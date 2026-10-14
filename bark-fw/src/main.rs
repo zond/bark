@@ -4,6 +4,8 @@
 #![no_std]
 #![no_main]
 
+mod board;
+
 // Links the nRF52840 interrupt vector table.
 use embassy_nrf as _;
 use panic_persist as _;
@@ -14,6 +16,8 @@ static SYMBOL_TIME_US: u64 = bark_proto::radio::SYMBOL_TIME.as_micros();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    let p = embassy_nrf::init(Default::default());
+    let _board = board::take_board!(p);
     loop {
         cortex_m::asm::wfi();
     }
