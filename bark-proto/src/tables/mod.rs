@@ -2,12 +2,56 @@
 //! fixed by the design and lives inline, so nothing here allocates
 //! (roadmap D8).
 
-pub mod visited;
-
 mod fixed;
-pub mod neighbours;
-pub mod leaves;
-pub mod delivery;
-pub mod recent_rx;
+
 pub mod budget;
 pub mod busy;
+pub mod delivery;
+pub mod leaves;
+pub mod neighbours;
+pub mod recent_rx;
+pub mod visited;
+
+/// Table sizes against the RAM targets of `docs/core-interface.md` §6.
+#[cfg(test)]
+mod sizes {
+    extern crate std;
+    use super::*;
+    use core::mem::size_of;
+
+    #[test]
+    fn table_sizes() {
+        let sizes = [
+            ("neighbours", size_of::<neighbours::Neighbours>()),
+            ("leaves", size_of::<leaves::Leaves>()),
+            ("delivery", size_of::<delivery::DeliveryQueue>()),
+            ("recent_rx", size_of::<recent_rx::RecentRx<{ recent_rx::RELAY_RECENT_RX }>>()),
+            ("budget", size_of::<budget::Budget>()),
+            ("busy", size_of::<busy::BusyEstimator>()),
+            ("visited", size_of::<visited::Visited>()),
+        ];
+        for (name, size) in sizes {
+            std::println!("{name:>10}: {size:>6} B");
+        }
+        // Per-entry sizes the capacities multiply.
+        assert_eq!(size_of::<neighbours::Neighbour>(), 32);
+        assert_eq!(size_of::<leaves::LeafEntry>(), 16);
+        assert_eq!(size_of::<delivery::Queued>(), 216);
+        // Whole tables, with headroom for the length and parameter fields.
+        let bound = |entries: usize, entry: usize| entries * entry + 64;
+        assert!(sizes[0].1 <= bound(neighbours::NEIGHBOURS, 32));
+        assert!(sizes[1].1 <= bound(leaves::LEAVES, 16));
+        assert!(sizes[2].1 <= bound(delivery::DELIVERY_QUEUE, 216));
+        assert!(sizes[3].1 <= bound(recent_rx::RELAY_RECENT_RX, 4));
+        assert!(sizes[4].1 <= 512);
+        assert!(sizes[5].1 <= 512);
+        assert!(sizes[6].1 <= 34);
+        // The relay's tables together. docs/core-interface.md §6 targets
+        // 16 KiB for the whole Relay; the delivery queue alone is 13.5 KiB
+        // (64 × 198-byte payloads), so that target cannot hold with the
+        // design's queue. 24 KiB bounds what the tables need.
+        let relay: usize = sizes[..6].iter().map(|&(_, s)| s).sum();
+        std::println!("{:>10}: {relay:>6} B", "relay sum");
+        assert!(relay <= 24 * 1024, "{relay}");
+    }
+}
