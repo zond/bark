@@ -3,3 +3,6 @@
 //! (roadmap D8).
 
 pub mod visited;
+
+mod fixed;
+pub mod neighbours;
