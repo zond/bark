@@ -24,7 +24,8 @@
 //! An ACK matches only if it names both the message and the receiver
 //! (roadmap D19). An ACK that arrives after the timeout but before the
 //! next attempt still counts: the receiver has the frame. A BUSY matches
-//! if it names the receiver (D27); the role decides what follows.
+//! if it names the receiver and the low 16 bits of the message ID (D27,
+//! D30); the role decides what follows.
 
 use crate::event::Action;
 use crate::node::Rng;
@@ -208,10 +209,13 @@ impl Transfer {
         !self.idle() && self.transmitted() && ack == self.expect
     }
 
-    /// Whether a BUSY from `from` refuses this hand-over: it names the
-    /// receiver of a frame that has been sent.
-    pub(crate) fn refused_by(&self, from: AckFrom) -> bool {
-        !self.idle() && self.transmitted() && from == self.expect.from
+    /// Whether `busy` refuses this hand-over: it names the receiver of a
+    /// frame that has been sent, and its message.
+    pub(crate) fn refused_by(&self, busy: Busy) -> bool {
+        !self.idle()
+            && self.transmitted()
+            && AckFrom::from(busy.from) == self.expect.from
+            && busy.refuses(self.expect.msg_id)
     }
 
     /// The receiver refused a hand-over that has no other receiver to go
@@ -386,8 +390,7 @@ impl<const N: usize> Replies<N> {
             .iter()
             .any(|e| e.reply == reply && e.channel == channel)
         {
-            // Already owed for an earlier copy, or a BUSY for another
-            // sender on the channel: one reply answers both.
+            // Already owed for an earlier copy: one reply answers both.
             return;
         }
         if self.owed.push(o).is_err() {
@@ -665,12 +668,12 @@ mod tests {
         // Lapsed ones are forgotten.
         assert_eq!(a.due(at(301)).unwrap().reply, ack(5));
         assert_eq!(replies_for(Duration::from_millis(100)), 9);
-        // One BUSY tells every sender on a channel.
-        let busy = Reply::Busy(Busy {
-            from: crate::position::ShortName(9),
-        });
-        a.owe(busy, ch, at(500), at(400));
-        a.owe(busy, ch, at(510), at(410));
+        // One BUSY answers a retransmission too, but not another message.
+        let busy = |id| Reply::Busy(Busy::refusing(crate::position::ShortName(9), MsgId(id)));
+        a.owe(busy(1), ch, at(500), at(400));
+        a.owe(busy(1), ch, at(510), at(410));
         assert_eq!(a.owed.len(), 1);
+        a.owe(busy(2), ch, at(510), at(410));
+        assert_eq!(a.owed.len(), 2);
     }
 }

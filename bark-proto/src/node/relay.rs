@@ -531,7 +531,7 @@ impl Relay {
             Ok(Packet::Data(d)) => d.dst_hop == me,
             Ok(Packet::Attach(a)) => a.relay == me,
             Ok(Packet::Ack(a)) => self.handover.answered_by(a),
-            Ok(Packet::Busy(b)) => self.handover.refused_by(b.from.into()),
+            Ok(Packet::Busy(b)) => self.handover.refused_by(b),
             _ => false,
         };
         if !own {

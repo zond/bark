@@ -614,7 +614,7 @@ impl Leaf {
     /// counts as hearing it and is no failure; the message waits out the
     /// hold.
     fn refused(&mut self, b: Busy, now: Instant) {
-        if self.sending != Sending::Data || !self.transfer.refused_by(b.from.into()) {
+        if self.sending != Sending::Data || !self.transfer.refused_by(b) {
             return;
         }
         self.transfer.cancel();

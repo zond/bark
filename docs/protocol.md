@@ -636,8 +636,9 @@ Packets waiting their turn are held in the relay's send queue.
    is taken, or the message goes back to the parent.
 
 **BUSY.** A BUSY whose `from` names the receiver of the outstanding
-hand-over says the receiver does not take the packet (§9.2.4); a BUSY
-from anyone else is ignored. The sender treats it as a listen-before-talk
+hand-over, and whose ID bits match the low 16 bits of its message ID,
+says the receiver does not take the packet (§9.2.4); any other BUSY is
+ignored. The sender treats it as a listen-before-talk
 give-up (step 2): the neighbour is set aside for this hand-over, not
 counted as tried, no failure is counted, and the next hop is chosen at
 once. A return to the parent, a packet sent straight back, or a DELIVER
@@ -650,11 +651,13 @@ after every other candidate, demoted ones included (§9.2.3). A leaf told
 BUSY by its relay keeps the relay and the message, and offers the
 message again 2.48 s later (§10.2).
 
-BUSY names the relay, not the message. Two senders on one channel that
-hand to the same relay within one reply time can both take a BUSY meant
-for one of them; one may then move on from a relay that took its packet,
-and the message has a second copy. The owner's delivered window drops
-it at delivery (§9.2.7, roadmap D27).
+BUSY carries the low 16 bits of the message ID because two senders on
+one channel can hand to the same relay within one reply time. Without
+them, both would take a BUSY meant for one; the other would move on from
+a relay that took its packet, and the message would have a second copy.
+With them this happens only when the two IDs agree in those bits, one
+time in 65 536, and the owner's delivered window then drops the copy at
+delivery (§9.2.7, roadmap D30).
 
 **Retry wait.** The wait before the retry after the k-th unanswered
 transmission is uniform in [0, 2^k × 150.4 ms]: 0–301 ms, then 0–602 ms.
@@ -1045,10 +1048,10 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
           aux = sender's home channel, so the receiver knows where to ACK
 DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
-BUSY      0x7: first(1) from(4)                                             = 5
+BUSY      0x7: first(1) from(4) id_low(2)                                   = 7
           a relay refusing a DATA (§9.2.4), sent instead of the ACK, on the
           channel in the refused DATA's aux; from = the refusing relay's short
-          name; aux unused
+          name; id_low = the low 16 bits of the refused message's ID; aux unused
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
@@ -1061,8 +1064,9 @@ because none of these fields changes. DATA does not carry it; ACK and
 DELIVER do, ACK to name what it acknowledges and DELIVER so the leaf can
 ACK it. The app must keep payloads unique (§11).
 
-BUSY carries no message ID: it says that the relay is busy, which is
-true of anything offered to it, not that one message is refused. At SF5 it
+BUSY carries only the low half of the message ID, enough for the sender
+to tell its own refusal from another's (§9.3). At SF5 a payload of 5 to
+7 bytes takes the same 41.25 symbols, so the two bytes cost nothing: BUSY
 takes 10.6 ms on air against the ACK's 11.8 ms.
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
@@ -1129,7 +1133,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, §9.3 retry wait |
-| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how; and how often the BUSY race of roadmap D27 duplicates a message | simulator, capacity scenario Decided 2026-10-15 (roadmap D29): a relay takes a packet only if the airtime of all it holds, that packet included, fits in its bucket now; to be built. |
+| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | simulator, capacity scenario Decided 2026-10-15 (roadmap D29): a relay takes a packet only if the airtime of all it holds, that packet included, fits in its bucket now; to be built. |
 
 ---
 

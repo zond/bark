@@ -48,11 +48,12 @@
 //! counts as one of the three attempts, and never as a failure against
 //! the neighbour.
 //!
-//! A BUSY from the receiver of the front hand-over is handled as that
-//! give-up (§9.3, roadmap D27), with two differences: the receiver is
-//! also marked busy for [`BUSY_HOLD`], so other messages take it only as
-//! the last resort, and since the frame went out, the record's mark that
-//! the receiver was handed the message is taken back. A return, a
+//! A BUSY from the receiver of the front hand-over, for its message, is
+//! handled as that give-up (§9.3, roadmap D27, D30), with two
+//! differences: the receiver is also marked busy for [`BUSY_HOLD`], so
+//! other messages take it only as the last resort, and since the frame
+//! went out, the record's mark that the receiver was handed the message
+//! is taken back. A return, a
 //! send-back or a DELIVER refused this way has used one of its attempts.
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
@@ -223,7 +224,7 @@ impl Relay {
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(BUSY_AIRTIME, now) {
-                let busy = Reply::Busy(Busy { from: self.me() });
+                let busy = Reply::Busy(Busy::refusing(self.me(), id));
                 self.replies.owe(busy, d.sender_home, deadline, now);
             }
             return;
@@ -769,7 +770,7 @@ impl Relay {
     /// A BUSY arrived: if from the receiver of the front hand-over, it
     /// does not take the packet (§9.3); see the module documentation.
     pub(super) fn busy_received(&mut self, b: Busy, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if !self.handover.refused_by(b.from.into()) {
+        if !self.handover.refused_by(b) {
             return;
         }
         let Some(out) = self.queue.front().copied() else {

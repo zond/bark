@@ -15,11 +15,13 @@
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
 //!                    payload                                        = 21 + payload
 //! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
-//! BUSY      0x7      first from                                     = 5
+//! BUSY      0x7      first from id_low                              = 7
 //! ```
 //!
 //! BUSY refuses a hand-over for this hop only (§9.2.4); the network
-//! still sends no failure notices (D10).
+//! still sends no failure notices (D10). It carries the low 16 bits of
+//! the refused message's ID, so that a sender takes only a refusal of its
+//! own packet (D30).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
@@ -100,15 +102,20 @@ pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
 // BUSY.
 const BUSY_FROM: usize = FIRST + FIRST_LEN;
-/// BUSY length (design §14: 5).
-pub const BUSY_LEN: usize = BUSY_FROM + NAME_LEN;
+const BUSY_ID: usize = BUSY_FROM + NAME_LEN;
+/// Bytes of the message ID a BUSY carries: the low half. At SF5 a payload
+/// of 5 to 7 bytes takes the same 41.25 symbols (`radio::time_on_air`), so
+/// these two bytes cost no airtime.
+const BUSY_ID_LEN: usize = 2;
+/// BUSY length (design §14: 7).
+pub const BUSY_LEN: usize = BUSY_ID + BUSY_ID_LEN;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
 /// 255 − 21 = 234 bytes. DATA and DELIVER carry at most this.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
 const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 9 && ATTACH_LEN == 9);
-const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9 && BUSY_LEN == 5);
+const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9 && BUSY_LEN == 7);
 const _: () = assert!(MAX_PAYLOAD == 234);
 
 /// A leaf's receive mode, carried in ATTACH `aux` (design §10.5). Sets the
@@ -243,13 +250,31 @@ pub struct Deliver<'a> {
     pub payload: &'a [u8],
 }
 
-/// BUSY, type 0x7 (design §9.2.4): the relay a DATA was
-/// addressed to does not take it. It names the relay, not the message: it
-/// says the relay is busy, which is true of anything offered to it.
+/// BUSY, type 0x7 (design §9.2.4): the relay a DATA was addressed to
+/// does not take it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Busy {
     /// The refusing relay.
     pub from: ShortName,
+    /// The low 16 bits of the refused message's ID. Two senders on one
+    /// channel handing to the same relay at once then take each other's
+    /// refusal only when their IDs agree there, one time in 65 536 (D30).
+    pub id_low: u16,
+}
+
+impl Busy {
+    /// `from` refuses message `id`.
+    pub fn refusing(from: ShortName, id: MsgId) -> Busy {
+        Busy {
+            from,
+            id_low: id.0 as u16,
+        }
+    }
+
+    /// Whether this refuses message `id`, as far as its 16 bits tell.
+    pub fn refuses(&self, id: MsgId) -> bool {
+        self.id_low == id.0 as u16
+    }
 }
 
 /// Any packet. Payloads borrow from the received frame.
@@ -396,6 +421,7 @@ impl Packet<'_> {
             Packet::Busy(b) => {
                 buf[FIRST] = first(T_BUSY, 0);
                 put(buf, BUSY_FROM, &b.from.0.to_be_bytes());
+                put(buf, BUSY_ID, &b.id_low.to_be_bytes());
                 Ok(BUSY_LEN)
             }
         }
@@ -459,6 +485,7 @@ impl<'a> Packet<'a> {
                 exact(b, BUSY_LEN)?;
                 Ok(Packet::Busy(Busy {
                     from: get_name(b, BUSY_FROM),
+                    id_low: u16::from_be_bytes([b[BUSY_ID], b[BUSY_ID + 1]]),
                 }))
             }
             other => Err(DecodeError::BadType(other)),
@@ -518,7 +545,7 @@ mod tests {
             Packet::Attach(_) => 9,
             Packet::Data(d) => 21 + d.payload.len(),
             Packet::Deliver(d) => 9 + d.payload.len(),
-            Packet::Busy(_) => 5,
+            Packet::Busy(_) => 7,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -565,8 +592,11 @@ mod tests {
         }
 
         #[test]
-        fn busy_round_trips(from in name()) {
-            round_trip(&Packet::Busy(Busy { from }));
+        fn busy_round_trips(from in name(), id in msg()) {
+            let busy = Busy::refusing(from, id);
+            prop_assert!(busy.refuses(id));
+            prop_assert!(!busy.refuses(MsgId(id.0 ^ 1)));
+            round_trip(&Packet::Busy(busy));
         }
 
         #[test]
@@ -730,15 +760,15 @@ mod tests {
         let len = Packet::Deliver(deliver).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-        let busy = Busy {
-            from: ShortName(0x0102_0304),
-        };
+        let busy = Busy::refusing(ShortName(0x0102_0304), MsgId(0x0506_0708));
         let len = Packet::Busy(busy).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x70, 1, 2, 3, 4]);
-        assert_eq!(
-            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(10_560),
-            "41.25 symbols at SF5"
-        );
+        assert_eq!(&buf[..len], &[0x70, 1, 2, 3, 4, 7, 8]);
+        for len in 5..=len {
+            assert_eq!(
+                crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+                Duration::from_micros(10_560),
+                "41.25 symbols at SF5, with or without the ID bits"
+            );
+        }
     }
 }

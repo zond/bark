@@ -155,4 +155,6 @@ action at a time, and the core never allocates.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
   - `aux` is unused in ACK, DELIVER and BUSY: sent as zero, ignored on receipt. A
     fixed-size packet with trailing bytes is rejected.
-  - BUSY `from` is a relay's short name, big-endian like every other.
+  - BUSY `from` is a relay's short name, big-endian like every other, and
+    `id_low` the low 16 bits of the refused message's ID, big-endian
+    (roadmap D30). A sender matches both against its hand-over.
