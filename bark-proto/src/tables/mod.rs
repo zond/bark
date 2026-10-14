@@ -64,5 +64,8 @@ mod sizes {
         }
         std::println!("{:>10}: {sum:>6} B", "tables");
         assert!(size_of::<busy::BusyEstimator>() <= 512);
+        // docs/core-interface.md §6: the whole Relay under 48 KiB, which
+        // leaves a little over 1 KiB for the medium access around the tables.
+        assert!(sum <= 47 * 1024, "{sum} B");
     }
 }

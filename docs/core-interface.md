@@ -99,9 +99,27 @@ The core never inspects a payload (design §11: the app owns identity and encryp
 
 ## 6. Memory
 
-`Relay` holds its tables inline: 64 neighbours, 256 leaves, 64 queued deliveries, a window of
-recently received message IDs. Target under 32 KiB; the delivery queue alone is 14 KiB (design §15). `Leaf` target
-under 1 KiB, because the capacity scenario holds twenty thousand of them.
+`Relay` holds its tables inline (design §15). Sizes as built, 2026-10-14, checked by the
+test in `tables/mod.rs`:
+
+| Table | Entries × size | Total |
+|---|---|---|
+| Neighbours (§8.2) | 64 × 40 B | 2.5 KiB |
+| Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
+| Delivery queue (§10.4) | 64 × 256 B | 16.0 KiB |
+| Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
+| Send queue (§9.3) | 10 × 260 B | 2.5 KiB |
+| Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
+| Duty budget and busy estimate | | 0.8 KiB |
+| **All** | | **46.5 KiB** |
+
+Target for the whole `Relay`: under 48 KiB. Design §15 budgets about 41 KB for the same
+tables; the difference is the record's tried mask (8 B per record, 4.9 KiB), the
+neighbour's demotion time (8 B per entry), and the delivery queue holding 234-byte
+payloads (§15 still counts 198). The relay's medium access alone, without the routing
+tables, is under 4 KiB today.
+
+`Leaf` target under 1 KiB, because the capacity scenario holds twenty thousand of them.
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
@@ -110,14 +128,20 @@ action at a time, and the core never allocates.
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
 - Relay short name (design §8.1, roadmap D14): the low 16 bits of the latitude count, then
-  the low 16 bits of the longitude count, big-endian. The receiver rebuilds the full
-  position from its own.
+  the low 16 bits of the longitude count, big-endian (`ShortName` in `position.rs`). The
+  receiver rebuilds the full position from its own as the one candidate within half a
+  period (32 768 counts) on each axis; both axes wrap as their wire fields do.
 - Message ID (design §14, D15): 32-bit FNV-1a over `dst_pos || dst_leaf || payload`,
-  `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`).
-- Everything else in design §14 is encoded by the Phase 0 codecs (`wire.rs`). Choices
-  made there, 2026-10-14:
+  `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`; `Data::msg_id` on a decoded
+  DATA).
+- Everything else in design §14 is encoded by the codecs in `wire.rs`. Choices made
+  there, 2026-10-14:
   - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four
-    opaque bytes in order.
+    opaque bytes in order. ACK `from` is a short name or a leaf ID, four bytes either way,
+    compared whole.
+  - The ACK of an ATTACH carries the leaf's ID as `id` and the relay's short name as
+    `from`: an ATTACH is not a message and has no message ID.
+  - A leaf's own DATA has `src_hop` zero and `hops` zero.
   - Application payload at most 234 bytes, what remains of 255 after the 21-byte DATA
     header; the decoder rejects anything longer.
   - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
@@ -125,3 +149,4 @@ action at a time, and the core never allocates.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
   - `aux` is unused in ACK and DELIVER: sent as zero, ignored on receipt. A fixed-size
     packet with trailing bytes is rejected.
+  - Type 0x7 is unassigned and rejected (roadmap D10).

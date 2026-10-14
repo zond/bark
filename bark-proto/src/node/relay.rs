@@ -479,8 +479,9 @@ mod tests {
     #[test]
     fn sizes() {
         extern crate std;
-        // docs/core-interface.md §6: under 32 KiB with every table; the MAC
-        // part alone is the neighbour table, budget and busy estimate.
+        // docs/core-interface.md §6: under 48 KiB with every table; until
+        // the routing tables join it, the medium access alone is the
+        // neighbour table, budget and busy estimate.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
         std::println!("Relay {relay} B, Leaf {leaf} B");
