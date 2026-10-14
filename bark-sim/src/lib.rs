@@ -13,7 +13,11 @@ pub mod geo;
 pub mod links;
 pub mod metrics;
 pub mod phy;
+mod radio;
 pub mod rng;
 pub mod scenario;
+pub mod sim;
+pub mod summary;
 
 pub use scenario::Scenario;
+pub use sim::Sim;
