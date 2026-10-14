@@ -178,13 +178,7 @@ impl Relay {
                 self.classify(&d, id, from_leaf, now)
             };
         let owner = match case {
-            Case::New => {
-                self.owns(d.dst_pos, now)
-                    || (from_leaf
-                        && d.dst_leaf != LeafId::RELAY
-                        && self.leaves.get(d.dst_leaf, now).is_some())
-            }
-            Case::FromLastChild => self.owns(d.dst_pos, now),
+            Case::New | Case::FromLastChild => self.owns(d.dst_pos, now),
             Case::AckOnly | Case::SendBack => false,
         };
         let sends = match case {
@@ -435,9 +429,7 @@ impl Relay {
             emit(Action::App(AppEvent::Sent(id)));
             return;
         }
-        let here = (dst_leaf != LeafId::RELAY && self.leaves.get(dst_leaf, now).is_some())
-            || self.owns(dst_pos, now);
-        if here {
+        if self.owns(dst_pos, now) {
             let mut record = Record::new(id, None, 0, now);
             record.set_owned();
             self.keep(record, now, emit);

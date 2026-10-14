@@ -539,9 +539,14 @@ A relay **owns** the destination `(x, y)` when:
 A relay farther than 50 m with no closer neighbour is at a gap, not the
 owner, and the search goes on (§9.2.3).
 
-A message whose destination is the sending node's own address, or a
-leaf attached to the relay it is handed to, is delivered there without
-entering the search.
+A message whose destination is the sending node's own address is
+delivered there without entering the search. The destination position
+alone decides who delivers: a relay that has the leaf in its leaf table
+but does not own the position routes the message on like any other. A
+leaf that has just moved to another relay stays in the old relay's table
+until it times out (180 s, §10.2), so the table disagrees with the
+address exactly when the address is new; delivering from the table would
+queue the message for a leaf that has gone (roadmap D21).
 
 The owner looks `leaf_id` up in its leaf table and delivers (§10.3), or
 queues (§10.4). If `leaf_id = 0` the message is for the relay itself: the

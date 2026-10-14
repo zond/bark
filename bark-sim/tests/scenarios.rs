@@ -210,12 +210,17 @@ fn capacity_sized_scenario_runs_a_minute_quickly() {
     );
 }
 
+/// S1 seeds run by the test: the first ten, and the four that lost
+/// messages at B before the owner rule ignored the leaf table (roadmap
+/// D21).
+const S1_SEEDS: [u64; 14] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 27, 32, 40];
+
 #[test]
 fn s1_parses_and_runs() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s1-line.toml");
     let sc = Scenario::load(&path).expect("S1 parses");
     assert_eq!(sc.links.model, Model::Table);
-    let mut sim = Sim::new(&sc).expect("S1 builds");
+    let sim = Sim::new(&sc).expect("S1 builds");
     // A and C cannot hear each other.
     let p = sc.radio.sensitivity_dbm();
     let (a, c) = (0, 2);
@@ -231,19 +236,6 @@ fn s1_parses_and_runs() {
             .is_some_and(|l| l.base_dbm as f64 > p + 10.0),
         "A hears B"
     );
-    sim.run();
-    let s = sim.summary();
-    print!("{}", s.table());
-    assert_eq!(
-        s.app.originated + s.app.unaddressed,
-        60,
-        "one text every 30 s for 30 minutes"
-    );
-    // Once the relays know each other, a worst-case rotation after their
-    // boot listen (design §6.2, §7), every text with an address is
-    // delivered until B is removed at 20 minutes; after that every one is
-    // dropped at A for want of a route (design §9.2.5). Every message has
-    // a fate, except one sent as the run ends.
     let c = bark_proto::Config::default();
     let settled = bark_proto::Instant::ZERO + c.boot_listen + c.heartbeat_max.mul(13);
     assert_eq!(
@@ -251,37 +243,68 @@ fn s1_parses_and_runs() {
         sc.settle_s,
         "the scenario's settle time is one rotation after the boot listen"
     );
+    for seed in S1_SEEDS {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        s1_seed(&sc, settled);
+    }
+}
+
+/// One run of S1. Once the relays know each other, a worst-case rotation
+/// after their boot listen (design §6.2, §7), every text with an address
+/// is delivered until B is removed at 20 minutes; after that every one is
+/// dropped at A for want of a route (design §9.2.5). Every message has a
+/// fate, except one sent as the run ends.
+fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
+    let seed = sc.seed;
+    let mut sim = Sim::new(sc).expect("S1 builds");
+    sim.run();
+    let s = sim.summary();
+    assert_eq!(
+        s.app.originated + s.app.unaddressed,
+        60,
+        "seed {seed}: one text every 30 s for 30 minutes"
+    );
     let removal = bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(1200);
     let fates: Vec<_> = sim.originated().filter(|(t, _)| *t < sim.end()).collect();
     assert!(
         fates.iter().all(|(_, f)| *f != Fate::Unaccounted),
-        "{fates:?}"
+        "seed {seed}: {fates:?}"
     );
     let (before, after): (Vec<_>, Vec<_>) = fates.iter().partition(|(t, _)| *t < removal);
-    let settled: Vec<_> = before.iter().filter(|(t, _)| *t >= settled).collect();
+    let on: Vec<_> = before.iter().filter(|(t, _)| *t >= settled).collect();
     assert!(
-        settled.iter().all(|(_, f)| *f == Fate::Delivered),
-        "{before:?}"
+        on.iter().all(|(_, f)| *f == Fate::Delivered),
+        "seed {seed}: {before:?}\n{}",
+        s.table()
     );
     let a_no_route = Fate::Dropped {
         node: 0,
         reason: DropReason::NoRoute,
     };
-    assert_eq!(after.len(), 20);
-    assert!(after.iter().all(|(_, f)| *f == a_no_route), "{after:?}");
+    assert_eq!(after.len(), 20, "seed {seed}");
+    assert!(
+        after.iter().all(|(_, f)| *f == a_no_route),
+        "seed {seed}: {after:?}"
+    );
     // The summary splits the run the same way.
     let phases = &s.app.phases;
     let names: Vec<_> = phases.iter().map(|p| p.phase.as_str()).collect();
     assert_eq!(names, ["before settle", "settled", "after removal"]);
-    let (on, off) = (&phases[1], &phases[2]);
-    assert_eq!(on.originated as usize, settled.len());
+    let (mid, off) = (&phases[1], &phases[2]);
+    assert_eq!(mid.originated as usize, on.len(), "seed {seed}");
     assert_eq!(
-        (on.delivery_ratio, on.lost_at.len(), on.unaccounted),
-        (1.0, 0, 0)
+        (mid.delivery_ratio, mid.lost_at.len(), mid.unaccounted),
+        (1.0, 0, 0),
+        "seed {seed}"
     );
-    assert_eq!((off.originated, off.delivered, off.unaccounted), (20, 0, 0));
+    assert_eq!(
+        (off.originated, off.delivered, off.unaccounted),
+        (20, 0, 0),
+        "seed {seed}"
+    );
     assert_eq!(off.lost_at.get("relay 0 (A): dropped NoRoute"), Some(&20));
-    assert_eq!(off.lost_at.len(), 1);
+    assert_eq!(off.lost_at.len(), 1, "seed {seed}");
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());

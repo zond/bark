@@ -286,3 +286,43 @@ fn line_of_three_loses_its_middle() {
         );
     }
 }
+
+/// The address decides who delivers, not the leaf table (roadmap D21). A
+/// leaf that has just moved to another relay stays in the old one's leaf
+/// table until it times out (§10.2); a message for it at its new address
+/// that passes the old relay goes on to the address.
+#[test]
+fn a_relay_holding_the_leaf_routes_by_the_address() {
+    let (r1, r2, l1, l2) = (0, 1, 2, 3);
+    let mut h = Harness::new(vec![
+        relay(0.0, 21),
+        relay(400.0, 22),
+        leaf(-30.0, 1, 23),
+        leaf(30.0, 2, 24),
+    ]);
+    for (a, b) in [(r1, r2), (l1, r1), (l2, r1)] {
+        h.link(a, b);
+    }
+    settle(&mut h, &[(l1, r1), (l2, r1)]);
+    let knows = |h: &Harness<Node>| {
+        the_relay(h, r1)
+            .neighbours()
+            .any(|n| n.position == position(h, r2))
+    };
+    assert!(h.run_until(h.now + secs(400), knows));
+    // l2 is attached at r1, but the sender has it at r2.
+    let id = send(&mut h, l1, l2, r2, b"to the address");
+    let queued_at_r2 = |h: &Harness<Node>| {
+        h.nodes[r2]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id))
+    };
+    assert!(h.run_until(h.now + secs(5), queued_at_r2), "not at r2");
+    h.run_for(secs(30));
+    assert_eq!(received(&h, l2, id), 0, "r1 delivered it from its table");
+    assert!(!h.nodes[r1]
+        .traces
+        .iter()
+        .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id)));
+}
