@@ -1,12 +1,11 @@
 //! The depth-first visited list carried inside DATA packets
 //! (design §8.1, §9.2, §14).
 //!
-//! Each entry is the 16-bit [`Position::hash16`] of a relay the packet has
+//! Each entry is the 16-bit position hash of a relay the packet has
 //! already passed through during void recovery. A hash collision only makes
 //! a candidate look visited, which skips it (design §8.1); it never loops a
 //! packet. The capacity is the wire bound [`MAX_VISITED`].
 
-use crate::position::Position;
 use crate::wire::MAX_VISITED;
 
 /// A bounded list of 16-bit position hashes, in the order they were pushed.
@@ -61,11 +60,6 @@ impl Visited {
         self.hashes().contains(&hash)
     }
 
-    /// Whether the hash of `position` is in the list.
-    pub fn contains_position(&self, position: Position) -> bool {
-        self.contains(position.hash16())
-    }
-
     /// Append `hash`. Returns `false`, leaving the list unchanged, if it is
     /// full. Does not deduplicate: whether to push a hash that is already
     /// present is the router's decision.
@@ -76,11 +70,6 @@ impl Visited {
         self.hashes[self.len()] = hash;
         self.len += 1;
         true
-    }
-
-    /// Append the hash of `position`; see [`Visited::push`].
-    pub fn push_position(&mut self, position: Position) -> bool {
-        self.push(position.hash16())
     }
 }
 
@@ -116,12 +105,9 @@ mod tests {
     }
 
     #[test]
-    fn positions_and_slices() {
-        let p = Position::from_degrees(50.45, 30.52);
+    fn slices() {
         let mut v = Visited::new();
-        assert!(!v.contains_position(p));
-        assert!(v.push_position(p));
-        assert!(v.contains_position(p));
+        assert!(v.push(7));
         assert_eq!(Visited::from_hashes(v.hashes()), Some(v));
         assert_eq!(Visited::from_hashes(&[0; MAX_VISITED + 1]), None);
     }

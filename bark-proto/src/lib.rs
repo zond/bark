@@ -27,6 +27,6 @@ pub mod wire;
 pub use event::{Action, AppCommand, AppEvent, Event, FailReason, Frame, Trace, MAX_FRAME};
 pub use ids::{LeafId, MsgId};
 pub use node::{Config, Core, Leaf, Node, Relay, Role};
-pub use position::Position;
+pub use position::{Position, ShortName};
 pub use radio::{Channel, CHANNELS};
 pub use time::{Duration, Instant};

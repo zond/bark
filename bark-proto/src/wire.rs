@@ -3,7 +3,7 @@
 //! The first byte of every packet is `type:4 | aux:4`. Positions are the
 //! 7-byte form of [`Position::encode`]; message and leaf identifiers are
 //! 4 bytes, big-endian; visited-list entries are 2-byte big-endian
-//! [`Position::hash16`] values. Lengths, in bytes:
+//! 16-bit position hashes. Lengths, in bytes:
 //!
 //! ```text
 //! HEARTBEAT 0x1/0x2  first pos                                         = 8
