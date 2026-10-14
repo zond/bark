@@ -49,7 +49,10 @@
 //! it has no relay or its relay does not answer, is held and tried again
 //! as above for up to the delivery TTL (§10.4: 10 minutes), the time the
 //! network itself would keep it; then it fails with [`FailReason::NoRelay`]
-//! or [`FailReason::NoAck`].
+//! or [`FailReason::NoAck`]. A relay that answers the message with BUSY
+//! (§9.2.4) is busy, not failing: the leaf holds the message and offers it
+//! again after [`BUSY_HOLD`], the time the relay's bucket takes to refill
+//! its reply reserve (roadmap D27).
 //!
 //! # Receiving
 //!
@@ -62,15 +65,17 @@
 use crate::event::{Action, AppCommand, AppEvent, Event, FailReason, Frame, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac::{self, Radio};
-use crate::node::transfer::{Acks, Check, Missed, Step, Transfer};
+use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::Budget;
+use crate::tables::budget::{Budget, BUSY_HOLD};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckFrom, Attach, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD};
+use crate::wire::{
+    Ack, AckFrom, Attach, Busy, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD,
+};
 
 /// How much stronger, in its mean over two heartbeats, another relay must
 /// be to take a leaf from its relay (§10.1).
@@ -183,7 +188,9 @@ pub struct Leaf {
     outgoing: Option<Frame>,
     /// When the message is given up if it has not been handed over.
     outgoing_until: Instant,
-    acks: Acks<1>,
+    /// Not before this is the message offered: the relay said it was busy.
+    outgoing_at: Instant,
+    acks: Replies<1>,
     budget: Budget,
     seen: [MsgId; SEEN],
     seen_next: u8,
@@ -217,7 +224,8 @@ impl Leaf {
             sending: Sending::Attach,
             outgoing: None,
             outgoing_until: Instant::ZERO,
-            acks: Acks::new(),
+            outgoing_at: Instant::ZERO,
+            acks: Replies::new(),
             budget: Budget::new(),
             seen: [MsgId(0); SEEN],
             seen_next: 0,
@@ -461,7 +469,10 @@ impl Leaf {
                 },
                 now,
             );
-        } else if let Some(msg_id) = self.outgoing_id().filter(|_| self.attached) {
+        } else if let Some(msg_id) = self
+            .outgoing_id()
+            .filter(|_| self.attached && now >= self.outgoing_at)
+        {
             self.sending = Sending::Data;
             self.transfer.start(Ack { msg_id, from }, now);
         }
@@ -594,6 +605,21 @@ impl Leaf {
         }
     }
 
+    /// The relay refused the message (§9.2.4). It hears the leaf, so this
+    /// counts as hearing it and is no failure; the message waits out the
+    /// hold.
+    fn refused(&mut self, b: Busy, now: Instant) {
+        if self.sending != Sending::Data || !self.transfer.refused_by(b.from.into()) {
+            return;
+        }
+        self.transfer.cancel();
+        if let Some(r) = &mut self.relay {
+            r.last_heard = now;
+        }
+        self.failed_periods = 0;
+        self.outgoing_at = now + BUSY_HOLD;
+    }
+
     // --- Receiving (§10.3) ---
 
     fn deliver(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -601,8 +627,12 @@ impl Leaf {
             msg_id: d.msg_id,
             from: AckFrom::from(self.id),
         };
-        self.acks
-            .owe(ack, self.home, now + self.config.ack_timeout, now);
+        self.acks.owe(
+            Reply::Ack(ack),
+            self.home,
+            now + self.config.ack_timeout,
+            now,
+        );
         if self.seen.contains(&d.msg_id) {
             return;
         }
@@ -621,7 +651,7 @@ impl Leaf {
         let Some(o) = self.acks.due(now) else {
             return false;
         };
-        let frame = mac::frame(&Packet::Ack(o.ack), o.channel, MIN_PREAMBLE_SYMBOLS);
+        let frame = mac::frame(&o.reply.packet(), o.channel, MIN_PREAMBLE_SYMBOLS);
         if !self.budget.would_allow(mac::airtime(&frame), now) {
             self.acks.abandon();
             return true;
@@ -640,7 +670,7 @@ impl Leaf {
         match self.acks.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Ack, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = mac::frame(&Packet::Ack(o.ack), o.channel, MIN_PREAMBLE_SYMBOLS);
+                let frame = mac::frame(&o.reply.packet(), o.channel, MIN_PREAMBLE_SYMBOLS);
                 let airtime = mac::airtime(&frame);
                 if self.budget.would_allow(airtime, now) {
                     self.budget.record(airtime, now);
@@ -657,6 +687,7 @@ impl Leaf {
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(hb)) => self.heartbeat(hb, rssi, now, emit),
             Ok(Packet::Ack(a)) => self.acked(a, now, emit),
+            Ok(Packet::Busy(b)) => self.refused(b, now),
             Ok(Packet::Deliver(d)) if d.dst_leaf == self.id => self.deliver(d, now, emit),
             _ => {}
         }
@@ -755,6 +786,9 @@ impl Core for Leaf {
             }
             if self.transfer.idle() && self.relay.is_some() {
                 at(self.attach_at);
+                if self.attached && self.outgoing.is_some() {
+                    at(self.outgoing_at);
+                }
             }
         }
         w

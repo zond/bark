@@ -1,15 +1,18 @@
 //! The send queue (design §9.3): packets waiting for their hand-over, the
 //! one being handed over included, first in first out.
 //!
-//! Its length is what a relay can send in the time its upstream sender
-//! spends retrying a hand-over to it: the retries after the first attempt,
-//! each waiting the longest before it (301 ms, then 602 ms; §9.3) and for
-//! the channel, carrying a full frame and waiting out the ACK timeout,
+//! Its length is what a relay can send in the time an upstream sender
+//! spends retrying a hand-over to it that goes unanswered: the retries
+//! after the first attempt, each waiting the longest before it (301 ms,
+//! then 602 ms; §9.3) and for the channel, carrying a full frame and
+//! waiting out the ACK timeout,
 //! `0.90 s + 2 × (500 ms + 138.6 ms + 100 ms) = 2.38 s`, over the time of
 //! one full frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈15.8⌉ = 16. A
 //! packet that would wait longer gets on sooner by the upstream relay
-//! choosing another next hop, which it does when this relay, its queue
-//! full, does not ACK.
+//! choosing another next hop, which it does at once when this relay, its
+//! queue full, answers BUSY (§9.2.4). At the duty-cycle cap the queue
+//! drains at the bucket's rate instead, a full frame every 1.4 s, so it
+//! can hold a packet about 23 s (design open item O15).
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (§9.3).

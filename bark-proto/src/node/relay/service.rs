@@ -16,11 +16,14 @@
 //! The ACK of an ATTACH carries the leaf's ID as the message ID and the
 //! relay's short name (§14). A relay whose leaf table is full of live
 //! leaves does not ACK, so the leaf attaches elsewhere (`tables/leaves.rs`).
+//! The ACK of an ATTACH is a reply and may spend the reply reserve (§9.4):
+//! a busy relay still keeps its leaves.
 
 use super::Relay;
 use crate::event::{Action, DropReason, Trace};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
+use crate::node::transfer::Reply;
 use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::Instant;
@@ -29,7 +32,7 @@ use crate::wire::{Ack, AckFrom, Attach, Deliver, Packet, ACK_LEN};
 impl Relay {
     /// An ATTACH or keepalive for this relay (§10.2).
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
-        if !self.affordable(time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS), now) {
+        if !self.can_reply(time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS), now) {
             return;
         }
         if self.leaves.attached(a.leaf, a.mode, now).is_err() {
@@ -39,8 +42,12 @@ impl Relay {
             msg_id: MsgId(u32::from_be_bytes(a.leaf.0)),
             from: AckFrom::from(self.me()),
         };
-        self.acks
-            .owe(ack, self.home, now + self.config.ack_timeout, now);
+        self.replies.owe(
+            Reply::Ack(ack),
+            self.home,
+            now + self.config.ack_timeout,
+            now,
+        );
         self.try_deliver(a.leaf, now);
     }
 

@@ -26,6 +26,13 @@
 //! refreshes the entry but leaves `fail_count` alone (roadmap D18): it
 //! proves the neighbour is alive, not that it hears us.
 //!
+//! # Busy
+//!
+//! A neighbour that refuses a hand-over with BUSY (§9.2.4) is busy until
+//! a hold later (`tables/budget.rs`, `BUSY_HOLD`): a next hop only when no
+//! other is left, after the demoted ones (§9.2.3, roadmap D27). A refusal
+//! is no failure: it says the neighbour hears us.
+//!
 //! # Eviction (roadmap D12)
 //!
 //! When the table is full and an unknown relay is heard, the newcomer
@@ -68,6 +75,8 @@ pub struct Neighbour {
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
     pub demoted_at: Instant,
+    /// Until when it has said it is busy.
+    pub busy_until: Instant,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
     /// Whether its position is surveyed (heartbeat 0x1) rather than GPS (0x2).
@@ -200,6 +209,11 @@ impl Neighbours {
         n.fail_count >= self.params.demote_after && now.since(n.demoted_at) < self.params.demotion
     }
 
+    /// Whether `n` is busy at `now`.
+    pub fn is_busy(&self, n: &Neighbour, now: Instant) -> bool {
+        now < n.busy_until
+    }
+
     /// Whether `n` has expired at `now`.
     pub fn is_expired(&self, n: &Neighbour, now: Instant) -> bool {
         now.since(n.last_heard) >= self.params.expire_after
@@ -234,6 +248,7 @@ impl Neighbours {
             home: hb.home,
             last_heard: now,
             demoted_at: Instant::ZERO,
+            busy_until: Instant::ZERO,
             fail_count: 0,
             surveyed: hb.surveyed,
         };
@@ -254,6 +269,13 @@ impl Neighbours {
     pub fn succeeded(&mut self, position: Position) {
         if let Some(n) = self.entry_mut(position) {
             n.fail_count = 0;
+        }
+    }
+
+    /// `position` refused a hand-over: busy until `until`.
+    pub fn refused(&mut self, position: Position, until: Instant) {
+        if let Some(n) = self.entry_mut(position) {
+            n.busy_until = until;
         }
     }
 

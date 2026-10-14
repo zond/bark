@@ -191,6 +191,12 @@ impl Tracer {
                     Trace::Refused { msg_id, reason } => {
                         write!(what, "refused {} {reason:?}", self.msg(msg_id, tags))
                     }
+                    Trace::TurnedAway { msg_id, by } => write!(
+                        what,
+                        "{} turned away by {}",
+                        self.msg(msg_id, tags),
+                        n.relay(by)
+                    ),
                     Trace::HandOverDeferred { msg_id, until } => write!(
                         what,
                         "hand-over of {} deferred to {:.3} s",

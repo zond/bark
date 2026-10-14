@@ -4,10 +4,15 @@
 //! # Receiving a DATA packet (§9.2.4)
 //!
 //! [`Relay::data`] classifies the packet by the six cases of §9.2.4 in
-//! order, decides whether acting on it means sending something (a forward,
-//! a return, or a packet sent straight back), refuses it without an ACK if
-//! the send queue or the duty-cycle budget has no room for that, and
-//! otherwise owes the ACK before acting.
+//! order and decides whether acting on it is work: a forward, a return, a
+//! packet sent straight back, or a delivery. Work is refused with BUSY when
+//! the send queue has no place for what it sends, or when the bucket holds
+//! less than the reply reserve and an ACK (`tables/budget.rs`); otherwise
+//! the ACK is owed before acting. A packet that gives no work (cases 2, 3
+//! and 5) is ACKed from the reply reserve: this relay already has the
+//! message, and BUSY would send its sender on with a second copy. A relay
+//! that cannot afford even the reply stays silent, and its sender
+//! retries.
 //!
 //! Three refinements the spec does not spell out:
 //!
@@ -43,22 +48,29 @@
 //! counts as one of the three attempts, and never as a failure against
 //! the neighbour.
 //!
+//! A BUSY from the receiver of the front hand-over is handled as that
+//! give-up (§9.3, roadmap D27), with two differences: the receiver is
+//! also marked busy for [`BUSY_HOLD`], so other messages take it only as
+//! the last resort, and since the frame went out, the record's mark that
+//! the receiver was handed the message is taken back. A return, a
+//! send-back or a DELIVER refused this way has used one of its attempts.
+//!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
 use super::{Job, Relay};
 use crate::event::{Action, AppEvent, DropReason, FailReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
-use crate::node::transfer::{Check, Missed, Step};
+use crate::node::transfer::{Check, Missed, Reply, Step};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::HEARTBEAT_RESERVE;
+use crate::tables::budget::{BUSY_AIRTIME, BUSY_HOLD, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::Neighbour;
 use crate::tables::records::{Record, MAX_HOPS};
-use crate::tables::send_queue::{retrying_span, Kind, Outgoing};
+use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckFrom, Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
+use crate::wire::{Ack, AckFrom, Busy, Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
 
 /// A relay within this distance of a destination that is not its own
 /// position, with no live, undemoted neighbour closer, owns it (design
@@ -109,30 +121,17 @@ impl Relay {
         self.config.position.short()
     }
 
-    fn reserve(&self) -> Duration {
-        HEARTBEAT_RESERVE
-    }
-
-    /// Whether everything but a heartbeat may spend `airtime` now (§9.4).
+    /// Whether forwarding, or an ACK that takes on work, may spend
+    /// `airtime` now: it must leave the reply reserve (§9.4).
     pub(super) fn affordable(&self, airtime: Duration, now: Instant) -> bool {
-        self.budget
-            .would_allow_keeping(airtime, self.reserve(), now)
+        self.budget.would_allow_keeping(airtime, REPLY_RESERVE, now)
     }
 
-    /// Whether the send queue, with `airtime` more, can go out within the
-    /// time an upstream sender spends retrying a hand-over (§9.3): a packet
-    /// that would wait longer for the budget gets on sooner by the sender
-    /// choosing another next hop.
-    fn drains_in_time(&self, airtime: Duration, now: Instant) -> bool {
-        let queued = self
-            .queue
-            .iter()
-            .fold(airtime, |sum, o| sum + mac::airtime(&o.frame));
-        let c = &self.config;
-        let horizon = retrying_span(c.ack_timeout, c.hop_attempts, c.retry_backoff);
+    /// Whether a reply may spend `airtime` now: it must leave the
+    /// heartbeat reserve (§9.4).
+    pub(super) fn can_reply(&self, airtime: Duration, now: Instant) -> bool {
         self.budget
-            .allowed_at(queued, self.reserve(), now)
-            .is_some_and(|t| t <= now + horizon)
+            .would_allow_keeping(airtime, HEARTBEAT_RESERVE, now)
     }
 
     fn drop_msg(&mut self, msg_id: MsgId, reason: DropReason, emit: &mut dyn FnMut(Action)) {
@@ -158,12 +157,13 @@ impl Relay {
     /// The next hop for the message of `record` to `dst` (§9.2.3): the
     /// live neighbour nearest `dst` that is not in the tried set and not
     /// set aside, ties broken by short name; a demoted one only when no
-    /// other is left (roadmap D25).
+    /// other is left (roadmap D25), and a busy one only after those (D27).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
         let skipped = self.skipped;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
+        let busy = |n: &Neighbour| self.neighbours.is_busy(n, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
@@ -173,8 +173,9 @@ impl Relay {
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                demoted(a)
-                    .cmp(&demoted(b))
+                busy(a)
+                    .cmp(&busy(b))
+                    .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.position.short().0.cmp(&b.position.short().0))
             })
@@ -209,29 +210,33 @@ impl Relay {
         // A return from the child being handed the message ends that
         // hand-over, which frees its place in the queue.
         let completes = case == Case::FromLastChild && self.handing(id, d.src_hop);
-        if sends {
-            let refusal = if self.queue.is_full() && !completes {
-                Some(DropReason::SendQueueFull)
-            } else if !self.affordable(ack_airtime(), now)
-                || !self.drains_in_time(ack_airtime() + data_airtime(d.payload.len()), now)
-            {
-                Some(DropReason::Budget)
-            } else {
-                None
-            };
-            if let Some(reason) = refusal {
-                emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
-                return;
-            }
+        let deadline = now + self.config.ack_timeout;
+        let refusal = if case == Case::AckOnly {
+            None
+        } else if sends && self.queue.is_full() && !completes {
+            Some(DropReason::SendQueueFull)
         } else if !self.affordable(ack_airtime(), now) {
+            Some(DropReason::Budget)
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
+            if self.can_reply(BUSY_AIRTIME, now) {
+                let busy = Reply::Busy(Busy { from: self.me() });
+                self.replies.owe(busy, d.sender_home, deadline, now);
+            }
+            return;
+        }
+        if !self.can_reply(ack_airtime(), now) {
             emit(Action::Trace(Trace::Refused {
                 msg_id: id,
                 reason: DropReason::Budget,
             }));
             return;
         }
-        self.acks
-            .owe(ack, d.sender_home, now + self.config.ack_timeout, now);
+        self.replies
+            .owe(Reply::Ack(ack), d.sender_home, deadline, now);
 
         match case {
             Case::New => {
@@ -643,7 +648,7 @@ impl Relay {
         let airtime = mac::airtime(&out.frame);
         let until = self
             .budget
-            .allowed_at(airtime, self.reserve(), now)
+            .allowed_at(airtime, REPLY_RESERVE, now)
             .unwrap_or(now + self.config.heartbeat_max);
         self.handover.defer(until);
         let msg_id = out.msg_id().unwrap_or_default();
@@ -687,7 +692,7 @@ impl Relay {
     /// relay's home channel as it is now (§14 `aux`). An owed ACK goes
     /// first, and the check is then repeated.
     fn transmit_front(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.acks.wake_at().is_some_and(|t| t <= now) {
+        if self.replies.wake_at().is_some_and(|t| t <= now) {
             self.handover.hold(now);
             return;
         }
@@ -720,7 +725,7 @@ impl Relay {
         }
         let airtime = mac::airtime(&frame);
         if !self.affordable(airtime, now) {
-            // Owed ACKs spent the budget since the check began.
+            // Owed replies spent the budget since the check began.
             self.defer_handover(&out, now, emit);
             return;
         }
@@ -760,6 +765,43 @@ impl Relay {
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.handover.acked(ack) {
             self.handover_done(now, emit);
+        }
+    }
+
+    /// A BUSY arrived: if from the receiver of the front hand-over, it
+    /// does not take the packet (§9.3); see the module documentation.
+    pub(super) fn busy_received(&mut self, b: Busy, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if !self.handover.refused_by(b.from.into()) {
+            return;
+        }
+        let Some(out) = self.queue.front().copied() else {
+            return;
+        };
+        let msg_id = out.msg_id().unwrap_or_default();
+        emit(Action::Trace(Trace::TurnedAway { msg_id, by: b.from }));
+        let slot = self
+            .neighbours
+            .by_short(b.from)
+            .map(|(s, n)| (s, n.position));
+        if let Some((_, position)) = slot {
+            self.neighbours.refused(position, now + BUSY_HOLD);
+        }
+        match out.kind {
+            Kind::Forward { .. } => {
+                if let Some((slot, _)) = slot {
+                    self.skipped |= 1 << slot;
+                    if let Some(r) = self.records.get_mut(msg_id, now) {
+                        r.not_handed(slot);
+                    }
+                }
+                self.handover.cancel();
+            }
+            Kind::Return | Kind::Bounce | Kind::Deliver => {
+                let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+                if self.handover.refused(now, max, &mut self.rng, retry) == Missed::Failed {
+                    self.handover_failed(out, false, now, emit);
+                }
+            }
         }
     }
 
@@ -839,39 +881,40 @@ impl Relay {
         }
     }
 
-    // --- Owed ACKs (§9.3) ---
+    // --- Owed replies (§9.3) ---
 
-    /// Start sending the first owed ACK, if one is ready. Without budget
-    /// for it the relay cannot ACK (§9.4); the ACK is abandoned.
-    pub(super) fn start_ack(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        if self.acks.due(now).is_none() {
+    /// Start sending the first owed reply, if one is ready. Without budget
+    /// for it the relay cannot reply (§9.4); the reply is abandoned.
+    pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+        let Some(o) = self.replies.due(now) else {
             return false;
-        }
-        if !self.affordable(ack_airtime(), now) {
-            self.acks.abandon();
+        };
+        let frame = mac::frame(&o.reply.packet(), o.channel, MIN_PREAMBLE_SYMBOLS);
+        if !self.can_reply(mac::airtime(&frame), now) {
+            self.replies.abandon();
             return true;
         }
-        match self.acks.begin() {
+        match self.replies.begin() {
             Some(cad) => {
-                self.radio.start(Job::Ack, cad, emit);
+                self.radio.start(Job::Reply, cad, emit);
                 true
             }
             None => false,
         }
     }
 
-    pub(super) fn ack_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
+    pub(super) fn reply_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let backoff = self.config.hop_backoff_max;
-        match self.acks.checked(busy, now, &mut self.rng, backoff) {
-            Some((o, false)) => self.radio.start(Job::Ack, Action::Rssi(o.channel), emit),
+        match self.replies.checked(busy, now, &mut self.rng, backoff) {
+            Some((o, false)) => self.radio.start(Job::Reply, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = mac::frame(&Packet::Ack(o.ack), o.channel, MIN_PREAMBLE_SYMBOLS);
+                let frame = mac::frame(&o.reply.packet(), o.channel, MIN_PREAMBLE_SYMBOLS);
                 let airtime = mac::airtime(&frame);
-                if self.affordable(airtime, now) {
+                if self.can_reply(airtime, now) {
                     self.budget.record(airtime, now);
-                    self.radio.start(Job::Ack, Action::Transmit(frame), emit);
+                    self.radio.start(Job::Reply, Action::Transmit(frame), emit);
                 } else {
-                    self.acks.abandon();
+                    self.replies.abandon();
                 }
             }
             None => {}
@@ -890,7 +933,7 @@ impl Relay {
     }
 
     /// When forwarding next needs the core. The ACK wait counts even while
-    /// an owed ACK holds the radio; the rest only once the radio is free.
+    /// an owed reply holds the radio; the rest only once the radio is free.
     pub(super) fn forward_wakeup(&self) -> Option<Instant> {
         let mut w: Option<Instant> = None;
         let mut at = |t: Instant| w = Some(w.map_or(t, |w| w.min(t)));
@@ -900,7 +943,7 @@ impl Relay {
             }
         }
         if self.radio.idle() {
-            if let Some(t) = self.acks.wake_at() {
+            if let Some(t) = self.replies.wake_at() {
                 at(t);
             }
         }

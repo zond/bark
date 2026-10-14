@@ -187,8 +187,12 @@ reading:
   (heartbeats included), from the packet lengths. Whether a reading fell
   in the node's own packet is known only when that packet ends, so a home
   reading is held until the next, one second later, longer than any
-  packet (roadmap D24). A packet for the node that fails its CRC cannot be
-  told from someone else's and counts.
+  packet (roadmap D24). A home reading may fall inside a reception, since
+  the radio keeps receiving while it reads its own channel
+  (`core-interface.md` rules 7 and 8): a reading inside a packet addressed
+  to the node is discarded, one inside any other packet counts. A packet
+  for the node that fails its CRC cannot be told from someone else's and
+  counts.
 - **Noise floor:** calibrate per device at boot as a low percentile of RSSI
   readings over the first rotation; recalibrate slowly.
 
@@ -309,6 +313,7 @@ Per node, up to 64 entries:
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
 | fail_count | consecutive ACK failures |
+| busy_until | when its last BUSY stops counting (§9.3) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
@@ -443,8 +448,9 @@ the message comes back, and after a failed hand-over (§9.3). The
 **candidates** are the neighbour-table entries that are live (§8.2),
 except those in the tried set (§9.2.2).
 
-The **order** is: neighbours that are not demoted before demoted ones;
-within each, distance to the destination position in the local plane
+The **order** is: neighbours that are not busy (§9.3) before busy ones,
+and within each, neighbours that are not demoted before demoted ones;
+within those, distance to the destination position in the local plane
 (§11), nearest first; equal distances are ordered by short name. The
 relay sends to the first candidate. If there is none, it returns the
 message to its parent (§9.2.5).
@@ -457,7 +463,9 @@ lost to collisions demote a neighbour that works, and on a line it is
 the only route, so without the last resort every message is dropped
 until the demotion lapses, six and a half minutes. A neighbour that is
 really gone costs each message routed to it three attempts until its
-entry expires (§8.2: 390 s after its last heartbeat) (roadmap D25).
+entry expires (§8.2: 390 s after its last heartbeat) (roadmap D25). A
+busy neighbour comes after the demoted ones: it has just said it will
+take nothing, and a few seconds later it may (roadmap D27).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -475,12 +483,18 @@ on to the next.
 
 #### 9.2.4 Receiving a DATA packet
 
-A relay ACKs a DATA packet addressed to it (§9.2.1, §9.3) before acting
-on it, with one exception: if acting on it means sending it on and the
-relay's send queue is full (§9.3), or its airtime budget would not let
-the queue with this packet go out within the time the sender spends
-retrying (§9.4), it neither ACKs nor changes anything, and the sender
-will try elsewhere.
+A relay answers a DATA packet addressed to it (§9.2.1, §9.3) before
+acting on it: with an ACK if it takes it, with BUSY (§14) if it does not.
+It refuses a packet that would give it work, something to send on or to
+deliver, when its send queue has no place for what it would send (§9.3)
+or when its airtime bucket holds less than the reply reserve and an ACK
+(§9.4). It then sends BUSY where the ACK would have gone, on the channel
+in `aux` after listening before talking, changes nothing, and the sender
+tries elsewhere at once. A packet that gives it no work, cases 2, 3 and
+5 below, is ACKed even then: the relay already has the message, and
+BUSY would send its sender on with a second copy. A relay that cannot
+afford even the reply stays silent, and its sender retries as for a lost
+ACK (roadmap D27).
 
 The packet is one of the following, tested in this order:
 
@@ -614,6 +628,27 @@ Packets waiting their turn are held in the relay's send queue.
    (§9.2.3). The neighbour is now the last child, so the next one in order
    is taken, or the message goes back to the parent.
 
+**BUSY.** A BUSY whose `from` names the receiver of the outstanding
+hand-over says the receiver does not take the packet (§9.2.4); a BUSY
+from anyone else is ignored. The sender treats it as a listen-before-talk
+give-up (step 2): the neighbour is set aside for this hand-over, not
+counted as tried, no failure is counted, and the next hop is chosen at
+once. A return to the parent, a packet sent straight back, or a DELIVER
+has no other candidate: BUSY uses up the attempt, the next one follows
+the retry wait, and after the last the packet is dropped as when its
+ACKs are missing, but with no failure counted against the receiver. The
+neighbour is also **busy** for 2.48 s, the time its bucket takes to
+refill the reply reserve (§9.4): until then other messages take it only
+after every other candidate, demoted ones included (§9.2.3). A leaf told
+BUSY by its relay keeps the relay and the message, and offers the
+message again 2.48 s later (§10.2).
+
+BUSY names the relay, not the message. Two senders on one channel that
+hand to the same relay within one reply time can both take a BUSY meant
+for one of them; one may then move on from a relay that took its packet,
+and the message has a second copy. The owner's delivered window drops
+it at delivery (§9.2.7, roadmap D27).
+
 **Retry wait.** The wait before the retry after the k-th unanswered
 transmission is uniform in [0, 2^k × 150.4 ms]: 0–301 ms, then 0–602 ms.
 150.4 ms is how long one hand-over holds its receiver, a full frame
@@ -635,9 +670,9 @@ that was itself a return to the parent, or a packet sent straight back
 (§9.2.4, case 6), is not retried elsewhere: the message is dropped.
 
 The receiver retunes to the sender's channel, listens before talking,
-sends the ACK, and retunes home. The ACK is the first byte, the message
-ID and the short name of the acknowledging relay, or the leaf ID of the
-acknowledging leaf (9 bytes, 11.8 ms, §14). The sender matches both
+sends the ACK or BUSY, and retunes home. The ACK is the first byte, the
+message ID and the short name of the acknowledging relay, or the leaf ID
+of the acknowledging leaf (9 bytes, 11.8 ms, §14). The sender matches both
 against its outstanding hand-over. The name is needed because relays
 share home channels: without it, an ACK for the same message from a
 different relay on the same channel, which the depth-first search can
@@ -654,14 +689,15 @@ That is the cost of having one radio.
 
 **Send queue.** At most 16 packets, the one being handed over included,
 first in first out. When it is full, a packet that would need a place is
-not ACKed (§9.2.4), so its sender retries and then routes around this
-relay as it would around a failing one. 16 is what a relay can send in
-the time its upstream sender spends retrying a hand-over: the two retry
-waits, 301 + 602 ms, plus 2 × (100 ms ACK timeout + 500 ms
-listen-before-talk give-up + 138.6 ms full frame), 2.38 s in all, and a
-full frame and its ACK take 138.6 + 11.8 = 150.4 ms, so
-⌈2.38 s / 150.4 ms⌉ = 16. A packet that would wait longer than that would
-get on sooner by the upstream relay choosing another next hop.
+refused with BUSY (§9.2.4), and its sender routes around this relay at
+once. 16 is what a relay can send in the time an upstream sender spends
+retrying a hand-over that goes unanswered: the two retry waits, 301 +
+602 ms, plus 2 × (100 ms ACK timeout + 500 ms listen-before-talk give-up
++ 138.6 ms full frame), 2.38 s in all, and a full frame and its ACK take
+138.6 + 11.8 = 150.4 ms, so ⌈2.38 s / 150.4 ms⌉ = 16. That holds while
+the relay has budget; at its duty-cycle cap the queue drains at the
+bucket's rate, a full frame every 1.4 s, so a full queue holds a packet
+about 23 s (open item O15).
 
 ### 9.4 Duty cycle cap
 
@@ -682,14 +718,20 @@ is empty, a full frame waits 1.4 s for it, and nothing waits longer
 than 6 s / 9.83% = 61 s (roadmap D26).
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
-it is not dropped. A relay takes no new packet to send on, and so does
-not ACK it (§9.2.4), when its send queue, that packet included, could
-not go out within the 2.38 s its sender spends retrying (§9.3): the
-sender then routes around it. It keeps sending heartbeats: everything
-else leaves one heartbeat's airtime, 11.8 ms, in the bucket, which the
-bucket refills in 120 ms, far less than the 5 s between heartbeats (§7).
-Without budget for an ACK it cannot ACK, so its neighbours' hand-overs
-to it fail and they route around it.
+it is not dropped. Two reserves stay in the bucket. Replies (ACK and
+BUSY) leave one heartbeat's airtime, 11.8 ms, which the bucket refills
+in 120 ms, far less than the 5 s between heartbeats (§7), so heartbeats
+always go. Forwarding, and the ACK that takes on a packet, leave the
+**reply reserve**: the BUSY replies the bucket refills while a sender
+retries an unanswered hand-over, 9.83 % × 2.38 s = 234 ms, ⌊234 /
+10.6⌋ = 22 of them, and the heartbeat, 244 ms in all. A relay whose
+bucket holds less than that and an ACK takes no new work: it answers
+BUSY (§9.2.4), and sends nothing but heartbeats and replies until the
+bucket refills. Its senders pass it over for the reserve's refill time,
+2.48 s (§9.3), so a relay at the reserve can tell 22 senders in that
+time that it is busy and pay for it from the refill alone. Without budget
+even for a reply it stays silent, its neighbours' hand-overs to it fail,
+and they route around it (roadmap D27).
 
 ### 9.5 Why the search finds a path
 
@@ -809,7 +851,10 @@ relay, the leaf takes the strongest other one it has heard (§10.1).
 because it has no relay or its relay does not answer, is held and tried
 again as above, for up to the delivery TTL (10 minutes, §10.4), the time
 the network itself would keep it. Only then is it reported failed. The
-leaf holds one message at a time (roadmap D23).
+leaf holds one message at a time (roadmap D23). A relay that answers the
+message with BUSY is busy, not failing: the leaf keeps it, counts no
+failed period, and offers the message again 2.48 s later (§9.3, roadmap
+D27).
 
 ### 10.3 Delivery
 
@@ -1026,10 +1071,10 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM budget (256 KB):** neighbour table 64 × 40 B = 2.5 KB; leaf table
+**RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 64 × 256 B = 16 KB; message records
 (§9.2.2) 626 × 32 B = 20 KB; send queue 16 × 262 B = 4.1 KB; delivered
-window 1 KB; busy estimates and duty budget under 1 KB; 48 KB in all,
+window 1 KB; busy estimates and duty budget under 1 KB; 49 KB in all,
 measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):
@@ -1072,6 +1117,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, §9.3 retry wait |
+| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how; and how often the BUSY race of roadmap D27 duplicates a message | simulator, capacity scenario |
 
 ---
 

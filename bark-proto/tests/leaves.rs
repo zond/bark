@@ -163,6 +163,88 @@ fn leaf_to_leaf_across_two_relays() {
         }));
 }
 
+/// R1's send queue is full: its application has queued sixteen messages
+/// for R2, whose frames from R1 are lost for a while. R1 answers L1's
+/// message with BUSY (§9.2.4); L1 keeps its relay, holds the message and
+/// offers it again only after the hold (§9.3, §10.2, roadmap D27), until
+/// R1 takes it and it arrives.
+#[test]
+fn a_leaf_told_busy_holds_its_message_for_the_hold() {
+    use bark_proto::tables::budget::BUSY_HOLD;
+    let (r1, r2, l1, l2) = (0, 1, 2, 3);
+    let mut h = Harness::new(vec![
+        relay(0.0, 11),
+        relay(400.0, 12),
+        leaf(-30.0, 1, 13),
+        leaf(430.0, 2, 14),
+    ]);
+    for (a, b) in [(r1, r2), (l1, r1), (l2, r2)] {
+        h.link(a, b);
+    }
+    settle(&mut h, &[(l1, r1), (l2, r2)]);
+    let knows = |h: &Harness<Node>| {
+        the_relay(h, r1)
+            .neighbours()
+            .any(|n| n.position == position(h, r2))
+    };
+    assert!(h.run_until(h.now + secs(400), knows));
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        losing.get()
+            && (from, to) == (r1, r2)
+            && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let p2 = position(&h, r2);
+    for k in 0..16u8 {
+        h.command(
+            r1,
+            AppCommand::Send {
+                dst_pos: p2,
+                dst_leaf: LeafId::RELAY,
+                payload: &[b'q', k],
+            },
+        );
+    }
+    let start = h.now;
+    let id = send(&mut h, l1, l2, r2, b"after the hold");
+    h.run_until(start + secs(10), |_| false);
+    lost.set(false);
+    assert!(
+        h.run_until(h.now + secs(60), |h| received(h, l2, id) > 0),
+        "not delivered"
+    );
+    let offers: Vec<Instant> = h.nodes[l1]
+        .sent
+        .iter()
+        .filter(|(t, fr)| {
+            *t >= start && matches!(Packet::decode(fr.payload()), Ok(Packet::Data(_)))
+        })
+        .map(|(t, _)| *t)
+        .collect();
+    let refusals: Vec<Instant> = h.nodes[l1]
+        .received
+        .iter()
+        .filter(|(t, b)| *t >= start && matches!(Packet::decode(b), Ok(Packet::Busy(_))))
+        .map(|(t, _)| *t)
+        .collect();
+    println!("offers at {offers:?}, BUSY at {refusals:?}");
+    assert!(!refusals.is_empty(), "R1 never refused");
+    for b in refusals {
+        let next = offers.iter().find(|&&t| t > b).expect("offered again");
+        assert!(
+            next.since(b) >= BUSY_HOLD,
+            "offered again after {:?}",
+            next.since(b)
+        );
+    }
+    assert!(attached(&h, l1, r1), "a busy relay is not a failing one");
+    assert_eq!(
+        reports(&h, l1, id),
+        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
+    );
+}
+
 /// The destination leaf's first ACK of the DELIVER is lost: the relay
 /// sends it again, the leaf ACKs again and surfaces it once (§10.3).
 #[test]

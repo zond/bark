@@ -9,18 +9,18 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! ACKs this relay owes, the heartbeat, the hand-over at the front of the
-//! send queue, and the sweep. The relay keeps at most one excursion
-//! outstanding (`docs/core-interface.md` §3 rule 1). When the radio is free
-//! it starts the first job that is ready, in that order: an owed ACK is
-//! worth nothing once its sender stops waiting, 100 ms after the frame
-//! (§9.3). A job that has begun a sequence of excursions (CAD, RSSI,
-//! transmit) continues it from each completion event, so sequences never
-//! interleave; the hand-over alone lets an owed ACK in before it
+//! replies (ACK or BUSY) this relay owes, the heartbeat, the hand-over at
+//! the front of the send queue, and the sweep. The relay keeps at most one
+//! excursion outstanding (`docs/core-interface.md` §3 rule 1). When the
+//! radio is free it starts the first job that is ready, in that order: an
+//! owed reply is worth nothing once its sender stops waiting, 100 ms after
+//! the frame (§9.3). A job that has begun a sequence of excursions (CAD,
+//! RSSI, transmit) continues it from each completion event, so sequences
+//! never interleave; the hand-over alone lets an owed reply in before it
 //! transmits, since its frame can take 139 ms on air. While a hand-over
-//! waits for its ACK, only owed ACKs use the radio: the heartbeat and the
-//! sweep would take the relay off its home channel, where the ACK arrives
-//! (§9.3). Jobs that are not ready say when they will be, and the earliest
+//! waits for its ACK, only owed replies use the radio: the heartbeat and
+//! the sweep would take the relay off its home channel, where the ACK
+//! arrives (§9.3). Jobs that are not ready say when they will be, and the earliest
 //! of those is `next_wakeup`.
 
 mod forward;
@@ -29,7 +29,7 @@ mod service;
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::node::mac::{self, Radio};
-use crate::node::transfer::{Acks, Step, Transfer, RELAY_ACKS};
+use crate::node::transfer::{Replies, Step, Transfer, RELAY_REPLIES};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
@@ -50,7 +50,7 @@ enum Job {
     Sweep,
     Heartbeat,
     HandOver,
-    Ack,
+    Reply,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +140,7 @@ pub struct Relay {
     /// Neighbour slots the front forward passed over because
     /// listen-before-talk gave up on them (§9.3 step 2); not tried.
     skipped: u64,
-    acks: Acks<RELAY_ACKS>,
+    replies: Replies<RELAY_REPLIES>,
     leaves: Leaves,
     delivery: DeliveryQueue,
     delivered: Delivered,
@@ -186,7 +186,7 @@ impl Relay {
             queue: SendQueue::new(),
             handover: Transfer::new(),
             skipped: 0,
-            acks: Acks::new(),
+            replies: Replies::new(),
             leaves: Leaves::from_config(&config),
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::from_config(&config),
@@ -297,7 +297,7 @@ impl Relay {
         while self.radio.idle() {
             self.prepare(now, emit);
             let awaiting = self.handover.awaiting_ack();
-            let started = self.start_ack(now, emit)
+            let started = self.start_reply(now, emit)
                 || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
                 || self.start_handover(now, emit)
                 || (!awaiting && self.sweep_due(now) && self.start_sweep(emit));
@@ -496,6 +496,7 @@ impl Relay {
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
+            Ok(Packet::Busy(b)) => self.busy_received(b, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
             Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
             _ => {}
@@ -503,9 +504,10 @@ impl Relay {
     }
 
     /// Account a reception on the home channel to the busy estimate (§6.1).
-    /// Packets addressed to this relay, and the ACKs of its own hand-overs,
-    /// follow it to any channel it moves to, so they are not counted, and
-    /// a home reading taken while one was on the air is set aside.
+    /// Packets addressed to this relay, and the replies to its own
+    /// hand-overs, follow it to any channel it moves to, so they are not
+    /// counted, and a home reading taken while one was on the air is set
+    /// aside.
     /// Everything else, heartbeats included, stays behind and counts.
     fn count_busy(&mut self, bytes: &[u8], now: Instant) {
         // The driver does not report the preamble a sender used. Assuming
@@ -518,6 +520,7 @@ impl Relay {
             Ok(Packet::Data(d)) => d.dst_hop == me,
             Ok(Packet::Attach(a)) => a.relay == me,
             Ok(Packet::Ack(a)) => self.handover.answered_by(a),
+            Ok(Packet::Busy(b)) => self.handover.refused_by(b.from.into()),
             _ => false,
         };
         if !own {
@@ -590,14 +593,14 @@ impl Core for Relay {
             Event::CadDone { busy, .. } => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                 Some(Job::HandOver) => self.handover_check(busy, now, emit),
-                Some(Job::Ack) => self.ack_check(busy, now, emit),
+                Some(Job::Reply) => self.reply_check(busy, now, emit),
                 Some(Job::Sweep) | None => {}
             },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
                 Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
                 Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
-                Some(Job::Ack) => self.ack_check(dbm > threshold, now, emit),
+                Some(Job::Reply) => self.reply_check(dbm > threshold, now, emit),
                 None => {}
             },
             Event::TxDone => match self.radio.complete() {
@@ -606,7 +609,7 @@ impl Core for Relay {
                 Some(Job::HandOver) if self.handover.step() == Step::Tx => {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
-                Some(Job::Ack) => self.acks.sent(),
+                Some(Job::Reply) => self.replies.sent(),
                 _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),

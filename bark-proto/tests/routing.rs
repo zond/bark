@@ -336,6 +336,186 @@ fn a_demoted_neighbour_is_the_last_resort() {
     assert!(delivered(&h, d, id), "{:?}", traces(&h, o));
 }
 
+/// F1, O's nearest neighbour toward D, has its send queue full: its
+/// application has just queued sixteen messages for D, whose frames from
+/// F1 are lost. F1 answers O's DATA with BUSY (§9.2.4), and O hands the
+/// message to F2 at once, counting no failure against F1 (§9.3). For the
+/// hold O passes F1 over for other messages too; after it, F1 is its
+/// first choice again (roadmap D27).
+///
+/// ```text
+///          F1
+///        /    \
+///       O      D
+///        \    /
+///          F2
+/// ```
+#[test]
+fn a_busy_relay_is_passed_over_for_the_hold() {
+    use bark_proto::tables::budget::BUSY_HOLD;
+    let (o, f1, f2, d) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 71),
+            relay(400.0, 50.0, 72),
+            relay(400.0, -100.0, 73),
+            relay(800.0, 0.0, 74),
+        ],
+        &[(o, f1), (o, f2), (f1, d), (f2, d)],
+    );
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        losing.get()
+            && (from, to) == (f1, d)
+            && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    for k in 0..16u8 {
+        send(&mut h, f1, d, &[b'q', k]);
+    }
+    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let (n1, n2) = (name(&h, f1), name(&h, f2));
+    let to_f1 = |h: &Harness<Node>, id: MsgId| {
+        h.nodes[o].sent.iter().any(|(_, fr)| {
+            matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == id)
+        })
+    };
+    let forwarded = |h: &Harness<Node>, id: MsgId| {
+        h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
+            Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some((*t, *to)),
+            _ => None,
+        })
+    };
+
+    let first = send(&mut h, o, d, b"first");
+    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, first)));
+    let refused_at = h.nodes[o]
+        .traces
+        .iter()
+        .find_map(|(t, tr)| match tr {
+            Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == n1 => Some(*t),
+            _ => None,
+        })
+        .expect("F1 refused with BUSY");
+    let (at, to) = forwarded(&h, first).unwrap();
+    assert_eq!(to, n2);
+    assert!(
+        at.since(refused_at) < secs(1),
+        "moved on at once: {:?}",
+        at.since(refused_at)
+    );
+    let p1 = position(&h, f1);
+    let entry = *core(&h, o).neighbours().find(|n| n.position == p1).unwrap();
+    assert_eq!(entry.fail_count, 0, "a refusal is no failure");
+    assert_eq!(entry.busy_until, refused_at + BUSY_HOLD);
+
+    // Within the hold F1 is not offered the next message at all.
+    let second = send(&mut h, o, d, b"second");
+    assert!(h.now < refused_at + BUSY_HOLD);
+    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, second)));
+    assert!(!to_f1(&h, second), "offered to F1 within the hold");
+    assert_eq!(forwarded(&h, second).map(|(_, to)| to), Some(n2));
+
+    // After it, and with F1's queue gone, F1 is first again.
+    lost.set(false);
+    h.run_for(secs(30));
+    let third = send(&mut h, o, d, b"third");
+    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
+    assert_eq!(forwarded(&h, third).map(|(_, to)| to), Some(n1));
+}
+
+/// Four relays, each on its own channel, offer F a message every 250 ms
+/// for an hour and five minutes; F, its frames to D all lost, keeps its
+/// send queue full and refuses nearly all of them with BUSY. Sixteen
+/// refusals a second ask for 17 % of F's time on air against the 9.83 %
+/// its bucket refills, so the replies run down the reply reserve, and F
+/// stays silent rather than spend the heartbeat reserve (§9.4, roadmap
+/// D27). No hour holds more than 360 s, replies included (the harness
+/// checks every transmission), and no heartbeat of F is held back.
+#[test]
+fn replies_stay_within_the_reserve() {
+    use bark_proto::radio::DUTY_CYCLE_WINDOW;
+    use bark_proto::tables::budget::{BUDGET, BUSY_AIRTIME};
+    let (f, d) = (0, 1);
+    let senders = [2, 3, 4, 5];
+    let fixed = |east: f64, north: f64, home: u8, seed: u64| {
+        Node::Relay(Relay::new(
+            Config {
+                position: pos(east, north),
+                boot_listen: secs(5),
+                home_override: Some(ch(home)),
+                ..Config::default()
+            },
+            seed,
+        ))
+    };
+    let mut nodes = vec![fixed(0.0, 0.0, 0, 81), fixed(400.0, 0.0, 1, 82)];
+    for (i, &s) in senders.iter().enumerate() {
+        let angle = 1.0 + i as f64;
+        nodes.push(fixed(
+            -400.0 * angle.cos().abs(),
+            400.0 * angle.sin(),
+            s as u8,
+            90 + s as u64,
+        ));
+    }
+    let mut links = vec![(f, d)];
+    links.extend(senders.iter().map(|&s| (f, s)));
+    let mut h = build(nodes, &links);
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (f, d) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let start = h.now;
+    let end = start + DUTY_CYCLE_WINDOW + secs(300);
+    let mut k = 0u32;
+    while h.now < end {
+        for &s in &senders {
+            send(&mut h, s, d, &k.to_be_bytes());
+            k += 1;
+        }
+        let next = h.now + Duration::from_millis(250);
+        h.run_until(next, |_| false);
+    }
+    let sent = &h.nodes[f].sent;
+    let busy = sent
+        .iter()
+        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Busy(_))))
+        .count();
+    let refused = traces(&h, f)
+        .iter()
+        .filter(|t| matches!(t, Trace::Refused { .. }))
+        .count();
+    let hour = |from: Instant| {
+        let to = from + DUTY_CYCLE_WINDOW;
+        h.nodes[f]
+            .airtime
+            .iter()
+            .filter(|(t, _)| *t >= from && *t < to)
+            .fold(Duration::ZERO, |sum, (_, a)| sum + *a)
+    };
+    let spent = hour(start + secs(300));
+    println!(
+        "{refused} refused, {busy} BUSY sent ({:.1} s), {:.1} s on air in the last hour",
+        (BUSY_AIRTIME.as_micros() * busy as u64) as f64 / 1e6,
+        spent.as_micros() as f64 / 1e6
+    );
+    assert!(spent <= BUDGET);
+    assert!(
+        spent > BUDGET.mul(9).div(10),
+        "F was not held at its cap: {spent:?}"
+    );
+    assert!(
+        refused > busy,
+        "the reserve never ran out: {refused} refused, {busy} BUSY"
+    );
+    assert!(
+        !traces(&h, f)
+            .iter()
+            .any(|t| matches!(t, Trace::HeartbeatDeferred { .. })),
+        "a reply spent the heartbeat reserve"
+    );
+}
+
 /// O sends D a full frame every 2 s, 7 % of D's home channel and more than
 /// the 5 % that moves a relay (§6.3). The traffic is D's own and would
 /// follow it to any channel, so D does not count it as busy and stays, and
@@ -378,17 +558,18 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
-/// bucket lets through (§9.4). F works at the edge of its bucket: it
-/// refuses a message without an ACK when its send queue could not go out
-/// within the time O spends retrying (§9.2.4), and a hand-over the bucket
-/// cannot fit yet waits for it, never longer than a frame's refill, instead
-/// of being dropped. Its heartbeats are never held back. The harness
-/// panics if any hour holds more than 10 %.
+/// bucket lets through (§9.4). F works at the edge of its bucket: with its
+/// send queue full it refuses a message with BUSY (§9.2.4), and a
+/// hand-over the bucket cannot fit yet waits for it, never longer than the
+/// refill of a frame and the reply reserve, instead of being dropped. Its
+/// heartbeats are never held back. The harness panics if any hour holds
+/// more than 10 %, replies included.
 ///
-/// O retries the messages F refuses, on F's channel, and O and D cannot
-/// hear each other: now and then D's ACKs to F are lost under O's frames,
-/// all four of F's attempts go unanswered, and F returns the message to
-/// O as the search requires (§9.2.5). That is not a drop.
+/// O, told BUSY, sets F aside without counting a failure (§9.3); F is its
+/// only neighbour, so it drops the message as the origin with no route.
+/// O and D cannot hear each other: now and then D's ACKs to F are lost
+/// under O's frames, all four of F's attempts go unanswered, and F returns
+/// the message to O as the search requires (§9.2.5). That is not a drop.
 ///
 /// The home channels are fixed. The frames this test loses on the way to D
 /// are on the air at D but never received, so D cannot tell them from
@@ -403,7 +584,7 @@ fn a_relay_does_not_flee_its_own_traffic() {
 #[test]
 fn duty_budget_defers_forwarding_and_never_drops() {
     use bark_proto::radio::{time_on_air, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
-    use bark_proto::tables::budget::{BUDGET, DEPTH, HEARTBEAT_RESERVE};
+    use bark_proto::tables::budget::{BUDGET, DEPTH, REPLY_RESERVE};
     use bark_proto::wire::MAX_PAYLOAD;
     use bark_proto::MAX_FRAME;
     const LOST: u32 = 2;
@@ -453,8 +634,9 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     }
     h.run_for(secs(600));
     let tf = traces(&h, f);
-    // No hand-over waits longer than a full frame's refill (§9.4).
-    let frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + HEARTBEAT_RESERVE;
+    // No hand-over waits longer than the refill of a full frame and the
+    // reply reserve it leaves (§9.4).
+    let frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + REPLY_RESERVE;
     let refill = Duration::from_micros(
         (frame.as_micros() * DUTY_CYCLE_WINDOW.as_micros()).div_ceil((BUDGET - DEPTH).as_micros()),
     );
@@ -477,17 +659,23 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .collect();
     deferred.sort_by_key(|m| m.0);
     deferred.dedup();
-    let refused = tf
+    let refused = |why: DropReason| {
+        tf.iter()
+            .filter(|t| matches!(t, Trace::Refused { reason, .. } if *reason == why))
+            .count()
+    };
+    let (full, broke) = (
+        refused(DropReason::SendQueueFull),
+        refused(DropReason::Budget),
+    );
+    let busy_sent = h.nodes[f]
+        .sent
         .iter()
-        .filter(|t| {
-            matches!(
-                t,
-                Trace::Refused {
-                    reason: DropReason::Budget,
-                    ..
-                }
-            )
-        })
+        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Busy(_))))
+        .count();
+    let turned_away = traces(&h, o)
+        .iter()
+        .filter(|t| matches!(t, Trace::TurnedAway { .. }))
         .count();
     let handed = |id: MsgId| {
         tf.iter().any(|t| {
@@ -495,7 +683,9 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         })
     };
     println!(
-        "{k} sent; F forwarded {}, returned {}, deferred {} for budget, refused {refused} for budget",
+        "{k} sent; F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
+         its queue full and {broke} below the reply reserve, {busy_sent} BUSY sent; \
+         O turned away {turned_away} times",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))
             .count(),
@@ -557,7 +747,8 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         latency.get(latency.len() / 2),
         latency.last(),
     );
-    assert!(refused > 0, "the budget never refused a message");
+    assert!(full + broke > 0, "F never refused a message");
+    assert!(busy_sent > 0 && turned_away > 0, "no BUSY reached O");
     assert!(
         !deferred.is_empty(),
         "the budget never held a hand-over back"

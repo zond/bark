@@ -39,10 +39,30 @@
 //! apart (design §7: at least 5 s): a heartbeat finds the reserve, takes
 //! it, and the bucket refills it before the next, since nothing else may
 //! spend below it.
+//!
+//! # Reply reserve
+//!
+//! Below [`REPLY_RESERVE`] a relay takes no new work: it answers every
+//! packet offered to it with BUSY, or the ACK of a copy it already has,
+//! and sends nothing else but heartbeats (§9.2.4, §9.4, roadmap D27). So
+//! forwarding and the ACKs that accept work leave the reply reserve in the
+//! bucket, and replies leave the heartbeat reserve.
+//!
+//! The reserve holds the BUSY replies the bucket refills while a sender
+//! retries a hand-over that goes unanswered, 2.38 s (§9.3):
+//! `r × 2.38 s = 234 ms`, ⌊234 / 10.56⌋ = [`REPLIES`] = 22 replies of
+//! 10.56 ms, and the heartbeat reserve on top, 244.2 ms in all. A sender
+//! told BUSY passes the relay over for [`BUSY_HOLD`], the reserve's refill
+//! time, 2.48 s: so a relay at the reserve can tell 22 senders a hold that
+//! it is busy, each once, and pay for it from the refill alone; and a
+//! sender stays away about as long as it would have spent retrying
+//! without the reply.
 
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
+use crate::tables::send_queue::retrying_span;
+use crate::tables::RETRY_BACKOFF;
 use crate::time::{Duration, Instant};
-use crate::wire::HEARTBEAT_LEN;
+use crate::wire::{BUSY_LEN, HEARTBEAT_LEN};
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration =
@@ -80,6 +100,37 @@ const _: () = assert!(MAX_TRANSMISSION.as_micros() <= DEPTH.as_micros());
 /// Airtime a relay keeps in the bucket for its heartbeats; see the module
 /// documentation.
 pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+
+/// Airtime of a BUSY reply, 10.56 ms.
+pub const BUSY_AIRTIME: Duration = time_on_air(BUSY_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+
+/// The airtime the bucket refills in `d`.
+const fn refilled(d: Duration) -> Duration {
+    Duration::from_micros(d.as_micros() * RATE_NUM / RATE_DEN)
+}
+
+/// The time the bucket takes to refill `d`.
+const fn refill_time(d: Duration) -> Duration {
+    Duration::from_micros((d.as_micros() * RATE_DEN).div_ceil(RATE_NUM))
+}
+
+/// BUSY replies the reply reserve holds: those the bucket refills while a
+/// sender with the design's 100 ms ACK timeout and 3 attempts retries
+/// (§9.3); see the module documentation.
+pub const REPLIES: u64 = refilled(retrying_span(Duration::from_millis(100), 3, RETRY_BACKOFF))
+    .as_micros()
+    / BUSY_AIRTIME.as_micros();
+
+/// Airtime below which a relay takes no new work; see the module
+/// documentation.
+pub const REPLY_RESERVE: Duration =
+    Duration::from_micros(REPLIES * BUSY_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
+
+/// How long a sender told BUSY passes the relay over (§9.3): the time the
+/// bucket takes to refill the reply reserve.
+pub const BUSY_HOLD: Duration = refill_time(REPLY_RESERVE);
+
+const _: () = assert!(REPLIES == 22);
 
 /// The duty-cycle token bucket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,6 +269,22 @@ mod tests {
     #[test]
     fn heartbeat_reserve_is_one_heartbeat() {
         assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(11_840));
+    }
+
+    #[test]
+    fn reply_reserve_and_hold() {
+        assert_eq!(BUSY_AIRTIME, Duration::from_micros(10_560));
+        assert_eq!(REPLY_RESERVE, Duration::from_micros(244_160));
+        let hold = BUSY_HOLD.as_micros();
+        assert!((2_482_000..2_484_000).contains(&hold), "{hold} µs");
+        // The hold refills exactly the reserve.
+        let mut b = Budget::new();
+        let t = Instant::from_micros(1_000_000);
+        b.record(b.available(t), t);
+        assert_eq!(
+            b.allowed_at(REPLY_RESERVE, Duration::ZERO, t),
+            Some(t + BUSY_HOLD)
+        );
     }
 
     #[test]

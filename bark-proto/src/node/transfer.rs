@@ -1,6 +1,7 @@
 //! Per-hop transfer (design §9.3), shared by both roles: one frame handed
 //! to one receiver until it ACKs or the sender gives up ([`Transfer`]), and
-//! the ACKs this node owes the senders of what it received ([`Acks`]).
+//! the replies, ACK or BUSY, this node owes the senders of what it
+//! received ([`Replies`]).
 //!
 //! Both only keep the state; the role owns the radio (`mac.rs`), the frame
 //! and the duty-cycle budget, starts each excursion and reports its
@@ -22,7 +23,8 @@
 //!
 //! An ACK matches only if it names both the message and the receiver
 //! (roadmap D19). An ACK that arrives after the timeout but before the
-//! next attempt still counts: the receiver has the frame.
+//! next attempt still counts: the receiver has the frame. A BUSY matches
+//! if it names the receiver (D27); the role decides what follows.
 
 use crate::event::Action;
 use crate::node::Rng;
@@ -30,7 +32,7 @@ use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::fixed::FixedVec;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckFrom, ATTACH_LEN};
+use crate::wire::{Ack, AckFrom, Busy, Packet, ATTACH_LEN};
 
 /// Where a hand-over is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +208,24 @@ impl Transfer {
         !self.idle() && self.transmitted() && ack == self.expect
     }
 
+    /// Whether a BUSY from `from` refuses this hand-over: it names the
+    /// receiver of a frame that has been sent.
+    pub(crate) fn refused_by(&self, from: AckFrom) -> bool {
+        !self.idle() && self.transmitted() && from == self.expect.from
+    }
+
+    /// The receiver refused a hand-over that has no other receiver to go
+    /// to: the transmission counts as unanswered.
+    pub(crate) fn refused(
+        &mut self,
+        now: Instant,
+        max: u8,
+        rng: &mut Rng,
+        retry_backoff: Duration,
+    ) -> Missed {
+        self.after_attempt(now, max, rng, retry_backoff)
+    }
+
     /// An ACK arrived. Returns whether it ends this hand-over, which it
     /// then does.
     pub(crate) fn acked(&mut self, ack: Ack) -> bool {
@@ -265,26 +285,42 @@ impl Transfer {
     }
 }
 
-/// How many ACKs a node can owe at once with the design's 100 ms ACK
-/// timeout (§9.3). An ACK is owed from the end of the frame it answers
+/// How many replies a node can owe at once with the design's 100 ms ACK
+/// timeout (§9.3). A reply is owed from the end of the frame it answers
 /// until the sender stops waiting, `ack_timeout` later; frames on one
-/// channel do not overlap, and the shortest frame that is ACKed, ATTACH,
-/// takes 11.84 ms, so ⌈100 / 11.84⌉ = 9 can be owed at once.
-pub(crate) const fn acks_for(ack_timeout: Duration) -> usize {
+/// channel do not overlap, and the shortest frame that is answered,
+/// ATTACH, takes 11.84 ms, so ⌈100 / 11.84⌉ = 9 can be owed at once.
+pub(crate) const fn replies_for(ack_timeout: Duration) -> usize {
     ack_timeout
         .as_micros()
         .div_ceil(time_on_air(ATTACH_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()) as usize
 }
 
-/// ACKs a relay can owe at once: [`acks_for`] the design's 100 ms.
-pub(crate) const RELAY_ACKS: usize = acks_for(Duration::from_millis(100));
+/// Replies a relay can owe at once: [`replies_for`] the design's 100 ms.
+pub(crate) const RELAY_REPLIES: usize = replies_for(Duration::from_millis(100));
 
-const _: () = assert!(RELAY_ACKS == 9);
+const _: () = assert!(RELAY_REPLIES == 9);
 
-/// An ACK this node owes.
+/// What a node answers a packet with (§9.3, §9.2.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reply {
+    Ack(Ack),
+    Busy(Busy),
+}
+
+impl Reply {
+    pub(crate) fn packet(self) -> Packet<'static> {
+        match self {
+            Reply::Ack(a) => Packet::Ack(a),
+            Reply::Busy(b) => Packet::Busy(b),
+        }
+    }
+}
+
+/// A reply this node owes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owed {
-    pub(crate) ack: Ack,
+    pub(crate) reply: Reply,
     /// The channel the sender listens on.
     pub(crate) channel: Channel,
     /// When the sender stops waiting; an ACK after that is useless.
@@ -293,16 +329,16 @@ pub(crate) struct Owed {
     ready: Instant,
 }
 
-/// Listen-before-talk progress of the ACK being sent.
+/// Listen-before-talk progress of the reply being sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AckStep {
+enum ReplyStep {
     Idle,
     Cad,
     Rssi,
     Tx,
 }
 
-/// The ACKs this node owes, oldest first. Each is sent with
+/// The replies this node owes, oldest first. Each is sent with
 /// listen-before-talk, as the receiver of §9.3 does, with the hand-over's
 /// backoff, and abandoned once its sender has stopped waiting.
 ///
@@ -310,18 +346,18 @@ enum AckStep {
 /// for can owe more than `N`; then the oldest is abandoned, as the one
 /// whose sender stops waiting first.
 #[derive(Clone)]
-pub(crate) struct Acks<const N: usize> {
+pub(crate) struct Replies<const N: usize> {
     owed: FixedVec<Owed, N>,
-    step: AckStep,
+    step: ReplyStep,
 }
 
-impl<const N: usize> Acks<N> {
+impl<const N: usize> Replies<N> {
     pub(crate) const fn new() -> Self {
         let fill = Owed {
-            ack: Ack {
+            reply: Reply::Ack(Ack {
                 msg_id: crate::ids::MsgId(0),
                 from: AckFrom([0; 4]),
-            },
+            }),
             channel: match Channel::new(0) {
                 Some(c) => c,
                 None => unreachable!(),
@@ -329,17 +365,17 @@ impl<const N: usize> Acks<N> {
             deadline: Instant::ZERO,
             ready: Instant::ZERO,
         };
-        Acks {
+        Replies {
             owed: FixedVec::new(fill),
-            step: AckStep::Idle,
+            step: ReplyStep::Idle,
         }
     }
 
-    /// Owe `ack` on `channel` until `deadline`.
-    pub(crate) fn owe(&mut self, ack: Ack, channel: Channel, deadline: Instant, now: Instant) {
+    /// Owe `reply` on `channel` until `deadline`.
+    pub(crate) fn owe(&mut self, reply: Reply, channel: Channel, deadline: Instant, now: Instant) {
         self.forget_late(now);
         let o = Owed {
-            ack,
+            reply,
             channel,
             deadline,
             ready: now,
@@ -348,13 +384,14 @@ impl<const N: usize> Acks<N> {
             .owed
             .as_slice()
             .iter()
-            .any(|e| e.ack == ack && e.channel == channel)
+            .any(|e| e.reply == reply && e.channel == channel)
         {
-            // Already owed for an earlier copy: one ACK answers both.
+            // Already owed for an earlier copy, or a BUSY for another
+            // sender on the channel: one reply answers both.
             return;
         }
         if self.owed.push(o).is_err() {
-            let first = usize::from(self.step != AckStep::Idle);
+            let first = usize::from(self.step != ReplyStep::Idle);
             if first < self.owed.len() {
                 self.owed.remove(first);
             }
@@ -362,10 +399,10 @@ impl<const N: usize> Acks<N> {
         }
     }
 
-    /// Drop owed ACKs whose sender has stopped waiting, except the one
+    /// Drop owed replies whose sender has stopped waiting, except the one
     /// being sent.
     fn forget_late(&mut self, now: Instant) {
-        let busy = self.step != AckStep::Idle;
+        let busy = self.step != ReplyStep::Idle;
         let mut i = usize::from(busy);
         while i < self.owed.len() {
             if self.owed.as_slice()[i].deadline <= now {
@@ -376,9 +413,10 @@ impl<const N: usize> Acks<N> {
         }
     }
 
-    /// The ACK to start sending now, if one is ready and none is in progress.
+    /// The reply to start sending now, if one is ready and none is in
+    /// progress.
     pub(crate) fn due(&mut self, now: Instant) -> Option<Owed> {
-        if self.step != AckStep::Idle {
+        if self.step != ReplyStep::Idle {
             return None;
         }
         self.forget_late(now);
@@ -389,9 +427,9 @@ impl<const N: usize> Acks<N> {
             .copied()
     }
 
-    /// When the next owed ACK is ready to send.
+    /// When the next owed reply is ready to send.
     pub(crate) fn wake_at(&self) -> Option<Instant> {
-        if self.step != AckStep::Idle {
+        if self.step != ReplyStep::Idle {
             return None;
         }
         self.owed.as_slice().first().map(|o| o.ready)
@@ -402,22 +440,22 @@ impl<const N: usize> Acks<N> {
         !self.owed.as_slice().is_empty()
     }
 
-    /// Give up the first owed ACK: no budget for it.
+    /// Give up the first owed reply: no budget for it.
     pub(crate) fn abandon(&mut self) {
         if !self.owed.as_slice().is_empty() {
             self.owed.remove(0);
         }
-        self.step = AckStep::Idle;
+        self.step = ReplyStep::Idle;
     }
 
-    /// The CAD of the first owed ACK starts.
+    /// The CAD of the first owed reply starts.
     pub(crate) fn begin(&mut self) -> Option<Action> {
         let o = self.owed.as_slice().first()?;
-        self.step = AckStep::Cad;
+        self.step = ReplyStep::Cad;
         Some(Action::Cad(o.channel))
     }
 
-    /// A check of the ACK being sent completed. Returns the next
+    /// A check of the reply being sent completed. Returns the next
     /// excursion's channel and whether it is the transmission, or `None`
     /// if the ACK now waits or was abandoned.
     pub(crate) fn checked(
@@ -429,7 +467,7 @@ impl<const N: usize> Acks<N> {
     ) -> Option<(Owed, bool)> {
         let o = *self.owed.as_slice().first()?;
         if busy {
-            self.step = AckStep::Idle;
+            self.step = ReplyStep::Idle;
             let ready = now + rng.duration(Duration::ZERO, backoff_max);
             if ready >= o.deadline {
                 self.owed.remove(0);
@@ -439,24 +477,24 @@ impl<const N: usize> Acks<N> {
             return None;
         }
         match self.step {
-            AckStep::Cad => {
-                self.step = AckStep::Rssi;
+            ReplyStep::Cad => {
+                self.step = ReplyStep::Rssi;
                 Some((o, false))
             }
-            AckStep::Rssi => {
-                self.step = AckStep::Tx;
+            ReplyStep::Rssi => {
+                self.step = ReplyStep::Tx;
                 Some((o, true))
             }
-            AckStep::Idle | AckStep::Tx => None,
+            ReplyStep::Idle | ReplyStep::Tx => None,
         }
     }
 
-    /// The ACK being sent left the antenna.
+    /// The reply being sent left the antenna.
     pub(crate) fn sent(&mut self) {
-        if self.step == AckStep::Tx && !self.owed.as_slice().is_empty() {
+        if self.step == ReplyStep::Tx && !self.owed.as_slice().is_empty() {
             self.owed.remove(0);
         }
-        self.step = AckStep::Idle;
+        self.step = ReplyStep::Idle;
     }
 }
 
@@ -587,11 +625,12 @@ mod tests {
     fn acks_wait_out_backoff_and_lapse_at_the_deadline() {
         let mut rng = Rng::new(4);
         let ch = Channel::new(3).unwrap();
-        let mut a: Acks<2> = Acks::new();
+        let mut a: Replies<2> = Replies::new();
+        let ack = |id| Reply::Ack(ack(id));
         a.owe(ack(1), ch, at(100), at(0));
         a.owe(ack(1), ch, at(110), at(10));
         assert_eq!(a.owed.len(), 1, "one ACK answers a retransmission too");
-        assert_eq!(a.due(at(10)).unwrap().ack, ack(1));
+        assert_eq!(a.due(at(10)).unwrap().reply, ack(1));
         assert_eq!(a.begin(), Some(Action::Cad(ch)));
         assert_eq!(a.due(at(10)), None, "one at a time");
         assert_eq!(
@@ -622,9 +661,16 @@ mod tests {
         a.owe(ack(3), ch, at(300), at(200));
         a.owe(ack(4), ch, at(301), at(200));
         a.owe(ack(5), ch, at(302), at(201));
-        assert_eq!(a.due(at(201)).unwrap().ack, ack(4));
+        assert_eq!(a.due(at(201)).unwrap().reply, ack(4));
         // Lapsed ones are forgotten.
-        assert_eq!(a.due(at(301)).unwrap().ack, ack(5));
-        assert_eq!(acks_for(Duration::from_millis(100)), 9);
+        assert_eq!(a.due(at(301)).unwrap().reply, ack(5));
+        assert_eq!(replies_for(Duration::from_millis(100)), 9);
+        // One BUSY tells every sender on a channel.
+        let busy = Reply::Busy(Busy {
+            from: crate::position::ShortName(9),
+        });
+        a.owe(busy, ch, at(500), at(400));
+        a.owe(busy, ch, at(510), at(410));
+        assert_eq!(a.owed.len(), 1);
     }
 }

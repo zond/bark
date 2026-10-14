@@ -228,6 +228,15 @@ impl Record {
         self.last_active = now;
     }
 
+    /// The neighbour in `slot` refused the message it was sent (BUSY,
+    /// §9.3): it was not handed it. It stays the last child, so a later
+    /// offer from it still counts as its return (§9.2.4 case 4).
+    pub fn not_handed(&mut self, slot: usize) {
+        if slot < NEIGHBOURS {
+            self.handed &= !(1 << slot);
+        }
+    }
+
     /// The message was sent at `now` somewhere that does not change the
     /// search: back to the parent, or straight back to a relay that
     /// offered it (§9.2.4 case 6).
