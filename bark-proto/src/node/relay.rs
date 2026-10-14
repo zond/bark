@@ -3,7 +3,8 @@
 //! This file holds the medium access: boot listen and home channel
 //! (design §6), the busy sweep (§6.1), the heartbeat (§7), the neighbour
 //! table (§8) and the duty-cycle budget (§3, §9.4). Routing and the
-//! per-hop transfer (§9) are in `relay/forward.rs`.
+//! per-hop transfer (§9) are in `relay/forward.rs`, the leaves this relay
+//! serves (§10) in `relay/service.rs`.
 //!
 //! # Radio discipline
 //!
@@ -23,6 +24,7 @@
 //! when they will be, and the earliest of those is `next_wakeup`.
 
 mod forward;
+mod service;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
@@ -127,6 +129,8 @@ pub struct Relay {
     leaves: Leaves,
     delivery: DeliveryQueue,
     delivered: Delivered,
+    /// When queued deliveries are next retried (§10.4: every 60 s).
+    delivery_retry_at: Instant,
 }
 
 impl Relay {
@@ -163,6 +167,7 @@ impl Relay {
             leaves: Leaves::from_config(&config),
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::from_config(&config),
+            delivery_retry_at: Instant::ZERO,
             config,
             rng,
         }
@@ -305,6 +310,7 @@ impl Relay {
             self.sweep.next_at = now + self.config.sweep_interval;
         }
         self.neighbours.expire(now);
+        self.leaves.expire(now);
         if self.stage == Stage::Running && self.config.home_override.is_none() {
             self.move_rule(now);
         }
@@ -425,6 +431,7 @@ impl Relay {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
+            Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
             _ => {}
         }
     }
@@ -501,6 +508,7 @@ impl Core for Relay {
         }
         self.timers(now, emit);
         self.forward_timers(now, emit);
+        self.service_timers(now, emit);
         self.pump(now, emit);
     }
 
@@ -516,6 +524,9 @@ impl Core for Relay {
             at(t);
         }
         if let Some(t) = self.forward_wakeup() {
+            at(t);
+        }
+        if let Some(t) = self.service_wakeup() {
             at(t);
         }
         let awaiting = self.handover.awaiting_ack();

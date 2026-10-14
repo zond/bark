@@ -114,7 +114,7 @@ impl Relay {
     }
 
     /// Whether everything but a heartbeat may spend `airtime` now (§9.4).
-    fn affordable(&self, airtime: Duration, now: Instant) -> bool {
+    pub(super) fn affordable(&self, airtime: Duration, now: Instant) -> bool {
         self.budget.would_allow_keeping(airtime, self.reserve(), now)
     }
 
@@ -358,6 +358,7 @@ impl Relay {
             Pushed::Queued => {}
         }
         emit(Action::Trace(Trace::Queued { msg_id: id, leaf }));
+        self.try_deliver(leaf, now);
         true
     }
 
@@ -562,6 +563,10 @@ impl Relay {
             return;
         }
         let mut frame = out.frame;
+        if out.kind == Kind::Deliver {
+            // The leaf listens on this relay's home, wherever that is now.
+            frame.channel = self.home;
+        }
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             frame = data_frame(&Data { sender_home: self.home, ..d }, out.frame.channel);
             let id = d.msg_id();
@@ -620,11 +625,15 @@ impl Relay {
     }
 
     /// The front hand-over succeeded: its receiver has the packet.
-    pub(super) fn handover_done(&mut self, _now: Instant, emit: &mut dyn FnMut(Action)) {
+    pub(super) fn handover_done(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.handover.cancel();
         self.skipped = 0;
         let Some(out) = self.queue.pop() else { return };
-        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else { return };
+        let d = match Packet::decode(out.frame.payload()) {
+            Ok(Packet::Data(d)) => d,
+            Ok(Packet::Deliver(d)) => return self.delivered_to(d, now, emit),
+            _ => return,
+        };
         let (id, to) = (d.msg_id(), d.dst_hop);
         if let Some(p) = self.neighbour_named(to) {
             self.neighbours.succeeded(p);
@@ -639,6 +648,7 @@ impl Relay {
             Kind::Return => Trace::ReturnedToParent { msg_id: id, to },
             Kind::Bounce | Kind::Deliver => Trace::Bounced { msg_id: id, to },
         };
+        debug_assert!(out.kind != Kind::Deliver, "a DELIVER is not a DATA");
         emit(Action::Trace(trace));
     }
 

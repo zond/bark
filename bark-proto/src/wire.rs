@@ -39,7 +39,8 @@
 use crate::event::MAX_FRAME;
 use crate::ids::{LeafId, MsgId};
 use crate::position::{Position, ShortName};
-use crate::radio::Channel;
+use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use crate::time::Duration;
 
 // Field widths.
 const FIRST_LEN: usize = 1;
@@ -125,7 +126,25 @@ impl RxMode {
             _ => None,
         }
     }
+
+    /// Preamble of packets to a leaf in this mode (design §10.5): the
+    /// minimum for a leaf that listens, and at least 512 ms, 2000 symbols,
+    /// for one that wakes for a CAD every 500 ms, so that every wake finds
+    /// a preamble on the air.
+    pub const fn preamble_symbols(self) -> u16 {
+        match self {
+            RxMode::Listening => MIN_PREAMBLE_SYMBOLS,
+            RxMode::DutyCycled | RxMode::Hybrid => {
+                SLEEPING_PREAMBLE.as_micros().div_ceil(SYMBOL_TIME.as_micros()) as u16
+            }
+        }
+    }
 }
+
+/// Shortest preamble for a leaf that sleeps between CADs (design §10.5).
+pub const SLEEPING_PREAMBLE: Duration = Duration::from_millis(512);
+
+const _: () = assert!(RxMode::Hybrid.preamble_symbols() == 2000);
 
 /// HEARTBEAT, types 0x1 and 0x2 (design §7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
