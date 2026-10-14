@@ -263,13 +263,23 @@ is also its address (§9.1). Consequences:
   and listens again. This is tidiness, not correctness: two relays at one
   position behave like one relay with two radios (both ACK, both forward,
   and duplicates are dropped downstream).
-- Hop references in packets (`dst_hop`, `dst_pos`, `relay_pos`) are the
-  full 7-byte position. Hashing them to 2–3 bytes would save one 20-bit
-  LoRa block, ≈1.3 ms per packet, at the price of possible collisions.
-- The **visited list** is the list of relays a message has passed through
-  while routing around a gap (§9.2). It carries a 16-bit hash per relay,
-  so a 16-deep list is 32 bytes rather than 112; a hash collision only
-  skips a candidate.
+- A packet field that only names a relay carries the relay's **short
+  name**: the low 16 bits of its latitude count followed by the low
+  16 bits of its longitude count, 4 bytes, big-endian, in that order.
+  These fields are ATTACH `relay` and DATA `dst_hop` and `src_hop` (§14).
+  One count is 180° / 2²⁵ ≈ 0.6 m, and the low 16 bits repeat every
+  65 536 counts: 39 km of latitude, and 39 km × cos(latitude) of
+  longitude (25 km at 50° N). Two relays share a short name only if they
+  are in the same 0.6 m cell, which is the same identity in the full form
+  too, or at least 25 km apart along one axis, far beyond any hearing
+  radius (≈3 km, §13). So a short name is unambiguous among everything a
+  node can hear, down to latitudes near 80° N or S, where the east-west
+  period shrinks toward the hearing radius. A receiver rebuilds the full
+  position from a short name and its own position, as the one candidate
+  within half a period on each axis, and looks tables up by it; a short
+  name that rebuilds to a position nowhere near is garbage. DATA
+  `dst_pos` stays 7 bytes because in a large city a relay may be more
+  than half a period from the destination (roadmap D14).
 - Leaves keep a 4-byte ID because they move. The app generates it at
   random; a collision matters only between leaves attached to the same
   relay (≈2 × 10⁻⁵ at 400 leaves). Neither role needs a setup step.
@@ -407,7 +417,8 @@ waits; every relay in range will appear within one rotation.
 
 ### 10.2 Attach and keepalive
 
-`ATTACH {type, leaf_id, relay_pos, flags}` is sent to the relay on its
+`ATTACH {type, leaf_id, relay, flags}` (`relay` is the relay's short
+name, §8.1) is sent to the relay on its
 home channel with listen-before-talk and ACK. The flags carry the leaf's
 receive mode (§10.5). Repeat every 60 s as a keepalive, and immediately on
 changing relay. The relay's **leaf table** (`leaf_id, last_seen, rssi,
@@ -430,7 +441,8 @@ the leaf's ACK. Preamble length per the leaf's receive mode (§10.5).
 Bounded, not a mailbox: up to 64 messages per relay, kept for 10 minutes
 (the delivery TTL). Retry delivery on the leaf's next keepalive and every
 60 s. On expiry the message is dropped. The owner remembers delivered
-`msg_id`s for the TTL and ACKs a repeat without delivering it twice. A
+message IDs (§14) for the TTL and ACKs a repeat without delivering it
+twice. A
 queued message costs no airtime; a failed delivery costs a retry across
 the city; the common case is a phone in a pocket, a basement, or the metro
 for a few minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
@@ -483,6 +495,13 @@ role set. The app owns identity and end-to-end encryption; the node sees
 opaque payloads. The sender's address `(x, y, leaf_id)` travels inside the
 encrypted payload so that only the recipient learns where the sender is.
 Encryption scheme: open item O1.
+
+A message has no ID field: the network identifies it by a hash of its
+destination and payload (§14). Two messages to the same destination with
+identical payloads are therefore one message to every relay that still
+remembers the first (up to the 10-minute delivery TTL, §10.4), and the
+second is not delivered. The app must make every payload unique;
+end-to-end encryption with a fresh nonce per message does that.
 
 ---
 
@@ -559,32 +578,40 @@ Common proposals that do not fit:
 
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
 channel in heartbeats and type-specific flags elsewhere. Positions are
-7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits (§7). The LoRa
-hardware CRC covers everything.
+7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits (§7). A relay's
+short name is 4 bytes cut from its position (§8.1). The LoRa hardware
+CRC covers everything.
 
 ```
 HEARTBEAT 0x1/0x2: first(1) pos(7)                                          = 8
-          0x1 surveyed position, 0x2 GPS-derived position; aux = channel
-ACK       0x3: first(1) msg_id(4)                                           = 5
-          sent on the original sender's home channel; aux unused
-ATTACH    0x4: first(1) leaf_id(4) relay_pos(7)                             = 12
-          aux = leaf receive mode (§10.5)
-DATA      0x5: first(1) dst_hop(7) msg_id(4) dst_pos(7) dst_leaf(4) hops(1)
-               visited_len(1) visited(2×n) payload                          = 25 + 2n + payload
+          0x1 surveyed position, 0x2 GPS-derived position; aux = home channel
+ACK       0x3: first(1) id(4)                                               = 5
+          sent on the channel in the acknowledged packet's aux; aux unused
+ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
+          relay = short name of the relay attached to; aux = leaf receive mode (§10.5)
+DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
+               payload                                                      = 21 + payload
+          dst_hop, src_hop = short names of the receiving and the sending relay;
           aux = sender's home channel, so the receiver knows where to ACK
-DELIVER   0x6: first(1) dst_leaf(4) msg_id(4) payload                       = 9 + payload
+DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
 Type 0x7 is unassigned.
 ```
 
+The **message ID** is a 32-bit hash, `hash32` (`position.rs`), of
+`dst_pos || dst_leaf || payload`, computed
+by every node that handles the message; it is the same on every hop
+because none of these fields changes. DATA does not carry it; ACK and
+DELIVER do, ACK to name what it acknowledges and DELIVER so the leaf can
+ACK it. The app must keep payloads unique (§11).
+
 `dst_hop` lets every node on a channel discard packets not addressed to it
-after 8 bytes. There is no `src_hop`: the ACK goes to the channel in
-`aux` and is matched by `msg_id` on the sender side, demotion is the
-sender's decision, and DFS backtracking uses the visited list. `msg_id`
-is a 32-bit random value chosen when the message is sent and kept across
-hops; duplicates are recognised by a window of recently received
-`msg_id`s (§9.3). The sender's address is inside the encrypted payload,
-not in the header.
+after 5 bytes. `src_hop` names the relay that sent the packet, and `aux`
+its home channel, which is where the ACK goes; routing uses them to know
+where a message came from (§9.2). A leaf sending its own message sets
+`src_hop` to 0 and `hops` to 0. The payload is at most
+255 − 21 = 234 bytes. The sender's address is inside the encrypted
+payload, not in the header.
 
 ---
 
@@ -630,7 +657,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | # | Item | Owner/when |
 |---|---|---|
 | O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
-| O2 | Finalise packet formats (§14), msg_id scheme, visited-list bound | step 4 |
+| O2 | Finalise packet formats (§14) | step 4 |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
 | O4 | Neighbour-table eviction policy for rooftop relays that hear hundreds | step 2 |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |

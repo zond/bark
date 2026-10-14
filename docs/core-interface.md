@@ -106,16 +106,18 @@ action at a time, and the core never allocates.
 
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
-- Position hash for the visited list (design §8.1): FNV-1a over the seven wire bytes folded to 16 bits.
+- Relay short name (design §8.1, roadmap D14): the low 16 bits of the latitude count, then
+  the low 16 bits of the longitude count, big-endian. The receiver rebuilds the full
+  position from its own.
+- Message ID (design §14, D15): `hash32` over `dst_pos || dst_leaf || payload`
+  (`position.rs`).
 - Everything else in design §14 is encoded by the Phase 0 codecs (`wire.rs`). Choices
   made there, 2026-10-14:
-  - Multi-byte integers (`msg_id`, visited hashes) are big-endian; `leaf_id` is four
+  - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four
     opaque bytes in order.
-  - Visited list at most 16 entries (design §8.1's 16-deep list); application payload
-    at most 198 bytes, what remains of 255 after the 25-byte DATA header and a full
-    visited list. Every DATA packet can then reach the full void-recovery depth
-    whatever its payload; the decoder rejects anything beyond either bound.
-  - DELIVER carries at most the same 198-byte payload: it only ever carries a DATA
+  - Application payload at most 234 bytes, what remains of 255 after the 21-byte DATA
+    header; the decoder rejects anything longer.
+  - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
     payload onward.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
   - `aux` is unused in ACK and DELIVER: sent as zero, ignored on receipt. A fixed-size
