@@ -186,6 +186,8 @@ pub(crate) struct NodeState {
     /// §3 rule 8), and its generation.
     pub held: Option<(ExKind, Channel)>,
     pub held_gen: u32,
+    /// Times the node was restarted (`ScriptAction::Restart`).
+    pub restarts: u32,
 }
 
 /// A transmission, from excursion start until it leaves the air.
@@ -229,8 +231,11 @@ struct PoissonTraffic {
 /// What became of a message, as far as the simulator has seen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fate {
-    /// Neither delivered nor reported lost (in flight at the end, or lost
-    /// without a report).
+    /// Still held by a core at the end: queued at a relay, waiting for its
+    /// leaf, or held by the leaf that sent it.
+    InFlight,
+    /// Neither delivered, nor reported lost, nor held by any core: lost
+    /// without a trace.
     Unaccounted,
     /// Reached its destination's application.
     Delivered,
@@ -254,6 +259,9 @@ struct OriginRecord {
     dst: u32,
     t: Instant,
     fate: Fate,
+    /// Whether the destination could be reached from the origin at the
+    /// start of the run; see [`Sim::reachable`].
+    reachable: bool,
 }
 
 /// A scripted excursion's result.
@@ -367,6 +375,9 @@ pub struct Sim {
     pub(crate) removal: Option<Instant>,
     /// The event trace, when asked for (`Sim::trace_to`).
     tracer: Option<Tracer>,
+    /// Per relay, its connected component among the relays at the start
+    /// of the run; see [`Sim::reachable`].
+    component: Vec<u32>,
 }
 
 fn secs(s: f64) -> Duration {
@@ -430,6 +441,7 @@ impl Sim {
                 cad_rng: Stream::new(sc.seed, Purpose::CadMiss, i as u64),
                 held: None,
                 held_gen: 0,
+                restarts: 0,
             })
             .collect();
 
@@ -494,7 +506,9 @@ impl Sim {
                 .map(|e| Instant::ZERO + secs(e.at_s))
                 .min(),
             tracer: None,
+            component: Vec::new(),
         };
+        sim.component = sim.components();
         sim.setup(sc, &placed)?;
         Ok(sim)
     }
@@ -1196,12 +1210,106 @@ impl Sim {
 
     /// Fate of every originated message, in origination order.
     pub fn fates(&self) -> impl Iterator<Item = Fate> + '_ {
-        self.origins.iter().map(|o| o.fate)
+        self.originated().map(|(_, f)| f)
     }
 
     /// When each message was originated, and its fate, in origination order.
     pub fn originated(&self) -> impl Iterator<Item = (Instant, Fate)> + '_ {
-        self.origins.iter().map(|o| (o.t, o.fate))
+        self.messages().map(|(t, f, _)| (t, f))
+    }
+
+    /// When each message was originated, its fate, and whether its
+    /// destination was reachable ([`Sim::reachable`]), in origination
+    /// order. A message neither delivered nor reported lost is in flight
+    /// if a core still holds it, and unaccounted otherwise.
+    pub fn messages(&self) -> impl Iterator<Item = (Instant, Fate, bool)> + '_ {
+        let held = self.held_tags();
+        self.origins.iter().enumerate().map(move |(tag, o)| {
+            let fate = match o.fate {
+                Fate::Unaccounted if held.contains(&(tag as u32)) => Fate::InFlight,
+                f => f,
+            };
+            (o.t, fate, o.reachable)
+        })
+    }
+
+    /// Traffic tags of the messages some live core still holds.
+    fn held_tags(&self) -> std::collections::HashSet<u32> {
+        let alive = |i: usize| self.nodes[i].alive;
+        let relays = self
+            .relays
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| alive(*i))
+            .flat_map(|(_, r)| r.holding());
+        let leaves = self
+            .leaves
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| alive(self.n_relays as usize + i))
+            .filter_map(|(_, l)| l.holding());
+        relays
+            .chain(leaves)
+            .filter_map(|id| self.msg_tags.get(&id.0).copied())
+            .collect()
+    }
+
+    /// Per relay, a label of its connected component: relays joined by
+    /// links that both ends hear above sensitivity without fading.
+    fn components(&self) -> Vec<u32> {
+        let n = self.n_relays as usize;
+        let mut comp: Vec<u32> = (0..n as u32).collect();
+        fn root(comp: &mut [u32], mut i: u32) -> u32 {
+            while comp[i as usize] != i {
+                comp[i as usize] = comp[comp[i as usize] as usize];
+                i = comp[i as usize];
+            }
+            i
+        }
+        for a in 0..self.n_relays {
+            for l in self.links.row(a) {
+                if l.rx < self.n_relays && self.hears_both(a, l.rx) {
+                    let (ra, rb) = (root(&mut comp, a), root(&mut comp, l.rx));
+                    comp[ra.max(rb) as usize] = ra.min(rb);
+                }
+            }
+        }
+        (0..n as u32).map(|i| root(&mut comp, i)).collect()
+    }
+
+    /// Whether `a` and `b` hear each other above sensitivity, before fading.
+    fn hears_both(&self, a: u32, b: u32) -> bool {
+        let up = |x, y| {
+            self.links
+                .get(x, y)
+                .is_some_and(|l| l.base_dbm as f64 >= self.sens_dbm)
+        };
+        up(a, b) && up(b, a)
+    }
+
+    /// Whether a message from `src` to the relay at `dst` could arrive,
+    /// judged from the links between relays at the start of the run: the
+    /// origin relay, `src` itself or the relay the leaf `src` is attached
+    /// to, is joined to the relay at `dst` by relays that hear each other.
+    /// A message to a relay that no route reaches is lost whatever the
+    /// protocol does, and is counted apart. A leaf without a relay, or an
+    /// address no relay has, counts as reachable: that loss is the
+    /// protocol's.
+    pub fn reachable(&self, src: u32, dst: Position) -> bool {
+        let relay_at = |p: Position| {
+            (0..self.n_relays).find(|&r| self.relays[r as usize].config().position == p)
+        };
+        let from = if src < self.n_relays {
+            Some(src)
+        } else {
+            self.leaves[(src - self.n_relays) as usize]
+                .relay()
+                .and_then(relay_at)
+        };
+        match (from, relay_at(dst)) {
+            (Some(a), Some(b)) => self.component[a as usize] == self.component[b as usize],
+            _ => true,
+        }
     }
 
     /// Leaf `node` is attached to `relay` after an event: keep its address
@@ -1252,10 +1360,12 @@ impl Sim {
             return;
         };
         let tag = self.origins.len() as u32;
+        let reachable = self.reachable(src, dst_pos);
         self.origins.push(OriginRecord {
             dst,
             t: self.now,
             fate: Fate::Unaccounted,
+            reachable,
         });
         let mut payload = [0u8; MAX_FRAME];
         payload[..4].copy_from_slice(&tag.to_le_bytes());
@@ -1314,6 +1424,7 @@ impl Sim {
             (e.node, e.action, e.channel, e.len, e.preamble);
         match action {
             ScriptAction::Remove => self.remove(node),
+            ScriptAction::Restart => self.restart(node),
             ScriptAction::Listen => self.listen(node, channel.expect("validated")),
             ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
             ScriptAction::Rssi => self.apply(node, Action::Rssi(channel.expect("validated")), true),
@@ -1334,11 +1445,44 @@ impl Sim {
     /// Power a node off for good: its excursion, transmission, reception
     /// and timers end now.
     pub fn remove(&mut self, node: u32) {
+        self.power_off(node, "removed");
+    }
+
+    /// Power a node off and on again: it boots afresh with every table
+    /// lost and its identity kept, a relay's position or a leaf's ID. Its
+    /// new core draws from a new random stream, as a board's hardware
+    /// generator would after a reboot.
+    pub fn restart(&mut self, node: u32) {
+        if !self.nodes[node as usize].alive {
+            return;
+        }
+        self.power_off(node, "restarted");
+        let st = &mut self.nodes[node as usize];
+        st.alive = true;
+        st.restarts += 1;
+        let index = (st.restarts as u64) << 32 | node as u64;
+        let seed = stream_seed(self.seed, Purpose::CoreSeed, index);
+        if node < self.n_relays {
+            let r = &mut self.relays[node as usize];
+            *r = Relay::new(*r.config(), seed);
+        } else {
+            let l = &mut self.leaves[(node - self.n_relays) as usize];
+            let config = Config {
+                leaf_id: l.id(),
+                ..*l.config()
+            };
+            *l = Leaf::new(config, seed);
+        }
+        // Power-on is delivered as a wakeup (docs/core-interface.md §2).
+        self.deliver(node, Event::Wakeup);
+    }
+
+    fn power_off(&mut self, node: u32, why: &str) {
         if !self.nodes[node as usize].alive {
             return;
         }
         if let Some(t) = &mut self.tracer {
-            t.note(self.now, node, "removed");
+            t.note(self.now, node, why);
         }
         self.abort_lock(node, Deaf::Absent);
         self.clear_arrivals(node);
@@ -1477,6 +1621,7 @@ mod tests {
                 dst: 2,
                 t: Instant::ZERO,
                 fate: Fate::Unaccounted,
+                reachable: true,
             });
             sim.pending_tag = Some(tag);
             sim.app_event(0, AppEvent::Accepted(MsgId(id)));

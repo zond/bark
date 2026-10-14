@@ -120,6 +120,54 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | S5 | S4 with the central relay removed / with a 2× hearing radius / with ACR_1 from 20 to 60 dB | sensitivity of S4 to the unknowns | C1 |
 | S6 | Cold start: all S4 nodes boot within 10 minutes | boot listen (§6.2), identity collision offset, convergence time | |
 
+### Scenarios in the repository
+
+The files in `scenarios/` are the ones the tests and the roadmap's
+measurements use. Each file says in its header what it is for.
+
+| File | What it is | What it checks |
+|---|---|---|
+| `s1-line.toml` | S1: three relays in a line, a leaf at each end, one sending to the other every 30 s; the middle relay is removed at 20 minutes | forwarding, ACK, delivery; every message dropped at the first relay after the removal |
+| `s1b-hidden.toml` | S1 with both leaves sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
+| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | attach, keepalive, delivery queue, dark phones |
+| `corridor.toml` | five relays in a line, a leaf at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
+| `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
+| `mesh-spread.toml` | the same mesh and flows, each leaf starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
+
+The meshes' links follow S2's model with shadowing drawn from the run's
+seed, so each seed is a different mesh: some have holes, and some leave
+a relay that no other reaches.
+
+**Restart.** A scripted `restart` powers a node off and on at once. The
+node keeps its identity, a relay its position and a leaf its ID, and
+loses everything else, as a solar relay does after a night. Its core is
+built afresh with a new random seed and boots: a relay listens before
+choosing a home channel (protocol §6.2) and takes no traffic until then,
+while its neighbours still list it.
+
+**Accounting.** Every message the traffic model sends ends up in one of
+these:
+
+- **delivered** to the destination's application;
+- **lost**, where a core reported it: dropped by a relay, or failed at
+  its origin, with the node and the reason;
+- **in flight**: a core still holds it when the run ends, in a send
+  queue, a delivery queue, or a leaf waiting to hand it over;
+- **unaccounted**: none of these. It was lost without a trace.
+
+A message is also marked **unreachable** when, at the start of the run,
+no chain of relays that hear each other above sensitivity joins its
+origin relay (the sender itself, or the relay the sending leaf is
+attached to) to the destination's relay. Such a message is lost whatever
+the protocol does; the summary counts it apart and gives the delivery
+ratio over the reachable ones too.
+
+The scenario tests require that no message to a reachable destination is
+unaccounted. A message to an unreachable destination can end untraced
+when it has split in two (protocol §9.5): both copies search the same
+relays, and a relay whose search for one copy has ended absorbs the
+other.
+
 ## 7. Performance target
 
 S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one keepalive per minute and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).

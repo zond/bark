@@ -1,0 +1,109 @@
+# A corridor: five relays in a line, a leaf at each end, both leaves
+# sending to each other every 30 s from the same instant.
+#
+#   LA   A --- B --- C --- D --- E   LE
+#
+# Each relay hears only its neighbours, so every message crosses all five,
+# and the two flows meet head on at every relay in between: each relay
+# takes messages from both sides and hands them on to both sides. This
+# is S1b's hidden-terminal pair stretched out, and the simplest case of
+# crossing traffic.
+
+name = "corridor"
+seed = 1
+duration_s = 1800.0
+# As S1: the relays know each other one worst-case rotation (13
+# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+settle_s = 345.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "table"
+table = [
+  # 400 m hops, about -106 dBm with a path-loss exponent of 3.5; farther
+  # pairs below sensitivity (-119 dBm), audible only as interference.
+  { a = "A", b = "B", dbm = -106.0 },
+  { a = "A", b = "C", dbm = -125.0 },
+  { a = "A", b = "D", dbm = -125.0 },
+  { a = "A", b = "E", dbm = -125.0 },
+  { a = "B", b = "C", dbm = -106.0 },
+  { a = "B", b = "D", dbm = -125.0 },
+  { a = "B", b = "E", dbm = -125.0 },
+  { a = "C", b = "D", dbm = -106.0 },
+  { a = "C", b = "E", dbm = -125.0 },
+  { a = "D", b = "E", dbm = -106.0 },
+  # Leaves 50 m from their relays; the next relay only as interference.
+  { a = "LA", b = "A", dbm = -80.0 },
+  { a = "LA", b = "B", dbm = -125.0 },
+  { a = "LE", b = "E", dbm = -80.0 },
+  { a = "LE", b = "D", dbm = -125.0 },
+]
+
+[[nodes]]
+place = "point"
+name = "A"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "B"
+role = "relay"
+x = 400.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 800.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "D"
+role = "relay"
+x = 1200.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "E"
+role = "relay"
+x = 1600.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LA"
+role = "leaf"
+x = -50.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LE"
+role = "leaf"
+x = 1650.0
+y = 0.0
+
+[[traffic]]
+kind = "periodic"
+from = "LA"
+to = "LE"
+interval_s = 30.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "LE"
+to = "LA"
+interval_s = 30.0
+payload_bytes = 40
+
+[metrics]
+cadence_s = 10.0

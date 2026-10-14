@@ -1,0 +1,596 @@
+# mesh-burst.toml's mesh with the same traffic spread out: each leaf
+# starts at its own time within the first 600 s and keeps its rhythm.
+# R18, the relay nearest the middle, restarts at 1500 s: it loses every
+# table and boots again with the same position, as a solar relay does
+# after a night, and the traffic must route around it while it listens
+# and its neighbours relearn it.
+
+# The 25 relays stand where a uniform draw put them in a 2.5 km square,
+# at least 200 m apart, with one leaf 15 m from each. With S2's link model
+# and its 6 dB shadowing, drawn per pair from the run's seed, each seed
+# gives other links: holes the search must route around, and on some
+# seeds (5 among 1 to 10) a relay that nothing reaches, whose messages
+# are counted apart as unreachable. Every leaf i sends 60 bytes to leaf
+# i + 12 (mod 25) every 600 s, so the flows cross the whole mesh. The
+# first message waits until every leaf has attached: the relays' 150 s
+# boot listen, up to a worst-case rotation (195 s) for a leaf to hear its
+# first heartbeat, and a rotation more before it chooses (protocol §10.1),
+# 540 s.
+
+name = "mesh-spread"
+seed = 1
+duration_s = 2700.0
+# As S1: the relays know each other one worst-case rotation (13
+# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+settle_s = 345.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+# S2's log-distance model, without fading: what is measured is the
+# protocol under load, not link noise.
+model = "log_distance"
+exponent = 3.6
+indoor_loss_db = 14.4
+shadowing_sigma_db = 6.0
+
+[[nodes]]
+place = "point"
+name = "R0"
+role = "relay"
+x = 594.9
+y = 1360.6
+
+[[nodes]]
+place = "point"
+name = "L0"
+role = "leaf"
+x = 609.9
+y = 1360.6
+
+[[nodes]]
+place = "point"
+name = "R1"
+role = "relay"
+x = 924.9
+y = 1509.8
+
+[[nodes]]
+place = "point"
+name = "L1"
+role = "leaf"
+x = 939.9
+y = 1509.8
+
+[[nodes]]
+place = "point"
+name = "R2"
+role = "relay"
+x = 1564.3
+y = 163.8
+
+[[nodes]]
+place = "point"
+name = "L2"
+role = "leaf"
+x = 1579.3
+y = 163.8
+
+[[nodes]]
+place = "point"
+name = "R3"
+role = "relay"
+x = 32.9
+y = 2093.7
+
+[[nodes]]
+place = "point"
+name = "L3"
+role = "leaf"
+x = 47.9
+y = 2093.7
+
+[[nodes]]
+place = "point"
+name = "R4"
+role = "relay"
+x = 648.4
+y = 585.8
+
+[[nodes]]
+place = "point"
+name = "L4"
+role = "leaf"
+x = 663.4
+y = 585.8
+
+[[nodes]]
+place = "point"
+name = "R5"
+role = "relay"
+x = 2489.1
+y = 1175.7
+
+[[nodes]]
+place = "point"
+name = "L5"
+role = "leaf"
+x = 2504.1
+y = 1175.7
+
+[[nodes]]
+place = "point"
+name = "R6"
+role = "relay"
+x = 2091.2
+y = 1190.9
+
+[[nodes]]
+place = "point"
+name = "L6"
+role = "leaf"
+x = 2106.2
+y = 1190.9
+
+[[nodes]]
+place = "point"
+name = "R7"
+role = "relay"
+x = 1597.7
+y = 376.5
+
+[[nodes]]
+place = "point"
+name = "L7"
+role = "leaf"
+x = 1612.7
+y = 376.5
+
+[[nodes]]
+place = "point"
+name = "R8"
+role = "relay"
+x = 1587.2
+y = 2170.1
+
+[[nodes]]
+place = "point"
+name = "L8"
+role = "leaf"
+x = 1602.2
+y = 2170.1
+
+[[nodes]]
+place = "point"
+name = "R9"
+role = "relay"
+x = 1308.0
+y = 1853.1
+
+[[nodes]]
+place = "point"
+name = "L9"
+role = "leaf"
+x = 1323.0
+y = 1853.1
+
+[[nodes]]
+place = "point"
+name = "R10"
+role = "relay"
+x = 1895.6
+y = 1477.7
+
+[[nodes]]
+place = "point"
+name = "L10"
+role = "leaf"
+x = 1910.6
+y = 1477.7
+
+[[nodes]]
+place = "point"
+name = "R11"
+role = "relay"
+x = 753.2
+y = 77.5
+
+[[nodes]]
+place = "point"
+name = "L11"
+role = "leaf"
+x = 768.2
+y = 77.5
+
+[[nodes]]
+place = "point"
+name = "R12"
+role = "relay"
+x = 1797.1
+y = 2197.0
+
+[[nodes]]
+place = "point"
+name = "L12"
+role = "leaf"
+x = 1812.1
+y = 2197.0
+
+[[nodes]]
+place = "point"
+name = "R13"
+role = "relay"
+x = 987.4
+y = 2002.3
+
+[[nodes]]
+place = "point"
+name = "L13"
+role = "leaf"
+x = 1002.4
+y = 2002.3
+
+[[nodes]]
+place = "point"
+name = "R14"
+role = "relay"
+x = 1111.6
+y = 2339.0
+
+[[nodes]]
+place = "point"
+name = "L14"
+role = "leaf"
+x = 1126.6
+y = 2339.0
+
+[[nodes]]
+place = "point"
+name = "R15"
+role = "relay"
+x = 2197.2
+y = 243.6
+
+[[nodes]]
+place = "point"
+name = "L15"
+role = "leaf"
+x = 2212.2
+y = 243.6
+
+[[nodes]]
+place = "point"
+name = "R16"
+role = "relay"
+x = 339.9
+y = 542.5
+
+[[nodes]]
+place = "point"
+name = "L16"
+role = "leaf"
+x = 354.9
+y = 542.5
+
+[[nodes]]
+place = "point"
+name = "R17"
+role = "relay"
+x = 1566.6
+y = 752.6
+
+[[nodes]]
+place = "point"
+name = "L17"
+role = "leaf"
+x = 1581.6
+y = 752.6
+
+[[nodes]]
+place = "point"
+name = "R18"
+role = "relay"
+x = 1268.1
+y = 964.7
+
+[[nodes]]
+place = "point"
+name = "L18"
+role = "leaf"
+x = 1283.1
+y = 964.7
+
+[[nodes]]
+place = "point"
+name = "R19"
+role = "relay"
+x = 2141.0
+y = 2477.5
+
+[[nodes]]
+place = "point"
+name = "L19"
+role = "leaf"
+x = 2156.0
+y = 2477.5
+
+[[nodes]]
+place = "point"
+name = "R20"
+role = "relay"
+x = 2261.7
+y = 1422.8
+
+[[nodes]]
+place = "point"
+name = "L20"
+role = "leaf"
+x = 2276.7
+y = 1422.8
+
+[[nodes]]
+place = "point"
+name = "R21"
+role = "relay"
+x = 1784.5
+y = 527.8
+
+[[nodes]]
+place = "point"
+name = "L21"
+role = "leaf"
+x = 1799.5
+y = 527.8
+
+[[nodes]]
+place = "point"
+name = "R22"
+role = "relay"
+x = 221.3
+y = 2001.5
+
+[[nodes]]
+place = "point"
+name = "L22"
+role = "leaf"
+x = 236.3
+y = 2001.5
+
+[[nodes]]
+place = "point"
+name = "R23"
+role = "relay"
+x = 1026.2
+y = 376.9
+
+[[nodes]]
+place = "point"
+name = "L23"
+role = "leaf"
+x = 1041.2
+y = 376.9
+
+[[nodes]]
+place = "point"
+name = "R24"
+role = "relay"
+x = 734.7
+y = 1922.0
+
+[[nodes]]
+place = "point"
+name = "L24"
+role = "leaf"
+x = 749.7
+y = 1922.0
+
+[[traffic]]
+kind = "periodic"
+from = "L0"
+to = "L12"
+interval_s = 600.0
+start_s = 620.62
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L1"
+to = "L13"
+interval_s = 600.0
+start_s = 1048.46
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L2"
+to = "L14"
+interval_s = 600.0
+start_s = 998.26
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L3"
+to = "L15"
+interval_s = 600.0
+start_s = 693.04
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L4"
+to = "L16"
+interval_s = 600.0
+start_s = 837.26
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L5"
+to = "L17"
+interval_s = 600.0
+start_s = 809.69
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L6"
+to = "L18"
+interval_s = 600.0
+start_s = 930.96
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L7"
+to = "L19"
+interval_s = 600.0
+start_s = 1013.23
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L8"
+to = "L20"
+interval_s = 600.0
+start_s = 596.32
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L9"
+to = "L21"
+interval_s = 600.0
+start_s = 557.01
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L10"
+to = "L22"
+interval_s = 600.0
+start_s = 1041.46
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L11"
+to = "L23"
+interval_s = 600.0
+start_s = 799.66
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L12"
+to = "L24"
+interval_s = 600.0
+start_s = 997.37
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L13"
+to = "L0"
+interval_s = 600.0
+start_s = 541.26
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L14"
+to = "L1"
+interval_s = 600.0
+start_s = 807.23
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L15"
+to = "L2"
+interval_s = 600.0
+start_s = 972.92
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L16"
+to = "L3"
+interval_s = 600.0
+start_s = 677.26
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L17"
+to = "L4"
+interval_s = 600.0
+start_s = 1107.16
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L18"
+to = "L5"
+interval_s = 600.0
+start_s = 1080.86
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L19"
+to = "L6"
+interval_s = 600.0
+start_s = 558.35
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L20"
+to = "L7"
+interval_s = 600.0
+start_s = 555.27
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L21"
+to = "L8"
+interval_s = 600.0
+start_s = 864.85
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L22"
+to = "L9"
+interval_s = 600.0
+start_s = 1103.49
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L23"
+to = "L10"
+interval_s = 600.0
+start_s = 768.72
+payload_bytes = 60
+
+[[traffic]]
+kind = "periodic"
+from = "L24"
+to = "L11"
+interval_s = 600.0
+start_s = 669.96
+payload_bytes = 60
+
+[[events]]
+at_s = 1500.0
+node = "R18"
+action = "restart"
+
+[metrics]
+cadence_s = 10.0
+per_node = true

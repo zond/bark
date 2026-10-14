@@ -249,6 +249,11 @@ impl Leaf {
         self.relay.filter(|_| self.attached).map(|r| r.position)
     }
 
+    /// The message this leaf holds to hand to its relay, if any.
+    pub fn holding(&self) -> Option<MsgId> {
+        self.outgoing_id()
+    }
+
     /// The channel the leaf listens on.
     pub fn home(&self) -> Channel {
         self.home

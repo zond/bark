@@ -92,6 +92,31 @@ fn busy_block(seed: u64) -> Scenario {
     sc
 }
 
+/// No message to a destination reachable from its origin is lost without
+/// a trace: each is delivered, reported lost where it died, or still held
+/// by a core at the end (`Sim::messages`). A message to an unreachable
+/// destination can end untraced when it has split in two (protocol §9.5):
+/// both copies search the same relays, and a relay whose search for one
+/// copy has ended absorbs the other. It would be lost anyway, and is
+/// only counted.
+fn accounted(sim: &Sim, what: &str) {
+    let lost: Vec<_> = sim
+        .messages()
+        .enumerate()
+        .filter(|(_, (_, f, reachable))| *f == Fate::Unaccounted && *reachable)
+        .map(|(tag, (t, _, _))| (tag, t))
+        .collect();
+    assert!(lost.is_empty(), "{what}: lost without a trace {lost:?}");
+}
+
+/// Load a scenario from `scenarios/`.
+fn scenario(file: &str) -> Scenario {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../scenarios")
+        .join(file);
+    Scenario::load(&path).unwrap_or_else(|e| panic!("{file}: {e}"))
+}
+
 fn run(sc: &Scenario) -> (String, String) {
     let mut sim = Sim::new(sc).expect("builds");
     sim.run();
@@ -335,6 +360,7 @@ fn s1b_hidden_terminals_come_apart() {
         let settled = &s.app.phases[1];
         assert_eq!(settled.phase, "settled");
         assert!(settled.delivery_ratio >= 0.85, "seed {seed}: {}", s.table());
+        accounted(&sim, &format!("S1b seed {seed}"));
         ratios.push(settled.delivery_ratio);
         let b = &s.nodes.as_ref().expect("per-node metrics")[1];
         assert!(
@@ -376,6 +402,7 @@ fn s2_block_smoke() {
     assert!(phase.delivery_ratio >= 0.7, "{}", s.table());
     assert!(s.relay_changes <= 100, "{}", s.table());
     assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+    accounted(&sim, "S2");
     let nodes = s.nodes.as_ref().expect("per-node metrics");
     for n in nodes.iter().filter(|n| n.label.starts_with("relay")) {
         // The choice at the end of the boot listen and no move after it
@@ -421,4 +448,87 @@ fn trace_follows_a_message_and_changes_nothing() {
             lines.join("\n")
         );
     }
+}
+
+/// The corridor (`scenarios/corridor.toml`): two flows meet head on at
+/// every relay of a line of five. Seeds 1 to 3 deliver at least 0.93 of
+/// the settled phase on `main` as of roadmap D28; the bound leaves room
+/// for the spread between seeds.
+#[test]
+fn corridor_carries_crossing_flows() {
+    let sc = scenario("corridor.toml");
+    for seed in 1..=3 {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        let mut sim = Sim::new(&sc).expect("builds");
+        sim.run();
+        let s = sim.summary();
+        let settled = &s.app.phases[1];
+        assert_eq!(settled.phase, "settled");
+        assert_eq!(settled.unreachable, 0, "the corridor is connected");
+        assert!(settled.delivery_ratio >= 0.9, "seed {seed}: {}", s.table());
+        assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+        accounted(&sim, &format!("corridor seed {seed}"));
+    }
+}
+
+/// The random mesh (`scenarios/mesh-burst.toml`, `mesh-spread.toml`):
+/// every leaf sends across the mesh, all at once or each at its own time,
+/// and in the spread run the middle relay restarts. Seed 5 leaves a relay
+/// that nothing reaches; its messages count as unreachable and the rest
+/// are delivered.
+#[test]
+fn mesh_routes_bursts_and_a_restart() {
+    for file in ["mesh-burst.toml", "mesh-spread.toml"] {
+        let sc = scenario(file);
+        for seed in [1, 5] {
+            let mut sc = sc.clone();
+            sc.seed = seed;
+            let mut sim = Sim::new(&sc).expect("builds");
+            sim.run();
+            let s = sim.summary();
+            let settled = &s.app.phases[1];
+            assert_eq!(settled.phase, "settled");
+            assert!(
+                settled.originated >= 75,
+                "{file} seed {seed}: {}",
+                s.table()
+            );
+            assert_eq!(settled.unreachable > 0, seed == 5, "{file} seed {seed}");
+            assert!(
+                settled.reachable_delivery_ratio >= 0.9,
+                "{file} seed {seed}: {}",
+                s.table()
+            );
+            assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+            accounted(&sim, &format!("{file} seed {seed}"));
+        }
+    }
+}
+
+/// A restarted relay keeps its position, loses its neighbours and boots
+/// again: it listens before choosing a home channel (protocol §6.2), and
+/// its neighbours are heard again within a rotation after that (§7).
+#[test]
+fn a_restarted_relay_boots_again_with_its_identity() {
+    use bark_proto::{Duration, Instant};
+    let sc = Scenario::new("restart", 1, 1200.0)
+        .point("A", RoleSpec::Relay, 0.0, 0.0)
+        .point("B", RoleSpec::Relay, 400.0, 0.0)
+        .link("A", "B", -100.0);
+    let mut sim = Sim::new(&sc).unwrap();
+    let c = bark_proto::Config::default();
+    let settled = Instant::ZERO + c.boot_listen + c.heartbeat_max.mul(13);
+    sim.run_until(settled);
+    let position = sim.relay(0).config().position;
+    assert!(!sim.relay(0).booting());
+    assert_eq!(sim.relay(0).neighbours().count(), 1);
+    sim.restart(0);
+    assert!(sim.relay(0).booting());
+    assert_eq!(sim.relay(0).neighbours().count(), 0);
+    assert_eq!(sim.relay(0).config().position, position);
+    sim.run_until(settled + c.boot_listen + c.heartbeat_max.mul(13) + Duration::from_secs(1));
+    assert!(!sim.relay(0).booting());
+    assert_eq!(sim.relay(0).neighbours().count(), 1);
+    assert!(sim.resting(0).is_some());
 }

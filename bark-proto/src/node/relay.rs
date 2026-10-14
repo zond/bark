@@ -28,6 +28,7 @@ mod service;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
+use crate::ids::MsgId;
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer, RELAY_REPLIES};
 use crate::node::{Config, Core, Rng};
@@ -220,6 +221,16 @@ impl Relay {
     /// The busy estimates and noise floor.
     pub fn busy(&self) -> &BusyEstimator {
         &self.busy
+    }
+
+    /// The messages this relay holds: queued to send, or waiting for
+    /// their leaf. A driver uses it to tell a message still in the
+    /// network from one lost without a trace.
+    pub fn holding(&self) -> impl Iterator<Item = MsgId> + '_ {
+        self.queue
+            .iter()
+            .filter_map(|o| o.msg_id())
+            .chain(self.delivery.iter().map(|q| q.msg_id))
     }
 
     fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
