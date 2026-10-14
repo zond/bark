@@ -225,8 +225,7 @@ Every node that forwards (relay role) sends a heartbeat. Leaves do not
 | lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
 | spare | 5 | zero |
 
-8 bytes, ≈12 ms on air at SF5 (a 15-byte heartbeat would be ≈15 ms, so
-this cuts heartbeat load by a fifth). No node ID: a relay's position
+8 bytes, ≈12 ms on air at SF5. No node ID: a relay's position
 **is** its identity (§8.1). No sequence number: there is no gossip to age
 out, relays do not move, and an unsigned counter adds nothing. No flags
 byte: the variants that matter are type codes.
@@ -322,6 +321,11 @@ previous message (the sender address is carried in the encrypted payload),
 from a QR code, or from a directory; the network provides no lookup.
 Geocast to an area is a natural extension (open item O7).
 
+Every DATA packet also carries `src_pos`, the position of the relay where
+it entered the network, so that a failure notice can be routed back
+(§9.5). The originating leaf's ID is not in the header; it travels in the
+encrypted payload.
+
 ### 9.2 Greedy forwarding
 
 Forward to the neighbour (relay role, not demoted) that minimises
@@ -329,7 +333,9 @@ Euclidean distance to the destination position. If no neighbour is closer
 than self, enter DFS void recovery: forward to the nearest non-demoted
 neighbour not in the packet's visited list, appending self; a node with no
 unvisited neighbour returns the packet to the hop it came from, which tries
-its next candidate. The visited list is carried in the packet and bounded;
+its next candidate. The previous hop is the last entry of the visited list,
+matched against the neighbour table by hash, and is reached on the channel
+in `aux`. The visited list is carried in the packet and bounded;
 when it fills, the packet is NACKed. DFS is for geographic voids only; it is never used
 to search for an ID.
 
@@ -364,8 +370,10 @@ The rule this gives is uniform: **a node receives everything, ACKs
 included, on its home channel, and leaves it only for its own transmit
 bursts.** A leaf's home channel is its relay's, so leaf ↔ relay traffic
 and its ACKs never retune at all. A relay is deaf for ≈15 ms per packet it
-forwards or ACKs; a sender that gets no ACK simply retries, and the
-duplicate is suppressed by `msg_id`. Accepted cost of one radio.
+forwards or ACKs; a sender that gets no ACK simply retries. A receiver
+recognises a repeat by `msg_id` and visited-list length: the same length is
+a duplicate, ACKed again and not forwarded; a longer list is a DFS
+backtrack and is processed. Accepted cost of one radio.
 
 ### 9.4 Duty cycle cap
 
@@ -374,6 +382,16 @@ before its channel does. Greedy forwarding does not load-balance; central
 rooftop relays will be the first to hit this. When the budget is
 exhausted the relay stops forwarding (NACKs with reason `busy`) but keeps
 heartbeating.
+
+### 9.5 Failure notices
+
+A relay that cannot forward a message (visited list full, no route, budget
+exhausted) or cannot deliver it (unknown leaf, queue expired) sends a NACK:
+a DATA packet addressed to `(src_pos, 0)` whose payload is the reason and
+the failed `msg_id`. The origin relay keeps `(msg_id, leaf_id)` for every
+message it accepted from a leaf, for the delivery TTL, and hands the notice
+to that leaf as a DELIVER with `aux = 1`. A NACK that cannot be routed is
+dropped; nothing NACKs a NACK.
 
 ---
 
@@ -418,7 +436,9 @@ ACK. Preamble length per the leaf's declared receive mode (§10.5).
 
 Bounded, not a mailbox: up to 64 messages per relay, TTL 10 minutes.
 Retry delivery on the leaf's next keepalive and every 60 s. On expiry,
-route a NACK to the sender address. Rationale: a queued message costs no
+send a NACK to the origin relay (§9.5). The owner remembers delivered
+`msg_id`s for the TTL and ACKs a repeat without delivering it twice.
+Rationale: a queued message costs no
 airtime, a failed delivery costs a NACK and a retry across the city; the
 common case is a phone in a pocket, a basement, or the metro for a few
 minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
@@ -457,8 +477,9 @@ global WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
 7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
 converts every position it handles into metres in a local tangent plane
 centred on itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`,
-with `cos(lat_self)` a per-node constant. That is accurate to better than
-0.1% out to hundreds of kilometres, far beyond any hop. Neighbour-table
+with `cos(lat_self)` a per-node constant. The error grows with
+Δlat · tan(lat): at 50° N it is 0.1% at 5 km and 0.4% at 20 km, enough to
+reorder only near-ties between candidate hops. Neighbour-table
 entries store both the wire form (identity) and the local form
 (distance). No UKF, no trilateration: every relay is an anchor.
 
@@ -563,21 +584,24 @@ ACK       0x3: first(1) msg_id(4)                                           = 5
           sent on the original sender's home channel; aux unused
 ATTACH    0x4: first(1) leaf_id(4) relay_pos(7)                             = 12
           aux = leaf receive mode (§10.5)
-DATA      0x5: first(1) dst_hop(7) msg_id(4) dst_pos(7) dst_leaf(4) hops(1)
-               visited_len(1) visited(2×n) payload                          = 25 + 2n + payload
+DATA      0x5: first(1) dst_hop(7) msg_id(4) dst_pos(7) dst_leaf(4) src_pos(7)
+               hops(1) visited_len(1) visited(2×n) payload                  = 32 + 2n + payload
           aux = sender's home channel, so the receiver knows where to ACK
-NACK      0x7: DATA layout; payload = reason(1) + original msg_id(4)
+NACK      0x7: DATA layout addressed to (src_pos, 0);
+               payload = reason(1) + failed msg_id(4)                       (§9.5)
 DELIVER   0x6: first(1) dst_leaf(4) msg_id(4) payload                       = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
+          aux = 0 message, 1 failure notice (payload = reason(1) + msg_id(4))
 ```
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
 after 8 bytes. There is no `src_hop`: the ACK goes to the channel in
 `aux` and is matched by `msg_id` on the sender side, demotion is a
-sender-side decision, and DFS backtracking uses the visited list. `msg_id` is a 32-bit random value chosen at
-origination and kept across hops; duplicate suppression keeps a recent-RX
-window on it. Sender address is inside the encrypted
-payload, not in the header.
+sender-side decision, and DFS backtracking uses the visited list. `msg_id`
+is a 32-bit random value chosen at origination and kept across hops;
+duplicate suppression keeps a recent-RX window on it and the visited
+length (§9.3). The originating leaf's ID is inside the encrypted payload,
+not in the header; `src_pos` names only the relay it entered at.
 
 ---
 
@@ -590,9 +614,9 @@ owns its routing and tables (D1, D3; `core-interface.md`). Crate layout is
 D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 64 × 272 B = 17 KB; recent-RX window
-256 × 8 B = 2 KB; busy estimates 13 floats; SoftDevice 64 KB; Embassy +
-stacks ≈16 KB. Comfortable.
+256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; recent-RX window,
+delivered window, origin table, busy estimates and duty budget together
+under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB. Comfortable.
 
 **Bring-up order** (each step is a demonstrable milestone on real boards):
 

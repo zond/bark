@@ -86,8 +86,8 @@ The core never inspects a payload (design §11: the app owns identity and encryp
 ## 6. Memory
 
 `Relay` holds its tables inline: 64 neighbours, 256 leaves, 64 queued deliveries, a recent-RX
-window. Target under 16 KiB (design §15 RAM budget). `Leaf` target under 512 bytes, because
-the capacity scenario holds twenty thousand of them and they should fit in cache.
+window. Target under 32 KiB; the delivery queue alone is 14 KiB (design §15). `Leaf` target
+under 1 KiB, because the capacity scenario holds twenty thousand of them.
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
