@@ -602,7 +602,7 @@ units happens with probability (1 − 1/W)²: never with one unit, 1/4 with
 two, 9/16 with four. Doubling per attempt also spreads more than two such
 senders. The listen-before-talk backoff of step 2 stays short: it waits
 for a channel the sender can hear to clear, and checks again (roadmap
-D20).
+D22).
 
 An ACK resets the neighbour's failure count and refreshes its last-heard
 time (§8.2): a neighbour that answers is alive whether or not its
@@ -988,7 +988,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
-| O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D20, §9.3 retry wait |
+| O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, §9.3 retry wait |
 
 ---
 
