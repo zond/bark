@@ -1,15 +1,15 @@
 # Implementation research, 2026-10-14
 
-What exists to implement `protocol.md`, what is missing, and
-where the design's numbers disagree with datasheets and regulators. Sources at the end.
-Section numbers (§) refer to the design.
+What exists to implement `protocol.md`, what is missing, and where the design's numbers
+disagree with datasheets and regulators. § numbers refer to the design. Sources at the end.
 
 ## 1. Rust stack
 
 ### Routing
 
 No published `no_std` crate implements the design's routing (greedy geographic forwarding
-keyed by position, DFS void recovery with a visited list, per-hop ACK). General mesh
+keyed by position, depth-first search around gaps with a visited list, per-hop
+acknowledgement). General mesh
 libraries carry gossip, global tables and node-ID identities the design removes, and any
 library that exposes `embassy_time::Instant` in its API pins an embassy-time version: lora-phy
 (git), trouble, nrf-sdc and embassy-nrf 0.11 all use embassy-time 0.5 and embassy-sync 0.8,
@@ -119,7 +119,7 @@ Layout used by the umsh and LoRa-APRS firmware without modifying the bootloader:
 UF2 family `0xADA52840`, base `0x26000`, volume `TECHOBOOT`, DFU entry by double-tap of
 the top-left button. INFO_UF2.TXT on the mounted drive reports the versions. SWD pads:
 "re-flashing the bootloader requires an SWD programmer" per LoRa-APRS, but pad locations
-not confirmed in any source I read; plan on UF2 + defmt over USB-CDC.
+not confirmed in any source read; plan on UF2 + defmt over USB-CDC.
 
 ### Relays: RAK WisBlock
 
@@ -132,7 +132,7 @@ are likely RAK4631 + RAK19007 base + RAK12500 GPS in a box, or a T-Echo Card.
 | Quantity | Value | Design said | Note |
 |---|---|---|---|
 | Minimum preamble, SF5/SF6 | **12 symbols** recommended; lora-phy enforces it | 8 symbols | §6.1 sweep-loss argument and §7 airtime need redoing. Heartbeat ≈ 11.8 ms, 255 B ≈ 139 ms with 12-symbol preamble. |
-| ToA, SF5/SF6 | own formula: 6.25-symbol sync overhead vs 4.25 for SF7+ | | Use the datasheet formula in the simulator and firmware airtime accounting. |
+| Time on air, SF5/SF6 | own formula: 6.25-symbol sync overhead vs 4.25 for SF7+ | | Use the datasheet formula in the simulator and firmware airtime accounting. |
 | Sensitivity, 125 kHz | SF7 −124 dBm, SF12 −137 dBm (boosted). **SF5 not listed** | −120 | Extrapolate ≈ −119 dBm; measure in Phase 2. |
 | Co-channel rejection, same SF | SF7 5 dB, SF12 19 dB | | SF5 unlisted, likely lower. This is the capture threshold in the simulator. |
 | Adjacent-channel rejection | 60 dB (SF7) and 72 dB (SF12) at **±1.5 × BW** offset | | 125 kHz spacing is 1.0 × BW: not characterised. Bench item C1 is real. |
@@ -169,7 +169,7 @@ are likely RAK4631 + RAK19007 base + RAK12500 GPS in a box, or a T-Echo Card.
   Its `docs/hardware/lilygo-techo-hardware.md` is the best T-Echo bring-up reference found.
 - **cfr34k/t-echo-lora-aprs** (C, nRF5 SDK): works with the stock bootloader, combined
   SoftDevice+app UF2, 100 µA standby with BLE.
-- **Meshtastic PR #11137**: a careful rework of CAD-based LBT across SX126x/127x/128x/LR11xx,
+- **Meshtastic PR #11137**: a rework of listen-before-talk using channel activity detection (CAD) across SX126x/127x/128x/LR11xx,
   with symbol-time formulas and the CAD_RX exit-mode handoff. Relevant to §9.3.
 - **meshtastenstein-rs**: Rust Meshtastic on XIAO nRF52840 + Wio-SX1262, lora-phy +
   trouble; never run on nRF hardware; no licence.
