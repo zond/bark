@@ -112,7 +112,7 @@ Layout used by the umsh and LoRa-APRS firmware without modifying the bootloader:
 
 ```
 0x00000000..0x00026000   MBR + SoftDevice slot (152 KiB, reserved)
-0x00026000..0x000F4000   application (760 KiB)   <- FLASH ORIGIN in memory.x
+0x00026000..0x000F4000   application (824 KiB)   <- FLASH ORIGIN in memory.x
 0x000F4000..0x00100000   bootloader + UICR (48 KiB)
 ```
 
