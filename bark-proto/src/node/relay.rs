@@ -29,7 +29,7 @@ mod service;
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::node::mac::{self, Radio};
-use crate::node::transfer::{Acks, Transfer, RELAY_ACKS};
+use crate::node::transfer::{Acks, Step, Transfer, RELAY_ACKS};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
@@ -500,9 +500,12 @@ impl Core for Relay {
             },
             Event::TxDone => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
-                Some(Job::HandOver) => self.handover.sent(now, self.config.ack_timeout),
+                // Unless the hand-over was given up meanwhile (a displaced record).
+                Some(Job::HandOver) if self.handover.step() == Step::Tx => {
+                    self.handover.sent(now, self.config.ack_timeout)
+                }
                 Some(Job::Ack) => self.acks.sent(),
-                Some(Job::Sweep) | None => {}
+                _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),
         }

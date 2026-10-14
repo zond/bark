@@ -1,20 +1,22 @@
 //! The protocol core: configuration, roles, and the `Core` trait that the
 //! driver programs against.
 //!
-//! The relay's medium access (home channel, sweep, heartbeat) is in
-//! `node/relay.rs`, on the shared radio discipline of `node/mac.rs`.
-//! Forwarding and the leaf are still stubs: they wait for the routing and
-//! wire format to settle.
+//! The relay is in `node/relay.rs` and `node/relay/`, the leaf in
+//! `node/leaf.rs`. Both use the radio discipline of `node/mac.rs` and the
+//! per-hop transfer of `node/transfer.rs`.
 
 use crate::event::{Action, Event};
+use crate::ids::LeafId;
 use crate::position::Position;
 use crate::radio::Channel;
 use crate::time::{Duration, Instant};
 
+mod leaf;
 mod mac;
 mod relay;
 mod transfer;
 
+pub use leaf::Leaf;
 pub use relay::Relay;
 
 /// Which half of the protocol a node runs (design §1).
@@ -34,6 +36,10 @@ pub struct Config {
     pub position: Position,
     /// Whether `position` is surveyed (heartbeat type 0x1) or GPS-derived (0x2).
     pub surveyed: bool,
+    /// A leaf's ID, which the app generates at random (design §8.1). A
+    /// leaf given [`LeafId::RELAY`] draws one from its seed. A relay
+    /// ignores it.
+    pub leaf_id: LeafId,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds, uniform random in between (design §7: 5–15 s).
@@ -92,6 +98,7 @@ impl Default for Config {
         Config {
             position: Position::default(),
             surveyed: true,
+            leaf_id: LeafId::RELAY,
             tx_power_dbm: 10,
             heartbeat_min: Duration::from_secs(5),
             heartbeat_max: Duration::from_secs(15),
@@ -134,13 +141,6 @@ pub trait Core {
     fn next_wakeup(&self) -> Option<Instant>;
 }
 
-/// Leaf role. Small: the simulator holds twenty thousand of these.
-pub struct Leaf {
-    config: Config,
-    rng: Rng,
-    wakeup: Option<Instant>,
-}
-
 /// Either role, for a driver that switches role at run time (the firmware).
 #[allow(clippy::large_enum_variant)]
 pub enum Node {
@@ -148,18 +148,6 @@ pub enum Node {
     Relay(Relay),
     /// Running as a leaf.
     Leaf(Leaf),
-}
-
-impl Leaf {
-    /// Create a leaf; see [`Relay::new`] for `seed`.
-    pub fn new(config: Config, seed: u64) -> Leaf {
-        Leaf { config, rng: Rng::new(seed), wakeup: None }
-    }
-
-    /// Configuration.
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
 }
 
 impl Node {
@@ -177,20 +165,6 @@ impl Node {
             Node::Relay(_) => Role::Relay,
             Node::Leaf(_) => Role::Leaf,
         }
-    }
-}
-
-// Stub until attach and delivery are specified: the leaf does nothing.
-impl Core for Leaf {
-    fn handle(&mut self, event: Event<'_>, _now: Instant, _emit: &mut dyn FnMut(Action)) {
-        if let Event::Wakeup = event {
-            self.wakeup = None;
-        }
-        let _ = (&mut self.rng, &self.config);
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        self.wakeup
     }
 }
 
