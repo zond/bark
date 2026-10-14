@@ -6,8 +6,8 @@
 use core::cell::Cell;
 
 use bark_proto::radio::{
-    Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MIN_PREAMBLE_SYMBOLS,
-    SPREADING_FACTOR,
+    time_on_air, Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MAX_ERP_DBM,
+    MIN_PREAMBLE_SYMBOLS, SPREADING_FACTOR,
 };
 use bark_proto::MAX_FRAME;
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -18,13 +18,15 @@ use embassy_nrf::Peri;
 use embassy_time::{with_deadline, with_timeout, Delay, Duration, Instant, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::mod_params::{
-    Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, SpreadingFactor,
+    Bandwidth, CodingRate, ModulationParams, PacketParams, PacketStatus, RadioError,
+    SpreadingFactor,
 };
 use lora_phy::mod_traits::InterfaceVariant;
 use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
 use lora_phy::{DelayNs, LoRa, RxMode};
 
 use crate::board;
+use crate::clock::Clock;
 
 // bark's modulation is a compile-time choice of the core; the driver wants
 // enum values, so tie the two together here.
@@ -38,6 +40,21 @@ const CR: CodingRate = CodingRate::_4_5;
 
 /// Largest LoRa payload, in bytes.
 pub const MAX_LEN: usize = MAX_FRAME;
+
+/// Antenna gain over a half-wave dipole, dBd. ERP = conducted power + gain
+/// in dBd. Assumption: the stock 433 MHz antenna is no better than a dipole.
+pub const ANTENNA_GAIN_DBD: i8 = 0;
+
+/// Highest conducted power the console allows: the regulatory ERP limit
+/// (ERC/REC 70-03 band g1, 10 mW; protocol §3) less antenna gain.
+pub const MAX_TX_DBM: i8 = MAX_ERP_DBM - ANTENNA_GAIN_DBD;
+
+/// Lowest power the SX1262 high-power PA can be set to (DS §13.4.4 SetTxParams).
+pub const MIN_TX_DBM: i8 = -9;
+
+/// Time on air of the longest frame.
+pub const MAX_AIRTIME: Duration =
+    Duration::from_micros(time_on_air(MAX_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
 
 /// TCXO start allowance lora-phy programs with SetDIO3AsTCXOCtrl (its
 /// `BRD_TCXO_WAKEUP_TIME`). The chip waits it out on every start of TX, RX,
@@ -53,6 +70,10 @@ const COLD_START: Duration = Duration::from_micros(3500);
 /// unpowered or wedged, and the console says so instead of hanging.
 const BUSY_TIMEOUT: Duration =
     Duration::from_micros(2 * (COLD_START.as_micros() + DRIVER_TCXO_START.as_micros()));
+
+/// Interrupt latency allowed beyond an operation's own duration: twice the
+/// TCXO start plus the STBY_RC to TX switch, 126 µs (DS Table 8-2).
+pub const IRQ_SLACK: Duration = Duration::from_micros(2 * (DRIVER_TCXO_START.as_micros() + 126));
 
 /// NRESET low time: twice the typical 100 µs of DS §8.1.
 const RESET_PULSE_US: u32 = 200;
@@ -139,10 +160,30 @@ impl InterfaceVariant for Pins<'_> {
     }
 }
 
+/// Durations of one transmission, µs.
+pub struct TxTiming {
+    /// Retune, modulation, packet parameters and payload upload.
+    pub prepare_us: u32,
+    /// SetTx to TxDone handled: the TCXO start, the PA ramp and the time on air.
+    pub tx_us: u32,
+}
+
+/// What a receive produced.
+pub enum Received {
+    /// A frame whose CRC passed.
+    Frame { len: usize, status: PacketStatus },
+    /// A frame whose payload CRC failed; the bytes are what arrived.
+    CrcError { len: usize, status: PacketStatus },
+    /// A header that failed its CRC: nothing was received.
+    HeaderError,
+}
+
 /// The powered radio.
 pub struct Radio<'a> {
     lora: Lora<'a>,
     rx_params: PacketParams,
+    irq_deadline: &'a Cell<Option<Instant>>,
+    clock: &'a Clock,
     // Dropping an Output disconnects the pin, which would cut the rail.
     _radio_en: Output<'static>,
     _rail_on: Output<'static>,
@@ -162,6 +203,7 @@ impl<'a> Radio<'a> {
         spim: Peri<'static, peripherals::SPI2>,
         irq: impl Binding<SPI2, spim::InterruptHandler<peripherals::SPI2>> + 'static,
         irq_deadline: &'a Cell<Option<Instant>>,
+        clock: &'a Clock,
     ) -> Result<Radio<'a>, RadioError> {
         let reset = Output::new(pins.reset, Level::Low, OutputDrive::Standard);
         let radio_en = Output::new(power.radio_en, Level::High, OutputDrive::Standard);
@@ -207,6 +249,8 @@ impl<'a> Radio<'a> {
         Ok(Radio {
             lora,
             rx_params,
+            irq_deadline,
+            clock,
             _radio_en: radio_en,
             _rail_on: rail_on,
         })
@@ -226,5 +270,89 @@ impl<'a> Radio<'a> {
         // read as a reception.
         self.lora.clear_irq_status().await?;
         self.lora.start_rx().await
+    }
+
+    /// Move a listening radio to `ch`, keeping everything else.
+    pub async fn retune(&mut self, ch: Channel) -> Result<(), RadioError> {
+        self.lora.rx_switch_channel(ch.hz()).await
+    }
+
+    /// Instantaneous RSSI on the channel being listened to, whole dBm.
+    pub async fn rssi(&mut self) -> Result<i16, RadioError> {
+        self.lora.get_rssi().await
+    }
+
+    /// Send `frame` on `ch` at `dbm` conducted. Leaves the radio in standby.
+    pub async fn transmit(
+        &mut self,
+        ch: Channel,
+        dbm: i8,
+        frame: &[u8],
+    ) -> Result<TxTiming, RadioError> {
+        let len = u8::try_from(frame.len())
+            .map_err(|_| RadioError::PayloadSizeUnexpected(frame.len()))?;
+        let t0 = self.clock.now();
+        let mdl = self.modulation(ch)?;
+        let mut params =
+            self.lora
+                .create_tx_packet_params(MIN_PREAMBLE_SYMBOLS, false, true, false, &mdl)?;
+        self.lora
+            .prepare_for_tx(&mdl, &mut params, dbm.into(), frame)
+            .await?;
+        let prepare_us = self.clock.since(t0);
+        let airtime = Duration::from_micros(time_on_air(len, MIN_PREAMBLE_SYMBOLS).as_micros());
+        let t1 = self.clock.now();
+        self.irq_deadline
+            .set(Some(Instant::now() + airtime + IRQ_SLACK));
+        let result = self.lora.tx().await;
+        self.irq_deadline.set(None);
+        let tx_us = self.clock.since(t1);
+        result.map(|()| TxTiming { prepare_us, tx_us })
+    }
+
+    /// One CAD on `ch`: whether a preamble was seen, the preparation time
+    /// and the CAD time, µs. Leaves the radio in standby.
+    pub async fn cad(&mut self, ch: Channel) -> Result<(bool, u32, u32), RadioError> {
+        let t0 = self.clock.now();
+        let mdl = self.modulation(ch)?;
+        self.lora.prepare_for_cad(&mdl).await?;
+        let prepare_us = self.clock.since(t0);
+        let t1 = self.clock.now();
+        self.irq_deadline.set(Some(Instant::now() + IRQ_SLACK));
+        let result = self.lora.cad(&mdl).await;
+        self.irq_deadline.set(None);
+        let cad_us = self.clock.since(t1);
+        result.map(|busy| (busy, prepare_us, cad_us))
+    }
+
+    /// Wait for DIO1 while listening. Cancel-safe: nothing has been read.
+    pub async fn wait_irq(&mut self) -> Result<(), RadioError> {
+        self.lora.wait_for_irq().await
+    }
+
+    /// Handle the interrupt [`Radio::wait_irq`] reported and, if it began a
+    /// frame, the rest of the frame. The radio keeps listening afterwards.
+    /// Must not be cancelled (the driver's rule for `complete_rx`).
+    pub async fn receive(&mut self, buf: &mut [u8; MAX_LEN]) -> Result<Received, RadioError> {
+        let params = &self.rx_params;
+        let deadline = Instant::now() + MAX_AIRTIME + IRQ_SLACK;
+        self.irq_deadline.set(Some(deadline));
+        let result = self.lora.complete_rx(params, buf).await;
+        self.irq_deadline.set(None);
+        match result {
+            Ok((len, status)) => Ok(Received::Frame {
+                len: len.into(),
+                status,
+            }),
+            Err(RadioError::CrcError) => {
+                let (len, status) = self.lora.get_rx_result(params, buf).await?;
+                Ok(Received::CrcError {
+                    len: len.into(),
+                    status,
+                })
+            }
+            Err(RadioError::HeaderError) => Ok(Received::HeaderError),
+            Err(e) => Err(e),
+        }
     }
 }

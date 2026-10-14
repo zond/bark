@@ -891,7 +891,9 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
           aux = sender's home channel, so the receiver knows where to ACK
 DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
-Type 0x7 is unassigned.
+Type 0x7 is unassigned. Type 0xF is reserved for the bench frames of the
+firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
+unknown type.
 ```
 
 The **message ID** is a 32-bit FNV-1a hash of

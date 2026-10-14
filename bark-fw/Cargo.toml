@@ -25,6 +25,7 @@ embassy-time = "=0.5.1"
 embassy-usb = "=0.6.0"
 embassy-usb-logger = "=0.6.0"
 embassy-futures = "=0.1.2"
+embassy-sync = "=0.8.0"
 log = "=0.4.34"
 cortex-m = { version = "=0.7.9", features = ["critical-section-single-core"] }
 # `set-vtor`: point VTOR at our vector table in the reset handler, so

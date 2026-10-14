@@ -1,32 +1,36 @@
 //! bark firmware for the LILYGO T-Echo: bring-up.
 //!
-//! Blinks the green LED at 1 Hz, logs over USB CDC-ACM, and powers up the
-//! SX1262 at bark's modulation. Touches no GPS, display or BLE.
+//! Blinks the green LED at 1 Hz, logs over USB CDC-ACM, powers up the
+//! SX1262 at bark's modulation and serves the measurement console
+//! (`console.rs`) on the same serial port. Touches no GPS, display or BLE.
 
 #![no_std]
 #![no_main]
 
 mod board;
 mod clock;
+mod console;
 mod radio;
 
 use core::cell::Cell;
 
-use bark_proto::radio::Channel;
 use embassy_executor::Spawner;
 use embassy_futures::join::join4;
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
-use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
+use embassy_nrf::{bind_interrupts, peripherals, saadc, spim, usb};
 use embassy_time::{Duration, Instant, Ticker};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
+// The logger macro constructs the input handler through this trait.
+use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    SAADC => saadc::InterruptHandler;
 });
 
 /// USB vendor ID of pid.codes, the open-source VID registry.
@@ -96,13 +100,18 @@ async fn main(_spawner: Spawner) {
     let mut device = builder.build();
 
     // Installs the global logger now; the returned future drains it to the
-    // host once the host asserts DTR (opens the port).
+    // host once the host asserts DTR (opens the port), and feeds what the
+    // host sends to the console.
     let log_sink = embassy_usb_logger::with_custom_style!(
         LOG_BUFFER,
         log::LevelFilter::Info,
         class,
         |record, writer| {
             use core::fmt::Write as _;
+            if record.target() == console::ECHO {
+                let _ = write!(writer, "> {}\r\n", record.args());
+                return;
+            }
             let ms = Instant::now().as_millis();
             let _ = write!(
                 writer,
@@ -112,7 +121,8 @@ async fn main(_spawner: Spawner) {
                 record.level(),
                 record.args()
             );
-        }
+        },
+        console::HostInput
     );
 
     log::info!("bark-fw {} on LILYGO T-Echo", env!("CARGO_PKG_VERSION"));
@@ -144,20 +154,36 @@ async fn main(_spawner: Spawner) {
 
     let clock = clock::Clock::new(p.TIMER1);
     let irq_deadline = Cell::new(None);
-    let radio = async {
+    let battery = saadc::Saadc::new(
+        p.SAADC,
+        Irqs,
+        saadc::Config::default(),
+        [saadc::ChannelConfig::single_ended(board.battery.adc)],
+    );
+    let mut lines = console::Lines::new();
+    let console = async {
         let t0 = clock.now();
-        match radio::Radio::new(board.radio, board.power, p.SPI2, Irqs, &irq_deadline).await {
-            Ok(mut radio) => {
+        match radio::Radio::new(
+            board.radio,
+            board.power,
+            p.SPI2,
+            Irqs,
+            &irq_deadline,
+            &clock,
+        )
+        .await
+        {
+            Ok(radio) => {
                 log::info!("radio up in {} us", clock.since(t0));
-                let home = Channel::new(0).expect("channel 0 is in the plan");
-                if let Err(e) = radio.rest(home).await {
-                    log::error!("radio: listen on channel 0: {:?}", e);
-                }
-                core::future::pending::<()>().await;
+                console::Console::new(radio, &clock, battery)
+                    .run(&mut lines)
+                    .await
             }
+            // Without a radio there is nothing to measure; USB and the log
+            // keep running so the error can be read.
             Err(e) => log::error!("radio init failed: {:?}", e),
         }
     };
 
-    join4(device.run(), log_sink, blink, radio).await;
+    join4(device.run(), log_sink, blink, console).await;
 }
