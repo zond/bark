@@ -1,15 +1,14 @@
 # bark protocol: Civilian 433 MHz Mesh
 
-**Status:** live specification, 2026-10-14. Consolidated from the October 2026
-design dialogue and maintained here; implementation decisions that refine it
-are recorded in `roadmap.md` with D-numbers, and the "Open items" section
-lists what must still be decided or measured. Where the code and this text
-disagree, one of them is wrong and the fix is a commit to both.
+**Status:** live specification, 2026-10-14. Decisions that refine it are in
+`roadmap.md` with D-numbers; §16 lists what is still to be decided or
+measured. Where the code and this text disagree, one of them is wrong and
+the fix is a commit to both.
 
-A civilian resilience mesh on off-the-shelf hardware, legal without a licence
-in both the EU and Ukraine, that gives phone apps a way to message each other
-across a city when ordinary infrastructure is gone. It is **not** designed to
-resist electronic warfare. Scope is infrastructure loss, not jamming.
+A mesh network of cheap radio nodes, legal without a licence in the EU and
+Ukraine, that lets phone apps message each other across a city when
+ordinary infrastructure is gone. It is **not** designed to survive
+deliberate jamming; it is designed for infrastructure loss.
 
 ---
 
@@ -18,17 +17,17 @@ resist electronic warfare. Scope is infrastructure loss, not jamming.
 | Item | Decision |
 |---|---|
 | Hardware | LILYGO T-Echo, 433 MHz variant (nRF52840 + SX1262 + L76K GPS + e-ink + BLE 5.0 + 850 mAh), one firmware for all roles |
-| Band | 433.050–434.790 MHz, 10 mW ERP, ≤10% duty cycle per node (legal EU and Ukraine) |
-| Modulation | LoRa, SF5, 125 kHz, CR 4/5. Fixed network-wide from day one; no SF migration path |
-| Channels | 13 × 125 kHz; each node picks its **home channel** by measured busy fraction (RSSI), no grid, no time sync |
-| MAC | Always listening on home channel, leaving it only for own transmit bursts; ACKs arrive on the sender's home channel; listen-before-talk (CAD + RSSI) before every transmission; transmit as soon as clear; no slots |
-| Heartbeat | 8 bytes (type and channel nibbles, then a 7-byte global position), every 5–15 s uniformly random, on a channel that steps through all 13 in order |
-| Neighbour discovery | Passive: a node hears every neighbour once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
-| Routing | Greedy forwarding to a destination **position**, DFS void recovery, per-hop ACK, demote neighbour on ACK failure |
-| Addressing | A relay position plus a 4-byte leaf ID; a relay's position is its only identity; no registration, no gossip, no global table |
-| Roles | Relay (mains/USB/solar, beacons, forwards, holds leaf table and delivery queue) and leaf (battery, attaches to one relay, otherwise silent) |
-| Phones | BLE GATT to the node; app does end-to-end encryption; sender position travels encrypted in the payload |
-| Position | Global WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), no per-deployment origin; distance math in a local tangent plane at each node; GPS when available, else user-entered; never used for timing; relays use surveyed coordinates |
+| Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
+| Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
+| Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
+| Medium access | Always listening on the home channel, leaving it only to transmit; acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
+| Heartbeat | A relay's periodic 8-byte broadcast of its home channel and position, every 5–15 s at random, on a channel that steps through all 13 in order |
+| Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
+| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; stop using a neighbour that fails to ACK |
+| Addressing | A relay position plus a 4-byte leaf ID; a relay's position is its only identity; no registration, no network-wide tables |
+| Roles | **Relay**: a fixed node on mains, USB or solar that sends heartbeats, forwards, and holds messages for its leaves. **Leaf**: a carried node on battery that attaches to one relay and otherwise stays silent |
+| Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
+| Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; GPS when available, else entered by the user; relays use surveyed coordinates; never used for timing |
 | Time | No network time synchronisation of any kind |
 
 ---
@@ -38,31 +37,30 @@ resist electronic warfare. Scope is infrastructure loss, not jamming.
 **LILYGO T-Echo, 433 MHz build.** nRF52840 (Nordic, Norway), SX1262
 (Semtech, US, EAR99), Quectel L76K GNSS, 1.54" e-ink, BLE 5.0, 850 mAh
 Li-ion, USB-C charging, UF2 bootloader. About $54 direct, ~€116 from EU
-stock. Confirm the LoRa module is the 433 build (SX1262 with 433 MHz
-matching), not the 868/915 build; the 868 board's matching network makes
-433 MHz operation lossy and out of spec.
+stock. Check that the LoRa module is the 433 MHz build, not the 868/915
+build: the 868 board's antenna matching makes 433 MHz operation lossy and
+out of spec.
 
-Alternatives, same chipset, same firmware:
+Same chipset, same firmware, for rooftop relays:
 
 - **RAK WisBlock** RAK4631 EU433 (PN 111000) + RAK19003/19007 base +
-  RAK12500 GPS, for rooftop relays in solar enclosures; a RAK13300 in an
-  IO slot would give a second SX1262 if a dedicated scanner is ever needed.
-- **RAK WisMesh Repeater Mini V2** (solar + 3200 mAh) for roofs, if a 433
-  build is confirmed available.
+  RAK12500 GPS, in a solar enclosure.
+- **RAK WisMesh Repeater Mini V2** (solar + 3200 mAh), if a 433 MHz build
+  is available (O12).
 
-The SX1262 is not European. The exception is accepted because no European
-part offers nRF52840 + SX1262-class integration off the shelf at this price,
-and the product premise is that any user can buy and plant a node.
-STM32WL55 (ST) is the European fallback but has no BLE.
+The SX1262 is not European. No European part offers nRF52840 + SX1262
+integration off the shelf at this price, and the premise is that anyone can
+buy and plant a node. ST's STM32WL55 is the European fallback but has no
+BLE.
 
-Roles are a runtime toggle. Carried on battery: leaf. Plugged into USB on a
-windowsill, or in a solar box on a roof: relay.
+The role is a runtime setting. Carried on battery: leaf. Plugged into USB
+on a windowsill, or in a solar box on a roof: relay.
 
 ---
 
 ## 3. Regulatory envelope
 
-Both regimes are modulation-agnostic in this band.
+Both regimes allow any modulation in this band.
 
 | | EU (ERC/REC 70-03, Annex 1, band g1; "f1" in editions before 2026) | Ukraine (NCEC decision 81 of 12.02.2025, row РІ 50-3-1, as amended by decision 212 of 06.05.2026) |
 |---|---|---|
@@ -70,16 +68,16 @@ Both regimes are modulation-agnostic in this band.
 | Power | 10 mW ERP | 10 mW ERP |
 | Duty cycle | ≤10% | <10% |
 | Channel spacing | no requirement | no requirement |
-| LBT | not required | not required |
+| Listen-before-talk | not required | not required |
 
-Implement: rolling one-hour airtime budget per node capped at 10%; a
-single transmission never exceeds 1 s (SF5 packets are ≤140 ms anyway).
-TX power setting such that ERP ≤ +10 dBm with the fitted antenna: with the
-stock antenna (≈0 dBd) that is +10 dBm at the connector.
+Implement: a rolling one-hour airtime budget per node capped at 10%; no
+single transmission longer than 1 s (SF5 packets are ≤140 ms anyway).
+Transmit power such that ERP ≤ +10 dBm with the fitted antenna: with the
+stock antenna (≈0 dBd gain) that is +10 dBm at the connector.
 
-The 868 MHz band was rejected for Ukraine (no 500 mW sub-band; 868.0–868.6
-MHz is 14 dBm at <1%), and 2.4 GHz for range. 433 MHz is the only band
-with identical rules in both jurisdictions.
+The 868 MHz band does not work for Ukraine (no 500 mW sub-band; 868.0–868.6
+MHz is 14 dBm at <1%), and 2.4 GHz has too little range. 433 MHz is the
+only band with identical rules in both jurisdictions.
 
 ---
 
@@ -87,37 +85,36 @@ with identical rules in both jurisdictions.
 
 | Parameter | Value | Note |
 |---|---|---|
-| Modulation | LoRa (CSS) | SX1262 native; `lora-phy` Rust driver exists |
+| Modulation | LoRa (chirp spread spectrum) | SX1262 native; `lora-phy` Rust driver exists |
 | Spreading factor | 5, fixed network-wide | SF5/SF6 are SX126x-only; all nodes are SX126x. Compile-time constant, changeable only for bench work |
 | Bandwidth | 125 kHz | |
 | Coding rate | 4/5 | |
 | Raw bit rate | 15.6 kbps at SF5 | 5.5 kbps at SF7 |
 | Symbol time | 0.256 ms at SF5 | |
-| Preamble | 8 symbols (≈2 ms) + sync; **no long preambles** except for duty-cycled leaves (§10.5) | |
+| Preamble | 8 symbols (≈2 ms) + sync; **no long preambles** except to duty-cycled leaves (§10.5) | |
 | 255-byte packet | ≈140 ms at SF5 | ≈400 ms at SF7 |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
-| Noise floor (125 kHz, NF≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
-| Sync word | private (not the LoRaWAN 0x34) | keeps LoRaWAN/Meshtastic from decoding us and vice versa |
+| Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: signal strength (RSSI) cannot see them, channel activity detection (CAD) can |
+| Sync word | private (not the LoRaWAN 0x34) | other LoRa networks and this one ignore each other's packets |
 | CRC | on (LoRa hardware CRC) | |
-| MTU | 255 bytes | SX126x maximum LoRa payload |
+| Maximum packet (MTU) | 255 bytes | SX126x maximum LoRa payload |
 | Range, relay↔handheld, street | ≈750 m at SF5, ≈1 km at SF7 | |
 | Range, relay↔handheld, indoors | ≈300 m at SF5, ≈400 m at SF7 | |
-| Range, rooftop↔rooftop | several km | rooftop relays hear ≈3 km; this sets the collision domain |
+| Range, rooftop↔rooftop | several km | rooftop relays hear ≈3 km; this sets the size of a collision domain (§13) |
 
-Why SF5 rather than GFSK: about 3× the bytes per airtime of SF7 for a
-quarter less range, with the existing driver, hardware FEC/CRC/whitening,
-channel activity detection, and ~15 dB of chirp processing gain against
-the key fobs and LPD433 handhelds that share the band. GFSK at 50 kbps
-would give a further 3× at 40% of the range and would need a modem driver
-and an FEC written from scratch. Rejected for now; nothing above the modem
-would change if it is revisited.
+RSSI is the received power the radio reports; CAD is the radio's check for
+a LoRa preamble on the channel, and works below the noise floor.
 
-SF is a network-wide constant because an SX1262 receives one SF at a time,
-so a mixed-SF network partitions. The network starts at SF5 and stays
-there: an SF7 start would need a flag-day migration later, and the
-deployment is expected to begin at a density where SF5 range suffices
-(indoor coverage at ≈9.6 relays/km², §13). The SF7 column in the table
-above is kept for comparison only.
+SF5 carries about 3× the bytes per unit of airtime of SF7 (the common LoRa
+default) for a quarter less range. LoRa brings an existing driver, hardware
+error correction, CRC and whitening, CAD, and ~15 dB of processing gain
+against the key fobs and LPD433 handhelds that share the band. GFSK: §13.
+
+SF is network-wide because an SX1262 receives one SF at a time, so a
+mixed-SF network splits into parts that cannot hear each other. Starting
+at SF7 would force a network-wide switch later; the deployment is expected
+to start at a density where SF5 range suffices (indoor coverage at ≈9.6
+relays/km², §13).
 
 ---
 
@@ -138,11 +135,8 @@ fobs, sensors). The selection rule in §6 avoids it wherever it is busy.
 spacing with a neighbour at full power. If it is inadequate, fall back to
 11 channels at 150 kHz spacing (same end centres, 433.170–434.670 MHz).
 
-There is no fixed colouring and no position-derived channel. Capacity
-analysis (§13) showed that in this regime, where a rooftop relay's hearing
-radius (~3 km) is far larger than a cell (~700 m), a fixed hex colouring
-only partitions load evenly; measured selection does the same and also
-adapts to hot spots and foreign interferers.
+Channels are not assigned by a fixed grid or derived from position; each
+node measures and chooses (§6). Why not a grid: §13.
 
 ---
 
@@ -154,68 +148,66 @@ channel.
 
 ### 6.1 Busy estimate
 
-Per channel, maintain `busy[c]`, an exponential moving average of a binary
-busy indicator:
+Per channel, keep `busy[c]`, an exponential moving average of a 0/1 busy
+reading:
 
 - **Sweep:** once per second, when the modem reports no preamble detected
-  or packet in progress: retune through all 13 channels, one RSSI reading
-  each (≈0.3 ms dwell after retune), retune home. ≈5 ms, ≈0.5%
-  off-channel.
-- **Cost, and why it is not worth optimising:** a packet whose preamble
-  overlaps the 5 ms gap is lost and retransmitted after the ACK timeout.
-  With the 8-symbol preamble that is ≈0.5% of arrivals, well below CSMA
-  collision loss. Spreading the 13 samples across the second does not
-  help by itself: the lost window per gap is `g + 2D − P` (gap, modem lock
-  requirement, preamble length), and with P ≈ 2D thirteen small gaps lose
-  as much as one burst. Spreading plus a 12-symbol preamble would remove
-  the loss entirely, but costs 1 ms on every packet, ≈3% of airtime on a
-  text plus its ACK, six times the loss it prevents. Rejected. If the
-  loss ever matters, sweep every 2 s instead.
-- **Indicator:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0.
-  Average the indicator, not the dBm: the quantity of interest is the
-  fraction of time listen-before-talk would refuse.
-- **Window:** α ≈ 1/600 per sample (≈10 minutes at one sample per channel per second).
-  One sample per heartbeat interval is too sparse; 60 samples per window
-  gives ±4 points on a 10% channel, the same size as the differences the
+  and no packet in progress: retune through all 13 channels, one RSSI
+  reading each (≈0.3 ms after retune), retune home. ≈5 ms, ≈0.5% of the
+  time off the home channel.
+- **Cost:** a packet whose preamble overlaps the 5 ms gap is lost and
+  retransmitted after the ACK timeout. With the 8-symbol preamble that is
+  ≈0.5% of arrivals, well below loss to collisions. Spreading the 13
+  samples across the second does not help by itself: the window lost per
+  gap is `g + 2D − P` (gap, time the modem needs to lock, preamble
+  length), and with P ≈ 2D thirteen small gaps lose as much as one burst.
+  Spreading plus a 12-symbol preamble would remove the loss, but costs
+  1 ms on every packet, ≈3% of airtime on a text plus its ACK, six times
+  the loss it prevents. If the loss ever matters, sweep every 2 s instead.
+- **Reading:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0.
+  Average the 0/1 reading, not the dBm: what matters is the fraction of
+  time listen-before-talk would refuse.
+- **Window:** α ≈ 1/600 per sample (≈10 minutes at one sample per channel
+  per second). One sample per heartbeat interval would give 60 samples
+  per window, ±4 points on a 10% channel, as large as the differences the
   rule acts on.
-- **Home channel:** additionally count the node's own receive time
-  (preamble detected to packet end, from modem IRQs) as busy, so the home
-  estimate is better than the sampled ones. That bias is in the safe
+- **Home channel:** also count the node's own receive time (preamble
+  detected to packet end, from modem interrupts) as busy, so the home
+  estimate is more accurate than the sampled ones. The bias is in the safe
   direction for a "should I move" decision.
 - **Noise floor:** calibrate per device at boot as a low percentile of RSSI
   readings over the first rotation; recalibrate slowly.
 
-Foreign transmitters (key fobs, LPD433 handhelds) count exactly like peers.
-Peer counting from heartbeats was considered and rejected: two neighbours
-on one channel that hear each other share it cleanly under LBT; what hurts
-is busy time at the receiver, and RSSI measures that directly.
+Foreign transmitters (key fobs, LPD433 handhelds) count exactly like
+peers. What hurts a node is busy time at its own receiver, and RSSI
+measures that directly; counting neighbours per channel would not, since
+two neighbours that hear each other share a channel cleanly.
 
 ### 6.2 Boot
 
-Listen on a random channel for one full rotation period (≈150 s),
-collecting sweeps and heartbeats. Then set home to `argmin busy[c]`,
-breaking ties randomly (±0.01). Nodes that hear nothing must not all pick
+Listen on a random channel for one full rotation (≈150 s), collecting
+sweeps and heartbeats. Then set home to `argmin busy[c]`, breaking ties
+randomly (±0.01), so that nodes that hear nothing do not all pick
 channel 0. A config override exists for bench work.
 
 ### 6.3 Move rule
 
 Move only when `busy[home] − min_c busy[c] > 0.05` continuously for
-10 minutes; then wait a uniformly random 0–5 minutes, re-check, and move
-to `argmin` with random tie-break. Immediately after retuning, send **one
+10 minutes; then wait a random 0–5 minutes, re-check, and move to
+`argmin` with random tie-break. Immediately after retuning, send **one
 heartbeat on the old channel** (it carries the new channel): that retunes
 the node's leaves and any neighbour parked on the old channel at once.
 No other announcement. Neighbours that miss it learn the new channel from
 the next rotation (≤130 s) or from ACK failure (§9.3).
 
-Hysteresis exists to make moves rare, not to announce them. Without it,
-every rooftop relay in a domain sees the same ranking and jumps together.
+The hysteresis keeps moves rare. Without it, every rooftop relay in range
+of the same interference sees the same ranking and they all jump together.
 
 ---
 
 ## 7. Heartbeat
 
-Every node that forwards (relay role) sends a heartbeat. Leaves do not
-(§10).
+Every relay sends a heartbeat. Leaves do not (§10).
 
 | Field | Bits | Content |
 |---|---|---|
@@ -225,35 +217,33 @@ Every node that forwards (relay role) sends a heartbeat. Leaves do not
 | lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
 | spare | 5 | zero |
 
-8 bytes, ≈12 ms on air at SF5. No node ID: a relay's position
-**is** its identity (§8.1). No sequence number: there is no gossip to age
-out, relays do not move, and an unsigned counter adds nothing. No flags
-byte: the variants that matter are type codes.
+8 bytes, ≈12 ms on air at SF5. There is no node ID: a relay's position
+**is** its identity (§8.1).
 
 The position is global: one firmware and one app everywhere, no
 per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
 49 bits, so 51 bits in 7 bytes is within 2 bits of the minimum;
-decimetre precision would need 58 bits. S2 cells, geohash and UTM were
-considered and all land at 50–51 bits for 1 m; plain fixed-point
-latitude/longitude is the one with trivial distance math (§11).
+decimetre precision would need 58 bits. Plain fixed-point latitude and
+longitude keeps distance math trivial (§11).
 
 **Timing:** interval uniformly random in [5, 15] s, mean 10 s.
-**Channel:** steps deterministically, `k ← (k + 1) mod 13` per heartbeat,
-with a random start. The time is randomised, the channel is not: a
-deterministic cycle reaches every neighbour once per 13 heartbeats
-(≈130 s); a random channel per heartbeat would need ≈41 heartbeats on
-average to cover all 13 (coupon collector).
-**Procedure:** retune to channel k, listen-before-talk (CAD + RSSI, ≈1 ms),
-if busy retry after a random 0–200 ms up to three times, then skip; send;
-retune home. The node is deaf for ≈15 ms per heartbeat, ≈0.2%.
+**Channel:** steps `k ← (k + 1) mod 13` per heartbeat, from a random
+start. The time is random, the channel order is not: a fixed cycle
+reaches every neighbour once per 13 heartbeats (≈130 s), where a random
+channel per heartbeat would need ≈41 heartbeats on average to cover all
+13.
+**Procedure:** retune to channel k, listen-before-talk (CAD + RSSI,
+≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
+skip; send; retune home. The node is deaf for ≈15 ms per heartbeat, ≈0.2%.
 
-Why this works with no scanning: every node sits still on its home
-channel; every neighbour's heartbeat rotates through all channels; so each
-neighbour lands on your channel once per rotation. A joiner, or a leaf,
+This is why no scanning is needed: every node sits on its home channel,
+every neighbour's heartbeat visits all channels, so each neighbour lands
+on your channel once per rotation. A newly started node, or a leaf,
 listening on any one channel hears every relay in range within one
-rotation. (This is the Bluetooth LE advertising pattern.)
+rotation.
 
-Per-channel heartbeat load in a 270-relay rooftop domain: ≈2.5%.
+Heartbeat load per channel among 270 rooftop relays that all hear each
+other: ≈2.5%.
 
 ---
 
@@ -262,27 +252,27 @@ Per-channel heartbeat load in a 270-relay rooftop domain: ≈2.5%.
 ### 8.1 Relay identity is position
 
 A relay has no node ID. Its identity is `(x, y)` from its heartbeat, which
-is also its address (§9.1); the two were redundant. Consequences:
+is also its address (§9.1). Consequences:
 
-- A relay **freezes** its position once accepted: a surveyed entry from
+- A relay **freezes** its position once accepted: a surveyed position from
   the app, or the first plausible GPS fix. Later GPS readings never update
   it. A changed position is a new identity and needs an explicit reset
   from the app.
 - At boot, during the one-rotation listen (§6.2), a relay that hears its
-  own exact position in another relay's heartbeat offsets itself by 1 m
-  and listens again. Two relays at one position would in any case behave
-  like one relay with two radios: both ACK, both forward, and duplicates
-  are suppressed downstream. The rule is tidiness, not correctness.
+  own exact position in another relay's heartbeat moves itself by 1 m
+  and listens again. This is tidiness, not correctness: two relays at one
+  position behave like one relay with two radios (both ACK, both forward,
+  and duplicates are dropped downstream).
 - Hop references in packets (`dst_hop`, `dst_pos`, `relay_pos`) are the
-  full 7-byte position. Hashing them to 2–3 bytes was considered and rejected:
-  the saving is one 20-bit LoRa block, ≈1.3 ms per packet, not worth a
-  collision case. The DFS visited list is the exception: it carries a
-  16-bit hash per entry so that a 16-deep list is 32 bytes rather than 112,
-  and a collision there only skips a candidate.
+  full 7-byte position. Hashing them to 2–3 bytes would save one 20-bit
+  LoRa block, ≈1.3 ms per packet, at the price of possible collisions.
+- The **visited list** is the list of relays a message has passed through
+  while routing around a gap (§9.2). It carries a 16-bit hash per relay,
+  so a 16-deep list is 32 bytes rather than 112; a hash collision only
+  skips a candidate.
 - Leaves keep a 4-byte ID because they move. The app generates it at
   random; a collision matters only between leaves attached to the same
-  relay (≈2 × 10⁻⁵ at 400 leaves). No provisioning step exists for either
-  role.
+  relay (≈2 × 10⁻⁵ at 400 leaves). Neither role needs a setup step.
 
 ### 8.2 Table
 
@@ -293,19 +283,19 @@ Per node, up to 64 entries:
 | x, y | from heartbeat; the entry key and the neighbour's identity |
 | channel | from heartbeat (the channel to transmit to this neighbour on) |
 | last_heard | local monotonic time |
-| rssi_ema | for leaf relay choice and tie-breaking |
+| rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
 | fail_count | consecutive ACK failures |
 
 - **Expire** after 3 rotations (≈400 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
-  `fail_count ≥ 2` is skipped for next-hop selection until its next
-  heartbeat resets it. Liveness by heartbeat alone takes minutes; a failed
-  forward must demote at once.
+  `fail_count ≥ 2` is not used as a next hop until its next heartbeat
+  resets it. Heartbeat expiry takes minutes; a failed forward must demote
+  at once.
 - **Eviction** when full: least recently heard. (Open item O4: rooftop
   relays hear ~270 relays; a geographically diverse set is better for
   greedy routing than the 64 most recent.)
 
-No neighbour table entry for leaves; leaves live in the leaf table (§10).
+Leaves are not in the neighbour table; they are in the leaf table (§10).
 
 ---
 
@@ -315,11 +305,11 @@ No neighbour table entry for leaves; leaves live in the leaf table (§10).
 
 A destination address is `(x, y, leaf_id)`: the position of the relay the
 recipient is attached to, plus the recipient's 4-byte ID. Relays have
-`leaf_id = 0`, i.e. the relay itself, so a relay's address and its identity
-are the same six bytes (§8.1). A sender learns an address from a
-previous message (the sender address is carried in the encrypted payload),
-from a QR code, or from a directory; the network provides no lookup.
-Geocast to an area is a natural extension (open item O7).
+`leaf_id = 0`, meaning the relay itself, so a relay's address is its
+identity (§8.1). A sender learns an address from a previous message (the
+sender's address is carried in the encrypted payload), from a QR code, or
+from a directory; the network provides no lookup. Sending to an area is
+open item O7.
 
 The network carries no sender address and sends no failure notices. The
 only acknowledgement in the protocol is the per-hop ACK (§9.3); whether a
@@ -328,9 +318,10 @@ whatever acknowledgement it puts inside the encrypted payload.
 
 ### 9.2 Greedy forwarding
 
-Forward to the neighbour (relay role, not demoted) that minimises
-Euclidean distance to the destination position. If no neighbour is closer
-than self, enter DFS void recovery.
+Forward to the neighbour (relay, not demoted) closest to the destination
+position in straight-line distance. If no neighbour is closer than self,
+the packet has reached a gap and is routed around it by depth-first search
+(DFS).
 
 Each relay keeps, for every message it has forwarded and for a bounded
 time, the neighbour it first received the message from (its parent) and
@@ -343,10 +334,11 @@ drops the message.
 The packet's visited list holds the hash of every relay that has forwarded
 it, appended on each forward, and is bounded; when it fills, the packet is
 dropped. Its last entry identifies the previous hop, matched against the
-neighbour table by hash with the home channel in `aux` as tie-break. A
+neighbour table by hash, with the home channel the packet names for its
+sender (§14) as tie-break. A
 repeat that arrives from the parent is a retransmission and is only ACKed;
-a repeat from a neighbour we forwarded to is a backtrack. DFS is for
-geographic voids only; it is never used to search for an ID.
+a repeat from a neighbour we forwarded to is a backtrack. DFS is only for
+routing around gaps, never for searching for an ID.
 
 A relay **owns** a destination when it is the closest relay the packet can
 reach: no non-demoted neighbour is closer to `(x, y)`. The owner looks
@@ -362,90 +354,90 @@ Nothing wider: a wider search is a flood.
 
 1. Retune to the next hop's home channel.
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
-   retry; give up after 500 ms and reselect the next hop.
+   retry; give up after 500 ms and choose another next hop.
 3. Transmit. The packet carries the sender's home channel (§14).
-4. Retune home immediately. Do not dwell on the other channel.
+4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
    ≈10 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: random backoff, retry, up to 3 attempts; then demote the
-   neighbour and reselect.
+   neighbour and choose another next hop.
 
-The receiver retunes to the sender's channel, listen-before-talk, sends
-the ACK, retunes home. ACK: first byte, msg_id (5 bytes, ≈10 ms). It has
-no target address; the sender matches it by `msg_id` against its
-outstanding transmissions.
+The receiver retunes to the sender's channel, listens before talking,
+sends the ACK, and retunes home. The ACK is the first byte and the
+`msg_id` (5 bytes, ≈10 ms). It has no target address; the sender matches
+it by `msg_id` against its outstanding transmissions.
 
-The rule this gives is uniform: **a node receives everything, ACKs
-included, on its home channel, and leaves it only for its own transmit
-bursts.** A leaf's home channel is its relay's, so leaf ↔ relay traffic
-and its ACKs never retune at all. A relay is deaf for ≈15 ms per packet it
-forwards or ACKs; a sender that gets no ACK simply retries. A receiver
-that has already handled a message classifies a repeat by who sent it: from
-its parent, a retransmission, ACKed and otherwise ignored; from a neighbour
-it forwarded to, a backtrack (§9.2). Accepted cost of one radio.
+So: **a node receives everything, ACKs included, on its home channel, and
+leaves it only to transmit.** A leaf's home channel is its relay's, so
+leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
+≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
+That is the cost of having one radio. A receiver that has already handled
+a message classifies a repeat by who sent it: from its parent, a
+retransmission, ACKed and otherwise ignored; from a neighbour it forwarded
+to, a backtrack (§9.2).
 
 ### 9.4 Duty cycle cap
 
-At SF5, 10% of airtime is ≈180 B/s per relay. A busy relay saturates
-before its channel does. Greedy forwarding does not load-balance; central
-rooftop relays will be the first to hit this. When the budget is
+At SF5, 10% of airtime is ≈180 B/s per relay, so a busy relay runs out of
+budget before its channel fills. Greedy forwarding does not spread load;
+central rooftop relays will hit the cap first. When the budget is
 exhausted the relay stops forwarding and drops what it cannot send, but
-keeps heartbeating.
+keeps sending heartbeats.
 
 ---
 
 ## 10. Leaves
 
-A leaf is a carried node on battery. It **never heartbeats on the rotating
-schedule** (at household density that would be hundreds of percent of
-airtime on every channel) and never forwards.
+A leaf is a carried node on battery. It **never sends heartbeats** (at
+household density that would be hundreds of percent of airtime on every
+channel) and never forwards.
 
 ### 10.1 Relay choice
 
-Camped on its relay's home channel, a leaf hears every relay in range once
-per rotation (≈130 s). It keeps `rssi_ema` per relay and switches to
-another relay when that relay has been stronger by ≥6 dB for two
-consecutive sightings. Handover is make-before-break. Walking pace gives
-two to four sightings per relay per cell; vehicles cannot track and rely
-on the delivery queue plus re-attach on arrival.
+Listening on its relay's home channel, a leaf hears every relay in range
+once per rotation (≈130 s). It keeps an averaged RSSI per relay and
+switches to another relay when that relay has been stronger by ≥6 dB for
+two consecutive heartbeats. It attaches to the new relay before leaving
+the old one. At walking pace a leaf hears each relay two to four times
+while in its coverage; vehicles cannot keep up and rely on the delivery
+queue plus re-attaching on arrival.
 
-A leaf that hears no relay for 3 rotations sweeps: it stays on any channel
-and waits; every relay in range will appear within one rotation.
+A leaf that hears no relay for 3 rotations stays on any channel and
+waits; every relay in range will appear within one rotation.
 
 ### 10.2 Attach and keepalive
 
-`ATTACH {type, leaf_id, relay_pos, flags}` unicast to the relay on its home
-channel with LBT and ACK. Flags carry the leaf's receive mode (§10.5).
-Repeat every 60 s as keepalive, and immediately on relay change. The
-relay's **leaf table** (`leaf_id, last_seen, rssi, rx_mode`) is separate
-from the neighbour table; entries expire after 3 missed keepalives
-(180 s). Leaf table size: 256 entries per relay (≈80 leaves per relay
-expected at indoor density in Kyiv with 10% adoption; 400 at 50%).
+`ATTACH {type, leaf_id, relay_pos, flags}` is sent to the relay on its
+home channel with listen-before-talk and ACK. The flags carry the leaf's
+receive mode (§10.5). Repeat every 60 s as a keepalive, and immediately on
+changing relay. The relay's **leaf table** (`leaf_id, last_seen, rssi,
+rx_mode`) is separate from the neighbour table; entries expire after 3
+missed keepalives (180 s). Leaf table size: 256 entries per relay (≈80
+leaves per relay expected at indoor density in Kyiv with 10% adoption; 400
+at 50%).
 
-Keepalive cost per channel at 80 leaves per relay: ≈2%; at 400: ≈12%.
-This is why the interval is 60 s and not 10 s.
+Keepalive load per channel at 80 leaves per relay: ≈2%; at 400: ≈12%.
+That is why the interval is 60 s and not 10 s.
 
 ### 10.3 Delivery
 
-The owning relay transmits the message to the leaf on the relay's own home
-channel (the leaf is camped there), LBT first, and waits for the leaf's
-ACK. Preamble length per the leaf's declared receive mode (§10.5).
+The owning relay sends the message to the leaf on the relay's own home
+channel (the leaf listens there), listen-before-talk first, and waits for
+the leaf's ACK. Preamble length per the leaf's receive mode (§10.5).
 
 ### 10.4 Delivery queue
 
-Bounded, not a mailbox: up to 64 messages per relay, TTL 10 minutes.
-Retry delivery on the leaf's next keepalive and every 60 s. On expiry the
-message is dropped. The owner remembers delivered `msg_id`s for the TTL
-and ACKs a repeat without delivering it twice. Rationale: a queued message
-costs no airtime, a failed delivery costs a retry across the city; the
-common case is a phone in a pocket, a basement, or the metro for a few
-minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
+Bounded, not a mailbox: up to 64 messages per relay, kept for 10 minutes
+(the delivery TTL). Retry delivery on the leaf's next keepalive and every
+60 s. On expiry the message is dropped. The owner remembers delivered
+`msg_id`s for the TTL and ACKs a repeat without delivering it twice. A
+queued message costs no airtime; a failed delivery costs a retry across
+the city; the common case is a phone in a pocket, a basement, or the metro
+for a few minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
 
-A handoff pointer (new relay notifies the old one, which forwards queued
-messages) was considered and dropped as complexity: the queue plus the
-sender's own retry covers the moved-leaf case. Overhearing by neighbouring
-relays does not work because neighbouring relays are on different
-channels.
+The queue plus the sender's own retry covers a leaf that has moved to
+another relay; the old relay does not forward to the new one. Neighbouring
+relays cannot overhear deliveries, because they are on different channels.
 
 ### 10.5 Leaf receive mode
 
@@ -455,64 +447,58 @@ channels.
 | Duty-cycled (sleep, CAD every 500 ms) | ≈0.3 mA + sleep | months | ≥512 ms | no: blind to relay changes |
 | Hybrid: full listen one rotation every 10 min, CAD between | ≈1.3 mA | ≈25 days | ≥512 ms | during the awake rotation |
 
-The leaf declares its mode in ATTACH flags; the relay sets the preamble
-accordingly. Long preambles are cheap in airtime because deliveries are
-rare (≈0.5% of a channel per day at 80 leaves × 10 messages). Default:
-always listening while USB/charging, hybrid on battery. GPS off after a
-fix, and off after 10 minutes without a fix (searching under jamming is
+The leaf declares its mode in ATTACH; the relay sets the preamble to
+match. Long preambles cost little airtime because deliveries are rare
+(≈0.5% of a channel per day at 80 leaves × 10 messages). Default: always
+listening while on USB or charging, hybrid on battery. GPS off after a
+fix, and off after 10 minutes without a fix (searching under jamming draws
 ≈27 mA, ≈1.3 days).
 
 ---
 
 ## 11. Position, time, phone link
 
-**Position.** GPS (L76K) is used for position only and is treated as an
-untrusted prior: accept a fix only if plausible (within 50 m of the last
-accepted position for a stationary relay, neighbour consistency, C/N0
-sanity). Rooftop and windowsill relays use surveyed or user-entered
-coordinates from the app, which override GPS. Positions on the wire are
-global WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
+**Position.** GPS (L76K) is used for position only and is not trusted
+blindly: accept a fix only if plausible (within 50 m of the last accepted
+position for a stationary relay, consistent with neighbours, satellite
+signal-to-noise C/N0 sane). Rooftop and windowsill relays use surveyed or
+user-entered coordinates from the app, which override GPS. Positions on
+the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
 7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
-converts every position it handles into metres in a local tangent plane
-centred on itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`,
-with `cos(lat_self)` a per-node constant. The error grows with
+converts every position it handles into metres on a flat plane centred on
+itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
+`cos(lat_self)` a per-node constant. The error grows with
 Δlat · tan(lat): at 50° N it is 0.1% at 5 km and 0.4% at 20 km, enough to
-reorder only near-ties between candidate hops. Neighbour-table
-entries store both the wire form (identity) and the local form
-(distance). No UKF, no trilateration: every relay is an anchor.
+reorder only near-ties between candidate hops. Neighbour-table entries
+store both the wire form (identity) and the local form (distance). Every
+relay knows its own position; nothing is estimated cooperatively.
 
 **Time.** No network time. GPS time is never used. All timers are local
 monotonic. Nothing in the protocol depends on two nodes agreeing on a
 clock.
 
-**Phone link.** BLE 5.0 GATT service on the nRF52840 (nrf-softdevice S140
-or TrouBLE): characteristics for send, receive-notify, node status,
-position set, role set. WiFi was rejected (power, no WiFi on the board).
-The app owns identity and end-to-end encryption; the node sees opaque
-payloads. The sender's address `(x, y, leaf_id)` travels inside the
+**Phone link.** BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
+D5): characteristics for send, receive-notify, node status, position set,
+role set. The app owns identity and end-to-end encryption; the node sees
+opaque payloads. The sender's address `(x, y, leaf_id)` travels inside the
 encrypted payload so that only the recipient learns where the sender is.
-Crypto scheme: open item O1.
+Encryption scheme: open item O1.
 
 ---
 
 ## 12. What the protocol deliberately omits
 
-Each of these is a familiar mesh mechanism that was considered and left out,
-with the reason, so that nobody re-proposes it without a new argument.
+Common mesh mechanisms left out, and why.
 
 | Omitted | Instead | Why |
 |---|---|---|
-| Neighbour gossip in heartbeats and a global node table | 7-byte position-only heartbeat; routing uses only direct neighbours | gossip convergence does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
-| Sequence numbers in heartbeats | none | they exist to age gossip; without gossip they carry nothing |
+| Neighbour lists in heartbeats and a network-wide node table | 8-byte position-only heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Sequence numbers in heartbeats | none | they exist to age shared tables; without those they carry nothing |
 | A node ID on every node | relays are identified by position; only leaves carry a 4-byte ID, generated by the app | relays do not move, and an ID would duplicate the address |
-| Slotted transmission on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
-| A protocol time unit scaled by the duty cycle | τ = one packet airtime (MTU at SF5, ≈140 ms); duty cycle is a separate per-node budget (§9.4) | scaling τ by the duty cycle inflates every protocol timer tenfold |
-| Cooperative position estimation (filters, trilateration, calibration rounds) | every relay knows its position from GPS or survey and is an anchor | §11 |
-| One table for all nodes | a neighbour table for relays (§8) and a leaf table for attached leaves (§10) | thousands of leaves must not enter routing |
+| Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
+| Cooperative position estimation | every relay knows its position from GPS or survey | §11 |
 | Heartbeats on one fixed channel | rotating channel, random 5–15 s interval | §7 |
-| ID-addressed delivery with a lookup | position + leaf ID; the owning relay resolves the ID locally | §9 |
-| Planar positions in a per-deployment frame | 51-bit global latitude/longitude on the wire; local tangent-plane metres for distance | no per-deployment origin; one firmware everywhere |
-| Long bans of failed neighbours | demotion until the neighbour's next heartbeat (§8.2) | the heartbeat is the liveness signal; a timer would duplicate it |
+| Addressing by ID with a lookup | position + leaf ID; the owning relay resolves the ID locally | §9 |
 
 ---
 
@@ -520,59 +506,60 @@ with the reason, so that nobody re-proposes it without a new argument.
 
 Kyiv model: ≈840 km², ≈400 km² built-up, ≈3 M people. Indoor coverage
 needs ≈9.6 relays/km² (≈3,800 relays); outdoor-only ≈1.9/km² (≈750).
-Rooftop relays hear ≈3 km, so a collision domain is ≈28 km² with ≈270
-relays, ≈14 domains across the built-up area.
+Rooftop relays hear ≈3 km, so a collision domain, the area within which
+transmissions interfere, is ≈28 km² with ≈270 relays, ≈14 domains across
+the built-up city.
 
-One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s under
-carrier sense (≈35% usable). A 100-byte text over 8 hops with ACKs is
-≈0.56 s of channel time.
+One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
+listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
+takes ≈0.56 s of channel time.
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
 | Single channel, 60 s heartbeats | 8% | 7 kB/s | 7 | 2 |
-| 7-colour fixed grid, beacons on all colours | 11–14% | 37 kB/s | 37 | 11 |
+| 7-colour fixed grid, heartbeats on all colours | 11–14% | 37 kB/s | 37 | 11 |
 | **13 channels, measured selection, rotating heartbeat (this design)** | **≈2.5%** | **≈85 kB/s** | **≈80** | **≈23** |
 | + per-packet power control (later) | | ≈160 kB/s | ≈150 | ≈45 |
 
-These are order-of-magnitude; the hearing radius and hop count are each
-uncertain by 2×. The centre of the city is the hot spot, and the per-relay
-10% cap (§9.4) binds there first.
+These are orders of magnitude; the hearing radius and hop count are each
+uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
+cap (§9.4) binds there first.
 
-Rejected for capacity reasons, so that nobody re-proposes them:
+Common proposals that do not fit:
 
-- **GFSK 50 kbps:** 3× more per channel than SF5, at 40% range, with a
-  modem driver and FEC to write. Revisit only if cells saturate at SF5.
-- **DSSS/CDMA over the whole band:** the SX1262 has no I/Q path; a
-  correlator board costs an order of magnitude more and draws 100+ mA; at
-  1.74 MHz and 15 kbps the processing gain is 20 dB, so a transmitter
-  300 m away blocks a wanted one 1 km away (near-far). Weber–Andrews: for
-  random meshes without power control, M channels beat M-chip spreading by
-  M^(1−2/α), 5–10× here. A DSSS radio survives that near-far ratio only
-  with ≈37 dB of processing gain, which this band cannot give.
-- **FHSS:** common-schedule hopping is single-channel capacity; per-receiver
-  sequences equal static channels plus time sync; per-packet random
-  channels with scanning receivers cost ≥20 ms preambles on every packet.
-  No regulatory benefit at 433 MHz (duty cycle is modulation-agnostic).
-- **Fixed hex-grid colouring with beacons on all colours:** 49% of every
-  channel at indoor density; and in this regime it only partitions load,
-  which measurement does as well while adapting to hot spots.
-- **Scheduled neighbour listening with long-preamble beacons:** works, but
-  needs per-neighbour timing state and a 20 ms preamble; the rotating
-  heartbeat gets the same result with none of it.
+- **GFSK at 50 kbps:** 3× more per channel than SF5, at 40% of the range,
+  and needs a modem driver and error correction written from scratch.
+  Revisit only if relays saturate at SF5; nothing above the modem would
+  change.
+- **Spreading one signal over the whole band (DSSS/CDMA):** the SX1262 has
+  no I/Q path; a correlator board costs an order of magnitude more and
+  draws 100+ mA; at 1.74 MHz and 15 kbps the processing gain is 20 dB, so
+  a transmitter 300 m away drowns a wanted one 1 km away. Weber–Andrews:
+  in random meshes without power control, M channels beat M-chip spreading
+  by M^(1−2/α), 5–10× here. Surviving that distance ratio would need
+  ≈37 dB of processing gain, which this band cannot give.
+- **Frequency hopping (FHSS):** hopping on a common schedule has the
+  capacity of one channel; per-receiver schedules equal fixed channels
+  plus time sync; random channels per packet with scanning receivers cost
+  ≥20 ms preambles on every packet. No regulatory benefit at 433 MHz
+  (the duty cycle applies to any modulation).
+- **A fixed hexagonal channel grid with heartbeats on all channels:** 49%
+  of every channel at indoor density. Where a rooftop relay hears ~3 km
+  and a relay covers ~700 m, a grid only spreads load evenly, which
+  measurement does as well while adapting to hot spots and foreign
+  interference.
 - **Home-relay registration (Mobile IP style):** registration traffic
-  scales with users; position addressing has no registration.
+  grows with users; position addressing needs none.
 - **Leaf heartbeats every 10 s:** collisions happen at the shared relay
-  regardless of leaf range; 72% of a channel at 400 leaves per relay.
-- **No delivery queue, rely on overhearing:** neighbouring relays are on
-  different channels and overhear nothing.
+  whatever the leaf's range; 72% of a channel at 400 leaves per relay.
 
 ---
 
-## 14. Packet formats (proposal; implementer finalises in O2)
+## 14. Packet formats (proposal; finalised in O2)
 
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
 channel in heartbeats and type-specific flags elsewhere. Positions are
-7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits (§7). LoRa
+7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits (§7). The LoRa
 hardware CRC covers everything.
 
 ```
@@ -592,11 +579,12 @@ Type 0x7 is unassigned.
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
 after 8 bytes. There is no `src_hop`: the ACK goes to the channel in
-`aux` and is matched by `msg_id` on the sender side, demotion is a
-sender-side decision, and DFS backtracking uses the visited list. `msg_id`
-is a 32-bit random value chosen at origination and kept across hops;
-duplicate suppression keeps a recent-RX window on it (§9.3). The sender's address is inside the encrypted payload, not
-in the header.
+`aux` and is matched by `msg_id` on the sender side, demotion is the
+sender's decision, and DFS backtracking uses the visited list. `msg_id`
+is a 32-bit random value chosen when the message is sent and kept across
+hops; duplicates are recognised by a window of recently received
+`msg_id`s (§9.3). The sender's address is inside the encrypted payload,
+not in the header.
 
 ---
 
@@ -604,36 +592,36 @@ in the header.
 
 **Rust stack:** `embassy-nrf` (nRF52840), `lora-phy` from git (SF5, CAD,
 RSSI; roadmap D4), TrouBLE with the Nordic controller for BLE (D5), the
-stock UF2 bootloader for flashing (D6). The protocol core is sans-IO and
-owns its routing and tables (D1, D3; `core-interface.md`). Crate layout is
-D7.
+stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
+its own and owns its routing and tables (D1, D3; `core-interface.md`).
+Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; recent-RX window,
-delivered window, busy estimates and duty budget together
-under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB. Comfortable.
+256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; recent-message
+window, delivered window, busy estimates and duty budget together under
+3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
-**Bring-up order** (each step is a demonstrable milestone on real boards):
+**Bring-up order** (each step is a milestone on real boards):
 
-1. `lora-phy` at SF5/125 kHz on two T-Echo 433: TX, RX, CAD, RSSI read,
-   retune time measured. **Bench item C1** (adjacent-channel rejection)
-   here.
-2. LBT + rotating heartbeat + neighbour table on three boards: each board
-   lists the other two with channel and position within one rotation.
-3. Busy estimate + home-channel selection: inject a CW interferer on one
-   channel, watch boards avoid it; verify no oscillation with three boards
-   that all hear each other.
+1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, CAD,
+   RSSI read, retune time measured. **Bench item C1** (adjacent-channel
+   rejection) here.
+2. Listen-before-talk + rotating heartbeat + neighbour table on three
+   boards: each board lists the other two with channel and position within
+   one rotation.
+3. Busy estimate + home-channel selection: put a continuous-wave
+   interferer on one channel, watch boards avoid it; check that three
+   boards that all hear each other do not keep switching.
 4. Greedy forwarding + per-hop ACK across three relays in a line, with
-   attenuators or distance so A cannot hear C. Demotion on a powered-off
-   middle relay.
+   attenuators or distance so A cannot hear C. Demotion when the middle
+   relay is powered off.
 5. Leaf attach, keepalive, delivery, queue. **This is the loop every
    user feels; prototype it before anything clever.**
 6. BLE GATT + minimal phone app.
 7. Field test: a dozen relays on windowsills across a few blocks.
 
-**Test rig:** at least three T-Echo 433, SMA attenuators, one CW/LoRa
-interferer source (a fourth board is fine), a USB logic/UART sniffer for
-timing.
+**Test rig:** at least three T-Echo 433, SMA attenuators, one interferer
+source (a fourth board is fine), a USB logic/UART sniffer for timing.
 
 ---
 
@@ -641,13 +629,13 @@ timing.
 
 | # | Item | Owner/when |
 |---|---|---|
-| O1 | End-to-end crypto scheme in the app (key exchange, address-in-payload format) | before step 6 |
+| O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
 | O2 | Finalise packet formats (§14), msg_id scheme, visited-list bound | step 4 |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
 | O4 | Neighbour-table eviction policy for rooftop relays that hear hundreds | step 2 |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
-| O7 | Geocast to an area (address = position + radius, leaf_id = broadcast) | later |
-| O8 | Per-packet TX power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | later |
+| O7 | Sending to an area (address = position + radius, leaf_id = broadcast) | later |
+| O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | later |
 | O9 | Repository/crate layout | resolved: roadmap D7 |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
@@ -661,7 +649,8 @@ timing.
 - NCEC (Ukraine) decision 81 of 12.02.2025 "generalised conditions", row
   РІ 50-3-1, as amended by decision 212 of 06.05.2026. Consultation
   (Aug–Sep 2026) on 865–868 MHz does not affect 433 MHz.
-- EN 300 220-2 for polite-access shapes (not required in this band).
+- EN 300 220-2 for polite-access (listen-before-talk) shapes (not required in this band).
 - Semtech SX1261/2 datasheet: LoRa sensitivity table, CAD, RSSI, SF5/SF6.
 - Weber, Andrews, Yang, de Veciana, "Transmission capacity of wireless ad
-  hoc networks with outage constraints", IEEE Trans. IT 2005 (FH vs DS).
+  hoc networks with outage constraints", IEEE Trans. IT 2005 (frequency
+  hopping vs direct sequence).
