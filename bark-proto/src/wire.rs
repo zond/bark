@@ -1,31 +1,36 @@
 //! Encoding and decoding of every packet in design §14.
 //!
-//! The first byte of every packet is `type:4 | aux:4`. Positions are the
-//! 7-byte form of [`Position::encode`]; message and leaf identifiers are
-//! 4 bytes, big-endian; visited-list entries are 2-byte big-endian
-//! 16-bit position hashes. Lengths, in bytes:
+//! The first byte of every packet is `type:4 | aux:4`. Fields that locate
+//! a place (heartbeat `pos`, DATA `dst_pos`) are the 7-byte form of
+//! [`Position::encode`]; fields that only name a relay (ATTACH `relay`, DATA
+//! `dst_hop` and `src_hop`) are its 4-byte [`ShortName`] (roadmap D14).
+//! DATA carries no message ID: every node computes [`Data::msg_id`] (D15).
+//! It carries no visited list either: search state lives in the relays
+//! (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x1/0x2  first pos                                         = 8
-//! ACK       0x3      first msg_id                                      = 5
-//! ATTACH    0x4      first leaf_id relay_pos                           = 12
-//! DATA      0x5      first dst_hop msg_id dst_pos dst_leaf hops
-//!                    visited_len visited(2n) payload                   = 25 + 2n + payload
-//! DELIVER   0x6      first dst_leaf msg_id payload                     = 9 + payload
+//! HEARTBEAT 0x1/0x2  first pos                                      = 8
+//! ACK       0x3      first id from                                  = 9
+//! ATTACH    0x4      first leaf_id relay                            = 9
+//! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
+//!                    payload                                        = 21 + payload
+//! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
 //! ```
 //!
-//! Type 0x7 is unassigned: the network sends no failure notices (roadmap D10).
+//! Type 0x7 is unassigned: the network sends no failure notices (D10).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
 //!
-//! - The visited list holds at most [`MAX_VISITED`] = 16 entries, the depth
-//!   design §8.1 sizes it for, and the application payload is at most
-//!   [`MAX_PAYLOAD`], what remains of [`MAX_FRAME`] after the DATA header
-//!   and a full visited list. So every DATA packet, whatever its payload,
-//!   can be extended to the full void-recovery depth: whether a message can
-//!   route around a void never depends on its size. The decoder enforces
-//!   both bounds, so the invariant holds for packets from other nodes too.
+//! - Short names and message IDs are big-endian; a leaf ID is four opaque
+//!   bytes in order. ACK `from` is either, so it is four bytes compared
+//!   whole.
+//! - The payload is at most [`MAX_PAYLOAD`] = 234 bytes, what a frame holds
+//!   after the DATA header. DELIVER only carries a DATA payload onward, so
+//!   it has the same cap although its header is shorter.
+//! - The ACK of an ATTACH carries the leaf's ID as `id`: an ATTACH is not a
+//!   message and has no message ID, and the leaf ID is what the leaf
+//!   matches.
 //! - `aux` is unused in ACK and DELIVER; it is sent as zero and ignored on
 //!   receipt, as are the spare position bits.
 //! - ATTACH `aux` is the [`RxMode`] code.
@@ -33,18 +38,16 @@
 
 use crate::event::MAX_FRAME;
 use crate::ids::{LeafId, MsgId};
-use crate::position::Position;
+use crate::position::{Position, ShortName};
 use crate::radio::Channel;
-use crate::tables::visited::Visited;
 
 // Field widths.
 const FIRST_LEN: usize = 1;
 const POS_LEN: usize = Position::WIRE_LEN;
+const NAME_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
 const LEAF_ID_LEN: usize = 4;
 const HOPS_LEN: usize = 1;
-const VISITED_LEN_LEN: usize = 1;
-const HASH_LEN: usize = 2;
 
 // First byte.
 const FIRST: usize = 0;
@@ -65,46 +68,39 @@ const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + POS_LEN;
 
 // ACK.
-const ACK_MSG_ID: usize = FIRST + FIRST_LEN;
-/// ACK length (design §14: 5).
-pub const ACK_LEN: usize = ACK_MSG_ID + MSG_ID_LEN;
+const ACK_ID: usize = FIRST + FIRST_LEN;
+const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
+/// ACK length (design §14: 9).
+pub const ACK_LEN: usize = ACK_FROM + NAME_LEN;
 
 // ATTACH.
 const ATTACH_LEAF: usize = FIRST + FIRST_LEN;
-const ATTACH_RELAY_POS: usize = ATTACH_LEAF + LEAF_ID_LEN;
-/// ATTACH length (design §14: 12).
-pub const ATTACH_LEN: usize = ATTACH_RELAY_POS + POS_LEN;
+const ATTACH_RELAY: usize = ATTACH_LEAF + LEAF_ID_LEN;
+/// ATTACH length (design §14: 9).
+pub const ATTACH_LEN: usize = ATTACH_RELAY + NAME_LEN;
 
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
-const DATA_MSG_ID: usize = DATA_DST_HOP + POS_LEN;
-const DATA_DST_POS: usize = DATA_MSG_ID + MSG_ID_LEN;
+const DATA_SRC_HOP: usize = DATA_DST_HOP + NAME_LEN;
+const DATA_DST_POS: usize = DATA_SRC_HOP + NAME_LEN;
 const DATA_DST_LEAF: usize = DATA_DST_POS + POS_LEN;
 const DATA_HOPS: usize = DATA_DST_LEAF + LEAF_ID_LEN;
-const DATA_VISITED_LEN: usize = DATA_HOPS + HOPS_LEN;
-const DATA_VISITED: usize = DATA_VISITED_LEN + VISITED_LEN_LEN;
-/// DATA header length before the visited list (design §14: 25).
-pub const DATA_HEADER_LEN: usize = DATA_VISITED;
+/// DATA header length (design §14: 21).
+pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
 
 // DELIVER.
 const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
-const DELIVER_MSG_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
+const DELIVER_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
 /// DELIVER header length before the payload (design §14: 9).
-pub const DELIVER_HEADER_LEN: usize = DELIVER_MSG_ID + MSG_ID_LEN;
+pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
-/// Most entries a visited list carries: the 16-deep list design §8.1 sizes
-/// at 32 bytes.
-pub const MAX_VISITED: usize = 16;
+/// Largest application payload: [`MAX_FRAME`] less the DATA header,
+/// 255 − 21 = 234 bytes. DATA and DELIVER carry at most this.
+pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-/// Largest application payload: [`MAX_FRAME`] less the DATA header and a
-/// full visited list, 255 − 25 − 32 = 198 bytes. DATA and DELIVER carry at
-/// most this.
-pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN - MAX_VISITED * HASH_LEN;
-
-const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 5 && ATTACH_LEN == 12);
-const _: () = assert!(DATA_HEADER_LEN == 25 && DELIVER_HEADER_LEN == 9);
-const _: () = assert!(MAX_PAYLOAD == 198);
-const _: () = assert!(MAX_VISITED <= u8::MAX as usize, "visited_len is one byte");
+const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 9 && ATTACH_LEN == 9);
+const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9);
+const _: () = assert!(MAX_PAYLOAD == 234);
 
 /// A leaf's receive mode, carried in ATTACH `aux` (design §10.5). Sets the
 /// preamble of packets the relay sends to the leaf.
@@ -142,11 +138,32 @@ pub struct Heartbeat {
     pub position: Position,
 }
 
-/// ACK, type 0x3 (design §9.3).
+/// Who sent an ACK: a relay's short name or a leaf's ID, in the 4 bytes of
+/// ACK `from` (roadmap D19). The receiver knows which it expects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AckFrom(pub [u8; 4]);
+
+impl From<ShortName> for AckFrom {
+    fn from(relay: ShortName) -> AckFrom {
+        AckFrom(relay.0.to_be_bytes())
+    }
+}
+
+impl From<LeafId> for AckFrom {
+    fn from(leaf: LeafId) -> AckFrom {
+        AckFrom(leaf.0)
+    }
+}
+
+/// ACK, type 0x3 (design §9.3). Matches an outstanding hand-over only if
+/// both fields agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
-    /// The acknowledged message.
+    /// The acknowledged message; for an ATTACH, the leaf's ID read as a
+    /// big-endian number.
     pub msg_id: MsgId,
+    /// The acknowledging relay or leaf.
+    pub from: AckFrom,
 }
 
 /// ATTACH, type 0x4 (design §10.2).
@@ -155,37 +172,36 @@ pub struct Attach {
     /// The attaching leaf.
     pub leaf: LeafId,
     /// The relay attached to.
-    pub relay: Position,
+    pub relay: ShortName,
     /// The leaf's receive mode.
     pub mode: RxMode,
-}
-
-/// The DATA routing header (design §14).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Route {
-    /// The sender's home channel, where the ACK goes (`aux`).
-    pub sender_home: Channel,
-    /// The next hop this transmission is addressed to.
-    pub dst_hop: Position,
-    /// The message, constant across hops.
-    pub msg_id: MsgId,
-    /// The destination relay's position.
-    pub dst_pos: Position,
-    /// The destination leaf, or [`LeafId::RELAY`].
-    pub dst_leaf: LeafId,
-    /// Hops taken so far.
-    pub hops: u8,
-    /// Void-recovery visited list.
-    pub visited: Visited,
 }
 
 /// DATA, type 0x5 (design §9, §14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
-    /// Routing header.
-    pub route: Route,
+    /// The sender's home channel, where the ACK and anything sent straight
+    /// back go (`aux`).
+    pub sender_home: Channel,
+    /// The relay this transmission is addressed to.
+    pub dst_hop: ShortName,
+    /// The relay that sent this transmission; zero from a leaf.
+    pub src_hop: ShortName,
+    /// The destination relay's position.
+    pub dst_pos: Position,
+    /// The destination leaf, or [`LeafId::RELAY`].
+    pub dst_leaf: LeafId,
+    /// Hand-overs so far (design §9.2.6).
+    pub hops: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
+}
+
+impl Data<'_> {
+    /// The message's ID (roadmap D15), the same on every hop.
+    pub fn msg_id(&self) -> MsgId {
+        MsgId::of(self.dst_pos, self.dst_leaf, self.payload)
+    }
 }
 
 /// DELIVER, type 0x6: relay to leaf on the relay's home channel (design §10.3).
@@ -193,7 +209,7 @@ pub struct Data<'a> {
 pub struct Deliver<'a> {
     /// The receiving leaf.
     pub dst_leaf: LeafId,
-    /// The message.
+    /// The message, so the leaf can ACK it without hashing.
     pub msg_id: MsgId,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
@@ -225,8 +241,6 @@ pub enum DecodeError {
     BadLength,
     /// A channel field outside the plan.
     ChannelOutOfRange(u8),
-    /// A visited list longer than [`MAX_VISITED`].
-    VisitedTooLong(u8),
     /// A payload longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
     /// An unknown ATTACH receive mode.
@@ -244,12 +258,14 @@ fn first(kind: u8, aux: u8) -> u8 {
     (kind << TYPE_SHIFT) | (aux & AUX_MASK)
 }
 
-fn put_pos(buf: &mut [u8], at: usize, p: Position) {
-    buf[at..at + POS_LEN].copy_from_slice(&p.encode());
+fn put(buf: &mut [u8], at: usize, bytes: &[u8]) {
+    buf[at..at + bytes.len()].copy_from_slice(bytes);
 }
 
-fn put_u32(buf: &mut [u8], at: usize, v: u32) {
-    buf[at..at + 4].copy_from_slice(&v.to_be_bytes());
+fn get4(b: &[u8], at: usize) -> [u8; 4] {
+    let mut a = [0; 4];
+    a.copy_from_slice(&b[at..at + 4]);
+    a
 }
 
 fn get_pos(b: &[u8], at: usize) -> Position {
@@ -258,10 +274,12 @@ fn get_pos(b: &[u8], at: usize) -> Position {
     Position::decode(&a)
 }
 
-fn get_u32(b: &[u8], at: usize) -> u32 {
-    let mut a = [0; 4];
-    a.copy_from_slice(&b[at..at + 4]);
-    u32::from_be_bytes(a)
+fn get_name(b: &[u8], at: usize) -> ShortName {
+    ShortName(u32::from_be_bytes(get4(b, at)))
+}
+
+fn get_msg_id(b: &[u8], at: usize) -> MsgId {
+    MsgId(u32::from_be_bytes(get4(b, at)))
 }
 
 fn channel(aux: u8) -> Result<Channel, DecodeError> {
@@ -277,56 +295,14 @@ fn exact(b: &[u8], len: usize) -> Result<(), DecodeError> {
     }
 }
 
-impl Route {
-    /// Write the header, visited list included, into `buf`; returns where
-    /// the payload starts.
-    fn encode(&self, buf: &mut [u8; MAX_FRAME]) -> usize {
-        buf[FIRST] = first(T_DATA, self.sender_home.index());
-        put_pos(buf, DATA_DST_HOP, self.dst_hop);
-        put_u32(buf, DATA_MSG_ID, self.msg_id.0);
-        put_pos(buf, DATA_DST_POS, self.dst_pos);
-        buf[DATA_DST_LEAF..DATA_DST_LEAF + LEAF_ID_LEN].copy_from_slice(&self.dst_leaf.0);
-        buf[DATA_HOPS] = self.hops;
-        buf[DATA_VISITED_LEN] = self.visited.len() as u8;
-        let mut at = DATA_VISITED;
-        for h in self.visited.hashes() {
-            buf[at..at + HASH_LEN].copy_from_slice(&h.to_be_bytes());
-            at += HASH_LEN;
-        }
-        at
+/// The payload after a `header`-byte header: there must be a header, and
+/// the payload must be within [`MAX_PAYLOAD`].
+fn payload(b: &[u8], header: usize) -> Result<&[u8], DecodeError> {
+    let p = b.get(header..).ok_or(DecodeError::Short)?;
+    if p.len() > MAX_PAYLOAD {
+        return Err(DecodeError::PayloadTooLong);
     }
-
-    /// Read the header from `b`, which holds at least `DATA_HEADER_LEN`
-    /// bytes; returns the header and the payload.
-    fn decode(b: &[u8]) -> Result<(Route, &[u8]), DecodeError> {
-        if b.len() < DATA_HEADER_LEN {
-            return Err(DecodeError::Short);
-        }
-        let n = b[DATA_VISITED_LEN];
-        if n as usize > MAX_VISITED {
-            return Err(DecodeError::VisitedTooLong(n));
-        }
-        let payload_at = DATA_VISITED + n as usize * HASH_LEN;
-        if b.len() < payload_at {
-            return Err(DecodeError::Short);
-        }
-        let mut visited = Visited::new();
-        for e in b[DATA_VISITED..payload_at].as_chunks::<HASH_LEN>().0 {
-            visited.push(u16::from_be_bytes(*e));
-        }
-        let mut leaf = [0; LEAF_ID_LEN];
-        leaf.copy_from_slice(&b[DATA_DST_LEAF..DATA_DST_LEAF + LEAF_ID_LEN]);
-        let route = Route {
-            sender_home: channel(b[FIRST] & AUX_MASK)?,
-            dst_hop: get_pos(b, DATA_DST_HOP),
-            msg_id: MsgId(get_u32(b, DATA_MSG_ID)),
-            dst_pos: get_pos(b, DATA_DST_POS),
-            dst_leaf: LeafId(leaf),
-            hops: b[DATA_HOPS],
-            visited,
-        };
-        Ok((route, &b[payload_at..]))
-    }
+    Ok(p)
 }
 
 impl Packet<'_> {
@@ -336,38 +312,43 @@ impl Packet<'_> {
             Packet::Heartbeat(h) => {
                 let kind = if h.surveyed { T_HEARTBEAT_SURVEYED } else { T_HEARTBEAT_GPS };
                 buf[FIRST] = first(kind, h.home.index());
-                put_pos(buf, HEARTBEAT_POS, h.position);
+                put(buf, HEARTBEAT_POS, &h.position.encode());
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
                 buf[FIRST] = first(T_ACK, 0);
-                put_u32(buf, ACK_MSG_ID, a.msg_id.0);
+                put(buf, ACK_ID, &a.msg_id.0.to_be_bytes());
+                put(buf, ACK_FROM, &a.from.0);
                 Ok(ACK_LEN)
             }
             Packet::Attach(a) => {
                 buf[FIRST] = first(T_ATTACH, a.mode as u8);
-                buf[ATTACH_LEAF..ATTACH_LEAF + LEAF_ID_LEN].copy_from_slice(&a.leaf.0);
-                put_pos(buf, ATTACH_RELAY_POS, a.relay);
+                put(buf, ATTACH_LEAF, &a.leaf.0);
+                put(buf, ATTACH_RELAY, &a.relay.0.to_be_bytes());
                 Ok(ATTACH_LEN)
             }
             Packet::Data(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
                 }
-                let at = d.route.encode(buf);
-                buf[at..at + d.payload.len()].copy_from_slice(d.payload);
-                Ok(at + d.payload.len())
+                buf[FIRST] = first(T_DATA, d.sender_home.index());
+                put(buf, DATA_DST_HOP, &d.dst_hop.0.to_be_bytes());
+                put(buf, DATA_SRC_HOP, &d.src_hop.0.to_be_bytes());
+                put(buf, DATA_DST_POS, &d.dst_pos.encode());
+                put(buf, DATA_DST_LEAF, &d.dst_leaf.0);
+                buf[DATA_HOPS] = d.hops;
+                put(buf, DATA_HEADER_LEN, d.payload);
+                Ok(DATA_HEADER_LEN + d.payload.len())
             }
             Packet::Deliver(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
                 }
                 buf[FIRST] = first(T_DELIVER, 0);
-                buf[DELIVER_LEAF..DELIVER_LEAF + LEAF_ID_LEN].copy_from_slice(&d.dst_leaf.0);
-                put_u32(buf, DELIVER_MSG_ID, d.msg_id.0);
-                let end = DELIVER_HEADER_LEN + d.payload.len();
-                buf[DELIVER_HEADER_LEN..end].copy_from_slice(d.payload);
-                Ok(end)
+                put(buf, DELIVER_LEAF, &d.dst_leaf.0);
+                put(buf, DELIVER_ID, &d.msg_id.0.to_be_bytes());
+                put(buf, DELIVER_HEADER_LEN, d.payload);
+                Ok(DELIVER_HEADER_LEN + d.payload.len())
             }
         }
     }
@@ -393,38 +374,33 @@ impl<'a> Packet<'a> {
             }
             T_ACK => {
                 exact(b, ACK_LEN)?;
-                Ok(Packet::Ack(Ack { msg_id: MsgId(get_u32(b, ACK_MSG_ID)) }))
+                Ok(Packet::Ack(Ack { msg_id: get_msg_id(b, ACK_ID), from: AckFrom(get4(b, ACK_FROM)) }))
             }
             T_ATTACH => {
                 exact(b, ATTACH_LEN)?;
-                let mut leaf = [0; LEAF_ID_LEN];
-                leaf.copy_from_slice(&b[ATTACH_LEAF..ATTACH_LEAF + LEAF_ID_LEN]);
                 Ok(Packet::Attach(Attach {
-                    leaf: LeafId(leaf),
-                    relay: get_pos(b, ATTACH_RELAY_POS),
+                    leaf: LeafId(get4(b, ATTACH_LEAF)),
+                    relay: get_name(b, ATTACH_RELAY),
                     mode: RxMode::from_code(aux).ok_or(DecodeError::BadRxMode(aux))?,
                 }))
             }
             T_DATA => {
-                let (route, payload) = Route::decode(b)?;
-                if payload.len() > MAX_PAYLOAD {
-                    return Err(DecodeError::PayloadTooLong);
-                }
-                Ok(Packet::Data(Data { route, payload }))
+                let payload = payload(b, DATA_HEADER_LEN)?;
+                Ok(Packet::Data(Data {
+                    sender_home: channel(aux)?,
+                    dst_hop: get_name(b, DATA_DST_HOP),
+                    src_hop: get_name(b, DATA_SRC_HOP),
+                    dst_pos: get_pos(b, DATA_DST_POS),
+                    dst_leaf: LeafId(get4(b, DATA_DST_LEAF)),
+                    hops: b[DATA_HOPS],
+                    payload,
+                }))
             }
             T_DELIVER => {
-                if b.len() < DELIVER_HEADER_LEN {
-                    return Err(DecodeError::Short);
-                }
-                let payload = &b[DELIVER_HEADER_LEN..];
-                if payload.len() > MAX_PAYLOAD {
-                    return Err(DecodeError::PayloadTooLong);
-                }
-                let mut leaf = [0; LEAF_ID_LEN];
-                leaf.copy_from_slice(&b[DELIVER_LEAF..DELIVER_LEAF + LEAF_ID_LEN]);
+                let payload = payload(b, DELIVER_HEADER_LEN)?;
                 Ok(Packet::Deliver(Deliver {
-                    dst_leaf: LeafId(leaf),
-                    msg_id: MsgId(get_u32(b, DELIVER_MSG_ID)),
+                    dst_leaf: LeafId(get4(b, DELIVER_LEAF)),
+                    msg_id: get_msg_id(b, DELIVER_ID),
                     payload,
                 }))
             }
@@ -451,6 +427,10 @@ mod tests {
         any::<[u8; 4]>().prop_map(LeafId)
     }
 
+    fn name() -> impl Strategy<Value = ShortName> {
+        any::<u32>().prop_map(ShortName)
+    }
+
     fn msg() -> impl Strategy<Value = MsgId> {
         any::<u32>().prop_map(MsgId)
     }
@@ -459,36 +439,22 @@ mod tests {
         prop_oneof![Just(RxMode::Listening), Just(RxMode::DutyCycled), Just(RxMode::Hybrid)]
     }
 
-    fn route() -> impl Strategy<Value = Route> {
-        (
-            chan(),
-            position(),
-            msg(),
-            position(),
-            leaf(),
-            any::<u8>(),
-            proptest::collection::vec(any::<u16>(), 0..=MAX_VISITED),
-        )
-            .prop_map(|(sender_home, dst_hop, msg_id, dst_pos, dst_leaf, hops, v)| Route {
-                sender_home,
-                dst_hop,
-                msg_id,
-                dst_pos,
-                dst_leaf,
-                hops,
-                visited: Visited::from_hashes(&v).unwrap(),
-            })
+    fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
+        proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD)
     }
 
-    /// Encode, check the length against design §14, decode, compare.
+    extern crate std;
+
+    /// Encode, check the length against the table of design §14, decode,
+    /// compare.
     fn round_trip(p: &Packet<'_>) {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
             Packet::Heartbeat(_) => 8,
-            Packet::Ack(_) => 5,
-            Packet::Attach(_) => 12,
-            Packet::Data(d) => 25 + 2 * d.route.visited.len() + d.payload.len(),
+            Packet::Ack(_) => 9,
+            Packet::Attach(_) => 9,
+            Packet::Data(d) => 21 + d.payload.len(),
             Packet::Deliver(d) => 9 + d.payload.len(),
         };
         assert_eq!(len, expected);
@@ -502,30 +468,44 @@ mod tests {
         }
 
         #[test]
-        fn ack_round_trips(msg_id in msg()) {
-            round_trip(&Packet::Ack(Ack { msg_id }));
+        fn ack_round_trips(msg_id in msg(), from: [u8; 4]) {
+            round_trip(&Packet::Ack(Ack { msg_id, from: AckFrom(from) }));
         }
 
         #[test]
-        fn attach_round_trips(leaf in leaf(), relay in position(), mode in rx_mode()) {
+        fn attach_round_trips(leaf in leaf(), relay in name(), mode in rx_mode()) {
             round_trip(&Packet::Attach(Attach { leaf, relay, mode }));
         }
 
         #[test]
-        fn data_round_trips(route in route(), payload in proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD)) {
-            round_trip(&Packet::Data(Data { route, payload: &payload }));
+        fn data_round_trips(
+            sender_home in chan(),
+            dst_hop in name(),
+            src_hop in name(),
+            dst_pos in position(),
+            dst_leaf in leaf(),
+            hops: u8,
+            payload in payload(),
+        ) {
+            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_leaf, hops, payload: &payload };
+            round_trip(&Packet::Data(d));
+            // The ID survives the trip: it depends only on fields every hop keeps.
+            let mut buf = [0; MAX_FRAME];
+            let len = Packet::Data(d).encode(&mut buf).unwrap();
+            let Ok(Packet::Data(back)) = Packet::decode(&buf[..len]) else { panic!() };
+            prop_assert_eq!(back.msg_id(), MsgId::of(dst_pos, dst_leaf, &payload));
         }
 
         #[test]
-        fn deliver_round_trips(dst_leaf in leaf(), msg_id in msg(), payload in proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD)) {
+        fn deliver_round_trips(dst_leaf in leaf(), msg_id in msg(), payload in payload()) {
             round_trip(&Packet::Deliver(Deliver { dst_leaf, msg_id, payload: &payload }));
         }
 
         #[test]
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
-            // Whatever decodes must re-encode to the same bytes, apart from
-            // the bits the decoder ignores (aux of ACK and DELIVER, spare
-            // position bits), so compare decode(encode(decode(b))) instead.
+            // Whatever decodes must re-encode to the same length and decode
+            // the same, apart from bits the decoder ignores (aux of ACK and
+            // DELIVER, spare position bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -535,38 +515,36 @@ mod tests {
         }
 
         #[test]
-        fn corrupted_data_never_panics(route in route(), payload in proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD), at: usize, byte: u8, cut: usize) {
-            // Random bytes rarely get past the type check; corrupt a valid
-            // frame instead so the length and visited-list paths are hit.
-            let mut buf = [0; MAX_FRAME];
-            let len = Packet::Data(Data { route, payload: &payload }).encode(&mut buf).unwrap();
-            buf[at % len] = byte;
-            let _ = Packet::decode(&buf[..cut % (len + 1)]);
-            let _ = Packet::decode(&buf[..len]);
+        fn every_type_never_panics(kind in 0u8..16, aux in 0u8..16, rest in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME)) {
+            // Random first bytes rarely hit a known type with a valid aux;
+            // force every type nibble so each decoder's length paths run.
+            let mut bytes = std::vec![first(kind, aux)];
+            bytes.extend_from_slice(&rest);
+            let _ = Packet::decode(&bytes);
+            for cut in [0, 1, 4, 5, 8, 9, 10, 20, 21, 22] {
+                let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
+            }
         }
     }
 
     #[test]
     fn full_frame_fits() {
-        let route = Route {
+        let payload = [0xa5; MAX_PAYLOAD];
+        let d = Data {
             sender_home: Channel::new(3).unwrap(),
-            dst_hop: Position::default(),
-            msg_id: MsgId(1),
+            dst_hop: ShortName(1),
+            src_hop: ShortName(2),
             dst_pos: Position::default(),
             dst_leaf: LeafId::RELAY,
             hops: 0,
-            visited: Visited::from_hashes(&[7; MAX_VISITED]).unwrap(),
+            payload: &payload,
         };
-        let payload = [0xa5; MAX_PAYLOAD];
         let mut buf = [0; MAX_FRAME];
-        assert_eq!(Packet::Data(Data { route, payload: &payload }).encode(&mut buf), Ok(MAX_FRAME));
+        assert_eq!(Packet::Data(d).encode(&mut buf), Ok(MAX_FRAME));
         let long = [0; MAX_PAYLOAD + 1];
-        assert_eq!(
-            Packet::Data(Data { route, payload: &long }).encode(&mut buf),
-            Err(EncodeError::PayloadTooLong)
-        );
-        let d = Deliver { dst_leaf: LeafId::RELAY, msg_id: MsgId(1), payload: &long };
-        assert_eq!(Packet::Deliver(d).encode(&mut buf), Err(EncodeError::PayloadTooLong));
+        assert_eq!(Packet::Data(Data { payload: &long, ..d }).encode(&mut buf), Err(EncodeError::PayloadTooLong));
+        let deliver = Deliver { dst_leaf: LeafId::RELAY, msg_id: MsgId(1), payload: &long };
+        assert_eq!(Packet::Deliver(deliver).encode(&mut buf), Err(EncodeError::PayloadTooLong));
     }
 
     #[test]
@@ -574,12 +552,15 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
+        assert_eq!(Packet::decode(&[0x70; DATA_HEADER_LEN]), Err(BadType(7)), "type 0x7 is unassigned");
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
         assert_eq!(Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]), Err(ChannelOutOfRange(13)));
         assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0]), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), Err(BadRxMode(3)));
-        assert_eq!(Packet::decode(&[0x30, 0, 0, 0]), Err(Short));
+        assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
+        assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
+        assert_eq!(Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0]), Err(BadRxMode(3)));
+        assert_eq!(Packet::decode(&[0x40; ATTACH_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0x60, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
 
@@ -587,32 +568,52 @@ mod tests {
         data[FIRST] = first(T_DATA, 13);
         assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(13)));
         data[FIRST] = first(T_DATA, 0);
-        data[DATA_VISITED_LEN] = MAX_VISITED as u8 + 1;
-        assert_eq!(Packet::decode(&data), Err(VisitedTooLong(MAX_VISITED as u8 + 1)));
-        data[DATA_VISITED_LEN] = 1;
-        assert_eq!(Packet::decode(&data), Err(Short));
+        assert!(Packet::decode(&data).is_ok(), "an empty payload is a payload");
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
 
-        // Payload beyond MAX_PAYLOAD is rejected even though it fits the frame.
-        let mut big = [0u8; DATA_HEADER_LEN + MAX_PAYLOAD + 1];
-        big[FIRST] = first(T_DATA, 0);
-        assert_eq!(Packet::decode(&big), Err(PayloadTooLong));
+        // MAX_PAYLOAD + 1 fits a DELIVER frame but is still rejected.
         let mut deliver = [0u8; DELIVER_HEADER_LEN + MAX_PAYLOAD + 1];
         deliver[FIRST] = first(T_DELIVER, 0);
         assert_eq!(Packet::decode(&deliver), Err(PayloadTooLong));
-
-        // Type 0x7 is unassigned (D10).
-        assert_eq!(Packet::decode(&[0x70; DATA_HEADER_LEN + 5]), Err(BadType(7)));
+        assert!(Packet::decode(&deliver[..DELIVER_HEADER_LEN + MAX_PAYLOAD]).is_ok());
     }
 
     #[test]
-    fn heartbeat_bytes() {
-        // Pin the exact layout: type 0x2, channel 12, position bytes.
+    fn exact_bytes() {
+        // Pin the layouts: field order, big-endian names and IDs.
+        let mut buf = [0; MAX_FRAME];
         let position = Position::from_degrees(50.45, 30.52);
         let hb = Heartbeat { surveyed: false, home: Channel::new(12).unwrap(), position };
-        let mut buf = [0; MAX_FRAME];
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x2c);
         assert_eq!(&buf[1..len], &position.encode());
+
+        let ack = Ack { msg_id: MsgId(0x0102_0304), from: ShortName(0x0506_0708).into() };
+        let len = Packet::Ack(ack).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x30, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(AckFrom::from(LeafId([5, 6, 7, 8])), ack.from, "a leaf ID is its bytes in order");
+
+        let attach = Attach { leaf: LeafId([1, 2, 3, 4]), relay: ShortName(0x0506_0708), mode: RxMode::Hybrid };
+        let len = Packet::Attach(attach).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x42, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let d = Data {
+            sender_home: Channel::new(9).unwrap(),
+            dst_hop: ShortName(0x0102_0304),
+            src_hop: ShortName(0x0506_0708),
+            dst_pos: position,
+            dst_leaf: LeafId([9, 10, 11, 12]),
+            hops: 13,
+            payload: &[14, 15],
+        };
+        let len = Packet::Data(d).encode(&mut buf).unwrap();
+        let mut want = std::vec![0x59, 1, 2, 3, 4, 5, 6, 7, 8];
+        want.extend_from_slice(&position.encode());
+        want.extend_from_slice(&[9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(&buf[..len], &want[..]);
+
+        let deliver = Deliver { dst_leaf: LeafId([1, 2, 3, 4]), msg_id: MsgId(0x0506_0708), payload: &[9] };
+        let len = Packet::Deliver(deliver).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 }

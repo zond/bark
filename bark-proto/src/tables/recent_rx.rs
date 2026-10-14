@@ -17,9 +17,9 @@
 //! ```
 //!
 //! and no channel delivers messages faster than one per airtime of the
-//! shortest message-carrying frame, an empty DATA packet (25 bytes,
-//! 20.8 ms at SF5 with the 12-symbol preamble). So
-//! `N = ceil(1.477 s / 20.8 ms) = 72` holds every message for its whole
+//! shortest message-carrying frame, an empty DATA packet (21 bytes,
+//! 18.2 ms at SF5 with the 12-symbol preamble). So
+//! `N = ceil(1.477 s / 18.2 ms) = 81` holds every message for its whole
 //! retry span even on a channel saturated with minimum-size frames, which
 //! is far beyond the §13 rates (a channel carries ≈640 B/s under carrier
 //! sense, a few messages per second). The bound uses airtime, not the §13
@@ -55,7 +55,7 @@ pub const fn window_for(ack_timeout: Duration, hop_attempts: u8) -> usize {
 /// timeout, 3 attempts).
 pub const RELAY_RECENT_RX: usize = window_for(Duration::from_millis(100), 3);
 
-const _: () = assert!(RELAY_RECENT_RX == 72);
+const _: () = assert!(RELAY_RECENT_RX == 81);
 
 /// The last `N` message IDs received.
 #[derive(Clone)]
