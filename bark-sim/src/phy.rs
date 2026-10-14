@@ -219,9 +219,9 @@ impl RadioParams {
     }
 
     /// Phases of an RSSI sample: retune there (if off channel), dwell,
-    /// retune back. On the resting channel there is no retune, but the
-    /// node is still deaf for the dwell (docs/core-interface.md §3 rule 3:
-    /// nothing is received during an excursion).
+    /// retune back. On the resting channel there is no retune, and the
+    /// node keeps receiving through the dwell (docs/core-interface.md §3
+    /// rule 7): the phases then only time the reading.
     pub fn rssi_phases(&self, off_channel: bool) -> [Phase; 3] {
         let r = if off_channel {
             self.retune()
