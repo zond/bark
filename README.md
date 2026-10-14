@@ -3,7 +3,8 @@
 Firmware, protocol core and simulator for a civilian resilience mesh on
 433 MHz LoRa: off-the-shelf LILYGO T-Echo nodes (nRF52840 + SX1262) that let
 phone apps message each other across a city when ordinary infrastructure is
-gone. Licence-free in the EU and Ukraine (10 mW ERP, 10% duty cycle).
+gone. Licence-free in the EU and Ukraine (10 mW effective radiated power,
+10% duty cycle).
 
 The name is from Darwin's bark spider (*Caerostris darwini*), the Madagascan
 spider that builds the largest orb webs known, anchored on bridge lines up to
@@ -18,8 +19,8 @@ Until they arrive the work is the simulator.
 
 Read, in order:
 
-1. `docs/protocol.md`: the specification. Radio, channel plan, heartbeat,
-   routing, leaves, packet formats, capacity rationale, open items.
+1. `docs/protocol.md`: the specification. Radio, channels, neighbour
+   discovery, routing, leaves, packet formats, capacity, open items.
 2. `docs/roadmap.md`: phases, decisions taken, open questions.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
@@ -31,18 +32,17 @@ Read, in order:
 
 ```
 bark-proto/   no_std protocol core: packet codecs, tables, routing, MAC state
-              machine. Sans-IO: no executor, no radio driver, explicit time,
-              no allocation. docs/core-interface.md is its contract.
+              machine. No I/O of its own: no executor, no radio driver, time
+              passed in, no allocation. docs/core-interface.md is its contract.
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
               bark-proto. Its own Cargo workspace, cross-compiled.
 docs/         design notes, research, decisions.
 ```
 
-Routing is greedy geographic forwarding toward the destination's position,
-with depth-first void recovery and per-hop acknowledgements, as the design
-specifies. The protocol core carries no external routing dependency
-(roadmap decision D1).
+Each relay forwards a message to the neighbour closest to the destination's
+position, backtracks around gaps, and expects an acknowledgement from every
+hop. The protocol core has no external routing dependency (roadmap D1).
 
 ## Building
 
