@@ -51,17 +51,24 @@
 //! The reserve holds the BUSY replies the bucket refills while a sender
 //! retries a hand-over that goes unanswered, 2.38 s (§9.3):
 //! `r × 2.38 s = 234 ms`, ⌊234 / 10.56⌋ = [`REPLIES`] = 22 replies of
-//! 10.56 ms, and the heartbeat reserve on top, 244.2 ms in all. A sender
-//! told BUSY passes the relay over for [`BUSY_HOLD`], the reserve's refill
-//! time, 2.48 s: so a relay at the reserve can tell 22 senders a hold that
-//! it is busy, each once, and pay for it from the refill alone; and a
-//! sender stays away about as long as it would have spent retrying
-//! without the reply.
+//! 10.56 ms, and the heartbeat reserve on top, 244.2 ms in all: a relay at
+//! the reserve can answer with BUSY, from the refill alone, as many
+//! senders as would otherwise have spent that time retrying it.
+//!
+//! # Ban
+//!
+//! A relay refuses a packet to send on when the packet's frame and the ACK
+//! that takes it do not fit in its bucket on top of what it has queued
+//! (§9.2.4, roadmap D29). The sender bans it for [`BAN`], the time the
+//! bucket takes to refill a full frame and its ACK, 150.4 ms at 9.83 %:
+//! 1.53 s: by then the bucket has refilled what the refusal lacked, unless
+//! the relay has spent it on what it already held.
 
+use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::{retrying_span, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
-use crate::wire::{BUSY_LEN, HEARTBEAT_LEN};
+use crate::wire::{ACK_LEN, BUSY_LEN, HEARTBEAT_LEN};
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration =
@@ -125,9 +132,12 @@ pub const REPLIES: u64 = refilled(retrying_span(Duration::from_millis(100), 3, R
 pub const REPLY_RESERVE: Duration =
     Duration::from_micros(REPLIES * BUSY_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
 
-/// How long a sender told BUSY passes the relay over (§9.3): the time the
-/// bucket takes to refill the reply reserve.
-pub const BUSY_HOLD: Duration = refill_time(REPLY_RESERVE);
+/// How long a sender told BUSY bans the relay (§9.3); see the module
+/// documentation.
+pub const BAN: Duration = refill_time(Duration::from_micros(
+    time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
+));
 
 const _: () = assert!(REPLIES == 22);
 
@@ -271,18 +281,18 @@ mod tests {
     }
 
     #[test]
-    fn reply_reserve_and_hold() {
+    fn reply_reserve_and_ban() {
         assert_eq!(BUSY_AIRTIME, Duration::from_micros(10_560));
         assert_eq!(REPLY_RESERVE, Duration::from_micros(244_160));
-        let hold = BUSY_HOLD.as_micros();
-        assert!((2_482_000..2_484_000).contains(&hold), "{hold} µs");
-        // The hold refills exactly the reserve.
+        let ban = BAN.as_micros();
+        assert!((1_529_000..1_530_000).contains(&ban), "{ban} µs");
+        // The ban refills exactly a full frame and its ACK.
         let mut b = Budget::new();
         let t = Instant::from_micros(1_000_000);
         b.record(b.available(t), t);
         assert_eq!(
-            b.allowed_at(REPLY_RESERVE, Duration::ZERO, t),
-            Some(t + BUSY_HOLD)
+            b.allowed_at(crate::tables::RETRY_BACKOFF, Duration::ZERO, t),
+            Some(t + BAN)
         );
     }
 

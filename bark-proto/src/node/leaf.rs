@@ -51,8 +51,8 @@
 //! network itself would keep it; then it fails with [`FailReason::NoRelay`]
 //! or [`FailReason::NoAck`]. A relay that answers the message with BUSY
 //! (§9.2.4) is busy, not failing: the leaf holds the message and offers it
-//! again after [`BUSY_HOLD`], the time the relay's bucket takes to refill
-//! its reply reserve (roadmap D27).
+//! again after [`BAN`], the time the relay's bucket takes to refill what
+//! it could not fit (roadmap D27, D29).
 //!
 //! # Receiving
 //!
@@ -69,7 +69,7 @@ use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{Budget, BUSY_HOLD};
+use crate::tables::budget::{Budget, BAN};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
@@ -622,7 +622,7 @@ impl Leaf {
             r.last_heard = now;
         }
         self.failed_periods = 0;
-        self.outgoing_at = now + BUSY_HOLD;
+        self.outgoing_at = now + BAN;
     }
 
     // --- Receiving (§10.3) ---

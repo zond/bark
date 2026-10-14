@@ -54,10 +54,9 @@
 //!
 //! A BUSY from the receiver of the front hand-over, for its message, is
 //! handled as that give-up (§9.3, roadmap D27, D30), with two
-//! differences: the receiver is also marked busy for [`BUSY_HOLD`], so
-//! other messages take it only as the last resort, and since the frame
-//! went out, the record's mark that the receiver was handed the message
-//! is taken back. A return, a
+//! differences: the receiver is also banned for [`BAN`], so no message
+//! takes it until then, and since the frame went out, the record's mark
+//! that the receiver was handed the message is taken back. A return, a
 //! send-back or a DELIVER refused this way has used one of its attempts.
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
@@ -69,7 +68,7 @@ use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Reply, Step};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{BUSY_AIRTIME, BUSY_HOLD, HEARTBEAT_RESERVE, REPLY_RESERVE};
+use crate::tables::budget::{BAN, BUSY_AIRTIME, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::Neighbour;
 use crate::tables::records::{Record, MAX_HOPS};
@@ -186,27 +185,26 @@ impl Relay {
     }
 
     /// The next hop for the message of `record` to `dst` (§9.2.3): the
-    /// live neighbour nearest `dst` that is not in the tried set and not
-    /// set aside, ties broken by short name; a demoted one only when no
-    /// other is left (roadmap D25), and a busy one only after those (D27).
+    /// live neighbour nearest `dst` that is not in the tried set, not set
+    /// aside and not banned, ties broken by short name; a demoted one only
+    /// when no other is left (roadmap D25, D29).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
         let skipped = self.skipped;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
-        let busy = |n: &Neighbour| self.neighbours.is_busy(n, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
                 !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.position.short()) != parent
+                    && !self.neighbours.is_banned(n, now)
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                busy(a)
-                    .cmp(&busy(b))
-                    .then(demoted(a).cmp(&demoted(b)))
+                demoted(a)
+                    .cmp(&demoted(b))
                     .then(da.total_cmp(&db))
                     .then(a.position.short().0.cmp(&b.position.short().0))
             })
@@ -826,7 +824,7 @@ impl Relay {
             .by_short(b.from)
             .map(|(s, n)| (s, n.position));
         if let Some((_, position)) = slot {
-            self.neighbours.refused(position, now + BUSY_HOLD);
+            self.neighbours.refused(position, now + BAN);
         }
         match out.kind {
             Kind::Forward { .. } => {

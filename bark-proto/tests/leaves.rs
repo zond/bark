@@ -166,11 +166,11 @@ fn leaf_to_leaf_across_two_relays() {
 /// R1's send queue is full: its application has queued a short message
 /// for R2 in each of its places, and R1's frames to R2 are lost for a
 /// while. R1 answers L1's message with BUSY (§9.2.4); L1 keeps its relay,
-/// holds the message and offers it again only after the hold (§9.3,
-/// §10.2, roadmap D27), until R1 takes it and it arrives.
+/// holds the message and offers it again only after the ban (§9.3,
+/// §10.2, roadmap D27, D29), until R1 takes it and it arrives.
 #[test]
-fn a_leaf_told_busy_holds_its_message_for_the_hold() {
-    use bark_proto::tables::budget::BUSY_HOLD;
+fn a_leaf_told_busy_holds_its_message_for_the_ban() {
+    use bark_proto::tables::budget::BAN;
     use bark_proto::tables::send_queue::SEND_QUEUE;
     let (r1, r2, l1, l2) = (0, 1, 2, 3);
     let mut h = Harness::new(vec![
@@ -208,7 +208,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_hold() {
         );
     }
     let start = h.now;
-    let id = send(&mut h, l1, l2, r2, b"after the hold");
+    let id = send(&mut h, l1, l2, r2, b"after the ban");
     h.run_until(start + secs(10), |_| false);
     lost.set(false);
     assert!(
@@ -234,7 +234,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_hold() {
     for b in refusals {
         let next = offers.iter().find(|&&t| t > b).expect("offered again");
         assert!(
-            next.since(b) >= BUSY_HOLD,
+            next.since(b) >= BAN,
             "offered again after {:?}",
             next.since(b)
         );

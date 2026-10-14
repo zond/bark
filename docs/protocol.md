@@ -313,7 +313,7 @@ Per node, up to 64 entries:
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
 | fail_count | consecutive ACK failures |
-| busy_until | when its last BUSY stops counting (§9.3) |
+| banned_until | when the ban of its last BUSY ends (§9.3) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
@@ -445,11 +445,10 @@ A record is 32 bytes, so 20 KB.
 One function chooses the next hop for a first send, for the next try after
 the message comes back, and after a failed hand-over (§9.3). The
 **candidates** are the neighbour-table entries that are live (§8.2),
-except those in the tried set (§9.2.2).
+except those in the tried set (§9.2.2) and those banned (§9.3).
 
-The **order** is: neighbours that are not busy (§9.3) before busy ones,
-and within each, neighbours that are not demoted before demoted ones;
-within those, distance to the destination position in the local plane
+The **order** is: neighbours that are not demoted before demoted ones;
+within each, distance to the destination position in the local plane
 (§11), nearest first; equal distances are ordered by short name. The
 relay sends to the first candidate. If there is none, it returns the
 message to its parent (§9.2.5).
@@ -463,8 +462,9 @@ the only route, so without the last resort every message is dropped
 until the demotion lapses, six and a half minutes. A neighbour that is
 really gone costs each message routed to it three attempts until its
 entry expires (§8.2: 390 s after its last heartbeat) (roadmap D25). A
-busy neighbour comes after the demoted ones: it has just said it will
-take nothing, and a few seconds later it may (roadmap D27).
+banned neighbour is not tried at all: it has just said it cannot take
+the message, and trying it again before its bucket has refilled would
+only cost it another reply (roadmap D29).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -545,14 +545,18 @@ last-active time.
 
 #### 9.2.5 Returning to the parent, and the end of the search
 
-When §9.2.3 finds no candidate, the relay sends the message back to its
-parent: a DATA packet with `dst_hop` the parent's short name, on the
-parent's channel, both from the record. The parent receives it from its
+When §9.2.3 finds no candidate, because every neighbour has been tried
+or is banned (§9.3), the relay sends the message back to its parent: a
+DATA packet with `dst_hop` the parent's short name, on the parent's
+channel, both from the record. The parent receives it from its
 last child (§9.2.4, case 4) and continues with its next neighbour.
 
-The origin has no parent. With no candidate left it drops the message: no
-relay that can be reached from it, through neighbours that answer, owns
-the destination. Nobody is told (§9.1, roadmap D10).
+The origin has no parent. With no candidate left it drops the message:
+no relay that can be reached from it, through neighbours that answer and
+are not banned, owns the destination. Nobody is told (§9.1, roadmap
+D10). A relay's own application hears that its message failed; a leaf
+has already had the first relay's ACK and hears nothing, the cost of
+having no end-to-end acknowledgement.
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
 and the search ends early. The usual cause is a parent that has since
@@ -650,11 +654,22 @@ once. A return to the parent, a packet sent straight back, or a DELIVER
 has no other candidate: BUSY uses up the attempt, the next one follows
 the retry wait, and after the last the packet is dropped as when its
 ACKs are missing, but with no failure counted against the receiver. The
-neighbour is also **busy** for 2.48 s, the time its bucket takes to
-refill the reply reserve (§9.4): until then other messages take it only
-after every other candidate, demoted ones included (§9.2.3). A leaf told
-BUSY by its relay keeps the relay and the message, and offers the
-message again 2.48 s later (§10.2).
+neighbour is also **banned** for 1.53 s. A relay refuses a packet to
+send on when the frame and the ACK that takes it, at most 150.4 ms, do
+not fit in its bucket on top of what it holds (§9.2.4), and its bucket
+refills that much in 150.4 ms / 9.83 % = 1.53 s (§9.4). Until then it
+is no candidate for any message (§9.2.3). A leaf told BUSY by its relay
+keeps the relay and the message, and offers the message again 1.53 s
+later (§10.2).
+
+Nothing waits for another node. A ban ends when the refuser's bucket
+has refilled what it could not fit, whatever either node does. A
+message whose every remaining candidate is banned goes back to its
+parent, or is dropped at the origin (§9.2.5): that loss is the
+overload's, and a relay's application hears of it, a leaf's does not.
+Waiting instead could hold two neighbours forever, each full of messages
+waiting for the other, since what a relay holds drains only as it sends
+(roadmap D29).
 
 BUSY carries the low 16 bits of the message ID because two senders on
 one channel can hand to the same relay within one reply time. Without
@@ -748,10 +763,9 @@ reply reserve on top of the work's ACK and of everything it has queued
 to send (§9.2.4); otherwise it answers BUSY. A hand-over therefore waits
 for the bucket only when retries or replies have spent it since its
 packet was taken. A relay below the reserve sends nothing but heartbeats
-and replies until its bucket refills. Its senders pass it over for the
-reserve's refill time, 2.48 s (§9.3), so a relay at the reserve can tell
-22 senders in that time that it is busy and pay for it from the refill
-alone. Without budget even for a reply it stays silent, its neighbours'
+and replies until its bucket refills. Each sender it refuses bans it
+for 1.53 s (§9.3), so a sender costs it at most one reply per ban.
+Without budget even for a reply it stays silent, its neighbours'
 hand-overs to it fail, and they route around it (roadmap D27, D29).
 
 ### 9.5 Why the search finds a path
@@ -879,8 +893,8 @@ again as above, for up to the delivery TTL (10 minutes, §10.4), the time
 the network itself would keep it. Only then is it reported failed. The
 leaf holds one message at a time (roadmap D23). A relay that answers the
 message with BUSY is busy, not failing: the leaf keeps it, counts no
-failed period, and offers the message again 2.48 s later (§9.3, roadmap
-D27).
+failed period, and offers the message again 1.53 s later (§9.3, roadmap
+D27, D29).
 
 ### 10.3 Delivery
 
