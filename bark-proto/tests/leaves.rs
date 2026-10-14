@@ -264,19 +264,35 @@ fn line_of_three_loses_its_middle() {
         bound.as_millis()
     );
     assert!(
-        times[0] < bound + Duration::from_millis(500),
-        "the first waits out three attempts"
+        times
+            .iter()
+            .all(|t| *t < bound + Duration::from_millis(500)),
+        "each waits out at most three attempts: {ms:?}"
     );
-    // B is demoted after two failed hand-overs (§8.2): from then on A has
-    // no candidate and drops as soon as the leaf's message arrives.
+    // B is demoted after two failed hand-overs (§8.2), but with no other
+    // neighbour A still tries it (§9.2.3, roadmap D25) until its entry
+    // expires, three rotations after its last heartbeat; from then on A
+    // has no neighbour and drops as soon as the leaf's message arrives.
     assert!(h.nodes[a]
         .traces
         .iter()
         .any(|(_, t)| matches!(t, Trace::Demoted { .. })));
+    let expiry = bark_proto::tables::neighbours::NeighbourParams::from_config(&c).expire_after;
+    let tried = times
+        .iter()
+        .take_while(|t| **t > Duration::from_millis(200))
+        .count();
     assert!(
-        times[2..].iter().all(|t| *t < Duration::from_millis(200)),
+        tried as u64 * interval.as_micros() <= expiry.as_micros() + interval.as_micros(),
         "{ms:?}"
     );
+    assert!(
+        times[tried..]
+            .iter()
+            .all(|t| *t < Duration::from_millis(200)),
+        "{ms:?}"
+    );
+    assert!(tried < times.len(), "B never expired: {ms:?}");
     for k in 0..20u8 {
         assert_eq!(
             received(

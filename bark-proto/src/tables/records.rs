@@ -36,7 +36,7 @@
 //! D17 defines the tried set as the parent, the last child, and every
 //! neighbour before the last child in the order of §9.2.3 (distance to the
 //! destination, then short name), which is fixed for a message. Choosing
-//! the next hop needs nothing more: the candidates are the live, undemoted
+//! the next hop needs nothing more: the candidates are the live
 //! neighbours after the last child in that order. The order also stays
 //! right when the table changes, since it never goes back.
 //!

@@ -140,14 +140,16 @@ impl Relay {
     }
 
     /// The next hop for the message of `record` to `dst` (§9.2.3): the
-    /// live, undemoted neighbour nearest `dst` that is not in the tried set
-    /// and not set aside, ties broken by short name.
+    /// live neighbour nearest `dst` that is not in the tried set and not
+    /// set aside, ties broken by short name; a demoted one only when no
+    /// other is left (roadmap D25).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
         let skipped = self.skipped;
+        let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         self.neighbours
-            .candidates(now)
+            .live(now)
             .filter(|(slot, n)| {
                 !record.handed(*slot)
                     && skipped & (1 << slot) == 0
@@ -155,7 +157,9 @@ impl Relay {
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                da.total_cmp(&db)
+                demoted(a)
+                    .cmp(&demoted(b))
+                    .then(da.total_cmp(&db))
                     .then(a.position.short().0.cmp(&b.position.short().0))
             })
             .map(|(slot, n)| (slot, *n))

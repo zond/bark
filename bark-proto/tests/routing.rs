@@ -303,6 +303,39 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
     assert_eq!(counts, vec![1, 1]);
 }
 
+/// O, M, D in a line. Two messages whose frames to M are all lost demote
+/// M at O (§8.2), but M is O's only way on, so the next message is still
+/// handed to it, as the last resort (§9.2.3, roadmap D25), and arrives.
+#[test]
+fn a_demoted_neighbour_is_the_last_resort() {
+    let (o, m, d) = (0, 1, 2);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 61),
+            relay(400.0, 0.0, 62),
+            relay(800.0, 0.0, 63),
+        ],
+        &[(o, m), (m, d)],
+    );
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        losing.get() && (from, to) == (o, m) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    for k in 0..2u8 {
+        let id = send(&mut h, o, d, &[b'x', k]);
+        h.run_for(secs(10));
+        assert!(!delivered(&h, d, id));
+    }
+    assert!(traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::Demoted { .. })));
+    lost.set(false);
+    let id = send(&mut h, o, d, b"through anyway");
+    h.run_for(secs(5));
+    assert!(delivered(&h, d, id), "{:?}", traces(&h, o));
+}
+
 /// O sends D a full frame every 2 s, 7 % of D's home channel and more than
 /// the 5 % that moves a relay (§6.3). The traffic is D's own and would
 /// follow it to any channel, so D does not count it as busy and stays, and

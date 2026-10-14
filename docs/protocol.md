@@ -311,8 +311,9 @@ Per node, up to 64 entries:
 
 - **Expire** after 3 rotations (390 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
-  `fail_count ≥ 2` is not used as a next hop until it ACKs a packet from
-  this relay or three rotations (390 s) pass. Its heartbeats keep it in
+  `fail_count ≥ 2` is a next hop only when no other is left (§9.2.3)
+  until it ACKs a packet from this relay or three rotations (390 s)
+  pass. Its heartbeats keep it in
   the table but do not clear the demotion: a heartbeat proves the
   neighbour is alive, not that it hears us, and a link that works one way
   only would otherwise cost every message the failed attempts again.
@@ -438,13 +439,24 @@ A record is 32 bytes, so 20 KB.
 
 One function chooses the next hop for a first send, for the next try after
 the message comes back, and after a failed hand-over (§9.3). The
-**candidates** are the neighbour-table entries that are live and not
-demoted (§8.2), except those in the tried set (§9.2.2).
+**candidates** are the neighbour-table entries that are live (§8.2),
+except those in the tried set (§9.2.2).
 
-The **order** is distance to the destination position in the local plane
+The **order** is: neighbours that are not demoted before demoted ones;
+within each, distance to the destination position in the local plane
 (§11), nearest first; equal distances are ordered by short name. The
-relay sends to the first candidate. If there is none, it returns the message to its
-parent (§9.2.5).
+relay sends to the first candidate. If there is none, it returns the
+message to its parent (§9.2.5).
+
+A demoted neighbour is thus a last resort: tried only when every other
+has been, its failures counted as usual. Demotion keeps a failing link
+from costing every message its attempts while another route exists; it
+should not drop a message whose only route is that link. Two hand-overs
+lost to collisions demote a neighbour that works, and on a line it is
+the only route, so without the last resort every message is dropped
+until the demotion lapses, six and a half minutes. A neighbour that is
+really gone costs each message routed to it three attempts until its
+entry expires (§8.2: 390 s after its last heartbeat) (roadmap D25).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is

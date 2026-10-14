@@ -313,11 +313,12 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
 /// S1b: A and C, which cannot hear each other, hand to B at the same
 /// instant every 30 s, so every first hand-over collides at B. The retry
 /// wait (protocol §9.3, roadmap D22) pulls them apart: over 100 seeds the
-/// settled phase delivers 0.945 on average, against 0.136 with the old
-/// 0–50 ms over 20. What is still lost is mostly B demoted by A or C after
-/// two failed hand-overs, with no other route: a seed where that happens
-/// loses a whole demotion's worth of messages, so the test bounds the
-/// mean over ten seeds rather than each.
+/// settled phase delivers 0.961 on average, worst seed 0.900, against
+/// 0.136 with the old 0–50 ms over 20. What is lost is a message whose
+/// three attempts all collided. B demoted by A or C after two such
+/// failures is still tried, as their last neighbour (roadmap D25); before
+/// that, a seed where it happened lost a whole demotion's worth of
+/// messages (worst seed 0.633).
 #[test]
 fn s1b_hidden_terminals_come_apart() {
     let path =
@@ -333,6 +334,7 @@ fn s1b_hidden_terminals_come_apart() {
         let s = sim.summary();
         let settled = &s.app.phases[1];
         assert_eq!(settled.phase, "settled");
+        assert!(settled.delivery_ratio >= 0.85, "seed {seed}: {}", s.table());
         ratios.push(settled.delivery_ratio);
         let b = &s.nodes.as_ref().expect("per-node metrics")[1];
         assert!(
@@ -341,7 +343,7 @@ fn s1b_hidden_terminals_come_apart() {
         );
     }
     let mean = ratios.iter().sum::<f64>() / ratios.len() as f64;
-    assert!(mean >= 0.9, "{ratios:?}");
+    assert!(mean >= 0.93, "{ratios:?}");
 }
 
 /// S2, the block (docs/simulator-design.md §6): ten windowsill relays and

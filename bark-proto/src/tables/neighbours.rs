@@ -17,7 +17,8 @@
 //! 3, 390 s).
 //!
 //! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
-//! (§8.2: 2) the neighbour is demoted and is not a next hop. Demotion ends
+//! (§8.2: 2) the neighbour is demoted: a next hop only when no other is
+//! left (§9.2.3, roadmap D25). Demotion ends
 //! when the neighbour ACKs a packet from this relay, which resets
 //! `fail_count` because §8.2 counts consecutive failures, or
 //! `demotion_rotations` rotations (3, 390 s) after the failure that
@@ -204,10 +205,16 @@ impl Neighbours {
         now.since(n.last_heard) >= self.params.expire_after
     }
 
-    /// Next-hop candidates at `now`, with their slots: live and not demoted.
+    /// Neighbours that work at `now`, with their slots: live and not
+    /// demoted. The owner rule (§9.2.7) looks only at these.
     pub fn candidates(&self, now: Instant) -> impl Iterator<Item = (usize, &Neighbour)> {
-        self.slots()
-            .filter(move |(_, n)| !self.is_demoted(n, now) && !self.is_expired(n, now))
+        self.live(now)
+            .filter(move |(_, n)| !self.is_demoted(n, now))
+    }
+
+    /// Entries not expired at `now`, demoted or not, with their slots.
+    pub fn live(&self, now: Instant) -> impl Iterator<Item = (usize, &Neighbour)> {
+        self.slots().filter(move |(_, n)| !self.is_expired(n, now))
     }
 
     /// A heartbeat from `hb.position` was heard at `now`. Refreshes its
