@@ -1,14 +1,20 @@
 //! The protocol core: configuration, roles, and the `Core` trait that the
 //! driver programs against.
 //!
-//! Phase 0 implements the state machines behind [`Relay`] and [`Leaf`]; this
-//! file fixes their outward shape so the simulator and the firmware can be
-//! built against it in parallel.
+//! The relay's medium access (home channel, sweep, heartbeat) is in
+//! `node/relay.rs`, on the shared radio discipline of `node/mac.rs`.
+//! Forwarding and the leaf are still stubs: they wait for the routing and
+//! wire format to settle.
 
 use crate::event::{Action, Event};
 use crate::position::Position;
-use crate::radio::{Channel, CHANNELS};
+use crate::radio::Channel;
 use crate::time::{Duration, Instant};
+
+mod mac;
+mod relay;
+
+pub use relay::Relay;
 
 /// Which half of the protocol a node runs (design §1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,10 +63,18 @@ pub struct Config {
     pub move_dwell: Duration,
     /// Maximum random wait before moving (design §6.3: 5 min).
     pub move_wait_max: Duration,
-    /// Listen-before-talk retries with random 0–`lbt_backoff_max` waits (design §7: 3, 200 ms).
+    /// Heartbeat listen-before-talk checks before the heartbeat is skipped,
+    /// with a random 0–`lbt_backoff_max` wait after each busy one (design
+    /// §7: "retry ... up to three times, then skip").
     pub lbt_attempts: u8,
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
+    /// Listen on one channel this long before choosing home (design §6.2:
+    /// one full rotation, ≈150 s).
+    pub boot_listen: Duration,
+    /// Fixed home channel for bench work instead of the measured choice
+    /// (design §6.2). The move rule is off while it is set.
+    pub home_override: Option<Channel>,
 }
 
 impl Default for Config {
@@ -85,6 +99,8 @@ impl Default for Config {
             move_wait_max: Duration::from_secs(300),
             lbt_attempts: 3,
             lbt_backoff_max: Duration::from_millis(200),
+            boot_listen: Duration::from_secs(150),
+            home_override: None,
         }
     }
 }
@@ -95,23 +111,14 @@ pub trait Core {
     /// Deliver one event at time `now`. The core calls `emit` zero or more
     /// times, in the order the actions must be performed, and returns.
     ///
-    /// `now` never decreases between calls. `Event::Wakeup` is delivered when
+    /// The first call is `Event::Wakeup`, at start. After that `now` never
+    /// decreases between calls, and `Event::Wakeup` is delivered when
     /// `now >= next_wakeup()`, possibly later than that instant, never earlier.
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action));
 
     /// When the core next needs `Event::Wakeup`, if ever. May change after
     /// every `handle` call; the driver re-reads it after each call.
     fn next_wakeup(&self) -> Option<Instant>;
-}
-
-/// Relay role. Capacity for 64 neighbours, 256 leaves and 64 queued
-/// deliveries (design §8.2, §10.2, §10.4), fixed at compile time.
-pub struct Relay {
-    config: Config,
-    home: Channel,
-    rng: Rng,
-    wakeup: Option<Instant>,
-    started: bool,
 }
 
 /// Leaf role. Small: the simulator holds twenty thousand of these.
@@ -122,31 +129,12 @@ pub struct Leaf {
 }
 
 /// Either role, for a driver that switches role at run time (the firmware).
+#[allow(clippy::large_enum_variant)]
 pub enum Node {
     /// Running as a relay.
     Relay(Relay),
     /// Running as a leaf.
     Leaf(Leaf),
-}
-
-impl Relay {
-    /// Create a relay. `seed` drives every random choice the relay makes;
-    /// two relays with the same config and seed behave identically.
-    pub fn new(config: Config, seed: u64) -> Relay {
-        let mut rng = Rng::new(seed);
-        let home = Channel::new((rng.next_u64() % CHANNELS as u64) as u8).expect("in range");
-        Relay { config, home, rng, wakeup: None, started: false }
-    }
-
-    /// Current home channel.
-    pub fn home(&self) -> Channel {
-        self.home
-    }
-
-    /// Configuration.
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
 }
 
 impl Leaf {
@@ -179,26 +167,7 @@ impl Node {
     }
 }
 
-// Phase 0 stubs: the state machines are implemented behind these. Until
-// then a core does nothing but start listening on its home channel.
-
-impl Core for Relay {
-    fn handle(&mut self, event: Event<'_>, _now: Instant, emit: &mut dyn FnMut(Action)) {
-        if let Event::Wakeup = event {
-            self.wakeup = None;
-        }
-        if !self.started {
-            self.started = true;
-            emit(Action::Listen(self.home));
-        }
-        let _ = &mut self.rng;
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        self.wakeup
-    }
-}
-
+// Stub until attach and delivery are specified: the leaf does nothing.
 impl Core for Leaf {
     fn handle(&mut self, event: Event<'_>, _now: Instant, _emit: &mut dyn FnMut(Action)) {
         if let Event::Wakeup = event {
@@ -252,5 +221,10 @@ impl Rng {
     pub fn range(&mut self, lo: u64, hi: u64) -> u64 {
         let span = hi - lo + 1;
         lo + ((self.next_u64() as u128 * span as u128) >> 64) as u64
+    }
+
+    /// A duration uniform in `[lo, hi]`; `lo` if `hi < lo`.
+    pub fn duration(&mut self, lo: Duration, hi: Duration) -> Duration {
+        Duration::from_micros(self.range(lo.as_micros(), hi.as_micros().max(lo.as_micros())))
     }
 }
