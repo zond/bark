@@ -40,7 +40,10 @@ pub struct Origin {
 impl Default for Origin {
     /// Central Kyiv.
     fn default() -> Self {
-        Origin { lat: 50.45, lon: 30.52 }
+        Origin {
+            lat: 50.45,
+            lon: 30.52,
+        }
     }
 }
 
@@ -72,7 +75,10 @@ pub struct Grid {
 impl Grid {
     /// Build a grid with cell side `side` metres over `points`.
     pub fn new(points: &[Xy], side: f64) -> Grid {
-        assert!(side > 0.0 && side.is_finite(), "grid cell side must be positive");
+        assert!(
+            side > 0.0 && side.is_finite(),
+            "grid cell side must be positive"
+        );
         let (mut x0, mut y0, mut x1, mut y1) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
         if let Some(p) = points.first() {
             (x0, y0, x1, y1) = (p.x, p.y, p.x, p.y);
@@ -85,7 +91,15 @@ impl Grid {
         }
         let nx = ((x1 - x0) / side) as usize + 1;
         let ny = ((y1 - y0) / side) as usize + 1;
-        let mut g = Grid { side, x0, y0, nx, ny, items: vec![0; points.len()], start: vec![0; nx * ny + 1] };
+        let mut g = Grid {
+            side,
+            x0,
+            y0,
+            nx,
+            ny,
+            items: vec![0; points.len()],
+            start: vec![0; nx * ny + 1],
+        };
         let cells: Vec<usize> = points.iter().map(|&p| g.cell(p)).collect();
         for &c in &cells {
             g.start[c + 1] += 1;
@@ -145,12 +159,21 @@ mod tests {
         let p0 = o.position(Xy { x: 0.0, y: 0.0 });
         let p1 = o.position(Xy { x: 0.0, y: 1000.0 });
         let counts = (p1.lat - p0.lat) as f64;
-        assert!((counts * UNIT_M - 1000.0).abs() < 1.0, "1 km north is {} m", counts * UNIT_M);
+        assert!(
+            (counts * UNIT_M - 1000.0).abs() < 1.0,
+            "1 km north is {} m",
+            counts * UNIT_M
+        );
     }
 
     #[test]
     fn neighbourhood_is_superset_of_disc() {
-        let pts: Vec<Xy> = (0..400).map(|i| Xy { x: (i % 20) as f64 * 37.0, y: (i / 20) as f64 * 41.0 }).collect();
+        let pts: Vec<Xy> = (0..400)
+            .map(|i| Xy {
+                x: (i % 20) as f64 * 37.0,
+                y: (i / 20) as f64 * 41.0,
+            })
+            .collect();
         let g = Grid::new(&pts, 100.0);
         for &q in &pts {
             let mut got = Vec::new();

@@ -113,6 +113,21 @@ pub fn normal_at(seed: u64, a: u64, b: u64) -> f64 {
     box_muller(mix(k ^ 1), mix(k ^ 2))
 }
 
+/// Counter-based approximate standard normal: the sum of four 16-bit
+/// uniforms from one hash, centred and scaled to unit variance (Irwin-Hall
+/// with n = 4, bounded at ±3.46). Several times cheaper than
+/// [`normal_at`]; used for fading innovations, where the process sums many
+/// of them and is Gaussian by the central limit theorem regardless.
+pub fn normal_fast_at(seed: u64, a: u64, b: u64) -> f64 {
+    let k = mix(seed ^ mix(a ^ mix(b)));
+    let s = (k & 0xffff) + ((k >> 16) & 0xffff) + ((k >> 32) & 0xffff) + (k >> 48);
+    // Each 16-bit part is uniform on {0..65535}: mean 32767.5, variance
+    // (65536² − 1) / 12. Four of them: four times both.
+    const MEAN: f64 = 4.0 * 32767.5;
+    const VAR: f64 = 4.0 * (65536.0 * 65536.0 - 1.0) / 12.0;
+    (s as f64 - MEAN) / VAR.sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +141,20 @@ mod tests {
         assert!(x != y && y != z && x != z);
         // Same triple, same sequence.
         assert_eq!(Stream::new(7, Purpose::Traffic, 3).next_u64(), x);
+    }
+
+    #[test]
+    fn fast_normal_has_unit_variance() {
+        let n = 200_000u64;
+        let (mut sum, mut sq) = (0.0, 0.0);
+        for i in 0..n {
+            let x = normal_fast_at(5, i, 7);
+            sum += x;
+            sq += x * x;
+        }
+        let mean = sum / n as f64;
+        assert!(mean.abs() < 0.01, "mean {mean}");
+        assert!((sq / n as f64 - mean * mean - 1.0).abs() < 0.01);
     }
 
     #[test]

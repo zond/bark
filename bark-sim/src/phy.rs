@@ -60,15 +60,30 @@ impl Deaf {
     /// Number of variants, for counter arrays.
     pub const COUNT: usize = 7;
     /// All variants in counter order.
-    pub const ALL: [Deaf; Deaf::COUNT] =
-        [Deaf::Retune, Deaf::Cad, Deaf::Rssi, Deaf::Tx, Deaf::HalfDuplex, Deaf::Corrupt, Deaf::Absent];
+    pub const ALL: [Deaf; Deaf::COUNT] = [
+        Deaf::Retune,
+        Deaf::Cad,
+        Deaf::Rssi,
+        Deaf::Tx,
+        Deaf::HalfDuplex,
+        Deaf::Corrupt,
+        Deaf::Absent,
+    ];
     /// Counter index.
     pub fn index(self) -> usize {
         self as usize
     }
     /// Name used in summaries.
     pub fn name(self) -> &'static str {
-        ["retune", "cad", "rssi", "tx", "half_duplex", "corrupt", "absent"][self as usize]
+        [
+            "retune",
+            "cad",
+            "rssi",
+            "tx",
+            "half_duplex",
+            "corrupt",
+            "absent",
+        ][self as usize]
     }
 }
 
@@ -157,7 +172,8 @@ impl RadioParams {
 
     /// Sensitivity in dBm.
     pub fn sensitivity_dbm(&self) -> f64 {
-        self.sensitivity_dbm.unwrap_or(self.noise_floor_dbm() + demod_snr_db())
+        self.sensitivity_dbm
+            .unwrap_or(self.noise_floor_dbm() + demod_snr_db())
     }
 
     /// Link-storage cut-off in dBm.
@@ -193,7 +209,10 @@ impl RadioParams {
     pub fn cad_phases(&self, off_channel: bool) -> [Phase; 3] {
         let hop = if off_channel { self.synth_hop_us } else { 0 };
         [
-            (Duration::from_micros(self.rx_to_fs_us + hop + self.fs_to_rx_us), Deaf::Retune),
+            (
+                Duration::from_micros(self.rx_to_fs_us + hop + self.fs_to_rx_us),
+                Deaf::Retune,
+            ),
             (self.cad_time(), Deaf::Cad),
             (Duration::from_micros(self.stby_to_rx_us), Deaf::Retune),
         ]
@@ -204,8 +223,16 @@ impl RadioParams {
     /// node is still deaf for the dwell (docs/core-interface.md §3 rule 3:
     /// nothing is received during an excursion).
     pub fn rssi_phases(&self, off_channel: bool) -> [Phase; 3] {
-        let r = if off_channel { self.retune() } else { Duration::ZERO };
-        [(r, Deaf::Retune), (Duration::from_micros(self.rssi_dwell_us), Deaf::Rssi), (r, Deaf::Retune)]
+        let r = if off_channel {
+            self.retune()
+        } else {
+            Duration::ZERO
+        };
+        [
+            (r, Deaf::Retune),
+            (Duration::from_micros(self.rssi_dwell_us), Deaf::Rssi),
+            (r, Deaf::Retune),
+        ]
     }
 
     /// Phases of a transmission with `airtime` on air: RX→TX (plus a hop if
@@ -241,7 +268,10 @@ mod tests {
         assert!((thermal_noise_dbm() - -123.03).abs() < 0.01);
         assert!((p.noise_figure_db - 6.53).abs() < 0.01);
         assert!((p.noise_floor_dbm() - -116.5).abs() < 0.01);
-        assert!((p.sensitivity_dbm() - -119.0).abs() < 1e-9, "SF5 sensitivity follows from SF7 and Table 6-1");
+        assert!(
+            (p.sensitivity_dbm() - -119.0).abs() < 1e-9,
+            "SF5 sensitivity follows from SF7 and Table 6-1"
+        );
     }
 
     #[test]

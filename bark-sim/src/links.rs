@@ -12,14 +12,21 @@
 //!   process per pair and channel, shared by both directions (the channel
 //!   is reciprocal), stepped by a heap event on a slow clock.
 //!
-//! A pair is stored only if it can matter: its strongest plausible power
-//! (base plus three fading standard deviations) reaches the cut-off,
-//! sensitivity minus the interference margin. Generators find candidate
-//! pairs with a spatial grid whose cell is the cut-off distance, so building
-//! the table visits each node's 3 × 3 cell neighbourhood and never all N².
+//! A pair is stored only if it can matter: its base power reaches the
+//! cut-off, sensitivity minus the interference margin. The margin covers
+//! both the weak signals that still add to a receiver's noise and the
+//! fading excursions that lift a link above its base: a link left out sits
+//! at least 10 dB (by default) under sensitivity, which a 4 dB fading
+//! process exceeds 0.6 % of the time.
+//!
+//! Generators find candidate pairs with spatial grids whose cell side is
+//! the cut-off distance for the pair's class (outdoor–outdoor,
+//! outdoor–indoor, indoor–indoor, since indoor loss shortens reach), so
+//! building the table visits each node's 3 × 3 cell neighbourhoods and
+//! never all N².
 
 use crate::geo::{Grid, Xy};
-use crate::rng::{normal_at, stream_seed, Purpose};
+use crate::rng::{normal_at, normal_fast_at, stream_seed, Purpose};
 use bark_proto::radio::{Channel, CHANNELS};
 use bark_proto::Duration;
 use serde::{Deserialize, Serialize};
@@ -39,10 +46,6 @@ pub fn free_space_loss_1m_db() -> f64 {
 /// Shadowing draws are truncated at this many standard deviations, so that
 /// the generator's cut-off distance is a hard bound.
 pub const SHADOW_TRUNCATE_SIGMA: f64 = 3.0;
-
-/// Fading headroom, in standard deviations, when deciding whether a pair
-/// can reach the cut-off.
-pub const FADE_HEADROOM_SIGMA: f64 = 3.0;
 
 /// Which generator fills the table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -87,7 +90,11 @@ pub struct FadingParams {
 
 impl Default for FadingParams {
     fn default() -> Self {
-        FadingParams { sigma_db: 0.0, correlation_time_s: 60.0, step_s: 10.0 }
+        FadingParams {
+            sigma_db: 0.0,
+            correlation_time_s: 60.0,
+            step_s: 10.0,
+        }
     }
 }
 
@@ -138,11 +145,11 @@ impl LinkParams {
     }
 
     /// Largest distance at which a transmitter of `tx_dbm` can deliver
-    /// `floor_dbm` with every allowance in its favour (no indoor loss,
-    /// shadowing at its truncation, fading headroom).
-    pub fn cutoff_distance_m(&self, tx_dbm: f64, floor_dbm: f64) -> f64 {
+    /// `floor_dbm` through `indoor_ends` indoor ends, with shadowing at its
+    /// truncation in its favour.
+    pub fn cutoff_distance_m(&self, tx_dbm: f64, floor_dbm: f64, indoor_ends: u8) -> f64 {
         let budget = tx_dbm + SHADOW_TRUNCATE_SIGMA * self.shadowing_sigma_db
-            + FADE_HEADROOM_SIGMA * self.fading.sigma_db
+            - self.indoor_loss_db * indoor_ends as f64
             - floor_dbm
             - self.l0();
         10f64.powf(budget / (10.0 * self.exponent)).max(1.0)
@@ -179,7 +186,7 @@ pub struct BuildStats {
     pub pairs: u64,
     /// Directed links stored.
     pub links: u64,
-    /// Grid cell side, the cut-off distance, in metres (0 for a table).
+    /// Largest cut-off distance (outdoor–outdoor), metres; 0 for a table.
     pub cutoff_m: f64,
 }
 
@@ -209,40 +216,66 @@ pub struct NodeRadio<'a> {
 impl LinkTable {
     /// Build with the configured generator. `cutoff_dbm` is sensitivity
     /// minus the interference margin.
-    pub fn build(p: &LinkParams, nodes: &NodeRadio<'_>, cutoff_dbm: f64, run_seed: u64) -> Result<LinkTable, String> {
+    pub fn build(
+        p: &LinkParams,
+        nodes: &NodeRadio<'_>,
+        cutoff_dbm: f64,
+        run_seed: u64,
+    ) -> Result<LinkTable, String> {
         let n = nodes.xy.len();
         let mut rows: Vec<Vec<Link>> = vec![Vec::new(); n];
         let mut pair_nodes = Vec::new();
         let mut static_offsets = Vec::new();
         let mut stats = BuildStats::default();
-        let headroom = FADE_HEADROOM_SIGMA * p.fading.sigma_db;
         match p.model {
             Model::LogDistance => {
                 let tx_max = nodes.tx_dbm.iter().cloned().fold(f64::MIN, f64::max);
-                let cut = p.cutoff_distance_m(tx_max, cutoff_dbm);
-                stats.cutoff_m = cut;
-                let grid = Grid::new(nodes.xy, cut);
+                let cut = |ends: u8| p.cutoff_distance_m(tx_max, cutoff_dbm, ends);
+                stats.cutoff_m = cut(0);
+                // Per indoor class, the class's members and their positions.
+                let class: [Vec<u32>; 2] = [false, true].map(|c| {
+                    (0..n as u32)
+                        .filter(|&i| nodes.indoor[i as usize] == c)
+                        .collect()
+                });
+                let class_xy: [Vec<Xy>; 2] =
+                    [0, 1].map(|c| class[c].iter().map(|&i| nodes.xy[i as usize]).collect());
+                // grids[from][to]: class `to` gridded at the cut-off for the pair class.
+                let grids: [[Option<Grid>; 2]; 2] = [0u8, 1].map(|from| {
+                    [0u8, 1].map(|to| {
+                        let members = &class_xy[to as usize];
+                        (!members.is_empty()).then(|| Grid::new(members, cut(from + to)))
+                    })
+                });
                 let shadow_seed = stream_seed(run_seed, Purpose::Shadowing, 0);
                 for a in 0..n {
-                    grid.neighbourhood(nodes.xy[a], |b| {
-                        let b = b as usize;
-                        if b <= a {
-                            return;
-                        }
-                        stats.evaluated += 1;
-                        let d = nodes.xy[a].dist(nodes.xy[b]);
-                        if d > cut {
-                            return;
-                        }
-                        let mut loss = p.path_loss_db(d);
-                        loss += p.indoor_loss_db * (nodes.indoor[a] as u8 + nodes.indoor[b] as u8) as f64;
-                        if p.shadowing_sigma_db > 0.0 {
-                            loss -= p.shadowing_sigma_db * truncated_normal(shadow_seed, a as u64, b as u64);
-                        }
-                        let ab = nodes.tx_dbm[a] - loss;
-                        let ba = nodes.tx_dbm[b] - loss;
-                        push_pair(&mut rows, &mut pair_nodes, a, b, ab, ba, cutoff_dbm - headroom);
-                    });
+                    let from = nodes.indoor[a] as usize;
+                    for to in 0..2 {
+                        let Some(grid) = &grids[from][to] else {
+                            continue;
+                        };
+                        let radius = grid.side();
+                        grid.neighbourhood(nodes.xy[a], |k| {
+                            let b = class[to][k as usize] as usize;
+                            if b <= a {
+                                return;
+                            }
+                            stats.evaluated += 1;
+                            let d = nodes.xy[a].dist(nodes.xy[b]);
+                            if d > radius {
+                                return;
+                            }
+                            let mut loss =
+                                p.path_loss_db(d) + p.indoor_loss_db * (from + to) as f64;
+                            if p.shadowing_sigma_db > 0.0 {
+                                loss -= p.shadowing_sigma_db
+                                    * truncated_normal(shadow_seed, a as u64, b as u64);
+                            }
+                            let ab = nodes.tx_dbm[a] - loss;
+                            let ba = nodes.tx_dbm[b] - loss;
+                            push_pair(&mut rows, &mut pair_nodes, a, b, ab, ba, cutoff_dbm);
+                        });
+                    }
                 }
             }
             Model::Table => {
@@ -261,11 +294,22 @@ impl LinkTable {
                     }
                     stats.evaluated += 1;
                     let before = pair_nodes.len();
-                    push_pair(&mut rows, &mut pair_nodes, a, b, l.dbm, l.dbm_back.unwrap_or(l.dbm), cutoff_dbm - headroom);
+                    push_pair(
+                        &mut rows,
+                        &mut pair_nodes,
+                        a,
+                        b,
+                        l.dbm,
+                        l.dbm_back.unwrap_or(l.dbm),
+                        cutoff_dbm,
+                    );
                     let mut off = [0f32; NCH];
                     if let Some(o) = &l.channel_offsets_db {
                         if o.len() != NCH {
-                            return Err(format!("link {}–{}: channel_offsets_db needs {NCH} values", l.a, l.b));
+                            return Err(format!(
+                                "link {}–{}: channel_offsets_db needs {NCH} values",
+                                l.a, l.b
+                            ));
                         }
                         for (d, s) in off.iter_mut().zip(o) {
                             *d = *s as f32;
@@ -291,8 +335,16 @@ impl LinkTable {
         }
         stats.pairs = pair_nodes.len() as u64;
         stats.links = links.len() as u64;
-        let fading = (p.fading.sigma_db > 0.0).then(|| Fading::new(&p.fading, &pair_nodes, run_seed));
-        Ok(LinkTable { row_start, links, pair_nodes, static_offsets, fading, stats })
+        let fading =
+            (p.fading.sigma_db > 0.0).then(|| Fading::new(&p.fading, &pair_nodes, run_seed));
+        Ok(LinkTable {
+            row_start,
+            links,
+            pair_nodes,
+            static_offsets,
+            fading,
+            stats,
+        })
     }
 
     /// Stored receivers of transmitter `a`.
@@ -330,7 +382,7 @@ impl LinkTable {
             f.tick += 1;
             for (o, &(a, b)) in f.offsets.iter_mut().zip(&self.pair_nodes) {
                 for (c, x) in o.iter_mut().enumerate() {
-                    let n = normal_at(f.seed, pair_key(a, b), (f.tick << 4) | c as u64);
+                    let n = normal_fast_at(f.seed, pair_key(a, b), (f.tick << 4) | c as u64);
                     *x = (f.rho * *x as f64 + f.innovation * n) as f32;
                 }
             }
@@ -386,17 +438,33 @@ fn truncated_normal(seed: u64, a: u64, b: u64) -> f64 {
         .expect("resampling terminates")
 }
 
-fn push_pair(rows: &mut [Vec<Link>], pairs: &mut Vec<(u32, u32)>, a: usize, b: usize, ab: f64, ba: f64, floor: f64) {
+fn push_pair(
+    rows: &mut [Vec<Link>],
+    pairs: &mut Vec<(u32, u32)>,
+    a: usize,
+    b: usize,
+    ab: f64,
+    ba: f64,
+    floor: f64,
+) {
     if ab < floor && ba < floor {
         return;
     }
     let pair = pairs.len() as u32;
     pairs.push((a as u32, b as u32));
     if ab >= floor {
-        rows[a].push(Link { rx: b as u32, base_dbm: ab as f32, pair });
+        rows[a].push(Link {
+            rx: b as u32,
+            base_dbm: ab as f32,
+            pair,
+        });
     }
     if ba >= floor {
-        rows[b].push(Link { rx: a as u32, base_dbm: ba as f32, pair });
+        rows[b].push(Link {
+            rx: a as u32,
+            base_dbm: ba as f32,
+            pair,
+        });
     }
 }
 
@@ -407,7 +475,12 @@ mod tests {
 
     fn scatter(n: usize, side: f64, seed: u64) -> Vec<Xy> {
         let mut s = Stream::new(seed, Purpose::Placement, 0);
-        (0..n).map(|_| Xy { x: s.uniform() * side, y: s.uniform() * side }).collect()
+        (0..n)
+            .map(|_| Xy {
+                x: s.uniform() * side,
+                y: s.uniform() * side,
+            })
+            .collect()
     }
 
     #[test]
@@ -422,19 +495,41 @@ mod tests {
         let tx = vec![10.0; n];
         let indoor: Vec<bool> = (0..n).map(|i| i % 3 == 0).collect();
         let names = vec![None; n];
-        let p = LinkParams { exponent: 3.5, indoor_loss_db: 10.0, shadowing_sigma_db: 4.0, ..LinkParams::default() };
+        let p = LinkParams {
+            exponent: 3.5,
+            indoor_loss_db: 10.0,
+            shadowing_sigma_db: 4.0,
+            ..LinkParams::default()
+        };
         let cutoff = -129.0;
-        let nodes = NodeRadio { xy: &xy, tx_dbm: &tx, indoor: &indoor, names: &names };
+        let nodes = NodeRadio {
+            xy: &xy,
+            tx_dbm: &tx,
+            indoor: &indoor,
+            names: &names,
+        };
         let t = LinkTable::build(&p, &nodes, cutoff, 9).unwrap();
         let cut = t.stats.cutoff_m;
-        assert!(cut < 5000.0, "cut-off {cut} m should be a fraction of the area");
+        assert!(
+            cut < 5000.0,
+            "cut-off {cut} m should be a fraction of the area"
+        );
+        let cut_for = |a: usize, b: usize| {
+            p.cutoff_distance_m(10.0, cutoff, indoor[a] as u8 + indoor[b] as u8)
+        };
 
-        // Every stored link is within the cut-off distance and above the cut-off power.
+        // Every stored link is within its class's cut-off distance and above the cut-off power.
         let mut stored = 0;
         for a in 0..n as u32 {
             for l in t.row(a) {
-                assert!(xy[a as usize].dist(xy[l.rx as usize]) <= cut);
-                assert!(l.base_dbm as f64 >= cutoff - 1e-4, "{} < {cutoff}", l.base_dbm);
+                assert!(
+                    xy[a as usize].dist(xy[l.rx as usize]) <= cut_for(a as usize, l.rx as usize)
+                );
+                assert!(
+                    l.base_dbm as f64 >= cutoff - 1e-4,
+                    "{} < {cutoff}",
+                    l.base_dbm
+                );
                 stored += 1;
             }
         }
@@ -449,31 +544,68 @@ mod tests {
                     continue;
                 }
                 let d = xy[a].dist(xy[b]);
-                let mut loss = p.path_loss_db(d) + 10.0 * (indoor[a] as u8 + indoor[b] as u8) as f64;
+                let mut loss =
+                    p.path_loss_db(d) + 10.0 * (indoor[a] as u8 + indoor[b] as u8) as f64;
                 loss -= 4.0 * truncated_normal(seed, a.min(b) as u64, a.max(b) as u64);
-                let expect = 10.0 - loss >= cutoff && d <= cut;
-                assert_eq!(t.get(a as u32, b as u32).is_some(), expect, "pair {a}->{b} at {d} m");
+                let expect = 10.0 - loss >= cutoff;
+                if expect {
+                    assert!(
+                        d <= cut_for(a, b),
+                        "the cut-off distance bounds every reachable pair"
+                    );
+                }
+                assert_eq!(
+                    t.get(a as u32, b as u32).is_some(),
+                    expect,
+                    "pair {a}->{b} at {d} m"
+                );
             }
         }
 
-        // The generator evaluated no more pairs than the 3 × 3 neighbourhoods hold.
-        let grid = Grid::new(&xy, cut);
+        // The generator evaluated no more pairs than the 3 × 3 neighbourhoods
+        // of the class grids hold, counting each pair from both ends.
         let mut bound = 0u64;
-        for &q in &xy {
-            grid.neighbourhood(q, |_| bound += 1);
+        for from in [false, true] {
+            for to in [false, true] {
+                let members: Vec<Xy> = (0..n).filter(|&i| indoor[i] == to).map(|i| xy[i]).collect();
+                let grid = Grid::new(
+                    &members,
+                    p.cutoff_distance_m(10.0, cutoff, from as u8 + to as u8),
+                );
+                for i in (0..n).filter(|&i| indoor[i] == from) {
+                    grid.neighbourhood(xy[i], |_| bound += 1);
+                }
+            }
         }
-        assert!(t.stats.evaluated * 2 <= bound, "{} evaluated, bound {}", t.stats.evaluated, bound);
-        assert!(t.stats.evaluated < (n * n / 2) as u64 / 2, "well below N²/2");
+        assert!(
+            t.stats.evaluated * 2 <= bound,
+            "{} evaluated, bound {}",
+            t.stats.evaluated,
+            bound
+        );
+        assert!(
+            t.stats.evaluated < (n * n / 2) as u64 / 2,
+            "well below N²/2"
+        );
     }
 
     #[test]
     fn fading_is_stationary_and_reciprocal() {
         let xy = vec![Xy { x: 0.0, y: 0.0 }, Xy { x: 100.0, y: 0.0 }];
         let p = LinkParams {
-            fading: FadingParams { sigma_db: 4.0, correlation_time_s: 10.0, step_s: 1.0 },
+            fading: FadingParams {
+                sigma_db: 4.0,
+                correlation_time_s: 10.0,
+                step_s: 1.0,
+            },
             ..LinkParams::default()
         };
-        let nodes = NodeRadio { xy: &xy, tx_dbm: &[10.0, 10.0], indoor: &[false, false], names: &[None, None] };
+        let nodes = NodeRadio {
+            xy: &xy,
+            tx_dbm: &[10.0, 10.0],
+            indoor: &[false, false],
+            names: &[None, None],
+        };
         let mut t = LinkTable::build(&p, &nodes, -129.0, 3).unwrap();
         let (ab, ba) = (*t.get(0, 1).unwrap(), *t.get(1, 0).unwrap());
         let base = ab.base_dbm as f64;
@@ -494,6 +626,9 @@ mod tests {
         let var = sq / steps as f64 - (sum / steps as f64).powi(2);
         assert!((var.sqrt() - 4.0).abs() < 0.3, "sigma {}", var.sqrt());
         let rho = lag / (steps - 1) as f64 / var;
-        assert!((rho - (-0.1f64).exp()).abs() < 0.03, "lag-1 correlation {rho}");
+        assert!(
+            (rho - (-0.1f64).exp()).abs() < 0.03,
+            "lag-1 correlation {rho}"
+        );
     }
 }
