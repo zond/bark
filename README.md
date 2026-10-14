@@ -13,15 +13,18 @@ web from small, cheap threads.
 ## Status (2026-10-14)
 
 Skeleton and core interface in place; protocol core and simulator in
-progress. The specification is `civilian-433-mesh-design.md` in the hrafnar
-repo (`~/projects/hrafnar/docs/`). Four T-Echo boards are on order, expected
-around 2026-11-04. Until they arrive the work is the simulator.
+progress. Four T-Echo boards are on order, expected around 2026-11-04.
+Until they arrive the work is the simulator.
 
 Read, in order:
 
-1. `docs/roadmap.md`: phases, decisions taken, open questions.
-2. `docs/simulator-design.md`: the capacity simulator we build first.
-3. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
+1. `docs/protocol.md`: the specification. Radio, channel plan, heartbeat,
+   routing, leaves, packet formats, capacity rationale, open items.
+2. `docs/roadmap.md`: phases, decisions taken, open questions.
+3. `docs/core-interface.md`: the contract between the protocol core and
+   its drivers (simulator, firmware).
+4. `docs/simulator-design.md`: the capacity simulator we build first.
+5. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
    ecosystem, hardware facts, and corrections to the design doc.
 
 ## Layout

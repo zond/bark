@@ -1,6 +1,6 @@
 # Implementation research, 2026-10-14
 
-What exists to implement `hrafnar/docs/civilian-433-mesh-design.md`, what is missing, and
+What exists to implement `protocol.md`, what is missing, and
 where the design's numbers disagree with datasheets and regulators. Sources at the end.
 Section numbers (§) refer to the design.
 

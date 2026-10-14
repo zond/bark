@@ -1,7 +1,7 @@
 # Roadmap and decisions
 
-**Status:** 2026-10-14, pre-code. Spec: `hrafnar/docs/civilian-433-mesh-design.md`
-(referred to below as "the design"; section numbers are its sections).
+**Status:** 2026-10-14. Spec: `protocol.md` (referred to below as "the design";
+section numbers are its sections).
 
 ## Decisions
 

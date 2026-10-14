@@ -1,7 +1,7 @@
 # Simulator design
 
 **Status:** proposal, 2026-10-14. For discussion before Phase 1 starts.
-Spec references are to `hrafnar/docs/civilian-433-mesh-design.md`.
+Spec references are to `protocol.md`.
 
 ## 1. Purpose
 

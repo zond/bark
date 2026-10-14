@@ -8,8 +8,8 @@ unfounded, and say what the tradeoff is in terms of concepts and ideals, not onl
 
 Run `date` to know what day it is.
 
-Read README.md first. The protocol specification lives outside this repo:
-`~/projects/hrafnar/docs/civilian-433-mesh-design.md`. The protocol core in this repo owns
+Read README.md first. The protocol specification is `docs/protocol.md`; it is the live
+spec and is edited together with the code it describes. The protocol core in this repo owns
 its routing and table code; it has no external routing dependency (docs/roadmap.md, D1).
 Describe mechanisms in their own terms; do not name other projects as the origin of code or
 ideas in anything committed here.
