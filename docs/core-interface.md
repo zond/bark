@@ -32,6 +32,9 @@ instant it calls `handle(Event::Wakeup, now)`. Late is allowed; early is not. Th
 all its own deadlines internally and exposes only the earliest, so there is one timer per
 core and no timer identifiers cross the boundary.
 
+Boot: the first `handle` call a core receives is `Event::Wakeup`, delivered at start
+whatever `next_wakeup()` says. The core's boot listen (design §6.2) starts there.
+
 ## 3. Radio
 
 The driver owns one half-duplex LoRa radio that is either listening on a channel or away on
@@ -58,6 +61,15 @@ Rules:
    the core issues `Cad` or `Rssi` and decides.
 6. **Duty cycle is the core's job.** The core keeps the rolling budget (design §9.4) and
    defers; the driver never drops a frame.
+7. **`Rssi` on the resting channel is not an excursion.** The radio keeps receiving while it
+   reads its own channel, so the core may issue it at any time; it still completes with
+   `RssiSample`. `Rssi` on another channel costs a retune and is an excursion.
+8. **The driver may hold a `Cad` or `Rssi` excursion while a reception is in progress**, by at
+   most one maximum frame airtime, so that a sweep does not cut a packet short (design §6.1).
+   `Transmit` is never held. The core's timeouts allow for the hold.
+9. **`Action::Trace` carries no obligation.** It reports protocol events (a dropped message
+   and why, a deferral, a forward, a backtrack, a demotion, a channel move) for the simulator's
+   metrics and the firmware's log. A driver may ignore it.
 
 The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated.
 
