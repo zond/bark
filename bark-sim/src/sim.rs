@@ -360,6 +360,10 @@ pub struct Sim {
     pub(crate) scenario_name: String,
     pub(crate) seed: u64,
     pub(crate) per_node_summary: bool,
+    /// Phase boundaries for the summary: the scenario's settle time, and
+    /// the first scripted removal.
+    pub(crate) settle: Instant,
+    pub(crate) removal: Option<Instant>,
 }
 
 fn secs(s: f64) -> Duration {
@@ -479,6 +483,13 @@ impl Sim {
             scenario_name: sc.name.clone(),
             seed: sc.seed,
             per_node_summary: sc.metrics.per_node,
+            settle: Instant::ZERO + secs(sc.settle_s.max(0.0)),
+            removal: sc
+                .events
+                .iter()
+                .filter(|e| e.action == ScriptAction::Remove)
+                .map(|e| Instant::ZERO + secs(e.at_s))
+                .min(),
         };
         sim.setup(sc, &placed)?;
         Ok(sim)

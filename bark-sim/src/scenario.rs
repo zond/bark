@@ -300,6 +300,10 @@ pub struct Scenario {
     pub duration_s: f64,
     /// Nodes boot uniformly at random in `[0, boot_spread_s]`.
     pub boot_spread_s: f64,
+    /// When the network should have settled, seconds: messages originated
+    /// before it are summarised apart, so start-up losses do not mask the
+    /// steady state. 0 for no start-up phase.
+    pub settle_s: f64,
     /// Origin of the local grid.
     pub origin: Origin,
     /// Radio parameters.
@@ -329,6 +333,7 @@ impl Default for Scenario {
             seed: 1,
             duration_s: 60.0,
             boot_spread_s: 0.0,
+            settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),
             links: LinkParams::default(),

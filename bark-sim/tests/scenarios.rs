@@ -246,6 +246,11 @@ fn s1_parses_and_runs() {
     // a fate, except one sent as the run ends.
     let c = bark_proto::Config::default();
     let settled = bark_proto::Instant::ZERO + c.boot_listen + c.heartbeat_max.mul(13);
+    assert_eq!(
+        settled.as_micros() as f64 / 1e6,
+        sc.settle_s,
+        "the scenario's settle time is one rotation after the boot listen"
+    );
     let removal = bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(1200);
     let fates: Vec<_> = sim.originated().filter(|(t, _)| *t < sim.end()).collect();
     assert!(
@@ -264,6 +269,19 @@ fn s1_parses_and_runs() {
     };
     assert_eq!(after.len(), 20);
     assert!(after.iter().all(|(_, f)| *f == a_no_route), "{after:?}");
+    // The summary splits the run the same way.
+    let phases = &s.app.phases;
+    let names: Vec<_> = phases.iter().map(|p| p.phase.as_str()).collect();
+    assert_eq!(names, ["before settle", "settled", "after removal"]);
+    let (on, off) = (&phases[1], &phases[2]);
+    assert_eq!(on.originated as usize, settled.len());
+    assert_eq!(
+        (on.delivery_ratio, on.lost_at.len(), on.unaccounted),
+        (1.0, 0, 0)
+    );
+    assert_eq!((off.originated, off.delivered, off.unaccounted), (20, 0, 0));
+    assert_eq!(off.lost_at.get("relay 0 (A): dropped NoRoute"), Some(&20));
+    assert_eq!(off.lost_at.len(), 1);
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());

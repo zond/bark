@@ -16,6 +16,9 @@
 name = "s1-line"
 seed = 1
 duration_s = 1800.0
+# The relays know each other one worst-case rotation (13 heartbeats at
+# 15 s) after their 150 s boot listen (protocol §6.2, §7).
+settle_s = 345.0
 
 [origin]
 lat = 50.45

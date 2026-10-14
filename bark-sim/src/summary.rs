@@ -7,6 +7,7 @@ use crate::links::BuildStats;
 use crate::metrics::{percentile, DropCounts, NodeMetrics, RxCounts};
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
+use bark_proto::Instant;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -57,6 +58,32 @@ pub struct AppSummary {
     pub unaccounted: u64,
     /// Origination-to-delivery latency.
     pub latency: Option<Latency>,
+    /// The same messages split by origination time: before the
+    /// scenario's settle time, from then until the first scripted
+    /// removal, and after it. A message originated as the run ends has
+    /// had no time to arrive and is in no phase. Empty phases are left out.
+    pub phases: Vec<PhaseSummary>,
+}
+
+/// Delivery of the messages originated in one phase of the run.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PhaseSummary {
+    /// Which phase: `"before settle"`, `"settled"` or `"after removal"`.
+    pub phase: String,
+    /// Start, seconds.
+    pub from_s: f64,
+    /// End (exclusive), seconds.
+    pub to_s: f64,
+    /// Messages originated in the phase.
+    pub originated: u64,
+    /// Of those, delivered.
+    pub delivered: u64,
+    /// `delivered / originated`, 0 if nothing was originated.
+    pub delivery_ratio: f64,
+    /// Of those, lost, by where and why: `"<node>: <reason>"`.
+    pub lost_at: BTreeMap<String, u64>,
+    /// Of those, neither delivered nor reported lost.
+    pub unaccounted: u64,
 }
 
 /// Per-channel summary.
@@ -152,22 +179,15 @@ impl Sim {
         let (mut lost_dropped, mut lost_failed, mut unaccounted) = (DropCounts::default(), 0, 0);
         let mut lost_at = BTreeMap::new();
         for f in self.fates() {
-            let at = match f {
-                Fate::Delivered => continue,
-                Fate::Failed { node, reason } => {
-                    lost_failed += 1;
-                    format!("{}: failed {reason:?}", self.label(node))
-                }
-                Fate::Dropped { node, reason } => {
-                    lost_dropped.add(reason);
-                    format!("{}: dropped {reason:?}", self.label(node))
-                }
-                Fate::Unaccounted => {
-                    unaccounted += 1;
-                    continue;
-                }
-            };
-            *lost_at.entry(at).or_insert(0) += 1;
+            match f {
+                Fate::Failed { .. } => lost_failed += 1,
+                Fate::Dropped { reason, .. } => lost_dropped.add(reason),
+                Fate::Unaccounted => unaccounted += 1,
+                Fate::Delivered => {}
+            }
+            if let Some(at) = self.lost_label(f) {
+                *lost_at.entry(at).or_insert(0) += 1;
+            }
         }
         let busy_run =
             |o: &crate::metrics::Observer, c: usize| o.busy_until(c, dur_us) as f64 / dur_us as f64;
@@ -237,6 +257,7 @@ impl Sim {
                 unaddressed: m.app.unaddressed,
                 unaccounted,
                 latency,
+                phases: self.phases(),
             },
             rx: m.rx_total(),
             tx_frames: m.channels.iter().map(|c| c.tx_frames).sum(),
@@ -247,6 +268,63 @@ impl Sim {
             observers,
             nodes,
         }
+    }
+}
+
+impl Sim {
+    /// Where and why a lost message was lost; `None` unless it was.
+    fn lost_label(&self, f: Fate) -> Option<String> {
+        match f {
+            Fate::Failed { node, reason } => {
+                Some(format!("{}: failed {reason:?}", self.label(node)))
+            }
+            Fate::Dropped { node, reason } => {
+                Some(format!("{}: dropped {reason:?}", self.label(node)))
+            }
+            Fate::Delivered | Fate::Unaccounted => None,
+        }
+    }
+
+    fn phases(&self) -> Vec<PhaseSummary> {
+        let end = self.end().min(self.now());
+        let removal = self.removal.unwrap_or(end).min(end);
+        let settle = self.settle.min(removal);
+        let bounds = [
+            ("before settle", Instant::ZERO, settle),
+            ("settled", settle, removal),
+            ("after removal", removal, end),
+        ];
+        bounds
+            .into_iter()
+            .filter(|(_, from, to)| from < to)
+            .map(|(phase, from, to)| {
+                let mut p = PhaseSummary {
+                    phase: phase.into(),
+                    from_s: from.as_micros() as f64 / 1e6,
+                    to_s: to.as_micros() as f64 / 1e6,
+                    originated: 0,
+                    delivered: 0,
+                    delivery_ratio: 0.0,
+                    lost_at: BTreeMap::new(),
+                    unaccounted: 0,
+                };
+                for (_, f) in self.originated().filter(|(t, _)| from <= *t && *t < to) {
+                    p.originated += 1;
+                    match f {
+                        Fate::Delivered => p.delivered += 1,
+                        Fate::Unaccounted => p.unaccounted += 1,
+                        _ => {}
+                    }
+                    if let Some(at) = self.lost_label(f) {
+                        *p.lost_at.entry(at).or_insert(0) += 1;
+                    }
+                }
+                if p.originated > 0 {
+                    p.delivery_ratio = p.delivered as f64 / p.originated as f64;
+                }
+                p
+            })
+            .collect()
     }
 }
 
@@ -300,6 +378,20 @@ impl Summary {
         }
         for (at, n) in &a.lost_at {
             let _ = writeln!(s, "  lost {n:>5} at {at}");
+        }
+        for p in &a.phases {
+            let _ = write!(
+                s,
+                "{} ({:.0}-{:.0} s): {} / {} ({:.3})",
+                p.phase, p.from_s, p.to_s, p.delivered, p.originated, p.delivery_ratio
+            );
+            for (at, n) in &p.lost_at {
+                let _ = write!(s, "; lost {n} at {at}");
+            }
+            if p.unaccounted > 0 {
+                let _ = write!(s, "; {} unaccounted", p.unaccounted);
+            }
+            let _ = writeln!(s);
         }
         let _ = writeln!(
             s,
