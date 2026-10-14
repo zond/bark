@@ -2,3 +2,4 @@
 .notes/
 # Agent worktrees
 .claude/worktrees/
+target/
