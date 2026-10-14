@@ -1129,7 +1129,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, §9.3 retry wait |
-| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how; and how often the BUSY race of roadmap D27 duplicates a message | simulator, capacity scenario |
+| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how; and how often the BUSY race of roadmap D27 duplicates a message | simulator, capacity scenario Decided 2026-10-15 (roadmap D29): a relay takes a packet only if the airtime of all it holds, that packet included, fits in its bucket now; to be built. |
 
 ---
 
