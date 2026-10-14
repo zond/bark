@@ -10,6 +10,7 @@
 use crate::ids::{LeafId, MsgId};
 use crate::position::Position;
 use crate::radio::Channel;
+use crate::time::Instant;
 
 /// Largest LoRa payload the SX126x carries, and so the largest frame the
 /// core will ever emit or accept.
@@ -152,4 +153,37 @@ pub enum Action {
     Transmit(Frame),
     /// Tell the application something.
     App(AppEvent),
+    /// A protocol event for logs and the simulator's metrics. Carries no
+    /// obligation; a driver may ignore it (`docs/core-interface.md` §3).
+    Trace(Trace),
+}
+
+/// A protocol event worth recording, emitted where it happens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trace {
+    /// The home channel changed: chosen at the end of the boot listen
+    /// (design §6.2) or moved by the move rule (§6.3).
+    HomeChannelMoved {
+        /// Previous home.
+        from: Channel,
+        /// New home.
+        to: Channel,
+    },
+    /// The boot listen heard this relay's own position from another relay
+    /// and stepped about a metre away from it (design §8.1).
+    PositionShifted {
+        /// The new position.
+        to: Position,
+    },
+    /// A heartbeat found its channel busy at every listen-before-talk check
+    /// and was skipped (design §7).
+    HeartbeatSkipped {
+        /// The channel it was for.
+        channel: Channel,
+    },
+    /// The duty-cycle budget held a heartbeat back (design §9.4).
+    HeartbeatDeferred {
+        /// When the budget may next allow it.
+        until: Instant,
+    },
 }

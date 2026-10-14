@@ -808,6 +808,7 @@ impl Sim {
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
+            Action::Trace(_) => {}
         }
     }
 
