@@ -9,7 +9,7 @@ use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node, Position,
     Relay, Trace,
 };
-use common::{secs, Harness};
+use common::{ch, secs, Harness};
 
 /// A position `east`, `north` metres from a point in Kyiv.
 fn pos(east: f64, north: f64) -> Position {
@@ -311,17 +311,39 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
 /// cannot fit waits for it instead of being dropped (§9.4). Its heartbeats
 /// are never held back. The harness panics if any hour holds more than
 /// 10 %.
+///
+/// The home channels are fixed. Otherwise F's own traffic to D, 10 % of
+/// D's home channel, makes D move every half hour or so (§6.1 counts a
+/// node's receive time as busy, §6.3), and messages handed over in the
+/// minutes before F hears D's new channel fail for that reason, which is
+/// not what this test is about. F makes one attempt more than the
+/// design's three: D also misses a frame now and then while it sweeps or
+/// sends a heartbeat, which the loss rule does not count, and three
+/// attempts would then run out for that reason alone. And the run goes on
+/// for an hour after the last message, for those still held back.
 #[test]
 fn duty_budget_defers_forwarding_and_never_drops() {
     use bark_proto::radio::DUTY_CYCLE_WINDOW;
     use bark_proto::wire::MAX_PAYLOAD;
     const LOST: u32 = 2;
     let (o, f, d) = (0, 1, 2);
+    let fixed = |east: f64, home: u8, hop_attempts: u8, seed: u64| {
+        Node::Relay(Relay::new(
+            Config {
+                position: pos(east, 0.0),
+                boot_listen: secs(5),
+                home_override: Some(ch(home)),
+                hop_attempts,
+                ..Config::default()
+            },
+            seed,
+        ))
+    };
     let mut h = build(
         vec![
-            relay(0.0, 0.0, 41),
-            relay(400.0, 0.0, 42),
-            relay(800.0, 0.0, 43),
+            fixed(0.0, 1, 3, 41),
+            fixed(400.0, 2, 4, 42),
+            fixed(800.0, 3, 3, 43),
         ],
         &[(o, f), (f, d)],
     );
@@ -347,6 +369,9 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         let next = h.now + Duration::from_millis(2500);
         h.run_until(next, |_| false);
     }
+    // F spends its hour's budget in a burst and then waits for it to age
+    // out, so a message held back near the end can wait most of an hour.
+    h.run_for(DUTY_CYCLE_WINDOW);
     let tf = traces(&h, f);
     let mut deferred: Vec<MsgId> = tf
         .iter()
