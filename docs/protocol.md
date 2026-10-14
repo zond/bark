@@ -302,9 +302,12 @@ Per node, up to 64 entries:
 
 - **Expire** after 3 rotations (≈400 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
-  `fail_count ≥ 2` is not used as a next hop until its next heartbeat
-  resets it. Heartbeat expiry takes minutes; a failed forward must demote
-  at once.
+  `fail_count ≥ 2` is not used as a next hop until it ACKs a packet from
+  this relay or three rotations (390 s) pass. Its heartbeats keep it in
+  the table but do not clear the demotion: a heartbeat proves the
+  neighbour is alive, not that it hears us, and a link that works one way
+  only would otherwise cost every message the failed attempts again.
+  Heartbeat expiry takes minutes; a failed forward must demote at once.
 - **Eviction** when full and a relay not in the table is heard: the
   newcomer replaces the least recently heard demoted entry; failing that,
   the least recently heard entry if it has not been heard for a
@@ -407,13 +410,13 @@ give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
 §9.3) = 188.3 s. So in a search without failures no record expires while
 the message is away exploring beyond it.
 
-**Bound and eviction.** A relay holds at most 654 records; when full, a
-new record replaces the least recently active one. 654 is the most
+**Bound and eviction.** A relay holds at most 627 records; when full, a
+new record replaces the least recently active one. 627 is the most
 messages a relay can handle in one record lifetime within its duty cycle
-(§3): every message it handles costs at least an ACK (5 bytes, 10.6 ms)
+(§3): every message it handles costs at least an ACK (9 bytes, 11.8 ms)
 and one DATA packet with no payload (21 bytes, 18.2 ms), together
-28.8 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 28.8 ms = 654.
-A record is about 24 bytes, so 16 KB.
+30.0 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 30.0 ms = 627.
+A record is about 24 bytes, so 15 KB.
 
 #### 9.2.3 Choosing the next hop
 
@@ -529,6 +532,10 @@ A relay **owns** the destination `(x, y)` when:
 A relay farther than 50 m with no closer neighbour is at a gap, not the
 owner, and the search goes on (§9.2.3).
 
+A message whose destination is the sending node's own address, or a
+leaf attached to the relay it is handed to, is delivered there without
+entering the search.
+
 The owner looks `leaf_id` up in its leaf table and delivers (§10.3), or
 queues (§10.4). If `leaf_id = 0` the message is for the relay itself: the
 addressed relay delivers it to its own application; an owner within 50 m
@@ -547,8 +554,8 @@ delivered again.
 
 A **hand-over** sends one DATA packet to one neighbour until that
 neighbour ACKs it or the relay gives up. A relay runs one hand-over at a
-time, so an ACK, which carries only the message ID, matches the one
-outstanding.
+time. An ACK carries the message ID and the name of the relay or leaf
+sending it, and matches the outstanding hand-over only if both agree.
 Packets waiting their turn are held in the relay's send queue.
 
 1. Retune to the next hop's home channel.
@@ -558,7 +565,7 @@ Packets waiting their turn are held in the relay's send queue.
 3. Transmit. The packet carries the sender's home channel in `aux` (§14).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
-   10.6 ms plus the receiver's retune and listen-before-talk).
+   11.8 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: random backoff, retry, up to 3 attempts. Then the
    hand-over has failed: count a failure against the neighbour (§8.2:
    demoted after 2 consecutive failures) and choose the next hop again
@@ -570,11 +577,16 @@ that was itself a return to the parent, or a packet sent straight back
 (§9.2.4, case 6), is not retried elsewhere: the message is dropped.
 
 The receiver retunes to the sender's channel, listens before talking,
-sends the ACK, and retunes home. The ACK is the first byte and the
-message ID (5 bytes, 10.6 ms). It has no target address; the sender
-matches it by message ID against its outstanding hand-over. A relay ACKs a packet
-as soon as it has received it, even while waiting for an ACK of its own;
-if that makes it miss its own ACK, its next attempt covers it.
+sends the ACK, and retunes home. The ACK is the first byte, the message
+ID and the short name of the acknowledging relay, or the leaf ID of the
+acknowledging leaf (9 bytes, 11.8 ms, §14). The sender matches both
+against its outstanding hand-over. The name is needed because relays
+share home channels: without it, an ACK for the same message from a
+different relay on the same channel, which the depth-first search can
+produce, would end the wrong hand-over and strand the message. A relay
+ACKs a packet as soon as it has received it, even while waiting for an
+ACK of its own; if that makes it miss its own ACK, its next attempt
+covers it.
 
 So: **a node receives everything, ACKs included, on its home channel, and
 leaves it only to transmit.** A leaf's home channel is its relay's, so
@@ -589,7 +601,7 @@ relay as it would around a failing one. 10 is what a relay can send in
 the time its upstream sender spends retrying a hand-over:
 2 × (100 ms ACK timeout + 500 ms listen-before-talk give-up + 138.6 ms
 full frame) = 1.48 s, and a full frame and its ACK take
-138.6 + 10.6 = 149 ms, so ⌈1.48 s / 149 ms⌉ = 10. A packet that would
+138.6 + 11.8 = 150 ms, so ⌈1.48 s / 150 ms⌉ = 10. A packet that would
 wait longer than that would get on sooner by the upstream relay choosing
 another next hop.
 
@@ -650,7 +662,7 @@ What breaks it:
   hand-overs from each end: a send and the return or the send back. In
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
-- **State per relay:** at most 654 records of about 24 bytes, 16 KB
+- **State per relay:** at most 627 records of about 24 bytes, 15 KB
   (§9.2.2); a send queue of 10 packets of up to 255 bytes, 2.5 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
@@ -763,6 +775,14 @@ remembers the first (up to the 10-minute delivery TTL, §10.4), and the
 second is not delivered. The app must make every payload unique;
 end-to-end encryption with a fresh nonce per message does that.
 
+**What the network does not defend against.** Nothing on the air is
+authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
+any position, attract traffic to it and drop it, send packets in another
+relay's name, or replay what it has heard. The app's end-to-end
+encryption keeps payloads private and authentic; it does nothing for
+routing. This is the scope stated at the top: infrastructure loss, not an
+adversary on the air.
+
 ---
 
 ## 12. What the protocol deliberately omits
@@ -791,8 +811,8 @@ the built-up city.
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.64 s of channel time: per hop a 121-byte DATA packet (69.4 ms)
-and its ACK (10.6 ms).
+takes ≈0.65 s of channel time: per hop a 121-byte DATA packet (69.4 ms)
+and its ACK (11.8 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
@@ -846,8 +866,9 @@ CRC covers everything.
 ```
 HEARTBEAT 0x1/0x2: first(1) pos(7)                                          = 8
           0x1 surveyed position, 0x2 GPS-derived position; aux = home channel
-ACK       0x3: first(1) id(4)                                               = 5
+ACK       0x3: first(1) id(4) from(4)                                       = 9
           sent on the channel in the acknowledged packet's aux; aux unused
+          from = the acknowledging relay's short name, or the leaf's ID
 ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
           relay = short name of the relay attached to; aux = leaf receive mode (§10.5)
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
@@ -886,7 +907,7 @@ Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; message records
-(§9.2.2) 654 × 24 B = 16 KB; send queue 10 × 255 B = 2.5 KB; delivered
+(§9.2.2) 627 × 24 B = 15 KB; send queue 10 × 255 B = 2.5 KB; delivered
 window, busy estimates and duty budget together under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):
