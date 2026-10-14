@@ -52,8 +52,15 @@ pub struct Leaves {
 impl Leaves {
     /// An empty table whose entries expire `expire_after` after their last ATTACH.
     pub const fn new(expire_after: Duration) -> Leaves {
-        let fill = LeafEntry { leaf: LeafId::RELAY, last_seen: Instant::ZERO, mode: RxMode::Listening };
-        Leaves { entries: FixedVec::new(fill), expire_after }
+        let fill = LeafEntry {
+            leaf: LeafId::RELAY,
+            last_seen: Instant::ZERO,
+            mode: RxMode::Listening,
+        };
+        Leaves {
+            entries: FixedVec::new(fill),
+            expire_after,
+        }
     }
 
     /// An empty table with the design's expiry for `config.keepalive`.
@@ -78,12 +85,17 @@ impl Leaves {
 
     /// The live entry for `leaf` at `now`.
     pub fn get(&self, leaf: LeafId, now: Instant) -> Option<&LeafEntry> {
-        self.iter().find(|e| e.leaf == leaf && now.since(e.last_seen) < self.expire_after)
+        self.iter()
+            .find(|e| e.leaf == leaf && now.since(e.last_seen) < self.expire_after)
     }
 
     /// An ATTACH from `leaf` was heard at `now`.
     pub fn attached(&mut self, leaf: LeafId, mode: RxMode, now: Instant) -> Result<(), Full> {
-        let entry = LeafEntry { leaf, last_seen: now, mode };
+        let entry = LeafEntry {
+            leaf,
+            last_seen: now,
+            mode,
+        };
         let expire_after = self.expire_after;
         let slots = self.entries.as_mut_slice();
         if let Some(e) = slots.iter_mut().find(|e| e.leaf == leaf) {
@@ -94,7 +106,10 @@ impl Leaves {
             return Ok(());
         }
         let slots = self.entries.as_mut_slice();
-        match slots.iter_mut().find(|e| now.since(e.last_seen) >= expire_after) {
+        match slots
+            .iter_mut()
+            .find(|e| now.since(e.last_seen) >= expire_after)
+        {
             Some(e) => {
                 *e = entry;
                 Ok(())
@@ -111,7 +126,8 @@ impl Leaves {
     /// Remove every entry expired at `now`.
     pub fn expire(&mut self, now: Instant) {
         let expire_after = self.expire_after;
-        self.entries.retain(|e| now.since(e.last_seen) < expire_after);
+        self.entries
+            .retain(|e| now.since(e.last_seen) < expire_after);
     }
 
     /// When the next entry expires, if any.

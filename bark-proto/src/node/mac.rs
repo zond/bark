@@ -9,7 +9,12 @@ use crate::wire::Packet;
 /// Encode `packet` as a frame. Only for packets whose payload the caller
 /// has bounded, which is every packet the MAC sends.
 pub(crate) fn frame(packet: &Packet<'_>, channel: Channel, preamble_symbols: u16) -> Frame {
-    let mut f = Frame { channel, preamble_symbols, len: 0, bytes: [0; MAX_FRAME] };
+    let mut f = Frame {
+        channel,
+        preamble_symbols,
+        len: 0,
+        bytes: [0; MAX_FRAME],
+    };
     f.len = packet.encode(&mut f.bytes).unwrap_or(0) as u8;
     f
 }
@@ -38,7 +43,10 @@ impl<O: Copy> Radio<O> {
     /// outstanding is a core bug.
     pub(crate) fn start(&mut self, owner: O, action: Action, emit: &mut dyn FnMut(Action)) {
         debug_assert!(self.out.is_none(), "second excursion outstanding");
-        debug_assert!(matches!(action, Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)));
+        debug_assert!(matches!(
+            action,
+            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+        ));
         self.out = Some(owner);
         emit(action);
     }

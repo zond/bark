@@ -20,7 +20,8 @@ const DAY_S: u64 = 86_400;
 const DESIGN_TTL_S: u64 = 600;
 
 /// Ring capacity; see the module documentation.
-pub const DELIVERED: usize = (LEAVES_PLANNED * TEXTS_PER_LEAF_PER_DAY * DESIGN_TTL_S).div_ceil(DAY_S) as usize;
+pub const DELIVERED: usize =
+    (LEAVES_PLANNED * TEXTS_PER_LEAF_PER_DAY * DESIGN_TTL_S).div_ceil(DAY_S) as usize;
 
 const _: () = assert!(DELIVERED == 64);
 
@@ -36,7 +37,12 @@ pub struct Delivered {
 impl Delivered {
     /// Empty; entries live `ttl`.
     pub const fn new(ttl: Duration) -> Delivered {
-        Delivered { entries: [(MsgId(0), Instant::ZERO); DELIVERED], next: 0, len: 0, ttl }
+        Delivered {
+            entries: [(MsgId(0), Instant::ZERO); DELIVERED],
+            next: 0,
+            len: 0,
+            ttl,
+        }
     }
 
     /// Empty, with `config.delivery_ttl`.
@@ -46,7 +52,9 @@ impl Delivered {
 
     /// Whether `id` was delivered less than the TTL before `now`.
     pub fn contains(&self, id: MsgId, now: Instant) -> bool {
-        self.entries[..self.len].iter().any(|&(i, at)| i == id && now.since(at) < self.ttl)
+        self.entries[..self.len]
+            .iter()
+            .any(|&(i, at)| i == id && now.since(at) < self.ttl)
     }
 
     /// Record that `id` was delivered at `now`.
@@ -68,16 +76,25 @@ mod tests {
     #[test]
     fn ttl_and_ring() {
         let mut d = Delivered::from_config(&Config::default());
-        assert!(!d.contains(MsgId(0), at(0)), "an empty slot is not message 0");
+        assert!(
+            !d.contains(MsgId(0), at(0)),
+            "an empty slot is not message 0"
+        );
         d.insert(MsgId(7), at(0));
         assert!(d.contains(MsgId(7), at(599)));
         assert!(!d.contains(MsgId(7), at(600)), "kept for the delivery TTL");
         for i in 0..DELIVERED as u32 - 1 {
             d.insert(MsgId(100 + i), at(1));
         }
-        assert!(d.contains(MsgId(7), at(1)), "the ring is full, nothing overwritten yet");
+        assert!(
+            d.contains(MsgId(7), at(1)),
+            "the ring is full, nothing overwritten yet"
+        );
         d.insert(MsgId(999), at(1));
-        assert!(!d.contains(MsgId(7), at(1)), "the oldest is overwritten first");
+        assert!(
+            !d.contains(MsgId(7), at(1)),
+            "the oldest is overwritten first"
+        );
         assert!(d.contains(MsgId(100), at(1)) && d.contains(MsgId(999), at(1)));
     }
 }

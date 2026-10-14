@@ -12,7 +12,9 @@
 
 #![allow(dead_code)]
 
-use bark_proto::radio::{time_on_air, Channel, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::radio::{
+    time_on_air, Channel, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
+};
 use bark_proto::tables::budget::BUDGET;
 use bark_proto::{Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, Trace};
 use std::collections::{HashMap, HashSet};
@@ -140,7 +142,12 @@ impl<C: Core> Harness<C> {
 
     /// A carrier on `channel` at `node`, all the time.
     pub fn jam(&mut self, node: usize, channel: Channel) {
-        self.jam_part(node, channel, Duration::from_micros(1), Duration::from_micros(1));
+        self.jam_part(
+            node,
+            channel,
+            Duration::from_micros(1),
+            Duration::from_micros(1),
+        );
     }
 
     /// A carrier on `channel` at `node` for the first `on` of every `period`.
@@ -149,7 +156,9 @@ impl<C: Core> Harness<C> {
     }
 
     fn jammed_at(&self, node: usize, channel: Channel, t: Instant) -> bool {
-        self.jammed.get(&(node, channel)).is_some_and(|&(on, period)| t.as_micros() % period.as_micros() < on.as_micros())
+        self.jammed
+            .get(&(node, channel))
+            .is_some_and(|&(on, period)| t.as_micros() % period.as_micros() < on.as_micros())
     }
 
     pub fn unjam(&mut self, node: usize, channel: Channel) {
@@ -177,7 +186,9 @@ impl<C: Core> Harness<C> {
     /// Run until `until`, or until `stop` holds after an event.
     pub fn run_until(&mut self, until: Instant, mut stop: impl FnMut(&Self) -> bool) -> bool {
         loop {
-            let Some(t) = self.next_time() else { return false };
+            let Some(t) = self.next_time() else {
+                return false;
+            };
             if t > until {
                 self.now = until;
                 return false;
@@ -234,7 +245,12 @@ impl<C: Core> Harness<C> {
                         }
                     }
                     self.nodes[i].received.push((now, tx.bytes.clone()));
-                    let ev = Event::Received { channel: tx.channel, rssi_dbm: SIGNAL_DBM, snr_db: 10, bytes: &tx.bytes };
+                    let ev = Event::Received {
+                        channel: tx.channel,
+                        rssi_dbm: SIGNAL_DBM,
+                        snr_db: 10,
+                        bytes: &tx.bytes,
+                    };
                     self.deliver(i, ev);
                 }
             }
@@ -248,10 +264,17 @@ impl<C: Core> Harness<C> {
             }
             self.nodes[i].ex = None;
             let ev = match ex.kind {
-                Kind::Cad => Event::CadDone { channel: ex.channel, busy: self.on_air(i, ex.channel, ex.start, ex.end) },
+                Kind::Cad => Event::CadDone {
+                    channel: ex.channel,
+                    busy: self.on_air(i, ex.channel, ex.start, ex.end),
+                },
                 Kind::Rssi => {
-                    let busy = self.on_air(i, ex.channel, ex.end, ex.end) || self.jammed_at(i, ex.channel, ex.end);
-                    Event::RssiSample { channel: ex.channel, dbm: if busy { SIGNAL_DBM } else { NOISE_DBM } }
+                    let busy = self.on_air(i, ex.channel, ex.end, ex.end)
+                        || self.jammed_at(i, ex.channel, ex.end);
+                    Event::RssiSample {
+                        channel: ex.channel,
+                        dbm: if busy { SIGNAL_DBM } else { NOISE_DBM },
+                    }
                 }
                 Kind::Tx => Event::TxDone,
             };
@@ -286,19 +309,29 @@ impl<C: Core> Harness<C> {
             && n.deaf_until <= tx.start
             && n.ex.is_none_or(|e| !e.deaf)
             && !self.txs.iter().any(|o| {
-                o.from != tx.from && o.channel == tx.channel && self.linked(o.from, i) && o.start < tx.end && o.end > tx.start
+                o.from != tx.from
+                    && o.channel == tx.channel
+                    && self.linked(o.from, i)
+                    && o.start < tx.end
+                    && o.end > tx.start
             })
     }
 
     /// Whether a linked transmission is on `channel` at `i` during `[a, b]`.
     fn on_air(&self, i: usize, channel: Channel, a: Instant, b: Instant) -> bool {
-        self.txs.iter().any(|t| t.channel == channel && self.linked(t.from, i) && t.start <= b && t.end > a)
+        self.txs
+            .iter()
+            .any(|t| t.channel == channel && self.linked(t.from, i) && t.start <= b && t.end > a)
     }
 
     /// A frame on `i`'s resting channel that `i` is in the middle of receiving.
     fn receiving(&self, i: usize) -> Option<Instant> {
         let now = self.now;
-        self.txs.iter().filter(|t| t.start < now && self.hears(i, t)).map(|t| t.end).max()
+        self.txs
+            .iter()
+            .filter(|t| t.start < now && self.hears(i, t))
+            .map(|t| t.end)
+            .max()
     }
 
     /// Hand `ev` to core `i`, then wake it again while it asks for a time
@@ -341,7 +374,10 @@ impl<C: Core> Harness<C> {
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 let n = &self.nodes[i];
-                assert!(n.ex.is_none() && n.held.is_none(), "core {i} started {a:?} with an excursion outstanding (rule 1)");
+                assert!(
+                    n.ex.is_none() && n.held.is_none(),
+                    "core {i} started {a:?} with an excursion outstanding (rule 1)"
+                );
                 let off = matches!(a, Action::Cad(c) | Action::Rssi(c) if n.resting != Some(c));
                 match self.receiving(i) {
                     Some(end) if off => self.nodes[i].held = Some((a, end)),
@@ -360,13 +396,25 @@ impl<C: Core> Harness<C> {
             Action::Rssi(c) if resting == Some(c) => (Kind::Rssi, c, RSSI, false),
             Action::Rssi(c) => (Kind::Rssi, c, RETUNE + RSSI + RETUNE, true),
             Action::Transmit(f) => {
-                assert!(f.preamble_symbols >= MIN_PREAMBLE_SYMBOLS, "core {i}: short preamble (rule 4)");
-                assert!(f.len as usize <= f.bytes.len(), "core {i}: oversized frame (rule 4)");
+                assert!(
+                    f.preamble_symbols >= MIN_PREAMBLE_SYMBOLS,
+                    "core {i}: short preamble (rule 4)"
+                );
+                assert!(
+                    f.len as usize <= f.bytes.len(),
+                    "core {i}: oversized frame (rule 4)"
+                );
                 let airtime = time_on_air(f.len, f.preamble_symbols);
                 self.check_budget(i, now, airtime);
                 self.nodes[i].airtime.push((now, airtime));
                 self.nodes[i].sent.push((now, f));
-                self.txs.push(Tx { from: i, channel: f.channel, start: now, end: now + airtime, bytes: f.payload().to_vec() });
+                self.txs.push(Tx {
+                    from: i,
+                    channel: f.channel,
+                    start: now,
+                    end: now + airtime,
+                    bytes: f.payload().to_vec(),
+                });
                 (Kind::Tx, f.channel, airtime + RETUNE, true)
             }
             _ => unreachable!(),
@@ -378,14 +426,22 @@ impl<C: Core> Harness<C> {
         if deaf {
             self.nodes[i].deaf_until = end;
         }
-        self.nodes[i].ex = Some(Excursion { kind, channel, start: now, end, deaf });
+        self.nodes[i].ex = Some(Excursion {
+            kind,
+            channel,
+            start: now,
+            end,
+            deaf,
+        });
     }
 
     /// The window ending when this transmission ends holds at most 10 %
     /// (design §3).
     fn check_budget(&self, i: usize, start: Instant, airtime: Duration) {
         let end = start + airtime;
-        let from = end.as_micros().saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
+        let from = end
+            .as_micros()
+            .saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
         let mut spent = airtime.as_micros();
         for &(s, a) in &self.nodes[i].airtime {
             let (s, e) = (s.as_micros(), s.as_micros() + a.as_micros());
@@ -393,7 +449,10 @@ impl<C: Core> Harness<C> {
                 spent += e - s.max(from);
             }
         }
-        assert!(spent <= BUDGET.as_micros(), "core {i} exceeds the duty cycle: {spent} µs in an hour");
+        assert!(
+            spent <= BUDGET.as_micros(),
+            "core {i} exceeds the duty cycle: {spent} µs in an hour"
+        );
     }
 }
 

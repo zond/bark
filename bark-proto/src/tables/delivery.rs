@@ -45,7 +45,13 @@ impl Queued {
         if payload.len() > MAX_PAYLOAD {
             return None;
         }
-        let mut q = Queued { msg_id, leaf, enqueued: now, len: payload.len() as u8, payload: [0; MAX_PAYLOAD] };
+        let mut q = Queued {
+            msg_id,
+            leaf,
+            enqueued: now,
+            len: payload.len() as u8,
+            payload: [0; MAX_PAYLOAD],
+        };
         q.payload[..payload.len()].copy_from_slice(payload);
         Some(q)
     }
@@ -96,7 +102,10 @@ impl DeliveryQueue {
             len: 0,
             payload: [0; MAX_PAYLOAD],
         };
-        DeliveryQueue { entries: FixedVec::new(fill), ttl }
+        DeliveryQueue {
+            entries: FixedVec::new(fill),
+            ttl,
+        }
     }
 
     /// An empty queue with `config.delivery_ttl`.

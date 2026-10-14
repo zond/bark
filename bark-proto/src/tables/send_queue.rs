@@ -15,11 +15,11 @@
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
-use crate::wire::Packet;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::attempt_span;
 use crate::tables::fixed::FixedVec;
 use crate::time::Duration;
+use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
 /// Queue length for a sender with these per-hop parameters; see the
@@ -95,8 +95,18 @@ impl SendQueue {
             Some(c) => c,
             None => unreachable!(),
         };
-        let frame = Frame { channel, preamble_symbols: 0, len: 0, bytes: [0; MAX_FRAME] };
-        SendQueue { frames: FixedVec::new(Outgoing { frame, kind: Kind::Return }) }
+        let frame = Frame {
+            channel,
+            preamble_symbols: 0,
+            len: 0,
+            bytes: [0; MAX_FRAME],
+        };
+        SendQueue {
+            frames: FixedVec::new(Outgoing {
+                frame,
+                kind: Kind::Return,
+            }),
+        }
     }
 
     /// Number of queued frames.
@@ -159,15 +169,27 @@ mod tests {
     fn frame(tag: u8) -> Outgoing {
         let mut bytes = [0; MAX_FRAME];
         bytes[0] = tag;
-        let frame = Frame { channel: Channel::new(3).unwrap(), preamble_symbols: MIN_PREAMBLE_SYMBOLS, len: 1, bytes };
-        Outgoing { frame, kind: Kind::Bounce }
+        let frame = Frame {
+            channel: Channel::new(3).unwrap(),
+            preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            len: 1,
+            bytes,
+        };
+        Outgoing {
+            frame,
+            kind: Kind::Bounce,
+        }
     }
 
     #[test]
     fn size_follows_the_config() {
         let c = Config::default();
         assert_eq!(queue_for(c.ack_timeout, c.hop_attempts), SEND_QUEUE);
-        assert_eq!(queue_for(c.ack_timeout, 1), 0, "no retries, no time to fill a queue");
+        assert_eq!(
+            queue_for(c.ack_timeout, 1),
+            0,
+            "no retries, no time to fill a queue"
+        );
     }
 
     #[test]
@@ -182,7 +204,10 @@ mod tests {
         q.front_mut().unwrap().frame.bytes[0] = 50;
         assert_eq!(q.pop().unwrap().frame.bytes[0], 50);
         assert_eq!(q.front().unwrap().frame.bytes[0], 1);
-        assert_eq!(q.iter().map(|f| f.frame.bytes[0]).last(), Some(SEND_QUEUE as u8 - 1));
+        assert_eq!(
+            q.iter().map(|f| f.frame.bytes[0]).last(),
+            Some(SEND_QUEUE as u8 - 1)
+        );
         assert_eq!(q.len(), SEND_QUEUE - 1);
         q.retain(|f| f.frame.bytes[0] % 2 == 0);
         assert_eq!(q.len(), (SEND_QUEUE - 1) / 2);

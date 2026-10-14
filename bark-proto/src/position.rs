@@ -65,7 +65,9 @@ impl Position {
 
     /// Decode the wire form. Spare bits are ignored.
     pub fn decode(bytes: &[u8; Self::WIRE_LEN]) -> Position {
-        let v = u64::from_be_bytes([0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6]]);
+        let v = u64::from_be_bytes([
+            0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+        ]);
         let lat = ((v >> (LON_BITS + 5)) & ((1 << LAT_BITS) - 1)) as u32;
         let lon = ((v >> 5) & ((1 << LON_BITS) - 1)) as u32;
         Position {
@@ -145,7 +147,13 @@ mod tests {
 
     #[test]
     fn round_trips_and_clamps() {
-        for &(lat, lon) in &[(0.0, 0.0), (50.45, 30.52), (-89.9, 179.9), (89.9, -179.9), (-90.0, -180.0)] {
+        for &(lat, lon) in &[
+            (0.0, 0.0),
+            (50.45, 30.52),
+            (-89.9, 179.9),
+            (89.9, -179.9),
+            (-90.0, -180.0),
+        ] {
             let p = Position::from_degrees(lat, lon);
             assert_eq!(Position::decode(&p.encode()), p);
             assert!(p.lat_deg() - lat < UNIT_DEG && lat - p.lat_deg() < UNIT_DEG);
@@ -157,22 +165,43 @@ mod tests {
 
     #[test]
     fn short_names() {
-        let p = Position { lat: 0x0012_3456, lon: -0x0001_0002 };
+        let p = Position {
+            lat: 0x0012_3456,
+            lon: -0x0001_0002,
+        };
         assert_eq!(p.short(), ShortName(0x3456_fffe));
         assert_eq!(Position::from_short(p.short(), p), p);
         // A name half a period away in each direction.
         let half = SHORT_PERIOD / 2;
-        let q = Position { lat: p.lat + half - 1, lon: p.lon - half };
+        let q = Position {
+            lat: p.lat + half - 1,
+            lon: p.lon - half,
+        };
         assert_eq!(Position::from_short(q.short(), p), q);
         // Across the antimeridian, both ways.
-        let east = Position { lat: 0, lon: (1 << 25) - 10 };
-        let west = Position { lat: 0, lon: -(1 << 25) + 10 };
+        let east = Position {
+            lat: 0,
+            lon: (1 << 25) - 10,
+        };
+        let west = Position {
+            lat: 0,
+            lon: -(1 << 25) + 10,
+        };
         assert_eq!(Position::from_short(west.short(), east), west);
         assert_eq!(Position::from_short(east.short(), west), east);
         // Beyond a pole a name rebuilds near the other one.
-        let pole = Position { lat: (1 << 24) - 10, lon: 0 };
+        let pole = Position {
+            lat: (1 << 24) - 10,
+            lon: 0,
+        };
         let garbage = Position::from_short(ShortName(20 << 16), pole);
-        assert_eq!(garbage, Position { lat: -(1 << 24) + 20, lon: 0 });
+        assert_eq!(
+            garbage,
+            Position {
+                lat: -(1 << 24) + 20,
+                lon: 0
+            }
+        );
     }
 
     /// `near` moved `north` and `east` metres in its local plane, wrapped
@@ -181,7 +210,10 @@ mod tests {
         let cos = libm::cos(near.lat_deg().to_radians());
         let lat = near.lat + round(north / UNIT_M) as i32;
         let lon = near.lon + round(east / (UNIT_M * cos)) as i32;
-        Position { lat, lon: wrap(lon, LON_BITS) }
+        Position {
+            lat,
+            lon: wrap(lon, LON_BITS),
+        }
     }
 
     fn lat_within(deg: f64) -> core::ops::Range<i32> {

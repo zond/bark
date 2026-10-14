@@ -35,15 +35,21 @@ impl Relay {
         if self.leaves.attached(a.leaf, a.mode, now).is_err() {
             return;
         }
-        let ack = Ack { msg_id: MsgId(u32::from_be_bytes(a.leaf.0)), from: AckFrom::from(self.me()) };
-        self.acks.owe(ack, self.home, now + self.config.ack_timeout, now);
+        let ack = Ack {
+            msg_id: MsgId(u32::from_be_bytes(a.leaf.0)),
+            from: AckFrom::from(self.me()),
+        };
+        self.acks
+            .owe(ack, self.home, now + self.config.ack_timeout, now);
         self.try_deliver(a.leaf, now);
     }
 
     /// Hand the oldest message queued for `leaf` to the send queue, if the
     /// leaf is attached and has no DELIVER there already.
     pub(super) fn try_deliver(&mut self, leaf: LeafId, now: Instant) {
-        let Some(entry) = self.leaves.get(leaf, now).copied() else { return };
+        let Some(entry) = self.leaves.get(leaf, now).copied() else {
+            return;
+        };
         let is_for = |o: &Outgoing| {
             o.kind == Kind::Deliver
                 && matches!(Packet::decode(o.frame.payload()), Ok(Packet::Deliver(d)) if d.dst_leaf == leaf)
@@ -51,17 +57,38 @@ impl Relay {
         if self.queue.is_full() || self.queue.iter().any(is_for) {
             return;
         }
-        let Some(q) = self.delivery.iter().find(|q| q.leaf == leaf) else { return };
-        let deliver = Deliver { dst_leaf: leaf, msg_id: q.msg_id, payload: q.payload() };
-        let frame = mac::frame(&Packet::Deliver(deliver), self.home, entry.mode.preamble_symbols());
-        let _ = self.queue.push(Outgoing { frame, kind: Kind::Deliver });
+        let Some(q) = self.delivery.iter().find(|q| q.leaf == leaf) else {
+            return;
+        };
+        let deliver = Deliver {
+            dst_leaf: leaf,
+            msg_id: q.msg_id,
+            payload: q.payload(),
+        };
+        let frame = mac::frame(
+            &Packet::Deliver(deliver),
+            self.home,
+            entry.mode.preamble_symbols(),
+        );
+        let _ = self.queue.push(Outgoing {
+            frame,
+            kind: Kind::Deliver,
+        });
     }
 
     /// The leaf ACKed the DELIVER at the front of the send queue.
-    pub(super) fn delivered_to(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
+    pub(super) fn delivered_to(
+        &mut self,
+        d: Deliver<'_>,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
         self.delivery.remove(d.msg_id);
         self.delivered.insert(d.msg_id, now);
-        emit(Action::Trace(Trace::Delivered { msg_id: d.msg_id, leaf: d.dst_leaf }));
+        emit(Action::Trace(Trace::Delivered {
+            msg_id: d.msg_id,
+            leaf: d.dst_leaf,
+        }));
         self.try_deliver(d.dst_leaf, now);
     }
 
@@ -77,13 +104,18 @@ impl Relay {
                 first = false;
                 keep
             });
-            emit(Action::Trace(Trace::Dropped { msg_id: id, reason: DropReason::QueueExpired }));
+            emit(Action::Trace(Trace::Dropped {
+                msg_id: id,
+                reason: DropReason::QueueExpired,
+            }));
         }
         if now >= self.delivery_retry_at {
             self.delivery_retry_at = now + self.config.delivery_retry;
             let mut i = 0;
             loop {
-                let Some(leaf) = self.delivery.iter().nth(i).map(|q| q.leaf) else { break };
+                let Some(leaf) = self.delivery.iter().nth(i).map(|q| q.leaf) else {
+                    break;
+                };
                 if !self.delivery.iter().take(i).any(|q| q.leaf == leaf) {
                     self.try_deliver(leaf, now);
                 }

@@ -134,9 +134,10 @@ impl RxMode {
     pub const fn preamble_symbols(self) -> u16 {
         match self {
             RxMode::Listening => MIN_PREAMBLE_SYMBOLS,
-            RxMode::DutyCycled | RxMode::Hybrid => {
-                SLEEPING_PREAMBLE.as_micros().div_ceil(SYMBOL_TIME.as_micros()) as u16
-            }
+            RxMode::DutyCycled | RxMode::Hybrid => SLEEPING_PREAMBLE
+                .as_micros()
+                .div_ceil(SYMBOL_TIME.as_micros())
+                as u16,
         }
     }
 }
@@ -329,7 +330,11 @@ impl Packet<'_> {
     pub fn encode(&self, buf: &mut [u8; MAX_FRAME]) -> Result<usize, EncodeError> {
         match self {
             Packet::Heartbeat(h) => {
-                let kind = if h.surveyed { T_HEARTBEAT_SURVEYED } else { T_HEARTBEAT_GPS };
+                let kind = if h.surveyed {
+                    T_HEARTBEAT_SURVEYED
+                } else {
+                    T_HEARTBEAT_GPS
+                };
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_POS, &h.position.encode());
                 Ok(HEARTBEAT_LEN)
@@ -393,7 +398,10 @@ impl<'a> Packet<'a> {
             }
             T_ACK => {
                 exact(b, ACK_LEN)?;
-                Ok(Packet::Ack(Ack { msg_id: get_msg_id(b, ACK_ID), from: AckFrom(get4(b, ACK_FROM)) }))
+                Ok(Packet::Ack(Ack {
+                    msg_id: get_msg_id(b, ACK_ID),
+                    from: AckFrom(get4(b, ACK_FROM)),
+                }))
             }
             T_ATTACH => {
                 exact(b, ATTACH_LEN)?;
@@ -435,7 +443,8 @@ mod tests {
     use proptest::prelude::*;
 
     fn position() -> impl Strategy<Value = Position> {
-        (-(1i32 << 24)..(1 << 24), -(1i32 << 25)..(1 << 25)).prop_map(|(lat, lon)| Position { lat, lon })
+        (-(1i32 << 24)..(1 << 24), -(1i32 << 25)..(1 << 25))
+            .prop_map(|(lat, lon)| Position { lat, lon })
     }
 
     fn chan() -> impl Strategy<Value = Channel> {
@@ -455,7 +464,11 @@ mod tests {
     }
 
     fn rx_mode() -> impl Strategy<Value = RxMode> {
-        prop_oneof![Just(RxMode::Listening), Just(RxMode::DutyCycled), Just(RxMode::Hybrid)]
+        prop_oneof![
+            Just(RxMode::Listening),
+            Just(RxMode::DutyCycled),
+            Just(RxMode::Hybrid)
+        ]
     }
 
     fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
@@ -561,9 +574,23 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         assert_eq!(Packet::Data(d).encode(&mut buf), Ok(MAX_FRAME));
         let long = [0; MAX_PAYLOAD + 1];
-        assert_eq!(Packet::Data(Data { payload: &long, ..d }).encode(&mut buf), Err(EncodeError::PayloadTooLong));
-        let deliver = Deliver { dst_leaf: LeafId::RELAY, msg_id: MsgId(1), payload: &long };
-        assert_eq!(Packet::Deliver(deliver).encode(&mut buf), Err(EncodeError::PayloadTooLong));
+        assert_eq!(
+            Packet::Data(Data {
+                payload: &long,
+                ..d
+            })
+            .encode(&mut buf),
+            Err(EncodeError::PayloadTooLong)
+        );
+        let deliver = Deliver {
+            dst_leaf: LeafId::RELAY,
+            msg_id: MsgId(1),
+            payload: &long,
+        };
+        assert_eq!(
+            Packet::Deliver(deliver).encode(&mut buf),
+            Err(EncodeError::PayloadTooLong)
+        );
     }
 
     #[test]
@@ -571,14 +598,27 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        assert_eq!(Packet::decode(&[0x70; DATA_HEADER_LEN]), Err(BadType(7)), "type 0x7 is unassigned");
+        assert_eq!(
+            Packet::decode(&[0x70; DATA_HEADER_LEN]),
+            Err(BadType(7)),
+            "type 0x7 is unassigned"
+        );
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
-        assert_eq!(Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]), Err(ChannelOutOfRange(13)));
+        assert_eq!(
+            Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]),
+            Err(ChannelOutOfRange(13))
+        );
         assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0]), Err(Short));
-        assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0]), Err(BadLength));
+        assert_eq!(
+            Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(BadLength)
+        );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0]), Err(BadRxMode(3)));
+        assert_eq!(
+            Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(BadRxMode(3))
+        );
         assert_eq!(Packet::decode(&[0x40; ATTACH_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0x60, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
@@ -587,7 +627,10 @@ mod tests {
         data[FIRST] = first(T_DATA, 13);
         assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(13)));
         data[FIRST] = first(T_DATA, 0);
-        assert!(Packet::decode(&data).is_ok(), "an empty payload is a payload");
+        assert!(
+            Packet::decode(&data).is_ok(),
+            "an empty payload is a payload"
+        );
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
 
         // MAX_PAYLOAD + 1 fits a DELIVER frame but is still rejected.
@@ -602,17 +645,32 @@ mod tests {
         // Pin the layouts: field order, big-endian names and IDs.
         let mut buf = [0; MAX_FRAME];
         let position = Position::from_degrees(50.45, 30.52);
-        let hb = Heartbeat { surveyed: false, home: Channel::new(12).unwrap(), position };
+        let hb = Heartbeat {
+            surveyed: false,
+            home: Channel::new(12).unwrap(),
+            position,
+        };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x2c);
         assert_eq!(&buf[1..len], &position.encode());
 
-        let ack = Ack { msg_id: MsgId(0x0102_0304), from: ShortName(0x0506_0708).into() };
+        let ack = Ack {
+            msg_id: MsgId(0x0102_0304),
+            from: ShortName(0x0506_0708).into(),
+        };
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x30, 1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(AckFrom::from(LeafId([5, 6, 7, 8])), ack.from, "a leaf ID is its bytes in order");
+        assert_eq!(
+            AckFrom::from(LeafId([5, 6, 7, 8])),
+            ack.from,
+            "a leaf ID is its bytes in order"
+        );
 
-        let attach = Attach { leaf: LeafId([1, 2, 3, 4]), relay: ShortName(0x0506_0708), mode: RxMode::Hybrid };
+        let attach = Attach {
+            leaf: LeafId([1, 2, 3, 4]),
+            relay: ShortName(0x0506_0708),
+            mode: RxMode::Hybrid,
+        };
         let len = Packet::Attach(attach).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x42, 1, 2, 3, 4, 5, 6, 7, 8]);
 
@@ -631,7 +689,11 @@ mod tests {
         want.extend_from_slice(&[9, 10, 11, 12, 13, 14, 15]);
         assert_eq!(&buf[..len], &want[..]);
 
-        let deliver = Deliver { dst_leaf: LeafId([1, 2, 3, 4]), msg_id: MsgId(0x0506_0708), payload: &[9] };
+        let deliver = Deliver {
+            dst_leaf: LeafId([1, 2, 3, 4]),
+            msg_id: MsgId(0x0506_0708),
+            payload: &[9],
+        };
         let len = Packet::Deliver(deliver).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }

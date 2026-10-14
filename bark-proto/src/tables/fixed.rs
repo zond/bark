@@ -11,7 +11,10 @@ pub(crate) struct FixedVec<T: Copy, const N: usize> {
 impl<T: Copy, const N: usize> FixedVec<T, N> {
     /// Empty; `fill` initialises the unused slots.
     pub(crate) const fn new(fill: T) -> Self {
-        FixedVec { items: [fill; N], len: 0 }
+        FixedVec {
+            items: [fill; N],
+            len: 0,
+        }
     }
 
     pub(crate) fn len(&self) -> usize {

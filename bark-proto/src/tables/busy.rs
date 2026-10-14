@@ -75,7 +75,11 @@ pub struct NoiseFloor {
 impl NoiseFloor {
     /// Empty; halves its histogram whenever it holds `halve_at` samples.
     pub const fn new(halve_at: u32) -> NoiseFloor {
-        NoiseFloor { bins: [0; HIST_BINS], total: 0, halve_at }
+        NoiseFloor {
+            bins: [0; HIST_BINS],
+            total: 0,
+            halve_at,
+        }
     }
 
     /// Add one RSSI reading.
@@ -150,7 +154,8 @@ impl BusyEstimator {
 
     /// RSSI above which a channel counts as busy, in dBm.
     pub fn threshold_dbm(&self) -> i16 {
-        self.noise_floor_dbm().saturating_add(self.threshold_db as i16)
+        self.noise_floor_dbm()
+            .saturating_add(self.threshold_db as i16)
     }
 
     /// One sweep reading of a channel other than home.
@@ -229,7 +234,11 @@ mod tests {
             }
         }
         let f = b.fraction(ch(6));
-        assert!(f.abs_diff(percent(10)) < percent(2), "{}", f as f64 / ONE as f64);
+        assert!(
+            f.abs_diff(percent(10)) < percent(2),
+            "{}",
+            f as f64 / ONE as f64
+        );
         assert!(b.fraction(ch(5)) < percent(1));
     }
 

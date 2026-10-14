@@ -23,7 +23,8 @@ pub const SPREADING_FACTOR: u8 = 5;
 pub const CODING_RATE_DENOMINATOR: u8 = 5;
 
 /// Symbol time: 2^SF / BW = 32 / 125 000 s = 256 µs.
-pub const SYMBOL_TIME: Duration = Duration::from_micros((1u64 << SPREADING_FACTOR) * 1_000_000 / BANDWIDTH_HZ as u64);
+pub const SYMBOL_TIME: Duration =
+    Duration::from_micros((1u64 << SPREADING_FACTOR) * 1_000_000 / BANDWIDTH_HZ as u64);
 
 /// Minimum preamble the SX126x accepts at SF5 and SF6 (datasheet §6.1.4:
 /// "for SF5 and SF6 the minimum preamble length is 12 symbols").

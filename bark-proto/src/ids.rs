@@ -44,7 +44,9 @@ mod tests {
 
     /// FNV-1a as published, for its test vectors.
     fn fnv1a(bytes: &[u8]) -> u32 {
-        bytes.iter().fold(0x811c_9dc5, |h, &b| (h ^ b as u32).wrapping_mul(0x0100_0193))
+        bytes.iter().fold(0x811c_9dc5, |h, &b| {
+            (h ^ b as u32).wrapping_mul(0x0100_0193)
+        })
     }
 
     #[test]
@@ -65,7 +67,17 @@ mod tests {
     fn every_field_counts() {
         let p = Position::from_degrees(50.45, 30.52);
         let a = MsgId::of(p, LeafId([1, 2, 3, 4]), b"a");
-        assert_ne!(a, MsgId::of(Position { lat: p.lat + 1, ..p }, LeafId([1, 2, 3, 4]), b"a"));
+        assert_ne!(
+            a,
+            MsgId::of(
+                Position {
+                    lat: p.lat + 1,
+                    ..p
+                },
+                LeafId([1, 2, 3, 4]),
+                b"a"
+            )
+        );
         assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 5]), b"a"));
         assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 4]), b"b"));
         assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 4]), b"a\0"));

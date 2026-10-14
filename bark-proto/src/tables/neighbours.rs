@@ -89,7 +89,12 @@ pub struct NeighbourParams {
 impl NeighbourParams {
     /// From the protocol configuration; see the module documentation.
     pub fn from_config(c: &Config) -> NeighbourParams {
-        let mean_rotation = Duration::from_micros((c.heartbeat_min + c.heartbeat_max).mul(CHANNELS as u64).as_micros() / 2);
+        let mean_rotation = Duration::from_micros(
+            (c.heartbeat_min + c.heartbeat_max)
+                .mul(CHANNELS as u64)
+                .as_micros()
+                / 2,
+        );
         NeighbourParams {
             demote_after: c.demote_after_failures,
             demotion: mean_rotation.mul(c.demotion_rotations as u64),
@@ -132,7 +137,10 @@ pub struct Neighbours {
 impl Neighbours {
     /// An empty table.
     pub const fn new(params: NeighbourParams) -> Neighbours {
-        Neighbours { slots: [None; NEIGHBOURS], params }
+        Neighbours {
+            slots: [None; NEIGHBOURS],
+            params,
+        }
     }
 
     /// The parameters.
@@ -152,7 +160,10 @@ impl Neighbours {
 
     /// All entries with their slots, in slot order.
     pub fn slots(&self) -> impl Iterator<Item = (usize, &Neighbour)> {
-        self.slots.iter().enumerate().filter_map(|(i, n)| n.as_ref().map(|n| (i, n)))
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| n.as_ref().map(|n| (i, n)))
     }
 
     /// All entries, in slot order.
@@ -167,7 +178,9 @@ impl Neighbours {
 
     /// The slot of `position`.
     pub fn slot_of(&self, position: Position) -> Option<usize> {
-        self.slots().find(|(_, n)| n.position == position).map(|(i, _)| i)
+        self.slots()
+            .find(|(_, n)| n.position == position)
+            .map(|(i, _)| i)
     }
 
     /// The entry for `position`.
@@ -193,7 +206,8 @@ impl Neighbours {
 
     /// Next-hop candidates at `now`, with their slots: live and not demoted.
     pub fn candidates(&self, now: Instant) -> impl Iterator<Item = (usize, &Neighbour)> {
-        self.slots().filter(move |(_, n)| !self.is_demoted(n, now) && !self.is_expired(n, now))
+        self.slots()
+            .filter(move |(_, n)| !self.is_demoted(n, now) && !self.is_expired(n, now))
     }
 
     /// A heartbeat from `hb.position` was heard at `now`. Refreshes its
@@ -263,7 +277,9 @@ impl Neighbours {
 
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
-        self.iter().map(|n| n.last_heard + self.params.expire_after).min()
+        self.iter()
+            .map(|n| n.last_heard + self.params.expire_after)
+            .min()
     }
 
     /// Recompute every entry's local point after own position changed.
@@ -274,7 +290,10 @@ impl Neighbours {
     }
 
     fn entry_mut(&mut self, position: Position) -> Option<&mut Neighbour> {
-        self.slots.iter_mut().flatten().find(|n| n.position == position)
+        self.slots
+            .iter_mut()
+            .flatten()
+            .find(|n| n.position == position)
     }
 }
 
@@ -282,9 +301,17 @@ impl Neighbours {
 /// newcomer takes at `now`, if any. See the module documentation.
 pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
     let oldest = |demoted: bool| {
-        table.slots().filter(|(_, n)| table.is_demoted(n, now) == demoted).min_by_key(|(_, n)| n.last_heard).map(|(i, _)| i)
+        table
+            .slots()
+            .filter(|(_, n)| table.is_demoted(n, now) == demoted)
+            .min_by_key(|(_, n)| n.last_heard)
+            .map(|(i, _)| i)
     };
-    let stale = |i: &usize| table.slot(*i).is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after);
+    let stale = |i: &usize| {
+        table
+            .slot(*i)
+            .is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after)
+    };
     oldest(true).or_else(|| oldest(false).filter(stale))
 }
 
@@ -297,7 +324,11 @@ mod tests {
     }
 
     fn hb(i: i32, home: u8) -> Heartbeat {
-        Heartbeat { surveyed: true, home: Channel::new(home).unwrap(), position: pos(i) }
+        Heartbeat {
+            surveyed: true,
+            home: Channel::new(home).unwrap(),
+            position: pos(i),
+        }
     }
 
     fn pos(i: i32) -> Position {
@@ -316,8 +347,16 @@ mod tests {
     fn params_follow_the_design() {
         let p = params();
         assert_eq!(p.demote_after, 2);
-        assert_eq!(p.demotion, Duration::from_secs(390), "three rotations of 13 × 10 s");
-        assert_eq!(p.expire_after, Duration::from_secs(390), "3 × 13 × 10 s ≈ the design's 400 s");
+        assert_eq!(
+            p.demotion,
+            Duration::from_secs(390),
+            "three rotations of 13 × 10 s"
+        );
+        assert_eq!(
+            p.expire_after,
+            Duration::from_secs(390),
+            "3 × 13 × 10 s ≈ the design's 400 s"
+        );
         assert_eq!(p.stale_after, Duration::from_secs(195));
     }
 
@@ -331,7 +370,11 @@ mod tests {
         t.failed(n.position, at(5));
         assert_eq!(t.heard(&hb(1000, 4), &plane(), at(10)), Heard::Refreshed(0));
         let n = *t.get(n.position).unwrap();
-        assert_eq!((n.home.index(), n.fail_count, n.last_heard), (4, 1, at(10)), "a heartbeat is not an ACK");
+        assert_eq!(
+            (n.home.index(), n.fail_count, n.last_heard),
+            (4, 1, at(10)),
+            "a heartbeat is not an ACK"
+        );
         assert_eq!(t.len(), 1);
     }
 
@@ -340,7 +383,10 @@ mod tests {
         let mut t = Neighbours::new(params());
         t.heard(&hb(7, 0), &plane(), at(0));
         t.heard(&hb(9, 0), &plane(), at(0));
-        assert_eq!(t.by_short(pos(9).short()).map(|(i, n)| (i, n.position)), Some((1, pos(9))));
+        assert_eq!(
+            t.by_short(pos(9).short()).map(|(i, n)| (i, n.position)),
+            Some((1, pos(9)))
+        );
         assert_eq!(t.by_short(pos(8).short()), None);
     }
 
@@ -352,14 +398,22 @@ mod tests {
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
         t.succeeded(p);
-        assert_eq!(t.failed(p, at(1)), Some(false), "an ACK resets: failures are consecutive");
+        assert_eq!(
+            t.failed(p, at(1)),
+            Some(false),
+            "an ACK resets: failures are consecutive"
+        );
         assert_eq!(t.failed(p, at(2)), Some(true));
         assert_eq!(t.candidates(at(2)).count(), 0);
         assert_eq!(t.failed(pos(2), at(2)), None);
 
         // Heartbeats keep it alive but demoted (D18).
         t.heard(&hb(1, 0), &plane(), at(300));
-        assert_eq!(t.candidates(at(300)).count(), 0, "a heartbeat does not lift demotion");
+        assert_eq!(
+            t.candidates(at(300)).count(),
+            0,
+            "a heartbeat does not lift demotion"
+        );
         // Three rotations after the demoting failure it is back.
         assert_eq!(t.candidates(at(391)).count(), 0);
         assert_eq!(t.candidates(at(392)).count(), 1);
@@ -377,21 +431,32 @@ mod tests {
         t.heard(&hb(1, 0), &plane(), at(0));
         t.heard(&hb(2, 0), &plane(), at(100));
         assert_eq!(t.next_expiry(), Some(at(390)));
-        assert_eq!(t.candidates(at(390)).count(), 1, "expired entries are not candidates");
+        assert_eq!(
+            t.candidates(at(390)).count(),
+            1,
+            "expired entries are not candidates"
+        );
         t.expire(at(389));
         assert_eq!(t.len(), 2);
         t.expire(at(390));
         assert_eq!(t.len(), 1);
         assert_eq!(t.slot_of(pos(2)), Some(1), "slots do not move");
         assert_eq!(t.next_expiry(), Some(at(490)));
-        assert_eq!(t.heard(&hb(3, 0), &plane(), at(400)), Heard::Added(0), "the free slot is reused");
+        assert_eq!(
+            t.heard(&hb(3, 0), &plane(), at(400)),
+            Heard::Added(0),
+            "the free slot is reused"
+        );
     }
 
     #[test]
     fn eviction_prefers_demoted_then_stale_then_keeps_incumbents() {
         let mut t = Neighbours::new(params());
         for i in 0..NEIGHBOURS as i32 {
-            assert_eq!(t.heard(&hb(i, 0), &plane(), at(i as u64)), Heard::Added(i as usize));
+            assert_eq!(
+                t.heard(&hb(i, 0), &plane(), at(i as u64)),
+                Heard::Added(i as usize)
+            );
         }
         // All live and recently heard: the newcomer is turned away.
         assert_eq!(t.heard(&hb(100, 0), &plane(), at(100)), Heard::Rejected);

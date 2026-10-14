@@ -47,7 +47,8 @@ use crate::time::{Duration, Instant};
 use crate::wire::HEARTBEAT_LEN;
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
-pub const BUDGET: Duration = Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
+pub const BUDGET: Duration =
+    Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
 /// Longest single transmission (design §3: 1 s; SF5 frames are ≤140 ms).
 pub const MAX_TRANSMISSION: Duration = Duration::from_secs(1);
@@ -82,7 +83,8 @@ pub struct Budget<const S: usize> {
 
 impl<const S: usize> Budget<S> {
     /// Bucket length: the window split into `S − 2` buckets.
-    pub const BUCKET: Duration = Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() / (S as u64 - 2));
+    pub const BUCKET: Duration =
+        Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() / (S as u64 - 2));
 
     /// A budget with nothing spent.
     pub const fn new() -> Self {
@@ -94,7 +96,12 @@ impl<const S: usize> Budget<S> {
             // started at most MAX_TRANSMISSION before it: their airtime fits.
             assert!(Self::BUCKET.as_micros() + MAX_TRANSMISSION.as_micros() <= u32::MAX as u64);
         };
-        Budget { slots: [Slot { bucket: 0, airtime: 0 }; S] }
+        Budget {
+            slots: [Slot {
+                bucket: 0,
+                airtime: 0,
+            }; S],
+        }
     }
 
     /// Bucket number of instant `t` µs. 32 bits of buckets last millennia
@@ -107,7 +114,11 @@ impl<const S: usize> Budget<S> {
     /// Airtime in the buckets overlapping a window that starts at `start` µs.
     fn spent_since(&self, start: u64) -> u64 {
         let first = Self::bucket(start);
-        self.slots.iter().filter(|s| s.bucket >= first).map(|s| s.airtime as u64).sum()
+        self.slots
+            .iter()
+            .filter(|s| s.bucket >= first)
+            .map(|s| s.airtime as u64)
+            .sum()
     }
 
     /// Whether a transmission of `airtime` may start at `now`.
@@ -159,7 +170,9 @@ impl<const S: usize> Budget<S> {
     /// Airtime available at `now`: the cap less what the window ending now
     /// has spent. Any transmission no longer than this is allowed.
     pub fn available(&self, now: Instant) -> Duration {
-        let start = now.as_micros().saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
+        let start = now
+            .as_micros()
+            .saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
         Duration::from_micros(BUDGET.as_micros().saturating_sub(self.spent_since(start)))
     }
 }
@@ -217,8 +230,15 @@ mod tests {
         let c = Config::default();
         // 360 heartbeats of 11.84 ms in an hour at the mean 10 s interval.
         assert_eq!(heartbeat_reserve(&c), Duration::from_micros(360 * 11_840));
-        let fast = Config { heartbeat_min: Duration::from_secs(1), heartbeat_max: Duration::from_secs(1), ..c };
-        assert_eq!(heartbeat_reserve(&fast), Duration::from_micros(3600 * 11_840));
+        let fast = Config {
+            heartbeat_min: Duration::from_secs(1),
+            heartbeat_max: Duration::from_secs(1),
+            ..c
+        };
+        assert_eq!(
+            heartbeat_reserve(&fast),
+            Duration::from_micros(3600 * 11_840)
+        );
     }
 
     #[test]
@@ -232,7 +252,10 @@ mod tests {
             t += ms(100);
         }
         assert!(b.available(t) >= reserve && b.available(t) < reserve + ms(100));
-        assert!(!b.would_allow_keeping(ms(100), reserve, t), "forwarding stops");
+        assert!(
+            !b.would_allow_keeping(ms(100), reserve, t),
+            "forwarding stops"
+        );
         assert!(b.would_allow(ms(12), t), "a heartbeat still goes");
     }
 
@@ -259,7 +282,10 @@ mod tests {
             assert!(next > at);
             at = next;
         }
-        assert!(at <= first && first.as_micros() - at.as_micros() < 250_000, "{at:?} vs {first:?}");
+        assert!(
+            at <= first && first.as_micros() - at.as_micros() < 250_000,
+            "{at:?} vs {first:?}"
+        );
         assert_eq!(b.next_change(ms(1001), t), None);
     }
 
@@ -325,7 +351,11 @@ mod tests {
         }
         assert!(worst_window(&txs) <= BUDGET.as_micros());
         let last_hour = end.as_micros() - DUTY_CYCLE_WINDOW.as_micros();
-        let spent: u64 = txs.iter().filter(|&&(s, _)| s >= last_hour).map(|&(_, a)| a).sum();
+        let spent: u64 = txs
+            .iter()
+            .filter(|&&(s, _)| s >= last_hour)
+            .map(|&(_, a)| a)
+            .sum();
         let floor = BUDGET.as_micros() - BUCKET.as_micros() / 10 - frame.as_micros();
         assert!(spent >= floor, "spent {spent} µs, floor {floor}");
     }

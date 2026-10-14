@@ -192,7 +192,13 @@ impl Leaf {
     // --- Relay choice (§10.1) ---
 
     fn heartbeat(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let heard = Heard { position: hb.position, home: hb.home, rssi, last_heard: now, streak: 0 };
+        let heard = Heard {
+            position: hb.position,
+            home: hb.home,
+            rssi,
+            last_heard: now,
+            streak: 0,
+        };
         let Some(mut relay) = self.relay else {
             self.switch(heard, now, emit);
             return;
@@ -211,11 +217,16 @@ impl Leaf {
         }
         let stronger = rssi >= relay.rssi + SWITCH_MARGIN_DB;
         let challenger = match self.challenger {
-            Some(c) if c.position == hb.position => {
-                Heard { rssi: average(c.rssi, rssi), streak: if stronger { c.streak + 1 } else { 0 }, ..heard }
-            }
+            Some(c) if c.position == hb.position => Heard {
+                rssi: average(c.rssi, rssi),
+                streak: if stronger { c.streak + 1 } else { 0 },
+                ..heard
+            },
             Some(c) if now.since(c.last_heard) < self.silence() && c.rssi >= rssi => return,
-            _ => Heard { streak: u8::from(stronger), ..heard },
+            _ => Heard {
+                streak: u8::from(stronger),
+                ..heard
+            },
         };
         if challenger.streak >= SWITCH_HEARTBEATS {
             self.switch(challenger, now, emit);
@@ -226,7 +237,10 @@ impl Leaf {
 
     /// Take `relay` and attach to it now.
     fn switch(&mut self, relay: Heard, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.challenger.is_some_and(|c| c.position == relay.position) {
+        if self
+            .challenger
+            .is_some_and(|c| c.position == relay.position)
+        {
             self.challenger = None;
         }
         self.relay = Some(Heard { streak: 0, ..relay });
@@ -251,7 +265,10 @@ impl Leaf {
                 // Stay on this channel and wait for a heartbeat (§10.1).
                 if let Some(id) = self.outgoing_id() {
                     self.outgoing = None;
-                    emit(Action::App(AppEvent::Failed { msg_id: id, reason: FailReason::NoRelay }));
+                    emit(Action::App(AppEvent::Failed {
+                        msg_id: id,
+                        reason: FailReason::NoRelay,
+                    }));
                 }
             }
         }
@@ -267,9 +284,18 @@ impl Leaf {
     }
 
     fn app(&mut self, cmd: AppCommand<'_>, emit: &mut dyn FnMut(Action)) {
-        let AppCommand::Send { dst_pos, dst_leaf, payload } = cmd else { return };
+        let AppCommand::Send {
+            dst_pos,
+            dst_leaf,
+            payload,
+        } = cmd
+        else {
+            return;
+        };
         let msg_id = crate::ids::MsgId::of(dst_pos, dst_leaf, payload);
-        let fail = |reason, emit: &mut dyn FnMut(Action)| emit(Action::App(AppEvent::Failed { msg_id, reason }));
+        let fail = |reason, emit: &mut dyn FnMut(Action)| {
+            emit(Action::App(AppEvent::Failed { msg_id, reason }))
+        };
         if payload.len() > MAX_PAYLOAD {
             fail(FailReason::PayloadTooLong, emit);
             return;
@@ -293,7 +319,11 @@ impl Leaf {
             hops: 0,
             payload,
         };
-        self.outgoing = Some(mac::frame(&Packet::Data(d), self.home, MIN_PREAMBLE_SYMBOLS));
+        self.outgoing = Some(mac::frame(
+            &Packet::Data(d),
+            self.home,
+            MIN_PREAMBLE_SYMBOLS,
+        ));
     }
 
     /// Start a hand-over if none is running: a due ATTACH first, then the
@@ -306,7 +336,13 @@ impl Leaf {
         let from = AckFrom::from(relay.position.short());
         if !self.attached || now >= self.attach_at {
             self.sending = Sending::Attach;
-            self.transfer.start(Ack { msg_id: MsgId(u32::from_be_bytes(self.id.0)), from }, now);
+            self.transfer.start(
+                Ack {
+                    msg_id: MsgId(u32::from_be_bytes(self.id.0)),
+                    from,
+                },
+                now,
+            );
         } else if let Some(msg_id) = self.outgoing_id() {
             self.sending = Sending::Data;
             self.transfer.start(Ack { msg_id, from }, now);
@@ -317,11 +353,25 @@ impl Leaf {
     fn frame(&self) -> Option<Frame> {
         let relay = self.relay?.position.short();
         let packet = match self.sending {
-            Sending::Attach => Packet::Attach(Attach { leaf: self.id, relay, mode: RxMode::Listening }),
+            Sending::Attach => Packet::Attach(Attach {
+                leaf: self.id,
+                relay,
+                mode: RxMode::Listening,
+            }),
             Sending::Data => {
-                let Ok(Packet::Data(d)) = Packet::decode(self.outgoing.as_ref()?.payload()) else { return None };
-                let addressed = Data { sender_home: self.home, dst_hop: relay, ..d };
-                return Some(mac::frame(&Packet::Data(addressed), self.home, MIN_PREAMBLE_SYMBOLS));
+                let Ok(Packet::Data(d)) = Packet::decode(self.outgoing.as_ref()?.payload()) else {
+                    return None;
+                };
+                let addressed = Data {
+                    sender_home: self.home,
+                    dst_hop: relay,
+                    ..d
+                };
+                return Some(mac::frame(
+                    &Packet::Data(addressed),
+                    self.home,
+                    MIN_PREAMBLE_SYMBOLS,
+                ));
             }
         };
         Some(mac::frame(&packet, self.home, MIN_PREAMBLE_SYMBOLS))
@@ -337,7 +387,10 @@ impl Leaf {
         };
         let airtime = mac::airtime(&frame);
         if !self.budget.would_allow(airtime, now) {
-            let until = self.budget.next_change(airtime, now).unwrap_or(now + self.config.keepalive);
+            let until = self
+                .budget
+                .next_change(airtime, now)
+                .unwrap_or(now + self.config.keepalive);
             self.transfer.hold(until);
             return false;
         }
@@ -353,7 +406,9 @@ impl Leaf {
         }
         let backoff = self.config.hop_backoff_max;
         match self.transfer.checked(busy, now, &mut self.rng, backoff) {
-            Check::Clear if step == Step::Cad => self.radio.start(Job::Send, Action::Rssi(self.home), emit),
+            Check::Clear if step == Step::Cad => {
+                self.radio.start(Job::Send, Action::Rssi(self.home), emit)
+            }
             Check::Clear => {
                 if self.acks.wake_at().is_some_and(|t| t <= now) {
                     self.transfer.hold(now);
@@ -365,7 +420,10 @@ impl Leaf {
                 };
                 let airtime = mac::airtime(&frame);
                 if !self.budget.would_allow(airtime, now) {
-                    let until = self.budget.next_change(airtime, now).unwrap_or(now + self.config.keepalive);
+                    let until = self
+                        .budget
+                        .next_change(airtime, now)
+                        .unwrap_or(now + self.config.keepalive);
                     self.transfer.hold(until);
                     return;
                 }
@@ -388,7 +446,10 @@ impl Leaf {
             Sending::Attach => self.lose_relay(now, emit),
             Sending::Data => {
                 if let Some(msg_id) = self.outgoing_id() {
-                    emit(Action::App(AppEvent::Failed { msg_id, reason: FailReason::NoAck }));
+                    emit(Action::App(AppEvent::Failed {
+                        msg_id,
+                        reason: FailReason::NoAck,
+                    }));
                 }
                 self.outgoing = None;
                 self.attached = false;
@@ -420,8 +481,12 @@ impl Leaf {
     // --- Receiving (§10.3) ---
 
     fn deliver(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let ack = Ack { msg_id: d.msg_id, from: AckFrom::from(self.id) };
-        self.acks.owe(ack, self.home, now + self.config.ack_timeout, now);
+        let ack = Ack {
+            msg_id: d.msg_id,
+            from: AckFrom::from(self.id),
+        };
+        self.acks
+            .owe(ack, self.home, now + self.config.ack_timeout, now);
         if self.seen.contains(&d.msg_id) {
             return;
         }
@@ -429,11 +494,17 @@ impl Leaf {
         self.seen_next = ((self.seen_next as usize + 1) % SEEN) as u8;
         let mut payload = [0; MAX_FRAME];
         payload[..d.payload.len()].copy_from_slice(d.payload);
-        emit(Action::App(AppEvent::Message { msg_id: d.msg_id, len: d.payload.len() as u8, payload }));
+        emit(Action::App(AppEvent::Message {
+            msg_id: d.msg_id,
+            len: d.payload.len() as u8,
+            payload,
+        }));
     }
 
     fn start_ack(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        let Some(o) = self.acks.due(now) else { return false };
+        let Some(o) = self.acks.due(now) else {
+            return false;
+        };
         let frame = mac::frame(&Packet::Ack(o.ack), o.channel, MIN_PREAMBLE_SYMBOLS);
         if !self.budget.would_allow(mac::airtime(&frame), now) {
             self.acks.abandon();
@@ -480,7 +551,10 @@ impl Leaf {
         if self.transfer.timeout(now, max, &mut self.rng, backoff) == Some(Missed::Failed) {
             self.send_failed(now, emit);
         }
-        if self.relay.is_some_and(|r| now.since(r.last_heard) >= self.silence()) {
+        if self
+            .relay
+            .is_some_and(|r| now.since(r.last_heard) >= self.silence())
+        {
             self.lose_relay(now, emit);
         }
     }
@@ -509,7 +583,9 @@ impl Core for Leaf {
         let busy_dbm = self.busy_dbm();
         match event {
             Event::Wakeup => {}
-            Event::Received { rssi_dbm, bytes, .. } => self.received(bytes, rssi_dbm, now, emit),
+            Event::Received {
+                rssi_dbm, bytes, ..
+            } => self.received(bytes, rssi_dbm, now, emit),
             Event::CadDone { busy, .. } => match self.radio.complete() {
                 Some(Job::Send) => self.send_check(busy, now, emit),
                 Some(Job::Ack) => self.ack_check(busy, now, emit),
@@ -521,7 +597,9 @@ impl Core for Leaf {
                 None => {}
             },
             Event::TxDone => match self.radio.complete() {
-                Some(Job::Send) if self.transfer.step() == Step::Tx => self.transfer.sent(now, self.config.ack_timeout),
+                Some(Job::Send) if self.transfer.step() == Step::Tx => {
+                    self.transfer.sent(now, self.config.ack_timeout)
+                }
                 Some(Job::Ack) => self.acks.sent(),
                 _ => {}
             },

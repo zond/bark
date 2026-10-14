@@ -89,7 +89,10 @@ pub const RECORDS: usize = records_for(RECORD_IDLE);
 
 const _: () = assert!(RECORD_IDLE.as_micros() == 188_332_800);
 const _: () = assert!(RECORDS == 626);
-const _: () = assert!(NEIGHBOURS <= u64::BITS as usize, "the tried mask has a bit per slot");
+const _: () = assert!(
+    NEIGHBOURS <= u64::BITS as usize,
+    "the tried mask has a bit per slot"
+);
 
 const OWNED: u8 = 1;
 const HAS_CHILD: u8 = 2;
@@ -252,7 +255,11 @@ impl Records {
             handed: 0,
             last_active: Instant::ZERO,
         };
-        Records { entries: [fill; RECORDS], len: 0, idle }
+        Records {
+            entries: [fill; RECORDS],
+            len: 0,
+            idle,
+        }
     }
 
     /// No records, with the lifetime for `config.ack_timeout`.
@@ -267,18 +274,25 @@ impl Records {
 
     /// Records alive at `now`.
     pub fn live(&self, now: Instant) -> usize {
-        self.entries[..self.len].iter().filter(|r| r.alive(self.idle, now)).count()
+        self.entries[..self.len]
+            .iter()
+            .filter(|r| r.alive(self.idle, now))
+            .count()
     }
 
     /// The live record for `id`.
     pub fn get(&self, id: MsgId, now: Instant) -> Option<&Record> {
-        self.entries[..self.len].iter().find(|r| r.id == id && r.alive(self.idle, now))
+        self.entries[..self.len]
+            .iter()
+            .find(|r| r.id == id && r.alive(self.idle, now))
     }
 
     /// The live record for `id`, to update.
     pub fn get_mut(&mut self, id: MsgId, now: Instant) -> Option<&mut Record> {
         let idle = self.idle;
-        self.entries[..self.len].iter_mut().find(|r| r.id == id && r.alive(idle, now))
+        self.entries[..self.len]
+            .iter_mut()
+            .find(|r| r.id == id && r.alive(idle, now))
     }
 
     /// Keep `record`, which must be for a message without a live record.
@@ -296,7 +310,9 @@ impl Records {
         let (i, victim) = match live.clone().find(|(_, r)| !r.alive(idle, now)) {
             Some((i, _)) => (i, None),
             None => {
-                let i = live.min_by_key(|(_, r)| r.last_active).map_or(0, |(i, _)| i);
+                let i = live
+                    .min_by_key(|(_, r)| r.last_active)
+                    .map_or(0, |(i, _)| i);
                 (i, Some(self.entries[i]))
             }
         };
@@ -372,14 +388,20 @@ mod tests {
         t.insert(Record::new(MsgId(1), None, 0, at(0)), at(0));
         assert!(t.get(MsgId(1), at(99)).is_some());
         t.get_mut(MsgId(1), at(99)).unwrap().received(1, at(99));
-        assert!(t.get(MsgId(1), at(198)).is_some(), "receipt restarts the clock");
+        assert!(
+            t.get(MsgId(1), at(198)).is_some(),
+            "receipt restarts the clock"
+        );
         t.get_mut(MsgId(1), at(198)).unwrap().sent(at(198));
         assert!(t.get(MsgId(1), at(297)).is_some(), "so does a send");
         assert!(t.get(MsgId(1), at(298)).is_none());
         assert!(t.get_mut(MsgId(1), at(298)).is_none());
         assert_eq!(t.live(at(298)), 0);
         // A dead record makes way for a new one for the same message.
-        assert_eq!(t.insert(Record::new(MsgId(1), None, 5, at(300)), at(300)), None);
+        assert_eq!(
+            t.insert(Record::new(MsgId(1), None, 5, at(300)), at(300)),
+            None
+        );
         assert_eq!(t.get(MsgId(1), at(300)).unwrap().highest_hops(), 5);
     }
 
@@ -387,18 +409,26 @@ mod tests {
     fn full_table_takes_dead_then_least_recently_active() {
         let mut t = Records::new(RECORD_IDLE);
         for i in 0..RECORDS as u32 {
-            assert_eq!(t.insert(Record::new(MsgId(i), None, 0, at(i as u64)), at(i as u64)), None);
+            assert_eq!(
+                t.insert(Record::new(MsgId(i), None, 0, at(i as u64)), at(i as u64)),
+                None
+            );
         }
         let now = at(RECORDS as u64);
         // Touch the oldest, so the second oldest is least recently active.
         t.get_mut(MsgId(0), now).unwrap().sent(now);
-        let gone = t.insert(Record::new(MsgId(1000), None, 0, now), now).unwrap();
+        let gone = t
+            .insert(Record::new(MsgId(1000), None, 0, now), now)
+            .unwrap();
         assert_eq!(gone.id(), MsgId(1));
         assert!(t.get(MsgId(0), now).is_some() && t.get(MsgId(1000), now).is_some());
         // Once records die, they go first, and nothing live is displaced.
         let later = now + RECORD_IDLE;
         t.get_mut(MsgId(1000), now).unwrap().sent(later);
-        assert_eq!(t.insert(Record::new(MsgId(1001), None, 0, later), later), None);
+        assert_eq!(
+            t.insert(Record::new(MsgId(1001), None, 0, later), later),
+            None
+        );
         assert_eq!(t.live(later), 2, "1000 and 1001; the rest died");
     }
 

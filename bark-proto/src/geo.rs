@@ -106,7 +106,10 @@ impl LocalPlane {
         } else if dlon < -LON_TURN / 2 {
             dlon += LON_TURN;
         }
-        Point { east: dlon as f32 * self.east_per_count, north: dlat as f32 * self.north_per_count }
+        Point {
+            east: dlon as f32 * self.east_per_count,
+            north: dlat as f32 * self.north_per_count,
+        }
     }
 
     /// Squared distance between two positions in this plane, in m².
@@ -146,8 +149,14 @@ mod tests {
     /// The point `d` metres from `o` on initial bearing `brg` degrees.
     fn destination(o: (f64, f64), d: f64, brg: f64) -> (f64, f64) {
         let (la, lo, b, dd) = (rad(o.0), rad(o.1), rad(brg), d / R);
-        let la2 = libm::asin(libm::sin(la) * libm::cos(dd) + libm::cos(la) * libm::sin(dd) * libm::cos(b));
-        let lo2 = lo + libm::atan2(libm::sin(b) * libm::sin(dd) * libm::cos(la), libm::cos(dd) - libm::sin(la) * libm::sin(la2));
+        let la2 = libm::asin(
+            libm::sin(la) * libm::cos(dd) + libm::cos(la) * libm::sin(dd) * libm::cos(b),
+        );
+        let lo2 = lo
+            + libm::atan2(
+                libm::sin(b) * libm::sin(dd) * libm::cos(la),
+                libm::cos(dd) - libm::sin(la) * libm::sin(la2),
+            );
         (deg(la2), deg(lo2))
     }
 
@@ -170,13 +179,15 @@ mod tests {
     /// Worst relative error between pairs of points on a ring of radius `d`.
     fn worst_between(d: f64) -> f64 {
         let plane = LocalPlane::new(pos(KYIV));
-        let ring: [(f64, f64); 24] = core::array::from_fn(|i| destination(KYIV, d, i as f64 * 15.0));
+        let ring: [(f64, f64); 24] =
+            core::array::from_fn(|i| destination(KYIV, d, i as f64 * 15.0));
         let mut worst: f64 = 0.0;
         for a in ring {
             for b in ring {
                 let truth = haversine(pos(a).degrees(), pos(b).degrees());
                 if truth > 1.0 {
-                    worst = worst.max((plane.distance_m(pos(a), pos(b)) as f64 - truth).abs() / truth);
+                    worst =
+                        worst.max((plane.distance_m(pos(a), pos(b)) as f64 - truth).abs() / truth);
                 }
             }
         }
@@ -192,7 +203,11 @@ mod tests {
     #[test]
     fn city_scale_within_a_tenth_of_a_percent() {
         for d in [300.0, 1_000.0, 3_000.0, 10_000.0] {
-            assert!(worst_from_centre(d) < 0.001, "{d} m from centre: {}", worst_from_centre(d));
+            assert!(
+                worst_from_centre(d) < 0.001,
+                "{d} m from centre: {}",
+                worst_from_centre(d)
+            );
         }
         // Two points anywhere within 2.5 km of the centre, so up to 5 km apart.
         for d in [500.0, 1_000.0, 2_500.0] {
@@ -203,11 +218,22 @@ mod tests {
     #[test]
     fn error_grows_as_documented() {
         // The table in the module documentation.
-        let rows = [(5e3, 0.0002, 0.0009), (20e3, 0.0007, 0.0037), (100e3, 0.0037, 0.019), (300e3, 0.0114, 0.0594)];
+        let rows = [
+            (5e3, 0.0002, 0.0009),
+            (20e3, 0.0007, 0.0037),
+            (100e3, 0.0037, 0.019),
+            (300e3, 0.0114, 0.0594),
+        ];
         for (d, centre, between) in rows {
             let (c, b) = (worst_from_centre(d), worst_between(d));
-            assert!((c - centre).abs() < 0.0001 + centre * 0.05, "{d}: centre {c}");
-            assert!((b - between).abs() < 0.0001 + between * 0.05, "{d}: between {b}");
+            assert!(
+                (c - centre).abs() < 0.0001 + centre * 0.05,
+                "{d}: centre {c}"
+            );
+            assert!(
+                (b - between).abs() < 0.0001 + between * 0.05,
+                "{d}: between {b}"
+            );
         }
     }
 
@@ -227,7 +253,12 @@ mod tests {
         let plane = LocalPlane::new(pos(KYIV));
         let half_turn = core::f64::consts::PI * R;
         let east_max = half_turn * libm::cos(rad(KYIV.0));
-        for (lat, lon) in [(-KYIV.0, KYIV.1 - 180.0), (-90.0, -180.0), (90.0, 180.0), (-50.0, 0.0)] {
+        for (lat, lon) in [
+            (-KYIV.0, KYIV.1 - 180.0),
+            (-90.0, -180.0),
+            (90.0, 180.0),
+            (-50.0, 0.0),
+        ] {
             let p = plane.point(Position::from_degrees(lat, lon));
             assert!(p.east.is_finite() && p.north.is_finite());
             assert!((p.east.abs() as f64) <= east_max * 1.0001, "{p:?}");

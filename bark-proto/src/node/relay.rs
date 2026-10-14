@@ -139,7 +139,9 @@ impl Relay {
     /// two relays with the same config and seed behave identically.
     pub fn new(config: Config, seed: u64) -> Relay {
         let mut rng = Rng::new(seed);
-        let home = config.home_override.unwrap_or_else(|| random_channel(&mut rng));
+        let home = config
+            .home_override
+            .unwrap_or_else(|| random_channel(&mut rng));
         let rotation = random_channel(&mut rng);
         Relay {
             plane: LocalPlane::new(config.position),
@@ -224,7 +226,10 @@ impl Relay {
 
     fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
         if to != self.home {
-            emit(Action::Trace(Trace::HomeChannelMoved { from: self.home, to }));
+            emit(Action::Trace(Trace::HomeChannelMoved {
+                from: self.home,
+                to,
+            }));
             self.home = to;
             emit(Action::Listen(to));
         }
@@ -233,7 +238,10 @@ impl Relay {
     /// `argmin busy[c]`, ties within 0.01 broken at random (design §6.2),
     /// so relays that hear nothing do not all pick channel 0.
     fn quietest(&mut self) -> Channel {
-        let min = Channel::all().map(|c| self.busy.fraction(c)).min().unwrap_or(ONE);
+        let min = Channel::all()
+            .map(|c| self.busy.fraction(c))
+            .min()
+            .unwrap_or(ONE);
         let busy = &self.busy;
         let near = |c: &Channel| busy.fraction(*c) <= min.saturating_add(percent(1));
         let count = Channel::all().filter(near).count() as u64;
@@ -242,7 +250,8 @@ impl Relay {
     }
 
     fn heartbeat_interval(&mut self) -> Duration {
-        self.rng.duration(self.config.heartbeat_min, self.config.heartbeat_max)
+        self.rng
+            .duration(self.config.heartbeat_min, self.config.heartbeat_max)
     }
 
     fn timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -296,14 +305,16 @@ impl Relay {
 
     fn start_sweep(&mut self, emit: &mut dyn FnMut(Action)) -> bool {
         self.sweep.next_at += self.sweep_step();
-        self.radio.start(Job::Sweep, Action::Rssi(self.sweep.channel), emit);
+        self.radio
+            .start(Job::Sweep, Action::Rssi(self.sweep.channel), emit);
         true
     }
 
     fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
             let interval = now.since(self.sweep.last_home);
-            self.busy.sample_home(channel, dbm, self.sweep.receiving, interval);
+            self.busy
+                .sample_home(channel, dbm, self.sweep.receiving, interval);
             self.sweep.receiving = Duration::ZERO;
             self.sweep.last_home = now;
         } else {
@@ -328,8 +339,12 @@ impl Relay {
 
     /// `busy[home] − min busy` above the move threshold (design §6.3).
     fn excess(&self) -> bool {
-        let min = Channel::all().map(|c| self.busy.fraction(c)).min().unwrap_or(0);
-        self.busy.fraction(self.home).saturating_sub(min) > percent(self.config.move_threshold_percent)
+        let min = Channel::all()
+            .map(|c| self.busy.fraction(c))
+            .min()
+            .unwrap_or(0);
+        self.busy.fraction(self.home).saturating_sub(min)
+            > percent(self.config.move_threshold_percent)
     }
 
     fn move_rule(&mut self, now: Instant) {
@@ -339,7 +354,8 @@ impl Relay {
         }
         let since = *self.mover.excess_since.get_or_insert(now);
         if self.mover.move_at.is_none() && now.since(since) >= self.config.move_dwell {
-            self.mover.move_at = Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
+            self.mover.move_at =
+                Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
         }
     }
 
@@ -349,14 +365,20 @@ impl Relay {
         self.stage == Stage::Running
             && self.beacon.check == Check::Idle
             && now >= self.beacon.ready_at
-            && (self.beacon.current.is_some() || self.beacon.announce.is_some() || now >= self.beacon.next_at)
+            && (self.beacon.current.is_some()
+                || self.beacon.announce.is_some()
+                || now >= self.beacon.next_at)
     }
 
     /// The heartbeat in progress. It carries the home at the moment it is
     /// sent, so a move during its backoff still announces the new channel.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
-        let hb = Heartbeat { surveyed: self.config.surveyed, home: self.home, position: self.config.position };
+        let hb = Heartbeat {
+            surveyed: self.config.surveyed,
+            home: self.home,
+            position: self.config.position,
+        };
         mac::frame(&Packet::Heartbeat(hb), channel, MIN_PREAMBLE_SYMBOLS)
     }
 
@@ -374,13 +396,17 @@ impl Relay {
         let f = self.heartbeat_frame();
         let airtime = mac::airtime(&f);
         if !self.budget.would_allow(airtime, now) {
-            let until = self.budget.next_change(airtime, now).unwrap_or(now + self.config.heartbeat_max);
+            let until = self
+                .budget
+                .next_change(airtime, now)
+                .unwrap_or(now + self.config.heartbeat_max);
             self.beacon.ready_at = until;
             emit(Action::Trace(Trace::HeartbeatDeferred { until }));
             return false;
         }
         self.beacon.check = Check::Cad;
-        self.radio.start(Job::Heartbeat, Action::Cad(f.channel), emit);
+        self.radio
+            .start(Job::Heartbeat, Action::Cad(f.channel), emit);
         true
     }
 
@@ -390,16 +416,22 @@ impl Relay {
             self.beacon.check = Check::Idle;
             self.beacon.busy_checks += 1;
             if self.beacon.busy_checks >= self.config.lbt_attempts {
-                emit(Action::Trace(Trace::HeartbeatSkipped { channel: f.channel }));
+                emit(Action::Trace(Trace::HeartbeatSkipped {
+                    channel: f.channel,
+                }));
                 self.heartbeat_done(now, false);
             } else {
-                self.beacon.ready_at = now + self.rng.duration(Duration::ZERO, self.config.lbt_backoff_max);
+                self.beacon.ready_at = now
+                    + self
+                        .rng
+                        .duration(Duration::ZERO, self.config.lbt_backoff_max);
             }
             return;
         }
         if self.beacon.check == Check::Cad {
             self.beacon.check = Check::Rssi;
-            self.radio.start(Job::Heartbeat, Action::Rssi(f.channel), emit);
+            self.radio
+                .start(Job::Heartbeat, Action::Rssi(f.channel), emit);
         } else {
             self.beacon.check = Check::Tx;
             self.budget.record(mac::airtime(&f), now);
@@ -457,7 +489,10 @@ impl Relay {
         if let Stage::Booting(_) = self.stage {
             // Another relay holds this identity: step two counts (≈1.2 m)
             // north and listen again (design §8.1).
-            let to = Position { lat: hb.position.lat + 2, ..hb.position };
+            let to = Position {
+                lat: hb.position.lat + 2,
+                ..hb.position
+            };
             self.set_position(to);
             self.stage = Stage::Booting(now + self.config.boot_listen);
             emit(Action::Trace(Trace::PositionShifted { to }));
@@ -472,7 +507,11 @@ impl Relay {
 
     fn app(&mut self, cmd: AppCommand<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         match cmd {
-            AppCommand::Send { dst_pos, dst_leaf, payload } => self.originate(dst_pos, dst_leaf, payload, now, emit),
+            AppCommand::Send {
+                dst_pos,
+                dst_leaf,
+                payload,
+            } => self.originate(dst_pos, dst_leaf, payload, now, emit),
             AppCommand::SetPosition { position, surveyed } => {
                 self.config.surveyed = surveyed;
                 self.set_position(position);
@@ -548,7 +587,11 @@ impl Core for Relay {
         if self.radio.idle() && !awaiting {
             if self.stage == Stage::Running && self.beacon.check == Check::Idle {
                 let pending = self.beacon.announce.is_some() || self.beacon.current.is_some();
-                let due = if pending { self.beacon.ready_at } else { self.beacon.next_at };
+                let due = if pending {
+                    self.beacon.ready_at
+                } else {
+                    self.beacon.next_at
+                };
                 at(due.max(self.beacon.ready_at));
             }
             at(self.sweep.next_at);

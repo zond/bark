@@ -26,7 +26,9 @@ pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 /// §9.3): 738.6 ms with the design's 100 ms timeout.
 pub const fn attempt_span(ack_timeout: Duration) -> Duration {
     Duration::from_micros(
-        LBT_GIVE_UP.as_micros() + time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ack_timeout.as_micros(),
+        LBT_GIVE_UP.as_micros()
+            + time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+            + ack_timeout.as_micros(),
     )
 }
 
@@ -48,12 +50,32 @@ mod sizes {
         assert_eq!(size_of::<send_queue::Outgoing>(), 262);
         // Whole tables: entries times capacity, and a few words of bookkeeping.
         let tables = [
-            ("neighbours", size_of::<neighbours::Neighbours>(), neighbours::NEIGHBOURS * 40),
+            (
+                "neighbours",
+                size_of::<neighbours::Neighbours>(),
+                neighbours::NEIGHBOURS * 40,
+            ),
             ("leaves", size_of::<leaves::Leaves>(), leaves::LEAVES * 16),
-            ("delivery", size_of::<delivery::DeliveryQueue>(), delivery::DELIVERY_QUEUE * 256),
-            ("records", size_of::<records::Records>(), records::RECORDS * 32),
-            ("send queue", size_of::<send_queue::SendQueue>(), send_queue::SEND_QUEUE * 262),
-            ("delivered", size_of::<delivered::Delivered>(), delivered::DELIVERED * 16),
+            (
+                "delivery",
+                size_of::<delivery::DeliveryQueue>(),
+                delivery::DELIVERY_QUEUE * 256,
+            ),
+            (
+                "records",
+                size_of::<records::Records>(),
+                records::RECORDS * 32,
+            ),
+            (
+                "send queue",
+                size_of::<send_queue::SendQueue>(),
+                send_queue::SEND_QUEUE * 262,
+            ),
+            (
+                "delivered",
+                size_of::<delivered::Delivered>(),
+                delivered::DELIVERED * 16,
+            ),
             ("budget", size_of::<budget::RelayBudget>(), 62 * 8),
             ("busy", size_of::<busy::BusyEstimator>(), 0),
         ];

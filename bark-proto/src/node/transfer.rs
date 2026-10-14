@@ -83,7 +83,10 @@ impl Transfer {
             step: Step::Idle,
             attempts: 0,
             lbt_since: None,
-            expect: Ack { msg_id: crate::ids::MsgId(0), from: AckFrom([0; 4]) },
+            expect: Ack {
+                msg_id: crate::ids::MsgId(0),
+                from: AckFrom([0; 4]),
+            },
         }
     }
 
@@ -111,7 +114,12 @@ impl Transfer {
 
     /// Begin a hand-over that ends with `expect`, ready at once.
     pub(crate) fn start(&mut self, expect: Ack, now: Instant) {
-        *self = Transfer { step: Step::Wait(now), attempts: 0, lbt_since: None, expect };
+        *self = Transfer {
+            step: Step::Wait(now),
+            attempts: 0,
+            lbt_since: None,
+            expect,
+        };
     }
 
     /// Give the hand-over up without a result.
@@ -146,7 +154,13 @@ impl Transfer {
     }
 
     /// A CAD or RSSI check completed.
-    pub(crate) fn checked(&mut self, busy: bool, now: Instant, rng: &mut Rng, backoff_max: Duration) -> Check {
+    pub(crate) fn checked(
+        &mut self,
+        busy: bool,
+        now: Instant,
+        rng: &mut Rng,
+        backoff_max: Duration,
+    ) -> Check {
         if !busy {
             if self.step == Step::Cad {
                 self.step = Step::Rssi;
@@ -188,20 +202,40 @@ impl Transfer {
     /// Count an attempt that could not be made, as if it had gone
     /// unanswered: for a hand-over that has nowhere else to go when
     /// listen-before-talk gives up.
-    pub(crate) fn lost_attempt(&mut self, now: Instant, max: u8, rng: &mut Rng, backoff_max: Duration) -> Missed {
+    pub(crate) fn lost_attempt(
+        &mut self,
+        now: Instant,
+        max: u8,
+        rng: &mut Rng,
+        backoff_max: Duration,
+    ) -> Missed {
         self.attempts = self.attempts.saturating_add(1);
         self.after_attempt(now, max, rng, backoff_max)
     }
 
     /// If the ACK wait has run out at `now`, retry or fail.
-    pub(crate) fn timeout(&mut self, now: Instant, max: u8, rng: &mut Rng, backoff_max: Duration) -> Option<Missed> {
+    pub(crate) fn timeout(
+        &mut self,
+        now: Instant,
+        max: u8,
+        rng: &mut Rng,
+        backoff_max: Duration,
+    ) -> Option<Missed> {
         match self.step {
-            Step::AwaitAck(deadline) if now >= deadline => Some(self.after_attempt(now, max, rng, backoff_max)),
+            Step::AwaitAck(deadline) if now >= deadline => {
+                Some(self.after_attempt(now, max, rng, backoff_max))
+            }
             _ => None,
         }
     }
 
-    fn after_attempt(&mut self, now: Instant, max: u8, rng: &mut Rng, backoff_max: Duration) -> Missed {
+    fn after_attempt(
+        &mut self,
+        now: Instant,
+        max: u8,
+        rng: &mut Rng,
+        backoff_max: Duration,
+    ) -> Missed {
         if self.attempts >= max {
             self.step = Step::Idle;
             Missed::Failed
@@ -219,7 +253,9 @@ impl Transfer {
 /// channel do not overlap, and the shortest frame that is ACKed, ATTACH,
 /// takes 11.84 ms, so ⌈100 / 11.84⌉ = 9 can be owed at once.
 pub(crate) const fn acks_for(ack_timeout: Duration) -> usize {
-    ack_timeout.as_micros().div_ceil(time_on_air(ATTACH_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()) as usize
+    ack_timeout
+        .as_micros()
+        .div_ceil(time_on_air(ATTACH_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()) as usize
 }
 
 /// ACKs a relay can owe at once: [`acks_for`] the design's 100 ms.
@@ -264,7 +300,10 @@ pub(crate) struct Acks<const N: usize> {
 impl<const N: usize> Acks<N> {
     pub(crate) const fn new() -> Self {
         let fill = Owed {
-            ack: Ack { msg_id: crate::ids::MsgId(0), from: AckFrom([0; 4]) },
+            ack: Ack {
+                msg_id: crate::ids::MsgId(0),
+                from: AckFrom([0; 4]),
+            },
             channel: match Channel::new(0) {
                 Some(c) => c,
                 None => unreachable!(),
@@ -272,14 +311,27 @@ impl<const N: usize> Acks<N> {
             deadline: Instant::ZERO,
             ready: Instant::ZERO,
         };
-        Acks { owed: FixedVec::new(fill), step: AckStep::Idle }
+        Acks {
+            owed: FixedVec::new(fill),
+            step: AckStep::Idle,
+        }
     }
 
     /// Owe `ack` on `channel` until `deadline`.
     pub(crate) fn owe(&mut self, ack: Ack, channel: Channel, deadline: Instant, now: Instant) {
         self.forget_late(now);
-        let o = Owed { ack, channel, deadline, ready: now };
-        if self.owed.as_slice().iter().any(|e| e.ack == ack && e.channel == channel) {
+        let o = Owed {
+            ack,
+            channel,
+            deadline,
+            ready: now,
+        };
+        if self
+            .owed
+            .as_slice()
+            .iter()
+            .any(|e| e.ack == ack && e.channel == channel)
+        {
             // Already owed for an earlier copy: one ACK answers both.
             return;
         }
@@ -312,7 +364,11 @@ impl<const N: usize> Acks<N> {
             return None;
         }
         self.forget_late(now);
-        self.owed.as_slice().first().filter(|o| o.ready <= now).copied()
+        self.owed
+            .as_slice()
+            .first()
+            .filter(|o| o.ready <= now)
+            .copied()
     }
 
     /// When the next owed ACK is ready to send.
@@ -346,7 +402,13 @@ impl<const N: usize> Acks<N> {
     /// A check of the ACK being sent completed. Returns the next
     /// excursion's channel and whether it is the transmission, or `None`
     /// if the ACK now waits or was abandoned.
-    pub(crate) fn checked(&mut self, busy: bool, now: Instant, rng: &mut Rng, backoff_max: Duration) -> Option<(Owed, bool)> {
+    pub(crate) fn checked(
+        &mut self,
+        busy: bool,
+        now: Instant,
+        rng: &mut Rng,
+        backoff_max: Duration,
+    ) -> Option<(Owed, bool)> {
         let o = *self.owed.as_slice().first()?;
         if busy {
             self.step = AckStep::Idle;
@@ -394,7 +456,10 @@ mod tests {
     }
 
     fn ack(id: u32) -> Ack {
-        Ack { msg_id: MsgId(id), from: AckFrom([1, 2, 3, 4]) }
+        Ack {
+            msg_id: MsgId(id),
+            from: AckFrom([1, 2, 3, 4]),
+        }
     }
 
     #[test]
@@ -438,7 +503,13 @@ mod tests {
         t.transmitting();
         t.sent(at(2), ms(100));
         assert!(!t.acked(ack(8)));
-        assert!(!t.acked(Ack { msg_id: MsgId(7), from: AckFrom([9; 4]) }), "same message, other relay (D19)");
+        assert!(
+            !t.acked(Ack {
+                msg_id: MsgId(7),
+                from: AckFrom([9; 4])
+            }),
+            "same message, other relay (D19)"
+        );
         // Late, during the retry backoff: still the receiver's ACK.
         assert_eq!(t.timeout(at(102), 3, &mut rng, ms(50)), Some(Missed::Retry));
         assert!(t.acked(ack(7)));
@@ -466,7 +537,10 @@ mod tests {
         // A retry starts a fresh 500 ms.
         t.start(ack(1), now);
         t.begin_lbt(now);
-        assert_eq!(t.checked(true, now + ms(499), &mut rng, ms(50)), Check::Busy);
+        assert_eq!(
+            t.checked(true, now + ms(499), &mut rng, ms(50)),
+            Check::Busy
+        );
     }
 
     #[test]
@@ -480,8 +554,14 @@ mod tests {
         assert_eq!(a.due(at(10)).unwrap().ack, ack(1));
         assert_eq!(a.begin(), Some(Action::Cad(ch)));
         assert_eq!(a.due(at(10)), None, "one at a time");
-        assert_eq!(a.checked(false, at(11), &mut rng, ms(50)).map(|(_, tx)| tx), Some(false));
-        assert_eq!(a.checked(false, at(12), &mut rng, ms(50)).map(|(_, tx)| tx), Some(true));
+        assert_eq!(
+            a.checked(false, at(11), &mut rng, ms(50)).map(|(_, tx)| tx),
+            Some(false)
+        );
+        assert_eq!(
+            a.checked(false, at(12), &mut rng, ms(50)).map(|(_, tx)| tx),
+            Some(true)
+        );
         a.sent();
         assert!(!a.pending());
         // Busy until past the deadline: abandoned.
