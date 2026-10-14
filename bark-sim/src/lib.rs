@@ -11,6 +11,7 @@
 
 pub mod geo;
 pub mod links;
+pub mod metrics;
 pub mod phy;
 pub mod rng;
 pub mod scenario;
