@@ -1,0 +1,89 @@
+# S1: three relays in a line, A cannot hear C; one leaf at C.
+#
+# Checks greedy forwarding, per-hop ACK, demotion when the middle relay
+# dies, and the drop at A once no route is left (docs/simulator-design.md
+# §6). Bench twin: the same layout on four boards in Phase 3, so the link
+# powers are given explicitly rather than generated; replace them with
+# measured values.
+#
+#   LA   A ---400 m--- B ---400 m--- C   LC
+#
+# A and C are 800 m apart: their link is below sensitivity (-119 dBm), so
+# they cannot hear each other, but it is kept as interference. LA is the
+# sending leaf on A's side, LC the destination leaf attached at C. B is
+# removed at 20 minutes; from then on A has no route to C.
+
+name = "s1-line"
+seed = 1
+duration_s = 1800.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "table"
+table = [
+  # Relay chain: 400 m hops, about -106 dBm with a path-loss exponent of 3.5.
+  { a = "A", b = "B", dbm = -106.0 },
+  { a = "B", b = "C", dbm = -106.0 },
+  # 800 m: audible as interference only.
+  { a = "A", b = "C", dbm = -125.0 },
+  # Leaves 50 m from their relays, and the far relay they barely reach.
+  { a = "LA", b = "A", dbm = -80.0 },
+  { a = "LA", b = "B", dbm = -110.0 },
+  { a = "LC", b = "C", dbm = -80.0 },
+  { a = "LC", b = "B", dbm = -110.0 },
+]
+
+[[nodes]]
+place = "point"
+name = "A"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "B"
+role = "relay"
+x = 400.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 800.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LA"
+role = "leaf"
+x = -50.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LC"
+role = "leaf"
+x = 850.0
+y = 0.0
+
+[[traffic]]
+kind = "periodic"
+from = "LA"
+to = "LC"
+interval_s = 30.0
+payload_bytes = 40
+
+[[events]]
+at_s = 1200.0
+node = "B"
+action = "remove"
+
+[metrics]
+cadence_s = 10.0
+observers = ["A", "B", "C"]
+per_node = true
