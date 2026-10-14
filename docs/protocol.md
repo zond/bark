@@ -326,65 +326,257 @@ only acknowledgement in the protocol is the per-hop ACK (§9.3); whether a
 message arrived, and what to do if it did not, is the app's business, with
 whatever acknowledgement it puts inside the encrypted payload.
 
-### 9.2 Greedy forwarding
+### 9.2 Routing
 
-Forward to the neighbour (relay, not demoted) closest to the destination
-position in straight-line distance. If no neighbour is closer than self,
-the packet has reached a gap and is routed around it by depth-first search
-(DFS).
+A message travels as a DATA packet (§14) handed from relay to relay, each
+hand-over acknowledged (§9.3). A relay hands the message to its neighbour
+closest to the destination position. Where that leads into a gap, a relay
+from which no neighbour leads on, the relays route around it by
+depth-first search (DFS): a relay with no neighbour left to try returns
+the message to the relay it first got it from, which tries its next
+neighbour. The search is shared out among the relays: each keeps a small
+record per message (§9.2.2), and the packet carries nothing for it but
+the name of the relay that sent it and a hop count. DFS only routes
+around gaps; it never searches for an ID.
 
-Each relay keeps, for every message it has forwarded and for a bounded
-time, the neighbour it first received the message from (its parent) and
-the neighbours it has tried. At a dead end it forwards to the nearest
-untried neighbour that is not in the packet's visited list; when none is
-left it returns the message to its parent, which continues with its own
-next untried neighbour. The originating relay with nothing left to try
-drops the message.
+The **origin** of a message is the relay that first sends it into the
+network: the relay a leaf handed it to, or a relay sending for its own
+application. The search starts and, if it finds nothing, ends there.
 
-The packet's visited list holds the hash of every relay that has forwarded
-it, appended on each forward, and is bounded; when it fills, the packet is
-dropped. Its last entry identifies the previous hop, matched against the
-neighbour table by hash, with the home channel the packet names for its
-sender (§14) as tie-break. A
-repeat that arrives from the parent is a retransmission and is only ACKed;
-a repeat from a neighbour we forwarded to is a backtrack. DFS is only for
-routing around gaps, never for searching for an ID.
+The rules below are roadmap D11, D16 and D17.
 
-A relay **owns** a destination when it is the closest relay the packet can
-reach: no non-demoted neighbour is closer to `(x, y)`. The owner looks
-`leaf_id` up in its leaf table and delivers (§10.3), or queues (§10.4). If
-`leaf_id = 0`, the owner is the destination.
+#### 9.2.1 The sender of a packet
 
-If the owner is not within 50 m of `(x, y)`, the addressed relay has
-probably died or moved. The owner may ask its direct neighbours once
-whether they hold `leaf_id` (one hop, one round); if none does, queue.
-Nothing wider: a wider search is a flood.
+A relay acts on a DATA packet whose `dst_hop` is its own short name
+(§8.1) and ignores the rest. The packet names its sender by `src_hop`,
+the sender's short name, and gives the sender's home channel in `aux`
+(§14). Those two are all a relay needs to send something back: `dst_hop`
+set to `src_hop`, on the channel in `aux`. It needs no neighbour-table
+entry for the sender.
+
+A packet with `hops = 0` comes from a leaf (§9.2.6): the receiving relay
+is the origin, and the message has no parent.
+
+Where a relay needs the sender's full position, to place it in the order
+of §9.2.3, it rebuilds it from the short name and its own position
+(§8.1).
+
+#### 9.2.2 Message records
+
+A relay keeps a **record** for every message it has received or
+originated:
+
+| Field | Content |
+|---|---|
+| ID | the message ID (§14) |
+| parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin |
+| last child | the neighbour it last sent the message to, as a short name, and that neighbour's distance to the destination; none before the first send |
+| highest hops | the largest `hops` (§9.2.6) received for the message |
+| owned | whether this relay owns the destination (§9.2.7) |
+| last active | when it last received or sent the message |
+
+The relay's **tried set** for the message is the parent, the last child,
+and every neighbour before the last child in the order of §9.2.3, which
+is fixed for a message. It is not stored as a list: the parent and the
+last child define it.
+
+The record is also how a relay recognises a repeat of a message it has
+handled (§9.2.4); there is no separate window of recent IDs.
+
+**Expiry.** A record is dropped after 188 s without the message being
+received or sent; each receipt or send restarts the clock. 188 s is how
+long the longest search the hop cap allows takes when every hand-over
+succeeds at the first attempt but waits the longest for the channel and
+carries a full frame: 255 hand-overs (§9.2.6) × (500 ms listen-before-talk
+give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
+§9.3) = 188.3 s. So in a search without failures no record expires while
+the message is away exploring beyond it.
+
+**Bound and eviction.** A relay holds at most 654 records; when full, a
+new record replaces the least recently active one. 654 is the most
+messages a relay can handle in one record lifetime within its duty cycle
+(§3): every message it handles costs at least an ACK (5 bytes, 10.6 ms)
+and one DATA packet with no payload (21 bytes, 18.2 ms), together
+28.8 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 28.8 ms = 654.
+A record is about 24 bytes, so 16 KB.
+
+#### 9.2.3 Choosing the next hop
+
+One function chooses the next hop for a first send, for the next try after
+the message comes back, and after a failed hand-over (§9.3). The
+**candidates** are the neighbour-table entries that are live and not
+demoted (§8.2), except those in the tried set (§9.2.2): the parent, the
+last child, and every neighbour before the last child in the order below.
+
+The **order** is distance to the destination position in the local plane
+(§11), nearest first; equal distances are ordered by short name. The
+relay sends to the first candidate. If there is none, it returns the message to its
+parent (§9.2.5).
+
+Nothing requires the next hop to be closer to the destination than the
+relay itself. After the message comes back, the best neighbour left is
+usually farther away, and such a rule would turn every gap into a dead
+end. On a first send the nearest neighbour is chosen anyway, so progress
+toward the destination is the normal case. The neighbour the message has
+just come from is never chosen: it is the parent or the last child, both
+tried.
+
+A candidate may already have the message, having got it by another path.
+The relay cannot know this: its neighbours listen on other channels and
+it does not overhear them. The candidate sends the message straight back
+(§9.2.4, case 6), and the relay, which counts it as its last child, moves
+on to the next.
+
+#### 9.2.4 Receiving a DATA packet
+
+A relay ACKs a DATA packet addressed to it (§9.2.1, §9.3) before acting
+on it, with one exception: if acting on it means sending it on and the
+relay's send queue is full (§9.3) or its airtime budget is spent (§9.4),
+it neither ACKs nor changes anything, and the sender will try elsewhere.
+
+The packet is one of the following, tested in this order:
+
+1. **New:** the relay has no record for the message ID. It creates one,
+   with the sender as parent (none if `hops = 0`). If it owns the
+   destination (§9.2.7), it delivers; otherwise it chooses a next hop
+   (§9.2.3) and sends.
+2. **Already owned:** the record says owned. ACK only.
+3. **A copy:** `hops` is no higher than the record's highest hops. This is
+   a retransmission of a packet already handled, whose ACK was lost.
+   ACK only.
+4. **From the last child:** the message has come back. Either the child
+   found no way on, or the child already had the message and sent it
+   straight back (case 6). If the relay is still retrying the hand-over
+   to that child, the hand-over is complete. The relay checks ownership
+   again (a closer neighbour may have been demoted since) and otherwise
+   chooses the next hop (§9.2.3).
+5. **From another neighbour in the tried set:** ACK only. From the parent,
+   this means the parent lost its record or the message has split in two
+   (§9.5); from an earlier child, that a hand-over the relay gave up on
+   (§9.3) had in fact succeeded, and the child has searched and returned
+   the message. Either way this relay's search has already moved on, and
+   a second one would only duplicate it.
+6. **From any other relay:** that relay offered the message here not
+   knowing this relay has it. Send it straight back, to `src_hop` on the
+   channel in `aux`; that relay will see it as a return from its last
+   child. The record does not change.
+
+Case 5 places the sender in the order of §9.2.3 by its distance to the
+destination, from its rebuilt position (§9.2.1). In every case the relay
+updates the record's highest hops, if the packet's is higher, and its
+last-active time.
+
+#### 9.2.5 Returning to the parent, and the end of the search
+
+When §9.2.3 finds no candidate, the relay sends the message back to its
+parent: a DATA packet with `dst_hop` the parent's short name, on the
+parent's channel, both from the record. The parent receives it from its
+last child (§9.2.4, case 4) and continues with its next neighbour.
+
+The origin has no parent. With no candidate left it drops the message: no
+relay that can be reached from it, through neighbours that answer, owns
+the destination. Nobody is told (§9.1, roadmap D10).
+
+If the hand-over to the parent fails (§9.3), the relay drops the message
+and the search ends early. The usual cause is a parent that has since
+moved to another home channel (§6.3).
+
+#### 9.2.6 The hop counter
+
+`hops` in the DATA header counts hand-overs. The sender of the first
+packet, a leaf or a relay's own application, sends 0; every relay sends
+what it received plus one, whether it is forwarding, returning to its
+parent or sending straight back. A retransmission repeats the count. So
+along the path of a message the count only grows, and a count no higher
+than one a relay has already received for the message marks a copy
+(§9.2.4, case 3).
+
+A relay that would have to send a count above 255, the largest the
+one-byte field holds, drops the message. A search that keeps its records
+ends on its own (§9.5); the cap ends one that has lost its way because a
+record expired or was replaced, or because the message split in two.
+255 is generous: the longest straight route across the city of §13
+(≈30 km at the ≈750 m street range of §4) is about 40 hand-overs, leaving
+about 200 for routing around gaps.
+
+#### 9.2.7 The owner
+
+A relay **owns** the destination `(x, y)` when:
+
+- its own position is `(x, y)`, that is, `dst_pos`: it is the addressed
+  relay; or
+- it is within 50 m of `(x, y)` and no live, non-demoted neighbour is
+  closer to `(x, y)` than itself. The addressed relay has then probably
+  died or moved; 50 m is the distance §11 allows between two GPS fixes of
+  a relay that has not moved, so a relay this close is, for the radio, in
+  the same place.
+
+A relay farther than 50 m with no closer neighbour is at a gap, not the
+owner, and the search goes on (§9.2.3).
+
+The owner looks `leaf_id` up in its leaf table and delivers (§10.3), or
+queues (§10.4). If `leaf_id = 0` the message is for the relay itself: the
+addressed relay delivers it to its own application; an owner within 50 m
+drops it, since the relay it was for is gone.
+
+An owner that is not the addressed relay and does not know `leaf_id` may
+ask its direct neighbours once whether they hold it (one hop, one round;
+the packet is open item O13); if none does, it queues. Nothing wider: a
+wider search is a flood.
+
+The owner remembers delivered message IDs for the delivery TTL (§10.4),
+and a later copy of the message, from any neighbour, is ACKed and not
+delivered again.
 
 ### 9.3 Per-hop transfer
 
+A **hand-over** sends one DATA packet to one neighbour until that
+neighbour ACKs it or the relay gives up. A relay runs one hand-over at a
+time, so an ACK, which carries only the message ID, matches the one
+outstanding.
+Packets waiting their turn are held in the relay's send queue.
+
 1. Retune to the next hop's home channel.
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
-   retry; give up after 500 ms and choose another next hop.
-3. Transmit. The packet carries the sender's home channel (§14).
+   retry; give up after 500 ms and choose the next hop again (§9.2.3),
+   without counting a failure against the neighbour.
+3. Transmit. The packet carries the sender's home channel in `aux` (§14).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
-   ≈10 ms plus the receiver's retune and listen-before-talk).
-6. On timeout: random backoff, retry, up to 3 attempts; then demote the
-   neighbour and choose another next hop.
+   10.6 ms plus the receiver's retune and listen-before-talk).
+6. On timeout: random backoff, retry, up to 3 attempts. Then the
+   hand-over has failed: count a failure against the neighbour (§8.2:
+   demoted after 2 consecutive failures) and choose the next hop again
+   (§9.2.3). The neighbour is now the last child, so the next one in order
+   is taken, or the message goes back to the parent.
+
+An ACK resets the neighbour's failure count (§8.2). A failed hand-over
+that was itself a return to the parent, or a packet sent straight back
+(§9.2.4, case 6), is not retried elsewhere: the message is dropped.
 
 The receiver retunes to the sender's channel, listens before talking,
 sends the ACK, and retunes home. The ACK is the first byte and the
-`msg_id` (5 bytes, ≈10 ms). It has no target address; the sender matches
-it by `msg_id` against its outstanding transmissions.
+message ID (5 bytes, 10.6 ms). It has no target address; the sender
+matches it by message ID against its outstanding hand-over. A relay ACKs a packet
+as soon as it has received it, even while waiting for an ACK of its own;
+if that makes it miss its own ACK, its next attempt covers it.
 
 So: **a node receives everything, ACKs included, on its home channel, and
 leaves it only to transmit.** A leaf's home channel is its relay's, so
 leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
-That is the cost of having one radio. A receiver that has already handled
-a message classifies a repeat by who sent it: from its parent, a
-retransmission, ACKed and otherwise ignored; from a neighbour it forwarded
-to, a backtrack (§9.2).
+That is the cost of having one radio.
+
+**Send queue.** At most 10 packets, the one being handed over included,
+first in first out. When it is full, a packet that would need a place is
+not ACKed (§9.2.4), so its sender retries and then routes around this
+relay as it would around a failing one. 10 is what a relay can send in
+the time its upstream sender spends retrying a hand-over:
+2 × (100 ms ACK timeout + 500 ms listen-before-talk give-up + 138.6 ms
+full frame) = 1.48 s, and a full frame and its ACK take
+138.6 + 10.6 = 149 ms, so ⌈1.48 s / 149 ms⌉ = 10. A packet that would
+wait longer than that would get on sooner by the upstream relay choosing
+another next hop.
 
 ### 9.4 Duty cycle cap
 
@@ -392,7 +584,60 @@ At SF5, 10% of airtime is ≈180 B/s per relay, so a busy relay runs out of
 budget before its channel fills. Greedy forwarding does not spread load;
 central rooftop relays will hit the cap first. When the budget is
 exhausted the relay stops forwarding and drops what it cannot send, but
-keeps sending heartbeats.
+keeps sending heartbeats: it holds back the airtime they need (11.8 ms
+every 10 s on average, 0.12%, §7). Without budget it cannot ACK either,
+so its neighbours' hand-overs to it fail and they route around it.
+
+### 9.5 Why the search finds a path
+
+Suppose that while a message is being routed the links do not change,
+every hand-over to a neighbour that answers succeeds within its attempts,
+and no record expires or is replaced. Then:
+
+- The message moves as a single packet: a relay sends only what it has
+  just received or originated, and every ACK-only case of §9.2.4 sends
+  nothing.
+- A relay holding the message either owns the destination, sends to its
+  next candidate, or returns it to its parent. Candidates advance in a
+  fixed order and never repeat, so each relay sends to each neighbour at
+  most once, and the search ends.
+- A send to a relay that already has the message comes straight back
+  without changing that relay's record (§9.2.4, case 6), as if the
+  neighbour had been a dead end.
+
+So the message makes a depth-first traversal of the relays reachable from
+the origin through neighbours that answer, nearest to the destination
+first. A depth-first traversal visits every relay it can reach; it stops
+at the first owner, or returns to the origin when there is none. If a path
+to an owner exists, the message finds it, provided the traversal fits in
+the 255 hand-overs of §9.2.6.
+
+What breaks it:
+
+- **A lost record.** A message returning to a relay whose record has
+  expired or been replaced is new there; the relay searches again from
+  itself, and the relays above it never get the message back. The search
+  ends early, or wanders until the hop cap ends it.
+- **A split.** A hand-over whose ACKs were all lost looks failed, so the
+  sender moves on while the receiver also carries the message: two copies
+  search at once. A copy that reaches a relay holding a record for the
+  message is mostly absorbed there (§9.2.4, cases 2, 3 and 5); otherwise each
+  ends by its own search or by the hop cap.
+- **Links that change** during the search, including a parent that moves
+  to another home channel (§9.2.5): parts of the graph go unsearched.
+
+### 9.6 Bounds
+
+- **Hand-overs per message:** at most 256 that succeed (the first, at
+  count 0, and 255 more, §9.2.6). A relay makes at most 3 attempts per
+  neighbour it tries, and tries each neighbour at most once per record.
+- **Cost of a search:** each link between two relays costs at most two
+  hand-overs from each end: a send and the return or the send back. In
+  the usual case it is two in all. Within the hop cap a search can
+  explore about 64 to 128 links beyond the route that led into the gap.
+- **State per relay:** at most 654 records of about 24 bytes, 16 KB
+  (§9.2.2); a send queue of 10 packets of up to 255 bytes, 2.5 KB (§9.3);
+  the owner's delivered IDs, kept with the delivery queue (§10.4).
 
 ---
 
@@ -624,9 +869,9 @@ its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; recent-message
-window, delivered window, busy estimates and duty budget together under
-3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
+256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; message records
+(§9.2.2) 654 × 24 B = 16 KB; send queue 10 × 255 B = 2.5 KB; delivered
+window, busy estimates and duty budget together under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):
 
@@ -666,6 +911,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O9 | Repository/crate layout | resolved: roadmap D7 |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
+| O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
 
 ---
 

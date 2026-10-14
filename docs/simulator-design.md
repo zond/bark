@@ -72,7 +72,7 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
 - Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the §13 argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
-- DFS: invocations, visited-list length, backtrack depth; messages dropped when the list fills.
+- DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap, at the origin, and on lost records.
 - Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the §6.1 and §9.3 cost arguments can be checked against numbers.
 
 ## 5. Architecture
@@ -81,7 +81,7 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 bark-proto (no_std, no allocation: D8)
   node::Node            state machine: handle(Event, Instant) -> Actions
   wire::*               §14 codecs, position codec
-  tables::*             neighbour, leaf, delivery queue, recent-rx, visited
+  tables::*             neighbour, leaf, delivery queue, message records
   mac::*                busy estimator, channel selection, heartbeat schedule,
                         per-hop transfer, duty-cycle budget
   routing::*            greedy, DFS, owner rule
@@ -102,13 +102,12 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| `tables::visited` | 16-bit position hash (§8.1) | per message, carried in the packet | DFS: which relays this message has already tried |
-| `tables::recent_rx` | 32-bit `msg_id` | fixed window | drop duplicates and late retransmits |
+| message records | message ID (§14) | 654 records, 188 s idle (§9.2.2) | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
 | `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves and their keepalive age |
-| `tables::delivery` | `msg_id` | 64 messages, 10 min TTL | messages waiting for a dark leaf |
+| `tables::delivery` | message ID | 64 messages, 10 min TTL | messages waiting for a dark leaf |
 
-`routing` is a pure function of (destination, neighbour table, visited list, own position): forward to the neighbour nearest the destination if one is nearer than we are, otherwise DFS over unvisited neighbours, otherwise NACK. The owner rule routes a leaf's traffic to the relay it is attached to. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
+`routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec §9.2.3, and applies the owner rule of §9.2.7. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
 
 ## 6. Scenario catalogue
 
