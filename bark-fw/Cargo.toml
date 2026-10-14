@@ -1,0 +1,42 @@
+[package]
+name = "bark-fw"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/zond/bark"
+description = "bark firmware for the LILYGO T-Echo (nRF52840 + SX1262)."
+publish = false
+
+# Its own workspace: this crate only builds for thumbv7em-none-eabihf
+# (roadmap decision D7), so the host workspace excludes it.
+[workspace]
+
+[dependencies]
+bark-proto = { path = "../bark-proto" }
+
+# `reset-pin-as-gpio`: without it, embassy-nrf's init writes UICR.PSELRESET
+# to P0.18 when that register is erased, a permanent change only SWD can undo.
+# With it, init only ever writes all-ones, a no-op on any UICR state, so this
+# firmware never alters the reset-pin setting the bootloader left.
+# `time-driver-rtc1`: nrf-sdc will take RTC0 (research doc §1).
+embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "reset-pin-as-gpio"] }
+embassy-executor = { version = "=0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = "=0.5.1"
+embassy-usb = "=0.6.0"
+embassy-usb-logger = "=0.6.0"
+embassy-futures = "=0.1.2"
+log = "=0.4.34"
+cortex-m = { version = "=0.7.9", features = ["critical-section-single-core"] }
+# `set-vtor`: point VTOR at our vector table in the reset handler, so
+# interrupts reach us directly instead of through MBR/SoftDevice forwarding.
+cortex-m-rt = { version = "=0.7.7", features = ["set-vtor"] }
+# With no debugger attached, a panic must survive into the next boot to be
+# seen at all: panic-persist writes it to RAM (PANDUMP in memory.x) and
+# soft-resets; main logs it over USB.
+panic-persist = { version = "=0.3.0", features = ["utf8"] }
+
+[profile.release]
+debug = 2
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
