@@ -414,9 +414,8 @@ originated:
 The relay's **tried set** for the message is the parent and the
 neighbours in `handed`. A neighbour that was passed over without being
 handed the message, because it was demoted, expired or not in the table
-at the time, is not tried: if it later offers the message, it is sent
-straight back (§9.2.4, case 6), not dropped. When a neighbour-table slot
-changes hands, its bit is cleared in every record.
+at the time, is not tried: it stays a candidate. When a neighbour-table
+slot changes hands, its bit is cleared in every record.
 
 The record is also how a relay recognises a repeat of a message it has
 handled (§9.2.4); there is no separate window of recent IDs.
@@ -516,16 +515,24 @@ The packet is one of the following, tested in this order:
    die here with nobody searching. Else the relay checks ownership again
    (a closer neighbour may have been demoted since) and otherwise chooses
    the next hop (§9.2.3).
-5. **From the parent or an earlier child (in `handed`):** ACK only. From
-   the parent, this means the parent lost its record or the message has
-   split in two (§9.5); from an earlier child, that a hand-over the relay
-   gave up on (§9.3) had in fact succeeded, and the child has searched and
-   returned the message. Either way this relay's search has already moved
-   on, and a second one would only duplicate it.
-6. **From any other relay:** that relay offered the message here not
-   knowing this relay has it. Send it straight back, to `src_hop` on the
-   channel in `aux`; that relay will see it as a return from its last
-   child. The record does not change.
+5. **From the parent:** ACK only. The parent lost its record or the
+   message has split in two (§9.5). This relay's search has already
+   moved on, and a second one would only duplicate it.
+6. **From any other relay, an earlier child (in `handed`) included:**
+   that relay offered the message here not knowing this relay has it.
+   Send it straight back, to `src_hop` on the channel in `aux`; that
+   relay will see it as a return from its last child. The record does
+   not change.
+
+   An earlier child may be offering its own searching copy: it had the
+   message before this relay handed it over and sent that hand-over
+   straight back, or it never took the hand-over, which this relay
+   counted as failed because its replies were lost, and got the message
+   later by another path. Only ACKing would end that copy, and with it
+   the search, without a trace. If instead the child is returning a
+   copy it took in a hand-over this relay counted as failed (§9.3), the
+   message has split in two; this relay is that child's parent, so the
+   child only ACKs what is sent back, and one copy goes on searching.
 
 In every case the relay
 updates the record's highest hops, if the packet's is higher, and its
@@ -748,7 +755,10 @@ and no record expires or is replaced. Then:
   most once, and the search ends.
 - A send to a relay that already has the message comes straight back
   without changing that relay's record (§9.2.4, case 6), as if the
-  neighbour had been a dead end.
+  neighbour had been a dead end. That holds also when the relay sent
+  the message back earlier and now offers it in its own search: the
+  receiver, for which it is an earlier child, sends it straight back in
+  turn, and only the parent's offer is absorbed.
 
 So the message makes a depth-first traversal of the relays reachable from
 the origin through neighbours that answer, nearest to the destination
@@ -766,8 +776,10 @@ What breaks it:
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
   sender moves on while the receiver also carries the message: two copies
   search at once. A copy that reaches a relay holding a record for the
-  message is mostly absorbed there (§9.2.4, cases 2, 3 and 5); otherwise each
-  ends by its own search or by the hop cap.
+  message is mostly absorbed, there (§9.2.4, cases 2, 3 and 5) or at the
+  child it came from, which only ACKs it when it is sent back by its
+  parent (case 6); otherwise each ends by its own search or by the hop
+  cap.
 - **Links that change** during the search, including a parent that moves
   to another home channel (§9.2.5): parts of the graph go unsearched.
 

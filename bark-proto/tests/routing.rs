@@ -217,6 +217,172 @@ fn a_neighbour_that_has_the_message_sends_it_straight_back() {
     }
 }
 
+/// The forwards of message `id` at relay `i`, in order.
+fn forwards(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<bark_proto::ShortName> {
+    traces(h, i)
+        .into_iter()
+        .filter_map(|t| match t {
+            Trace::Forwarded { msg_id, to, .. } if msg_id == id => Some(to),
+            _ => None,
+        })
+        .collect()
+}
+
+fn no_drops(h: &Harness<Node>) {
+    for i in 0..h.nodes.len() {
+        assert!(
+            !traces(h, i)
+                .iter()
+                .any(|t| matches!(t, Trace::Dropped { .. })),
+            "relay {i} dropped: {:?}",
+            traces(h, i)
+        );
+    }
+}
+
+/// An earlier child that offers the message during its own search is sent
+/// it straight back (§9.2.4 case 5): its copy is the one searching. Here
+/// it has the message before this relay hands it over, sends that
+/// hand-over straight back, and offers the message itself later.
+///
+/// W → Y → C → X. X offers Y, which has the message and sends it straight
+/// back (case 6); X moves on to Z, a dead end, and returns to C, which
+/// returns to Y. Y now offers X, for which Y is an earlier child. X sends
+/// it straight back, and Y goes on to E, which reaches D. ACK-only there
+/// ended the only searching copy without a trace.
+///
+/// ```text
+///   W - Y - C          D (far east)
+///       |\  |          |
+///       E  \|          E
+///            X - Z
+/// ```
+#[test]
+fn an_earlier_child_that_had_the_message_is_sent_it_back() {
+    let (w, y, c, x, z, e, d) = (0, 1, 2, 3, 4, 5, 6);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 111),
+            relay(600.0, 0.0, 112),
+            relay(900.0, 200.0, 113),
+            relay(800.0, -200.0, 114),
+            relay(100.0, -400.0, 115),
+            relay(500.0, 300.0, 116),
+            relay(10_000.0, 0.0, 117),
+        ],
+        &[(w, y), (y, c), (y, x), (c, x), (x, z), (y, e), (e, d)],
+    );
+    let id = send(&mut h, w, d, b"its own search");
+    assert!(
+        h.run_until(h.now + secs(20), |h| delivered(h, d, id)),
+        "not delivered: X {:?}",
+        traces(&h, x)
+    );
+    let name = |i| position(&h, i).short();
+    let bounced = |at: usize, to: usize| {
+        traces(&h, at).contains(&Trace::Bounced {
+            msg_id: id,
+            to: name(to),
+        })
+    };
+    assert!(bounced(y, x), "Y sends X's offer straight back");
+    assert!(bounced(x, y), "X sends Y's later offer straight back");
+    assert_eq!(forwards(&h, x, id), vec![name(y), name(z)]);
+    assert_eq!(forwards(&h, y, id), vec![name(c), name(x), name(e)]);
+    assert_eq!(messages(&h, d, id), 1);
+    no_drops(&h);
+}
+
+/// The same for a hand-over this relay counted as failed, though the
+/// neighbour never took the message: X's three frames to Y are lost, as
+/// three refusals whose BUSY replies were lost would be. X moves on to Z,
+/// Z hands to Y, and Y offers X, an earlier child of X's. X sends it
+/// straight back, and Y goes on to E, which reaches D.
+///
+/// ```text
+///   E - Y - X          D (far east)
+///   |    \  |
+///   D     Z-+
+/// ```
+#[test]
+fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
+    let (x, y, z, e, d) = (0, 1, 2, 3, 4);
+    let mut h = build(
+        vec![
+            relay(500.0, 0.0, 121),
+            relay(600.0, 300.0, 122),
+            relay(400.0, -300.0, 123),
+            relay(300.0, 400.0, 124),
+            relay(10_000.0, 0.0, 125),
+        ],
+        &[(x, y), (x, z), (z, y), (y, e), (e, d)],
+    );
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let data = (from, to) == (x, y) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)));
+        let lose = data && lost < 3;
+        lost += usize::from(lose);
+        lose
+    }));
+    let id = send(&mut h, x, d, b"failed, not taken");
+    assert!(
+        h.run_until(h.now + secs(20), |h| delivered(h, d, id)),
+        "not delivered: X {:?}",
+        traces(&h, x)
+    );
+    let name = |i| position(&h, i).short();
+    assert!(traces(&h, x).contains(&Trace::Bounced {
+        msg_id: id,
+        to: name(y),
+    }));
+    assert_eq!(forwards(&h, y, id), vec![name(x), name(e)]);
+    assert_eq!(messages(&h, d, id), 1);
+    no_drops(&h);
+}
+
+/// A split: X's hand-over to Y succeeds but all three ACKs are lost, so X
+/// counts it failed and moves on to Z, which reaches D. Y searches too,
+/// finds a dead end and returns the message to X. X sends it straight
+/// back (§9.2.4 case 5), and Y, receiving it from its parent, only ACKs:
+/// one copy dies there, and the message is delivered once.
+///
+/// ```text
+///   P - Y - X - Z - D
+/// ```
+#[test]
+fn a_split_copy_returned_by_an_earlier_child_ends_there() {
+    let (x, y, p, z, d) = (0, 1, 2, 3, 4);
+    let mut h = build(
+        vec![
+            relay(500.0, 0.0, 131),
+            relay(800.0, 300.0, 132),
+            relay(900.0, 700.0, 133),
+            relay(700.0, -300.0, 134),
+            relay(10_000.0, 0.0, 135),
+        ],
+        &[(x, y), (y, p), (x, z), (z, d)],
+    );
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let ack = (from, to) == (y, x) && matches!(Packet::decode(bytes), Ok(Packet::Ack(_)));
+        let lose = ack && lost < 3;
+        lost += usize::from(lose);
+        lose
+    }));
+    let id = send(&mut h, x, d, b"split");
+    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let (ny, nx) = (name(&h, y), name(&h, x));
+    let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
+    assert!(h.run_until(h.now + secs(20), |h| {
+        delivered(h, d, id) && traces(h, y).contains(&back_at_y)
+    }));
+    h.run_for(secs(10));
+    assert!(traces(&h, x).contains(&Trace::Bounced { msg_id: id, to: ny }));
+    assert_eq!(forwards(&h, y, id), vec![name(&h, p)]);
+    assert_eq!(messages(&h, d, id), 1);
+    no_drops(&h);
+}
+
 /// With D unreachable, the same search ends at the origin with a drop
 /// for want of a route (§9.2.5). The application heard `Sent` at the first
 /// hop's ACK and hears nothing more (core-interface §4).

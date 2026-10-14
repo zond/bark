@@ -28,34 +28,22 @@
 //! can handle in one record lifetime within its duty cycle (§3): each costs
 //! at least an ACK (9 bytes, 11.84 ms) and one DATA packet with no payload
 //! (21 bytes, 18.24 ms), together 30.08 ms; 10 % of 188.33 s is 18.83 s of
-//! airtime, and ⌊18.83 s / 30.08 ms⌋ = 626. (§9.2.2 rounds the two
-//! airtimes to 11.8 and 18.2 ms and gets 627.)
+//! airtime, and ⌊18.83 s / 30.08 ms⌋ = 626.
 //!
 //! # The tried set
 //!
-//! D17 defines the tried set as the parent, the last child, and every
+//! D17 defined the tried set as the parent, the last child, and every
 //! neighbour before the last child in the order of §9.2.3 (distance to the
-//! destination, then short name), which is fixed for a message. Choosing
-//! the next hop needs nothing more: the candidates are the live
-//! neighbours after the last child in that order. The order also stays
-//! right when the table changes, since it never goes back.
-//!
-//! Recognising a repeat (§9.2.4, cases 5 and 6) needs to know whom this
-//! relay actually handed the message to, which the record keeps as a mask
-//! over neighbour-table slots ([`Record::handed`]). With the table
-//! unchanged and every neighbour before the last child a candidate when
-//! passed over, the mask and D17's set agree. They differ for a relay
-//! passed over because it was demoted, expired or not in the table: D17
-//! counts it as tried, so its offer of the message would be ACKed and
-//! dropped (case 5), ending the one copy that is searching; the mask
-//! counts it as untried, so the message goes straight back to it (case 6)
-//! and its search goes on, which is what a depth-first search does on
-//! meeting a visited node. When a slot changes hands its bit is cleared in
-//! every record ([`Records::slot_reoccupied`]), so a newcomer is never
-//! taken for a neighbour that was handed the message; a returning
-//! neighbour that was is then sent the message straight back, and drops
-//! it as a repeat from its parent, which is safe. The spec text may follow
-//! this.
+//! destination, then short name), which is fixed for a message. The record
+//! keeps instead the neighbours this relay actually handed the message to,
+//! as a mask over neighbour-table slots ([`Record::handed`]). With the
+//! table unchanged and every neighbour before the last child a candidate
+//! when passed over, the two agree. They differ for a relay passed over
+//! because it was demoted, expired or not in the table: the order counts
+//! it as tried, the mask as untried, so it stays a candidate for later
+//! choices. When a slot changes hands its bit is cleared in every record
+//! ([`Records::slot_reoccupied`]), so a newcomer is never taken for a
+//! neighbour that was handed the message.
 
 use crate::ids::MsgId;
 use crate::node::Config;

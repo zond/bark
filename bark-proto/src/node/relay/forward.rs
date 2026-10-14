@@ -305,11 +305,9 @@ impl Relay {
                 Case::FromLastChild
             };
         }
-        let handed = self
-            .neighbours
-            .by_short(sender)
-            .is_some_and(|(slot, _)| r.handed(slot));
-        if r.parent().map(|(name, _)| name) == Some(sender) || handed {
+        // An earlier child may be offering its own searching copy, which
+        // only a send-back keeps alive (§9.2.4 case 6).
+        if r.parent().map(|(name, _)| name) == Some(sender) {
             return Case::AckOnly;
         }
         Case::SendBack
