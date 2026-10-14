@@ -392,6 +392,7 @@ originated:
 | handed | the neighbours this relay has handed the message to, as one bit per neighbour-table slot |
 | highest hops | the largest `hops` (§9.2.6) received for the message |
 | owned | whether this relay owns the destination (§9.2.7) |
+| returned | whether this relay has returned the message to its parent, or dropped it as origin |
 | last active | when it last received or sent the message |
 
 The relay's **tried set** for the message is the parent and the
@@ -467,9 +468,13 @@ The packet is one of the following, tested in this order:
 4. **From the last child:** the message has come back. Either the child
    found no way on, or the child already had the message and sent it
    straight back (case 6). If the relay is still retrying the hand-over
-   to that child, the hand-over is complete. The relay checks ownership
-   again (a closer neighbour may have been demoted since) and otherwise
-   chooses the next hop (§9.2.3).
+   to that child, the hand-over is complete. If the relay has already
+   returned the message to its parent (`returned`), its search here is
+   over: it sends the packet straight back as in case 6, so the child
+   marks it handed and moves on; otherwise a copy of the message would
+   die here with nobody searching. Else the relay checks ownership again
+   (a closer neighbour may have been demoted since) and otherwise chooses
+   the next hop (§9.2.3).
 5. **From the parent or an earlier child (in `handed`):** ACK only. From
    the parent, this means the parent lost its record or the message has
    split in two (§9.5); from an earlier child, that a hand-over the relay
@@ -502,8 +507,9 @@ moved to another home channel (§6.3).
 
 #### 9.2.6 The hop counter
 
-`hops` in the DATA header counts hand-overs. The sender of the first
-packet, a leaf or a relay's own application, sends 0; every relay sends
+`hops` in the DATA header counts hand-overs. A leaf sends 0; a relay
+sending for its own application sends 1, as if it had received the
+message at 0, since 0 means "from a leaf" (§9.2.1); every relay sends
 what it received plus one, whether it is forwarding, returning to its
 parent or sending straight back. A retransmission repeats the count. So
 along the path of a message the count only grows, and a count no higher
@@ -562,7 +568,10 @@ Packets waiting their turn are held in the relay's send queue.
 1. Retune to the next hop's home channel.
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
    retry; give up after 500 ms and choose the next hop again (§9.2.3),
-   without counting a failure against the neighbour.
+   without counting a failure against the neighbour. The neighbour is set
+   aside for this hand-over only, so the next choice is a different one.
+   For a return to the parent, a packet sent straight back, or a DELIVER,
+   which have no other candidate, a give-up counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux` (§14).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
@@ -573,7 +582,9 @@ Packets waiting their turn are held in the relay's send queue.
    (§9.2.3). The neighbour is now the last child, so the next one in order
    is taken, or the message goes back to the parent.
 
-An ACK resets the neighbour's failure count (§8.2). A failed hand-over
+An ACK resets the neighbour's failure count and refreshes its last-heard
+time (§8.2): a neighbour that answers is alive whether or not its
+heartbeats are heard. A failed hand-over
 that was itself a return to the parent, or a packet sent straight back
 (§9.2.4, case 6), is not retried elsewhere: the message is dropped.
 
@@ -953,6 +964,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
+| O14 | Hidden terminals: the 0–50 ms retry backoff (§9.3) is shorter than a full frame (139 ms), so two senders that cannot hear each other and collide once collide again on every retry. Measure in the simulator and set the backoff from the frame time. | simulator |
 
 ---
 
