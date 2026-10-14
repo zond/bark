@@ -108,6 +108,20 @@ pub enum AppCommand<'a> {
     },
 }
 
+/// Why a message failed at this node. Every reason is local: the network
+/// sends no failure notices (roadmap D10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FailReason {
+    /// A leaf with no relay to hand the message to.
+    NoRelay,
+    /// The first hop never acknowledged it, after every attempt.
+    NoAck,
+    /// The duty-cycle budget could not fit it (design §9.4).
+    Budget,
+    /// This relay originated it and has no neighbour left to try (design §9.2.5).
+    NoRoute,
+}
+
 /// Events for the application side. `Message` carries its payload by value
 /// for the same reason `Action::Transmit` does.
 #[allow(clippy::large_enum_variant)]
@@ -115,14 +129,15 @@ pub enum AppCommand<'a> {
 pub enum AppEvent {
     /// A `Send` was queued; here is its id.
     Accepted(MsgId),
-    /// The destination acknowledged delivery.
-    Delivered(MsgId),
-    /// Delivery failed; `reason` is the NACK reason code (design §14).
+    /// The first hop acknowledged the message. Nothing more is reported
+    /// about it: the protocol has no end-to-end acknowledgement (design §9.1).
+    Sent(MsgId),
+    /// The message failed here, before or at the first hop.
     Failed {
         /// Message that failed.
         msg_id: MsgId,
-        /// Reason code from the NACK, or a local reason.
-        reason: u8,
+        /// Why.
+        reason: FailReason,
     },
     /// A message arrived for this node's application.
     Message {

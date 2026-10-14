@@ -1,4 +1,4 @@
-//! The depth-first visited list carried inside DATA and NACK packets
+//! The depth-first visited list carried inside DATA packets
 //! (design §8.1, §9.2, §14).
 //!
 //! Each entry is the 16-bit [`Position::hash16`] of a relay the packet has

@@ -76,7 +76,10 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 ## 4. Application
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_leaf)` with an opaque payload;
-the core answers with `AppEvent::Accepted(msg_id)` and later `Delivered` or `Failed`.
+the core answers with `AppEvent::Accepted(msg_id)` and later either `Sent`, when the first
+hop has acknowledged it, or `Failed` with a `FailReason`, when it failed at this node.
+Nothing is reported after that: the protocol has no end-to-end acknowledgement (design §9.1),
+so whether the message arrived is for the app to find out inside its payload.
 `AppCommand::SetPosition` updates own position (relay identity changes with it, so the
 driver does this rarely). `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (design §11: the app owns identity and encryption).

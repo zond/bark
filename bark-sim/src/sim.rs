@@ -1035,8 +1035,8 @@ impl Sim {
                     self.msg_tags.insert(id, tag);
                 }
             }
-            // The first hop acknowledged the message (to be renamed `Sent`).
-            AppEvent::Delivered(MsgId(_)) => {
+            // The first hop acknowledged the message.
+            AppEvent::Sent(MsgId(_)) => {
                 m.app.sent += 1;
                 m.nodes[node as usize].sent += 1;
             }

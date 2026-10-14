@@ -12,8 +12,9 @@
 //! DATA      0x5      first dst_hop msg_id dst_pos dst_leaf hops
 //!                    visited_len visited(2n) payload                   = 25 + 2n + payload
 //! DELIVER   0x6      first dst_leaf msg_id payload                     = 9 + payload
-//! NACK      0x7      DATA layout, payload = reason(1) original(4)      = 30 + 2n
 //! ```
+//!
+//! Type 0x7 is unassigned: the network sends no failure notices (roadmap D10).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
@@ -27,7 +28,7 @@
 //!   both bounds, so the invariant holds for packets from other nodes too.
 //! - `aux` is unused in ACK and DELIVER; it is sent as zero and ignored on
 //!   receipt, as are the spare position bits.
-//! - ATTACH `aux` is the [`RxMode`] code; NACK reasons are [`NackReason`].
+//! - ATTACH `aux` is the [`RxMode`] code.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
@@ -44,7 +45,6 @@ const LEAF_ID_LEN: usize = 4;
 const HOPS_LEN: usize = 1;
 const VISITED_LEN_LEN: usize = 1;
 const HASH_LEN: usize = 2;
-const REASON_LEN: usize = 1;
 
 // First byte.
 const FIRST: usize = 0;
@@ -58,7 +58,6 @@ const T_ACK: u8 = 0x3;
 const T_ATTACH: u8 = 0x4;
 const T_DATA: u8 = 0x5;
 const T_DELIVER: u8 = 0x6;
-const T_NACK: u8 = 0x7;
 
 // HEARTBEAT.
 const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
@@ -76,7 +75,7 @@ const ATTACH_RELAY_POS: usize = ATTACH_LEAF + LEAF_ID_LEN;
 /// ATTACH length (design §14: 12).
 pub const ATTACH_LEN: usize = ATTACH_RELAY_POS + POS_LEN;
 
-// DATA and NACK.
+// DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
 const DATA_MSG_ID: usize = DATA_DST_HOP + POS_LEN;
 const DATA_DST_POS: usize = DATA_MSG_ID + MSG_ID_LEN;
@@ -86,12 +85,6 @@ const DATA_VISITED_LEN: usize = DATA_HOPS + HOPS_LEN;
 const DATA_VISITED: usize = DATA_VISITED_LEN + VISITED_LEN_LEN;
 /// DATA header length before the visited list (design §14: 25).
 pub const DATA_HEADER_LEN: usize = DATA_VISITED;
-
-// NACK payload, relative to the payload start.
-const NACK_REASON: usize = 0;
-const NACK_ORIGINAL: usize = NACK_REASON + REASON_LEN;
-/// NACK payload length: reason and original `msg_id` (design §14: 5).
-pub const NACK_PAYLOAD_LEN: usize = NACK_ORIGINAL + MSG_ID_LEN;
 
 // DELIVER.
 const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
@@ -110,7 +103,7 @@ pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN - MAX_VISITED * HASH_
 
 const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 5 && ATTACH_LEN == 12);
 const _: () = assert!(DATA_HEADER_LEN == 25 && DELIVER_HEADER_LEN == 9);
-const _: () = assert!(MAX_PAYLOAD == 198 && NACK_PAYLOAD_LEN <= MAX_PAYLOAD);
+const _: () = assert!(MAX_PAYLOAD == 198);
 const _: () = assert!(MAX_VISITED <= u8::MAX as usize, "visited_len is one byte");
 
 /// A leaf's receive mode, carried in ATTACH `aux` (design §10.5). Sets the
@@ -136,23 +129,6 @@ impl RxMode {
             _ => None,
         }
     }
-}
-
-/// Why a message was not delivered, the first byte of a NACK payload. Codes
-/// this core does not know pass through unchanged so that an older node
-/// can still route a newer node's NACK.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct NackReason(pub u8);
-
-impl NackReason {
-    /// The relay's duty-cycle budget is exhausted (design §9.4).
-    pub const BUSY: NackReason = NackReason(1);
-    /// The message sat in the delivery queue until its TTL ran out (design §10.4).
-    pub const EXPIRED: NackReason = NackReason(2);
-    /// The owning relay does not know the destination leaf (design §9.2).
-    pub const UNKNOWN_LEAF: NackReason = NackReason(3);
-    /// Void recovery exhausted the visited list or every candidate (design §9.2).
-    pub const NO_ROUTE: NackReason = NackReason(4);
 }
 
 /// HEARTBEAT, types 0x1 and 0x2 (design §7).
@@ -184,7 +160,7 @@ pub struct Attach {
     pub mode: RxMode,
 }
 
-/// The routing header shared by DATA and NACK (design §14).
+/// The DATA routing header (design §14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Route {
     /// The sender's home channel, where the ACK goes (`aux`).
@@ -212,17 +188,6 @@ pub struct Data<'a> {
     pub payload: &'a [u8],
 }
 
-/// NACK, type 0x7: DATA layout with a fixed payload (design §14).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Nack {
-    /// Routing header. `msg_id` is the NACK's own.
-    pub route: Route,
-    /// Why the original failed.
-    pub reason: NackReason,
-    /// The message that failed.
-    pub original: MsgId,
-}
-
 /// DELIVER, type 0x6: relay to leaf on the relay's home channel (design §10.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Deliver<'a> {
@@ -245,8 +210,6 @@ pub enum Packet<'a> {
     Attach(Attach),
     /// DATA.
     Data(Data<'a>),
-    /// NACK.
-    Nack(Nack),
     /// DELIVER.
     Deliver(Deliver<'a>),
 }
@@ -258,8 +221,7 @@ pub enum DecodeError {
     BadType(u8),
     /// Fewer bytes than the packet's fields need.
     Short,
-    /// Longer than [`MAX_FRAME`], or trailing bytes after a fixed-size
-    /// packet, or a NACK payload that is not [`NACK_PAYLOAD_LEN`].
+    /// Longer than [`MAX_FRAME`], or trailing bytes after a fixed-size packet.
     BadLength,
     /// A channel field outside the plan.
     ChannelOutOfRange(u8),
@@ -317,9 +279,9 @@ fn exact(b: &[u8], len: usize) -> Result<(), DecodeError> {
 
 impl Route {
     /// Write the header, visited list included, into `buf`; returns where
-    /// the payload starts. `kind` is DATA or NACK.
-    fn encode(&self, kind: u8, buf: &mut [u8; MAX_FRAME]) -> usize {
-        buf[FIRST] = first(kind, self.sender_home.index());
+    /// the payload starts.
+    fn encode(&self, buf: &mut [u8; MAX_FRAME]) -> usize {
+        buf[FIRST] = first(T_DATA, self.sender_home.index());
         put_pos(buf, DATA_DST_HOP, self.dst_hop);
         put_u32(buf, DATA_MSG_ID, self.msg_id.0);
         put_pos(buf, DATA_DST_POS, self.dst_pos);
@@ -392,15 +354,9 @@ impl Packet<'_> {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
                 }
-                let at = d.route.encode(T_DATA, buf);
+                let at = d.route.encode(buf);
                 buf[at..at + d.payload.len()].copy_from_slice(d.payload);
                 Ok(at + d.payload.len())
-            }
-            Packet::Nack(n) => {
-                let at = n.route.encode(T_NACK, buf);
-                buf[at + NACK_REASON] = n.reason.0;
-                put_u32(buf, at + NACK_ORIGINAL, n.original.0);
-                Ok(at + NACK_PAYLOAD_LEN)
             }
             Packet::Deliver(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
@@ -455,15 +411,6 @@ impl<'a> Packet<'a> {
                     return Err(DecodeError::PayloadTooLong);
                 }
                 Ok(Packet::Data(Data { route, payload }))
-            }
-            T_NACK => {
-                let (route, payload) = Route::decode(b)?;
-                exact(payload, NACK_PAYLOAD_LEN)?;
-                Ok(Packet::Nack(Nack {
-                    route,
-                    reason: NackReason(payload[NACK_REASON]),
-                    original: MsgId(get_u32(payload, NACK_ORIGINAL)),
-                }))
             }
             T_DELIVER => {
                 if b.len() < DELIVER_HEADER_LEN {
@@ -542,7 +489,6 @@ mod tests {
             Packet::Ack(_) => 5,
             Packet::Attach(_) => 12,
             Packet::Data(d) => 25 + 2 * d.route.visited.len() + d.payload.len(),
-            Packet::Nack(n) => 25 + 2 * n.route.visited.len() + 5,
             Packet::Deliver(d) => 9 + d.payload.len(),
         };
         assert_eq!(len, expected);
@@ -568,11 +514,6 @@ mod tests {
         #[test]
         fn data_round_trips(route in route(), payload in proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD)) {
             round_trip(&Packet::Data(Data { route, payload: &payload }));
-        }
-
-        #[test]
-        fn nack_round_trips(route in route(), reason: u8, original in msg()) {
-            round_trip(&Packet::Nack(Nack { route, reason: NackReason(reason), original }));
         }
 
         #[test]
@@ -660,12 +601,8 @@ mod tests {
         deliver[FIRST] = first(T_DELIVER, 0);
         assert_eq!(Packet::decode(&deliver), Err(PayloadTooLong));
 
-        // NACK payload must be exactly reason + original msg_id.
-        let mut nack = [0u8; DATA_HEADER_LEN + NACK_PAYLOAD_LEN + 1];
-        nack[FIRST] = first(T_NACK, 0);
-        assert_eq!(Packet::decode(&nack), Err(BadLength));
-        assert!(Packet::decode(&nack[..DATA_HEADER_LEN + NACK_PAYLOAD_LEN]).is_ok());
-        assert_eq!(Packet::decode(&nack[..DATA_HEADER_LEN + NACK_PAYLOAD_LEN - 1]), Err(Short));
+        // Type 0x7 is unassigned (D10).
+        assert_eq!(Packet::decode(&[0x70; DATA_HEADER_LEN + 5]), Err(BadType(7)));
     }
 
     #[test]
