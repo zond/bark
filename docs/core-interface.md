@@ -24,9 +24,8 @@ behaviour is a function of its config, its seed and its event sequence.
 
 ## 2. Time
 
-`Instant` and `Duration` are integer microseconds, nothing else: a millisecond count can
-never be added to a tick count by accident, because there is no tick count. `now` never decreases across calls on one
-core. Different cores have unrelated clocks; the protocol has no network time (design §11).
+`Instant` and `Duration` are integer microseconds; there is no other time unit to mix
+them up with. `now` never decreases across calls on one core. Different cores have unrelated clocks; the protocol has no network time (design §11).
 
 Wakeups: after every `handle` the driver reads `next_wakeup()`. When its clock reaches that
 instant it calls `handle(Event::Wakeup, now)`. Late is allowed; early is not. The core keeps
@@ -35,9 +34,9 @@ core and no timer identifiers cross the boundary.
 
 ## 3. Radio
 
-The driver owns one half-duplex LoRa radio in one of these states: listening on a channel,
-or performing an excursion. Excursions are `Action::Cad`, `Action::Rssi` and
-`Action::Transmit`. `Action::Listen(c)` is not an excursion: it sets the resting channel,
+The driver owns one half-duplex LoRa radio that is either listening on a channel or away on
+an **excursion**: a channel activity check (`Action::Cad`), a signal strength reading
+(`Action::Rssi`) or a transmission (`Action::Transmit`). `Action::Listen(c)` is not an excursion: it sets the resting channel,
 takes effect at once, and the radio listens on `c` whenever no excursion is in progress.
 
 Rules:
@@ -85,8 +84,8 @@ The core never inspects a payload (design §11: the app owns identity and encryp
 
 ## 6. Memory
 
-`Relay` holds its tables inline: 64 neighbours, 256 leaves, 64 queued deliveries, a recent-RX
-window. Target under 32 KiB; the delivery queue alone is 14 KiB (design §15). `Leaf` target
+`Relay` holds its tables inline: 64 neighbours, 256 leaves, 64 queued deliveries, a window of
+recently received message IDs. Target under 32 KiB; the delivery queue alone is 14 KiB (design §15). `Leaf` target
 under 1 KiB, because the capacity scenario holds twenty thousand of them.
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
@@ -95,7 +94,7 @@ action at a time, and the core never allocates.
 
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
-- Position hash for DFS visited lists: FNV-1a over the seven wire bytes folded to 16 bits.
+- Position hash for the visited list (design §8.1): FNV-1a over the seven wire bytes folded to 16 bits.
 - Everything else in design §14 is encoded by the Phase 0 codecs (`wire.rs`). Choices
   made there, 2026-10-14:
   - Multi-byte integers (`msg_id`, visited hashes) are big-endian; `leaf_id` is four
