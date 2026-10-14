@@ -112,8 +112,8 @@ action at a time, and the core never allocates.
 - Relay short name (design §8.1, roadmap D14): the low 16 bits of the latitude count, then
   the low 16 bits of the longitude count, big-endian. The receiver rebuilds the full
   position from its own.
-- Message ID (design §14, D15): `hash32` over `dst_pos || dst_leaf || payload`
-  (`position.rs`).
+- Message ID (design §14, D15): 32-bit FNV-1a over `dst_pos || dst_leaf || payload`,
+  `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`).
 - Everything else in design §14 is encoded by the Phase 0 codecs (`wire.rs`). Choices
   made there, 2026-10-14:
   - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four

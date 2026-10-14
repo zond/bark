@@ -90,7 +90,7 @@ pub enum Event<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppCommand<'a> {
     /// Originate a message to `(dst_pos, dst_leaf)` with an opaque payload.
-    /// The core assigns the `MsgId` and reports it in `AppEvent::Accepted`.
+    /// Its ID is [`MsgId::of`] the three, reported in `AppEvent::Accepted`.
     Send {
         /// Position of the destination's relay (design §9.1).
         dst_pos: Position,
