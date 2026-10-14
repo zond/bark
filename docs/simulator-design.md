@@ -7,7 +7,7 @@ Spec references are to `protocol.md`.
 
 Answer, before and after hardware exists:
 
-1. Does the protocol work as specified: discovery within one rotation, greedy forwarding with DFS recovery, leaf attach and delivery, channel selection that converges and does not oscillate?
+1. Does the protocol work as specified: discovery within one rotation, greedy forwarding with depth-first search (DFS) around gaps, leaf attach and delivery, channel selection that converges and does not oscillate?
 2. What is the capacity in a realistic city deployment, and where does it bind first: channel busy fraction, per-relay 10% duty cycle, delivery queue, neighbour table?
 3. Which values for the open thresholds (O3, O4) and which unknown radio parameters (adjacent-channel rejection, hearing radius, SF5 sensitivity) change the answer?
 
@@ -15,14 +15,14 @@ Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. Leaf 
 
 ## 2. What the user supplies
 
-A **scenario**: 
+A **scenario**:
 
 - **Nodes.** Each has a position (metres on a local grid; the simulator converts to the 51-bit WGS-84 wire form around a chosen origin so the real codec runs), a role (relay or leaf), and for relays whether it is rooftop or windowsill (affects nothing in the protocol, only the link generator). Nodes can be placed one by one, on a lattice with jitter, or by density per km².
-- **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured TX power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below the sensitivity floor minus the interference margin (a weak signal can still add to the noise at a receiver, so the cut-off sits some dB below sensitivity; parameter) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k leaves would otherwise mean 4×10⁸ entries). A table can also be loaded from a file so field measurements replace the model later; absent pairs are out of range.
-- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Pure path loss is the same on all 13 channels: the band spans 1.74 MHz, which is 0.035 dB of free-space difference end to end. What does differ per channel is multipath fading, which is frequency-selective once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are the reason a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, the reason a home channel that was quiet becomes busy without any new transmitter, and therefore what exercises the move rule (§6.3), the neighbour-table expiry and the per-hop retry logic. The interferers above are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
-- **Interferers.** Per channel, foreign busy sources (key fobs, LPD433 handhelds): a position, a power, and an on/off process. They are heard by RSSI and by CAD only if they look like LoRa (a flag).
+- **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured transmit power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below sensitivity minus an interference margin (a parameter; a signal too weak to decode still adds to the noise) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k leaves would otherwise mean 4×10⁸ entries). A table can also be loaded from a file so field measurements replace the model later; absent pairs are out of range.
+- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (§6.3), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
+- **Interferers.** Per channel, foreign busy sources (key fobs, LPD433 handhelds): a position, a power, and an on/off process. Signal strength readings (RSSI) always see them; channel activity detection (CAD) sees them only if they are LoRa (a flag).
 - **Traffic.** Message arrival as a Poisson process per leaf with a rate, a payload-length distribution, and a destination distribution (uniform, or distance-biased so most texts are local). Leaves may be static, random-walk, or follow a trace. Leaves also have an availability process: periods where the phone is dark (pocket, metro) and the leaf does not ACK deliveries.
-- **Radio parameters.** Everything the firmware will measure in Phase 2, with the datasheet value as default: SF5 sensitivity, noise floor, co-channel capture threshold, adjacent-channel rejection at ±1 and ±2 channels, CAD duration and miss probability, retune time, TX/RX turnaround, sweep schedule.
+- **Radio parameters.** Everything the firmware will measure in Phase 2, with the datasheet value as default: SF5 sensitivity, noise floor, co-channel capture threshold, adjacent-channel rejection at ±1 and ±2 channels, CAD duration and miss probability, retune time, transmit/receive turnaround, sweep schedule.
 - **Protocol parameters.** The O3 thresholds, table sizes, intervals; defaults from the design.
 - **Run.** Duration, seed, which metrics to log and at what cadence.
 
@@ -34,7 +34,7 @@ Discrete-event, microsecond resolution, single-threaded, deterministic for a giv
 
 ### 3.2 Radio state per node
 
-`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core asks for actions (`SetChannel`, `Cad`, `Rssi`, `Transmit`, `Sleep`); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (§6.1), heartbeat deafness (§7) and the per-hop retune cost (§9.3) are measured rather than assumed.
+`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (§6.1), heartbeat deafness (§7) and the per-hop retune cost (§9.3) are measured rather than assumed.
 
 ### 3.3 Reception
 
@@ -48,7 +48,7 @@ Interferers participate in step 2 as transmitters that never carry packets.
 
 ### 3.4 Listen-before-talk
 
-CAD: returns busy if any LoRa transmission on the channel at the node exceeds sensitivity, with a configurable miss probability (AN1200.48 gives detection rates; default 0). Duration per datasheet, about 1 ms at SF5 with 4 symbols. RSSI: returns the dB sum of everything on the channel at the node, including interferers and thermal noise; busy if above noise floor + 6 dB. Both make the node deaf for their duration.
+CAD: returns busy if any LoRa transmission on the channel at the node exceeds sensitivity, with a configurable miss probability (Semtech application note AN1200.48 gives detection rates; default 0). Duration per datasheet, about 1 ms at SF5 with 4 symbols. RSSI: returns the dB sum of everything on the channel at the node, including interferers and thermal noise; busy if above noise floor + 6 dB. Both make the node deaf for their duration.
 
 ### 3.5 Busy estimate and sweep
 
@@ -67,18 +67,18 @@ A leaf is a node whose protocol core is in leaf role: camps on its relay's chann
 Logged per run as CSV/JSON, with the scenario and seed embedded:
 
 - Delivery ratio and where undelivered messages were dropped, by distance bucket and hop count.
-- End-to-end latency distribution (origination to leaf ACK), split into per-hop wait, LBT backoff, retransmits, queue dwell.
+- End-to-end latency distribution (origination to leaf ACK), split into per-hop wait, listen-before-talk backoff, retransmits, queue dwell.
 - Per-channel busy fraction over time, at a chosen set of observer nodes.
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
 - Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the §13 argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
 - DFS: invocations, visited-list length, backtrack depth; messages dropped when the list fills.
-- Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own TX), each separately, so the §6.1 and §9.3 cost arguments can be checked against numbers.
+- Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the §6.1 and §9.3 cost arguments can be checked against numbers.
 
 ## 5. Architecture
 
 ```
-bark-proto (no_std + alloc)
+bark-proto (no_std, no allocation: D8)
   node::Node            state machine: handle(Event, Instant) -> Actions
   wire::*               §14 codecs, position codec
   tables::*             neighbour, leaf, delivery queue, recent-rx, visited
@@ -96,29 +96,7 @@ bark-sim (std)
   bin/bark-sim          run a scenario file, print a summary
 ```
 
-The core's interface, to be fixed in Phase 0:
-
-```rust
-pub enum Event<'a> {
-    Timer(TimerId),
-    Received { channel: u8, bytes: &'a [u8], rssi_dbm: i16 },
-    CadDone { channel: u8, busy: bool },
-    RssiSample { channel: u8, dbm: i16 },
-    TxDone,
-    App(AppCommand),          // send, set role, set position
-}
-
-pub enum Action<'a> {
-    SetChannel(u8),
-    StartCad(u8),
-    ReadRssi(u8),
-    Transmit { channel: u8, preamble_symbols: u16, bytes: &'a [u8] },
-    ArmTimer(TimerId, Instant),
-    App(AppEvent),            // delivered, nack, status
-}
-```
-
-Firmware maps `Action` onto `lora-phy` calls and embassy timers; the simulator maps them onto heap events. The core never blocks and never allocates per packet beyond its bounded tables.
+The core's interface is `core-interface.md`. Firmware maps its actions onto `lora-phy` calls and one embassy timer; the simulator maps them onto heap events.
 
 ### Core tables
 
