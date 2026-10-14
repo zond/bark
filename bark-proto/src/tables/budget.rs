@@ -30,7 +30,7 @@
 use crate::radio::{DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW};
 use crate::time::{Duration, Instant};
 
-/// Bucket length. One minute: 62 buckets for the hour.
+/// Bucket length. One minute: 62 buckets of 8 bytes for the hour.
 pub const BUCKET: Duration = Duration::from_secs(60);
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
@@ -53,7 +53,7 @@ const _: () = assert!(BUCKET.as_micros() + MAX_TRANSMISSION.as_micros() <= u32::
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Slot {
     /// Bucket number: end instant / BUCKET.
-    bucket: u64,
+    bucket: u32,
     /// Airtime in µs ending in this bucket.
     airtime: u32,
 }
@@ -70,8 +70,11 @@ impl Budget {
         Budget { slots: [Slot { bucket: 0, airtime: 0 }; SLOTS] }
     }
 
-    fn bucket(t: u64) -> u64 {
-        t / BUCKET.as_micros()
+    /// Bucket number of instant `t` µs. 32 bits of minutes last 8000 years
+    /// from the driver's epoch; beyond that every instant shares the last
+    /// bucket, which over-counts and so stays legal.
+    fn bucket(t: u64) -> u32 {
+        u32::try_from(t / BUCKET.as_micros()).unwrap_or(u32::MAX)
     }
 
     /// Airtime in the buckets overlapping a window that starts at `start` µs.
@@ -94,7 +97,7 @@ impl Budget {
     /// whether or not it was allowed: what went on air counts.
     pub fn record(&mut self, airtime: Duration, now: Instant) {
         let bucket = Budget::bucket(now.as_micros() + airtime.as_micros());
-        let slot = &mut self.slots[(bucket % SLOTS as u64) as usize];
+        let slot = &mut self.slots[bucket as usize % SLOTS];
         if slot.bucket != bucket {
             *slot = Slot { bucket, airtime: 0 };
         }
@@ -151,6 +154,7 @@ mod tests {
     fn constants() {
         assert_eq!(BUDGET, Duration::from_secs(360));
         assert_eq!(SLOTS, 62);
+        assert_eq!(core::mem::size_of::<Budget>(), 62 * 8);
     }
 
     #[test]
