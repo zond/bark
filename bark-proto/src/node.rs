@@ -51,9 +51,12 @@ pub struct Config {
     /// Per-hop transmit attempts before giving up on a neighbour (design §9.3: 3).
     pub hop_attempts: u8,
     /// Longest random wait of a hand-over or an ACK after a busy
-    /// listen-before-talk check, and before a retry after a missing ACK
-    /// (design §9.3: 0–50 ms).
+    /// listen-before-talk check (design §9.3: 0–50 ms).
     pub hop_backoff_max: Duration,
+    /// Unit of the random wait before a retry after a missing ACK: retry
+    /// `k` waits up to `2^k` units (design §9.3: a full frame and its ACK,
+    /// 150.4 ms; `tables::RETRY_BACKOFF`).
+    pub retry_backoff: Duration,
     /// Failed transfers before a neighbour is demoted (design §8.2: 2).
     pub demote_after_failures: u8,
     /// Neighbour expiry in heartbeat rotations (design §8.2: 3, ≈400 s).
@@ -105,6 +108,7 @@ impl Default for Config {
             ack_timeout: Duration::from_millis(100),
             hop_attempts: 3,
             hop_backoff_max: Duration::from_millis(50),
+            retry_backoff: crate::tables::RETRY_BACKOFF,
             demote_after_failures: 2,
             neighbour_expiry_rotations: 3,
             demotion_rotations: 3,

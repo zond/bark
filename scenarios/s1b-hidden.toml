@@ -1,0 +1,95 @@
+# S1b: hidden terminals (protocol §16, O14). S1's line of three relays
+# with a leaf at each end, both leaves sending to each other at the same
+# rate.
+#
+#   LA   A ---400 m--- B ---400 m--- C   LC
+#
+# A and C cannot hear each other, and both hand their leaf's messages to
+# B on B's home channel: listen-before-talk at A cannot see C's
+# transmission and the other way round, so B hears both at once. The two
+# flows start together, so every message pair reaches A and C at the same
+# moment and their first hand-overs to B always overlap; what this
+# scenario measures is whether the retries pull them apart (§9.3).
+#
+# Unlike S1, each leaf reaches only its own relay, so both flows cross B
+# as relay-to-relay hand-overs. No relay is removed.
+
+name = "s1b-hidden"
+seed = 1
+duration_s = 1800.0
+# As S1: the relays know each other one worst-case rotation (13
+# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+settle_s = 345.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "table"
+table = [
+  # Relay chain: 400 m hops, about -106 dBm with a path-loss exponent of 3.5.
+  { a = "A", b = "B", dbm = -106.0 },
+  { a = "B", b = "C", dbm = -106.0 },
+  # 800 m: audible as interference only, below sensitivity (-119 dBm).
+  { a = "A", b = "C", dbm = -125.0 },
+  # Leaves 50 m from their relays; the middle relay only as interference.
+  { a = "LA", b = "A", dbm = -80.0 },
+  { a = "LA", b = "B", dbm = -125.0 },
+  { a = "LC", b = "C", dbm = -80.0 },
+  { a = "LC", b = "B", dbm = -125.0 },
+]
+
+[[nodes]]
+place = "point"
+name = "A"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "B"
+role = "relay"
+x = 400.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 800.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LA"
+role = "leaf"
+x = -50.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "LC"
+role = "leaf"
+x = 850.0
+y = 0.0
+
+[[traffic]]
+kind = "periodic"
+from = "LA"
+to = "LC"
+interval_s = 30.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "LC"
+to = "LA"
+interval_s = 30.0
+payload_bytes = 40
+
+[metrics]
+cadence_s = 10.0
+observers = ["A", "B", "C"]
+per_node = true

@@ -433,8 +433,8 @@ impl Leaf {
             }
             Check::Busy => {}
             Check::GaveUp => {
-                let max = self.config.hop_attempts;
-                if self.transfer.lost_attempt(now, max, &mut self.rng, backoff) == Missed::Failed {
+                let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+                if self.transfer.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
                     self.send_failed(now, emit);
                 }
             }
@@ -547,8 +547,8 @@ impl Leaf {
     }
 
     fn timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let (max, backoff) = (self.config.hop_attempts, self.config.hop_backoff_max);
-        if self.transfer.timeout(now, max, &mut self.rng, backoff) == Some(Missed::Failed) {
+        let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+        if self.transfer.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
             self.send_failed(now, emit);
         }
         if self

@@ -16,6 +16,7 @@ pub mod send_queue;
 use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::time::Duration;
+use crate::wire::ACK_LEN;
 
 /// How long a hand-over keeps trying listen-before-talk before it gives
 /// up and chooses the next hop again (design §9.3 step 2).
@@ -30,6 +31,45 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
             + time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
             + ack_timeout.as_micros(),
     )
+}
+
+/// The time one hand-over holds its receiver: a full frame and its ACK,
+/// 138.6 + 11.8 = 150.4 ms (design §9.3).
+///
+/// It is the unit of the wait before a retry. Two senders that cannot hear
+/// each other and have collided at one receiver both miss the ACK and
+/// retry at random times in `[0, W]`. Their frames miss each other only if
+/// the starts are more than this apart, the first frame and the ACK that
+/// answers it, so they come apart with probability `(1 − unit / W)²`:
+/// never at `W` = one unit, 1/4 at two, 9/16 at four, for full frames.
+/// Hence [`retry_window`] starts at two units and doubles (roadmap D20).
+pub const RETRY_BACKOFF: Duration = Duration::from_micros(
+    time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
+);
+
+/// The window of the random wait before the retry that follows `attempts`
+/// transmissions: `2^attempts × unit`, 301 ms and then 602 ms with the
+/// design's three attempts and [`RETRY_BACKOFF`]. Doubling also spreads
+/// out more than two senders, where a fixed window would not.
+pub const fn retry_window(unit: Duration, attempts: u8) -> Duration {
+    let factor = match 1u64.checked_shl(attempts as u32) {
+        Some(f) => f,
+        None => u64::MAX,
+    };
+    Duration::from_micros(unit.as_micros().saturating_mul(factor))
+}
+
+/// The longest a hand-over waits in all before its retries, with
+/// `hop_attempts` transmissions: the sum of the retry windows.
+pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
+    let mut total = 0u64;
+    let mut k = 1;
+    while k < hop_attempts {
+        total = total.saturating_add(retry_window(unit, k).as_micros());
+        k += 1;
+    }
+    Duration::from_micros(total)
 }
 
 /// Table sizes against the RAM budget of design §15.
@@ -87,8 +127,8 @@ mod sizes {
         }
         std::println!("{:>10}: {sum:>6} B", "tables");
         assert!(size_of::<busy::BusyEstimator>() <= 512);
-        // docs/core-interface.md §6: the whole Relay under 48 KiB, which
+        // docs/core-interface.md §6: the whole Relay under 50 KiB, which
         // leaves a little over 1 KiB for the medium access around the tables.
-        assert!(sum <= 47 * 1024, "{sum} B");
+        assert!(sum <= 49 * 1024, "{sum} B");
     }
 }

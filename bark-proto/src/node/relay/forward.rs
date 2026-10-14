@@ -726,8 +726,8 @@ impl Relay {
                 }
             }
             Kind::Return | Kind::Bounce | Kind::Deliver => {
-                let (max, backoff) = (self.config.hop_attempts, self.config.hop_backoff_max);
-                if self.handover.lost_attempt(now, max, &mut self.rng, backoff) == Missed::Failed {
+                let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+                if self.handover.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
                 }
             }
@@ -859,8 +859,8 @@ impl Relay {
     // --- Timers ---
 
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let (max, backoff) = (self.config.hop_attempts, self.config.hop_backoff_max);
-        if self.handover.timeout(now, max, &mut self.rng, backoff) == Some(Missed::Failed) {
+        let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+        if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
             if let Some(out) = self.queue.front().copied() {
                 self.handover_failed(out, true, now, emit);
             }

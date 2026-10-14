@@ -3,12 +3,13 @@
 //!
 //! Its length is what a relay can send in the time its upstream sender
 //! spends retrying a hand-over to it: the retries after the first attempt,
-//! each waiting the longest for the channel, carrying a full frame and
-//! waiting out the ACK timeout,
-//! `2 × (500 ms + 138.6 ms + 100 ms) = 1.48 s`, over the time of one full
-//! frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈9.8⌉ = 10. A packet that
-//! would wait longer gets on sooner by the upstream relay choosing another
-//! next hop, which it does when this relay, its queue full, does not ACK.
+//! each waiting the longest before it (301 ms, then 602 ms; §9.3) and for
+//! the channel, carrying a full frame and waiting out the ACK timeout,
+//! `0.90 s + 2 × (500 ms + 138.6 ms + 100 ms) = 2.38 s`, over the time of
+//! one full frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈15.8⌉ = 16. A
+//! packet that would wait longer gets on sooner by the upstream relay
+//! choosing another next hop, which it does when this relay, its queue
+//! full, does not ACK.
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (§9.3).
@@ -16,25 +17,27 @@
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::attempt_span;
 use crate::tables::fixed::FixedVec;
+use crate::tables::{attempt_span, retry_waits, RETRY_BACKOFF};
 use crate::time::Duration;
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
 /// Queue length for a sender with these per-hop parameters; see the
 /// module documentation.
-pub const fn queue_for(ack_timeout: Duration, hop_attempts: u8) -> usize {
-    let retrying = attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64;
+pub const fn queue_for(ack_timeout: Duration, hop_attempts: u8, retry_backoff: Duration) -> usize {
+    let retrying = attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64
+        + retry_waits(retry_backoff, hop_attempts).as_micros();
     let per_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
     retrying.div_ceil(per_frame) as usize
 }
 
-/// Queue length for the design's 100 ms ACK timeout and 3 attempts (§9.3).
-pub const SEND_QUEUE: usize = queue_for(Duration::from_millis(100), 3);
+/// Queue length for the design's 100 ms ACK timeout, 3 attempts and retry
+/// backoff (§9.3).
+pub const SEND_QUEUE: usize = queue_for(Duration::from_millis(100), 3, RETRY_BACKOFF);
 
-const _: () = assert!(SEND_QUEUE == 10);
+const _: () = assert!(SEND_QUEUE == 16);
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,9 +187,12 @@ mod tests {
     #[test]
     fn size_follows_the_config() {
         let c = Config::default();
-        assert_eq!(queue_for(c.ack_timeout, c.hop_attempts), SEND_QUEUE);
         assert_eq!(
-            queue_for(c.ack_timeout, 1),
+            queue_for(c.ack_timeout, c.hop_attempts, c.retry_backoff),
+            SEND_QUEUE
+        );
+        assert_eq!(
+            queue_for(c.ack_timeout, 1, c.retry_backoff),
             0,
             "no retries, no time to fill a queue"
         );

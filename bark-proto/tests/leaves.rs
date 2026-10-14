@@ -238,8 +238,9 @@ fn line_of_three_loses_its_middle() {
     // A hand-over attempt is at most the 500 ms listen-before-talk give-up,
     // a frame and the ACK timeout; three of them, with their backoffs, end
     // in a failure (§9.3).
-    let per_hop = c.hop_backoff_max + bark_proto::tables::attempt_span(c.ack_timeout);
-    let bound = per_hop.mul(c.hop_attempts as u64);
+    let attempts = bark_proto::tables::attempt_span(c.ack_timeout).mul(c.hop_attempts as u64);
+    let waits = bark_proto::tables::retry_waits(c.retry_backoff, c.hop_attempts);
+    let bound = Duration::from_micros(attempts.as_micros() + waits.as_micros());
     let mut times = Vec::new();
     for k in 0..20u8 {
         let id = send(&mut h, la, lc, cc, &[b'n', k]);

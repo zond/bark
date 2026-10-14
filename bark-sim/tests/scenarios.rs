@@ -309,3 +309,31 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());
 }
+
+/// S1b: A and C, which cannot hear each other, hand to B at the same
+/// instant every 30 s, so every first hand-over collides at B. The retry
+/// wait (protocol §9.3, roadmap D20) pulls them apart: over 20 seeds the
+/// settled phase delivers 0.958 on average, against 0.136 with the old
+/// 0–50 ms. What is still lost is mostly B demoted by A or C after two
+/// failed hand-overs, with no other route.
+#[test]
+fn s1b_hidden_terminals_come_apart() {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s1b-hidden.toml");
+    let sc = Scenario::load(&path).expect("S1b parses");
+    for seed in 1..=5 {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        let mut sim = Sim::new(&sc).expect("S1b builds");
+        sim.run();
+        let s = sim.summary();
+        let settled = &s.app.phases[1];
+        assert_eq!(settled.phase, "settled");
+        assert!(settled.delivery_ratio >= 0.9, "seed {seed}: {}", s.table());
+        let b = &s.nodes.as_ref().expect("per-node metrics")[1];
+        assert!(
+            b.m.rx.lost_capture + b.m.rx.sinr_fail > 0,
+            "seed {seed}: no collisions at B; the scenario no longer tests hidden terminals"
+        );
+    }
+}

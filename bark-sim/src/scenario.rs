@@ -117,6 +117,8 @@ pub struct ProtocolOverrides {
     pub move_wait_max_ms: Option<u64>,
     pub lbt_attempts: Option<u8>,
     pub lbt_backoff_max_ms: Option<u64>,
+    pub hop_backoff_max_ms: Option<u64>,
+    pub retry_backoff_ms: Option<u64>,
 }
 
 impl ProtocolOverrides {
@@ -148,6 +150,8 @@ impl ProtocolOverrides {
         set!(delivery_ttl, delivery_ttl_ms, ms);
         set!(busy_ema_inverse);
         set!(sweep_interval, sweep_interval_ms, ms);
+        set!(hop_backoff_max, hop_backoff_max_ms, ms);
+        set!(retry_backoff, retry_backoff_ms, ms);
         set!(busy_threshold_db);
         set!(move_threshold_percent);
         set!(move_dwell, move_dwell_ms, ms);

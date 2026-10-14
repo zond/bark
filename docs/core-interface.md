@@ -108,19 +108,19 @@ test in `tables/mod.rs`:
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
 | Delivery queue (§10.4) | 64 × 256 B | 16.0 KiB |
 | Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
-| Send queue (§9.3) | 10 × 262 B | 2.6 KiB |
+| Send queue (§9.3) | 16 × 262 B | 4.1 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget and busy estimate | | 0.8 KiB |
-| **All** | | **46.6 KiB** |
+| **All** | | **48.1 KiB** |
 
-The whole `Relay` is 48 304 B (47.2 KiB), under the 48 KiB target; besides the tables it
+The whole `Relay` is 49 880 B (48.7 KiB), under the 50 KiB target; besides the tables it
 holds the medium access, the hand-over and nine owed ACKs. Design §15 budgets about 41 KB
 for the same tables; the difference is the record's tried mask (8 B per record, 4.9 KiB),
 the neighbour's demotion time (8 B per entry), and the delivery queue holding 234-byte
 payloads (§15 still counts 198). Checked by the tests in `tables/mod.rs` and
 `node/relay.rs`.
 
-`Leaf` is 696 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 704 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.

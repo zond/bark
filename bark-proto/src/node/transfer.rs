@@ -13,8 +13,12 @@
 //!    (§9.3: 50 ms) and check again; once the checks of one attempt have
 //!    found it busy for [`LBT_GIVE_UP`] (500 ms), give up ([`Check::GaveUp`]).
 //! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
-//! 3. No ACK: wait a random backoff and go back to 1, up to `hop_attempts`
-//!    (3) transmissions; then the hand-over has failed.
+//! 3. No ACK: wait a random time in `[0, retry_window]` and go back to 1,
+//!    up to `hop_attempts` (3) transmissions; then the hand-over has
+//!    failed. The window is twice the time one hand-over holds its
+//!    receiver and doubles per attempt ([`retry_window`]), so that two
+//!    senders that cannot hear each other and have collided at the
+//!    receiver come apart (§9.3, roadmap D20).
 //!
 //! An ACK matches only if it names both the message and the receiver
 //! (roadmap D19). An ACK that arrives after the timeout but before the
@@ -24,7 +28,7 @@ use crate::event::Action;
 use crate::node::Rng;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::fixed::FixedVec;
-use crate::tables::LBT_GIVE_UP;
+use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, AckFrom, ATTACH_LEN};
 
@@ -215,10 +219,10 @@ impl Transfer {
         now: Instant,
         max: u8,
         rng: &mut Rng,
-        backoff_max: Duration,
+        retry_backoff: Duration,
     ) -> Missed {
         self.attempts = self.attempts.saturating_add(1);
-        self.after_attempt(now, max, rng, backoff_max)
+        self.after_attempt(now, max, rng, retry_backoff)
     }
 
     /// If the ACK wait has run out at `now`, retry or fail.
@@ -227,11 +231,11 @@ impl Transfer {
         now: Instant,
         max: u8,
         rng: &mut Rng,
-        backoff_max: Duration,
+        retry_backoff: Duration,
     ) -> Option<Missed> {
         match self.step {
             Step::AwaitAck(deadline) if now >= deadline => {
-                Some(self.after_attempt(now, max, rng, backoff_max))
+                Some(self.after_attempt(now, max, rng, retry_backoff))
             }
             _ => None,
         }
@@ -242,14 +246,15 @@ impl Transfer {
         now: Instant,
         max: u8,
         rng: &mut Rng,
-        backoff_max: Duration,
+        retry_backoff: Duration,
     ) -> Missed {
         if self.attempts >= max {
             self.step = Step::Idle;
             Missed::Failed
         } else {
             self.lbt_since = None;
-            self.step = Step::Wait(now + rng.duration(Duration::ZERO, backoff_max));
+            let window = retry_window(retry_backoff, self.attempts);
+            self.step = Step::Wait(now + rng.duration(Duration::ZERO, window));
             Missed::Retry
         }
     }
@@ -491,7 +496,13 @@ mod tests {
             if attempt < 2 {
                 assert_eq!(missed, Missed::Retry);
                 let w = t.wake_at().unwrap();
-                assert!(w >= now + ms(100) && w <= now + ms(150), "backoff 0–50 ms");
+                // Two units after the first transmission, four after the second.
+                let window = ms(50 << (attempt + 1));
+                assert!(
+                    w >= now + ms(100) && w <= now + ms(100) + window,
+                    "backoff 0–{} ms",
+                    window.as_millis()
+                );
             } else {
                 assert_eq!(missed, Missed::Failed);
                 assert!(t.idle());

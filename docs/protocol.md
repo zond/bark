@@ -584,11 +584,25 @@ Packets waiting their turn are held in the relay's send queue.
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
    11.8 ms plus the receiver's retune and listen-before-talk).
-6. On timeout: random backoff, retry, up to 3 attempts. Then the
+6. On timeout: wait a random time, retry, up to 3 attempts. Then the
    hand-over has failed: count a failure against the neighbour (§8.2:
    demoted after 2 consecutive failures) and choose the next hop again
    (§9.2.3). The neighbour is now the last child, so the next one in order
    is taken, or the message goes back to the parent.
+
+**Retry wait.** The wait before the retry after the k-th unanswered
+transmission is uniform in [0, 2^k × 150.4 ms]: 0–301 ms, then 0–602 ms.
+150.4 ms is how long one hand-over holds its receiver, a full frame
+(138.6 ms) and its ACK (11.8 ms). The usual cause of a missing ACK, other
+than a weak link, is a sender the first one cannot hear that transmitted
+to the same receiver at the same time (a hidden terminal): both miss the
+ACK and both retry. Their retries miss each other only if they start
+more than one hand-over apart, which for full frames and a window of W
+units happens with probability (1 − 1/W)²: never with one unit, 1/4 with
+two, 9/16 with four. Doubling per attempt also spreads more than two such
+senders. The listen-before-talk backoff of step 2 stays short: it waits
+for a channel the sender can hear to clear, and checks again (roadmap
+D20).
 
 An ACK resets the neighbour's failure count and refreshes its last-heard
 time (§8.2): a neighbour that answers is alive whether or not its
@@ -614,16 +628,16 @@ leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
 That is the cost of having one radio.
 
-**Send queue.** At most 10 packets, the one being handed over included,
+**Send queue.** At most 16 packets, the one being handed over included,
 first in first out. When it is full, a packet that would need a place is
 not ACKed (§9.2.4), so its sender retries and then routes around this
-relay as it would around a failing one. 10 is what a relay can send in
-the time its upstream sender spends retrying a hand-over:
-2 × (100 ms ACK timeout + 500 ms listen-before-talk give-up + 138.6 ms
-full frame) = 1.48 s, and a full frame and its ACK take
-138.6 + 11.8 = 150 ms, so ⌈1.48 s / 150 ms⌉ = 10. A packet that would
-wait longer than that would get on sooner by the upstream relay choosing
-another next hop.
+relay as it would around a failing one. 16 is what a relay can send in
+the time its upstream sender spends retrying a hand-over: the two retry
+waits, 301 + 602 ms, plus 2 × (100 ms ACK timeout + 500 ms
+listen-before-talk give-up + 138.6 ms full frame), 2.38 s in all, and a
+full frame and its ACK take 138.6 + 11.8 = 150.4 ms, so
+⌈2.38 s / 150.4 ms⌉ = 16. A packet that would wait longer than that would
+get on sooner by the upstream relay choosing another next hop.
 
 ### 9.4 Duty cycle cap
 
@@ -683,7 +697,7 @@ What breaks it:
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
 - **State per relay:** at most 626 records of 32 bytes, 20 KB
-  (§9.2.2); a send queue of 10 packets of up to 255 bytes, 2.5 KB (§9.3);
+  (§9.2.2); a send queue of 16 packets of up to 255 bytes, 4.1 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
 ---
@@ -931,8 +945,8 @@ Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 40 B = 2.5 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 64 × 256 B = 16 KB; message records
-(§9.2.2) 626 × 32 B = 20 KB; send queue 10 × 260 B = 2.5 KB; delivered
-window 1 KB; busy estimates and duty budget under 1 KB; 47 KB in all,
+(§9.2.2) 626 × 32 B = 20 KB; send queue 16 × 262 B = 4.1 KB; delivered
+window 1 KB; busy estimates and duty budget under 1 KB; 49 KB in all,
 measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):
@@ -974,7 +988,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
-| O14 | Hidden terminals: the 0–50 ms retry backoff (§9.3) is shorter than a full frame (139 ms), so two senders that cannot hear each other and collide once collide again on every retry. Measure in the simulator and set the backoff from the frame time. | simulator |
+| O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D20, §9.3 retry wait |
 
 ---
 
