@@ -8,6 +8,9 @@ description = "Sans-IO protocol core for the bark 433 MHz LoRa mesh: codecs, tab
 
 [dependencies]
 
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [features]
 default = []
 # Enables std-only conveniences (Debug printing helpers, Vec sinks) for the simulator and tests.

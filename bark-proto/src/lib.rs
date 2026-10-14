@@ -19,7 +19,9 @@ pub mod ids;
 pub mod node;
 pub mod position;
 pub mod radio;
+pub mod tables;
 pub mod time;
+pub mod wire;
 
 pub use event::{Action, AppCommand, AppEvent, Event, Frame, MAX_FRAME};
 pub use ids::{LeafId, MsgId};

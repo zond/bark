@@ -1,0 +1,5 @@
+//! Bounded state the protocol core keeps. Every container has a capacity
+//! fixed by the design and lives inline, so nothing here allocates
+//! (roadmap D8).
+
+pub mod visited;

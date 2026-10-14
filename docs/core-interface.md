@@ -96,4 +96,19 @@ action at a time, and the core never allocates.
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
 - Position hash for DFS visited lists: FNV-1a over the seven wire bytes folded to 16 bits.
-- Everything else in design §14 is encoded by the Phase 0 codecs and documented there.
+- Everything else in design §14 is encoded by the Phase 0 codecs (`wire.rs`). Choices
+  made there, 2026-10-14:
+  - Multi-byte integers (`msg_id`, visited hashes) are big-endian; `leaf_id` is four
+    opaque bytes in order.
+  - Visited list at most 16 entries (design §8.1's 16-deep list); application payload
+    at most 198 bytes, what remains of 255 after the 25-byte DATA header and a full
+    visited list. Every DATA packet can then reach the full void-recovery depth
+    whatever its payload; the decoder rejects anything beyond either bound.
+  - DELIVER carries at most the same 198-byte payload: it only ever carries a DATA
+    payload onward.
+  - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
+  - NACK reason codes: 1 busy (§9.4), 2 queue TTL expired (§10.4), 3 unknown leaf
+    (§9.2), 4 no route (§9.2); 0 reserved; unknown codes are carried through.
+    The NACK's `msg_id` field is the NACK's own; the failed message's is in the payload.
+  - `aux` is unused in ACK and DELIVER: sent as zero, ignored on receipt. A fixed-size
+    packet with trailing bytes is rejected.
