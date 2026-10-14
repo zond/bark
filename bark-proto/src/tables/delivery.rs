@@ -7,7 +7,7 @@
 //! and drains [`DeliveryQueue::pop_expired`] to fail the expired ones.
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
-//! duplicate that slipped past the recent-RX window costs nothing here.
+//! duplicate that slipped past the per-message records costs nothing here.
 //!
 //! When the queue is full, the newcomer displaces the oldest message of
 //! the leaf with the most queued messages, the newcomer counted (decision

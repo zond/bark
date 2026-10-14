@@ -5,8 +5,8 @@
 //! [`Position::encode`]; fields that only name a relay (ATTACH `relay`, DATA
 //! `dst_hop` and `src_hop`) are its 4-byte [`ShortName`] (roadmap D14).
 //! DATA carries no message ID: every node computes [`Data::msg_id`] (D15).
-//! It carries no visited list either: search state lives in the relays
-//! (D16). Lengths, in bytes:
+//! Search state lives in the relays, not the packet (D16). Lengths, in
+//! bytes:
 //!
 //! ```text
 //! HEARTBEAT 0x1/0x2  first pos                                      = 8
