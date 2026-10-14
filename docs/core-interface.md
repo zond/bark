@@ -120,7 +120,7 @@ the neighbour's demotion time (8 B per entry), and the delivery queue holding 23
 payloads (§15 still counts 198). Checked by the tests in `tables/mod.rs` and
 `node/relay.rs`.
 
-`Leaf` is 704 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 832 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.

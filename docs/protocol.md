@@ -710,13 +710,29 @@ channel) and never forwards.
 
 ### 10.1 Relay choice
 
-Listening on its relay's home channel, a leaf hears every relay in range
-once per rotation (≈130 s). It keeps an averaged RSSI per relay and
-switches to another relay when that relay has been stronger by ≥6 dB for
-two consecutive heartbeats. It attaches to the new relay before leaving
-the old one. At walking pace a leaf hears each relay two to four times
-while in its coverage; vehicles cannot keep up and rely on the delivery
-queue plus re-attaching on arrival.
+Listening on any one channel, a leaf hears every relay in range once per
+rotation (≈130 s, at most 13 × 15 s = 195 s). It keeps, for its relay and
+the four strongest others it hears, the mean RSSI of the last two
+heartbeats. Four covers the relays an indoor leaf reaches at the design
+density: π × (300 m)² × 9.6 relays/km² ≈ 2.7 (§4, §13).
+
+**First choice.** A leaf without a relay attaches to the strongest it has
+heard once it has listened for a worst-case rotation, 195 s, from the
+first heartbeat it heard; by then every relay in range has visited its
+channel. A leaf with a message to send does not wait: it attaches to the
+strongest heard so far.
+
+**Switching.** An attached leaf moves to another relay only when that
+relay has been heard over at least two heartbeats and its mean is at
+least 8 dB above its own relay's. The margin is two standard deviations
+of the difference of two such means under fading of σ = 4 dB (the
+scenarios' figure): a relay's heartbeats reach the leaf's channel about
+130 s apart, longer than the 60 s the fading lasts, so they are nearly
+independent, a mean of two has σ/√2, and the difference of two means
+σ√(1/2 + 1/2) = 4 dB. A relay that is no better takes the leaf on 2.3 %
+of comparisons. The leaf attaches to the new relay before leaving the old
+one. Vehicles cannot keep up and rely on the delivery queue plus
+re-attaching on arrival.
 
 A leaf that hears no relay for 3 rotations stays on any channel and
 waits; every relay in range will appear within one rotation.
@@ -735,6 +751,23 @@ at 50%).
 
 Keepalive load per channel at 80 leaves per relay: ≈2%; at 400: ≈12%.
 That is why the interval is 60 s and not 10 s.
+
+**Keeping the relay.** A hand-over to the relay that fails, keepalive or
+message (§9.3: three attempts), is tried again one keepalive period
+later, ATTACH first. The leaf gives the relay up only when hand-overs
+have failed in two periods in a row, or when it has heard neither a
+heartbeat nor an ACK from it for as long as a neighbour entry lasts
+(§8.2: 390 s), whichever comes first. A fade lasts about a minute (the
+scenarios' correlation time), as long as one period, so one fade costs a
+keepalive, not the relay: the three attempts of one hand-over, a few
+hundred milliseconds apart, all fall inside it. Having given up its
+relay, the leaf takes the strongest other one it has heard (§10.1).
+
+**A message without a relay.** A message the leaf cannot hand over,
+because it has no relay or its relay does not answer, is held and tried
+again as above, for up to the delivery TTL (10 minutes, §10.4), the time
+the network itself would keep it. Only then is it reported failed. The
+leaf holds one message at a time (roadmap D23).
 
 ### 10.3 Delivery
 

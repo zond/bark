@@ -88,6 +88,8 @@ pub struct Harness<C: Core> {
     links: HashSet<(usize, usize)>,
     /// Channels a node hears a foreign carrier on: busy to RSSI, not to CAD.
     jammed: HashMap<(usize, Channel), (Duration, Duration)>,
+    /// Packet RSSI per directed link, where it is not [`SIGNAL_DBM`].
+    rssi: HashMap<(usize, usize), i16>,
     txs: Vec<Tx>,
     /// Excursions started, by kind, for accounting.
     pub excursions: usize,
@@ -123,6 +125,7 @@ impl<C: Core> Harness<C> {
             nodes,
             links: HashSet::new(),
             jammed: HashMap::new(),
+            rssi: HashMap::new(),
             txs: Vec::new(),
             excursions: 0,
             lose: None,
@@ -132,6 +135,12 @@ impl<C: Core> Harness<C> {
     pub fn link(&mut self, a: usize, b: usize) {
         self.links.insert((a, b));
         self.links.insert((b, a));
+    }
+
+    /// Frames between `a` and `b` arrive at `dbm`, both ways.
+    pub fn set_rssi(&mut self, a: usize, b: usize, dbm: i16) {
+        self.rssi.insert((a, b), dbm);
+        self.rssi.insert((b, a), dbm);
     }
 
     /// Cut the link between `a` and `b`.
@@ -247,7 +256,7 @@ impl<C: Core> Harness<C> {
                     self.nodes[i].received.push((now, tx.bytes.clone()));
                     let ev = Event::Received {
                         channel: tx.channel,
-                        rssi_dbm: SIGNAL_DBM,
+                        rssi_dbm: self.rssi.get(&(tx.from, i)).copied().unwrap_or(SIGNAL_DBM),
                         snr_db: 10,
                         bytes: &tx.bytes,
                     };

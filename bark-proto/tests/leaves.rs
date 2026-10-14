@@ -104,7 +104,8 @@ fn dropped(h: &Harness<Node>, i: usize, id: MsgId) -> Option<(Instant, DropReaso
 }
 
 /// Run until every leaf is attached to its relay: the relays' boot listen
-/// (§6.2), then up to a rotation for each leaf to hear its relay (§10.1).
+/// (§6.2), up to a rotation for each leaf to hear its relay, and a
+/// rotation of listening before it chooses (§10.1).
 fn settle(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
     let deadline = Instant::ZERO + secs(150 + 2 * 195);
@@ -326,4 +327,202 @@ fn a_relay_holding_the_leaf_routes_by_the_address() {
         .traces
         .iter()
         .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id)));
+}
+
+/// When the leaf received its first heartbeat and sent its first ATTACH.
+fn first_heartbeat_and_attach(h: &Harness<Node>, l: usize) -> (Instant, Instant) {
+    let first = |frames: &[(Instant, Vec<u8>)], heartbeat: bool| {
+        frames
+            .iter()
+            .find(|(_, b)| match Packet::decode(b) {
+                Ok(Packet::Heartbeat(_)) => heartbeat,
+                Ok(Packet::Attach(_)) => !heartbeat,
+                _ => false,
+            })
+            .map(|(t, _)| *t)
+            .expect("frame")
+    };
+    let sent: Vec<_> = h.nodes[l]
+        .sent
+        .iter()
+        .map(|(t, f)| (*t, f.payload().to_vec()))
+        .collect();
+    (first(&h.nodes[l].received, true), first(&sent, false))
+}
+
+/// A leaf attaches to the strongest relay it hears over a rotation of
+/// listening, not to the first (§10.1).
+#[test]
+fn a_leaf_chooses_the_strongest_relay_after_a_rotation() {
+    let rotation = Config::default().heartbeat_max.mul(13);
+    for seed in 0..4 {
+        let (r1, r2, l) = (0, 1, 2);
+        let mut h = Harness::new(vec![
+            relay(0.0, 50 + seed),
+            relay(400.0, 60 + seed),
+            leaf(200.0, 1, 70 + seed),
+        ]);
+        h.link(l, r1);
+        h.link(l, r2);
+        h.set_rssi(l, r1, -100);
+        h.set_rssi(l, r2, -88);
+        settle(&mut h, &[(l, r2)]);
+        let (heard, attach) = first_heartbeat_and_attach(&h, l);
+        assert!(
+            attach.since(heard) >= rotation,
+            "seed {seed}: attached {:?} after the first heartbeat",
+            attach.since(heard)
+        );
+    }
+}
+
+/// A leaf with a message to send does not wait out the rotation, and holds
+/// the message until it has a relay (§10.1, §10.2).
+#[test]
+fn a_message_waits_for_a_relay() {
+    let (r, l) = (0, 1);
+    let mut h = Harness::new(vec![relay(0.0, 41), leaf(30.0, 1, 42)]);
+    h.link(l, r);
+    // Within the relay's boot listen: the leaf has heard nothing yet.
+    h.run_until(Instant::ZERO + secs(10), |_| false);
+    let dst = position(&h, r);
+    let text = b"wait for me";
+    h.command(
+        l,
+        AppCommand::Send {
+            dst_pos: dst,
+            dst_leaf: LeafId::RELAY,
+            payload: text,
+        },
+    );
+    let id = MsgId::of(dst, LeafId::RELAY, text);
+    assert!(h.run_until(Instant::ZERO + secs(600), |h| received(h, r, id) == 1));
+    h.run_for(secs(1));
+    assert_eq!(
+        reports(&h, l, id),
+        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
+    );
+    let (heard, attach) = first_heartbeat_and_attach(&h, l);
+    assert!(
+        attach.since(heard) < Duration::from_millis(100),
+        "attached {:?} after the first heartbeat",
+        attach.since(heard)
+    );
+}
+
+/// A message no relay takes fails after the delivery TTL (§10.4), not at
+/// once.
+#[test]
+fn a_message_without_a_relay_fails_after_the_delivery_ttl() {
+    let mut h = Harness::new(vec![leaf(0.0, 1, 43)]);
+    h.run_until(Instant::ZERO + secs(1), |_| false);
+    let (dst, text) = (pos(500.0, 0.0), b"nobody there");
+    h.command(
+        0,
+        AppCommand::Send {
+            dst_pos: dst,
+            dst_leaf: LeafId([9; 4]),
+            payload: text,
+        },
+    );
+    let id = MsgId::of(dst, LeafId([9; 4]), text);
+    h.run_for(secs(599));
+    assert_eq!(reports(&h, 0, id), vec![AppEvent::Accepted(id)]);
+    h.run_for(secs(2));
+    assert_eq!(
+        reports(&h, 0, id),
+        vec![
+            AppEvent::Accepted(id),
+            AppEvent::Failed {
+                msg_id: id,
+                reason: bark_proto::FailReason::NoRelay
+            }
+        ]
+    );
+}
+
+/// One failed keepalive, as in a fade, does not cost the leaf its relay;
+/// failures in two keepalive periods in a row do (§10.2).
+#[test]
+fn a_leaf_keeps_its_relay_through_one_failed_keepalive() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let (r1, r2, l) = (0, 1, 2);
+    let mut h = Harness::new(vec![relay(0.0, 31), relay(400.0, 32), leaf(30.0, 1, 33)]);
+    h.link(l, r1);
+    h.link(l, r2);
+    h.set_rssi(l, r1, -90);
+    h.set_rssi(l, r2, -100);
+    settle(&mut h, &[(l, r1)]);
+    let cut = Rc::new(Cell::new((Instant::ZERO, Instant::ZERO)));
+    let window = cut.clone();
+    h.lose = Some(Box::new(move |now, from, to, _| {
+        let (a, b) = window.get();
+        from == l && to == r1 && a <= now && now < b
+    }));
+    let keepalive = Config::default().keepalive;
+    let attaches = |h: &Harness<Node>, from: Instant| {
+        h.nodes[l]
+            .sent
+            .iter()
+            .filter(|(t, f)| {
+                *t >= from && matches!(Packet::decode(f.payload()), Ok(Packet::Attach(_)))
+            })
+            .count()
+    };
+
+    // A little over one period: one keepalive fails.
+    let start = h.now;
+    cut.set((start, start + keepalive + secs(10)));
+    let moved = h.run_until(start + secs(600), |h| attached(h, l, r2));
+    assert!(!moved, "left its relay after one failed keepalive");
+    assert!(attached(&h, l, r1));
+    assert!(
+        attaches(&h, start) > 3,
+        "the keepalive failed and was retried"
+    );
+
+    // Two periods: the relay is given up for the other one.
+    let start = h.now;
+    cut.set((start, start + keepalive.mul(3)));
+    assert!(
+        h.run_until(start + secs(400), |h| attached(h, l, r2)),
+        "kept a relay that failed in two periods"
+    );
+}
+
+/// A leaf moves to a relay only when it is stronger by the margin over two
+/// heartbeats (§10.1).
+#[test]
+fn a_leaf_switches_only_to_a_clearly_stronger_relay() {
+    let (r1, r2, r3, l) = (0, 1, 2, 3);
+    let mut h = Harness::new(vec![
+        relay(0.0, 34),
+        relay(400.0, 35),
+        relay(-400.0, 36),
+        leaf(30.0, 1, 37),
+    ]);
+    h.link(l, r1);
+    h.set_rssi(l, r1, -90);
+    settle(&mut h, &[(l, r1)]);
+    // 5 dB stronger: not enough.
+    h.link(l, r2);
+    h.set_rssi(l, r2, -85);
+    let start = h.now;
+    assert!(!h.run_until(start + secs(1200), |h| attached(h, l, r2)));
+    // 10 dB stronger: the leaf moves, once it has heard two heartbeats.
+    h.link(l, r3);
+    h.set_rssi(l, r3, -80);
+    let start = h.now;
+    assert!(h.run_until(start + secs(600), |h| attached(h, l, r3)));
+    let r3_position = position(&h, r3);
+    let heard = h.nodes[l]
+        .received
+        .iter()
+        .filter(|(t, b)| {
+            *t >= start
+                && matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.position == r3_position)
+        })
+        .count();
+    assert!(heard >= 2, "switched after {heard} heartbeat(s)");
 }
