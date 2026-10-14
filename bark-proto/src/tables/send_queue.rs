@@ -1,18 +1,15 @@
 //! The send queue (design §9.3): packets waiting for their hand-over, the
 //! one being handed over included, first in first out.
 //!
-//! Its length is what a relay can send in the time an upstream sender
-//! spends retrying a hand-over to it that goes unanswered: the retries
-//! after the first attempt, each waiting the longest before it (301 ms,
-//! then 602 ms; §9.3) and for the channel, carrying a full frame and
-//! waiting out the ACK timeout,
-//! `0.90 s + 2 × (500 ms + 138.6 ms + 100 ms) = 2.38 s`, over the time of
-//! one full frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈15.8⌉ = 16. A
-//! packet that would wait longer gets on sooner by the upstream relay
-//! choosing another next hop, which it does at once when this relay, its
-//! queue full, answers BUSY (§9.2.4). At the duty-cycle cap the queue
-//! drains at the bucket's rate instead, a full frame every 1.4 s, so it
-//! can hold a packet about 23 s (design open item O15).
+//! A relay takes a packet only if the airtime of everything queued, that
+//! packet included, fits in its duty bucket as it stands (§9.2.4, roadmap
+//! D29), so the queue never holds more than the bucket can send at once.
+//! Its length follows: the bucket's depth, 6 s, over the time of one full
+//! frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈39.9⌉ = 40. Each packet
+//! taken also costs the ACK that takes it, so from a full bucket with the
+//! reply reserve left in at most 38 full frames fit, and for full frames
+//! the bucket binds first. Short frames fill the 40 places first: forty
+//! hand-overs of them still go out in a few seconds.
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (§9.3).
@@ -20,39 +17,23 @@
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
-use crate::tables::{attempt_span, retry_waits, RETRY_BACKOFF};
 use crate::time::Duration;
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
-/// How long an upstream sender spends retrying a hand-over after its
-/// first attempt; see the module documentation.
-pub const fn retrying_span(
-    ack_timeout: Duration,
-    hop_attempts: u8,
-    retry_backoff: Duration,
-) -> Duration {
-    Duration::from_micros(
-        attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64
-            + retry_waits(retry_backoff, hop_attempts).as_micros(),
-    )
-}
-
-/// Queue length for a sender with these per-hop parameters; see the
-/// module documentation.
-pub const fn queue_for(ack_timeout: Duration, hop_attempts: u8, retry_backoff: Duration) -> usize {
-    let retrying = retrying_span(ack_timeout, hop_attempts, retry_backoff).as_micros();
+/// Queue length for a bucket of `depth`; see the module documentation.
+pub const fn queue_for(depth: Duration) -> usize {
     let per_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
-    retrying.div_ceil(per_frame) as usize
+    depth.as_micros().div_ceil(per_frame) as usize
 }
 
-/// Queue length for the design's 100 ms ACK timeout, 3 attempts and retry
-/// backoff (§9.3).
-pub const SEND_QUEUE: usize = queue_for(Duration::from_millis(100), 3, RETRY_BACKOFF);
+/// Queue length for the design's bucket (§9.4).
+pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
-const _: () = assert!(SEND_QUEUE == 16);
+const _: () = assert!(SEND_QUEUE == 40);
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +123,13 @@ impl SendQueue {
         self.frames.is_full()
     }
 
+    /// The airtime of every queued frame, sent once each.
+    pub fn airtime(&self) -> Duration {
+        self.iter()
+            .map(|o| time_on_air(o.frame.len, o.frame.preamble_symbols))
+            .fold(Duration::ZERO, |a, b| a + b)
+    }
+
     /// Queue `out` last, unless the queue is full.
     pub fn push(&mut self, out: Outgoing) -> Result<(), Full> {
         self.frames.push(out).map_err(|_| Full)
@@ -182,7 +170,7 @@ impl Default for SendQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::Config;
+    use crate::tables::budget::REPLY_RESERVE;
 
     fn frame(tag: u8) -> Outgoing {
         let mut bytes = [0; MAX_FRAME];
@@ -200,17 +188,26 @@ mod tests {
     }
 
     #[test]
-    fn size_follows_the_config() {
-        let c = Config::default();
-        assert_eq!(
-            queue_for(c.ack_timeout, c.hop_attempts, c.retry_backoff),
-            SEND_QUEUE
-        );
-        assert_eq!(
-            queue_for(c.ack_timeout, 1, c.retry_backoff),
-            0,
-            "no retries, no time to fill a queue"
-        );
+    fn size_follows_the_bucket() {
+        assert_eq!(queue_for(Duration::from_secs(6)), SEND_QUEUE);
+        assert_eq!(queue_for(Duration::ZERO), 0);
+        // What a full bucket takes in full frames, each with the ACK that
+        // took it, leaving the reply reserve: fewer than the places.
+        let per = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS)
+            + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        let fit = (DEPTH - REPLY_RESERVE).as_micros() / per.as_micros();
+        assert_eq!(fit, 38);
+        assert!((fit as usize) < SEND_QUEUE);
+    }
+
+    #[test]
+    fn airtime_counts_every_frame() {
+        let mut q = SendQueue::new();
+        assert_eq!(q.airtime(), Duration::ZERO);
+        q.push(frame(1)).unwrap();
+        q.push(frame(2)).unwrap();
+        let one = time_on_air(1, MIN_PREAMBLE_SYMBOLS);
+        assert_eq!(q.airtime(), one + one);
     }
 
     #[test]

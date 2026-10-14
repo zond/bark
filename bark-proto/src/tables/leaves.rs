@@ -36,6 +36,9 @@ pub struct LeafEntry {
     pub last_seen: Instant,
     /// Its declared receive mode.
     pub mode: RxMode,
+    /// Its last DELIVER went unanswered: it is not listening, and its
+    /// messages wait for its next keepalive or the delivery retry (§10.4).
+    pub missed: bool,
 }
 
 /// The table is full of live leaves.
@@ -56,6 +59,7 @@ impl Leaves {
             leaf: LeafId::RELAY,
             last_seen: Instant::ZERO,
             mode: RxMode::Listening,
+            missed: false,
         };
         Leaves {
             entries: FixedVec::new(fill),
@@ -95,6 +99,7 @@ impl Leaves {
             leaf,
             last_seen: now,
             mode,
+            missed: false,
         };
         let expire_after = self.expire_after;
         let slots = self.entries.as_mut_slice();
@@ -115,6 +120,18 @@ impl Leaves {
                 Ok(())
             }
             None => Err(Full),
+        }
+    }
+
+    /// Mark whether `leaf`, if present, left its last DELIVER unanswered.
+    pub fn set_missed(&mut self, leaf: LeafId, missed: bool) {
+        if let Some(e) = self
+            .entries
+            .as_mut_slice()
+            .iter_mut()
+            .find(|e| e.leaf == leaf)
+        {
+            e.missed = missed;
         }
     }
 
@@ -160,6 +177,13 @@ mod tests {
         assert_eq!(t.next_expiry(), Some(at(190)));
         assert!(t.get(id(2), at(189)).is_some());
         assert!(t.get(id(2), at(190)).is_none(), "three missed keepalives");
+        t.set_missed(id(1), true);
+        assert!(t.get(id(1), at(61)).unwrap().missed);
+        assert_eq!(t.attached(id(1), RxMode::DutyCycled, at(62)), Ok(()));
+        assert!(
+            !t.get(id(1), at(62)).unwrap().missed,
+            "a keepalive clears it"
+        );
         t.expire(at(190));
         assert_eq!(t.len(), 1);
         t.remove(id(1));

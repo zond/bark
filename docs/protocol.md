@@ -428,9 +428,9 @@ carries a full frame: 255 hand-overs (§9.2.6) × (500 ms listen-before-talk
 give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
 §9.3) = 188.3 s. So in a search without failures no record expires while
 the message is away exploring beyond it. A message waiting in the relay's
-send queue for the duty-cycle budget (§9.4), which can take minutes, is
-still here, and keeps its record alive: without it the message could not
-be routed when its turn comes.
+send queue, for the hand-overs ahead of it or for the duty-cycle budget
+(§9.4), is still here, and keeps its record alive: without it the
+message could not be routed when its turn comes.
 
 **Bound and eviction.** A relay holds at most 626 records; when full, a
 new record replaces the least recently active one. 626 is the most
@@ -484,16 +484,21 @@ on to the next.
 
 A relay answers a DATA packet addressed to it (§9.2.1, §9.3) before
 acting on it: with an ACK if it takes it, with BUSY (§14) if it does not.
-It refuses a packet that would give it work, something to send on or to
-deliver, when its send queue has no place for what it would send (§9.3)
-or when its airtime bucket holds less than the reply reserve and an ACK
-(§9.4). It then sends BUSY where the ACK would have gone, on the channel
-in `aux` after listening before talking, changes nothing, and the sender
-tries elsewhere at once. A packet that gives it no work, cases 2, 3 and
-5 below, is ACKed even then: the relay already has the message, and
-BUSY would send its sender on with a second copy. A relay that cannot
-afford even the reply stays silent, and its sender retries as for a lost
-ACK (roadmap D27).
+It takes a packet that would give it something to send on only if its
+send queue has a place for it and its airtime bucket (§9.4) holds, as
+it stands, the ACK, the airtime of every frame in the send queue and of
+the new one, and the reply reserve. So a relay takes no more than it can
+send now, and the sender hears at once that it should go elsewhere,
+instead of the packet waiting here for the bucket to refill (§9.3). It
+takes a packet to deliver only if its bucket holds the reply reserve and
+an ACK and, for one of its leaves, its delivery queue has room (§10.4).
+Otherwise it refuses: it sends BUSY where the ACK would have gone, on
+the channel in `aux` after listening before talking, changes nothing,
+and the sender tries elsewhere at once. A packet that gives it no work,
+cases 2, 3 and 5 below, is ACKed even then: the relay already has the
+message, and BUSY would send its sender on with a second copy. A relay
+that cannot afford even the reply stays silent, and its sender retries
+as for a lost ACK (roadmap D27, D29).
 
 The packet is one of the following, tested in this order:
 
@@ -697,17 +702,17 @@ leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
 That is the cost of having one radio.
 
-**Send queue.** At most 16 packets, the one being handed over included,
-first in first out. When it is full, a packet that would need a place is
-refused with BUSY (§9.2.4), and its sender routes around this relay at
-once. 16 is what a relay can send in the time an upstream sender spends
-retrying a hand-over that goes unanswered: the two retry waits, 301 +
-602 ms, plus 2 × (100 ms ACK timeout + 500 ms listen-before-talk give-up
-+ 138.6 ms full frame), 2.38 s in all, and a full frame and its ACK take
-138.6 + 11.8 = 150.4 ms, so ⌈2.38 s / 150.4 ms⌉ = 16. That holds while
-the relay has budget; at its duty-cycle cap the queue drains at the
-bucket's rate, a full frame every 1.4 s, so a full queue holds a packet
-about 23 s (open item O15).
+**Send queue.** At most 40 packets, the one being handed over included,
+first in first out. A relay queues a packet only if everything queued,
+that packet included, fits in its bucket as it stands (§9.2.4), so the
+queue never holds more than the relay can send at once, and a packet in
+it waits for the hand-overs ahead of it, not for the bucket to refill.
+The number of places follows: the bucket holds at most 6 s (§9.4), and
+a full frame and the ACK that took it on cost 138.6 + 11.8 = 150.4 ms,
+so ⌈6 s / 150.4 ms⌉ = 40. With the reply reserve left in, a full bucket
+takes at most 38 full frames, so for full frames the bucket is the
+limit; shorter frames fill the 40 places first, and forty hand-overs of
+them go out within a few seconds.
 
 ### 9.4 Duty cycle cap
 
@@ -733,15 +738,21 @@ BUSY) leave one heartbeat's airtime, 11.8 ms, which the bucket refills
 in 120 ms, far less than the 5 s between heartbeats (§7), so heartbeats
 always go. Forwarding, and the ACK that takes on a packet, leave the
 **reply reserve**: the BUSY replies the bucket refills while a sender
-retries an unanswered hand-over, 9.83 % × 2.38 s = 234 ms, ⌊234 /
-10.6⌋ = 22 of them, and the heartbeat, 244 ms in all. A relay whose
-bucket holds less than that and an ACK takes no new work: it answers
-BUSY (§9.2.4), and sends nothing but heartbeats and replies until the
-bucket refills. Its senders pass it over for the reserve's refill time,
-2.48 s (§9.3), so a relay at the reserve can tell 22 senders in that
-time that it is busy and pay for it from the refill alone. Without budget
-even for a reply it stays silent, its neighbours' hand-overs to it fail,
-and they route around it (roadmap D27).
+retries an unanswered hand-over, and the heartbeat. The retrying takes
+the two retry waits, 301 + 602 ms, and two more attempts of 500 ms
+listen-before-talk give-up, a 138.6 ms full frame and the 100 ms ACK
+timeout (§9.3), 2.38 s in all; the bucket refills 9.83 % × 2.38 s =
+234 ms of it, ⌊234 / 10.6⌋ = 22 replies, and with the heartbeat the
+reserve is 244 ms. A relay takes new work only if its bucket holds the
+reply reserve on top of the work's ACK and of everything it has queued
+to send (§9.2.4); otherwise it answers BUSY. A hand-over therefore waits
+for the bucket only when retries or replies have spent it since its
+packet was taken. A relay below the reserve sends nothing but heartbeats
+and replies until its bucket refills. Its senders pass it over for the
+reserve's refill time, 2.48 s (§9.3), so a relay at the reserve can tell
+22 senders in that time that it is busy and pay for it from the refill
+alone. Without budget even for a reply it stays silent, its neighbours'
+hand-overs to it fail, and they route around it (roadmap D27, D29).
 
 ### 9.5 Why the search finds a path
 
@@ -796,7 +807,7 @@ What breaks it:
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
 - **State per relay:** at most 626 records of 32 bytes, 20 KB
-  (§9.2.2); a send queue of 16 packets of up to 255 bytes, 4.1 KB (§9.3);
+  (§9.2.2); a send queue of 40 packets of up to 255 bytes, 10.2 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
 ---
@@ -879,15 +890,36 @@ the leaf's ACK. Preamble length per the leaf's receive mode (§10.5).
 
 ### 10.4 Delivery queue
 
-Bounded, not a mailbox: up to 64 messages per relay, kept for 10 minutes
-(the delivery TTL). Retry delivery on the leaf's next keepalive and every
-60 s. On expiry the message is dropped. The owner remembers the last 64
-delivered message IDs (§14) for the TTL and ACKs a repeat without
-delivering it twice; 64 is 400 leaves (§10.2) × 23 texts a day (§13) over
-the 144 ten-minute TTLs in a day. A
-queued message costs no airtime; a failed delivery costs a retry across
-the city; the common case is a phone in a pocket, a basement, or the metro
-for a few minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
+Bounded, not a mailbox: up to 41 messages per relay, kept for 10 minutes
+(the delivery TTL). On expiry the message is dropped. When the queue is
+full, a message for one of the relay's leaves is refused with BUSY
+(§9.2.4): what is queued stays, and the sender learns at once.
+
+A queued message goes to the send queue (§9.3) as a DELIVER, one per
+leaf at a time and oldest first, when it arrives, when the leaf's
+previous one is ACKed, and whenever a hand-over ends and leaves room in
+the send queue. It needs room as any packet does (§9.3); one the bucket
+cannot fit yet goes the moment the bucket will. A leaf whose DELIVER went unanswered is not listening:
+its messages wait for its next keepalive and are retried every 60 s,
+not each time room frees up.
+
+A message stays long only for a leaf that does not answer. A leaf that
+listens takes its DELIVER at the first hand-over: a duty-cycled or
+hybrid one checks the channel every 500 ms, and the 512 ms preamble
+spans the check (§10.5). One that does not is a phone in a pocket, a
+basement or the metro for a few minutes, and its messages wait until
+its first keepalive after it is back, at most 60 s later (§10.2), or
+until the TTL. Leaves in one train or one basement go dark together, so
+the queue holds what arrives in a TTL for every leaf a relay can serve,
+its leaf table's 256 (§10.2), at the 23 texts a day each that the
+network carries (§13): 256 × 23 / 144 ten-minute TTLs in a day = 40.9,
+so 41 messages, 10.3 KB.
+
+The owner remembers the last 64 delivered message IDs (§14) for the TTL
+and ACKs a repeat without delivering it twice; 64 is 400 leaves (§10.2)
+× 23 texts a day (§13) over the 144 ten-minute TTLs in a day. A queued
+message costs no airtime; a failed delivery costs a retry across the
+city.
 
 The queue plus the sender's own retry covers a leaf that has moved to
 another relay; the old relay does not forward to the new one. Neighbouring
@@ -1088,8 +1120,8 @@ its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 64 × 256 B = 16 KB; message records
-(§9.2.2) 626 × 32 B = 20 KB; send queue 16 × 262 B = 4.1 KB; delivered
+256 × 16 B = 4 KB; delivery queue 41 × 256 B = 10.3 KB; message records
+(§9.2.2) 626 × 32 B = 20 KB; send queue 40 × 262 B = 10.2 KB; delivered
 window 1 KB; busy estimates and duty budget under 1 KB; 49 KB in all,
 measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
@@ -1133,7 +1165,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? (§9.2.7) | step 5 |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, §9.3 retry wait |
-| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | simulator, capacity scenario Decided 2026-10-15 (roadmap D29): a relay takes a packet only if the airtime of all it holds, that packet included, fits in its bucket now; to be built. |
+| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | resolved: roadmap D29 rule 1, §9.2.4, §9.3 send queue |
 
 ---
 

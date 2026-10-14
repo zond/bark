@@ -59,8 +59,7 @@
 //! without the reply.
 
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::send_queue::retrying_span;
-use crate::tables::RETRY_BACKOFF;
+use crate::tables::{retrying_span, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
 use crate::wire::{BUSY_LEN, HEARTBEAT_LEN};
 
@@ -69,7 +68,7 @@ pub const BUDGET: Duration =
     Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
 /// The most airtime the bucket holds: one minute at the cap, 6 s, about
-/// forty full frames, more than a full send queue (§9.3: 16) can use.
+/// forty full frames; the send queue's length follows from it (§9.3).
 pub const DEPTH: Duration = Duration::from_micros(BUDGET.as_micros() / 60);
 
 /// Longest single transmission (design §3: 1 s; SF5 frames are ≤140 ms).

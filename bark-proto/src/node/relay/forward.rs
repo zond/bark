@@ -5,14 +5,18 @@
 //!
 //! [`Relay::data`] classifies the packet by the six cases of §9.2.4 in
 //! order and decides whether acting on it is work: a forward, a return, a
-//! packet sent straight back, or a delivery. Work is refused with BUSY when
-//! the send queue has no place for what it sends, or when the bucket holds
-//! less than the reply reserve and an ACK (`tables/budget.rs`); otherwise
-//! the ACK is owed before acting. A packet that gives no work (cases 2, 3
-//! and 5) is ACKed from the reply reserve: this relay already has the
-//! message, and BUSY would send its sender on with a second copy. A relay
-//! that cannot afford even the reply stays silent, and its sender
-//! retries.
+//! packet sent straight back, or a delivery. Work to send on is refused
+//! with BUSY unless the send queue has a place for it and the bucket holds
+//! the ACK, the airtime of everything queued with the new frame, and the
+//! reply reserve (§9.2.4, roadmap D29). So the queue never holds more than
+//! the bucket can send now, and a packet waits in it for the hand-overs
+//! ahead of it, not for the bucket to refill. A delivery is refused when
+//! the delivery queue is full, or when the bucket holds less than the
+//! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
+//! owed before acting. A packet that gives no work (cases 2, 3 and 5) is
+//! ACKed from the reply reserve: this relay already has the message, and
+//! BUSY would send its sender on with a second copy. A relay that cannot
+//! afford even the reply stays silent, and its sender retries.
 //!
 //! Three refinements the spec does not spell out:
 //!
@@ -128,6 +132,32 @@ impl Relay {
         self.budget.would_allow_keeping(airtime, REPLY_RESERVE, now)
     }
 
+    /// Why the send queue cannot take a frame of `airtime` after this
+    /// relay spends `spend` (the ACK that takes the packet), if it cannot:
+    /// it needs a place, and everything queued, the frame included, must
+    /// fit in the bucket now with the reply reserve left (§9.2.4, §9.3).
+    /// `freed`: the front's hand-over ends first, giving up its place.
+    pub(super) fn no_room(
+        &self,
+        airtime: Duration,
+        spend: Duration,
+        freed: bool,
+        now: Instant,
+    ) -> Option<DropReason> {
+        let front = match (freed, self.queue.front()) {
+            (true, Some(o)) => mac::airtime(&o.frame),
+            _ => Duration::ZERO,
+        };
+        let queued = self.queue.airtime() - front;
+        if self.queue.is_full() && !freed {
+            Some(DropReason::SendQueueFull)
+        } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
+            Some(DropReason::Budget)
+        } else {
+            None
+        }
+    }
+
     /// Whether a reply may spend `airtime` now: it must leave the
     /// heartbeat reserve (§9.4).
     pub(super) fn can_reply(&self, airtime: Duration, now: Instant) -> bool {
@@ -212,10 +242,13 @@ impl Relay {
         // hand-over, which frees its place in the queue.
         let completes = case == Case::FromLastChild && self.handing(id, d.src_hop);
         let deadline = now + self.config.ack_timeout;
+        let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
         let refusal = if case == Case::AckOnly {
             None
-        } else if sends && self.queue.is_full() && !completes {
-            Some(DropReason::SendQueueFull)
+        } else if sends {
+            self.no_room(data_airtime(d.payload.len()), ack_airtime(), completes, now)
+        } else if for_leaf && self.delivery.is_full() {
+            Some(DropReason::DeliveryFull)
         } else if !self.affordable(ack_airtime(), now) {
             Some(DropReason::Budget)
         } else {
@@ -347,6 +380,7 @@ impl Relay {
         let before = self.queue.len();
         self.queue.retain(|o| !routed(o));
         if self.queue.len() != before {
+            self.feed_due = true;
             if front {
                 self.handover.cancel();
                 self.skipped = 0;
@@ -415,11 +449,16 @@ impl Relay {
         };
         match self.delivery.push(q) {
             Pushed::Duplicate => return true,
-            Pushed::Displaced(old) => self.drop_msg(old.msg_id, DropReason::QueueDisplaced, emit),
-            Pushed::Queued => {}
+            Pushed::Full => {
+                // Only when ownership is found at the hand-over, too late
+                // to refuse (§9.2.4 case 4).
+                self.drop_msg(id, DropReason::DeliveryFull, emit);
+                return false;
+            }
+            Pushed::Queued => self.feed_due = true,
         }
         emit(Action::Trace(Trace::Queued { msg_id: id, leaf }));
-        self.try_deliver(leaf, now);
+        self.deliver_now(leaf, now);
         true
     }
 
@@ -456,6 +495,11 @@ impl Relay {
             return;
         }
         if self.owns(dst_pos, now) {
+            if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+                fail(FailReason::QueueFull, emit);
+                self.drop_msg(id, DropReason::DeliveryFull, emit);
+                return;
+            }
             let mut record = Record::new(id, None, 0, now);
             record.set_owned();
             self.keep(record, now, emit);
@@ -466,16 +510,14 @@ impl Relay {
             }
             return;
         }
-        let refusal = if self.queue.is_full() {
-            Some((FailReason::QueueFull, DropReason::SendQueueFull))
-        } else if !self.affordable(data_airtime(payload.len()), now) {
-            Some((FailReason::Budget, DropReason::Budget))
-        } else {
-            None
-        };
-        if let Some((f, d)) = refusal {
+        let airtime = data_airtime(payload.len());
+        if let Some(reason) = self.no_room(airtime, Duration::ZERO, false, now) {
+            let f = match reason {
+                DropReason::SendQueueFull => FailReason::QueueFull,
+                _ => FailReason::Budget,
+            };
             fail(f, emit);
-            self.drop_msg(id, d, emit);
+            self.drop_msg(id, reason, emit);
             return;
         }
         self.keep(Record::new(id, None, 0, now), now, emit);
@@ -533,6 +575,7 @@ impl Relay {
                 Routed::Done => {
                     self.queue.pop();
                     self.skipped = 0;
+                    self.feed_due = true;
                 }
             }
         }
@@ -813,6 +856,7 @@ impl Relay {
         self.handover.cancel();
         self.skipped = 0;
         let Some(out) = self.queue.pop() else { return };
+        self.feed_due = true;
         let d = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) => d,
             Ok(Packet::Deliver(d)) => return self.delivered_to(d, now, emit),
@@ -863,8 +907,12 @@ impl Relay {
             Kind::Bounce => Some(DropReason::BounceFailed),
             Kind::Deliver => None,
         };
+        if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
+            self.leaves.set_missed(d.dst_leaf, true);
+        }
         self.queue.pop();
         self.skipped = 0;
+        self.feed_due = true;
         if let Some(reason) = reason {
             self.drop_msg(id, reason, emit);
         }

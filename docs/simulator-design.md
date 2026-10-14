@@ -105,7 +105,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | message records | message ID (§14) | 626 records, 188 s idle (§9.2.2) | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
 | `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves and their keepalive age |
-| `tables::delivery` | message ID | 64 messages, 10 min TTL | messages waiting for a dark leaf |
+| `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |
 
 `routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec §9.2.3, and applies the owner rule of §9.2.7. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
 

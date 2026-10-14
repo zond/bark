@@ -1,30 +1,49 @@
 //! The delivery queue (design §10.4): messages for attached leaves that
 //! could not be delivered yet, held for a while instead of failed at once.
 //!
-//! Up to 64 messages, each with a TTL (§10.4: 10 minutes); oldest first.
-//! The relay retries delivery on the leaf's next keepalive and every 60 s,
-//! taking a leaf's messages in arrival order with [`DeliveryQueue::pop_for`],
-//! and drains [`DeliveryQueue::pop_expired`] to fail the expired ones.
+//! Each message lives the delivery TTL (§10.4: 10 minutes); oldest first.
+//! The relay hands a leaf's messages to the send queue in arrival order
+//! with [`DeliveryQueue::pop_for`], and drains
+//! [`DeliveryQueue::pop_expired`] to fail the expired ones.
+//!
+//! A message stays long only for a leaf that does not answer. One that
+//! listens, always or with a check of the channel every 500 ms, takes its
+//! DELIVER at the first hand-over, whose 512 ms preamble spans the check
+//! (§10.5). One that does not is a phone in a pocket, a basement or the
+//! metro, and its messages wait for its first keepalive after it is back,
+//! at most 60 s later (§10.2), or for the TTL. Leaves in one train or one
+//! basement go dark together, so the queue holds what arrives in a TTL for
+//! every leaf the relay can serve, its leaf table's [`LEAVES`] (§10.2),
+//! at the [`TEXTS_PER_DAY`] each that the network carries (§13):
+//! `256 × 23 × 10 min / 1 day = 40.9`, so 41.
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
 //! duplicate that slipped past the per-message records costs nothing here.
-//!
-//! When the queue is full, the newcomer displaces the oldest message of
-//! the leaf with the most queued messages, the newcomer counted (decision
-//! 2026-10-14; §10.4 does not say). One absent leaf with a busy
-//! conversation then cannot flush everyone else's messages; among leaves
-//! with equal shares the oldest message, nearest its expiry, goes. The
-//! displaced message is returned so the relay can fail it as it would an
-//! expired one.
+//! A message that finds the queue full is refused (§9.2.4): what is queued
+//! stays, and the sender learns at once that this relay cannot take it.
 
 use crate::ids::{LeafId, MsgId};
 use crate::node::Config;
 use crate::tables::fixed::FixedVec;
+use crate::tables::leaves::LEAVES;
 use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
-/// Queue capacity (design §10.4).
-pub const DELIVERY_QUEUE: usize = 64;
+/// Texts a user receives a day when the network carries all it can
+/// (design §13: ≈23 at 300 000 users).
+pub const TEXTS_PER_DAY: u64 = 23;
+
+/// Queue capacity for `leaves` leaves and messages that live `ttl`; see
+/// the module documentation.
+pub const fn queue_for(leaves: usize, ttl: Duration) -> usize {
+    const DAY: u64 = 86_400_000_000;
+    (leaves as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
+}
+
+/// Queue capacity for the design's leaf table and 10-minute TTL (§10.4).
+pub const DELIVERY_QUEUE: usize = queue_for(LEAVES, Duration::from_secs(600));
+
+const _: () = assert!(DELIVERY_QUEUE == 41);
 
 /// A queued message.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -74,15 +93,14 @@ impl core::fmt::Debug for Queued {
 }
 
 /// What [`DeliveryQueue::push`] did.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pushed {
-    /// Queued in free space.
+    /// Queued.
     Queued,
     /// Already queued; nothing changed.
     Duplicate,
-    /// Queued, displacing this message.
-    Displaced(Queued),
+    /// The queue is full; nothing changed.
+    Full,
 }
 
 /// The delivery queue, in arrival order.
@@ -123,6 +141,11 @@ impl DeliveryQueue {
         self.len() == 0
     }
 
+    /// Whether a new message would be refused.
+    pub fn is_full(&self) -> bool {
+        self.entries.is_full()
+    }
+
     /// Queued messages, oldest first.
     pub fn iter(&self) -> impl Iterator<Item = &Queued> {
         self.entries.as_slice().iter()
@@ -133,28 +156,15 @@ impl DeliveryQueue {
         self.iter().filter(|q| q.leaf == leaf).count()
     }
 
-    /// Queue a message; see the module documentation for a full queue.
+    /// Queue a message, unless it is queued already or the queue is full.
     pub fn push(&mut self, q: Queued) -> Pushed {
         if self.iter().any(|e| e.msg_id == q.msg_id) {
             return Pushed::Duplicate;
         }
-        if self.entries.push(q).is_ok() {
-            return Pushed::Queued;
+        match self.entries.push(q) {
+            Ok(()) => Pushed::Queued,
+            Err(_) => Pushed::Full,
         }
-        let share = |leaf: LeafId| self.count_for(leaf) + usize::from(leaf == q.leaf);
-        // First in arrival order among the largest shares: that leaf's oldest.
-        let mut victim = 0;
-        let mut most = 0;
-        for (i, e) in self.iter().enumerate() {
-            let s = share(e.leaf);
-            if s > most {
-                most = s;
-                victim = i;
-            }
-        }
-        let displaced = self.entries.remove(victim);
-        let _ = self.entries.push(q);
-        Pushed::Displaced(displaced)
     }
 
     /// Take the oldest message for `leaf`.
@@ -237,24 +247,23 @@ mod tests {
     }
 
     #[test]
-    fn full_queue_displaces_from_the_largest_share() {
-        let mut q = DeliveryQueue::from_config(&Config::default());
-        // Leaf 9 holds half the queue, the others one message each.
-        for i in 0..DELIVERY_QUEUE as u32 {
-            let to = if i % 2 == 1 { 9 } else { i as u8 + 100 };
-            assert_eq!(q.push(msg(i, to, i as u64)), Pushed::Queued);
-        }
-        // Leaf 9's oldest goes, not the oldest message overall (0, for leaf 100).
-        assert_eq!(q.push(msg(100, 1, 100)), Pushed::Displaced(msg(1, 9, 1)));
-        // Equal shares: the oldest message among them goes.
+    fn full_queue_refuses() {
         let mut q = DeliveryQueue::from_config(&Config::default());
         for i in 0..DELIVERY_QUEUE as u32 {
-            q.push(msg(i, i as u8, i as u64));
+            assert_eq!(q.push(msg(i, i as u8, i as u64)), Pushed::Queued);
         }
-        assert_eq!(q.push(msg(100, 200, 100)), Pushed::Displaced(msg(0, 0, 0)));
-        // The newcomer counts: leaf 5 now has two with it, so its own oldest goes.
-        assert_eq!(q.push(msg(101, 5, 101)), Pushed::Displaced(msg(5, 5, 5)));
+        assert!(q.is_full());
+        assert_eq!(q.push(msg(100, 200, 100)), Pushed::Full);
+        assert_eq!(q.push(msg(0, 0, 100)), Pushed::Duplicate);
         assert_eq!(q.len(), DELIVERY_QUEUE);
-        assert_eq!(q.iter().last().unwrap().msg_id, MsgId(101));
+        assert_eq!(q.iter().next().unwrap().msg_id, MsgId(0));
+    }
+
+    #[test]
+    fn size_follows_the_leaf_table_and_ttl() {
+        let c = Config::default();
+        assert_eq!(queue_for(LEAVES, c.delivery_ttl), DELIVERY_QUEUE);
+        // The delivered window's 64 is the same count for 400 leaves.
+        assert_eq!(queue_for(400, c.delivery_ttl), 64);
     }
 }

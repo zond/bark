@@ -503,8 +503,8 @@ fn a_demoted_neighbour_is_the_last_resort() {
 }
 
 /// F1, O's nearest neighbour toward D, has its send queue full: its
-/// application has just queued sixteen messages for D, whose frames from
-/// F1 are lost. F1 answers O's DATA with BUSY (§9.2.4), and O hands the
+/// application has just queued a short message for D in each of its
+/// places, and its frames to D are lost. F1 answers O's DATA with BUSY (§9.2.4), and O hands the
 /// message to F2 at once, counting no failure against F1 (§9.3). For the
 /// hold O passes F1 over for other messages too; after it, F1 is its
 /// first choice again (roadmap D27).
@@ -519,6 +519,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
 #[test]
 fn a_busy_relay_is_passed_over_for_the_hold() {
     use bark_proto::tables::budget::BUSY_HOLD;
+    use bark_proto::tables::send_queue::SEND_QUEUE;
     let (o, f1, f2, d) = (0, 1, 2, 3);
     let mut h = build(
         vec![
@@ -536,7 +537,7 @@ fn a_busy_relay_is_passed_over_for_the_hold() {
             && (from, to) == (f1, d)
             && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    for k in 0..16u8 {
+    for k in 0..SEND_QUEUE as u8 {
         send(&mut h, f1, d, &[b'q', k]);
     }
     let name = |h: &Harness<Node>, i| position(h, i).short();
@@ -724,9 +725,10 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
-/// bucket lets through (§9.4). F works at the edge of its bucket: with its
-/// send queue full it refuses a message with BUSY (§9.2.4), and a
-/// hand-over the bucket cannot fit yet waits for it, never longer than the
+/// bucket lets through (§9.4). F works at the edge of its bucket: it
+/// refuses a message with BUSY when the message's frame and everything it
+/// has queued would not fit in the bucket (§9.2.4), and a hand-over whose
+/// retries the bucket cannot fit yet waits for it, never longer than the
 /// refill of a frame and the reply reserve, instead of being dropped. Its
 /// heartbeats are never held back. The harness panics if any hour holds
 /// more than 10 %, replies included.
@@ -850,7 +852,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     };
     println!(
         "{k} sent; F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
-         its queue full and {broke} below the reply reserve, {busy_sent} BUSY sent; \
+         its queue full and {broke} for its bucket, {busy_sent} BUSY sent; \
          O turned away {turned_away} times",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))

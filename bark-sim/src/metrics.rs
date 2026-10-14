@@ -202,8 +202,8 @@ pub struct DropCounts {
     pub relay_gone: u64,
     /// The delivery TTL ran out (§10.4).
     pub queue_expired: u64,
-    /// Displaced from a full delivery queue (§10.4).
-    pub queue_displaced: u64,
+    /// The delivery queue was full (§10.4).
+    pub delivery_full: u64,
     /// The payload was too long (§14).
     pub payload_too_long: u64,
 }
@@ -221,7 +221,7 @@ impl DropCounts {
             DropReason::BounceFailed => &mut self.bounce_failed,
             DropReason::RelayGone => &mut self.relay_gone,
             DropReason::QueueExpired => &mut self.queue_expired,
-            DropReason::QueueDisplaced => &mut self.queue_displaced,
+            DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
         };
         *c += 1;
@@ -238,7 +238,7 @@ impl DropCounts {
             + self.bounce_failed
             + self.relay_gone
             + self.queue_expired
-            + self.queue_displaced
+            + self.delivery_full
             + self.payload_too_long
     }
 }

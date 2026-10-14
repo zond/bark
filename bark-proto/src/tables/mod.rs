@@ -72,6 +72,22 @@ pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
     Duration::from_micros(total)
 }
 
+/// How long an upstream sender spends retrying a hand-over after its
+/// first attempt, when every attempt goes unanswered: the retries, each
+/// waiting the longest before it ([`retry_waits`]) and for the channel,
+/// carrying a full frame and waiting out the ACK timeout. 2.38 s with the
+/// design's 100 ms timeout and three attempts (§9.3).
+pub const fn retrying_span(
+    ack_timeout: Duration,
+    hop_attempts: u8,
+    retry_backoff: Duration,
+) -> Duration {
+    Duration::from_micros(
+        attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64
+            + retry_waits(retry_backoff, hop_attempts).as_micros(),
+    )
+}
+
 /// Table sizes against the RAM budget of design §15.
 #[cfg(test)]
 mod sizes {
@@ -88,6 +104,11 @@ mod sizes {
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), 262);
+        // The send queue's places follow from the duty bucket (§9.3), and
+        // the delivery queue's from a full leaf table over one TTL
+        // (§10.4); together 20.5 KiB, where 16 and 64 places took 20.1.
+        assert_eq!(send_queue::SEND_QUEUE, 40);
+        assert_eq!(delivery::DELIVERY_QUEUE, 41);
         // Whole tables: entries times capacity, and a few words of bookkeeping.
         let tables = [
             (

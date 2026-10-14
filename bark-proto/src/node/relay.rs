@@ -147,6 +147,12 @@ pub struct Relay {
     delivered: Delivered,
     /// When queued deliveries are next retried (§10.4: every 60 s).
     delivery_retry_at: Instant,
+    /// The send queue may have room for the delivery queue: a hand-over
+    /// ended or the delivery queue changed.
+    feed_due: bool,
+    /// When the bucket will fit the DELIVER the send queue last had no
+    /// room for, as a hand-over the bucket cannot fit yet is deferred.
+    feed_at: Option<Instant>,
 }
 
 impl Relay {
@@ -192,6 +198,8 @@ impl Relay {
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::from_config(&config),
             delivery_retry_at: Instant::ZERO,
+            feed_due: false,
+            feed_at: None,
             config,
             rng,
         }
@@ -305,6 +313,9 @@ impl Relay {
 
     /// Start whatever is ready until the radio is busy or nothing is.
     fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.feed_due || self.feed_at.is_some_and(|t| t <= now) {
+            self.feed(false, now);
+        }
         while self.radio.idle() {
             self.prepare(now, emit);
             let awaiting = self.handover.awaiting_ack();
@@ -669,16 +680,122 @@ impl Core for Relay {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use std::vec::Vec;
 
     #[test]
     fn sizes() {
-        extern crate std;
-        // docs/core-interface.md §6: under 50 KiB with every table.
+        // docs/core-interface.md §6: under 50 KiB with every table; 50 344 B
+        // with a 40-place send queue and a 41-place delivery queue.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
         std::println!("Relay {relay} B, Leaf {leaf} B");
         assert!(relay < 50 * 1024, "{relay}");
         assert!(leaf < 1024, "{leaf}");
+    }
+
+    /// Drive `r` from its own wakeups until `until`, completing every radio
+    /// action at once on a quiet channel. Returns the frames it sent.
+    fn drive(r: &mut Relay, now: &mut Instant, until: Instant) -> Vec<(Instant, Frame)> {
+        let mut sent = Vec::new();
+        let mut pending: Vec<Action> = Vec::new();
+        loop {
+            let event = match pending.pop() {
+                Some(Action::Cad(channel)) => Event::CadDone {
+                    channel,
+                    busy: false,
+                },
+                Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+                Some(Action::Transmit(f)) => {
+                    sent.push((*now, f));
+                    *now += mac::airtime(&f);
+                    Event::TxDone
+                }
+                Some(_) => continue,
+                None => match r.next_wakeup() {
+                    Some(t) if t <= until => {
+                        *now = (*now).max(t);
+                        Event::Wakeup
+                    }
+                    _ => return sent,
+                },
+            };
+            r.handle(event, *now, &mut |a| match a {
+                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                _ => {}
+            });
+        }
+    }
+
+    /// A relay whose bucket is spent holds one message for a listening
+    /// leaf, and nothing else happens: it wakes when its bucket will fit
+    /// the DELIVER with the reply reserve, and sends it then, not at the
+    /// 60 s retry (protocol §9.3, §10.4).
+    #[test]
+    fn a_deliver_waits_for_the_bucket_not_the_retry() {
+        use crate::ids::{LeafId, MsgId};
+        use crate::tables::budget::REPLY_RESERVE;
+        use crate::tables::delivery::Queued;
+        use crate::wire::{Deliver, RxMode};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        assert!(!r.booting());
+        now = Instant::ZERO + Duration::from_secs(10);
+        let leaf = LeafId([7; 4]);
+        r.leaves.attached(leaf, RxMode::Listening, now).unwrap();
+        r.budget.record(r.budget.available(now), now);
+        let q = Queued::new(MsgId(42), leaf, b"later", now).unwrap();
+        r.delivery.push(q);
+        r.feed_due = true;
+        r.handle(Event::Wakeup, now, &mut |_| {});
+        assert!(r.queue.is_empty(), "taken with a spent bucket");
+        let deliver = Deliver {
+            dst_leaf: leaf,
+            msg_id: MsgId(42),
+            payload: b"later",
+        };
+        let frame = mac::frame(&Packet::Deliver(deliver), r.home, MIN_PREAMBLE_SYMBOLS);
+        let fits = r
+            .budget
+            .allowed_at(mac::airtime(&frame), REPLY_RESERVE, now)
+            .unwrap();
+        assert_eq!(r.next_wakeup(), Some(fits));
+        let retry = r.delivery_retry_at;
+        assert!(
+            retry > fits + Duration::from_secs(10),
+            "the retry is far off"
+        );
+        let sent = drive(
+            &mut r,
+            &mut now,
+            Instant::from_micros(retry.as_micros() - 1),
+        );
+        let delivers: Vec<_> = sent
+            .iter()
+            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
+            .collect();
+        assert_eq!(
+            delivers.len(),
+            3,
+            "three attempts at a leaf that never answers"
+        );
+        let first = delivers[0].0;
+        assert!(first >= fits, "sent before the bucket fit it");
+        assert!(
+            first.since(fits) < Duration::from_millis(1),
+            "sent {:?} after the bucket fit it",
+            first.since(fits)
+        );
     }
 }

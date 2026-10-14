@@ -99,26 +99,25 @@ The core never inspects a payload (design §11: the app owns identity and encryp
 
 ## 6. Memory
 
-`Relay` holds its tables inline (design §15). Sizes as built, 2026-10-14, checked by the
+`Relay` holds its tables inline (design §15). Sizes as built, 2026-10-15, checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
 | Neighbours (§8.2) | 64 × 48 B | 3.0 KiB |
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
-| Delivery queue (§10.4) | 64 × 256 B | 16.0 KiB |
+| Delivery queue (§10.4) | 41 × 256 B | 10.3 KiB |
 | Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
-| Send queue (§9.3) | 16 × 262 B | 4.1 KiB |
+| Send queue (§9.3) | 40 × 262 B | 10.2 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget (§9.4) and busy estimate (§6.1) | 16 B + 348 B | 0.4 KiB |
-| **All** | | **48.1 KiB** |
+| **All** | | **48.5 KiB** |
 
-The whole `Relay` is 49 928 B (48.8 KiB), under the 50 KiB target; besides the tables it
-holds the medium access, the hand-over and nine owed replies. Design §15 budgets about 41 KB
-for the same tables; the difference is the record's tried mask (8 B per record, 4.9 KiB),
-the neighbour's demotion and busy times (16 B per entry), and the delivery queue holding
-234-byte payloads (§15 still counts 198). Checked by the tests in `tables/mod.rs` and
-`node/relay.rs`.
+The send queue's 40 places follow from the duty bucket (design §9.3), and the delivery
+queue gives up the memory for them: its 41 places hold what arrives in one delivery TTL for
+a full leaf table (§10.4). The whole `Relay` is 50 344 B (49.2 KiB), under the 50 KiB
+target; besides the tables it holds the medium access, the hand-over and nine owed replies.
+Checked by the tests in `tables/mod.rs` and `node/relay.rs`.
 
 `Leaf` is 744 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).

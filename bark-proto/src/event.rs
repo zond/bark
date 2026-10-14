@@ -120,7 +120,8 @@ pub enum FailReason {
     Budget,
     /// This relay originated it and has no neighbour left to try (design §9.2.5).
     NoRoute,
-    /// The send queue had no room for it (design §9.3); a leaf holds one
+    /// The send queue or, for one of this relay's leaves, the delivery
+    /// queue had no room for it (design §9.3, §10.4); a leaf holds one
     /// message at a time.
     QueueFull,
     /// The payload is longer than a DATA frame holds (design §14: 234 bytes).
@@ -140,9 +141,10 @@ pub enum DropReason {
     /// while its packet waited in the send queue (design §9.2.2): without
     /// the record the search cannot go on from here.
     RecordLost,
-    /// The send queue had no room (design §9.3).
+    /// The send queue had no place (design §9.3).
     SendQueueFull,
-    /// The duty-cycle budget had no room (design §9.4).
+    /// The duty-cycle bucket could not fit it with everything queued
+    /// (design §9.2.4, §9.4).
     Budget,
     /// The hand-over back to the parent failed (design §9.2.5, §9.3).
     ReturnFailed,
@@ -154,9 +156,9 @@ pub enum DropReason {
     RelayGone,
     /// Its leaf did not collect it within the delivery TTL (design §10.4).
     QueueExpired,
-    /// The delivery queue was full and a newer message took its place
-    /// (design §10.4, `tables/delivery.rs`).
-    QueueDisplaced,
+    /// The delivery queue had no room for a message to one of this
+    /// relay's leaves (design §10.4).
+    DeliveryFull,
     /// The payload is longer than a DATA frame holds (design §14).
     PayloadTooLong,
 }
@@ -254,7 +256,8 @@ pub enum Trace {
     Refused {
         /// The message.
         msg_id: MsgId,
-        /// [`DropReason::SendQueueFull`] or [`DropReason::Budget`].
+        /// [`DropReason::SendQueueFull`], [`DropReason::Budget`] or
+        /// [`DropReason::DeliveryFull`].
         reason: DropReason,
     },
     /// The receiver of a hand-over refused it with BUSY (design §9.3).
