@@ -37,7 +37,8 @@ The protocol core does not allocate and has no external routing dependency.
 ## Writing
 
 Describe mechanisms in their own terms. Never name other projects as the origin of code or
-ideas, in code, comments, docs or commit messages.
+ideas, in code, comments, docs or commit messages. A dated research note may cite another
+project as the source of a fact, such as a pin assignment.
 
 Documents describe what we do. Mention an alternative only when it is obvious or very
 common and a reader would otherwise ask why not.
