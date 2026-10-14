@@ -301,9 +301,20 @@ Per node, up to 64 entries:
   `fail_count ≥ 2` is not used as a next hop until its next heartbeat
   resets it. Heartbeat expiry takes minutes; a failed forward must demote
   at once.
-- **Eviction** when full: least recently heard. (Open item O4: rooftop
-  relays hear ~270 relays; a geographically diverse set is better for
-  greedy routing than the 64 most recent.)
+- **Eviction** when full and a relay not in the table is heard: the
+  newcomer replaces the least recently heard demoted entry; failing that,
+  the least recently heard entry if it has not been heard for a
+  worst-case rotation, 13 × 15 s = 195 s (§7), so it has certainly missed
+  a heartbeat on this channel; failing that, the newcomer is not added
+  (roadmap D12). Replacing the least recently heard entry outright does
+  not work for a rooftop relay that hears ≈270 relays (§13): about two
+  heartbeats a second arrive on its channel, most from relays not in the
+  table, so each entry would last about 64 / 2 ≈ 30 s and every failure
+  count would be forgotten within a minute. Keeping incumbents holds an
+  equally arbitrary 64, keeps their failure counts, and replaces exactly
+  the entries that are failing or silent. Choosing a set spread around
+  the relay, which would serve greedy routing better, is left to the
+  simulator (open item O4).
 
 Leaves are not in the neighbour table; they are in the leaf table (§10).
 
@@ -904,7 +915,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
 | O2 | Finalise packet formats (§14) | step 4 |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
-| O4 | Neighbour-table eviction policy for rooftop relays that hear hundreds | step 2 |
+| O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule (§8.2) | simulator |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
 | O7 | Sending to an area (address = position + radius, leaf_id = broadcast) | later |
 | O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | later |
