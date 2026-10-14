@@ -32,12 +32,12 @@ mod sizes {
             std::println!("{name:>10}: {size:>6} B");
         }
         // Per-entry sizes the capacities multiply.
-        assert_eq!(size_of::<neighbours::Neighbour>(), 32);
+        assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 40);
         assert_eq!(size_of::<leaves::LeafEntry>(), 16);
         assert_eq!(size_of::<delivery::Queued>(), 256);
         // Whole tables, with headroom for the length and parameter fields.
         let bound = |entries: usize, entry: usize| entries * entry + 64;
-        assert!(sizes[0].1 <= bound(neighbours::NEIGHBOURS, 32));
+        assert!(sizes[0].1 <= bound(neighbours::NEIGHBOURS, 40));
         assert!(sizes[1].1 <= bound(leaves::LEAVES, 16));
         assert!(sizes[2].1 <= bound(delivery::DELIVERY_QUEUE, 256));
         assert!(sizes[3].1 <= bound(recent_rx::RELAY_RECENT_RX, 4));

@@ -47,6 +47,8 @@ pub struct Config {
     pub demote_after_failures: u8,
     /// Neighbour expiry in heartbeat rotations (design §8.2: 3, ≈400 s).
     pub neighbour_expiry_rotations: u8,
+    /// Rotations a demotion lasts without an ACK (design §8.2: 3, 390 s).
+    pub demotion_rotations: u8,
     /// Leaf keepalive interval (design §10.2: 60 s).
     pub keepalive: Duration,
     /// Delivery-queue entry lifetime (design §10.4: 10 min).
@@ -89,6 +91,7 @@ impl Default for Config {
             hop_attempts: 3,
             demote_after_failures: 2,
             neighbour_expiry_rotations: 3,
+            demotion_rotations: 3,
             keepalive: Duration::from_secs(60),
             delivery_ttl: Duration::from_secs(600),
             busy_ema_inverse: 600,
