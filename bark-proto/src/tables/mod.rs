@@ -42,7 +42,7 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
 /// the starts are more than this apart, the first frame and the ACK that
 /// answers it, so they come apart with probability `(1 − unit / W)²`:
 /// never at `W` = one unit, 1/4 at two, 9/16 at four, for full frames.
-/// Hence [`retry_window`] starts at two units and doubles (roadmap D20).
+/// Hence [`retry_window`] starts at two units and doubles (roadmap D22).
 pub const RETRY_BACKOFF: Duration = Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),

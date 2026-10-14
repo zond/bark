@@ -18,7 +18,7 @@
 //!    failed. The window is twice the time one hand-over holds its
 //!    receiver and doubles per attempt ([`retry_window`]), so that two
 //!    senders that cannot hear each other and have collided at the
-//!    receiver come apart (§9.3, roadmap D20).
+//!    receiver come apart (§9.3, roadmap D22).
 //!
 //! An ACK matches only if it names both the message and the receiver
 //! (roadmap D19). An ACK that arrives after the timeout but before the
