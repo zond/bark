@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Sans-IO protocol core for the bark 433 MHz LoRa mesh: codecs, tables, routing, MAC."
 
 [dependencies]
+libm = "0.2"
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }

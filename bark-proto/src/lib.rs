@@ -15,6 +15,7 @@
 extern crate std;
 
 pub mod event;
+pub mod geo;
 pub mod ids;
 pub mod node;
 pub mod position;
