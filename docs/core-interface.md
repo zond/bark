@@ -107,8 +107,5 @@ action at a time, and the core never allocates.
   - DELIVER carries at most the same 198-byte payload: it only ever carries a DATA
     payload onward.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
-  - NACK reason codes: 1 busy (§9.4), 2 queue TTL expired (§10.4), 3 unknown leaf
-    (§9.2), 4 no route (§9.2); 0 reserved; unknown codes are carried through.
-    The NACK's `msg_id` field is the NACK's own; the failed message's is in the payload.
   - `aux` is unused in ACK and DELIVER: sent as zero, ignored on receipt. A fixed-size
     packet with trailing bytes is rejected.

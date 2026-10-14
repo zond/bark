@@ -15,8 +15,8 @@ section numbers are its sections).
 | D6 | **Keep the stock bootloader.** Application linked at `0x26000`, flashed as UF2 (family `0xADA52840`, volume `TECHOBOOT`). | The T-Echo ships Adafruit's UF2 bootloader with SoftDevice S140 6.1.1 occupying `0x1000..0x26000`. Replacing it needs SWD and buys nothing. nrf-sdc does not use the SoftDevice; the slot simply stays reserved. |
 | D7 | Repository is `bark`; crates `bark-proto`, `bark-sim`, `bark-fw`. `bark-fw` is a separate Cargo workspace. | Answers design open item O9. A crate that only builds for `thumbv7em-none-eabihf` cannot share a workspace with host tests without nightly per-package targets. |
 | D8 | **`bark-proto` does not allocate.** Tables are fixed-capacity arrays sized by the design. | Every table is bounded by the design anyway (§8.2, §10.2, §10.4). No allocator on the firmware means no allocation failure path; fixed-size `Leaf`s let the simulator hold twenty thousand in cache. |
-| D10 | **DATA carries the origin relay's position** (`src_pos`); failure notices are routed to it and handed to the leaf. | Without it a NACK had nowhere to go: the sender's address is only inside the encrypted payload. Cost: 7 bytes per DATA packet, and relays on the path learn which relay a message entered at, though not which leaf. The alternative, no notices at all, leaves the app waiting out the 10-minute queue TTL to learn of any failure. (Spec §9.5.) |
-| D11 | **A repeat is a duplicate if its visited list is the same length, a DFS backtrack if longer.** The owner relay remembers delivered IDs for the queue TTL. | Duplicate suppression on `msg_id` alone would swallow every backtrack; a short recent-RX window alone would let a retry deferred by the duty budget be delivered twice. (Spec §9.3, §10.4.) |
+| D10 | **No failure notices.** The per-hop ACK is the only acknowledgement in the protocol; whether a message arrived is the app's business, inside the encrypted payload. | A network-level notice needs a sender address in the header, which the design keeps out of the header on purpose. Decided 2026-10-14 after the first draft added one. |
+| D11 | **DFS state lives in the relay, not only in the packet.** Per forwarded message a relay keeps its parent and the neighbours it has tried; the packet's visited list is the skip list and identifies the previous hop. A repeat from the parent is a retransmission, from a child a backtrack. The owner relay remembers delivered IDs for the queue TTL. | Backtracking needs to know who sent the repeat; the sender's identity comes from the last visited entry, which keeps the header free of a source field. Revised 2026-10-14; the first draft keyed on visited-list length alone, which cannot tell a retransmission from a backtrack when the child's append was lost. (Spec §9.2, §9.3.) |
 | D9 | **One timer per core.** The core exposes `next_wakeup()`; the driver delivers `Event::Wakeup` when its clock reaches it. | No timer identifiers cross the boundary, the simulator keeps one heap entry per core, the firmware one embassy timer. Fixed in `docs/core-interface.md`. |
 
 ## Phases
@@ -24,7 +24,7 @@ section numbers are its sections).
 ### Phase 0: skeleton and protocol core (now)
 
 - Cargo workspace, CI for host tests.
-- `bark-proto`: wire codecs for every packet in design §14 (heartbeat, ACK, ATTACH, DATA, NACK, DELIVER), the 7-byte position codec (§7), local tangent-plane distance (§11), neighbour table, leaf table, delivery queue, recent-RX window, busy estimator and home-channel rule (§6), heartbeat scheduler (§7), per-hop transfer state machine (§9.3), duty-cycle budget (§3).
+- `bark-proto`: wire codecs for every packet in design §14 (heartbeat, ACK, ATTACH, DATA, DELIVER), the 7-byte position codec (§7), local tangent-plane distance (§11), neighbour table, leaf table, delivery queue, recent-RX window, busy estimator and home-channel rule (§6), heartbeat scheduler (§7), per-hop transfer state machine (§9.3), duty-cycle budget (§3).
 - Tables and routing: a bounded visited list of 16-bit position hashes for DFS (§8.1), a recent-RX window keyed by 32-bit `msg_id`, a neighbour table keyed by 7-byte position with channel and `fail_count` and expiry after three rotations, and a routing decision function that picks the neighbour nearest to the destination, falls back to DFS when no neighbour is closer, and applies the owner rule for leaves.
 - Exit criterion: every codec round-trips under property tests; a two-node unit test exchanges heartbeat, ATTACH, DATA, ACK through the core with a fake clock.
 
@@ -33,7 +33,7 @@ section numbers are its sections).
 See `simulator-design.md`. Milestones:
 
 1. Three relays in a line, one leaf: greedy forward, ACK, demotion when the middle relay dies. Mirrors bench step 4 so the same scenario later runs on hardware.
-2. One km² block, ~10 relays, ~80 leaves: attach, keepalive, delivery, queue, NACK (bench step 5).
+2. One km² block, ~10 relays, ~80 leaves: attach, keepalive, delivery, queue (bench step 5).
 3. Channel selection: inject a busy channel, confirm avoidance and no oscillation among relays that all hear each other (bench step 3).
 4. Capacity: a 28 km² collision domain, ~270 relays, 20k leaves, texts at the §13 rates. Measure delivery ratio, latency, per-channel busy fraction, per-relay airtime, where the 10% cap binds first.
 5. Sweep the unknowns: adjacent-channel rejection at 125 kHz spacing (bench item C1), hearing radius, SF5 sensitivity, heartbeat interval. Produce the table that replaces §13.

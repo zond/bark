@@ -321,23 +321,32 @@ previous message (the sender address is carried in the encrypted payload),
 from a QR code, or from a directory; the network provides no lookup.
 Geocast to an area is a natural extension (open item O7).
 
-Every DATA packet also carries `src_pos`, the position of the relay where
-it entered the network, so that a failure notice can be routed back
-(§9.5). The originating leaf's ID is not in the header; it travels in the
-encrypted payload.
+The network carries no sender address and sends no failure notices. The
+only acknowledgement in the protocol is the per-hop ACK (§9.3); whether a
+message arrived, and what to do if it did not, is the app's business, with
+whatever acknowledgement it puts inside the encrypted payload.
 
 ### 9.2 Greedy forwarding
 
 Forward to the neighbour (relay role, not demoted) that minimises
 Euclidean distance to the destination position. If no neighbour is closer
-than self, enter DFS void recovery: forward to the nearest non-demoted
-neighbour not in the packet's visited list, appending self; a node with no
-unvisited neighbour returns the packet to the hop it came from, which tries
-its next candidate. The previous hop is the last entry of the visited list,
-matched against the neighbour table by hash, and is reached on the channel
-in `aux`. The visited list is carried in the packet and bounded;
-when it fills, the packet is NACKed. DFS is for geographic voids only; it is never used
-to search for an ID.
+than self, enter DFS void recovery.
+
+Each relay keeps, for every message it has forwarded and for a bounded
+time, the neighbour it first received the message from (its parent) and
+the neighbours it has tried. At a dead end it forwards to the nearest
+untried neighbour that is not in the packet's visited list; when none is
+left it returns the message to its parent, which continues with its own
+next untried neighbour. The originating relay with nothing left to try
+drops the message.
+
+The packet's visited list holds the hash of every relay that has forwarded
+it, appended on each forward, and is bounded; when it fills, the packet is
+dropped. Its last entry identifies the previous hop, matched against the
+neighbour table by hash with the home channel in `aux` as tie-break. A
+repeat that arrives from the parent is a retransmission and is only ACKed;
+a repeat from a neighbour we forwarded to is a backtrack. DFS is for
+geographic voids only; it is never used to search for an ID.
 
 A relay **owns** a destination when it is the closest relay the packet can
 reach: no non-demoted neighbour is closer to `(x, y)`. The owner looks
@@ -346,8 +355,8 @@ reach: no non-demoted neighbour is closer to `(x, y)`. The owner looks
 
 If the owner is not within 50 m of `(x, y)`, the addressed relay has
 probably died or moved. The owner may ask its direct neighbours once
-whether they hold `leaf_id` (one hop, one round); if none does, queue and
-NACK. Nothing wider: a wider search is a flood.
+whether they hold `leaf_id` (one hop, one round); if none does, queue.
+Nothing wider: a wider search is a flood.
 
 ### 9.3 Per-hop transfer
 
@@ -371,27 +380,17 @@ included, on its home channel, and leaves it only for its own transmit
 bursts.** A leaf's home channel is its relay's, so leaf ↔ relay traffic
 and its ACKs never retune at all. A relay is deaf for ≈15 ms per packet it
 forwards or ACKs; a sender that gets no ACK simply retries. A receiver
-recognises a repeat by `msg_id` and visited-list length: the same length is
-a duplicate, ACKed again and not forwarded; a longer list is a DFS
-backtrack and is processed. Accepted cost of one radio.
+that has already handled a message classifies a repeat by who sent it: from
+its parent, a retransmission, ACKed and otherwise ignored; from a neighbour
+it forwarded to, a backtrack (§9.2). Accepted cost of one radio.
 
 ### 9.4 Duty cycle cap
 
 At SF5, 10% of airtime is ≈180 B/s per relay. A busy relay saturates
 before its channel does. Greedy forwarding does not load-balance; central
 rooftop relays will be the first to hit this. When the budget is
-exhausted the relay stops forwarding (NACKs with reason `busy`) but keeps
-heartbeating.
-
-### 9.5 Failure notices
-
-A relay that cannot forward a message (visited list full, no route, budget
-exhausted) or cannot deliver it (unknown leaf, queue expired) sends a NACK:
-a DATA packet addressed to `(src_pos, 0)` whose payload is the reason and
-the failed `msg_id`. The origin relay keeps `(msg_id, leaf_id)` for every
-message it accepted from a leaf, for the delivery TTL, and hands the notice
-to that leaf as a DELIVER with `aux = 1`. A NACK that cannot be routed is
-dropped; nothing NACKs a NACK.
+exhausted the relay stops forwarding and drops what it cannot send, but
+keeps heartbeating.
 
 ---
 
@@ -435,11 +434,10 @@ ACK. Preamble length per the leaf's declared receive mode (§10.5).
 ### 10.4 Delivery queue
 
 Bounded, not a mailbox: up to 64 messages per relay, TTL 10 minutes.
-Retry delivery on the leaf's next keepalive and every 60 s. On expiry,
-send a NACK to the origin relay (§9.5). The owner remembers delivered
-`msg_id`s for the TTL and ACKs a repeat without delivering it twice.
-Rationale: a queued message costs no
-airtime, a failed delivery costs a NACK and a retry across the city; the
+Retry delivery on the leaf's next keepalive and every 60 s. On expiry the
+message is dropped. The owner remembers delivered `msg_id`s for the TTL
+and ACKs a repeat without delivering it twice. Rationale: a queued message
+costs no airtime, a failed delivery costs a retry across the city; the
 common case is a phone in a pocket, a basement, or the metro for a few
 minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
 
@@ -584,14 +582,12 @@ ACK       0x3: first(1) msg_id(4)                                           = 5
           sent on the original sender's home channel; aux unused
 ATTACH    0x4: first(1) leaf_id(4) relay_pos(7)                             = 12
           aux = leaf receive mode (§10.5)
-DATA      0x5: first(1) dst_hop(7) msg_id(4) dst_pos(7) dst_leaf(4) src_pos(7)
-               hops(1) visited_len(1) visited(2×n) payload                  = 32 + 2n + payload
+DATA      0x5: first(1) dst_hop(7) msg_id(4) dst_pos(7) dst_leaf(4) hops(1)
+               visited_len(1) visited(2×n) payload                          = 25 + 2n + payload
           aux = sender's home channel, so the receiver knows where to ACK
-NACK      0x7: DATA layout addressed to (src_pos, 0);
-               payload = reason(1) + failed msg_id(4)                       (§9.5)
 DELIVER   0x6: first(1) dst_leaf(4) msg_id(4) payload                       = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
-          aux = 0 message, 1 failure notice (payload = reason(1) + msg_id(4))
+Type 0x7 is unassigned.
 ```
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
@@ -599,9 +595,8 @@ after 8 bytes. There is no `src_hop`: the ACK goes to the channel in
 `aux` and is matched by `msg_id` on the sender side, demotion is a
 sender-side decision, and DFS backtracking uses the visited list. `msg_id`
 is a 32-bit random value chosen at origination and kept across hops;
-duplicate suppression keeps a recent-RX window on it and the visited
-length (§9.3). The originating leaf's ID is inside the encrypted payload,
-not in the header; `src_pos` names only the relay it entered at.
+duplicate suppression keeps a recent-RX window on it (§9.3). The sender's address is inside the encrypted payload, not
+in the header.
 
 ---
 
@@ -615,7 +610,7 @@ D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; recent-RX window,
-delivered window, origin table, busy estimates and duty budget together
+delivered window, busy estimates and duty budget together
 under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB. Comfortable.
 
 **Bring-up order** (each step is a demonstrable milestone on real boards):
@@ -631,7 +626,7 @@ under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB. Comfortable.
 4. Greedy forwarding + per-hop ACK across three relays in a line, with
    attenuators or distance so A cannot hear C. Demotion on a powered-off
    middle relay.
-5. Leaf attach, keepalive, delivery, queue, NACK. **This is the loop every
+5. Leaf attach, keepalive, delivery, queue. **This is the loop every
    user feels; prototype it before anything clever.**
 6. BLE GATT + minimal phone app.
 7. Field test: a dozen relays on windowsills across a few blocks.

@@ -66,7 +66,7 @@ A leaf is a node whose protocol core is in leaf role: camps on its relay's chann
 
 Logged per run as CSV/JSON, with the scenario and seed embedded:
 
-- Delivery ratio and NACK ratio, by distance bucket and hop count.
+- Delivery ratio and where undelivered messages were dropped, by distance bucket and hop count.
 - End-to-end latency distribution (origination to leaf ACK), split into per-hop wait, LBT backoff, retransmits, queue dwell.
 - Per-channel busy fraction over time, at a chosen set of observer nodes.
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
@@ -136,7 +136,7 @@ Firmware maps `Action` onto `lora-phy` calls and embassy timers; the simulator m
 
 | # | Scenario | Checks | Bench twin |
 |---|---|---|---|
-| S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, NACK path | design step 4 |
+| S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, drop after B dies | design step 4 |
 | S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | attach, keepalive load (≈2%), delivery, queue, dark phones | step 5 |
 | S3 | S2 plus an interferer on channel 6 and three rooftop relays that all hear each other | avoidance, move hysteresis, no joint jumps | step 3 |
 | S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, §13 rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
