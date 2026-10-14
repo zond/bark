@@ -18,6 +18,7 @@ pub mod rng;
 pub mod scenario;
 pub mod sim;
 pub mod summary;
+mod trace;
 
 pub use scenario::Scenario;
 pub use sim::Sim;

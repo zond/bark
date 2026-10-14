@@ -22,6 +22,7 @@ use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
     resolve, Destination, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
 };
+use crate::trace::{Names, Tracer};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, FailReason, Frame,
@@ -364,6 +365,8 @@ pub struct Sim {
     /// the first scripted removal.
     pub(crate) settle: Instant,
     pub(crate) removal: Option<Instant>,
+    /// The event trace, when asked for (`Sim::trace_to`).
+    tracer: Option<Tracer>,
 }
 
 fn secs(s: f64) -> Duration {
@@ -490,6 +493,7 @@ impl Sim {
                 .filter(|e| e.action == ScriptAction::Remove)
                 .map(|e| Instant::ZERO + secs(e.at_s))
                 .min(),
+            tracer: None,
         };
         sim.setup(sc, &placed)?;
         Ok(sim)
@@ -734,9 +738,25 @@ impl Sim {
         }
     }
 
+    /// Write the per-node event trace (`trace.rs`) to `out` from now on.
+    pub fn trace_to(&mut self, out: Box<dyn std::io::Write>) {
+        let n = self.nodes.len() as u32;
+        let names = Names {
+            labels: (0..n).map(|i| self.label(i)).collect(),
+            relays: (0..self.n_relays)
+                .map(|i| (self.positions[i as usize].short().0, i))
+                .collect(),
+            leaves: (self.n_relays..n).map(|i| (self.leaf_id(i).0, i)).collect(),
+        };
+        self.tracer = Some(Tracer::new(out, names));
+    }
+
     /// Run to the scenario end.
     pub fn run(&mut self) {
         self.run_until(self.end);
+        if let Some(t) = &mut self.tracer {
+            t.flush();
+        }
     }
 
     /// Process every event at or before `t`, then set the clock to `t`.
@@ -809,6 +829,9 @@ impl Sim {
         let mut buf = std::mem::take(&mut self.actions);
         buf.clear();
         let now = self.now;
+        if let Some(t) = &mut self.tracer {
+            t.event(now, node, &ev, &self.msg_tags);
+        }
         let wake = if node < self.n_relays {
             let c = &mut self.relays[node as usize];
             c.handle(ev, now, &mut |a| buf.push(a));
@@ -840,6 +863,8 @@ impl Sim {
     /// Perform one action for `node`. `scripted` actions come from the
     /// scenario rather than the core; their completions go to the log.
     fn apply(&mut self, node: u32, a: Action, scripted: bool) {
+        // After the action, so that an accepted message has its tag.
+        let traced = (!scripted && self.tracer.is_some()).then_some(a);
         match a {
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
@@ -852,6 +877,9 @@ impl Sim {
                 self.message_dropped(node, msg_id, reason)
             }
             Action::Trace(_) => {}
+        }
+        if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
+            t.action(self.now, node, &a, &self.msg_tags);
         }
     }
 
@@ -1309,6 +1337,9 @@ impl Sim {
         if !self.nodes[node as usize].alive {
             return;
         }
+        if let Some(t) = &mut self.tracer {
+            t.note(self.now, node, "removed");
+        }
         self.abort_lock(node, Deaf::Absent);
         self.clear_arrivals(node);
         let st = &mut self.nodes[node as usize];
@@ -1395,6 +1426,9 @@ impl Sim {
             return;
         }
         let present = self.nodes[n as usize].present;
+        if let Some(t) = &mut self.tracer {
+            t.note(self.now, n, if present { "dark" } else { "back" });
+        }
         let next = if present {
             // Going dark: out of reach of everything now on the air.
             self.abort_lock(n, Deaf::Absent);

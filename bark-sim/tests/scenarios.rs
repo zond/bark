@@ -385,3 +385,31 @@ fn s2_block_smoke() {
         );
     }
 }
+
+/// The event trace (`--trace FILE`) records a message from end to end and
+/// does not change the run.
+#[test]
+fn trace_follows_a_message_and_changes_nothing() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s1-line.toml");
+    let sc = Scenario::load(&path).expect("S1 parses");
+    let (plain, _) = run(&sc);
+    let file = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s1.trace");
+    let mut sim = Sim::new(&sc).expect("S1 builds");
+    sim.trace_to(Box::new(std::fs::File::create(&file).unwrap()));
+    sim.run();
+    assert_eq!(sim.summary().json(), plain);
+    let trace = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<_> = trace.lines().filter(|l| l.contains("#20")).collect();
+    for step in [
+        "leaf 3 (LA): app send #20",
+        "relay 0 (A): forwarded #20 to relay 1 (B)",
+        "relay 2 (C): queued #20 for leaf 4 (LC)",
+        "leaf 4 (LC): app message #20",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.contains(step)),
+            "{step:?} not in\n{}",
+            lines.join("\n")
+        );
+    }
+}

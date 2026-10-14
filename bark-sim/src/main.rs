@@ -1,13 +1,14 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
-//! [--json FILE] [--csv FILE]`. Prints a short table; writes the JSON
-//! summary and the CSV time series when asked.
+//! [--json FILE] [--csv FILE] [--trace FILE]`. Prints a short table;
+//! writes the JSON summary, the CSV time series and the per-node event
+//! trace when asked.
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--trace FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -22,7 +23,7 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let mut path = None;
-    let (mut seed, mut duration, mut json, mut csv) = (None, None, None, None);
+    let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -45,6 +46,7 @@ fn run() -> Result<(), String> {
             }
             "--json" => json = Some(PathBuf::from(val("--json")?)),
             "--csv" => csv = Some(PathBuf::from(val("--csv")?)),
+            "--trace" => trace = Some(PathBuf::from(val("--trace")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -66,6 +68,10 @@ fn run() -> Result<(), String> {
     }
     let t0 = std::time::Instant::now();
     let mut sim = Sim::new(&sc)?;
+    if let Some(p) = &trace {
+        let f = std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        sim.trace_to(Box::new(std::io::BufWriter::new(f)));
+    }
     let built = t0.elapsed();
     sim.run();
     let ran = t0.elapsed() - built;
