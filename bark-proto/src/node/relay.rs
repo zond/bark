@@ -15,13 +15,13 @@
 //! it starts the first job that is ready, in that order: an owed ACK is
 //! worth nothing once its sender stops waiting, 100 ms after the frame
 //! (§9.3). A job that has begun a sequence of excursions (CAD, RSSI,
-//! transmit; or the thirteen sweep readings) continues it from each
-//! completion event, so sequences never interleave; the hand-over alone
-//! lets an owed ACK in before it transmits, since its frame can take
-//! 139 ms on air. While a hand-over waits for its ACK, only owed ACKs use
-//! the radio: the heartbeat and the sweep would take the relay off its
-//! home channel, where the ACK arrives (§9.3). Jobs that are not ready say
-//! when they will be, and the earliest of those is `next_wakeup`.
+//! transmit) continues it from each completion event, so sequences never
+//! interleave; the hand-over alone lets an owed ACK in before it
+//! transmits, since its frame can take 139 ms on air. While a hand-over
+//! waits for its ACK, only owed ACKs use the radio: the heartbeat and the
+//! sweep would take the relay off its home channel, where the ACK arrives
+//! (§9.3). Jobs that are not ready say when they will be, and the earliest
+//! of those is `next_wakeup`.
 
 mod forward;
 mod service;
@@ -71,11 +71,12 @@ enum Check {
     Tx,
 }
 
-/// The once-a-second thirteen-channel RSSI sweep (design §6.1).
+/// The busy sweep (design §6.1): one RSSI reading at a time, channels in
+/// turn, spread over the sweep interval.
 struct Sweep {
     next_at: Instant,
-    /// The channel being read, while a sweep is in progress.
-    reading: Option<Channel>,
+    /// The channel the next reading takes.
+    channel: Channel,
     /// When the home channel was last read.
     last_home: Instant,
     /// Time spent receiving on the home channel since `last_home`.
@@ -148,7 +149,12 @@ impl Relay {
             busy: BusyEstimator::from_config(&config),
             budget: RelayBudget::new(),
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
-            sweep: Sweep { next_at: Instant::ZERO, reading: None, last_home: Instant::ZERO, receiving: Duration::ZERO },
+            sweep: Sweep {
+                next_at: Instant::ZERO,
+                channel: Channel::all().next().expect("the plan has channels"),
+                last_home: Instant::ZERO,
+                receiving: Duration::ZERO,
+            },
             beacon: Beacon {
                 next_at: Instant::ZERO,
                 ready_at: Instant::ZERO,
@@ -277,18 +283,24 @@ impl Relay {
     // --- Sweep (design §6.1) ---
 
     fn sweep_due(&self, now: Instant) -> bool {
-        self.sweep.reading.is_none() && now >= self.sweep.next_at
+        now >= self.sweep.next_at
+    }
+
+    /// Each channel once per sweep interval, one reading at a time (§6.1,
+    /// roadmap D13): one reading is away for less than the preamble leaves
+    /// the modem to lock on after it, so it costs no packet; thirteen in a
+    /// burst would.
+    fn sweep_step(&self) -> Duration {
+        self.config.sweep_interval.div(CHANNELS as u64)
     }
 
     fn start_sweep(&mut self, emit: &mut dyn FnMut(Action)) -> bool {
-        self.sweep.next_at += self.config.sweep_interval;
-        let first = Channel::all().next().unwrap_or(self.home);
-        self.sweep.reading = Some(first);
-        self.radio.start(Job::Sweep, Action::Rssi(first), emit);
+        self.sweep.next_at += self.sweep_step();
+        self.radio.start(Job::Sweep, Action::Rssi(self.sweep.channel), emit);
         true
     }
 
-    fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
+    fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
             let interval = now.since(self.sweep.last_home);
             self.busy.sample_home(channel, dbm, self.sweep.receiving, interval);
@@ -297,18 +309,16 @@ impl Relay {
         } else {
             self.busy.sample(channel, dbm);
         }
+        self.sweep.channel = channel.next();
+        // A reading held up by receptions (core-interface rule 8) or by
+        // a hand-over must not leave a backlog to take back to back.
+        if self.sweep.next_at <= now {
+            self.sweep.next_at = now + self.sweep_step();
+        }
         if channel.index() + 1 < CHANNELS {
-            let next = channel.next();
-            self.sweep.reading = Some(next);
-            self.radio.start(Job::Sweep, Action::Rssi(next), emit);
             return;
         }
-        self.sweep.reading = None;
-        // A sweep held up by receptions (core-interface rule 8) must not
-        // leave a backlog of sweeps to run back to back.
-        if self.sweep.next_at <= now {
-            self.sweep.next_at = now + self.config.sweep_interval;
-        }
+        // Once per round of the channels.
         self.neighbours.expire(now);
         self.leaves.expire(now);
         if self.stage == Stage::Running && self.config.home_override.is_none() {
@@ -492,7 +502,7 @@ impl Core for Relay {
                 Some(Job::Sweep) | None => {}
             },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
-                Some(Job::Sweep) => self.sweep_sample(channel, dbm, now, emit),
+                Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
                 Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
                 Some(Job::Ack) => self.ack_check(dbm > threshold, now, emit),

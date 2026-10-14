@@ -5,7 +5,7 @@ mod common;
 use bark_proto::radio::{time_on_air, CHANNELS, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::tables::budget::{RelayBudget, BUDGET};
 use bark_proto::wire::{Packet, HEARTBEAT_LEN};
-use bark_proto::{Channel, Config, Duration, Instant, Position, Relay, Trace};
+use bark_proto::{Action, Channel, Config, Duration, Instant, Position, Relay, Trace};
 use common::{at, ch, secs, Harness};
 
 /// A position `east`, `north` metres from a point in Kyiv.
@@ -31,8 +31,10 @@ fn rotation(c: &Config) -> Duration {
 
 /// Each relay's heartbeat lands on the other's home once per rotation
 /// (design §7), so discovery takes one rotation after boot, unless that one
-/// heartbeat arrives while the receiver is deaf in its sweep (≈9 ms a second
-/// here, ≈1 % of heartbeats); then it takes the next rotation.
+/// heartbeat arrives while the receiver is off its home channel: twelve
+/// sweep readings of 0.7 ms a second here, ≈1 % of heartbeats, since this
+/// medium loses a frame to any overlap and ignores the preamble the modem
+/// can lock on after a short gap (§6.1). Then it takes the next rotation.
 #[test]
 fn two_relays_discover_each_other_within_one_rotation() {
     let c = Config::default();
@@ -71,6 +73,44 @@ fn two_relays_discover_each_other_within_one_rotation() {
         rotation(&c).as_millis() / 1000
     );
     assert!(late <= 2, "{late} of {seeds} pairs needed a second rotation");
+}
+
+#[test]
+fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
+    // Design §6.1, roadmap D13: one reading every interval / 13, channels
+    // in turn, so the relay is off its home for one reading at a time.
+    let home = ch(4);
+    let c = Config { position: pos(0.0, 0.0), home_override: Some(home), ..Config::default() };
+    let mut h = Harness::new(vec![Relay::new(c, 5)]);
+    let (from, to) = (at(200), at(260));
+    h.run_until(to, |_| false);
+    let checks = &h.nodes[0].checks;
+    // A heartbeat's listen-before-talk is a CAD and then an RSSI reading of
+    // the same channel; every other reading is the sweep's.
+    let lbt = |k: usize| k > 0 && matches!((checks[k - 1].2, checks[k].2), (Action::Cad(a), Action::Rssi(b)) if a == b);
+    let sweep: Vec<_> = (0..checks.len())
+        .filter(|&k| checks[k].0 >= from && matches!(checks[k].2, Action::Rssi(_)) && !lbt(k))
+        .map(|k| checks[k])
+        .collect();
+    let step = c.sweep_interval.div(CHANNELS as u64);
+    let expected = to.since(from).as_micros() / step.as_micros();
+    assert!(sweep.len() as u64 + 1 >= expected && sweep.len() as u64 <= expected + 1, "{} readings", sweep.len());
+    // A heartbeat (its checks and 12 ms frame) may delay one reading; the
+    // next is back on schedule.
+    let slack = Duration::from_millis(20).as_micros() as i64;
+    for w in sweep.windows(2) {
+        let (Action::Rssi(a), Action::Rssi(b)) = (w[0].2, w[1].2) else { unreachable!() };
+        assert_eq!(b, a.next(), "channels in turn");
+        let gap = w[1].0.since(w[0].0).as_micros() as i64;
+        assert!((gap - step.as_micros() as i64).abs() < slack, "{gap} µs between readings");
+        // Back on home well before the next reading leaves it.
+        assert!(w[1].0.since(w[0].1) > Duration::from_millis(50));
+    }
+    // The reading of the home channel does not leave it (core-interface
+    // §3 rule 7); every other one does.
+    for (_, _, a, off) in &sweep {
+        assert_eq!(*off, *a != Action::Rssi(home), "{a:?}");
+    }
 }
 
 #[test]
@@ -146,9 +186,11 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
     assert!(knows(&h, 1, 0));
     // A foreign carrier appears on A's home, on 30 % of the time. (A
     // channel busy all the time would also refuse the announcement below:
-    // listen-before-talk on the channel being left.)
+    // listen-before-talk on the channel being left.) Its period shares no
+    // factor with the sweep's, so the home readings fall on every phase of
+    // it rather than always in its on or its off part.
     let jam_at = h.now;
-    h.jam_part(0, old, Duration::from_millis(30), Duration::from_millis(100));
+    h.jam_part(0, old, Duration::from_millis(32), Duration::from_millis(107));
     let moved = |h: &Harness<Relay>| h.nodes[0].traces.iter().any(|(_, t)| matches!(t, Trace::HomeChannelMoved { .. }) && h.nodes[0].core.home() != old);
     // The estimate must first cross 5 %, then hold for the dwell, then the
     // random wait: well within dwell + wait + a few minutes.

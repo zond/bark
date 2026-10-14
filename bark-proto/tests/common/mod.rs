@@ -68,6 +68,9 @@ pub struct SimNode<C: Core> {
     started: bool,
     /// Every transmission: start and airtime.
     pub airtime: Vec<(Instant, Duration)>,
+    /// Every CAD and RSSI check as it began: start, end, the action, and
+    /// whether it took the node off its resting channel.
+    pub checks: Vec<(Instant, Instant, Action, bool)>,
     pub app: Vec<(Instant, AppEvent)>,
     pub traces: Vec<(Instant, Trace)>,
     pub sent: Vec<(Instant, Frame)>,
@@ -106,6 +109,7 @@ impl<C: Core> Harness<C> {
                 wakeup: Some(Instant::ZERO),
                 started: false,
                 airtime: Vec::new(),
+                checks: Vec::new(),
                 app: Vec::new(),
                 traces: Vec::new(),
                 sent: Vec::new(),
@@ -368,6 +372,9 @@ impl<C: Core> Harness<C> {
             _ => unreachable!(),
         };
         let end = now + cost;
+        if kind != Kind::Tx {
+            self.nodes[i].checks.push((now, end, a, deaf));
+        }
         if deaf {
             self.nodes[i].deaf_until = end;
         }

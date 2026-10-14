@@ -68,6 +68,11 @@ impl Duration {
     pub const fn mul(self, n: u64) -> Duration {
         Duration(self.0 * n)
     }
+
+    /// Divide by a positive integer, rounding down.
+    pub const fn div(self, n: u64) -> Duration {
+        Duration(self.0 / n)
+    }
 }
 
 impl Add<Duration> for Instant {
