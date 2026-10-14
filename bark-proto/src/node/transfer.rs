@@ -141,9 +141,17 @@ impl Transfer {
     }
 
     /// Hold the hand-over until `until`, without starting a new
-    /// listen-before-talk period: for the duty-cycle budget, or to let an
-    /// ACK this node owes go first.
+    /// listen-before-talk period: to let an ACK this node owes go first.
     pub(crate) fn hold(&mut self, until: Instant) {
+        self.step = Step::Wait(until);
+    }
+
+    /// Hold the hand-over until the duty-cycle budget allows it. The
+    /// listen-before-talk give-up counts time the channel was found busy;
+    /// a wait of minutes for the budget is not that, so the checks after
+    /// it start a new period.
+    pub(crate) fn defer(&mut self, until: Instant) {
+        self.lbt_since = None;
         self.step = Step::Wait(until);
     }
 
@@ -540,6 +548,22 @@ mod tests {
         assert_eq!(
             t.checked(true, now + ms(499), &mut rng, ms(50)),
             Check::Busy
+        );
+    }
+
+    #[test]
+    fn a_budget_hold_starts_a_new_listen_before_talk_period() {
+        let mut rng = Rng::new(5);
+        let mut t = Transfer::new();
+        t.start(ack(1), at(0));
+        t.begin_lbt(at(0));
+        assert_eq!(t.checked(true, at(0), &mut rng, ms(50)), Check::Busy);
+        t.defer(at(60_000));
+        t.begin_lbt(at(60_000));
+        assert_eq!(
+            t.checked(true, at(60_000), &mut rng, ms(50)),
+            Check::Busy,
+            "a minute of waiting for the budget is not a busy channel"
         );
     }
 

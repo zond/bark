@@ -623,7 +623,7 @@ impl Relay {
             .budget
             .next_change(airtime, now)
             .unwrap_or(now + self.config.heartbeat_max);
-        self.handover.hold(until);
+        self.handover.defer(until);
         let msg_id = out.msg_id().unwrap_or_default();
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
         // Everything queued waits with the front.

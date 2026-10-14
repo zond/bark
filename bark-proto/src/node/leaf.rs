@@ -391,7 +391,7 @@ impl Leaf {
                 .budget
                 .next_change(airtime, now)
                 .unwrap_or(now + self.config.keepalive);
-            self.transfer.hold(until);
+            self.transfer.defer(until);
             return false;
         }
         self.transfer.begin_lbt(now);
@@ -424,7 +424,7 @@ impl Leaf {
                         .budget
                         .next_change(airtime, now)
                         .unwrap_or(now + self.config.keepalive);
-                    self.transfer.hold(until);
+                    self.transfer.defer(until);
                     return;
                 }
                 self.budget.record(airtime, now);
