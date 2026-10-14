@@ -71,7 +71,7 @@ Both regimes allow any modulation in this band.
 | Listen-before-talk | not required | not required |
 
 Implement: a rolling one-hour airtime budget per node capped at 10%; no
-single transmission longer than 1 s (SF5 packets are ≤140 ms anyway).
+single transmission longer than 1 s (SF5 packets are ≤139 ms anyway).
 Transmit power such that ERP ≤ +10 dBm with the fitted antenna: with the
 stock antenna (≈0 dBd gain) that is +10 dBm at the connector.
 
@@ -91,8 +91,8 @@ only band with identical rules in both jurisdictions.
 | Coding rate | 4/5 | |
 | Raw bit rate | 15.6 kbps at SF5 | 5.5 kbps at SF7 |
 | Symbol time | 0.256 ms at SF5 | |
-| Preamble | 8 symbols (≈2 ms) + sync; **no long preambles** except to duty-cycled leaves (§10.5) | |
-| 255-byte packet | ≈140 ms at SF5 | ≈400 ms at SF7 |
+| Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **no long preambles** except to duty-cycled leaves (§10.5) | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4) |
+| 255-byte packet | 138.6 ms at SF5 | ≈400 ms at SF7. Airtime from the datasheet formula (§6.1.4), `time_on_air` in `radio.rs` |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
 | Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: signal strength (RSSI) cannot see them, channel activity detection (CAD) can |
 | Sync word | private (not the LoRaWAN 0x34) | other LoRa networks and this one ignore each other's packets |
@@ -151,19 +151,23 @@ channel.
 Per channel, keep `busy[c]`, an exponential moving average of a 0/1 busy
 reading:
 
-- **Sweep:** once per second, when the modem reports no preamble detected
-  and no packet in progress: retune through all 13 channels, one RSSI
-  reading each (≈0.3 ms after retune), retune home. ≈5 ms, ≈0.5% of the
-  time off the home channel.
-- **Cost:** a packet whose preamble overlaps the 5 ms gap is lost and
-  retransmitted after the ACK timeout. With the 8-symbol preamble that is
-  ≈0.5% of arrivals, well below loss to collisions. Spreading the 13
-  samples across the second does not help by itself: the window lost per
-  gap is `g + 2D − P` (gap, time the modem needs to lock, preamble
-  length), and with P ≈ 2D thirteen small gaps lose as much as one burst.
-  Spreading plus a 12-symbol preamble would remove the loss, but costs
-  1 ms on every packet, ≈3% of airtime on a text plus its ACK, six times
-  the loss it prevents. If the loss ever matters, sweep every 2 s instead.
+- **Sweep:** one RSSI reading per channel per second, spread evenly: one
+  reading every 1 s / 13 ≈ 77 ms, channels in turn, each taken only when
+  the modem reports no preamble detected and no packet in progress.
+  A reading is: retune (≈0.1 ms), read (≈0.3 ms after retune), retune
+  home; ≈0.5 ms, so ≈6.5 ms per second, 0.65% of the time off the home
+  channel.
+- **Cost:** while the node is away it can miss a packet. The modem needs
+  some length `D` of preamble to lock on, taken here as 4 symbols
+  (≈1 ms; measure in bring-up step 1, §15). A packet is lost if its
+  preamble starts too late before the gap for the modem to have locked,
+  or too early in it to leave `D` after it: a window of `g + 2D − P` per
+  gap of length `g`, with `P` the preamble, 12 symbols (3.1 ms, §4). For
+  one spread reading, 0.5 + 2.0 − 3.1 < 0: no packet is lost. One burst
+  of all 13 readings, ≈5 ms, would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals
+  per second, 0.4%. Spreading loses nothing as long as
+  `D ≤ (P − g) / 2` ≈ 1.3 ms, 5 symbols; if the bench shows the modem
+  needs more, redo this comparison.
 - **Reading:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0.
   Average the 0/1 reading, not the dBm: what matters is the fraction of
   time listen-before-talk would refuse.
@@ -217,7 +221,7 @@ Every relay sends a heartbeat. Leaves do not (§10).
 | lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
 | spare | 5 | zero |
 
-8 bytes, ≈12 ms on air at SF5. There is no node ID: a relay's position
+8 bytes, 11.8 ms on air at SF5 (§4). There is no node ID: a relay's position
 **is** its identity (§8.1).
 
 The position is global: one firmware and one app everywhere, no
@@ -711,7 +715,7 @@ relays cannot overhear deliveries, because they are on different channels.
 
 | Mode | Leaf current | 850 mAh | Preamble on packets to the leaf | Hears heartbeats |
 |---|---|---|---|---|
-| Always listening | ≈5.8 mA | ≈6 days | 8 symbols | yes |
+| Always listening | ≈5.8 mA | ≈6 days | 12 symbols (§4) | yes |
 | Duty-cycled (sleep, CAD every 500 ms) | ≈0.3 mA + sleep | months | ≥512 ms | no: blind to relay changes |
 | Hybrid: full listen one rotation every 10 min, CAD between | ≈1.3 mA | ≈25 days | ≥512 ms | during the awake rotation |
 
@@ -787,7 +791,8 @@ the built-up city.
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.56 s of channel time.
+takes ≈0.64 s of channel time: per hop a 121-byte DATA packet (69.4 ms)
+and its ACK (10.6 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
