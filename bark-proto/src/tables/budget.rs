@@ -25,6 +25,13 @@
 //! one-minute buckets about `60 s × 10 % = 6 s` (1.7 % of the 360 s budget)
 //! for a node that transmits steadily at the cap.
 //!
+//! # Heartbeat reserve
+//!
+//! A relay out of budget stops forwarding but keeps sending heartbeats
+//! (§9.4), so everything but a heartbeat must leave [`heartbeat_reserve`]
+//! unspent: the airtime of the heartbeats one window holds at the mean
+//! interval, 3600 s / 10 s × 11.84 ms = 4.26 s, 0.12 % of the hour.
+//!
 //! # Sizes
 //!
 //! `S` slots hold `S − 2` buckets for the window, plus one partial at its
@@ -34,14 +41,24 @@
 //! a minute and the odd message, uses [`LeafBudget`] with five-minute
 //! buckets, a ninth of the memory.
 
-use crate::radio::{DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW};
+use crate::node::Config;
+use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::time::{Duration, Instant};
+use crate::wire::HEARTBEAT_LEN;
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration = Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
 /// Longest single transmission (design §3: 1 s; SF5 frames are ≤140 ms).
 pub const MAX_TRANSMISSION: Duration = Duration::from_secs(1);
+
+/// Airtime a relay keeps for its heartbeats in every window; see the
+/// module documentation.
+pub fn heartbeat_reserve(c: &Config) -> Duration {
+    let mean_interval = (c.heartbeat_min + c.heartbeat_max).as_micros() / 2;
+    let heartbeats = DUTY_CYCLE_WINDOW.as_micros().div_ceil(mean_interval.max(1));
+    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).mul(heartbeats)
+}
 
 /// A relay's budget: 60 one-minute buckets.
 pub type RelayBudget = Budget<62>;
@@ -95,12 +112,19 @@ impl<const S: usize> Budget<S> {
 
     /// Whether a transmission of `airtime` may start at `now`.
     pub fn would_allow(&self, airtime: Duration, now: Instant) -> bool {
+        self.would_allow_keeping(airtime, Duration::ZERO, now)
+    }
+
+    /// Whether a transmission of `airtime` may start at `now` and leave
+    /// `reserve` of the window unspent, as everything but a heartbeat must
+    /// leave [`heartbeat_reserve`].
+    pub fn would_allow_keeping(&self, airtime: Duration, reserve: Duration, now: Instant) -> bool {
         if airtime > MAX_TRANSMISSION {
             return false;
         }
         let end = now.as_micros() + airtime.as_micros();
         let start = end.saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
-        self.spent_since(start) + airtime.as_micros() <= BUDGET.as_micros()
+        self.spent_since(start) + airtime.as_micros() + reserve.as_micros() <= BUDGET.as_micros()
     }
 
     /// The earliest instant at or after `now` when [`Budget::would_allow`]
@@ -186,6 +210,30 @@ mod tests {
         assert_eq!(LeafBudget::BUCKET, Duration::from_secs(300));
         assert_eq!(core::mem::size_of::<RelayBudget>(), 62 * 8);
         assert_eq!(core::mem::size_of::<LeafBudget>(), 14 * 8);
+    }
+
+    #[test]
+    fn heartbeat_reserve_follows_the_design() {
+        let c = Config::default();
+        // 360 heartbeats of 11.84 ms in an hour at the mean 10 s interval.
+        assert_eq!(heartbeat_reserve(&c), Duration::from_micros(360 * 11_840));
+        let fast = Config { heartbeat_min: Duration::from_secs(1), heartbeat_max: Duration::from_secs(1), ..c };
+        assert_eq!(heartbeat_reserve(&fast), Duration::from_micros(3600 * 11_840));
+    }
+
+    #[test]
+    fn the_reserve_is_left_for_heartbeats() {
+        let reserve = heartbeat_reserve(&Config::default());
+        let mut b = RelayBudget::new();
+        let mut t = Instant::ZERO;
+        // Spend all but the reserve and a little, in 100 ms frames.
+        while b.would_allow_keeping(ms(100), reserve, t) {
+            b.record(ms(100), t);
+            t += ms(100);
+        }
+        assert!(b.available(t) >= reserve && b.available(t) < reserve + ms(100));
+        assert!(!b.would_allow_keeping(ms(100), reserve, t), "forwarding stops");
+        assert!(b.would_allow(ms(12), t), "a heartbeat still goes");
     }
 
     /// Spend the whole budget, then step through `next_change` until it
