@@ -300,7 +300,7 @@ Per node, up to 64 entries:
 | rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
 | fail_count | consecutive ACK failures |
 
-- **Expire** after 3 rotations (≈400 s) without a heartbeat.
+- **Expire** after 3 rotations (390 s) without a heartbeat.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
   `fail_count ≥ 2` is not used as a next hop until it ACKs a packet from
   this relay or three rotations (390 s) pass. Its heartbeats keep it in
@@ -388,15 +388,18 @@ originated:
 |---|---|
 | ID | the message ID (§14) |
 | parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin |
-| last child | the neighbour it last sent the message to, as a short name, and that neighbour's distance to the destination; none before the first send |
+| last child | the neighbour it last sent the message to, as a short name; none before the first send |
+| handed | the neighbours this relay has handed the message to, as one bit per neighbour-table slot |
 | highest hops | the largest `hops` (§9.2.6) received for the message |
 | owned | whether this relay owns the destination (§9.2.7) |
 | last active | when it last received or sent the message |
 
-The relay's **tried set** for the message is the parent, the last child,
-and every neighbour before the last child in the order of §9.2.3, which
-is fixed for a message. It is not stored as a list: the parent and the
-last child define it.
+The relay's **tried set** for the message is the parent and the
+neighbours in `handed`. A neighbour that was passed over without being
+handed the message, because it was demoted, expired or not in the table
+at the time, is not tried: if it later offers the message, it is sent
+straight back (§9.2.4, case 6), not dropped. When a neighbour-table slot
+changes hands, its bit is cleared in every record.
 
 The record is also how a relay recognises a repeat of a message it has
 handled (§9.2.4); there is no separate window of recent IDs.
@@ -410,21 +413,20 @@ give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
 §9.3) = 188.3 s. So in a search without failures no record expires while
 the message is away exploring beyond it.
 
-**Bound and eviction.** A relay holds at most 627 records; when full, a
-new record replaces the least recently active one. 627 is the most
+**Bound and eviction.** A relay holds at most 626 records; when full, a
+new record replaces the least recently active one. 626 is the most
 messages a relay can handle in one record lifetime within its duty cycle
 (§3): every message it handles costs at least an ACK (9 bytes, 11.8 ms)
 and one DATA packet with no payload (21 bytes, 18.2 ms), together
-30.0 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 30.0 ms = 627.
-A record is about 24 bytes, so 15 KB.
+30.0 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 30.0 ms = 626.
+A record is 32 bytes, so 20 KB.
 
 #### 9.2.3 Choosing the next hop
 
 One function chooses the next hop for a first send, for the next try after
 the message comes back, and after a failed hand-over (§9.3). The
 **candidates** are the neighbour-table entries that are live and not
-demoted (§8.2), except those in the tried set (§9.2.2): the parent, the
-last child, and every neighbour before the last child in the order below.
+demoted (§8.2), except those in the tried set (§9.2.2).
 
 The **order** is distance to the destination position in the local plane
 (§11), nearest first; equal distances are ordered by short name. The
@@ -468,19 +470,18 @@ The packet is one of the following, tested in this order:
    to that child, the hand-over is complete. The relay checks ownership
    again (a closer neighbour may have been demoted since) and otherwise
    chooses the next hop (§9.2.3).
-5. **From another neighbour in the tried set:** ACK only. From the parent,
-   this means the parent lost its record or the message has split in two
-   (§9.5); from an earlier child, that a hand-over the relay gave up on
-   (§9.3) had in fact succeeded, and the child has searched and returned
-   the message. Either way this relay's search has already moved on, and
-   a second one would only duplicate it.
+5. **From the parent or an earlier child (in `handed`):** ACK only. From
+   the parent, this means the parent lost its record or the message has
+   split in two (§9.5); from an earlier child, that a hand-over the relay
+   gave up on (§9.3) had in fact succeeded, and the child has searched and
+   returned the message. Either way this relay's search has already moved
+   on, and a second one would only duplicate it.
 6. **From any other relay:** that relay offered the message here not
    knowing this relay has it. Send it straight back, to `src_hop` on the
    channel in `aux`; that relay will see it as a return from its last
    child. The record does not change.
 
-Case 5 places the sender in the order of §9.2.3 by its distance to the
-destination, from its rebuilt position (§9.2.1). In every case the relay
+In every case the relay
 updates the record's highest hops, if the packet's is higher, and its
 last-active time.
 
@@ -662,7 +663,7 @@ What breaks it:
   hand-overs from each end: a send and the return or the send back. In
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
-- **State per relay:** at most 627 records of about 24 bytes, 15 KB
+- **State per relay:** at most 626 records of 32 bytes, 20 KB
   (§9.2.2); a send queue of 10 packets of up to 255 bytes, 2.5 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
@@ -712,9 +713,10 @@ the leaf's ACK. Preamble length per the leaf's receive mode (§10.5).
 
 Bounded, not a mailbox: up to 64 messages per relay, kept for 10 minutes
 (the delivery TTL). Retry delivery on the leaf's next keepalive and every
-60 s. On expiry the message is dropped. The owner remembers delivered
-message IDs (§14) for the TTL and ACKs a repeat without delivering it
-twice. A
+60 s. On expiry the message is dropped. The owner remembers the last 64
+delivered message IDs (§14) for the TTL and ACKs a repeat without
+delivering it twice; 64 is 400 leaves (§10.2) × 23 texts a day (§13) over
+the 144 ten-minute TTLs in a day. A
 queued message costs no airtime; a failed delivery costs a retry across
 the city; the common case is a phone in a pocket, a basement, or the metro
 for a few minutes. RAM is not the constraint (64 × 255 B = 16 KB of 256 KB).
@@ -871,6 +873,7 @@ ACK       0x3: first(1) id(4) from(4)                                       = 9
           from = the acknowledging relay's short name, or the leaf's ID
 ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
           relay = short name of the relay attached to; aux = leaf receive mode (§10.5)
+          ACKed with id = leaf_id read as a 32-bit number, from = the relay's short name
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
                payload                                                      = 21 + payload
           dst_hop, src_hop = short names of the receiving and the sending relay;
@@ -880,7 +883,7 @@ DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 
 Type 0x7 is unassigned.
 ```
 
-The **message ID** is a 32-bit hash, `hash32` (`position.rs`), of
+The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_leaf || payload`, computed
 by every node that handles the message; it is the same on every hop
 because none of these fields changes. DATA does not carry it; ACK and
@@ -905,10 +908,11 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM budget (256 KB):** neighbour table 64 × 32 B = 2 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 64 × 216 B = 14 KB; message records
-(§9.2.2) 627 × 24 B = 15 KB; send queue 10 × 255 B = 2.5 KB; delivered
-window, busy estimates and duty budget together under 3 KB; BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
+**RAM budget (256 KB):** neighbour table 64 × 40 B = 2.5 KB; leaf table
+256 × 16 B = 4 KB; delivery queue 64 × 256 B = 16 KB; message records
+(§9.2.2) 626 × 32 B = 20 KB; send queue 10 × 260 B = 2.5 KB; delivered
+window 1 KB; busy estimates and duty budget under 1 KB; 47 KB in all,
+measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):
 
