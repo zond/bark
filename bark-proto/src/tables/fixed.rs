@@ -40,6 +40,14 @@ impl<T: Copy, const N: usize> FixedVec<T, N> {
         Ok(())
     }
 
+    /// Remove index `i`, shifting the rest down. Keeps order.
+    pub(crate) fn remove(&mut self, i: usize) -> T {
+        let v = self.items[i];
+        self.items.copy_within(i + 1..self.len, i);
+        self.len -= 1;
+        v
+    }
+
     /// Keep only the elements for which `keep` is true. Keeps order.
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(&T) -> bool) {
         let mut w = 0;
@@ -68,6 +76,8 @@ mod tests {
         v.as_mut_slice()[0] = 9;
         v.retain(|&x| x != 3);
         assert_eq!(v.as_slice(), &[9, 2, 4]);
-        assert_eq!(v.len(), 3);
+        assert_eq!(v.remove(1), 2);
+        assert_eq!(v.as_slice(), &[9, 4]);
+        assert_eq!(v.len(), 2);
     }
 }

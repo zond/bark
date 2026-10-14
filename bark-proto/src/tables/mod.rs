@@ -7,3 +7,4 @@ pub mod visited;
 mod fixed;
 pub mod neighbours;
 pub mod leaves;
+pub mod delivery;
