@@ -17,7 +17,9 @@
 //! ```
 //!
 //! So in a search without failures no record expires while the message is
-//! away exploring beyond it.
+//! away exploring beyond it. While the message waits here for the
+//! duty-cycle budget, which can take minutes, its record is kept alive
+//! ([`Record::held`]).
 //!
 //! # Bound
 //!
@@ -230,6 +232,14 @@ impl Record {
     /// search: back to the parent, or straight back to a relay that
     /// offered it (§9.2.4 case 6).
     pub fn sent(&mut self, now: Instant) {
+        self.last_active = now;
+    }
+
+    /// The message is still in this relay's send queue at `now`, held back
+    /// by the duty-cycle budget (§9.4). The lifetime covers a message away
+    /// exploring beyond this relay; one still here must keep its record,
+    /// or it could not be routed when its turn comes.
+    pub fn held(&mut self, now: Instant) {
         self.last_active = now;
     }
 }

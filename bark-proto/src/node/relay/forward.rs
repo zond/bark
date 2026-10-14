@@ -626,6 +626,12 @@ impl Relay {
         self.handover.hold(until);
         let msg_id = out.msg_id().unwrap_or_default();
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
+        // Everything queued waits with the front.
+        for id in self.queue.iter().filter_map(|o| o.msg_id()) {
+            if let Some(r) = self.records.get_mut(id, now) {
+                r.held(now);
+            }
+        }
     }
 
     /// A CAD or RSSI check of the front hand-over completed.

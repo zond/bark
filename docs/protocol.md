@@ -412,7 +412,10 @@ succeeds at the first attempt but waits the longest for the channel and
 carries a full frame: 255 hand-overs (§9.2.6) × (500 ms listen-before-talk
 give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
 §9.3) = 188.3 s. So in a search without failures no record expires while
-the message is away exploring beyond it.
+the message is away exploring beyond it. A message waiting in the relay's
+send queue for the duty-cycle budget (§9.4), which can take minutes, is
+still here, and keeps its record alive: without it the message could not
+be routed when its turn comes.
 
 **Bound and eviction.** A relay holds at most 626 records; when full, a
 new record replaces the least recently active one. 626 is the most
