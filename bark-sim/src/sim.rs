@@ -57,6 +57,8 @@ pub(crate) enum Ev {
     Availability(u32),
     /// Scripted event.
     Script(u32),
+    /// A check held during a reception starts (node, hold generation).
+    Held(u32, u32),
     /// Time-series sample.
     Sample,
 }
@@ -108,6 +110,9 @@ pub(crate) struct Excursion {
     pub cad_seen: bool,
     /// RSSI: the value read.
     pub rssi_dbm: Option<i16>,
+    /// Whether the node stops receiving for it. An RSSI reading on the
+    /// resting channel does not (docs/core-interface.md §3 rule 7).
+    pub deaf: bool,
     /// Transmit: the air slot.
     pub slot: Option<u32>,
 }
@@ -176,6 +181,10 @@ pub(crate) struct NodeState {
     pub arrivals: Vec<Arrival>,
     pub observer: Option<u32>,
     pub cad_rng: Stream,
+    /// A CAD or RSSI held while a packet is being received (core-interface
+    /// §3 rule 8), and its generation.
+    pub held: Option<(ExKind, Channel)>,
+    pub held_gen: u32,
 }
 
 /// A transmission, from excursion start until it leaves the air.
@@ -412,6 +421,8 @@ impl Sim {
                 arrivals: Vec::new(),
                 observer: None,
                 cad_rng: Stream::new(sc.seed, Purpose::CadMiss, i as u64),
+                held: None,
+                held_gen: 0,
             })
             .collect();
 
@@ -763,6 +774,14 @@ impl Sim {
             Ev::Interferer(k, g) => self.interferer_toggle(k, g),
             Ev::Availability(n) => self.availability_toggle(n),
             Ev::Script(k) => self.run_script(k),
+            Ev::Held(n, g) => {
+                let st = &mut self.nodes[n as usize];
+                if st.alive && st.held_gen == g {
+                    if let Some((kind, c)) = st.held.take() {
+                        self.begin_excursion(n, kind, c, None, false);
+                    }
+                }
+            }
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
                 let c = self.cadence.expect("sampling on");
@@ -809,8 +828,8 @@ impl Sim {
     fn apply(&mut self, node: u32, a: Action, scripted: bool) {
         match a {
             Action::Listen(c) => self.listen(node, c),
-            Action::Cad(c) => self.begin_excursion(node, ExKind::Cad, c, None, scripted),
-            Action::Rssi(c) => self.begin_excursion(node, ExKind::Rssi, c, None, scripted),
+            Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
+            Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
@@ -843,6 +862,27 @@ impl Sim {
         }
     }
 
+    /// A CAD or RSSI reading. One that would take the node off a packet it
+    /// is receiving waits for the packet's end, at most one longest frame
+    /// (docs/core-interface.md §3 rule 8; design §6.1: a reading is taken
+    /// only when no packet is in progress). Scripted checks are not held.
+    fn check(&mut self, node: u32, kind: ExKind, c: Channel, scripted: bool) {
+        let now = self.now;
+        let st = &mut self.nodes[node as usize];
+        let deaf = !(kind == ExKind::Rssi && st.resting == Some(c));
+        if let (false, true, Lock::Rx(r)) = (scripted, deaf, st.lock) {
+            if st.alive && st.ex.is_none() && st.held.is_none() {
+                let longest = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
+                st.held = Some((kind, c));
+                st.held_gen = st.held_gen.wrapping_add(1);
+                let g = st.held_gen;
+                self.push(r.end.min(now + longest), Ev::Held(node, g));
+                return;
+            }
+        }
+        self.begin_excursion(node, kind, c, None, scripted);
+    }
+
     fn begin_excursion(
         &mut self,
         node: u32,
@@ -856,6 +896,12 @@ impl Sim {
         let st = &self.nodes[node as usize];
         if !st.alive {
             return;
+        }
+        if st.held.is_some() && !scripted {
+            panic!(
+                "{label}: core started {kind:?} while a held check is outstanding \
+                 (docs/core-interface.md §3 rule 1: one excursion outstanding)"
+            );
         }
         if let Some(ex) = &st.ex {
             let who = if scripted { "scripted event" } else { "core" };
@@ -904,10 +950,13 @@ impl Sim {
             scripted,
             cad_seen: false,
             rssi_dbm: None,
+            deaf: !(kind == ExKind::Rssi && !off),
             slot: None,
         };
-        let first_reason = ex.reason_at(now);
-        self.abort_lock(node, first_reason);
+        if ex.deaf {
+            let first_reason = ex.reason_at(now);
+            self.abort_lock(node, first_reason);
+        }
         let st = &mut self.nodes[node as usize];
         st.ex_gen = st.ex_gen.wrapping_add(1);
         let g = st.ex_gen;
@@ -994,7 +1043,9 @@ impl Sim {
         }
         let ex = st.ex.take().expect("excursion end without excursion");
         // Back on the resting channel; the radio restarts its preamble search.
-        st.lock = Lock::Idle;
+        if ex.deaf {
+            st.lock = Lock::Idle;
+        }
         let c = ex.channel;
         let result = match ex.kind {
             ExKind::Cad => {
@@ -1239,6 +1290,8 @@ impl Sim {
         st.wake_gen = st.wake_gen.wrapping_add(1);
         st.wake_at = None;
         st.ex_gen = st.ex_gen.wrapping_add(1);
+        st.held = None;
+        st.held_gen = st.held_gen.wrapping_add(1);
         if let Some(ex) = st.ex.take() {
             if let Some(slot) = ex.slot {
                 let tx = self.txs[slot as usize]
@@ -1387,7 +1440,10 @@ mod tests {
         assert_eq!(sim.metrics.nodes[1].drops.total(), 2);
         let s = sim.summary();
         assert_eq!(
-            (s.app.lost_dropped.no_route, s.app.lost_dropped.queue_expired),
+            (
+                s.app.lost_dropped.no_route,
+                s.app.lost_dropped.queue_expired
+            ),
             (1, 0)
         );
         assert_eq!(

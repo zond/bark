@@ -200,7 +200,7 @@ impl Sim {
             self.metrics.candidate(b, a.channel);
             let outcome = if a.dbm < sens {
                 Some(Outcome::BelowSensitivity)
-            } else if let Some(ex) = &st.ex {
+            } else if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
                 Some(Outcome::Deaf(ex.reason_at(now)))
             } else if now < st.listen_from {
                 Some(Outcome::Deaf(Deaf::Retune))
@@ -246,7 +246,7 @@ impl Sim {
         }
         // The new signal raises interference on any packet being received.
         let st = &mut self.nodes[b as usize];
-        if st.ex.is_none() {
+        if st.ex.as_ref().is_none_or(|e| !e.deaf) {
             if let Lock::Rx(mut r) = st.lock {
                 if r.key != a.key {
                     let (co, adj) = interference(&st.arrivals, rest, r.key, &rej);

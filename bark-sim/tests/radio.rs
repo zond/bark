@@ -1,6 +1,6 @@
 //! Radio-model tests, driven by scripted driver-level actions so they hold
-//! whatever the protocol cores do (the cores here are the Phase 0 stubs;
-//! leaves are used throughout because a stub leaf never touches its radio).
+//! whatever the protocol cores do. Leaves are used throughout: with no
+//! relay to hear, a leaf never transmits.
 
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::Instant;
@@ -194,6 +194,19 @@ fn reception_aborted_by_an_excursion_is_counted_deaf() {
     );
     let r = rx(&run(&sc), 2);
     assert_eq!((r.candidates, r.delivered, r.deaf.retune), (1, 0, 1));
+}
+
+#[test]
+fn rssi_on_the_resting_channel_keeps_receiving() {
+    // docs/core-interface.md §3 rule 7: not an excursion.
+    let sc = trio(-90.0, -200.0).script_tx(1.0, "T1", 3, 40, 12).script(
+        1.005,
+        "R",
+        ScriptAction::Rssi,
+        Some(3),
+    );
+    let r = rx(&run(&sc), 2);
+    assert_eq!((r.candidates, r.delivered, r.deaf.total()), (1, 1, 0));
 }
 
 #[test]

@@ -2,10 +2,10 @@
 
 use bark_sim::links::{FadingParams, Model};
 use bark_sim::metrics::DropReason;
-use bark_sim::sim::Fate;
 use bark_sim::scenario::{
     Availability, Destination, InterfererSpec, Placement, RoleSpec, ScriptAction, TrafficSpec,
 };
+use bark_sim::sim::Fate;
 use bark_sim::{Scenario, Sim};
 use std::time::Instant as Wall;
 
@@ -234,7 +234,11 @@ fn s1_parses_and_runs() {
     sim.run();
     let s = sim.summary();
     print!("{}", s.table());
-    assert_eq!(s.app.originated + s.app.unaddressed, 60, "one text every 30 s for 30 minutes");
+    assert_eq!(
+        s.app.originated + s.app.unaddressed,
+        60,
+        "one text every 30 s for 30 minutes"
+    );
     // Once the relays know each other, a worst-case rotation after their
     // boot listen (design §6.2, §7), every text with an address is
     // delivered until B is removed at 20 minutes; after that every one is
@@ -244,11 +248,20 @@ fn s1_parses_and_runs() {
     let settled = bark_proto::Instant::ZERO + c.boot_listen + c.heartbeat_max.mul(13);
     let removal = bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(1200);
     let fates: Vec<_> = sim.originated().filter(|(t, _)| *t < sim.end()).collect();
-    assert!(fates.iter().all(|(_, f)| *f != Fate::Unaccounted), "{fates:?}");
+    assert!(
+        fates.iter().all(|(_, f)| *f != Fate::Unaccounted),
+        "{fates:?}"
+    );
     let (before, after): (Vec<_>, Vec<_>) = fates.iter().partition(|(t, _)| *t < removal);
     let settled: Vec<_> = before.iter().filter(|(t, _)| *t >= settled).collect();
-    assert!(settled.iter().all(|(_, f)| *f == Fate::Delivered), "{before:?}");
-    let a_no_route = Fate::Dropped { node: 0, reason: DropReason::NoRoute };
+    assert!(
+        settled.iter().all(|(_, f)| *f == Fate::Delivered),
+        "{before:?}"
+    );
+    let a_no_route = Fate::Dropped {
+        node: 0,
+        reason: DropReason::NoRoute,
+    };
     assert_eq!(after.len(), 20);
     assert!(after.iter().all(|(_, f)| *f == a_no_route), "{after:?}");
     // B was removed at 20 minutes and its relay core stopped.
