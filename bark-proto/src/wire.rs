@@ -15,9 +15,11 @@
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
 //!                    payload                                        = 21 + payload
 //! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
+//! BUSY      0x7      first from                                     = 5
 //! ```
 //!
-//! Type 0x7 is unassigned: the network sends no failure notices (D10).
+//! BUSY refuses a hand-over for this hop only (§9.2.4); the network
+//! still sends no failure notices (D10).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
@@ -31,8 +33,8 @@
 //! - The ACK of an ATTACH carries the leaf's ID as `id`: an ATTACH is not a
 //!   message and has no message ID, and the leaf ID is what the leaf
 //!   matches.
-//! - `aux` is unused in ACK and DELIVER; it is sent as zero and ignored on
-//!   receipt, as are the spare position bits.
+//! - `aux` is unused in ACK, DELIVER and BUSY; it is sent as zero and
+//!   ignored on receipt, as are the spare position bits.
 //! - ATTACH `aux` is the [`RxMode`] code.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
@@ -62,6 +64,7 @@ const T_ACK: u8 = 0x3;
 const T_ATTACH: u8 = 0x4;
 const T_DATA: u8 = 0x5;
 const T_DELIVER: u8 = 0x6;
+const T_BUSY: u8 = 0x7;
 
 // HEARTBEAT.
 const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
@@ -95,12 +98,17 @@ const DELIVER_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
 /// DELIVER header length before the payload (design §14: 9).
 pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
+// BUSY.
+const BUSY_FROM: usize = FIRST + FIRST_LEN;
+/// BUSY length (design §14: 5).
+pub const BUSY_LEN: usize = BUSY_FROM + NAME_LEN;
+
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
 /// 255 − 21 = 234 bytes. DATA and DELIVER carry at most this.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
 const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 9 && ATTACH_LEN == 9);
-const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9);
+const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9 && BUSY_LEN == 5);
 const _: () = assert!(MAX_PAYLOAD == 234);
 
 /// A leaf's receive mode, carried in ATTACH `aux` (design §10.5). Sets the
@@ -235,6 +243,15 @@ pub struct Deliver<'a> {
     pub payload: &'a [u8],
 }
 
+/// BUSY, type 0x7 (design §9.2.4): the relay a DATA was
+/// addressed to does not take it. It names the relay, not the message: it
+/// says the relay is busy, which is true of anything offered to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Busy {
+    /// The refusing relay.
+    pub from: ShortName,
+}
+
 /// Any packet. Payloads borrow from the received frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packet<'a> {
@@ -248,6 +265,8 @@ pub enum Packet<'a> {
     Data(Data<'a>),
     /// DELIVER.
     Deliver(Deliver<'a>),
+    /// BUSY.
+    Busy(Busy),
 }
 
 /// Why a frame did not decode.
@@ -374,6 +393,11 @@ impl Packet<'_> {
                 put(buf, DELIVER_HEADER_LEN, d.payload);
                 Ok(DELIVER_HEADER_LEN + d.payload.len())
             }
+            Packet::Busy(b) => {
+                buf[FIRST] = first(T_BUSY, 0);
+                put(buf, BUSY_FROM, &b.from.0.to_be_bytes());
+                Ok(BUSY_LEN)
+            }
         }
     }
 }
@@ -429,6 +453,12 @@ impl<'a> Packet<'a> {
                     dst_leaf: LeafId(get4(b, DELIVER_LEAF)),
                     msg_id: get_msg_id(b, DELIVER_ID),
                     payload,
+                }))
+            }
+            T_BUSY => {
+                exact(b, BUSY_LEN)?;
+                Ok(Packet::Busy(Busy {
+                    from: get_name(b, BUSY_FROM),
                 }))
             }
             other => Err(DecodeError::BadType(other)),
@@ -488,6 +518,7 @@ mod tests {
             Packet::Attach(_) => 9,
             Packet::Data(d) => 21 + d.payload.len(),
             Packet::Deliver(d) => 9 + d.payload.len(),
+            Packet::Busy(_) => 5,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -534,10 +565,15 @@ mod tests {
         }
 
         #[test]
+        fn busy_round_trips(from in name()) {
+            round_trip(&Packet::Busy(Busy { from }));
+        }
+
+        #[test]
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
-            // the same, apart from bits the decoder ignores (aux of ACK and
-            // DELIVER, spare position bits).
+            // the same, apart from bits the decoder ignores (aux of ACK,
+            // DELIVER and BUSY, spare position bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -598,11 +634,8 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        assert_eq!(
-            Packet::decode(&[0x70; DATA_HEADER_LEN]),
-            Err(BadType(7)),
-            "type 0x7 is unassigned"
-        );
+        assert_eq!(Packet::decode(&[0x70; BUSY_LEN - 1]), Err(Short));
+        assert_eq!(Packet::decode(&[0x70; BUSY_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
         assert_eq!(
             Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]),
@@ -696,5 +729,16 @@ mod tests {
         };
         let len = Packet::Deliver(deliver).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let busy = Busy {
+            from: ShortName(0x0102_0304),
+        };
+        let len = Packet::Busy(busy).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x70, 1, 2, 3, 4]);
+        assert_eq!(
+            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(10_560),
+            "41.25 symbols at SF5"
+        );
     }
 }

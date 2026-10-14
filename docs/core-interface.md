@@ -153,6 +153,6 @@ action at a time, and the core never allocates.
   - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
     payload onward.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
-  - `aux` is unused in ACK and DELIVER: sent as zero, ignored on receipt. A fixed-size
-    packet with trailing bytes is rejected.
-  - Type 0x7 is unassigned and rejected (roadmap D10).
+  - `aux` is unused in ACK, DELIVER and BUSY: sent as zero, ignored on receipt. A
+    fixed-size packet with trailing bytes is rejected.
+  - BUSY `from` is a relay's short name, big-endian like every other.

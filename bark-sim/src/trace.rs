@@ -116,6 +116,7 @@ impl Tracer {
                 payload_tag(d.payload),
                 n.leaf(d.dst_leaf)
             ),
+            Ok(Packet::Busy(b)) => format!("BUSY from {}", n.relay(b.from)),
             Err(e) => format!("undecodable {e:?}"),
         }
     }

@@ -988,7 +988,11 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
           aux = sender's home channel, so the receiver knows where to ACK
 DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel
-Type 0x7 is unassigned. Type 0xF is reserved for the bench frames of the
+BUSY      0x7: first(1) from(4)                                             = 5
+          a relay refusing a DATA (§9.2.4), sent instead of the ACK, on the
+          channel in the refused DATA's aux; from = the refusing relay's short
+          name; aux unused
+Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
 ```
@@ -999,6 +1003,10 @@ by every node that handles the message; it is the same on every hop
 because none of these fields changes. DATA does not carry it; ACK and
 DELIVER do, ACK to name what it acknowledges and DELIVER so the leaf can
 ACK it. The app must keep payloads unique (§11).
+
+BUSY carries no message ID: it says that the relay is busy, which is
+true of anything offered to it, not that one message is refused. At SF5 it
+takes 10.6 ms on air against the ACK's 11.8 ms.
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
 after 5 bytes. `src_hop` names the relay that sent the packet, and `aux`
