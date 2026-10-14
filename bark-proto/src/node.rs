@@ -13,6 +13,7 @@ use crate::time::{Duration, Instant};
 
 mod mac;
 mod relay;
+mod transfer;
 
 pub use relay::Relay;
 
@@ -43,6 +44,10 @@ pub struct Config {
     pub ack_timeout: Duration,
     /// Per-hop transmit attempts before giving up on a neighbour (design §9.3: 3).
     pub hop_attempts: u8,
+    /// Longest random wait of a hand-over or an ACK after a busy
+    /// listen-before-talk check, and before a retry after a missing ACK
+    /// (design §9.3: 0–50 ms).
+    pub hop_backoff_max: Duration,
     /// Failed transfers before a neighbour is demoted (design §8.2: 2).
     pub demote_after_failures: u8,
     /// Neighbour expiry in heartbeat rotations (design §8.2: 3, ≈400 s).
@@ -53,6 +58,9 @@ pub struct Config {
     pub keepalive: Duration,
     /// Delivery-queue entry lifetime (design §10.4: 10 min).
     pub delivery_ttl: Duration,
+    /// Interval of the delivery retry for queued messages, besides the
+    /// retry on each keepalive (design §10.4: 60 s).
+    pub delivery_retry: Duration,
     /// Busy-estimate EMA coefficient as 1/N (design §6.1: 1/600).
     pub busy_ema_inverse: u16,
     /// Interval between 13-channel RSSI sweeps (design §6.1: 1 s).
@@ -89,11 +97,13 @@ impl Default for Config {
             heartbeat_max: Duration::from_secs(15),
             ack_timeout: Duration::from_millis(100),
             hop_attempts: 3,
+            hop_backoff_max: Duration::from_millis(50),
             demote_after_failures: 2,
             neighbour_expiry_rotations: 3,
             demotion_rotations: 3,
             keepalive: Duration::from_secs(60),
             delivery_ttl: Duration::from_secs(600),
+            delivery_retry: Duration::from_secs(60),
             busy_ema_inverse: 600,
             sweep_interval: Duration::from_secs(1),
             busy_threshold_db: 6,

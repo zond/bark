@@ -2,7 +2,7 @@
 //! fixed by the design and lives inline, so nothing here allocates
 //! (roadmap D8).
 
-mod fixed;
+pub(crate) mod fixed;
 
 pub mod budget;
 pub mod busy;

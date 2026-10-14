@@ -8,7 +8,7 @@
 //! outstanding at a time.
 
 use crate::ids::{LeafId, MsgId};
-use crate::position::Position;
+use crate::position::{Position, ShortName};
 use crate::radio::Channel;
 use crate::time::Instant;
 
@@ -120,6 +120,45 @@ pub enum FailReason {
     Budget,
     /// This relay originated it and has no neighbour left to try (design §9.2.5).
     NoRoute,
+    /// The send queue had no room for it (design §9.3); a leaf holds one
+    /// message at a time.
+    QueueFull,
+    /// The payload is longer than a DATA frame holds (design §14: 234 bytes).
+    PayloadTooLong,
+}
+
+/// Why a relay dropped a message, or refused one (design §9). The network
+/// sends no failure notices (roadmap D10); these reach only the
+/// simulator's metrics and the firmware's log, through [`Trace`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DropReason {
+    /// The origin has no neighbour left to try (design §9.2.5).
+    NoRoute,
+    /// Sending it on would need a count above 255 (design §9.2.6).
+    HopCap,
+    /// Its record was replaced because the table was full, or expired,
+    /// while its packet waited in the send queue (design §9.2.2): without
+    /// the record the search cannot go on from here.
+    RecordLost,
+    /// The send queue had no room (design §9.3).
+    SendQueueFull,
+    /// The duty-cycle budget had no room (design §9.4).
+    Budget,
+    /// The hand-over back to the parent failed (design §9.2.5, §9.3).
+    ReturnFailed,
+    /// The hand-over straight back to a relay that offered it failed
+    /// (design §9.3). That relay's copy ends; this relay's goes on.
+    BounceFailed,
+    /// Addressed to a relay itself (leaf 0), reached an owner within 50 m
+    /// that is not that relay: the relay it was for is gone (design §9.2.7).
+    RelayGone,
+    /// Its leaf did not collect it within the delivery TTL (design §10.4).
+    QueueExpired,
+    /// The delivery queue was full and a newer message took its place
+    /// (design §10.4, `tables/delivery.rs`).
+    QueueDisplaced,
+    /// The payload is longer than a DATA frame holds (design §14).
+    PayloadTooLong,
 }
 
 /// Events for the application side. `Message` carries its payload by value
@@ -200,5 +239,75 @@ pub enum Trace {
     HeartbeatDeferred {
         /// When the budget may next allow it.
         until: Instant,
+    },
+    /// This relay dropped the message; nothing else is reported about it
+    /// here (design §9.1).
+    Dropped {
+        /// The message.
+        msg_id: MsgId,
+        /// Why.
+        reason: DropReason,
+    },
+    /// A DATA packet was not acknowledged because acting on it needed what
+    /// `reason` names (design §9.2.4). Not a drop: the sender still holds
+    /// the message and will try elsewhere.
+    Refused {
+        /// The message.
+        msg_id: MsgId,
+        /// [`DropReason::SendQueueFull`] or [`DropReason::Budget`].
+        reason: DropReason,
+    },
+    /// The duty-cycle budget held a hand-over back (design §9.4).
+    HandOverDeferred {
+        /// The message, or for a DELIVER the delivered message.
+        msg_id: MsgId,
+        /// When the budget may next allow it.
+        until: Instant,
+    },
+    /// A neighbour acknowledged the message, sent on toward the destination
+    /// (design §9.2.3).
+    Forwarded {
+        /// The message.
+        msg_id: MsgId,
+        /// The neighbour.
+        to: ShortName,
+        /// The count it carried (design §9.2.6).
+        hops: u8,
+    },
+    /// The parent acknowledged the message, returned to it because no
+    /// neighbour was left to try (design §9.2.5).
+    ReturnedToParent {
+        /// The message.
+        msg_id: MsgId,
+        /// The parent.
+        to: ShortName,
+    },
+    /// A relay that offered a message this relay already had acknowledged
+    /// it being sent straight back (design §9.2.4 case 6).
+    Bounced {
+        /// The message.
+        msg_id: MsgId,
+        /// The relay that offered it.
+        to: ShortName,
+    },
+    /// A neighbour reached the demotion threshold and is no longer a next
+    /// hop (design §8.2).
+    Demoted {
+        /// The neighbour.
+        neighbour: ShortName,
+    },
+    /// An attached leaf acknowledged a DELIVER (design §10.3).
+    Delivered {
+        /// The message.
+        msg_id: MsgId,
+        /// The leaf.
+        leaf: LeafId,
+    },
+    /// A message for a leaf entered the delivery queue (design §10.4).
+    Queued {
+        /// The message.
+        msg_id: MsgId,
+        /// The leaf.
+        leaf: LeafId,
     },
 }
