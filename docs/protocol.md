@@ -175,10 +175,19 @@ reading:
   per second). One sample per heartbeat interval would give 60 samples
   per window, ±4 points on a 10% channel, as large as the differences the
   rule acts on.
-- **Home channel:** also count the node's own receive time (preamble
-  detected to packet end, from modem interrupts) as busy, so the home
-  estimate is more accurate than the sampled ones. The bias is in the safe
-  direction for a "should I move" decision.
+- **Home channel:** count only what would stay behind if the node moved.
+  Packets addressed to the node (DATA, ATTACH), the ACKs of its own
+  hand-overs, and its own transmissions and ACKs go wherever it goes:
+  counting them would make a busy relay leave its channel for its own
+  traffic and take that traffic along. So a home reading is 1 if RSSI is
+  above the threshold and no packet addressed to the node was on the air
+  when it was taken; otherwise it is the fraction of the time since the
+  last home reading spent receiving packets addressed to others
+  (heartbeats included), from the packet lengths. Whether a reading fell
+  in the node's own packet is known only when that packet ends, so a home
+  reading is held until the next, one second later, longer than any
+  packet (roadmap D24). A packet for the node that fails its CRC cannot be
+  told from someone else's and counts.
 - **Noise floor:** calibrate per device at boot as a low percentile of RSSI
   readings over the first rotation; recalibrate slowly.
 

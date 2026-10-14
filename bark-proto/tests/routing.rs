@@ -303,6 +303,45 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
     assert_eq!(counts, vec![1, 1]);
 }
 
+/// O sends D a full frame every 2 s, 7 % of D's home channel and more than
+/// the 5 % that moves a relay (§6.3). The traffic is D's own and would
+/// follow it to any channel, so D does not count it as busy and stays, and
+/// neither does O for D's ACKs (§6.1, roadmap D24).
+#[test]
+fn a_relay_does_not_flee_its_own_traffic() {
+    use bark_proto::tables::busy::{percent, ONE};
+    use bark_proto::wire::MAX_PAYLOAD;
+    let (o, d) = (0, 1);
+    let mut h = build(vec![relay(0.0, 0.0, 51), relay(400.0, 0.0, 52)], &[(o, d)]);
+    let c = Config::default();
+    let start = h.now;
+    let end = start + c.move_dwell + c.move_wait_max + secs(600);
+    let mut k = 0u32;
+    while h.now < end {
+        let mut text = [0u8; MAX_PAYLOAD];
+        text[..4].copy_from_slice(&k.to_be_bytes());
+        let id = send(&mut h, o, d, &text);
+        k += 1;
+        h.run_until(h.now + secs(2), |_| false);
+        assert!(delivered(&h, d, id), "message {k} not delivered");
+    }
+    for i in [o, d] {
+        let moves = h.nodes[i]
+            .traces
+            .iter()
+            .filter(|(t, tr)| *t >= start && matches!(tr, Trace::HomeChannelMoved { .. }))
+            .count();
+        let r = core(&h, i);
+        let busy = r.busy().fraction(r.home());
+        println!(
+            "relay {i}: home busy {:.2} %, {moves} moves",
+            busy as f64 * 100.0 / ONE as f64
+        );
+        assert_eq!(moves, 0, "relay {i} moved");
+        assert!(busy < percent(1), "relay {i} counts its own traffic");
+    }
+}
+
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 360 s of its
@@ -312,11 +351,12 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
 /// are never held back. The harness panics if any hour holds more than
 /// 10 %.
 ///
-/// The home channels are fixed. Otherwise F's own traffic to D, 10 % of
-/// D's home channel, makes D move every half hour or so (§6.1 counts a
-/// node's receive time as busy, §6.3), and messages handed over in the
-/// minutes before F hears D's new channel fail for that reason, which is
-/// not what this test is about. F makes one attempt more than the
+/// The home channels are fixed. The frames this test loses on the way to D
+/// are on the air at D but never received, so D cannot tell them from
+/// other nodes' traffic (§6.1): about two thirds of F's airtime, enough to
+/// move D every hour or so (§6.3), and messages handed over in the minutes
+/// before F hears D's new channel fail for that reason, which is not what
+/// this test is about. F makes one attempt more than the
 /// design's three: D also misses a frame now and then while it sweeps or
 /// sends a heartbeat, which the loss rule does not count, and three
 /// attempts would then run out for that reason alone. And the run goes on

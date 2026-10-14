@@ -201,10 +201,15 @@ impl Transfer {
         self.step = Step::AwaitAck(now + ack_timeout);
     }
 
+    /// Whether `ack` ends this hand-over.
+    pub(crate) fn answered_by(&self, ack: Ack) -> bool {
+        !self.idle() && self.transmitted() && ack == self.expect
+    }
+
     /// An ACK arrived. Returns whether it ends this hand-over, which it
     /// then does.
     pub(crate) fn acked(&mut self, ack: Ack) -> bool {
-        let matched = !self.idle() && self.transmitted() && ack == self.expect;
+        let matched = self.answered_by(ack);
         if matched {
             self.step = Step::Idle;
         }

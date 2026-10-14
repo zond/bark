@@ -79,8 +79,22 @@ struct Sweep {
     channel: Channel,
     /// When the home channel was last read.
     last_home: Instant,
-    /// Time spent receiving on the home channel since `last_home`.
-    receiving: Duration,
+    /// Time spent since `last_home` receiving packets for other nodes on
+    /// the home channel.
+    foreign: Duration,
+    /// The last home reading, held until any reception it fell in has
+    /// ended and shown whether the energy it read was this relay's own.
+    pending: Option<HomeReading>,
+}
+
+/// A reading of the home channel awaiting [`Sweep::pending`]'s verdict.
+#[derive(Clone, Copy)]
+struct HomeReading {
+    channel: Channel,
+    at: Instant,
+    /// `None` once a packet addressed to this relay turned out to be on
+    /// the air when it was taken.
+    dbm: Option<i16>,
 }
 
 /// The rotating heartbeat (design §7) and the one-off announcement on the
@@ -155,7 +169,8 @@ impl Relay {
                 next_at: Instant::ZERO,
                 channel: Channel::all().next().expect("the plan has channels"),
                 last_home: Instant::ZERO,
-                receiving: Duration::ZERO,
+                foreign: Duration::ZERO,
+                pending: None,
             },
             beacon: Beacon {
                 next_at: Instant::ZERO,
@@ -226,6 +241,9 @@ impl Relay {
 
     fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
         if to != self.home {
+            // What was heard on the old channel says nothing of the new.
+            self.sweep.pending = None;
+            self.sweep.foreign = Duration::ZERO;
             emit(Action::Trace(Trace::HomeChannelMoved {
                 from: self.home,
                 to,
@@ -310,13 +328,23 @@ impl Relay {
         true
     }
 
+    /// A reading of the home channel is held for one sweep interval, longer
+    /// than any packet it can fall in, and then counts only energy that
+    /// would stay on the channel if this relay left it (§6.1).
     fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
-            let interval = now.since(self.sweep.last_home);
-            self.busy
-                .sample_home(channel, dbm, self.sweep.receiving, interval);
-            self.sweep.receiving = Duration::ZERO;
+            if let Some(p) = self.sweep.pending.take() {
+                let interval = now.since(self.sweep.last_home);
+                self.busy
+                    .sample_home(p.channel, p.dbm, self.sweep.foreign, interval);
+            }
+            self.sweep.foreign = Duration::ZERO;
             self.sweep.last_home = now;
+            self.sweep.pending = Some(HomeReading {
+                channel,
+                at: now,
+                dbm: Some(dbm),
+            });
         } else {
             self.busy.sample(channel, dbm);
         }
@@ -461,11 +489,7 @@ impl Relay {
     // --- Reception ---
 
     fn received(&mut self, bytes: &[u8], now: Instant, emit: &mut dyn FnMut(Action)) {
-        // The driver does not report the preamble a sender used. Assuming
-        // the minimum undercounts only frames for sleeping leaves, which
-        // are rare (design §10.5).
-        let len = bytes.len().min(u8::MAX as usize) as u8;
-        self.sweep.receiving = self.sweep.receiving + time_on_air(len, MIN_PREAMBLE_SYMBOLS);
+        self.count_busy(bytes, now);
         // A booting relay has no home channel yet to be reached on, nor
         // neighbours to forward to: it takes no traffic (§6.2).
         let running = self.stage == Stage::Running;
@@ -475,6 +499,35 @@ impl Relay {
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
             Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
             _ => {}
+        }
+    }
+
+    /// Account a reception on the home channel to the busy estimate (§6.1).
+    /// Packets addressed to this relay, and the ACKs of its own hand-overs,
+    /// follow it to any channel it moves to, so they are not counted, and
+    /// a home reading taken while one was on the air is set aside.
+    /// Everything else, heartbeats included, stays behind and counts.
+    fn count_busy(&mut self, bytes: &[u8], now: Instant) {
+        // The driver does not report the preamble a sender used. Assuming
+        // the minimum undercounts only frames for sleeping leaves, which
+        // are rare (design §10.5).
+        let len = bytes.len().min(u8::MAX as usize) as u8;
+        let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
+        let me = self.me();
+        let own = match Packet::decode(bytes) {
+            Ok(Packet::Data(d)) => d.dst_hop == me,
+            Ok(Packet::Attach(a)) => a.relay == me,
+            Ok(Packet::Ack(a)) => self.handover.answered_by(a),
+            _ => false,
+        };
+        if !own {
+            self.sweep.foreign = self.sweep.foreign + airtime;
+            return;
+        }
+        if let Some(p) = &mut self.sweep.pending {
+            if now.since(p.at) <= airtime {
+                p.dbm = None;
+            }
         }
     }
 

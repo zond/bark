@@ -14,11 +14,14 @@
 //! integer division truncates, which biases the estimate by less than
 //! `busy_ema_inverse / ONE` (3.6 × 10⁻⁵ at 1/600).
 //!
-//! The home channel is never sampled while a packet is being received
-//! (§6.1 sweeps only when the modem is idle), so its estimate also counts
-//! the receive time: a home sample is the fraction of the sweep interval
-//! spent receiving, or 1 if the RSSI says busy. That is the "own receive
-//! time counts as busy" rule of §6.1.
+//! The home estimate counts only what would stay on the channel if the
+//! node moved (§6.1, roadmap D24). Packets addressed to the node, and the
+//! ACKs of its own hand-overs, would follow it to its new channel, so
+//! counting them would make a busy relay flee its own traffic. A home
+//! sample is therefore 1 if the RSSI says busy and no packet for this
+//! node was on the air at the time, else the fraction of the sweep
+//! interval spent receiving packets for other nodes. The relay decides
+//! which readings and receptions are its own (`node/relay.rs`).
 //!
 //! # Noise floor
 //!
@@ -165,18 +168,28 @@ impl BusyEstimator {
         self.update(c, x);
     }
 
-    /// One sweep reading of the home channel, which was receiving for
-    /// `receiving` of the `interval` since the last one.
-    pub fn sample_home(&mut self, c: Channel, dbm: i16, receiving: Duration, interval: Duration) {
-        let x = if dbm > self.threshold_dbm() {
+    /// One sweep reading of the home channel, `None` if a packet for this
+    /// node was on the air when it was taken, after `foreign` of the
+    /// `interval` since the last one was spent receiving packets for
+    /// other nodes.
+    pub fn sample_home(
+        &mut self,
+        c: Channel,
+        dbm: Option<i16>,
+        foreign: Duration,
+        interval: Duration,
+    ) {
+        let x = if dbm.is_some_and(|d| d > self.threshold_dbm()) {
             ONE
         } else if interval == Duration::ZERO {
             0
         } else {
-            let r = receiving.min(interval).as_micros() as u128;
+            let r = foreign.min(interval).as_micros() as u128;
             (r * ONE as u128 / interval.as_micros() as u128) as u32
         };
-        self.noise.add(dbm);
+        if let Some(d) = dbm {
+            self.noise.add(d);
+        }
         self.update(c, x);
     }
 
@@ -243,16 +256,19 @@ mod tests {
     }
 
     #[test]
-    fn home_counts_receive_time() {
+    fn home_counts_foreign_receive_time() {
         let mut b = BusyEstimator::from_config(&Config::default());
         let s = Duration::from_secs(1);
-        b.sample_home(ch(3), -125, Duration::from_millis(250), s);
+        b.sample_home(ch(3), Some(-125), Duration::from_millis(250), s);
         assert_eq!(b.fraction(ch(3)), ONE / 4);
-        b.sample_home(ch(3), -125, Duration::from_millis(750), s);
+        b.sample_home(ch(3), Some(-125), Duration::from_millis(750), s);
         assert_eq!(b.fraction(ch(3)), ONE / 2);
-        b.sample_home(ch(3), -60, Duration::ZERO, s);
+        b.sample_home(ch(3), Some(-60), Duration::ZERO, s);
         assert_eq!(b.fraction(ch(3)), 2 * ONE / 3);
-        b.sample_home(ch(3), -125, Duration::from_secs(5), Duration::ZERO);
+        // A reading taken during the node's own reception is set aside.
+        b.sample_home(ch(3), None, Duration::ZERO, s);
+        assert_eq!(b.fraction(ch(3)), ONE / 2);
+        b.sample_home(ch(3), Some(-125), Duration::from_secs(5), Duration::ZERO);
     }
 
     #[test]
