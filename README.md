@@ -33,8 +33,10 @@ bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around bark-prot
 docs/         design notes, research, decisions.
 ```
 
-Routing is a reduced Darkmap. The code is copied in and adapted, not
-depended upon; see roadmap decision D1.
+Routing is greedy geographic forwarding toward the destination's position,
+with depth-first void recovery and per-hop acknowledgements, as the design
+specifies. The protocol core carries no external routing dependency
+(roadmap decision D1).
 
 ## Building
 

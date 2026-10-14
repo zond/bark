@@ -7,7 +7,7 @@
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | **No dependency on the darkmap crate.** Copy the pieces we need into `bark-proto` and adapt them. | Darkmap's `Node` is built around gossip, a global table, the UKF and a 4-byte node ID that keys every table; the design removes all four and makes the 7-byte position the relay identity. Feature-gating would leave the wrong types in the API. Darkmap also pins embassy-time 0.4 / embassy-sync 0.6, while every current radio and BLE crate is on 0.5 / 0.8. A copy lets bark evolve without pulling darkforest along. |
+| D1 | **The protocol core owns its routing and table code**; `bark-proto` takes no external routing or mesh dependency. | The design's routing is small and specific: greedy forwarding on a 7-byte position that is also the relay identity, depth-first void recovery over a visited list of position hashes, a recent-RX window keyed by message ID, per-hop ACK with demotion. A general mesh library brings gossip, global tables, position estimation and a node-ID identity the design deliberately removes, and pins its own embassy versions. Writing the few hundred lines ourselves keeps the API shaped by the design alone. |
 | D2 | **Simulator first.** Before any firmware, build a discrete-event simulator that places relays and leaves on a grid, takes a sparse pairwise signal-power table (only pairs in range, per channel, varying over time), and runs traffic through the real protocol core. | The design's capacity numbers (§13) are order-of-magnitude estimates with 2× uncertainty on hearing radius and hop count. The thresholds in O3 and the eviction policy in O4 can only be tuned against a model. Boards arrive in three weeks; the simulator is what we can do now and what we will keep using after. |
 | D3 | **Protocol core is sans-IO** (`bark-proto`): a state machine driven by `(event, now)` that returns actions, no executor, no async, no radio driver. Firmware wraps it in an embassy task; the simulator drives it from an event queue. | One implementation under test in both places. Thousands of nodes in one process need a core that does not own tasks or channels. (Proposed; see open question Q1.) |
 | D4 | `lora-phy` from the lora-rs **git main**, not crates.io 3.0.1 (July 2024). | SF5, `get_rssi`, arbitrary sync word, `rx_switch_channel`, RX duty cycle all landed after 3.0.1. Pin a revision. |
@@ -21,7 +21,7 @@
 
 - Cargo workspace, CI for host tests.
 - `bark-proto`: wire codecs for every packet in design §14 (heartbeat, ACK, ATTACH, DATA, NACK, DELIVER), the 7-byte position codec (§7), local tangent-plane distance (§11), neighbour table, leaf table, delivery queue, recent-RX window, busy estimator and home-channel rule (§6), heartbeat scheduler (§7), per-hop transfer state machine (§9.3), duty-cycle budget (§3).
-- Copy from `darkforest/darkmap`: `collections/visited.rs`, `collections/recent_rx.rs`, the shape of `collections/neighbor_table.rs` (re-keyed by position), `routing.rs` (`RoutingContext::decide`, `select_best`, `nearest_to`). Leave behind: `positioning`, gossip, `global_table`, `messages.rs`, `sim/executor.rs`.
+- Tables and routing: a bounded visited list of 16-bit position hashes for DFS (§8.1), a recent-RX window keyed by 32-bit `msg_id`, a neighbour table keyed by 7-byte position with channel and `fail_count` and expiry after three rotations, and a routing decision function that picks the neighbour nearest to the destination, falls back to DFS when no neighbour is closer, and applies the owner rule for leaves.
 - Exit criterion: every codec round-trips under property tests; a two-node unit test exchanges heartbeat, ATTACH, DATA, ACK through the core with a fake clock.
 
 ### Phase 1: simulator (until boards arrive, ~2026-11-04)
@@ -44,8 +44,8 @@ Steps 4 and 5 with four boards (three relays in a line plus one leaf), then BLE 
 
 ## Open questions for discussion
 
-- **Q1 (D3).** Sans-IO core versus Darkmap's async `Node::run` over embassy channels. Sans-IO costs an explicit timer-wheel in the core and a thin adapter in firmware; async costs a mini-executor in the simulator (darkmap has one, 932 lines) and makes 20k simulated leaves expensive. Recommendation: sans-IO.
-- **Q2.** Link model fidelity. Start with a user-supplied sparse pairwise RX-power table plus a few generators (log-distance with exponent, rooftop bonus, indoor wall loss). Terrain-class models like darkmap's `sim/radio.rs` can be one generator but should not be the primary interface.
+- **Q1 (D3).** Sans-IO core versus an async node task over embassy channels. Sans-IO costs an explicit timer-wheel in the core and a thin adapter in firmware; async costs a mini-executor in the simulator (on the order of a thousand lines) and makes 20k simulated leaves expensive. Recommendation: sans-IO.
+- **Q2.** Link model fidelity. Start with a user-supplied sparse pairwise RX-power table plus a few generators (log-distance with exponent, rooftop bonus, indoor wall loss). Terrain-class models (free-space loss plus per-cell attenuation along the path) can be one generator but should not be the primary interface.
 - **Q3.** Leaf behaviour model: static, random walk, or trace-driven? Phones in pockets go dark for minutes; that drives the delivery-queue sizing (§10.4).
 - **Q4.** Whether the simulator exercises the real wire format (bytes through the codec) or passes structs. Recommendation: real bytes, so a codec bug is a simulator failure too, and airtime is computed from actual lengths.
 - **Q5.** The design's 8-symbol preamble assumption is wrong for SF5 (12 symbols minimum, enforced by the driver). §6.1's sweep-loss argument and §7's heartbeat airtime need a pass. Who updates the design doc, and when?

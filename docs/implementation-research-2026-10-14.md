@@ -6,19 +6,15 @@ Section numbers (§) refer to the design.
 
 ## 1. Rust stack
 
-### Routing: Darkmap
+### Routing
 
-`~/projects/darkforest/darkmap` (18.6k lines incl. tests) is `no_std` + `alloc`, with
-greedy forwarding, DFS backtracking with a visited list, recent-RX dedup, per-hop ACK, and a
-pull-based `Transport` trait. Reusable pieces and the reasons we copy rather than depend on
-it are in `roadmap.md` (D1) and `simulator-design.md` §5. Facts that drove that decision:
-
-- `Cargo.lock` resolves embassy-time 0.4.0 and embassy-sync 0.6.2. lora-phy (git), trouble,
-  nrf-sdc and embassy-nrf 0.11 all use embassy-time 0.5 and embassy-sync 0.8. Darkmap's
-  public API exposes `embassy_time::Instant`, so two versions cannot coexist.
-- `node/mod.rs` (2250 lines) interleaves routing with gossip selection, the UKF and the
-  global table. `NodeId = [u8; 4]` keys every table.
-- It needs a global allocator; `embedded-alloc` is the documented choice.
+No published `no_std` crate implements the design's routing (greedy geographic forwarding
+keyed by position, DFS void recovery with a visited list, per-hop ACK). General mesh
+libraries carry gossip, global tables and node-ID identities the design removes, and any
+library that exposes `embassy_time::Instant` in its API pins an embassy-time version: lora-phy
+(git), trouble, nrf-sdc and embassy-nrf 0.11 all use embassy-time 0.5 and embassy-sync 0.8,
+and two versions cannot coexist. The core is written here (D1). Bounded tables with a
+global allocator: `embedded-alloc` is the documented choice on nRF52.
 
 ### Radio driver: lora-phy
 

@@ -9,10 +9,10 @@ unfounded, and say what the tradeoff is in terms of concepts and ideals, not onl
 Run `date` to know what day it is.
 
 Read README.md first. The protocol specification lives outside this repo:
-`~/projects/hrafnar/docs/civilian-433-mesh-design.md`. The Darkmap routing design it
-reduces is `~/projects/darkforest/docs/darkmap.md` and the code is
-`~/projects/darkforest/darkmap`. We copy from Darkmap; we do not depend on it (docs/roadmap.md,
-decision D1).
+`~/projects/hrafnar/docs/civilian-433-mesh-design.md`. The protocol core in this repo owns
+its routing and table code; it has no external routing dependency (docs/roadmap.md, D1).
+Describe mechanisms in their own terms; do not name other projects as the origin of code or
+ideas in anything committed here.
 
 ## Design ideals
 

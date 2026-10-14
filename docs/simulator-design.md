@@ -84,7 +84,7 @@ bark-proto (no_std + alloc)
   tables::*             neighbour, leaf, delivery queue, recent-rx, visited
   mac::*                busy estimator, channel selection, heartbeat schedule,
                         per-hop transfer, duty-cycle budget
-  routing::*            greedy, DFS, owner rule (copied from darkmap, re-keyed)
+  routing::*            greedy, DFS, owner rule
 
 bark-sim (std)
   engine                event heap, clock, RNG
@@ -120,18 +120,17 @@ pub enum Action<'a> {
 
 Firmware maps `Action` onto `lora-phy` calls and embassy timers; the simulator maps them onto heap events. The core never blocks and never allocates per packet beyond its bounded tables.
 
-### What is copied from darkmap
+### Core tables
 
-| darkmap | bark-proto | change |
-|---|---|---|
-| `collections/visited.rs` | `tables::visited` | key by 16-bit position hash per §8.1 |
-| `collections/recent_rx.rs` | `tables::recent_rx` | key by 32-bit `msg_id` |
-| `collections/neighbor_table.rs` | `tables::neighbours` | key by 7-byte position; add channel, `fail_count`; drop ban/range fields |
-| `routing.rs` | `routing` | `RoutingContext::decide`, `select_best`, `nearest_to` as-is; add owner rule |
-| `sim/radio.rs` free-space + terrain attenuation | `links::generators::terrain` | one generator among several, converted to f64 dB |
-| `sim/topology.rs` `LinkProps` | `links` | replaced by the sparse table; keep the generator shapes |
+| module | keyed by | bound | purpose |
+|---|---|---|---|
+| `tables::visited` | 16-bit position hash (§8.1) | per message, carried in the packet | DFS: which relays this message has already tried |
+| `tables::recent_rx` | 32-bit `msg_id` | fixed window | drop duplicates and late retransmits |
+| `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
+| `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves and their keepalive age |
+| `tables::delivery` | `msg_id` | 64 messages, 10 min TTL | messages waiting for a dark leaf |
 
-Not copied: `node/mod.rs`, `messages.rs`, `wire.rs` varints, `positioning`, `global_table`, `recent_tx` (per-hop ACK state is simpler here), `sim/executor.rs`.
+`routing` is a pure function of (destination, neighbour table, visited list, own position): forward to the neighbour nearest the destination if one is nearer than we are, otherwise DFS over unvisited neighbours, otherwise NACK. The owner rule routes a leaf's traffic to the relay it is attached to. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
 
 ## 6. Scenario catalogue
 
