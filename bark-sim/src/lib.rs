@@ -13,3 +13,6 @@ pub mod geo;
 pub mod links;
 pub mod phy;
 pub mod rng;
+pub mod scenario;
+
+pub use scenario::Scenario;
