@@ -13,7 +13,9 @@
 | D4 | `lora-phy` from the lora-rs **git main**, not crates.io 3.0.1 (July 2024). | SF5, `get_rssi`, arbitrary sync word, `rx_switch_channel`, RX duty cycle all landed after 3.0.1. Pin a revision. |
 | D5 | BLE via **TrouBLE + nrf-sdc**, not nrf-softdevice. | nrf-softdevice last released January 2024; trouble-host 0.8 and nrf-sdc 0.4 both released August 2026 with GATT, notifications and security. Proven on a T-Echo by the umsh project. |
 | D6 | **Keep the stock bootloader.** Application linked at `0x26000`, flashed as UF2 (family `0xADA52840`, volume `TECHOBOOT`). | The T-Echo ships Adafruit's UF2 bootloader with SoftDevice S140 6.1.1 occupying `0x1000..0x26000`. Replacing it needs SWD and buys nothing. nrf-sdc does not use the SoftDevice; the slot simply stays reserved. |
-| D7 | Repository is `bark`; crates `bark-proto`, `bark-sim`, `bark-fw` in one workspace. | Answers design open item O9. |
+| D7 | Repository is `bark`; crates `bark-proto`, `bark-sim`, `bark-fw`. `bark-fw` is a separate Cargo workspace. | Answers design open item O9. A crate that only builds for `thumbv7em-none-eabihf` cannot share a workspace with host tests without nightly per-package targets. |
+| D8 | **`bark-proto` does not allocate.** Tables are fixed-capacity arrays sized by the design. | Every table is bounded by the design anyway (§8.2, §10.2, §10.4). No allocator on the firmware means no allocation failure path; fixed-size `Leaf`s let the simulator hold twenty thousand in cache. |
+| D9 | **One timer per core.** The core exposes `next_wakeup()`; the driver delivers `Event::Wakeup` when its clock reaches it. | No timer identifiers cross the boundary, the simulator keeps one heap entry per core, the firmware one embassy timer. Fixed in `docs/core-interface.md`. |
 
 ## Phases
 
@@ -44,7 +46,7 @@ Steps 4 and 5 with four boards (three relays in a line plus one leaf), then BLE 
 
 ## Open questions for discussion
 
-- **Q1 (D3).** Sans-IO core versus an async node task over embassy channels. Sans-IO costs an explicit timer-wheel in the core and a thin adapter in firmware; async costs a mini-executor in the simulator (on the order of a thousand lines) and makes 20k simulated leaves expensive. Recommendation: sans-IO.
+- **Q1 (D3), decided 2026-10-14.** Sans-IO. An async node task would need a mini-executor in the simulator and makes 20k simulated leaves expensive. The contract is `docs/core-interface.md`.
 - **Q2.** Link model fidelity. Start with a user-supplied sparse pairwise RX-power table plus a few generators (log-distance with exponent, rooftop bonus, indoor wall loss). Terrain-class models (free-space loss plus per-cell attenuation along the path) can be one generator but should not be the primary interface.
 - **Q3.** Leaf behaviour model: static, random walk, or trace-driven? Phones in pockets go dark for minutes; that drives the delivery-queue sizing (§10.4).
 - **Q4.** Whether the simulator exercises the real wire format (bytes through the codec) or passes structs. Recommendation: real bytes, so a codec bug is a simulator failure too, and airtime is computed from actual lengths.
@@ -55,7 +57,7 @@ Steps 4 and 5 with four boards (three relays in a line plus one leaf), then BLE 
 
 | When | What |
 |---|---|
-| 2026-10-14 | This document. |
+| 2026-10-14 | This document. Workspace skeleton and `docs/core-interface.md`. |
 | Oct 2026 | Phase 0 and simulator milestones 1 to 3. |
 | late Oct 2026 | Capacity scenario and parameter sweeps; revise §13. |
 | ~2026-11-04 | Four T-Echo 433 arrive. Phase 2. |

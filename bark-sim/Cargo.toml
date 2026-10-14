@@ -1,0 +1,10 @@
+[package]
+name = "bark-sim"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Discrete-event simulator and scenario runner for the bark mesh."
+
+[dependencies]
+bark-proto = { path = "../bark-proto", features = ["std"] }

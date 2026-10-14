@@ -12,7 +12,8 @@ web from small, cheap threads.
 
 ## Status (2026-10-14)
 
-Pre-code. The specification is `civilian-433-mesh-design.md` in the hrafnar
+Skeleton and core interface in place; protocol core and simulator in
+progress. The specification is `civilian-433-mesh-design.md` in the hrafnar
 repo (`~/projects/hrafnar/docs/`). Four T-Echo boards are on order, expected
 around 2026-11-04. Until they arrive the work is the simulator.
 
@@ -23,13 +24,15 @@ Read, in order:
 3. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
    ecosystem, hardware facts, and corrections to the design doc.
 
-## Layout (planned)
+## Layout
 
 ```
 bark-proto/   no_std protocol core: packet codecs, tables, routing, MAC state
-              machine. Sans-IO: no executor, no radio driver, explicit time.
+              machine. Sans-IO: no executor, no radio driver, explicit time,
+              no allocation. docs/core-interface.md is its contract.
 bark-sim/     discrete-event simulator and scenario runner (std, host).
-bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around bark-proto.
+bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
+              bark-proto. Its own Cargo workspace, cross-compiled.
 docs/         design notes, research, decisions.
 ```
 
@@ -40,6 +43,18 @@ specifies. The protocol core carries no external routing dependency
 
 ## Building
 
-Nothing to build yet. Host toolchain: stable Rust (1.98 on the dev machine).
-Firmware will need `rustup target add thumbv7em-none-eabihf` and a UF2
-converter; see the research doc.
+Host (core and simulator), stable Rust:
+
+```
+cargo test --workspace
+```
+
+Firmware, from `bark-fw/` (its own workspace, so the host workspace never
+cross-compiles):
+
+```
+rustup target add thumbv7em-none-eabihf
+cd bark-fw && cargo build --release
+```
+
+See `bark-fw/README.md` for packaging the UF2 and flashing.

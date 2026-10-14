@@ -1,0 +1,29 @@
+//! Sans-IO protocol core for the bark mesh.
+//!
+//! The core is a state machine. A driver (firmware or simulator) feeds it
+//! [`Event`]s stamped with the current [`Instant`] and collects the
+//! [`Action`]s it emits. The core never blocks, never sleeps, never allocates
+//! and never touches a radio; everything it needs from the world arrives as
+//! an event. See `docs/core-interface.md` for the contract a driver must
+//! honour, and `docs/roadmap.md` for the design decisions behind it.
+
+#![no_std]
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+pub mod event;
+pub mod ids;
+pub mod node;
+pub mod position;
+pub mod radio;
+pub mod time;
+
+pub use event::{Action, AppCommand, AppEvent, Event, Frame, MAX_FRAME};
+pub use ids::{LeafId, MsgId};
+pub use node::{Config, Core, Leaf, Node, Relay, Role};
+pub use position::Position;
+pub use radio::{Channel, CHANNELS};
+pub use time::{Duration, Instant};
