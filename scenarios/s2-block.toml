@@ -1,0 +1,74 @@
+# S2: a city block (docs/simulator-design.md §6). One square kilometre,
+# ten relays on windowsills, eighty phones indoors with their leaves, ten
+# texts per leaf per day to any other leaf in the block, for one hour.
+#
+# Checks attach and keepalive (protocol §10.2: about 2 % of a channel at
+# 80 leaves per relay, here 8), delivery and the delivery queue (§10.3,
+# §10.4), and phones that go dark for minutes. Bench twin: protocol §15
+# step 5, then the windowsill field test of step 7.
+
+name = "s2-block"
+seed = 1
+duration_s = 3600.0
+# As S1: the relays know each other one worst-case rotation (13
+# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+# Leaves attach to the first relay they hear within that rotation.
+settle_s = 345.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+# Fitted to the ranges of protocol §4 at SF5 with 10 dBm and the default
+# -119 dBm sensitivity (129 dB of budget) and free-space loss at 1 m
+# (25.2 dB at 433.92 MHz): 750 m to a handheld in the street gives
+# n = (129 - 25.2) / (10 log10 750) = 3.6, and 300 m to one indoors then
+# leaves 14.4 dB for the wall. A windowsill relay counts as outdoors.
+exponent = 3.6
+indoor_loss_db = 14.4
+# Buildings in the way differ from link to link, and people and doors
+# move; the same figures as the capacity scenario's test.
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 1000.0
+height_m = 1000.0
+per_km2 = 10.0
+
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 1000.0
+height_m = 1000.0
+per_km2 = 80.0
+indoor = true
+
+# Ten texts per leaf per day (simulator-design §6), 100 bytes each, the
+# text of protocol §13, to any other leaf in the block.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.4166667
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+# A phone in a pocket, a basement or the metro for a few minutes
+# (protocol §10.4): dark five minutes in an hour on average.
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 60.0
+observers = ["relay:0", "relay:1", "relay:2", "relay:3", "relay:4",
+             "relay:5", "relay:6", "relay:7", "relay:8", "relay:9"]
+per_node = true

@@ -337,3 +337,51 @@ fn s1b_hidden_terminals_come_apart() {
         );
     }
 }
+
+/// S2, the block (docs/simulator-design.md §6): ten windowsill relays and
+/// eighty indoor leaves over a square kilometre for an hour. A smoke test
+/// on one seed: it runs, delivers most texts, and the relays neither
+/// oscillate between channels nor approach their duty cycle.
+///
+/// The delivery bound is loose on purpose. Over seeds 1 to 10 the settled
+/// phase delivers 0.81 (seed 1: 0.70). Leaves change relay about twice an
+/// hour each: indoors at the design's relay density half the leaves hear
+/// their relay less than 12 dB above sensitivity, one fade makes a
+/// keepalive fail, and the leaf then leaves the relay for good. Texts
+/// sent while it has no relay fail at once, and texts already queued at
+/// the old relay expire there. The bound should rise towards 0.95, and the
+/// relay changes fall, once a leaf keeps its relay through a fade.
+#[test]
+fn s2_block_smoke() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s2-block.toml");
+    let sc = Scenario::load(&path).expect("S2 parses");
+    let c = bark_proto::Config::default();
+    let settled = (c.boot_listen + c.heartbeat_max.mul(13)).as_micros() as f64 / 1e6;
+    assert_eq!(settled, sc.settle_s, "settle time derived as in S1");
+    let mut sim = Sim::new(&sc).expect("S2 builds");
+    sim.run();
+    let s = sim.summary();
+    assert_eq!((s.relays, s.leaves), (10, 80));
+    let phase = &s.app.phases[1];
+    assert_eq!(phase.phase, "settled");
+    assert!(phase.originated >= 15, "{}", s.table());
+    assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
+    assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+    let nodes = s.nodes.as_ref().expect("per-node metrics");
+    for n in nodes.iter().filter(|n| n.label.starts_with("relay")) {
+        // The choice at the end of the boot listen and no move after it
+        // (protocol §6.2, §6.3).
+        assert!(
+            n.m.home_moves <= 1,
+            "{}: {} home moves",
+            n.label,
+            n.m.home_moves
+        );
+        assert!(
+            n.airtime_fraction < 0.02,
+            "{}: airtime {:.3}",
+            n.label,
+            n.airtime_fraction
+        );
+    }
+}
