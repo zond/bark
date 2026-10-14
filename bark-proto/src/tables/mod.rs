@@ -26,7 +26,7 @@ mod sizes {
             ("leaves", size_of::<leaves::Leaves>()),
             ("delivery", size_of::<delivery::DeliveryQueue>()),
             ("recent_rx", size_of::<recent_rx::RecentRx<{ recent_rx::RELAY_RECENT_RX }>>()),
-            ("budget", size_of::<budget::Budget>()),
+            ("budget", size_of::<budget::RelayBudget>()),
             ("busy", size_of::<busy::BusyEstimator>()),
             ("visited", size_of::<visited::Visited>()),
         ];
