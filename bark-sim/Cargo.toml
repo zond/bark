@@ -8,3 +8,6 @@ description = "Discrete-event simulator and scenario runner for the bark mesh."
 
 [dependencies]
 bark-proto = { path = "../bark-proto", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
