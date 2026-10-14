@@ -1,47 +1,45 @@
-//! The duty-cycle budget (design §3, §9.4): at most
-//! [`DUTY_CYCLE_PERCENT`] of any [`DUTY_CYCLE_WINDOW`] on air, and no
-//! single transmission longer than [`MAX_TRANSMISSION`].
+//! The duty-cycle budget (design §3, §9.4): a token bucket that keeps a
+//! node within [`DUTY_CYCLE_PERCENT`] of every [`DUTY_CYCLE_WINDOW`], and
+//! no single transmission longer than [`MAX_TRANSMISSION`].
 //!
-//! # Accounting
+//! # The bucket
 //!
-//! Airtime is summed into buckets by the instant each transmission *ends*.
-//! A transmission of length `a` starting at `now` is allowed if the airtime
-//! in every bucket that overlaps the window ending when it ends,
-//! `[now + a − W, now + a]`, plus `a`, is within the cap.
+//! The bucket holds at most [`DEPTH`] of airtime, one minute at the 10 %
+//! cap, 6 s, and fills at the rate `r = (B − DEPTH) / W`, with `B` the
+//! [`BUDGET`] of 360 s and `W` the one-hour window: 354 s an hour, 9.83 %.
+//! A transmission may start only if the bucket holds its airtime, which it
+//! then takes out.
 //!
-//! That is sufficient for legality, at every instant:
+//! **Legality.** Take any interval `[T − L, T]`. If no transmission
+//! straddles its start, everything on the air in it started in it and was
+//! taken from the bucket: at most what the bucket held at `T − L`, at most
+//! `DEPTH`, plus what flowed in meanwhile, `r·L`. If one transmission of
+//! airtime `a` started at `s < T − L` and runs into the interval, count
+//! from `s` instead: the bucket held at most `DEPTH − a` after it, so what
+//! started in `(s, T]` is at most `DEPTH − a + r·(T − s)`, and the
+//! straddler adds `s + a − (T − L)` inside the interval; the sum is
+//! `DEPTH + L − (1 − r)·(T − s)`, at most `DEPTH + r·L` since
+//! `T − s > L`. A transmission running past `T` only lowers the count. So
+//! any interval of length `L` holds at most `DEPTH + r·L` on air, and any
+//! hour at most `DEPTH + r·W = B`: 10 %, the limit of ERC/REC 70-03
+//! Annex 1 band g1, which that recommendation measures over one hour.
+//! The rate is below 10 % by `DEPTH / W` exactly so that the allowance
+//! for a burst cannot carry an hour over the limit.
 //!
-//! - Any earlier transmission with airtime inside that window ends inside
-//!   it, so its bucket overlaps the window and is counted, in full.
-//! - The airtime in a window ending at `T` grows with `T` while this
-//!   transmission is on air (it gains this transmission at full rate and
-//!   loses old airtime at most at that rate), so the window ending when it
-//!   ends is the worst one; later windows are checked by later
-//!   transmissions.
-//!
-//! The error is one-sided: the oldest counted bucket may lie mostly
-//! outside the window and is counted whole. The budget is therefore
-//! underestimated by at most the airtime of one bucket: for the relay's
-//! one-minute buckets about `60 s × 10 % = 6 s` (1.7 % of the 360 s budget)
-//! for a node that transmits steadily at the cap.
+//! **Silence.** A node that has emptied its bucket may send a transmission
+//! of airtime `a` after `a / r`: 1.4 s for a full frame, never more than
+//! `DEPTH / r`, 61 s.
 //!
 //! # Heartbeat reserve
 //!
 //! A relay out of budget stops forwarding but keeps sending heartbeats
-//! (§9.4), so everything but a heartbeat must leave [`heartbeat_reserve`]
-//! unspent: the airtime of the heartbeats one window holds at the mean
-//! interval, 3600 s / 10 s × 11.84 ms = 4.26 s, 0.12 % of the hour.
-//!
-//! # Sizes
-//!
-//! `S` slots hold `S − 2` buckets for the window, plus one partial at its
-//! start, plus one that a transmission ending up to [`MAX_TRANSMISSION`]
-//! after `now` can reach. A relay, which can run at the cap, uses
-//! [`RelayBudget`] with one-minute buckets; a leaf, which sends a keepalive
-//! a minute and the odd message, uses [`LeafBudget`] with five-minute
-//! buckets, a ninth of the memory.
+//! (§9.4), so everything but a heartbeat leaves [`HEARTBEAT_RESERVE`] in
+//! the bucket: one heartbeat's airtime, 11.84 ms. That suffices while
+//! heartbeats are at least the reserve's refill time, 11.84 ms / r = 120 ms,
+//! apart (design §7: at least 5 s): a heartbeat finds the reserve, takes
+//! it, and the bucket refills it before the next, since nothing else may
+//! spend below it.
 
-use crate::node::Config;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::time::{Duration, Instant};
 use crate::wire::HEARTBEAT_LEN;
@@ -50,75 +48,70 @@ use crate::wire::HEARTBEAT_LEN;
 pub const BUDGET: Duration =
     Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
+/// The most airtime the bucket holds: one minute at the cap, 6 s, about
+/// forty full frames, more than a full send queue (§9.3: 16) can use.
+pub const DEPTH: Duration = Duration::from_micros(BUDGET.as_micros() / 60);
+
 /// Longest single transmission (design §3: 1 s; SF5 frames are ≤140 ms).
 pub const MAX_TRANSMISSION: Duration = Duration::from_secs(1);
 
-/// Airtime a relay keeps for its heartbeats in every window; see the
-/// module documentation.
-pub fn heartbeat_reserve(c: &Config) -> Duration {
-    let mean_interval = (c.heartbeat_min + c.heartbeat_max).as_micros() / 2;
-    let heartbeats = DUTY_CYCLE_WINDOW.as_micros().div_ceil(mean_interval.max(1));
-    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).mul(heartbeats)
+const fn gcd(a: u64, b: u64) -> u64 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
-/// A relay's budget: 60 one-minute buckets.
-pub type RelayBudget = Budget<62>;
+const G: u64 = gcd(
+    BUDGET.as_micros() - DEPTH.as_micros(),
+    DUTY_CYCLE_WINDOW.as_micros(),
+);
 
-/// A leaf's budget: 12 five-minute buckets.
-pub type LeafBudget = Budget<14>;
+/// The fill rate `(BUDGET − DEPTH) / W` as `RATE_NUM / RATE_DEN`: 59 / 600.
+/// The bucket counts in units of `1 / RATE_DEN` µs, so it fills by
+/// `RATE_NUM` units a microsecond and the arithmetic is exact.
+const RATE_NUM: u64 = (BUDGET.as_micros() - DEPTH.as_micros()) / G;
+const RATE_DEN: u64 = DUTY_CYCLE_WINDOW.as_micros() / G;
 
+const _: () = assert!(RATE_NUM == 59 && RATE_DEN == 600);
+const _: () = assert!(MAX_TRANSMISSION.as_micros() <= DEPTH.as_micros());
+
+/// Airtime a relay keeps in the bucket for its heartbeats; see the module
+/// documentation.
+pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+
+/// The duty-cycle token bucket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Slot {
-    /// Bucket number: end instant / bucket length.
-    bucket: u32,
-    /// Airtime in µs ending in this bucket.
-    airtime: u32,
+pub struct Budget {
+    /// Content at `at`, in `1 / RATE_DEN` µs. Negative only after a
+    /// transmission the bucket did not allow was recorded.
+    units: i64,
+    at: Instant,
 }
 
-/// The rolling airtime budget, in `S` slots.
-#[derive(Clone, Debug)]
-pub struct Budget<const S: usize> {
-    slots: [Slot; S],
+/// `d` in bucket units.
+const fn units(d: Duration) -> i64 {
+    (d.as_micros() * RATE_DEN) as i64
 }
 
-impl<const S: usize> Budget<S> {
-    /// Bucket length: the window split into `S − 2` buckets.
-    pub const BUCKET: Duration =
-        Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() / (S as u64 - 2));
+const FULL: i64 = units(DEPTH);
 
-    /// A budget with nothing spent.
+impl Budget {
+    /// A full bucket.
     pub const fn new() -> Self {
-        const {
-            assert!(S > 2);
-            assert!(DUTY_CYCLE_WINDOW.as_micros().is_multiple_of(S as u64 - 2));
-            assert!(MAX_TRANSMISSION.as_micros() <= Self::BUCKET.as_micros());
-            // Transmissions ending in one bucket do not overlap, so they
-            // started at most MAX_TRANSMISSION before it: their airtime fits.
-            assert!(Self::BUCKET.as_micros() + MAX_TRANSMISSION.as_micros() <= u32::MAX as u64);
-        };
         Budget {
-            slots: [Slot {
-                bucket: 0,
-                airtime: 0,
-            }; S],
+            units: FULL,
+            at: Instant::ZERO,
         }
     }
 
-    /// Bucket number of instant `t` µs. 32 bits of buckets last millennia
-    /// from the driver's epoch; beyond that every instant shares the last
-    /// bucket, which over-counts and so stays legal.
-    fn bucket(t: u64) -> u32 {
-        u32::try_from(t / Self::BUCKET.as_micros()).unwrap_or(u32::MAX)
-    }
-
-    /// Airtime in the buckets overlapping a window that starts at `start` µs.
-    fn spent_since(&self, start: u64) -> u64 {
-        let first = Self::bucket(start);
-        self.slots
-            .iter()
-            .filter(|s| s.bucket >= first)
-            .map(|s| s.airtime as u64)
-            .sum()
+    /// Content at `now`, in bucket units.
+    fn content(&self, now: Instant) -> i64 {
+        let elapsed = now.as_micros().saturating_sub(self.at.as_micros()) as u128;
+        let filled =
+            self.units as i128 + (elapsed * RATE_NUM as u128).min(u64::MAX as u128) as i128;
+        filled.min(FULL as i128) as i64
     }
 
     /// Whether a transmission of `airtime` may start at `now`.
@@ -127,57 +120,47 @@ impl<const S: usize> Budget<S> {
     }
 
     /// Whether a transmission of `airtime` may start at `now` and leave
-    /// `reserve` of the window unspent, as everything but a heartbeat must
-    /// leave [`heartbeat_reserve`].
+    /// `reserve` in the bucket, as everything but a heartbeat must leave
+    /// [`HEARTBEAT_RESERVE`].
     pub fn would_allow_keeping(&self, airtime: Duration, reserve: Duration, now: Instant) -> bool {
-        if airtime > MAX_TRANSMISSION {
-            return false;
-        }
-        let end = now.as_micros() + airtime.as_micros();
-        let start = end.saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
-        self.spent_since(start) + airtime.as_micros() + reserve.as_micros() <= BUDGET.as_micros()
+        airtime <= MAX_TRANSMISSION && self.content(now) >= units(airtime + reserve)
     }
 
-    /// The earliest instant at or after `now` when [`Budget::would_allow`]
-    /// may change its answer for `airtime` without anything being recorded:
-    /// when the oldest bucket the window overlaps falls out of it. `None`
-    /// if `airtime` can never be allowed.
-    pub fn next_change(&self, airtime: Duration, now: Instant) -> Option<Instant> {
-        if airtime > MAX_TRANSMISSION {
+    /// The first instant at or after `now` when a transmission of
+    /// `airtime` that leaves `reserve` will be allowed, if nothing else is
+    /// sent meanwhile; `None` if it never can be.
+    pub fn allowed_at(
+        &self,
+        airtime: Duration,
+        reserve: Duration,
+        now: Instant,
+    ) -> Option<Instant> {
+        let need = airtime + reserve;
+        if airtime > MAX_TRANSMISSION || need > DEPTH {
             return None;
         }
-        let bucket = Self::BUCKET.as_micros();
-        let end = now.as_micros() + airtime.as_micros();
-        let start = end.saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
-        // The window start must pass the end of its current bucket.
-        let next_start = (start / bucket + 1) * bucket;
-        let at = next_start + DUTY_CYCLE_WINDOW.as_micros() - airtime.as_micros();
-        Some(Instant::from_micros(at.max(now.as_micros())))
+        let short = units(need) - self.content(now);
+        if short <= 0 {
+            return Some(now);
+        }
+        Some(now + Duration::from_micros((short as u64).div_ceil(RATE_NUM)))
     }
 
     /// Record a transmission of `airtime` that started at `now`. Records it
     /// whether or not it was allowed: what went on air counts.
     pub fn record(&mut self, airtime: Duration, now: Instant) {
-        let bucket = Self::bucket(now.as_micros() + airtime.as_micros());
-        let slot = &mut self.slots[bucket as usize % S];
-        if slot.bucket != bucket {
-            *slot = Slot { bucket, airtime: 0 };
-        }
-        let airtime = u32::try_from(airtime.as_micros()).unwrap_or(u32::MAX);
-        slot.airtime = slot.airtime.saturating_add(airtime);
+        self.units = self.content(now) - units(airtime);
+        self.at = self.at.max(now);
     }
 
-    /// Airtime available at `now`: the cap less what the window ending now
-    /// has spent. Any transmission no longer than this is allowed.
+    /// Airtime in the bucket at `now`. Any transmission no longer than
+    /// this, and than [`MAX_TRANSMISSION`], is allowed.
     pub fn available(&self, now: Instant) -> Duration {
-        let start = now
-            .as_micros()
-            .saturating_sub(DUTY_CYCLE_WINDOW.as_micros());
-        Duration::from_micros(BUDGET.as_micros().saturating_sub(self.spent_since(start)))
+        Duration::from_micros(self.content(now).max(0) as u64 / RATE_DEN)
     }
 }
 
-impl<const S: usize> Default for Budget<S> {
+impl Default for Budget {
     fn default() -> Self {
         Budget::new()
     }
@@ -194,11 +177,10 @@ mod tests {
         Duration::from_millis(n)
     }
 
-    /// The most airtime in any window, from the exact intervals, which are
-    /// in order and do not overlap. The worst window ends at a
-    /// transmission's end (module documentation), so only those are tried.
-    fn worst_window(txs: &[(u64, u64)]) -> u64 {
-        let w = DUTY_CYCLE_WINDOW.as_micros();
+    /// The most airtime in any interval of length `w`, from the exact
+    /// intervals, which are in order and do not overlap. The worst interval
+    /// ends at a transmission's end, so only those are tried.
+    fn worst(txs: &[(u64, u64)], w: u64) -> u64 {
         let (mut first, mut sum, mut worst) = (0, 0, 0);
         for &(s, a) in txs {
             let end = s + a;
@@ -214,38 +196,35 @@ mod tests {
         worst
     }
 
-    const BUCKET: Duration = RelayBudget::BUCKET;
+    /// The most a node may have on air in any interval of `w` µs:
+    /// `DEPTH + r·w` (module documentation).
+    fn bound(w: u64) -> u64 {
+        DEPTH.as_micros() + w * RATE_NUM / RATE_DEN
+    }
 
     #[test]
     fn constants() {
         assert_eq!(BUDGET, Duration::from_secs(360));
-        assert_eq!(BUCKET, Duration::from_secs(60));
-        assert_eq!(LeafBudget::BUCKET, Duration::from_secs(300));
-        assert_eq!(core::mem::size_of::<RelayBudget>(), 62 * 8);
-        assert_eq!(core::mem::size_of::<LeafBudget>(), 14 * 8);
+        assert_eq!(DEPTH, Duration::from_secs(6));
+        assert_eq!(bound(DUTY_CYCLE_WINDOW.as_micros()), BUDGET.as_micros());
+        assert_eq!(core::mem::size_of::<Budget>(), 16);
+        let r = RATE_NUM as f64 / RATE_DEN as f64;
+        assert!((r - 354.0 / 3600.0).abs() < 1e-12);
+        // Worst silence: a full bucket's refill.
+        let refill = DEPTH.as_micros() as f64 / r / 1e6;
+        assert!((refill - 61.0).abs() < 0.1, "{refill}");
     }
 
     #[test]
-    fn heartbeat_reserve_follows_the_design() {
-        let c = Config::default();
-        // 360 heartbeats of 11.84 ms in an hour at the mean 10 s interval.
-        assert_eq!(heartbeat_reserve(&c), Duration::from_micros(360 * 11_840));
-        let fast = Config {
-            heartbeat_min: Duration::from_secs(1),
-            heartbeat_max: Duration::from_secs(1),
-            ..c
-        };
-        assert_eq!(
-            heartbeat_reserve(&fast),
-            Duration::from_micros(3600 * 11_840)
-        );
+    fn heartbeat_reserve_is_one_heartbeat() {
+        assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(11_840));
     }
 
     #[test]
     fn the_reserve_is_left_for_heartbeats() {
-        let reserve = heartbeat_reserve(&Config::default());
-        let mut b = RelayBudget::new();
-        let mut t = Instant::ZERO;
+        let reserve = HEARTBEAT_RESERVE;
+        let mut b = Budget::new();
+        let mut t = Instant::ZERO + Duration::from_secs(1000);
         // Spend all but the reserve and a little, in 100 ms frames.
         while b.would_allow_keeping(ms(100), reserve, t) {
             b.record(ms(100), t);
@@ -256,86 +235,67 @@ mod tests {
             !b.would_allow_keeping(ms(100), reserve, t),
             "forwarding stops"
         );
-        assert!(b.would_allow(ms(12), t), "a heartbeat still goes");
+        assert!(b.would_allow(reserve, t), "a heartbeat still goes");
+        b.record(reserve, t);
+        // It is back well before the next heartbeat (§7: 5 s at the least).
+        let back = b.allowed_at(ms(0), reserve, t).unwrap();
+        assert!(back.since(t) < ms(121), "{:?}", back.since(t));
     }
 
-    /// Spend the whole budget, then step through `next_change` until it
-    /// allows again: it never skips past the first allowed instant.
-    fn next_change_is_exact<const S: usize>() {
-        let mut b = Budget::<S>::new();
+    #[test]
+    fn allowed_at_is_exact() {
+        let mut b = Budget::new();
         let mut t = Instant::from_micros(7_777_777);
         while b.would_allow(ms(900), t) {
             b.record(ms(900), t);
             t += ms(1000);
         }
-        let a = ms(500);
-        let mut probe = t;
-        let first = loop {
-            if b.would_allow(a, probe) {
-                break probe;
-            }
-            probe += ms(250);
-        };
-        let mut at = t;
-        while !b.would_allow(a, at) {
-            let next = b.next_change(a, at).unwrap();
-            assert!(next > at);
-            at = next;
+        b.record(b.available(t), t);
+        for (a, reserve) in [(ms(500), Duration::ZERO), (ms(139), ms(12)), (ms(1), ms(0))] {
+            let at = b.allowed_at(a, reserve, t).unwrap();
+            assert!(at > t);
+            assert!(b.would_allow_keeping(a, reserve, at));
+            let before = Instant::from_micros(at.as_micros() - 1);
+            assert!(!b.would_allow_keeping(a, reserve, before));
         }
-        assert!(
-            at <= first && first.as_micros() - at.as_micros() < 250_000,
-            "{at:?} vs {first:?}"
-        );
-        assert_eq!(b.next_change(ms(1001), t), None);
+        assert_eq!(b.allowed_at(ms(1001), Duration::ZERO, t), None);
+        assert_eq!(b.allowed_at(ms(1000), DEPTH, t), None);
+        assert_eq!(b.allowed_at(ms(0), Duration::ZERO, t), Some(t));
     }
 
     #[test]
-    fn next_change_finds_the_first_allowed_instant() {
-        next_change_is_exact::<62>();
-        next_change_is_exact::<14>();
-    }
-
-    #[test]
-    fn spends_and_recovers() {
-        let mut b = RelayBudget::new();
+    fn spends_a_burst_and_refills_at_the_rate() {
+        let mut b = Budget::new();
         let t0 = Instant::from_micros(10 * 3_600_000_000);
-        assert_eq!(b.available(t0), BUDGET);
+        assert_eq!(b.available(t0), DEPTH);
         assert!(!b.would_allow(ms(1001), t0), "single transmission cap");
-        // Spend the whole budget in one-second frames.
+        // A burst of the whole bucket, and what flows in meanwhile, back to
+        // back.
         let mut t = t0;
-        for _ in 0..360 {
-            assert!(b.would_allow(ms(1000), t));
+        let mut sent = 0;
+        while b.would_allow(ms(1000), t) {
             b.record(ms(1000), t);
             t += ms(1000);
+            sent += 1;
         }
+        assert_eq!(sent, 6);
+        b.record(b.available(t), t);
         assert!(!b.would_allow(ms(1), t));
-        assert_eq!(b.available(t), Duration::ZERO);
-        // An hour after the burst ended everything is back.
-        let later = t + DUTY_CYCLE_WINDOW + BUCKET;
-        assert_eq!(b.available(later), BUDGET);
-        assert!(b.would_allow(ms(1000), later));
+        // A full frame after 1.4 s, the whole bucket after 61 s.
+        let frame = ms(139);
+        let wait = b.allowed_at(frame, Duration::ZERO, t).unwrap().since(t);
+        assert!(wait > ms(1400) && wait < ms(1420), "{wait:?}");
+        let full = t + Duration::from_micros(DEPTH.as_micros() * RATE_DEN / RATE_NUM + 1);
+        assert_eq!(b.available(full), DEPTH);
     }
 
     #[test]
-    fn straddling_transmission_counts_where_it_ends() {
-        // One second from 59.5 s to 60.5 s, then 359 s from 120 s. A further
-        // second ending at 3660.25 s puts 0.25 + 359 + 1 s in the window
-        // [60.25 s, 3660.25 s]: over the cap. Bucketing by start instant
-        // would miss the first transmission and allow it.
-        let mut b = RelayBudget::new();
-        b.record(ms(1000), Instant::from_micros(59_500_000));
-        for i in 0..359 {
-            b.record(ms(1000), Instant::from_micros(120_000_000 + i * 1_000_000));
-        }
-        assert!(!b.would_allow(ms(1000), Instant::from_micros(3_659_250_000)));
-        assert!(b.would_allow(ms(1000), Instant::from_micros(3_720_000_000)));
-    }
-
-    #[test]
-    fn steady_sender_gets_nearly_the_whole_budget() {
-        // Send 140 ms frames whenever allowed for three hours; the last hour
-        // must carry at least the budget less one bucket at 10 %.
-        let mut b = RelayBudget::new();
+    fn a_steady_sender_gets_the_rate() {
+        // Send 140 ms frames whenever allowed for three hours: every hour
+        // and every minute stays within the bound, the last hour carries
+        // the rate's 354 s less a frame, and no wait is longer than a
+        // frame's refill.
+        let mut b = Budget::new();
         let mut txs = Vec::new();
         let frame = ms(140);
         let mut t = Instant::ZERO;
@@ -349,15 +309,23 @@ mod tests {
                 t += ms(10);
             }
         }
-        assert!(worst_window(&txs) <= BUDGET.as_micros());
+        for w in [60_000_000, DUTY_CYCLE_WINDOW.as_micros()] {
+            assert!(worst(&txs, w) <= bound(w), "window {w} µs");
+        }
         let last_hour = end.as_micros() - DUTY_CYCLE_WINDOW.as_micros();
         let spent: u64 = txs
             .iter()
             .filter(|&&(s, _)| s >= last_hour)
             .map(|&(_, a)| a)
             .sum();
-        let floor = BUDGET.as_micros() - BUCKET.as_micros() / 10 - frame.as_micros();
+        let floor = (BUDGET - DEPTH).as_micros() - frame.as_micros();
         assert!(spent >= floor, "spent {spent} µs, floor {floor}");
+        let gap = txs
+            .windows(2)
+            .map(|w| w[1].0 - (w[0].0 + w[0].1))
+            .max()
+            .unwrap();
+        assert!(gap <= 1_430_000, "{gap} µs");
     }
 
     fn gap() -> impl Strategy<Value = u64> {
@@ -371,8 +339,9 @@ mod tests {
         fn never_exceeds_the_cap(steps in proptest::collection::vec((gap(), 1u64..=1_000_000), 1..10_000)) {
             // Demand well above the cap (mostly sub-second gaps, airtimes up to
             // 1 s) with occasional long silences; every transmission the
-            // budget allows is sent.
-            let mut b = RelayBudget::new();
+            // budget allows is sent. No hour holds more than 10 %, and no
+            // interval more than the bucket plus the rate.
+            let mut b = Budget::new();
             let mut txs = Vec::new();
             let mut t = 0;
             for (gap, airtime) in steps {
@@ -385,12 +354,15 @@ mod tests {
                     t += airtime;
                 }
             }
-            prop_assert!(worst_window(&txs) <= BUDGET.as_micros());
+            prop_assert!(worst(&txs, DUTY_CYCLE_WINDOW.as_micros()) <= BUDGET.as_micros());
+            for w in [1_000_000, 60_000_000, 600_000_000] {
+                prop_assert!(worst(&txs, w) <= bound(w));
+            }
         }
 
         #[test]
         fn available_is_allowed(spent in proptest::collection::vec((0u64..5_000_000, 1u64..=1_000_000), 0..500), probe in 1u64..=1_000_000) {
-            let mut b = RelayBudget::new();
+            let mut b = Budget::new();
             let mut t = 0;
             for (gap, airtime) in spent {
                 t += gap;

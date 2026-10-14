@@ -23,11 +23,23 @@ use crate::time::Duration;
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
+/// How long an upstream sender spends retrying a hand-over after its
+/// first attempt; see the module documentation.
+pub const fn retrying_span(
+    ack_timeout: Duration,
+    hop_attempts: u8,
+    retry_backoff: Duration,
+) -> Duration {
+    Duration::from_micros(
+        attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64
+            + retry_waits(retry_backoff, hop_attempts).as_micros(),
+    )
+}
+
 /// Queue length for a sender with these per-hop parameters; see the
 /// module documentation.
 pub const fn queue_for(ack_timeout: Duration, hop_attempts: u8, retry_backoff: Duration) -> usize {
-    let retrying = attempt_span(ack_timeout).as_micros() * hop_attempts.saturating_sub(1) as u64
-        + retry_waits(retry_backoff, hop_attempts).as_micros();
+    let retrying = retrying_span(ack_timeout, hop_attempts, retry_backoff).as_micros();
     let per_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
     retrying.div_ceil(per_frame) as usize

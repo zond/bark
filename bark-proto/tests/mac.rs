@@ -3,7 +3,7 @@
 mod common;
 
 use bark_proto::radio::{time_on_air, CHANNELS, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
-use bark_proto::tables::budget::{RelayBudget, BUDGET};
+use bark_proto::tables::budget::{BUDGET, DEPTH};
 use bark_proto::wire::{Packet, HEARTBEAT_LEN};
 use bark_proto::{Action, Channel, Config, Duration, Instant, Position, Relay, Trace};
 use common::{at, ch, secs, Harness};
@@ -397,7 +397,10 @@ fn duty_budget_defers_heartbeats_and_never_drops_them() {
         .iter()
         .any(|(_, t)| matches!(t, Trace::HeartbeatSkipped { .. })));
     // Deferred, not dropped: the held heartbeat goes out at the instant the
-    // budget allows it again, or as soon after as listen-before-talk takes.
+    // budget allows it again, or as soon after as listen-before-talk takes:
+    // a few milliseconds, or its backoffs when B's heartbeat is on the
+    // channel (§7).
+    let lbt = fast.lbt_backoff_max.mul(fast.lbt_attempts as u64);
     let mut checked = 0;
     for until in &deferrals {
         if *until >= end {
@@ -409,7 +412,7 @@ fn duty_budget_defers_heartbeats_and_never_drops_them() {
             .find(|(t, _)| t >= until)
             .expect("a heartbeat after the deferral");
         assert!(
-            t.since(*until) < Duration::from_millis(5),
+            t.since(*until) < lbt,
             "held {:?} past {until:?}",
             t.since(*until)
         );
@@ -430,9 +433,9 @@ fn duty_budget_defers_heartbeats_and_never_drops_them() {
         .channel;
     let after = a.sent.iter().find(|(t, _)| *t >= first).unwrap().1.channel;
     assert_eq!(after, before.next());
-    // At the cap, the last hour carries the budget less the bucketing
-    // error (`tables/budget.rs`): one bucket's airtime, here sent at the
-    // demanded ≈24 % rather than 10 %, and a frame.
+    // At the cap, the last hour carries what the bucket lets in over an
+    // hour (`tables/budget.rs`), the budget less the bucket's depth, less
+    // a frame.
     let from = end.as_micros() - DUTY_CYCLE_WINDOW.as_micros();
     let spent: u64 = a
         .airtime
@@ -440,10 +443,7 @@ fn duty_budget_defers_heartbeats_and_never_drops_them() {
         .filter(|(t, _)| t.as_micros() >= from)
         .map(|(_, d)| d.as_micros())
         .sum();
-    let demand = hb.as_micros() as f64 / fast.heartbeat_min.as_micros() as f64;
-    let floor = BUDGET.as_micros()
-        - (RelayBudget::BUCKET.as_micros() as f64 * demand) as u64
-        - hb.as_micros();
+    let floor = (BUDGET - DEPTH).as_micros() - hb.as_micros();
     assert!(
         spent >= floor && spent <= BUDGET.as_micros(),
         "{spent} µs in the last hour"

@@ -66,7 +66,7 @@ use crate::node::transfer::{Acks, Check, Missed, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::LeafBudget;
+use crate::tables::budget::Budget;
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
@@ -184,7 +184,7 @@ pub struct Leaf {
     /// When the message is given up if it has not been handed over.
     outgoing_until: Instant,
     acks: Acks<1>,
-    budget: LeafBudget,
+    budget: Budget,
     seen: [MsgId; SEEN],
     seen_next: u8,
 }
@@ -218,7 +218,7 @@ impl Leaf {
             outgoing: None,
             outgoing_until: Instant::ZERO,
             acks: Acks::new(),
-            budget: LeafBudget::new(),
+            budget: Budget::new(),
             seen: [MsgId(0); SEEN],
             seen_next: 0,
         }
@@ -507,7 +507,7 @@ impl Leaf {
         if !self.budget.would_allow(airtime, now) {
             let until = self
                 .budget
-                .next_change(airtime, now)
+                .allowed_at(airtime, Duration::ZERO, now)
                 .unwrap_or(now + self.config.keepalive);
             self.transfer.defer(until);
             return false;
@@ -540,7 +540,7 @@ impl Leaf {
                 if !self.budget.would_allow(airtime, now) {
                     let until = self
                         .budget
-                        .next_change(airtime, now)
+                        .allowed_at(airtime, Duration::ZERO, now)
                         .unwrap_or(now + self.config.keepalive);
                     self.transfer.defer(until);
                     return;

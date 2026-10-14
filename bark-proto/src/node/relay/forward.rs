@@ -52,11 +52,11 @@ use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Step};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::heartbeat_reserve;
+use crate::tables::budget::HEARTBEAT_RESERVE;
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::Neighbour;
 use crate::tables::records::{Record, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing};
+use crate::tables::send_queue::{retrying_span, Kind, Outgoing};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, AckFrom, Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -110,13 +110,29 @@ impl Relay {
     }
 
     fn reserve(&self) -> Duration {
-        heartbeat_reserve(&self.config)
+        HEARTBEAT_RESERVE
     }
 
     /// Whether everything but a heartbeat may spend `airtime` now (§9.4).
     pub(super) fn affordable(&self, airtime: Duration, now: Instant) -> bool {
         self.budget
             .would_allow_keeping(airtime, self.reserve(), now)
+    }
+
+    /// Whether the send queue, with `airtime` more, can go out within the
+    /// time an upstream sender spends retrying a hand-over (§9.3): a packet
+    /// that would wait longer for the budget gets on sooner by the sender
+    /// choosing another next hop.
+    fn drains_in_time(&self, airtime: Duration, now: Instant) -> bool {
+        let queued = self
+            .queue
+            .iter()
+            .fold(airtime, |sum, o| sum + mac::airtime(&o.frame));
+        let c = &self.config;
+        let horizon = retrying_span(c.ack_timeout, c.hop_attempts, c.retry_backoff);
+        self.budget
+            .allowed_at(queued, self.reserve(), now)
+            .is_some_and(|t| t <= now + horizon)
     }
 
     fn drop_msg(&mut self, msg_id: MsgId, reason: DropReason, emit: &mut dyn FnMut(Action)) {
@@ -196,7 +212,9 @@ impl Relay {
         if sends {
             let refusal = if self.queue.is_full() && !completes {
                 Some(DropReason::SendQueueFull)
-            } else if !self.affordable(ack_airtime() + data_airtime(d.payload.len()), now) {
+            } else if !self.affordable(ack_airtime(), now)
+                || !self.drains_in_time(ack_airtime() + data_airtime(d.payload.len()), now)
+            {
                 Some(DropReason::Budget)
             } else {
                 None
@@ -625,7 +643,7 @@ impl Relay {
         let airtime = mac::airtime(&out.frame);
         let until = self
             .budget
-            .next_change(airtime, now)
+            .allowed_at(airtime, self.reserve(), now)
             .unwrap_or(now + self.config.heartbeat_max);
         self.handover.defer(until);
         let msg_id = out.msg_id().unwrap_or_default();

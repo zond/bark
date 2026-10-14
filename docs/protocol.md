@@ -70,8 +70,9 @@ Both regimes allow any modulation in this band.
 | Channel spacing | no requirement | no requirement |
 | Listen-before-talk | not required | not required |
 
-Implement: a rolling one-hour airtime budget per node capped at 10%; no
-single transmission longer than 1 s (SF5 packets are ≤139 ms anyway).
+Implement: an airtime token bucket per node that keeps every hour within
+10% (§9.4); no single transmission longer than 1 s (SF5 packets are
+≤139 ms anyway).
 Transmit power such that ERP ≤ +10 dBm with the fitted antenna: with the
 stock antenna (≈0 dBd gain) that is +10 dBm at the connector.
 
@@ -476,8 +477,10 @@ on to the next.
 
 A relay ACKs a DATA packet addressed to it (§9.2.1, §9.3) before acting
 on it, with one exception: if acting on it means sending it on and the
-relay's send queue is full (§9.3) or its airtime budget is spent (§9.4),
-it neither ACKs nor changes anything, and the sender will try elsewhere.
+relay's send queue is full (§9.3), or its airtime budget would not let
+the queue with this packet go out within the time the sender spends
+retrying (§9.4), it neither ACKs nor changes anything, and the sender
+will try elsewhere.
 
 The packet is one of the following, tested in this order:
 
@@ -664,11 +667,29 @@ get on sooner by the upstream relay choosing another next hop.
 
 At SF5, 10% of airtime is ≈180 B/s per relay, so a busy relay runs out of
 budget before its channel fills. Greedy forwarding does not spread load;
-central rooftop relays will hit the cap first. When the budget is
-exhausted the relay stops forwarding and drops what it cannot send, but
-keeps sending heartbeats: it holds back the airtime they need (11.8 ms
-every 10 s on average, 0.12%, §7). Without budget it cannot ACK either,
-so its neighbours' hand-overs to it fail and they route around it.
+central rooftop relays will hit the cap first.
+
+**Token bucket.** Each node keeps its airtime in a bucket that holds at
+most 6 s, one minute at 10%, and fills at (360 s − 6 s) per hour, 9.83%
+of the time. A transmission may start only if the bucket holds its
+airtime, which it takes out. Any interval of length L then carries at
+most 6 s + 9.83% × L on air, so any hour at most 360 s: 10%, the limit
+of ERC/REC 70-03 band g1, which is measured over an hour (proof in
+`tables/budget.rs`). The rate is lower than 10% by the bucket's depth
+over the hour, so that a burst cannot carry an hour over the limit. A
+node at the cap sends steadily, 5.9 s of every minute; once its bucket
+is empty, a full frame waits 1.4 s for it, and nothing waits longer
+than 6 s / 9.83% = 61 s (roadmap D26).
+
+**Out of budget.** A hand-over the bucket cannot fit yet waits for it;
+it is not dropped. A relay takes no new packet to send on, and so does
+not ACK it (§9.2.4), when its send queue, that packet included, could
+not go out within the 2.38 s its sender spends retrying (§9.3): the
+sender then routes around it. It keeps sending heartbeats: everything
+else leaves one heartbeat's airtime, 11.8 ms, in the bucket, which the
+bucket refills in 120 ms, far less than the 5 s between heartbeats (§7).
+Without budget for an ACK it cannot ACK, so its neighbours' hand-overs
+to it fail and they route around it.
 
 ### 9.5 Why the search finds a path
 
@@ -1000,7 +1021,7 @@ Crate layout is D7.
 **RAM budget (256 KB):** neighbour table 64 × 40 B = 2.5 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 64 × 256 B = 16 KB; message records
 (§9.2.2) 626 × 32 B = 20 KB; send queue 16 × 262 B = 4.1 KB; delivered
-window 1 KB; busy estimates and duty budget under 1 KB; 49 KB in all,
+window 1 KB; busy estimates and duty budget under 1 KB; 48 KB in all,
 measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 
 **Bring-up order** (each step is a milestone on real boards):

@@ -377,12 +377,18 @@ fn a_relay_does_not_flee_its_own_traffic() {
 
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
-/// ACK: about 0.43 s per message, 630 s an hour against the 360 s of its
-/// budget (§3), while O spends a third of its own. F's budget fills: it then
-/// refuses new messages without an ACK (§9.2.4), and a retry the budget
-/// cannot fit waits for it instead of being dropped (§9.4). Its heartbeats
-/// are never held back. The harness panics if any hour holds more than
-/// 10 %.
+/// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
+/// bucket lets through (§9.4). F works at the edge of its bucket: it
+/// refuses a message without an ACK when its send queue could not go out
+/// within the time O spends retrying (§9.2.4), and a hand-over the bucket
+/// cannot fit yet waits for it, never longer than a frame's refill, instead
+/// of being dropped. Its heartbeats are never held back. The harness
+/// panics if any hour holds more than 10 %.
+///
+/// O retries the messages F refuses, on F's channel, and O and D cannot
+/// hear each other: now and then D's ACKs to F are lost under O's frames,
+/// all four of F's attempts go unanswered, and F returns the message to
+/// O as the search requires (§9.2.5). That is not a drop.
 ///
 /// The home channels are fixed. The frames this test loses on the way to D
 /// are on the air at D but never received, so D cannot tell them from
@@ -393,11 +399,13 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// design's three: D also misses a frame now and then while it sweeps or
 /// sends a heartbeat, which the loss rule does not count, and three
 /// attempts would then run out for that reason alone. And the run goes on
-/// for an hour after the last message, for those still held back.
+/// for ten minutes after the last message, for those still queued.
 #[test]
 fn duty_budget_defers_forwarding_and_never_drops() {
-    use bark_proto::radio::DUTY_CYCLE_WINDOW;
+    use bark_proto::radio::{time_on_air, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
+    use bark_proto::tables::budget::{BUDGET, DEPTH, HEARTBEAT_RESERVE};
     use bark_proto::wire::MAX_PAYLOAD;
+    use bark_proto::MAX_FRAME;
     const LOST: u32 = 2;
     let (o, f, d) = (0, 1, 2);
     let fixed = |east: f64, home: u8, hop_attempts: u8, seed: u64| {
@@ -442,10 +450,23 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         let next = h.now + Duration::from_millis(2500);
         h.run_until(next, |_| false);
     }
-    // F spends its hour's budget in a burst and then waits for it to age
-    // out, so a message held back near the end can wait most of an hour.
-    h.run_for(DUTY_CYCLE_WINDOW);
+    h.run_for(secs(600));
     let tf = traces(&h, f);
+    // No hand-over waits longer than a full frame's refill (§9.4).
+    let frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + HEARTBEAT_RESERVE;
+    let refill = Duration::from_micros(
+        (frame.as_micros() * DUTY_CYCLE_WINDOW.as_micros()).div_ceil((BUDGET - DEPTH).as_micros()),
+    );
+    let longest = h.nodes[f]
+        .traces
+        .iter()
+        .filter_map(|(t, tr)| match tr {
+            Trace::HandOverDeferred { until, .. } => Some(until.since(*t)),
+            _ => None,
+        })
+        .max()
+        .expect("deferrals");
+    assert!(longest <= refill, "deferred {longest:?}, refill {refill:?}");
     let mut deferred: Vec<MsgId> = tf
         .iter()
         .filter_map(|t| match t {
@@ -467,14 +488,18 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             )
         })
         .count();
-    let forwarded = |id: MsgId| {
-        tf.iter()
-            .any(|t| matches!(t, Trace::Forwarded { msg_id, .. } if *msg_id == id))
+    let handed = |id: MsgId| {
+        tf.iter().any(|t| {
+            matches!(t, Trace::Forwarded { msg_id, .. } | Trace::ReturnedToParent { msg_id, .. } if *msg_id == id)
+        })
     };
     println!(
-        "{k} sent; F forwarded {}, deferred {} for budget, refused {refused} for budget",
+        "{k} sent; F forwarded {}, returned {}, deferred {} for budget, refused {refused} for budget",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))
+            .count(),
+        tf.iter()
+            .filter(|t| matches!(t, Trace::ReturnedToParent { .. }))
             .count(),
         deferred.len(),
     );
@@ -484,8 +509,8 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         "the budget never held a hand-over back"
     );
     assert!(
-        deferred.iter().all(|&id| forwarded(id)),
-        "a deferred message was not forwarded"
+        deferred.iter().all(|&id| handed(id)),
+        "a deferred message was neither forwarded nor returned"
     );
     let drops: Vec<_> = tf
         .iter()

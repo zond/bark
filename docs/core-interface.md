@@ -59,7 +59,7 @@ Rules:
    `Config::tx_power_dbm` on `Frame::channel`, then returns to the resting channel.
 5. **Listen-before-talk is the core's job.** The driver never checks the channel on its own;
    the core issues `Cad` or `Rssi` and decides.
-6. **Duty cycle is the core's job.** The core keeps the rolling budget (design §9.4) and
+6. **Duty cycle is the core's job.** The core keeps the duty-cycle budget (design §9.4) and
    defers; the driver never drops a frame.
 7. **`Rssi` on the resting channel is not an excursion.** The radio keeps receiving while it
    reads its own channel, so the core may issue it at any time; it still completes with
@@ -110,17 +110,17 @@ test in `tables/mod.rs`:
 | Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
 | Send queue (§9.3) | 16 × 262 B | 4.1 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
-| Duty budget and busy estimate | | 0.8 KiB |
-| **All** | | **48.1 KiB** |
+| Duty budget (§9.4) and busy estimate (§6.1) | 16 B + 348 B | 0.4 KiB |
+| **All** | | **47.6 KiB** |
 
-The whole `Relay` is 49 880 B (48.7 KiB), under the 50 KiB target; besides the tables it
+The whole `Relay` is 49 416 B (48.3 KiB), under the 50 KiB target; besides the tables it
 holds the medium access, the hand-over and nine owed ACKs. Design §15 budgets about 41 KB
 for the same tables; the difference is the record's tried mask (8 B per record, 4.9 KiB),
 the neighbour's demotion time (8 B per entry), and the delivery queue holding 234-byte
 payloads (§15 still counts 198). Checked by the tests in `tables/mod.rs` and
 `node/relay.rs`.
 
-`Leaf` is 832 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.

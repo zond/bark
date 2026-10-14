@@ -56,7 +56,7 @@ The once-per-second 13-channel sweep (§6.1) is modelled explicitly: 13 retunes,
 
 ### 3.6 Airtime and duty cycle
 
-Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead, 12-symbol minimum preamble), computed from the actual encoded packet length. The protocol core's rolling one-hour budget is the real code; the simulator records when it blocks forwarding.
+Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead, 12-symbol minimum preamble), computed from the actual encoded packet length. The protocol core's duty-cycle token bucket is the real code; the simulator records when it blocks forwarding.
 
 ### 3.7 Leaves and phones
 

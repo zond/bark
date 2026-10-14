@@ -33,7 +33,7 @@ use crate::node::transfer::{Acks, Step, Transfer, RELAY_ACKS};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::RelayBudget;
+use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
 use crate::tables::delivered::Delivered;
 use crate::tables::delivery::DeliveryQueue;
@@ -128,7 +128,7 @@ pub struct Relay {
     stage: Stage,
     radio: Radio<Job>,
     busy: BusyEstimator,
-    budget: RelayBudget,
+    budget: Budget,
     neighbours: Neighbours,
     sweep: Sweep,
     beacon: Beacon,
@@ -163,7 +163,7 @@ impl Relay {
             stage: Stage::Off,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
-            budget: RelayBudget::new(),
+            budget: Budget::new(),
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
             sweep: Sweep {
                 next_at: Instant::ZERO,
@@ -412,8 +412,8 @@ impl Relay {
 
     /// Check the budget before the channel: there is no point listening for
     /// a slot the budget will not let us use. Nothing else transmits
-    /// between this check and the transmission, and the window only slides
-    /// forward, so the budget cannot have shrunk by then.
+    /// between this check and the transmission, and the bucket only fills
+    /// meanwhile, so the budget cannot have shrunk by then.
     fn start_heartbeat(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if self.beacon.current.is_none() {
             self.beacon.current = Some(match self.beacon.announce {
@@ -426,7 +426,7 @@ impl Relay {
         if !self.budget.would_allow(airtime, now) {
             let until = self
                 .budget
-                .next_change(airtime, now)
+                .allowed_at(airtime, Duration::ZERO, now)
                 .unwrap_or(now + self.config.heartbeat_max);
             self.beacon.ready_at = until;
             emit(Action::Trace(Trace::HeartbeatDeferred { until }));

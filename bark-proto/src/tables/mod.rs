@@ -116,7 +116,7 @@ mod sizes {
                 size_of::<delivered::Delivered>(),
                 delivered::DELIVERED * 16,
             ),
-            ("budget", size_of::<budget::RelayBudget>(), 62 * 8),
+            ("budget", size_of::<budget::Budget>(), 16),
             ("busy", size_of::<busy::BusyEstimator>(), 0),
         ];
         let mut sum = 0;
