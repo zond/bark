@@ -351,13 +351,14 @@ fn s1b_hidden_terminals_come_apart() {
 /// on one seed: it runs, delivers most texts, and the relays neither
 /// oscillate between channels nor approach their duty cycle.
 ///
-/// The delivery bound is loose on purpose. Over seeds 1 to 10 the settled
-/// phase delivers 0.86 (seed 1: 0.78), 0.81 before a leaf kept its relay
-/// through a fade (roadmap D23). Indoors at the design's relay density
-/// half the leaves hear their relay less than 12 dB above sensitivity;
-/// a leaf still changes relay about once an hour, after keepalives fail
-/// in two periods in a row, and texts already queued at the old relay
-/// expire there.
+/// Over seeds 1 to 10 the settled phase delivers 0.86, worst seed 0.70
+/// (seed 1: 0.78), and the 80 leaves change relay 70 times an hour; before
+/// a leaf kept its relay through a fade (roadmap D23), 0.79 and 174. The
+/// bounds leave a margin below seed 1's 0.78 and 65. Indoors at the
+/// design's relay density half the leaves hear their relay less than
+/// 12 dB above sensitivity; a leaf still changes relay about once an
+/// hour, after keepalives fail in two periods in a row, and texts already
+/// queued at the old relay expire there.
 #[test]
 fn s2_block_smoke() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s2-block.toml");
@@ -372,7 +373,8 @@ fn s2_block_smoke() {
     let phase = &s.app.phases[1];
     assert_eq!(phase.phase, "settled");
     assert!(phase.originated >= 15, "{}", s.table());
-    assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
+    assert!(phase.delivery_ratio >= 0.7, "{}", s.table());
+    assert!(s.relay_changes <= 100, "{}", s.table());
     assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
     let nodes = s.nodes.as_ref().expect("per-node metrics");
     for n in nodes.iter().filter(|n| n.label.starts_with("relay")) {
