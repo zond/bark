@@ -45,13 +45,14 @@ mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 256);
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 262);
         // Whole tables: entries times capacity, and a few words of bookkeeping.
         let tables = [
             ("neighbours", size_of::<neighbours::Neighbours>(), neighbours::NEIGHBOURS * 40),
             ("leaves", size_of::<leaves::Leaves>(), leaves::LEAVES * 16),
             ("delivery", size_of::<delivery::DeliveryQueue>(), delivery::DELIVERY_QUEUE * 256),
             ("records", size_of::<records::Records>(), records::RECORDS * 32),
-            ("send queue", size_of::<send_queue::SendQueue>(), send_queue::SEND_QUEUE * 260),
+            ("send queue", size_of::<send_queue::SendQueue>(), send_queue::SEND_QUEUE * 262),
             ("delivered", size_of::<delivered::Delivered>(), delivered::DELIVERED * 16),
             ("budget", size_of::<budget::RelayBudget>(), 62 * 8),
             ("busy", size_of::<busy::BusyEstimator>(), 0),

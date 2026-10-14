@@ -20,8 +20,6 @@
 //! (roadmap D19). An ACK that arrives after the timeout but before the
 //! next attempt still counts: the receiver has the frame.
 
-#![allow(dead_code)] // The roles take this up in the next commit.
-
 use crate::event::Action;
 use crate::node::Rng;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
@@ -325,6 +323,7 @@ impl<const N: usize> Acks<N> {
         self.owed.as_slice().first().map(|o| o.ready)
     }
 
+    #[cfg(test)]
     pub(crate) fn pending(&self) -> bool {
         !self.owed.as_slice().is_empty()
     }

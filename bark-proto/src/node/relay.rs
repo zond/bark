@@ -1,27 +1,44 @@
-//! The relay's medium access: boot listen and home channel (design §6),
-//! the busy sweep (§6.1), the heartbeat (§7), the neighbour table (§8)
-//! and the duty-cycle budget (§3, §9.4).
+//! The relay: medium access, forwarding and the leaves it serves.
+//!
+//! This file holds the medium access: boot listen and home channel
+//! (design §6), the busy sweep (§6.1), the heartbeat (§7), the neighbour
+//! table (§8) and the duty-cycle budget (§3, §9.4). Routing and the
+//! per-hop transfer (§9) are in `relay/forward.rs`.
 //!
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! sweep and the heartbeat, so far. The relay keeps at most one excursion
+//! ACKs this relay owes, the heartbeat, the hand-over at the front of the
+//! send queue, and the sweep. The relay keeps at most one excursion
 //! outstanding (`docs/core-interface.md` §3 rule 1). When the radio is free
-//! it starts the first job that is ready, heartbeat before sweep; a job
-//! that has begun a sequence of excursions (CAD, RSSI, transmit; or the
-//! thirteen sweep readings) continues it from each completion event, so
-//! sequences never interleave. Jobs that are not ready say when they will
-//! be, and the earliest of those is `next_wakeup`.
+//! it starts the first job that is ready, in that order: an owed ACK is
+//! worth nothing once its sender stops waiting, 100 ms after the frame
+//! (§9.3). A job that has begun a sequence of excursions (CAD, RSSI,
+//! transmit; or the thirteen sweep readings) continues it from each
+//! completion event, so sequences never interleave; the hand-over alone
+//! lets an owed ACK in before it transmits, since its frame can take
+//! 139 ms on air. While a hand-over waits for its ACK, only owed ACKs use
+//! the radio: the heartbeat and the sweep would take the relay off its
+//! home channel, where the ACK arrives (§9.3). Jobs that are not ready say
+//! when they will be, and the earliest of those is `next_wakeup`.
+
+mod forward;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::node::mac::{self, Radio};
+use crate::node::transfer::{Acks, Transfer, RELAY_ACKS};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::RelayBudget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
+use crate::tables::delivered::Delivered;
+use crate::tables::delivery::DeliveryQueue;
+use crate::tables::leaves::Leaves;
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
+use crate::tables::records::Records;
+use crate::tables::send_queue::SendQueue;
 use crate::time::{Duration, Instant};
 use crate::wire::{Heartbeat, Packet};
 
@@ -30,6 +47,8 @@ use crate::wire::{Heartbeat, Packet};
 enum Job {
     Sweep,
     Heartbeat,
+    HandOver,
+    Ack,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +116,17 @@ pub struct Relay {
     sweep: Sweep,
     beacon: Beacon,
     mover: Mover,
+    records: Records,
+    queue: SendQueue,
+    /// The hand-over of the front of `queue`.
+    handover: Transfer,
+    /// Neighbour slots the front forward passed over because
+    /// listen-before-talk gave up on them (§9.3 step 2); not tried.
+    skipped: u64,
+    acks: Acks<RELAY_ACKS>,
+    leaves: Leaves,
+    delivery: DeliveryQueue,
+    delivered: Delivered,
 }
 
 impl Relay {
@@ -125,6 +155,14 @@ impl Relay {
                 check: Check::Idle,
             },
             mover: Mover::default(),
+            records: Records::from_config(&config),
+            queue: SendQueue::new(),
+            handover: Transfer::new(),
+            skipped: 0,
+            acks: Acks::new(),
+            leaves: Leaves::from_config(&config),
+            delivery: DeliveryQueue::from_config(&config),
+            delivered: Delivered::from_config(&config),
             config,
             rng,
         }
@@ -219,8 +257,12 @@ impl Relay {
     /// Start whatever is ready until the radio is busy or nothing is.
     fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         while self.radio.idle() {
-            let started = (self.beacon_due(now) && self.start_heartbeat(now, emit))
-                || (self.sweep_due(now) && self.start_sweep(emit));
+            self.prepare(now, emit);
+            let awaiting = self.handover.awaiting_ack();
+            let started = self.start_ack(now, emit)
+                || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
+                || self.start_handover(now, emit)
+                || (!awaiting && self.sweep_due(now) && self.start_sweep(emit));
             if !started {
                 break;
             }
@@ -376,15 +418,23 @@ impl Relay {
         // are rare (design §10.5).
         let len = bytes.len().min(u8::MAX as usize) as u8;
         self.sweep.receiving = self.sweep.receiving + time_on_air(len, MIN_PREAMBLE_SYMBOLS);
-        // ACK, ATTACH, DATA and DELIVER wait for the routing design to settle.
-        if let Ok(Packet::Heartbeat(hb)) = Packet::decode(bytes) {
-            self.heard(hb, now, emit);
+        // A booting relay has no home channel yet to be reached on, nor
+        // neighbours to forward to: it takes no traffic (§6.2).
+        let running = self.stage == Stage::Running;
+        match Packet::decode(bytes) {
+            Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
+            Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
+            Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
+            _ => {}
         }
     }
 
     fn heard(&mut self, hb: Heartbeat, now: Instant, emit: &mut dyn FnMut(Action)) {
         if hb.position != self.config.position {
-            self.neighbours.heard(&hb, &self.plane, now);
+            if let Some(slot) = self.neighbours.heard(&hb, &self.plane, now).new_occupant() {
+                self.records.slot_reoccupied(slot);
+                self.skipped &= !(1 << slot);
+            }
             return;
         }
         if let Stage::Booting(_) = self.stage {
@@ -403,11 +453,13 @@ impl Relay {
         self.neighbours.replane(&self.plane);
     }
 
-    fn app(&mut self, cmd: AppCommand<'_>) {
-        // Send waits for the routing design to settle.
-        if let AppCommand::SetPosition { position, surveyed } = cmd {
-            self.config.surveyed = surveyed;
-            self.set_position(position);
+    fn app(&mut self, cmd: AppCommand<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
+        match cmd {
+            AppCommand::Send { dst_pos, dst_leaf, payload } => self.originate(dst_pos, dst_leaf, payload, now, emit),
+            AppCommand::SetPosition { position, surveyed } => {
+                self.config.surveyed = surveyed;
+                self.set_position(position);
+            }
         }
     }
 }
@@ -426,24 +478,29 @@ impl Core for Relay {
         match event {
             Event::Wakeup => {}
             Event::Received { bytes, .. } => self.received(bytes, now, emit),
-            Event::CadDone { busy, .. } => {
-                if let Some(Job::Heartbeat) = self.radio.complete() {
-                    self.heartbeat_check(busy, now, emit);
-                }
-            }
+            Event::CadDone { busy, .. } => match self.radio.complete() {
+                Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
+                Some(Job::HandOver) => self.handover_check(busy, now, emit),
+                Some(Job::Ack) => self.ack_check(busy, now, emit),
+                Some(Job::Sweep) | None => {}
+            },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
                 Some(Job::Sweep) => self.sweep_sample(channel, dbm, now, emit),
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
+                Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
+                Some(Job::Ack) => self.ack_check(dbm > threshold, now, emit),
                 None => {}
             },
-            Event::TxDone => {
-                if let Some(Job::Heartbeat) = self.radio.complete() {
-                    self.heartbeat_done(now, true);
-                }
-            }
-            Event::App(cmd) => self.app(cmd),
+            Event::TxDone => match self.radio.complete() {
+                Some(Job::Heartbeat) => self.heartbeat_done(now, true),
+                Some(Job::HandOver) => self.handover.sent(now, self.config.ack_timeout),
+                Some(Job::Ack) => self.acks.sent(),
+                Some(Job::Sweep) | None => {}
+            },
+            Event::App(cmd) => self.app(cmd, now, emit),
         }
         self.timers(now, emit);
+        self.forward_timers(now, emit);
         self.pump(now, emit);
     }
 
@@ -458,9 +515,13 @@ impl Core for Relay {
         if let Some(t) = self.mover.move_at {
             at(t);
         }
+        if let Some(t) = self.forward_wakeup() {
+            at(t);
+        }
+        let awaiting = self.handover.awaiting_ack();
         // Radio jobs only once the radio is free: their completion event
         // wakes the core otherwise.
-        if self.radio.idle() {
+        if self.radio.idle() && !awaiting {
             if self.stage == Stage::Running && self.beacon.check == Check::Idle {
                 let pending = self.beacon.announce.is_some() || self.beacon.current.is_some();
                 let due = if pending { self.beacon.ready_at } else { self.beacon.next_at };
@@ -479,13 +540,11 @@ mod tests {
     #[test]
     fn sizes() {
         extern crate std;
-        // docs/core-interface.md §6: under 48 KiB with every table; until
-        // the routing tables join it, the medium access alone is the
-        // neighbour table, budget and busy estimate.
+        // docs/core-interface.md §6: under 48 KiB with every table.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
         std::println!("Relay {relay} B, Leaf {leaf} B");
-        assert!(relay < 4 * 1024, "{relay}");
+        assert!(relay < 48 * 1024, "{relay}");
         assert!(leaf < 1024, "{leaf}");
     }
 }

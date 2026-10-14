@@ -9,8 +9,13 @@
 //! frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈9.8⌉ = 10. A packet that
 //! would wait longer gets on sooner by the upstream relay choosing another
 //! next hop, which it does when this relay, its queue full, does not ACK.
+//!
+//! Each entry is a frame and what kind of hand-over it is, which decides
+//! what happens when the hand-over fails (§9.3).
 
 use crate::event::{Frame, MAX_FRAME};
+use crate::ids::MsgId;
+use crate::wire::Packet;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::attempt_span;
 use crate::tables::fixed::FixedVec;
@@ -31,6 +36,48 @@ pub const SEND_QUEUE: usize = queue_for(Duration::from_millis(100), 3);
 
 const _: () = assert!(SEND_QUEUE == 10);
 
+/// What a queued frame is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A DATA to the next hop toward the destination (§9.2.3). Its next
+    /// hop is chosen when its hand-over starts, and again after a failure.
+    /// `report`: the relay's own application waits for `Sent` or `Failed`.
+    Forward {
+        /// Whether the application waits for the first hop's ACK.
+        report: bool,
+    },
+    /// A DATA back to the parent (§9.2.5); dropped if it fails.
+    Return,
+    /// A DATA straight back to a relay that offered a message this relay
+    /// has (§9.2.4 case 6); dropped if it fails.
+    Bounce,
+    /// A DELIVER to an attached leaf (§10.3); left in the delivery queue
+    /// if it fails.
+    Deliver,
+}
+
+/// A queued frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Outgoing {
+    /// The frame as it will be sent; a forward's address is filled in when
+    /// its hand-over starts.
+    pub frame: Frame,
+    /// What it is for.
+    pub kind: Kind,
+}
+
+impl Outgoing {
+    /// The message the frame carries: a DATA's computed ID (roadmap D15)
+    /// or a DELIVER's.
+    pub fn msg_id(&self) -> Option<MsgId> {
+        match Packet::decode(self.frame.payload()) {
+            Ok(Packet::Data(d)) => Some(d.msg_id()),
+            Ok(Packet::Deliver(d)) => Some(d.msg_id),
+            _ => None,
+        }
+    }
+}
+
 /// The send queue is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full;
@@ -38,7 +85,7 @@ pub struct Full;
 /// The send queue.
 #[derive(Clone)]
 pub struct SendQueue {
-    frames: FixedVec<Frame, SEND_QUEUE>,
+    frames: FixedVec<Outgoing, SEND_QUEUE>,
 }
 
 impl SendQueue {
@@ -48,8 +95,8 @@ impl SendQueue {
             Some(c) => c,
             None => unreachable!(),
         };
-        let fill = Frame { channel, preamble_symbols: 0, len: 0, bytes: [0; MAX_FRAME] };
-        SendQueue { frames: FixedVec::new(fill) }
+        let frame = Frame { channel, preamble_symbols: 0, len: 0, bytes: [0; MAX_FRAME] };
+        SendQueue { frames: FixedVec::new(Outgoing { frame, kind: Kind::Return }) }
     }
 
     /// Number of queued frames.
@@ -67,29 +114,34 @@ impl SendQueue {
         self.frames.is_full()
     }
 
-    /// Queue `frame` last, unless the queue is full.
-    pub fn push(&mut self, frame: Frame) -> Result<(), Full> {
-        self.frames.push(frame).map_err(|_| Full)
+    /// Queue `out` last, unless the queue is full.
+    pub fn push(&mut self, out: Outgoing) -> Result<(), Full> {
+        self.frames.push(out).map_err(|_| Full)
     }
 
-    /// The frame being handed over, or next to be.
-    pub fn front(&self) -> Option<&Frame> {
+    /// The entry being handed over, or next to be.
+    pub fn front(&self) -> Option<&Outgoing> {
         self.frames.as_slice().first()
     }
 
-    /// The front frame, to readdress after a failed hand-over (§9.3 step 6).
-    pub fn front_mut(&mut self) -> Option<&mut Frame> {
+    /// The front entry, to readdress after a failed hand-over (§9.3 step 6).
+    pub fn front_mut(&mut self) -> Option<&mut Outgoing> {
         self.frames.as_mut_slice().first_mut()
     }
 
-    /// Take the front frame: its hand-over is over.
-    pub fn pop(&mut self) -> Option<Frame> {
+    /// Take the front entry: its hand-over is over.
+    pub fn pop(&mut self) -> Option<Outgoing> {
         (!self.is_empty()).then(|| self.frames.remove(0))
     }
 
-    /// Queued frames, front first.
-    pub fn iter(&self) -> impl Iterator<Item = &Frame> {
+    /// Queued entries, front first.
+    pub fn iter(&self) -> impl Iterator<Item = &Outgoing> {
         self.frames.as_slice().iter()
+    }
+
+    /// Keep only the entries for which `keep` holds, in order.
+    pub fn retain(&mut self, keep: impl FnMut(&Outgoing) -> bool) {
+        self.frames.retain(keep)
     }
 }
 
@@ -104,10 +156,11 @@ mod tests {
     use super::*;
     use crate::node::Config;
 
-    fn frame(tag: u8) -> Frame {
+    fn frame(tag: u8) -> Outgoing {
         let mut bytes = [0; MAX_FRAME];
         bytes[0] = tag;
-        Frame { channel: Channel::new(3).unwrap(), preamble_symbols: MIN_PREAMBLE_SYMBOLS, len: 1, bytes }
+        let frame = Frame { channel: Channel::new(3).unwrap(), preamble_symbols: MIN_PREAMBLE_SYMBOLS, len: 1, bytes };
+        Outgoing { frame, kind: Kind::Bounce }
     }
 
     #[test]
@@ -126,10 +179,12 @@ mod tests {
         }
         assert!(q.is_full());
         assert_eq!(q.push(frame(99)), Err(Full));
-        q.front_mut().unwrap().bytes[0] = 50;
-        assert_eq!(q.pop().unwrap().bytes[0], 50);
-        assert_eq!(q.front().unwrap().bytes[0], 1);
-        assert_eq!(q.iter().map(|f| f.bytes[0]).last(), Some(SEND_QUEUE as u8 - 1));
+        q.front_mut().unwrap().frame.bytes[0] = 50;
+        assert_eq!(q.pop().unwrap().frame.bytes[0], 50);
+        assert_eq!(q.front().unwrap().frame.bytes[0], 1);
+        assert_eq!(q.iter().map(|f| f.frame.bytes[0]).last(), Some(SEND_QUEUE as u8 - 1));
         assert_eq!(q.len(), SEND_QUEUE - 1);
+        q.retain(|f| f.frame.bytes[0] % 2 == 0);
+        assert_eq!(q.len(), (SEND_QUEUE - 1) / 2);
     }
 }

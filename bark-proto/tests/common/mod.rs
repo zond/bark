@@ -14,7 +14,7 @@
 
 use bark_proto::radio::{time_on_air, Channel, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::tables::budget::BUDGET;
-use bark_proto::{Action, AppEvent, Core, Duration, Event, Frame, Instant, Trace};
+use bark_proto::{Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, Trace};
 use std::collections::{HashMap, HashSet};
 
 /// Synthesiser retune and settle, of the order the SX1262 datasheet gives
@@ -74,6 +74,9 @@ pub struct SimNode<C: Core> {
     pub received: Vec<(Instant, Vec<u8>)>,
 }
 
+/// Decides whether a frame is lost: `(now, from, to, bytes)`.
+pub type Loss = Box<dyn FnMut(Instant, usize, usize, &[u8]) -> bool>;
+
 pub struct Harness<C: Core> {
     pub now: Instant,
     pub nodes: Vec<SimNode<C>>,
@@ -83,6 +86,9 @@ pub struct Harness<C: Core> {
     txs: Vec<Tx>,
     /// Excursions started, by kind, for accounting.
     pub excursions: usize,
+    /// Frames to lose on the way, for tests of retransmission: called as
+    /// `(now, from, to, bytes)` for each frame a node would receive.
+    pub lose: Option<Loss>,
 }
 
 impl<C: Core> Harness<C> {
@@ -106,12 +112,26 @@ impl<C: Core> Harness<C> {
                 received: Vec::new(),
             })
             .collect();
-        Harness { now: Instant::ZERO, nodes, links: HashSet::new(), jammed: HashMap::new(), txs: Vec::new(), excursions: 0 }
+        Harness {
+            now: Instant::ZERO,
+            nodes,
+            links: HashSet::new(),
+            jammed: HashMap::new(),
+            txs: Vec::new(),
+            excursions: 0,
+            lose: None,
+        }
     }
 
     pub fn link(&mut self, a: usize, b: usize) {
         self.links.insert((a, b));
         self.links.insert((b, a));
+    }
+
+    /// Cut the link between `a` and `b`.
+    pub fn unlink(&mut self, a: usize, b: usize) {
+        self.links.remove(&(a, b));
+        self.links.remove(&(b, a));
     }
 
     /// A carrier on `channel` at `node`, all the time.
@@ -166,6 +186,11 @@ impl<C: Core> Harness<C> {
         }
     }
 
+    /// Hand node `i` an application command now.
+    pub fn command(&mut self, i: usize, cmd: AppCommand<'_>) {
+        self.deliver(i, Event::App(cmd));
+    }
+
     pub fn run_for(&mut self, d: Duration) {
         let until = self.now + d;
         self.run_until(until, |_| false);
@@ -199,6 +224,11 @@ impl<C: Core> Harness<C> {
         for tx in &ending {
             for i in 0..self.nodes.len() {
                 if self.hears(i, tx) {
+                    if let Some(lose) = &mut self.lose {
+                        if lose(now, tx.from, i, &tx.bytes) {
+                            continue;
+                        }
+                    }
                     self.nodes[i].received.push((now, tx.bytes.clone()));
                     let ev = Event::Received { channel: tx.channel, rssi_dbm: SIGNAL_DBM, snr_db: 10, bytes: &tx.bytes };
                     self.deliver(i, ev);

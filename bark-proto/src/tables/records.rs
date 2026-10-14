@@ -93,6 +93,7 @@ const _: () = assert!(NEIGHBOURS <= u64::BITS as usize, "the tried mask has a bi
 
 const OWNED: u8 = 1;
 const HAS_CHILD: u8 = 2;
+const RETURNED: u8 = 4;
 
 /// What a relay remembers about one message (§9.2.2).
 ///
@@ -173,6 +174,27 @@ impl Record {
     /// Whether the neighbour now in `slot` was handed the message.
     pub fn handed(&self, slot: usize) -> bool {
         slot < NEIGHBOURS && self.handed & (1 << slot) != 0
+    }
+
+    /// Whether this relay has given the message back to its parent: its
+    /// part of the search is over.
+    ///
+    /// §9.2.2 does not list this. Without it a finished relay takes a
+    /// later offer from its last child for that child's return (§9.2.4
+    /// case 4) and returns the message to its parent a second time; the
+    /// parent, which has moved on, only ACKs it (case 5), and the message
+    /// is lost without a drop. With O, P, Q all neighbours: O → P → Q → O,
+    /// O sends it straight back, Q and then P return it, O tries Q, and Q,
+    /// whose last child is O, returns it to P again. A finished relay sends
+    /// such an offer straight back (case 6), as the search needs: it is a
+    /// visit to a relay already searched.
+    pub fn returned(&self) -> bool {
+        self.flags & RETURNED != 0
+    }
+
+    /// Mark the message as given back to the parent.
+    pub fn set_returned(&mut self) {
+        self.flags |= RETURNED;
     }
 
     /// Mark this relay as owning the destination.
@@ -335,6 +357,9 @@ mod tests {
         assert_eq!(r.last_active(), at(6));
         r.set_owned();
         assert!(r.owned());
+        assert!(!r.returned());
+        r.set_returned();
+        assert!(r.returned() && r.owned());
 
         let origin = Record::new(MsgId(8), None, 0, at(0));
         assert_eq!(origin.parent(), None);
