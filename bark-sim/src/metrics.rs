@@ -173,53 +173,70 @@ pub struct NodeMetrics {
     pub drops: DropCounts,
 }
 
-/// Why a relay dropped a message. The protocol sends no failure notice
-/// (roadmap D10), so a lost message is only visible where it died.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DropReason {
-    /// The packet's visited list was full.
-    VisitedFull,
-    /// No neighbour left to try.
-    NoRoute,
-    /// The duty-cycle budget was exhausted.
-    DutyBudget,
-    /// The destination leaf is not attached here.
-    UnknownLeaf,
-    /// The delivery queue entry expired.
-    QueueTtl,
-}
+/// Why a relay dropped a message: the core's own reasons, reported in
+/// `Trace::Dropped`. The protocol sends no failure notice (roadmap D10),
+/// so a lost message is only visible where it died.
+pub use bark_proto::DropReason;
 
 /// Drop counters by reason.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct DropCounts {
-    /// Visited list full.
-    pub visited_full: u64,
-    /// No route.
+    /// No neighbour left at the origin (§9.2.5).
     pub no_route: u64,
-    /// Duty-cycle budget.
-    pub duty_budget: u64,
-    /// Unknown leaf.
-    pub unknown_leaf: u64,
-    /// Queue TTL expired.
-    pub queue_ttl: u64,
+    /// The hop cap (§9.2.6).
+    pub hop_cap: u64,
+    /// The message's record was lost while its packet waited (§9.2.2).
+    pub record_lost: u64,
+    /// The send queue was full (§9.3).
+    pub send_queue_full: u64,
+    /// The duty-cycle budget (§9.4).
+    pub budget: u64,
+    /// The return to the parent failed (§9.2.5).
+    pub return_failed: u64,
+    /// A send straight back failed (§9.3).
+    pub bounce_failed: u64,
+    /// For a relay that is gone (§9.2.7).
+    pub relay_gone: u64,
+    /// The delivery TTL ran out (§10.4).
+    pub queue_expired: u64,
+    /// Displaced from a full delivery queue (§10.4).
+    pub queue_displaced: u64,
+    /// The payload was too long (§14).
+    pub payload_too_long: u64,
 }
 
 impl DropCounts {
     /// Count one drop.
     pub fn add(&mut self, r: DropReason) {
-        match r {
-            DropReason::VisitedFull => self.visited_full += 1,
-            DropReason::NoRoute => self.no_route += 1,
-            DropReason::DutyBudget => self.duty_budget += 1,
-            DropReason::UnknownLeaf => self.unknown_leaf += 1,
-            DropReason::QueueTtl => self.queue_ttl += 1,
-        }
+        let c = match r {
+            DropReason::NoRoute => &mut self.no_route,
+            DropReason::HopCap => &mut self.hop_cap,
+            DropReason::RecordLost => &mut self.record_lost,
+            DropReason::SendQueueFull => &mut self.send_queue_full,
+            DropReason::Budget => &mut self.budget,
+            DropReason::ReturnFailed => &mut self.return_failed,
+            DropReason::BounceFailed => &mut self.bounce_failed,
+            DropReason::RelayGone => &mut self.relay_gone,
+            DropReason::QueueExpired => &mut self.queue_expired,
+            DropReason::QueueDisplaced => &mut self.queue_displaced,
+            DropReason::PayloadTooLong => &mut self.payload_too_long,
+        };
+        *c += 1;
     }
 
     /// Total.
     pub fn total(&self) -> u64 {
-        self.visited_full + self.no_route + self.duty_budget + self.unknown_leaf + self.queue_ttl
+        self.no_route
+            + self.hop_cap
+            + self.record_lost
+            + self.send_queue_full
+            + self.budget
+            + self.return_failed
+            + self.bounce_failed
+            + self.relay_gone
+            + self.queue_expired
+            + self.queue_displaced
+            + self.payload_too_long
     }
 }
 
@@ -254,6 +271,9 @@ pub struct AppMetrics {
     pub sent: u64,
     /// Local failures reported at origins, by reason.
     pub failed: BTreeMap<String, u64>,
+    /// Messages the traffic model did not send because their destination
+    /// leaf had never attached, so no sender could know its address (§9.1).
+    pub unaddressed: u64,
     /// Drops reported by relays, by reason (events, not messages: two
     /// copies of one message may be dropped in two places).
     pub drops: DropCounts,

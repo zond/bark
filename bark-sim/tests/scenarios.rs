@@ -1,6 +1,8 @@
 //! Whole-scenario tests: determinism, the capacity-sized run, and S1.
 
 use bark_sim::links::{FadingParams, Model};
+use bark_sim::metrics::DropReason;
+use bark_sim::sim::Fate;
 use bark_sim::scenario::{
     Availability, Destination, InterfererSpec, Placement, RoleSpec, ScriptAction, TrafficSpec,
 };
@@ -113,7 +115,9 @@ fn same_seed_gives_bit_identical_output() {
         "{}",
         s.table()
     );
-    assert!(s.app.originated > 100);
+    // Two minutes is inside the relays' boot listen (design §6.2): no leaf
+    // has attached, so no message has an address yet.
+    assert!(s.app.originated + s.app.unaddressed > 100);
     assert!(
         s.channels[6].busy_fraction.unwrap() > 0.0,
         "the interferer shows"
@@ -192,11 +196,10 @@ fn capacity_sized_scenario_runs_a_minute_quickly() {
         total.as_secs_f64()
     );
     assert_eq!((s.relays, s.leaves), (270, 20_000));
-    assert!(
-        s.app.originated > 50,
-        "{} texts in a minute",
-        s.app.originated
-    );
+    // Within the relays' boot listen (design §6.2) no leaf has attached,
+    // so the texts have no address yet.
+    let texts = s.app.originated + s.app.unaddressed;
+    assert!(texts > 50, "{texts} texts in a minute");
     // "A few seconds" on an optimised build; unoptimised test builds are
     // several times slower, so the bound is looser there.
     let limit = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
@@ -231,10 +234,23 @@ fn s1_parses_and_runs() {
     sim.run();
     let s = sim.summary();
     print!("{}", s.table());
-    assert_eq!(s.app.originated, 60, "one text every 30 s for 30 minutes");
-    // The stub cores send nothing, so nothing is delivered yet.
-    assert_eq!(s.app.delivered, 0);
-    assert_eq!(s.app.delivery_ratio, 0.0);
+    assert_eq!(s.app.originated + s.app.unaddressed, 60, "one text every 30 s for 30 minutes");
+    // Once the relays know each other, a worst-case rotation after their
+    // boot listen (design §6.2, §7), every text with an address is
+    // delivered until B is removed at 20 minutes; after that every one is
+    // dropped at A for want of a route (design §9.2.5). Every message has
+    // a fate, except one sent as the run ends.
+    let c = bark_proto::Config::default();
+    let settled = bark_proto::Instant::ZERO + c.boot_listen + c.heartbeat_max.mul(13);
+    let removal = bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(1200);
+    let fates: Vec<_> = sim.originated().filter(|(t, _)| *t < sim.end()).collect();
+    assert!(fates.iter().all(|(_, f)| *f != Fate::Unaccounted), "{fates:?}");
+    let (before, after): (Vec<_>, Vec<_>) = fates.iter().partition(|(t, _)| *t < removal);
+    let settled: Vec<_> = before.iter().filter(|(t, _)| *t >= settled).collect();
+    assert!(settled.iter().all(|(_, f)| *f == Fate::Delivered), "{before:?}");
+    let a_no_route = Fate::Dropped { node: 0, reason: DropReason::NoRoute };
+    assert_eq!(after.len(), 20);
+    assert!(after.iter().all(|(_, f)| *f == a_no_route), "{after:?}");
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());

@@ -49,6 +49,10 @@ pub struct AppSummary {
     pub lost_dropped: DropCounts,
     /// Messages that failed locally and were never delivered.
     pub lost_failed: u64,
+    /// Every message lost, by where and why: `"<node>: <reason>"`.
+    pub lost_at: BTreeMap<String, u64>,
+    /// Messages not sent because their destination had no address yet.
+    pub unaddressed: u64,
     /// Messages neither delivered nor reported lost.
     pub unaccounted: u64,
     /// Origination-to-delivery latency.
@@ -146,13 +150,24 @@ impl Sim {
             max_ms: ms(100.0),
         });
         let (mut lost_dropped, mut lost_failed, mut unaccounted) = (DropCounts::default(), 0, 0);
+        let mut lost_at = BTreeMap::new();
         for f in self.fates() {
-            match f {
-                Fate::Delivered => {}
-                Fate::Failed => lost_failed += 1,
-                Fate::Dropped { reason, .. } => lost_dropped.add(reason),
-                Fate::Unaccounted => unaccounted += 1,
-            }
+            let at = match f {
+                Fate::Delivered => continue,
+                Fate::Failed { node, reason } => {
+                    lost_failed += 1;
+                    format!("{}: failed {reason:?}", self.label(node))
+                }
+                Fate::Dropped { node, reason } => {
+                    lost_dropped.add(reason);
+                    format!("{}: dropped {reason:?}", self.label(node))
+                }
+                Fate::Unaccounted => {
+                    unaccounted += 1;
+                    continue;
+                }
+            };
+            *lost_at.entry(at).or_insert(0) += 1;
         }
         let busy_run =
             |o: &crate::metrics::Observer, c: usize| o.busy_until(c, dur_us) as f64 / dur_us as f64;
@@ -218,6 +233,8 @@ impl Sim {
                 drops: m.app.drops,
                 lost_dropped,
                 lost_failed,
+                lost_at,
+                unaddressed: m.app.unaddressed,
                 unaccounted,
                 latency,
             },
@@ -274,6 +291,16 @@ impl Summary {
             a.lost_failed,
             a.unaccounted
         );
+        if a.unaddressed > 0 {
+            let _ = writeln!(
+                s,
+                "not sent: {} to a leaf that had not attached yet",
+                a.unaddressed
+            );
+        }
+        for (at, n) in &a.lost_at {
+            let _ = writeln!(s, "  lost {n:>5} at {at}");
+        }
         let _ = writeln!(
             s,
             "radio: {} frames, {:.1} s airtime (max node {:.2}%), {} home moves",

@@ -24,8 +24,8 @@ use crate::scenario::{
 };
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::{
-    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, Leaf,
-    LeafId, MsgId, Position, Relay, MAX_FRAME,
+    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, FailReason, Frame,
+    Instant, Leaf, LeafId, MsgId, Position, Relay, Trace, MAX_FRAME,
 };
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -225,7 +225,12 @@ pub enum Fate {
     /// Reached its destination's application.
     Delivered,
     /// Failed locally at its origin.
-    Failed,
+    Failed {
+        /// The origin.
+        node: u32,
+        /// Why.
+        reason: FailReason,
+    },
     /// Dropped by a relay; the last drop reported wins.
     Dropped {
         /// Where.
@@ -325,7 +330,9 @@ pub struct Sim {
     poisson_rng: Vec<Stream>,
     leaf_grid: Option<Grid>,
     leaf_xy: Vec<Xy>,
-    home_relay: Vec<u32>,
+    /// Each node's address as a sender last learned it: a relay's
+    /// position, or the relay a leaf was last attached to.
+    address: Vec<Option<Position>>,
     availability: Option<(f64, f64)>,
     avail_rng: Vec<Stream>,
     origins: Vec<OriginRecord>,
@@ -446,7 +453,7 @@ impl Sim {
             poisson_rng: Vec::new(),
             leaf_grid: None,
             leaf_xy: Vec::new(),
-            home_relay: vec![u32::MAX; n],
+            address: vec![None; n],
             availability: None,
             avail_rng: Vec::new(),
             origins: Vec::new(),
@@ -808,6 +815,9 @@ impl Sim {
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
+            Action::Trace(Trace::Dropped { msg_id, reason }) => {
+                self.message_dropped(node, msg_id, reason)
+            }
             Action::Trace(_) => {}
         }
     }
@@ -1050,7 +1060,7 @@ impl Sim {
                     .and_then(|&t| self.origins.get_mut(t as usize))
                 {
                     if o.fate == Fate::Unaccounted {
-                        o.fate = Fate::Failed;
+                        o.fate = Fate::Failed { node, reason };
                     }
                 }
             }
@@ -1074,10 +1084,9 @@ impl Sim {
         }
     }
 
-    /// A core dropped message `msg_id` for `reason`. The protocol sends no
-    /// failure notice, so this is the only record of where a lost message
-    /// died. The core interface does not report drops yet; when it does,
-    /// its report is translated into this call in [`Sim::app_event`].
+    /// A core dropped message `msg_id` for `reason`, reported in
+    /// `Trace::Dropped`. The protocol sends no failure notice, so this is
+    /// the only record of where a lost message died.
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
@@ -1097,41 +1106,33 @@ impl Sim {
         self.origins.iter().map(|o| o.fate)
     }
 
-    /// The relay a destination is reached through: itself if a relay;
-    /// for a leaf, the relay with the strongest link to it, else the
-    /// nearest relay. The sender's application is assumed to know it
-    /// (design §9.1: addresses are relay position plus leaf id).
-    fn relay_of(&mut self, node: u32) -> u32 {
-        if node < self.n_relays {
-            return node;
-        }
-        if self.home_relay[node as usize] == u32::MAX {
-            let best = self
-                .links
-                .row(node)
-                .iter()
-                .filter(|l| l.rx < self.n_relays)
-                .max_by(|a, b| a.base_dbm.total_cmp(&b.base_dbm).then(b.rx.cmp(&a.rx)))
-                .map(|l| l.rx);
-            let r = best.or_else(|| {
-                let p = self.xy[node as usize];
-                (0..self.n_relays).min_by(|&a, &b| {
-                    self.xy[a as usize]
-                        .dist(p)
-                        .total_cmp(&self.xy[b as usize].dist(p))
-                })
-            });
-            self.home_relay[node as usize] = r.unwrap_or(0);
-        }
-        self.home_relay[node as usize]
+    /// When each message was originated, and its fate, in origination order.
+    pub fn originated(&self) -> impl Iterator<Item = (Instant, Fate)> + '_ {
+        self.origins.iter().map(|o| (o.t, o.fate))
     }
 
-    /// Leaf id of a node: leaves are numbered from 1 (0 is the relay itself).
+    /// The address of `node` as a sender knows it (design §9.1): a
+    /// relay's own position; for a leaf, the relay it is attached to, or
+    /// the one it was last attached to, as the sender would have learnt
+    /// it from an earlier message. `None` for a leaf that never attached:
+    /// nobody can have its address.
+    fn address_of(&mut self, node: u32) -> Option<Position> {
+        if node < self.n_relays {
+            return Some(self.positions[node as usize]);
+        }
+        let leaf = &self.leaves[(node - self.n_relays) as usize];
+        if let Some(p) = leaf.relay() {
+            self.address[node as usize] = Some(p);
+        }
+        self.address[node as usize]
+    }
+
+    /// Leaf id of a node: the leaf core's own, `LeafId::RELAY` for a relay.
     pub fn leaf_id(&self, node: u32) -> LeafId {
         if node < self.n_relays {
             LeafId::RELAY
         } else {
-            LeafId((node - self.n_relays + 1).to_be_bytes())
+            self.leaves[(node - self.n_relays) as usize].id()
         }
     }
 
@@ -1140,6 +1141,10 @@ impl Sim {
         if !st.alive || !st.present || self.n_relays == 0 {
             return;
         }
+        let Some(dst_pos) = self.address_of(dst) else {
+            self.metrics.app.unaddressed += 1;
+            return;
+        };
         let tag = self.origins.len() as u32;
         self.origins.push(OriginRecord {
             dst,
@@ -1148,9 +1153,8 @@ impl Sim {
         });
         let mut payload = [0u8; MAX_FRAME];
         payload[..4].copy_from_slice(&tag.to_le_bytes());
-        let relay = self.relay_of(dst);
         let cmd = AppCommand::Send {
-            dst_pos: self.positions[relay as usize],
+            dst_pos,
             dst_leaf: self.leaf_id(dst),
             payload: &payload[..len as usize],
         };
@@ -1365,7 +1369,7 @@ mod tests {
         }
         sim.pending_tag = None;
         sim.message_dropped(1, MsgId(7), DropReason::NoRoute);
-        sim.message_dropped(1, MsgId(8), DropReason::QueueTtl);
+        sim.message_dropped(1, MsgId(8), DropReason::QueueExpired);
         let mut payload = [0u8; MAX_FRAME];
         payload[..4].copy_from_slice(&1u32.to_le_bytes());
         let msg = AppEvent::Message {
@@ -1383,7 +1387,7 @@ mod tests {
         assert_eq!(sim.metrics.nodes[1].drops.total(), 2);
         let s = sim.summary();
         assert_eq!(
-            (s.app.lost_dropped.no_route, s.app.lost_dropped.queue_ttl),
+            (s.app.lost_dropped.no_route, s.app.lost_dropped.queue_expired),
             (1, 0)
         );
         assert_eq!(
