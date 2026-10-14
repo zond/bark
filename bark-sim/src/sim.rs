@@ -816,7 +816,10 @@ impl Sim {
         } else {
             let c = &mut self.leaves[(node - self.n_relays) as usize];
             c.handle(ev, now, &mut |a| buf.push(a));
-            c.next_wakeup()
+            let attached = c.relay();
+            let wake = c.next_wakeup();
+            self.attached(node, attached);
+            wake
         };
         for a in buf.drain(..) {
             self.apply(node, a, false);
@@ -1171,6 +1174,19 @@ impl Sim {
     /// When each message was originated, and its fate, in origination order.
     pub fn originated(&self) -> impl Iterator<Item = (Instant, Fate)> + '_ {
         self.origins.iter().map(|o| (o.t, o.fate))
+    }
+
+    /// Leaf `node` is attached to `relay` after an event: keep its address
+    /// and count a change of relay.
+    fn attached(&mut self, node: u32, relay: Option<Position>) {
+        let Some(p) = relay else { return };
+        let last = &mut self.address[node as usize];
+        if *last != Some(p) {
+            if last.is_some() {
+                self.metrics.nodes[node as usize].relay_changes += 1;
+            }
+            *last = Some(p);
+        }
     }
 
     /// The address of `node` as a sender knows it (design §9.1): a

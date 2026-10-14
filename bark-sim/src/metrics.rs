@@ -161,6 +161,9 @@ pub struct NodeMetrics {
     pub rssi: u64,
     /// Resting-channel changes after the first `Listen`.
     pub home_moves: u64,
+    /// For a leaf: times it attached to a relay other than the one it was
+    /// last attached to (design §10.1).
+    pub relay_changes: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
     /// Own messages whose first hop acknowledged them.

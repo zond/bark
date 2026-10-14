@@ -153,6 +153,8 @@ pub struct Summary {
     pub max_airtime_fraction: f64,
     /// Resting-channel changes.
     pub home_moves: u64,
+    /// Leaves attaching to a relay other than their last (design §10.1).
+    pub relay_changes: u64,
     /// Per channel.
     pub channels: Vec<ChannelSummary>,
     /// Per observer.
@@ -264,6 +266,7 @@ impl Sim {
             airtime_s: airtime_us as f64 / 1e6,
             max_airtime_fraction: max_air as f64 / dur_us as f64,
             home_moves: m.nodes.iter().map(|n| n.home_moves).sum(),
+            relay_changes: m.nodes.iter().map(|n| n.relay_changes).sum(),
             channels,
             observers,
             nodes,
@@ -395,11 +398,12 @@ impl Summary {
         }
         let _ = writeln!(
             s,
-            "radio: {} frames, {:.1} s airtime (max node {:.2}%), {} home moves",
+            "radio: {} frames, {:.1} s airtime (max node {:.2}%), {} home moves, {} leaf relay changes",
             self.tx_frames,
             self.airtime_s,
             100.0 * self.max_airtime_fraction,
-            self.home_moves
+            self.home_moves,
+            self.relay_changes
         );
         let _ = writeln!(
             s,
