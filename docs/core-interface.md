@@ -108,18 +108,20 @@ test in `tables/mod.rs`:
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
 | Delivery queue (§10.4) | 64 × 256 B | 16.0 KiB |
 | Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
-| Send queue (§9.3) | 10 × 260 B | 2.5 KiB |
+| Send queue (§9.3) | 10 × 262 B | 2.6 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget and busy estimate | | 0.8 KiB |
-| **All** | | **46.5 KiB** |
+| **All** | | **46.6 KiB** |
 
-Target for the whole `Relay`: under 48 KiB. Design §15 budgets about 41 KB for the same
-tables; the difference is the record's tried mask (8 B per record, 4.9 KiB), the
-neighbour's demotion time (8 B per entry), and the delivery queue holding 234-byte
-payloads (§15 still counts 198). The relay's medium access alone, without the routing
-tables, is under 4 KiB today.
+The whole `Relay` is 48 304 B (47.2 KiB), under the 48 KiB target; besides the tables it
+holds the medium access, the hand-over and nine owed ACKs. Design §15 budgets about 41 KB
+for the same tables; the difference is the record's tried mask (8 B per record, 4.9 KiB),
+the neighbour's demotion time (8 B per entry), and the delivery queue holding 234-byte
+payloads (§15 still counts 198). Checked by the tests in `tables/mod.rs` and
+`node/relay.rs`.
 
-`Leaf` target under 1 KiB, because the capacity scenario holds twenty thousand of them.
+`Leaf` is 696 B, under the 1 KiB target, because the capacity scenario holds twenty
+thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
@@ -141,7 +143,11 @@ action at a time, and the core never allocates.
     compared whole.
   - The ACK of an ATTACH carries the leaf's ID as `id` and the relay's short name as
     `from`: an ATTACH is not a message and has no message ID.
-  - A leaf's own DATA has `src_hop` zero and `hops` zero.
+  - A leaf's own DATA has `src_hop` zero and `hops` zero. A relay sending for its own
+    application sends `hops` 1, as if it had received the message from the
+    application at 0: a receiver takes `hops` 0 for a leaf's packet (design §9.2.1).
+  - A DELIVER to a duty-cycled or hybrid leaf has a 2000-symbol preamble, the 512 ms
+    of design §10.5 (`RxMode::preamble_symbols`).
   - Application payload at most 234 bytes, what remains of 255 after the 21-byte DATA
     header; the decoder rejects anything longer.
   - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
