@@ -34,6 +34,12 @@ cortex-m-rt = { version = "=0.7.7", features = ["set-vtor"] }
 # seen at all: panic-persist writes it to RAM (PANDUMP in memory.x) and
 # soft-resets; main logs it over USB.
 panic-persist = { version = "=0.3.0", features = ["utf8"] }
+# SX1262 driver. Git, not crates.io 3.0.1 (roadmap D4), pinned to a reviewed
+# revision of main (2026-10-06): it reports payload and header CRC failures
+# as errors instead of handing the buffer up as a packet. See README, Risks.
+lora-phy = { git = "https://github.com/lora-rs/lora-rs.git", rev = "7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185" }
+# Wraps the SPIM bus and the NSS pin into the SpiDevice lora-phy takes.
+embedded-hal-bus = { version = "=0.3.0", features = ["async"] }
 
 [profile.release]
 debug = 2

@@ -1,20 +1,24 @@
-//! bark firmware for the LILYGO T-Echo: bring-up skeleton.
+//! bark firmware for the LILYGO T-Echo: bring-up.
 //!
-//! Blinks the green LED at 1 Hz and logs over USB CDC-ACM. Proves the
-//! toolchain, the flash layout under the stock bootloader, and that
-//! `bark-proto` builds for the target. Touches no radio, GPS, display or BLE.
+//! Blinks the green LED at 1 Hz, logs over USB CDC-ACM, and powers up the
+//! SX1262 at bark's modulation. Touches no GPS, display or BLE.
 
 #![no_std]
 #![no_main]
 
 mod board;
+mod clock;
+mod radio;
 
+use core::cell::Cell;
+
+use bark_proto::radio::Channel;
 use embassy_executor::Spawner;
-use embassy_futures::join::join3;
+use embassy_futures::join::join4;
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
-use embassy_nrf::{bind_interrupts, peripherals, usb};
+use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::{Duration, Instant, Ticker};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use panic_persist as _;
@@ -22,6 +26,7 @@ use panic_persist as _;
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
 });
 
 /// USB vendor ID of pid.codes, the open-source VID registry.
@@ -137,5 +142,22 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join3(device.run(), log_sink, blink).await;
+    let clock = clock::Clock::new(p.TIMER1);
+    let irq_deadline = Cell::new(None);
+    let radio = async {
+        let t0 = clock.now();
+        match radio::Radio::new(board.radio, board.power, p.SPI2, Irqs, &irq_deadline).await {
+            Ok(mut radio) => {
+                log::info!("radio up in {} us", clock.since(t0));
+                let home = Channel::new(0).expect("channel 0 is in the plan");
+                if let Err(e) = radio.rest(home).await {
+                    log::error!("radio: listen on channel 0: {:?}", e);
+                }
+                core::future::pending::<()>().await;
+            }
+            Err(e) => log::error!("radio init failed: {:?}", e),
+        }
+    };
+
+    join4(device.run(), log_sink, blink, radio).await;
 }

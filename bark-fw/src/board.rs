@@ -53,7 +53,7 @@ pub struct Radio {
 /// Power switching.
 ///
 /// The switched peripheral rail is up when `PWR_EN AND (PWR_ON OR VBUS)`.
-/// This skeleton drives neither line: it does not touch the radio.
+/// `radio::Radio::new` drives both high and holds them.
 pub struct Power {
     /// `PWR_EN`, P0.13, active high: radio (and switched-rail) power enable.
     /// Left floating it leaves the rail half up; whoever brings up the radio
