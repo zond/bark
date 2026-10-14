@@ -4,8 +4,8 @@
 //! runs of one scenario produce byte-identical JSON.
 
 use crate::links::BuildStats;
-use crate::metrics::{percentile, NodeMetrics, RxCounts};
-use crate::sim::Sim;
+use crate::metrics::{percentile, DropCounts, NodeMetrics, RxCounts};
+use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -39,10 +39,18 @@ pub struct AppSummary {
     pub duplicates: u64,
     /// Deliveries to the wrong node.
     pub misdelivered: u64,
-    /// End-to-end ACKs reported at origins.
-    pub acks: u64,
-    /// NACKs (failures) reported at origins, by reason code.
-    pub nacks: BTreeMap<String, u64>,
+    /// First-hop acknowledgements reported at origins.
+    pub sent: u64,
+    /// Local failures reported at origins, by reason.
+    pub failed: BTreeMap<String, u64>,
+    /// Drop reports from relays, by reason.
+    pub drops: DropCounts,
+    /// Messages whose last reported fate is a drop, by reason.
+    pub lost_dropped: DropCounts,
+    /// Messages that failed locally and were never delivered.
+    pub lost_failed: u64,
+    /// Messages neither delivered nor reported lost.
+    pub unaccounted: u64,
     /// Origination-to-delivery latency.
     pub latency: Option<Latency>,
 }
@@ -137,6 +145,15 @@ impl Sim {
             p99_ms: ms(99.0),
             max_ms: ms(100.0),
         });
+        let (mut lost_dropped, mut lost_failed, mut unaccounted) = (DropCounts::default(), 0, 0);
+        for f in self.fates() {
+            match f {
+                Fate::Delivered => {}
+                Fate::Failed => lost_failed += 1,
+                Fate::Dropped { reason, .. } => lost_dropped.add(reason),
+                Fate::Unaccounted => unaccounted += 1,
+            }
+        }
         let busy_run =
             |o: &crate::metrics::Observer, c: usize| o.busy_until(c, dur_us) as f64 / dur_us as f64;
         let channels = (0..CHANNELS as usize)
@@ -196,13 +213,12 @@ impl Sim {
                 },
                 duplicates: m.app.duplicates,
                 misdelivered: m.app.misdelivered,
-                acks: m.app.acks,
-                nacks: m
-                    .app
-                    .nacks
-                    .iter()
-                    .map(|(k, v)| (format!("{k:#04x}"), *v))
-                    .collect(),
+                sent: m.app.sent,
+                failed: m.app.failed.clone(),
+                drops: m.app.drops,
+                lost_dropped,
+                lost_failed,
+                unaccounted,
                 latency,
             },
             rx: m.rx_total(),
@@ -250,12 +266,13 @@ impl Summary {
             .unwrap_or_else(|| "no latency samples".into());
         let _ = writeln!(
             s,
-            "messages: {} originated, {} delivered ({:.1}%), {} acks, {} nacks; {lat}",
+            "messages: {} originated, {} delivered ({:.1}%), {} dropped, {} failed, {} unaccounted; {lat}",
             a.originated,
             a.delivered,
             100.0 * a.delivery_ratio,
-            a.acks,
-            a.nacks.values().sum::<u64>()
+            a.lost_dropped.total(),
+            a.lost_failed,
+            a.unaccounted
         );
         let _ = writeln!(
             s,

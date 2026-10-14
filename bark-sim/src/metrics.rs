@@ -163,12 +163,64 @@ pub struct NodeMetrics {
     pub home_moves: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
-    /// `AppEvent::Delivered` at this node (end-to-end ACK of its message).
-    pub acks: u64,
-    /// `AppEvent::Failed` at this node (NACK or local failure).
-    pub nacks: u64,
+    /// Own messages whose first hop acknowledged them.
+    pub sent: u64,
+    /// Own messages that failed locally.
+    pub failed: u64,
     /// `AppEvent::Message` at this node.
     pub messages_in: u64,
+    /// Messages this node dropped, by reason.
+    pub drops: DropCounts,
+}
+
+/// Why a relay dropped a message. The protocol sends no failure notice
+/// (roadmap D10), so a lost message is only visible where it died.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropReason {
+    /// The packet's visited list was full.
+    VisitedFull,
+    /// No neighbour left to try.
+    NoRoute,
+    /// The duty-cycle budget was exhausted.
+    DutyBudget,
+    /// The destination leaf is not attached here.
+    UnknownLeaf,
+    /// The delivery queue entry expired.
+    QueueTtl,
+}
+
+/// Drop counters by reason.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct DropCounts {
+    /// Visited list full.
+    pub visited_full: u64,
+    /// No route.
+    pub no_route: u64,
+    /// Duty-cycle budget.
+    pub duty_budget: u64,
+    /// Unknown leaf.
+    pub unknown_leaf: u64,
+    /// Queue TTL expired.
+    pub queue_ttl: u64,
+}
+
+impl DropCounts {
+    /// Count one drop.
+    pub fn add(&mut self, r: DropReason) {
+        match r {
+            DropReason::VisitedFull => self.visited_full += 1,
+            DropReason::NoRoute => self.no_route += 1,
+            DropReason::DutyBudget => self.duty_budget += 1,
+            DropReason::UnknownLeaf => self.unknown_leaf += 1,
+            DropReason::QueueTtl => self.queue_ttl += 1,
+        }
+    }
+
+    /// Total.
+    pub fn total(&self) -> u64 {
+        self.visited_full + self.no_route + self.duty_budget + self.unknown_leaf + self.queue_ttl
+    }
 }
 
 /// Per-channel counters.
@@ -184,6 +236,8 @@ pub struct ChannelMetrics {
 
 /// Application-level counters, matched through a tag the traffic model
 /// writes into each payload (the core never looks inside a payload).
+/// End-to-end delivery is known only by observing `AppEvent::Message` at
+/// the destination; nothing in the protocol reports it back.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AppMetrics {
     /// Messages the traffic model asked a core to send.
@@ -196,10 +250,13 @@ pub struct AppMetrics {
     pub duplicates: u64,
     /// Messages that reached a node other than their destination.
     pub misdelivered: u64,
-    /// `AppEvent::Delivered` at origins.
-    pub acks: u64,
-    /// `AppEvent::Failed` at origins, by reason code.
-    pub nacks: BTreeMap<u8, u64>,
+    /// Messages whose first hop acknowledged them, reported at origins.
+    pub sent: u64,
+    /// Local failures reported at origins, by reason.
+    pub failed: BTreeMap<String, u64>,
+    /// Drops reported by relays, by reason (events, not messages: two
+    /// copies of one message may be dropped in two places).
+    pub drops: DropCounts,
     /// Origination to destination application, µs, in arrival order.
     #[serde(skip)]
     pub latencies_us: Vec<u64>,

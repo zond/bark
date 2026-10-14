@@ -16,7 +16,7 @@
 
 use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio};
-use crate::metrics::{Metrics, Observer, Outcome};
+use crate::metrics::{DropReason, Metrics, Observer, Outcome};
 use crate::phy::{self, Deaf, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
@@ -216,10 +216,29 @@ struct PoissonTraffic {
     dest: Destination,
 }
 
+/// What became of a message, as far as the simulator has seen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fate {
+    /// Neither delivered nor reported lost (in flight at the end, or lost
+    /// without a report).
+    Unaccounted,
+    /// Reached its destination's application.
+    Delivered,
+    /// Failed locally at its origin.
+    Failed,
+    /// Dropped by a relay; the last drop reported wins.
+    Dropped {
+        /// Where.
+        node: u32,
+        /// Why.
+        reason: DropReason,
+    },
+}
+
 struct OriginRecord {
     dst: u32,
     t: Instant,
-    delivered: bool,
+    fate: Fate,
 }
 
 /// A scripted excursion's result.
@@ -311,7 +330,8 @@ pub struct Sim {
     avail_rng: Vec<Stream>,
     origins: Vec<OriginRecord>,
     pending_tag: Option<u32>,
-    msg_tags: HashMap<(u32, u32), u32>,
+    /// Message id (kept across hops) to traffic tag.
+    msg_tags: HashMap<u32, u32>,
     script: Vec<ScriptEntry>,
     /// Results of scripted excursions, in completion order.
     pub script_log: Vec<ScriptResult>,
@@ -1003,22 +1023,35 @@ impl Sim {
 
     // ---- Application ---------------------------------------------------
 
+    /// Every application event the core can emit is interpreted here and
+    /// nowhere else.
     fn app_event(&mut self, node: u32, e: AppEvent) {
         let m = &mut self.metrics;
         match e {
             AppEvent::Accepted(MsgId(id)) => {
                 m.app.accepted += 1;
                 if let Some(tag) = self.pending_tag {
-                    self.msg_tags.insert((node, id), tag);
+                    self.msg_tags.insert(id, tag);
                 }
             }
+            // The first hop acknowledged the message (to be renamed `Sent`).
             AppEvent::Delivered(MsgId(_)) => {
-                m.app.acks += 1;
-                m.nodes[node as usize].acks += 1;
+                m.app.sent += 1;
+                m.nodes[node as usize].sent += 1;
             }
-            AppEvent::Failed { reason, .. } => {
-                *m.app.nacks.entry(reason).or_insert(0) += 1;
-                m.nodes[node as usize].nacks += 1;
+            // A local failure at the origin.
+            AppEvent::Failed { msg_id, reason } => {
+                *m.app.failed.entry(format!("{reason:?}")).or_insert(0) += 1;
+                m.nodes[node as usize].failed += 1;
+                if let Some(o) = self
+                    .msg_tags
+                    .get(&msg_id.0)
+                    .and_then(|&t| self.origins.get_mut(t as usize))
+                {
+                    if o.fate == Fate::Unaccounted {
+                        o.fate = Fate::Failed;
+                    }
+                }
             }
             AppEvent::Message { len, payload, .. } => {
                 m.nodes[node as usize].messages_in += 1;
@@ -1028,8 +1061,8 @@ impl Sim {
                 }
                 let tag = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 match self.origins.get_mut(tag as usize) {
-                    Some(o) if o.dst == node && !o.delivered => {
-                        o.delivered = true;
+                    Some(o) if o.dst == node && o.fate != Fate::Delivered => {
+                        o.fate = Fate::Delivered;
                         m.app.delivered += 1;
                         m.app.latencies_us.push(self.now.since(o.t).as_micros());
                     }
@@ -1038,6 +1071,29 @@ impl Sim {
                 }
             }
         }
+    }
+
+    /// A core dropped message `msg_id` for `reason`. The protocol sends no
+    /// failure notice, so this is the only record of where a lost message
+    /// died. The core interface does not report drops yet; when it does,
+    /// its report is translated into this call in [`Sim::app_event`].
+    pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
+        self.metrics.app.drops.add(reason);
+        self.metrics.nodes[node as usize].drops.add(reason);
+        if let Some(o) = self
+            .msg_tags
+            .get(&msg_id.0)
+            .and_then(|&t| self.origins.get_mut(t as usize))
+        {
+            if o.fate != Fate::Delivered {
+                o.fate = Fate::Dropped { node, reason };
+            }
+        }
+    }
+
+    /// Fate of every originated message, in origination order.
+    pub fn fates(&self) -> impl Iterator<Item = Fate> + '_ {
+        self.origins.iter().map(|o| o.fate)
     }
 
     /// The relay a destination is reached through: itself if a relay;
@@ -1087,7 +1143,7 @@ impl Sim {
         self.origins.push(OriginRecord {
             dst,
             t: self.now,
-            delivered: false,
+            fate: Fate::Unaccounted,
         });
         let mut payload = [0u8; MAX_FRAME];
         payload[..4].copy_from_slice(&tag.to_le_bytes());
@@ -1278,5 +1334,60 @@ impl Sim {
             self.metrics.outcome(node, r.channel, Outcome::Deaf(why));
         }
         st.lock = Lock::Idle;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drops are attributed to the node and reason the core reports, and a
+    /// delivery of another copy overrides them.
+    #[test]
+    fn drops_are_attributed_to_node_and_reason() {
+        let sc = Scenario::new("drops", 1, 10.0)
+            .point("A", RoleSpec::Relay, 0.0, 0.0)
+            .point("B", RoleSpec::Relay, 400.0, 0.0)
+            .point("L", RoleSpec::Leaf, 450.0, 0.0)
+            .link("A", "B", -100.0);
+        let mut sim = Sim::new(&sc).unwrap();
+        // Two messages from A to L, accepted as msg ids 7 and 8.
+        for id in [7, 8] {
+            let tag = sim.origins.len() as u32;
+            sim.origins.push(OriginRecord {
+                dst: 2,
+                t: Instant::ZERO,
+                fate: Fate::Unaccounted,
+            });
+            sim.pending_tag = Some(tag);
+            sim.app_event(0, AppEvent::Accepted(MsgId(id)));
+        }
+        sim.pending_tag = None;
+        sim.message_dropped(1, MsgId(7), DropReason::NoRoute);
+        sim.message_dropped(1, MsgId(8), DropReason::QueueTtl);
+        let mut payload = [0u8; MAX_FRAME];
+        payload[..4].copy_from_slice(&1u32.to_le_bytes());
+        let msg = AppEvent::Message {
+            msg_id: MsgId(8),
+            len: 4,
+            payload,
+        };
+        sim.app_event(2, msg);
+        let fates: Vec<Fate> = sim.fates().collect();
+        let no_route = Fate::Dropped {
+            node: 1,
+            reason: DropReason::NoRoute,
+        };
+        assert_eq!(fates, vec![no_route, Fate::Delivered]);
+        assert_eq!(sim.metrics.nodes[1].drops.total(), 2);
+        let s = sim.summary();
+        assert_eq!(
+            (s.app.lost_dropped.no_route, s.app.lost_dropped.queue_ttl),
+            (1, 0)
+        );
+        assert_eq!(
+            (s.app.drops.total(), s.app.delivered, s.app.unaccounted),
+            (2, 1, 0)
+        );
     }
 }
