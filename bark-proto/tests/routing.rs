@@ -442,10 +442,11 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     }));
     let end = h.now + DUTY_CYCLE_WINDOW.mul(3);
     let mut k = 0u32;
+    let mut sent_at = std::collections::HashMap::new();
     while h.now < end {
         let mut text = [0u8; MAX_PAYLOAD];
         text[..4].copy_from_slice(&k.to_be_bytes());
-        send(&mut h, o, d, &text);
+        sent_at.insert(send(&mut h, o, d, &text), h.now);
         k += 1;
         let next = h.now + Duration::from_millis(2500);
         h.run_until(next, |_| false);
@@ -502,6 +503,59 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             .filter(|t| matches!(t, Trace::ReturnedToParent { .. }))
             .count(),
         deferred.len(),
+    );
+    let (pf, pd) = (position(&h, f).short(), position(&h, d).short());
+    let gap = h.nodes[f]
+        .sent
+        .iter()
+        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Data(_))))
+        .map(|(t, _)| *t)
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|w| w[1].since(w[0]))
+        .max()
+        .unwrap_or_default();
+    let acks_from_d = |frames: &[(Instant, Vec<u8>)]| {
+        frames
+            .iter()
+            .filter(|(_, b)| matches!(Packet::decode(b), Ok(Packet::Ack(a)) if a.from == pd.into()))
+            .count()
+    };
+    let d_sent: Vec<_> = h.nodes[d]
+        .sent
+        .iter()
+        .map(|(t, fr)| (*t, fr.payload().to_vec()))
+        .collect();
+    let acks_lost = acks_from_d(&d_sent) - acks_from_d(&h.nodes[f].received);
+    let to_f: Vec<MsgId> = h.nodes[o]
+        .sent
+        .iter()
+        .filter_map(|(_, fr)| match Packet::decode(fr.payload()) {
+            Ok(Packet::Data(p)) if p.dst_hop == pf => Some(p.msg_id()),
+            _ => None,
+        })
+        .collect();
+    let mut latency: Vec<Duration> = h.nodes[d]
+        .app
+        .iter()
+        .filter_map(|(t, e)| match e {
+            AppEvent::Message { msg_id, .. } => Some(t.since(sent_at[msg_id])),
+            _ => None,
+        })
+        .collect();
+    latency.sort();
+    let mut offered = to_f.clone();
+    offered.sort_by_key(|m| m.0);
+    offered.dedup();
+    println!(
+        "longest gap between F's DATA frames {gap:?}; D's ACKs lost at F {acks_lost}; \
+         O's frames to F {}, of which retries {}; D received {} messages, \
+         latency median {:?}, max {:?}",
+        to_f.len(),
+        to_f.len() - offered.len(),
+        latency.len(),
+        latency.get(latency.len() / 2),
+        latency.last(),
     );
     assert!(refused > 0, "the budget never refused a message");
     assert!(
