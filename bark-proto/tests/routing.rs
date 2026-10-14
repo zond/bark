@@ -5,7 +5,7 @@
 mod common;
 
 use bark_proto::wire::{Packet, ACK_LEN};
-use bark_proto::{AppCommand, AppEvent, Config, DropReason, Instant, LeafId, MsgId, Node, Position, Relay, Trace};
+use bark_proto::{AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node, Position, Relay, Trace};
 use common::{secs, Harness};
 
 /// A position `east`, `north` metres from a point in Kyiv.
@@ -202,4 +202,65 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
         })
         .collect();
     assert_eq!(counts, vec![1, 1]);
+}
+
+
+/// O sends to D through F every 2.5 s, over a link that loses F's first
+/// two transmissions of every message, so each costs F three frames and an
+/// ACK: about 0.43 s per message, 630 s an hour against the 360 s of its
+/// budget (§3), while O spends a third of its own. F's budget fills: it then
+/// refuses new messages without an ACK (§9.2.4), and a retry the budget
+/// cannot fit waits for it instead of being dropped (§9.4). Its heartbeats
+/// are never held back. The harness panics if any hour holds more than
+/// 10 %.
+#[test]
+fn duty_budget_defers_forwarding_and_never_drops() {
+    use bark_proto::radio::DUTY_CYCLE_WINDOW;
+    use bark_proto::wire::MAX_PAYLOAD;
+    const LOST: u32 = 2;
+    let (o, f, d) = (0, 1, 2);
+    let mut h = build(vec![relay(0.0, 0.0, 41), relay(400.0, 0.0, 42), relay(800.0, 0.0, 43)], &[(o, f), (f, d)]);
+    let mut tries = std::collections::HashMap::new();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let Ok(Packet::Data(p)) = Packet::decode(bytes) else { return false };
+        if (from, to) != (f, d) {
+            return false;
+        }
+        let n = tries.entry(p.msg_id()).or_insert(0);
+        *n += 1;
+        *n <= LOST
+    }));
+    let end = h.now + DUTY_CYCLE_WINDOW.mul(3);
+    let mut k = 0u32;
+    while h.now < end {
+        let mut text = [0u8; MAX_PAYLOAD];
+        text[..4].copy_from_slice(&k.to_be_bytes());
+        send(&mut h, o, d, &text);
+        k += 1;
+        let next = h.now + Duration::from_millis(2500);
+        h.run_until(next, |_| false);
+    }
+    let tf = traces(&h, f);
+    let mut deferred: Vec<MsgId> = tf
+        .iter()
+        .filter_map(|t| match t {
+            Trace::HandOverDeferred { msg_id, .. } => Some(*msg_id),
+            _ => None,
+        })
+        .collect();
+    deferred.sort_by_key(|m| m.0);
+    deferred.dedup();
+    let refused = tf.iter().filter(|t| matches!(t, Trace::Refused { reason: DropReason::Budget, .. })).count();
+    let forwarded = |id: MsgId| tf.iter().any(|t| matches!(t, Trace::Forwarded { msg_id, .. } if *msg_id == id));
+    println!(
+        "{k} sent; F forwarded {}, deferred {} for budget, refused {refused} for budget",
+        tf.iter().filter(|t| matches!(t, Trace::Forwarded { .. })).count(),
+        deferred.len(),
+    );
+    assert!(refused > 0, "the budget never refused a message");
+    assert!(!deferred.is_empty(), "the budget never held a hand-over back");
+    assert!(deferred.iter().all(|&id| forwarded(id)), "a deferred message was not forwarded");
+    let drops: Vec<_> = tf.iter().filter(|t| matches!(t, Trace::Dropped { .. })).collect();
+    assert!(drops.is_empty(), "F dropped: {drops:?}");
+    assert!(!tf.iter().any(|t| matches!(t, Trace::HeartbeatDeferred { .. })), "a heartbeat was held back");
 }
