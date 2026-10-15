@@ -10,7 +10,8 @@ values into a scenario's `[radio]` table (see the end).
 
 ## Setup
 
-- Two boards, A and B, flashed with the same UF2, both on USB to one
+- Two boards, A and B, flashed with the same console UF2 (built with
+  `cargo build --release --features console`), both on USB to one
   laptop (or B on a battery with its own laptop for range tests).
 - Log each session to a file: `picocom --logfile A-<date>.log /dev/ttyACM0`.
   Lines starting with `>` are the commands typed; every result is one
@@ -184,9 +185,9 @@ suffers, the fallback is 11 channels at 150 kHz (§5).
 
 ## Step 2: listen-before-talk, heartbeat, neighbour table (§15 step 2)
 
-The heartbeat and neighbour table need the protocol core on the
-firmware, which this console does not run. What this firmware measures
-for step 2:
+The heartbeat and neighbour table need the protocol core, which the
+default build runs and the console does not (README). What the console
+measures for step 2:
 
 - The cost of listen-before-talk: `cad` (1.5) plus `rssi` on the target
   channel (1.3).
@@ -195,7 +196,7 @@ for step 2:
 
 ## Step 3: busy estimate and home channel (§15 step 3)
 
-Also needs the core. What this firmware measures for step 3:
+Also needs the core. What the console measures for step 3:
 
 - Noise floor per channel and its spread (1.3), which sets the busy
   threshold (floor + 6 dB, §6.1; O3, O11).

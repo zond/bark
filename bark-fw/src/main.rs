@@ -1,15 +1,20 @@
-//! bark firmware for the LILYGO T-Echo: bring-up.
+//! bark firmware for the LILYGO T-Echo.
 //!
 //! Blinks the green LED at 1 Hz, logs over USB CDC-ACM, powers up the
-//! SX1262 at bark's modulation and serves the measurement console
-//! (`console.rs`) on the same serial port. Touches no GPS, display or BLE.
+//! SX1262 at bark's modulation and runs the protocol core on it
+//! (`node.rs`), or with the `console` feature the bring-up measurement
+//! console (`console.rs`) on the serial port. Touches no GPS, display or
+//! BLE.
 
 #![no_std]
 #![no_main]
 
 mod board;
 mod clock;
+#[cfg(feature = "console")]
 mod console;
+#[cfg(not(feature = "console"))]
+mod node;
 mod radio;
 
 use core::cell::Cell;
@@ -19,19 +24,32 @@ use embassy_futures::join::join4;
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
-use embassy_nrf::{bind_interrupts, peripherals, saadc, spim, usb};
+use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::{Duration, Instant, Ticker};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 // The logger macro constructs the input handler through this trait.
 use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 
+#[cfg(feature = "console")]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    SAADC => saadc::InterruptHandler;
+    SAADC => embassy_nrf::saadc::InterruptHandler;
 });
+#[cfg(not(feature = "console"))]
+bind_interrupts!(struct Irqs {
+    USBD => usb::InterruptHandler<peripherals::USBD>;
+    CLOCK_POWER => vbus_detect::InterruptHandler;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+});
+
+/// What the host types: commands for the console, or nothing to the node.
+#[cfg(feature = "console")]
+use console::HostInput as Input;
+#[cfg(not(feature = "console"))]
+use node::IgnoreInput as Input;
 
 /// USB vendor ID of pid.codes, the open-source VID registry.
 const USB_VID: u16 = 0x1209;
@@ -108,6 +126,7 @@ async fn main(_spawner: Spawner) {
         class,
         |record, writer| {
             use core::fmt::Write as _;
+            #[cfg(feature = "console")]
             if record.target() == console::ECHO {
                 let _ = write!(writer, "> {}\r\n", record.args());
                 return;
@@ -122,7 +141,7 @@ async fn main(_spawner: Spawner) {
                 record.args()
             );
         },
-        console::HostInput
+        Input
     );
 
     log::info!("bark-fw {} on LILYGO T-Echo", env!("CARGO_PKG_VERSION"));
@@ -154,14 +173,24 @@ async fn main(_spawner: Spawner) {
 
     let clock = clock::Clock::new(p.TIMER1);
     let irq_deadline = Cell::new(None);
-    let battery = saadc::Saadc::new(
+    #[cfg(feature = "console")]
+    let battery = embassy_nrf::saadc::Saadc::new(
         p.SAADC,
         Irqs,
-        saadc::Config::default(),
-        [saadc::ChannelConfig::single_ended(board.battery.adc)],
+        embassy_nrf::saadc::Config::default(),
+        [embassy_nrf::saadc::ChannelConfig::single_ended(
+            board.battery.adc,
+        )],
     );
+    #[cfg(feature = "console")]
     let mut lines = console::Lines::new();
-    let console = async {
+    #[cfg(not(feature = "console"))]
+    let (config, core) = {
+        let config = node::config();
+        let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG).blocking_next_u64();
+        (config, node::core(config, seed))
+    };
+    let radio_task = async {
         let t0 = clock.now();
         match radio::Radio::new(
             board.radio,
@@ -175,9 +204,12 @@ async fn main(_spawner: Spawner) {
         {
             Ok(radio) => {
                 log::info!("radio up in {} us", clock.since(t0));
+                #[cfg(feature = "console")]
                 console::Console::new(radio, &clock, battery)
                     .run(&mut lines)
-                    .await
+                    .await;
+                #[cfg(not(feature = "console"))]
+                node::run(core, radio, &config).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.
@@ -185,5 +217,5 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join4(device.run(), log_sink, blink, console).await;
+    join4(device.run(), log_sink, blink, radio_task).await;
 }

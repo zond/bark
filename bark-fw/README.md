@@ -3,14 +3,34 @@
 Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
-Current state (2026-10-14): bring-up firmware. It blinks the green LED at
-1 Hz, logs over USB CDC-ACM (a banner with the firmware version and
-constants from `bark-proto`, the previous boot's panic message if there
-was one, an uptime line every 10 s), powers up the SX1262 at bark's
-modulation (SF5, 125 kHz, CR 4/5, 12-symbol preamble, CRC on, private sync
-word) and runs a measurement console on the same serial port. It does not
-run the protocol core yet, and does not touch GPS, e-paper or BLE (the GPS
-does get power, see Radio power below).
+Current state (2026-10-15). The firmware blinks the green LED at 1 Hz,
+logs over USB CDC-ACM (a banner with the firmware version and constants
+from `bark-proto`, the previous boot's panic message if there was one, an
+uptime line every 10 s), powers up the SX1262 at bark's modulation (SF5,
+125 kHz, CR 4/5, 12-symbol preamble, CRC on, private sync word) and then
+does one of three things, chosen when it is built:
+
+| Build | Runs |
+|---|---|
+| `cargo build --release` | the protocol core as a relay |
+| `cargo build --release --features leaf` | the protocol core as a leaf |
+| `cargo build --release --features console` | the measurement console (below) |
+
+The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
+its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
+describes it. A node's position is set when it is built, from `BARK_LAT`
+and `BARK_LON` in degrees, until the phone app or the GPS can set it:
+
+```
+BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
+```
+
+Without them the position is 0, 0, and boards built alike share one
+identity. Every protocol event (`Trace`) and every message for the node is
+a log line, and every 10 s a `driver` line gives the loop's counters and
+its longest times. There is no application yet: the node sends no
+messages of its own. It does not touch GPS, e-paper or BLE (the GPS does
+get power, see Radio power below).
 
 ## Verified and unverified
 
@@ -20,9 +40,16 @@ driver's source, and have only been compiled.
 
 Verified on the host:
 
-- `cargo build --release` and `cargo clippy --release -- -D warnings` pass.
+- `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
+  with each of the three builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`, and the image is about 89 KiB.
+  initial stack pointer is `0x20040000`. The relay image is 284 KiB of
+  flash, 150 KiB of it the relay's empty tables, which start in flash and
+  are copied to RAM at boot; it uses 157 KiB of RAM before the stack,
+  which leaves 97 KiB for the stack, and its deepest single stack frame is
+  18 KiB (2026-10-15).
+- The driver loop, against a fake radio (`cargo test -p bark-driver` in
+  the host workspace).
 - `scripts/uf2.py` produces a UF2 that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, contiguous 256-byte payloads starting
   at `0x26000`.
@@ -100,7 +127,8 @@ below. `memory.x` has the full map.
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
    appears on the host, and once it is opened the log shows
-   `radio up in N us` and `console ready`.
+   `radio up in N us`, then `relay at ...` (or `leaf at ...`), or
+   `console ready` from a console build.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
@@ -123,7 +151,8 @@ to it.
 
 ## Console
 
-The serial port carries the log and takes commands. Type a command and
+Built with `--features console`. The serial port carries the log and takes
+commands. Type a command and
 Enter; the firmware echoes it as a line starting with `>`, and every result
 is a log line of `key=value` fields, so a saved transcript separates
 commands from everything else by the first character. A leading `>` on

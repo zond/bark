@@ -11,8 +11,18 @@ publish = false
 # (roadmap decision D7), so the host workspace excludes it.
 [workspace]
 
+[features]
+default = []
+# Run the core as a leaf instead of a relay.
+leaf = []
+# Run the bring-up measurement console (README, Console) instead of the core.
+console = []
+
 [dependencies]
 bark-proto = { path = "../bark-proto" }
+bark-driver = { path = "../bark-driver" }
+# A place for the 150 KiB relay outside every task's future and stack.
+static_cell = "=2.1.1"
 
 # `reset-pin-as-gpio`: without it, embassy-nrf's init writes UICR.PSELRESET
 # to P0.18 when that register is erased, a permanent change only SWD can undo.

@@ -493,7 +493,10 @@ impl<'a> Console<'a> {
                     Payload::Hex(hex) => decode_hex(hex, &mut self.tx),
                 };
                 let len = frame.len();
-                let timing = self.radio.transmit(ch, self.power, frame).await?;
+                let timing = self
+                    .radio
+                    .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+                    .await?;
                 let airtime_us = airtime_us(len);
                 self.count_tx(len);
                 let rest_us = self.rest().await?;
@@ -734,7 +737,10 @@ impl<'a> Console<'a> {
             return Ok(());
         }
         let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PONG, bench.seq, self.home);
-        let timing = self.radio.transmit(reply, self.power, frame).await?;
+        let timing = self
+            .radio
+            .transmit(reply, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+            .await?;
         let turnaround_us = self.clock.since(t_rx);
         self.count_tx(ACK_LEN);
         self.counters.pongs_sent += 1;
@@ -757,7 +763,10 @@ impl<'a> Console<'a> {
         self.seq = self.seq.wrapping_add(1);
         let seq = self.seq;
         let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PING, seq, self.home);
-        let timing = self.radio.transmit(ch, self.power, frame).await?;
+        let timing = self
+            .radio
+            .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+            .await?;
         let t_sent = self.clock.now();
         let until = Instant::now() + PING_WAIT;
         self.count_tx(ACK_LEN);
@@ -804,7 +813,10 @@ impl<'a> Console<'a> {
         let (ch, len) = (beacon.ch, beacon.len);
         self.seq = self.seq.wrapping_add(1);
         let frame = bench_frame(&mut self.tx, len, KIND_TEST, self.seq, self.home);
-        let timing = self.radio.transmit(ch, self.power, frame).await?;
+        let timing = self
+            .radio
+            .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+            .await?;
         self.count_tx(len);
         self.rest().await?;
         log::info!(

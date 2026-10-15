@@ -5,11 +5,12 @@
 
 use core::cell::Cell;
 
+use bark_driver::Heard;
 use bark_proto::radio::{
     time_on_air, Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MAX_ERP_DBM,
     MIN_PREAMBLE_SYMBOLS, SPREADING_FACTOR,
 };
-use bark_proto::MAX_FRAME;
+use bark_proto::{Frame, MAX_FRAME};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::typelevel::{Binding, SPI2};
 use embassy_nrf::peripherals;
@@ -18,10 +19,9 @@ use embassy_nrf::Peri;
 use embassy_time::{with_deadline, with_timeout, Delay, Duration, Instant, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::mod_params::{
-    Bandwidth, CodingRate, ModulationParams, PacketParams, PacketStatus, RadioError,
-    SpreadingFactor,
+    Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, SpreadingFactor,
 };
-use lora_phy::mod_traits::InterfaceVariant;
+use lora_phy::mod_traits::{InterfaceVariant, IrqState};
 use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
 use lora_phy::{DelayNs, LoRa, RxMode};
 
@@ -53,6 +53,7 @@ pub const MAX_TX_DBM: i8 = MAX_ERP_DBM - ANTENNA_GAIN_DBD;
 pub const MIN_TX_DBM: i8 = -9;
 
 /// Time on air of the longest frame.
+#[cfg(feature = "console")]
 pub const MAX_AIRTIME: Duration =
     Duration::from_micros(time_on_air(MAX_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
 
@@ -161,6 +162,8 @@ impl InterfaceVariant for Pins<'_> {
 }
 
 /// Durations of one transmission, µs.
+// The console prints them; the node only needs the transmission done.
+#[cfg_attr(not(feature = "console"), allow(dead_code))]
 pub struct TxTiming {
     /// Retune, modulation, packet parameters and payload upload.
     pub prepare_us: u32,
@@ -169,11 +172,18 @@ pub struct TxTiming {
 }
 
 /// What a receive produced.
+#[cfg(feature = "console")]
 pub enum Received {
     /// A frame whose CRC passed.
-    Frame { len: usize, status: PacketStatus },
+    Frame {
+        len: usize,
+        status: lora_phy::mod_params::PacketStatus,
+    },
     /// A frame whose payload CRC failed; the bytes are what arrived.
-    CrcError { len: usize, status: PacketStatus },
+    CrcError {
+        len: usize,
+        status: lora_phy::mod_params::PacketStatus,
+    },
     /// A header that failed its CRC: nothing was received.
     HeaderError,
 }
@@ -182,6 +192,9 @@ pub enum Received {
 pub struct Radio<'a> {
     lora: Lora<'a>,
     rx_params: PacketParams,
+    /// In continuous receive, where a retune is a frequency change; after
+    /// a transmit or CAD the chip is in standby and needs the full setup.
+    receiving: bool,
     irq_deadline: &'a Cell<Option<Instant>>,
     clock: &'a Clock,
     // Dropping an Output disconnects the pin, which would cut the rail.
@@ -249,6 +262,7 @@ impl<'a> Radio<'a> {
         Ok(Radio {
             lora,
             rx_params,
+            receiving: false,
             irq_deadline,
             clock,
             _radio_en: radio_en,
@@ -262,6 +276,7 @@ impl<'a> Radio<'a> {
 
     /// Listen on `ch` until told otherwise, from any state.
     pub async fn rest(&mut self, ch: Channel) -> Result<(), RadioError> {
+        self.receiving = false;
         let mdl = self.modulation(ch)?;
         self.lora
             .prepare_for_rx(RxMode::Continuous, &mdl, &self.rx_params)
@@ -269,7 +284,9 @@ impl<'a> Radio<'a> {
         // Flags left by an earlier operation would raise DIO1 at once and be
         // read as a reception.
         self.lora.clear_irq_status().await?;
-        self.lora.start_rx().await
+        self.lora.start_rx().await?;
+        self.receiving = true;
+        Ok(())
     }
 
     /// Move a listening radio to `ch`, keeping everything else.
@@ -282,25 +299,28 @@ impl<'a> Radio<'a> {
         self.lora.get_rssi().await
     }
 
-    /// Send `frame` on `ch` at `dbm` conducted. Leaves the radio in standby.
+    /// Send `frame` on `ch` at `dbm` conducted after a preamble of
+    /// `preamble` symbols. Leaves the radio in standby.
     pub async fn transmit(
         &mut self,
         ch: Channel,
         dbm: i8,
+        preamble: u16,
         frame: &[u8],
     ) -> Result<TxTiming, RadioError> {
         let len = u8::try_from(frame.len())
             .map_err(|_| RadioError::PayloadSizeUnexpected(frame.len()))?;
+        self.receiving = false;
         let t0 = self.clock.now();
         let mdl = self.modulation(ch)?;
-        let mut params =
-            self.lora
-                .create_tx_packet_params(MIN_PREAMBLE_SYMBOLS, false, true, false, &mdl)?;
+        let mut params = self
+            .lora
+            .create_tx_packet_params(preamble, false, true, false, &mdl)?;
         self.lora
             .prepare_for_tx(&mdl, &mut params, dbm.into(), frame)
             .await?;
         let prepare_us = self.clock.since(t0);
-        let airtime = Duration::from_micros(time_on_air(len, MIN_PREAMBLE_SYMBOLS).as_micros());
+        let airtime = Duration::from_micros(time_on_air(len, preamble).as_micros());
         let t1 = self.clock.now();
         self.irq_deadline
             .set(Some(Instant::now() + airtime + IRQ_SLACK));
@@ -313,6 +333,7 @@ impl<'a> Radio<'a> {
     /// One CAD on `ch`: whether a preamble was seen, the preparation time
     /// and the CAD time, µs. Leaves the radio in standby.
     pub async fn cad(&mut self, ch: Channel) -> Result<(bool, u32, u32), RadioError> {
+        self.receiving = false;
         let t0 = self.clock.now();
         let mdl = self.modulation(ch)?;
         self.lora.prepare_for_cad(&mdl).await?;
@@ -333,6 +354,7 @@ impl<'a> Radio<'a> {
     /// Handle the interrupt [`Radio::wait_irq`] reported and, if it began a
     /// frame, the rest of the frame. The radio keeps listening afterwards.
     /// Must not be cancelled (the driver's rule for `complete_rx`).
+    #[cfg(feature = "console")]
     pub async fn receive(&mut self, buf: &mut [u8; MAX_LEN]) -> Result<Received, RadioError> {
         let params = &self.rx_params;
         let deadline = Instant::now() + MAX_AIRTIME + IRQ_SLACK;
@@ -354,5 +376,68 @@ impl<'a> Radio<'a> {
             Err(RadioError::HeaderError) => Ok(Received::HeaderError),
             Err(e) => Err(e),
         }
+    }
+}
+
+impl Radio<'_> {
+    /// What the interrupt [`Radio::wait_irq`] reported was: a frame read
+    /// into `buf`, a packet begun, a packet failed, or nothing. Clears the
+    /// interrupt; the radio keeps listening. Must not be cancelled.
+    pub async fn service(&mut self, buf: &mut [u8; MAX_LEN]) -> Result<Heard, RadioError> {
+        let state = self.lora.get_irq_state().await;
+        self.lora.clear_irq_status().await?;
+        match state {
+            Ok(Some(IrqState::Done)) => {
+                let (len, status) = self.lora.get_rx_result(&self.rx_params, buf).await?;
+                Ok(Heard::Frame {
+                    len,
+                    rssi_dbm: status.rssi.dbm(),
+                    snr_db: status.snr.db().clamp(i8::MIN.into(), i8::MAX.into()) as i8,
+                })
+            }
+            Ok(Some(IrqState::PreambleReceived)) => Ok(Heard::Started),
+            Ok(None) => Ok(Heard::Nothing),
+            Err(RadioError::CrcError | RadioError::HeaderError) => Ok(Heard::Failed),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl bark_driver::Radio for Radio<'_> {
+    type Error = RadioError;
+
+    async fn listen(&mut self, channel: Channel) -> Result<(), RadioError> {
+        match self.receiving {
+            true => self.retune(channel).await,
+            false => self.rest(channel).await,
+        }
+    }
+
+    async fn wait(&mut self) -> Result<(), RadioError> {
+        self.wait_irq().await
+    }
+
+    async fn service(&mut self, buf: &mut [u8; MAX_LEN]) -> Result<Heard, RadioError> {
+        Radio::service(self, buf).await
+    }
+
+    async fn cad(&mut self, channel: Channel) -> Result<bool, RadioError> {
+        Radio::cad(self, channel).await.map(|(busy, _, _)| busy)
+    }
+
+    async fn rssi(&mut self) -> Result<i16, RadioError> {
+        Radio::rssi(self).await
+    }
+
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), RadioError> {
+        Radio::transmit(
+            self,
+            frame.channel,
+            dbm,
+            frame.preamble_symbols,
+            frame.payload(),
+        )
+        .await
+        .map(|_| ())
     }
 }
