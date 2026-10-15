@@ -1,0 +1,12 @@
+[package]
+name = "bark-driver"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Drives a bark protocol core against a radio and a clock: the firmware's main loop, testable on the host."
+
+[dependencies]
+bark-proto = { path = "../bark-proto" }
+embassy-futures = "=0.1.2"
+log = "=0.4.34"

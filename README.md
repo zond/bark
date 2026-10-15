@@ -36,6 +36,9 @@ Read, in order:
 bark-proto/   no_std protocol core: packet codecs, tables, routing, MAC state
               machine. No I/O of its own: no executor, no radio driver, time
               passed in, no allocation. docs/core-interface.md is its contract.
+bark-driver/  no_std loop that drives the core against a radio and a clock;
+              the firmware runs it on the board, its tests on the host
+              against a fake radio.
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
               bark-proto. Its own Cargo workspace, cross-compiled.
