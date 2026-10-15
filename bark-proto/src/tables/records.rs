@@ -2,33 +2,35 @@
 //! remembers about each message it has received or originated, so that it
 //! can run its part of the depth-first search and recognise a repeat.
 //!
-//! # Lifetime
+//! # Eviction
 //!
-//! A record dies [`record_idle`] after the message was last received or
-//! sent here; each receipt or send restarts the clock. That is how long
-//! the longest search the hop cap allows takes when every hand-over
-//! succeeds at the first attempt but waits the longest for the channel
-//! and carries a full frame:
+//! A record has no lifetime: it is kept until the table needs its place.
+//! A new record then takes the place of the least recently touched one,
+//! touched meaning that the message was received or sent here, of those
+//! whose message this relay does not hold. A message is held while it is
+//! in the send queue, the hand-over included, or set aside for the
+//! delivery queue; it needs its record to be routed when its turn comes,
+//! so overload never takes it (roadmap D31). The table holds more records
+//! than the relay can hold messages ([`HELD`]), so a new record always
+//! finds a place.
+//!
+//! # Size
+//!
+//! A message sent on can come back to this relay, returned or offered by
+//! a split copy, and its record must still be here then. On its way it
+//! may wait at each relay as long as a full send queue takes to drain,
+//! each entry waiting out one ban (§9.3, roadmap D31):
 //!
 //! ```text
-//! 255 hand-overs (§9.2.6) × (500 ms listen-before-talk give-up
-//!                            + 138.6 ms airtime of a 255-byte frame
-//!                            + 100 ms ACK timeout, §9.3)  = 188.3 s
+//! (40 + 254) places × 1.53 s = 449.7 s
 //! ```
 //!
-//! So in a search without failures no record expires while the message is
-//! away exploring beyond it. While the message waits here for the
-//! duty-cycle budget, which can take minutes, its record is kept alive
-//! ([`Record::held`]).
-//!
-//! # Bound
-//!
-//! At most [`RECORDS`] records; when full, a new one replaces a dead one,
-//! else the least recently active. The bound is the most messages a relay
-//! can handle in one record lifetime within its duty cycle (§3): each costs
-//! at least an ACK (9 bytes, 11.84 ms) and one DATA packet with no payload
-//! (21 bytes, 18.24 ms), together 30.08 ms; 10 % of 188.33 s is 18.83 s of
-//! airtime, and ⌊18.83 s / 30.08 ms⌋ = 626.
+//! The most messages a relay can touch in that time within its duty
+//! cycle (§3): each costs at least an ACK (9 bytes, 11.84 ms) and one DATA
+//! packet with no payload (21 bytes, 18.24 ms), together 30.08 ms; 10 % of
+//! 449.7 s is 44.97 s of airtime, and ⌊44.97 s / 30.08 ms⌋ = 1494. The
+//! records of held messages are not evicted and may be older than that,
+//! so the table has room for them on top: 1494 + 294 = 1788.
 //!
 //! # The tried set
 //!
@@ -46,39 +48,40 @@
 //! neighbour that was handed the message.
 
 use crate::ids::MsgId;
-use crate::node::Config;
 use crate::position::ShortName;
 use crate::radio::{time_on_air, Channel, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::attempt_span;
+use crate::tables::budget::BAN;
 use crate::tables::neighbours::NEIGHBOURS;
+use crate::tables::send_queue::{HOP_PLACES, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
 
 /// The hop cap: the largest count the one-byte `hops` field holds (§9.2.6).
 pub const MAX_HOPS: u8 = u8::MAX;
 
-/// How long a record lives without the message being received or sent,
-/// for a relay with this ACK timeout; see the module documentation.
-pub const fn record_idle(ack_timeout: Duration) -> Duration {
-    attempt_span(ack_timeout).mul(MAX_HOPS as u64)
-}
+/// How long a full send queue takes to drain with each entry waiting out
+/// one ban; see the module documentation.
+pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_PLACES) as u64);
 
-/// The most records a relay keeps; see the module documentation.
-pub const fn records_for(idle: Duration) -> usize {
-    let airtime = idle.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100;
+/// The most messages a relay holds at once: one per place in its send
+/// queue. A message set aside for the delivery queue keeps its place
+/// (`relay/forward.rs`).
+pub const HELD: usize = SEND_QUEUE + HOP_PLACES;
+
+/// The most messages a relay can touch in `span`; see the module
+/// documentation.
+pub const fn records_for(span: Duration) -> usize {
+    let airtime = span.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100;
     let per_message = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(DATA_HEADER_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
     (airtime / per_message) as usize
 }
 
-/// Record lifetime for the design's 100 ms ACK timeout (§9.3): 188.3 s.
-pub const RECORD_IDLE: Duration = record_idle(Duration::from_millis(100));
+/// Record bound; see the module documentation.
+pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-/// Record bound for [`RECORD_IDLE`]: 626.
-pub const RECORDS: usize = records_for(RECORD_IDLE);
-
-const _: () = assert!(RECORD_IDLE.as_micros() == 188_332_800);
-const _: () = assert!(RECORDS == 626);
+const _: () = assert!(RECORDS == 1788);
+const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
     "the tried mask has a bit per slot"
@@ -161,12 +164,6 @@ impl Record {
         self.last_active
     }
 
-    /// Whether the record is still alive at `now`, with records dying
-    /// `idle` after their last activity.
-    pub fn alive(&self, idle: Duration, now: Instant) -> bool {
-        now.since(self.last_active) < idle
-    }
-
     /// Whether the neighbour now in `slot` was handed the message.
     pub fn handed(&self, slot: usize) -> bool {
         slot < NEIGHBOURS && self.handed & (1 << slot) != 0
@@ -234,14 +231,6 @@ impl Record {
     pub fn sent(&mut self, now: Instant) {
         self.last_active = now;
     }
-
-    /// The message is still in this relay's send queue at `now`, held back
-    /// by the duty-cycle budget (§9.4). The lifetime covers a message away
-    /// exploring beyond this relay; one still here must keep its record,
-    /// or it could not be routed when its turn comes.
-    pub fn held(&mut self, now: Instant) {
-        self.last_active = now;
-    }
 }
 
 /// The records of one relay.
@@ -249,12 +238,11 @@ impl Record {
 pub struct Records {
     entries: [Record; RECORDS],
     len: usize,
-    idle: Duration,
 }
 
 impl Records {
-    /// No records; each dies `idle` after its last activity.
-    pub const fn new(idle: Duration) -> Records {
+    /// No records.
+    pub const fn new() -> Records {
         let fill = Record {
             id: MsgId(0),
             parent: ShortName(0),
@@ -268,66 +256,60 @@ impl Records {
         Records {
             entries: [fill; RECORDS],
             len: 0,
-            idle,
         }
     }
 
-    /// No records, with the lifetime for `config.ack_timeout`.
-    pub fn from_config(config: &Config) -> Records {
-        Records::new(record_idle(config.ack_timeout))
+    /// Number of records.
+    pub fn len(&self) -> usize {
+        self.len
     }
 
-    /// How long a record lives without activity.
-    pub fn idle(&self) -> Duration {
-        self.idle
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
-    /// Records alive at `now`.
-    pub fn live(&self, now: Instant) -> usize {
-        self.entries[..self.len]
+    /// Whether a new record must take an old one's place.
+    pub fn is_full(&self) -> bool {
+        self.len == RECORDS
+    }
+
+    /// The record for `id`.
+    pub fn get(&self, id: MsgId) -> Option<&Record> {
+        self.entries[..self.len].iter().find(|r| r.id == id)
+    }
+
+    /// The record for `id`, to update.
+    pub fn get_mut(&mut self, id: MsgId) -> Option<&mut Record> {
+        self.entries[..self.len].iter_mut().find(|r| r.id == id)
+    }
+
+    /// Where a new record goes: free space, else the place of the least
+    /// recently active record whose message is not `held`; `None` if
+    /// every one is.
+    pub fn place(&self, held: impl Fn(MsgId) -> bool) -> Option<usize> {
+        if !self.is_full() {
+            return Some(self.len);
+        }
+        self.entries
             .iter()
-            .filter(|r| r.alive(self.idle, now))
-            .count()
+            .enumerate()
+            .filter(|(_, r)| !held(r.id))
+            .min_by_key(|(_, r)| r.last_active)
+            .map(|(i, _)| i)
     }
 
-    /// The live record for `id`.
-    pub fn get(&self, id: MsgId, now: Instant) -> Option<&Record> {
-        self.entries[..self.len]
-            .iter()
-            .find(|r| r.id == id && r.alive(self.idle, now))
-    }
-
-    /// The live record for `id`, to update.
-    pub fn get_mut(&mut self, id: MsgId, now: Instant) -> Option<&mut Record> {
-        let idle = self.idle;
-        self.entries[..self.len]
-            .iter_mut()
-            .find(|r| r.id == id && r.alive(idle, now))
-    }
-
-    /// Keep `record`, which must be for a message without a live record.
-    /// It takes free space, else a dead record's place, else the least
-    /// recently active one's, which is returned.
-    pub fn insert(&mut self, record: Record, now: Instant) -> Option<Record> {
-        debug_assert!(self.get(record.id, now).is_none(), "one record per message");
-        if self.len < RECORDS {
-            self.entries[self.len] = record;
+    /// Keep `record`, which must be for a message without one, at `at`
+    /// from [`Records::place`]; returns the record it replaces.
+    pub fn put(&mut self, at: usize, record: Record) -> Option<Record> {
+        debug_assert!(self.get(record.id).is_none(), "one record per message");
+        debug_assert!(at <= self.len && at < RECORDS);
+        if at == self.len {
+            self.entries[at] = record;
             self.len += 1;
             return None;
         }
-        let idle = self.idle;
-        let live = self.entries.iter().enumerate();
-        let (i, victim) = match live.clone().find(|(_, r)| !r.alive(idle, now)) {
-            Some((i, _)) => (i, None),
-            None => {
-                let i = live
-                    .min_by_key(|(_, r)| r.last_active)
-                    .map_or(0, |(i, _)| i);
-                (i, Some(self.entries[i]))
-            }
-        };
-        self.entries[i] = record;
-        victim
+        Some(core::mem::replace(&mut self.entries[at], record))
     }
 
     /// Neighbour-table `slot` has a new occupant, which no record has
@@ -338,6 +320,12 @@ impl Records {
                 r.handed &= !(1 << slot);
             }
         }
+    }
+}
+
+impl Default for Records {
+    fn default() -> Self {
+        Records::new()
     }
 }
 
@@ -355,11 +343,11 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        let c = Config::default();
-        assert_eq!(record_idle(c.ack_timeout), RECORD_IDLE);
-        // 255 × (500 + 138.56 + 100) ms.
-        assert_eq!(RECORD_IDLE, Duration::from_micros(255 * 738_560));
-        assert_eq!(RECORDS, 626);
+        // 294 places × one ban, 1.53 s.
+        assert_eq!(DRAIN, BAN.mul(294));
+        assert_eq!(DRAIN.as_millis(), 449_670);
+        assert_eq!(HELD, 294);
+        assert_eq!(RECORDS, 1494 + 294);
         assert_eq!(core::mem::size_of::<Record>(), 32);
     }
 
@@ -391,69 +379,59 @@ mod tests {
         assert_eq!(origin.parent(), None);
     }
 
-    #[test]
-    fn idle_expiry_and_refresh() {
-        let idle = Duration::from_millis(100);
-        let mut t = Records::new(idle);
-        t.insert(Record::new(MsgId(1), None, 0, at(0)), at(0));
-        assert!(t.get(MsgId(1), at(99)).is_some());
-        t.get_mut(MsgId(1), at(99)).unwrap().received(1, at(99));
-        assert!(
-            t.get(MsgId(1), at(198)).is_some(),
-            "receipt restarts the clock"
-        );
-        t.get_mut(MsgId(1), at(198)).unwrap().sent(at(198));
-        assert!(t.get(MsgId(1), at(297)).is_some(), "so does a send");
-        assert!(t.get(MsgId(1), at(298)).is_none());
-        assert!(t.get_mut(MsgId(1), at(298)).is_none());
-        assert_eq!(t.live(at(298)), 0);
-        // A dead record makes way for a new one for the same message.
-        assert_eq!(
-            t.insert(Record::new(MsgId(1), None, 5, at(300)), at(300)),
-            None
-        );
-        assert_eq!(t.get(MsgId(1), at(300)).unwrap().highest_hops(), 5);
+    fn keep(t: &mut Records, r: Record) -> Option<Record> {
+        let at = t.place(|_| false).unwrap();
+        t.put(at, r)
     }
 
     #[test]
-    fn full_table_takes_dead_then_least_recently_active() {
-        let mut t = Records::new(RECORD_IDLE);
+    fn records_have_no_lifetime() {
+        let mut t = Records::new();
+        keep(&mut t, Record::new(MsgId(1), None, 0, at(0)));
+        assert!(t.get(MsgId(1)).is_some());
+        assert_eq!(t.len(), 1);
+    }
+
+    #[test]
+    fn a_full_table_gives_up_the_least_recently_active_record_not_held() {
+        let mut t = Records::new();
         for i in 0..RECORDS as u32 {
-            assert_eq!(
-                t.insert(Record::new(MsgId(i), None, 0, at(i as u64)), at(i as u64)),
-                None
-            );
+            let now = at(i as u64);
+            assert_eq!(keep(&mut t, Record::new(MsgId(i), None, 0, now)), None);
         }
+        assert!(t.is_full());
         let now = at(RECORDS as u64);
-        // Touch the oldest, so the second oldest is least recently active.
-        t.get_mut(MsgId(0), now).unwrap().sent(now);
-        let gone = t
-            .insert(Record::new(MsgId(1000), None, 0, now), now)
-            .unwrap();
-        assert_eq!(gone.id(), MsgId(1));
-        assert!(t.get(MsgId(0), now).is_some() && t.get(MsgId(1000), now).is_some());
-        // Once records die, they go first, and nothing live is displaced.
-        let later = now + RECORD_IDLE;
-        t.get_mut(MsgId(1000), now).unwrap().sent(later);
+        // Touch the oldest; hold the second oldest: the third goes.
+        t.get_mut(MsgId(0)).unwrap().sent(now);
+        let i = t.place(|id| id == MsgId(1)).unwrap();
+        let gone = t.put(i, Record::new(MsgId(10_000), None, 0, now)).unwrap();
+        assert_eq!(gone.id(), MsgId(2));
+        assert!(t.get(MsgId(0)).is_some() && t.get(MsgId(1)).is_some());
+        assert!(t.get(MsgId(10_000)).is_some() && t.get(MsgId(2)).is_none());
+        // Received counts as touched too.
+        t.get_mut(MsgId(3)).unwrap().received(1, now);
+        let i = t.place(|_| false).unwrap();
         assert_eq!(
-            t.insert(Record::new(MsgId(1001), None, 0, later), later),
-            None
+            t.put(i, Record::new(MsgId(10_001), None, 0, now))
+                .unwrap()
+                .id(),
+            MsgId(1)
         );
-        assert_eq!(t.live(later), 2, "1000 and 1001; the rest died");
+        assert_eq!(t.place(|_| true), None, "every message held");
     }
 
     #[test]
     fn a_reoccupied_slot_is_not_handed() {
-        let mut t = Records::new(RECORD_IDLE);
+        let mut t = Records::new();
         for id in 0..3 {
-            t.insert(Record::new(MsgId(id), None, 0, at(0)), at(0));
-            let r = t.get_mut(MsgId(id), at(0)).unwrap();
+            keep(&mut t, Record::new(MsgId(id), None, 0, at(0)));
+            let r = t.get_mut(MsgId(id)).unwrap();
             r.sent_to_child(ShortName(1), 7, at(0));
             r.sent_to_child(ShortName(2), 8, at(0));
         }
         t.slot_reoccupied(7);
         for id in 0..3 {
-            let r = t.get(MsgId(id), at(0)).unwrap();
+            let r = t.get(MsgId(id)).unwrap();
             assert!(!r.handed(7) && r.handed(8));
             assert_eq!(r.last_child(), Some(ShortName(2)));
         }

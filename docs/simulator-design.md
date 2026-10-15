@@ -72,7 +72,7 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
 - Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the §13 argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
-- DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap, at the origin, and on lost records.
+- DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap and at the origin.
 - Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the §6.1 and §9.3 cost arguments can be checked against numbers.
 
 ## 5. Architecture
@@ -102,7 +102,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (§14) | 626 records, 188 s idle (§9.2.2) | DFS parent and tried set; recognises repeats |
+| message records | message ID (§14) | 1788 records, least recently active given up, never one of a message held (§9.2.2) | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
 | `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves and their keepalive age |
 | `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |

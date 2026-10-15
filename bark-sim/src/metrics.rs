@@ -183,8 +183,8 @@ pub struct DropCounts {
     pub no_route: u64,
     /// The hop cap (§9.2.6).
     pub hop_cap: u64,
-    /// The message's record was lost while its packet waited (§9.2.2).
-    pub record_lost: u64,
+    /// No place for its record (§9.2.2).
+    pub no_record: u64,
     /// The send queue was full (§9.3).
     pub send_queue_full: u64,
     /// The duty-cycle budget (§9.4).
@@ -211,7 +211,7 @@ impl DropCounts {
         let c = match r {
             DropReason::NoRoute => &mut self.no_route,
             DropReason::HopCap => &mut self.hop_cap,
-            DropReason::RecordLost => &mut self.record_lost,
+            DropReason::NoRecord => &mut self.no_record,
             DropReason::SendQueueFull => &mut self.send_queue_full,
             DropReason::Budget => &mut self.budget,
             DropReason::ReturnFailed => &mut self.return_failed,
@@ -229,7 +229,7 @@ impl DropCounts {
     pub fn total(&self) -> u64 {
         self.no_route
             + self.hop_cap
-            + self.record_lost
+            + self.no_record
             + self.send_queue_full
             + self.budget
             + self.return_failed

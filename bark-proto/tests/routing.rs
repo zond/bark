@@ -731,9 +731,10 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         );
         MsgId::of(pf, l, text)
     };
-    let fill = |h: &mut Harness<Node>, n: usize| {
+    // Payloads are unique (§11): F remembers the messages of each fill.
+    let fill = |h: &mut Harness<Node>, round: u8, n: usize| {
         for k in 0..n as u8 {
-            to_l(h, f, &[b'f', k]);
+            to_l(h, f, &[b'f', round, k]);
         }
     };
     let nf = pf.short();
@@ -764,7 +765,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
             .collect::<Vec<_>>()
     };
 
-    fill(&mut h, DELIVERY_QUEUE);
+    fill(&mut h, 0, DELIVERY_QUEUE);
     let id = to_l(&mut h, o, b"held");
     assert!(h.run_until(h.now + secs(1), |h| !refusals(h, id).is_empty()));
     h.run_for(Duration::from_millis(100));
@@ -799,7 +800,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id)));
 
     // Taken, the hold starts again from one ban.
-    fill(&mut h, DELIVERY_QUEUE - 1);
+    fill(&mut h, 1, DELIVERY_QUEUE - 1);
     let next = to_l(&mut h, o, b"next");
     assert!(h.run_until(h.now + secs(5), |h| !waits(h, next).is_empty()));
     let w = waits(&h, next)[0];

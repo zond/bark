@@ -10,7 +10,8 @@
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (§9.2.4, roadmap D29); else into a free hop place numbered no
 //! higher than the packet's count (roadmap D31); else it is refused with
-//! BUSY. A delivery is refused when
+//! BUSY. A new message also needs a place for its record, which the size
+//! of the table guarantees (`tables/records.rs`). A delivery is refused when
 //! the delivery queue is full, or when the bucket holds less than the
 //! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
 //! owed before acting. A packet that gives no work (cases 2, 3 and 5) is
@@ -36,9 +37,9 @@
 //!   message to its parent is sent straight back (case 6), not taken for a
 //!   return (case 4); see [`Record::returned`].
 //! - A message delivered here, or waiting in the delivery queue, is only
-//!   ACKed whatever its record says: the record may have expired (188 s)
-//!   well within the delivery TTL (10 min) the owner must remember it for
-//!   (§9.2.7).
+//!   ACKed whatever its record says: the delivered window and the
+//!   delivery queue remember it, and its record may have made way for
+//!   newer ones (§9.2.7).
 //!
 //! # The send queue (§9.3)
 //!
@@ -97,7 +98,7 @@ use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, BAN, BUSY_AIRTIME, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::Neighbour;
-use crate::tables::records::{Record, MAX_HOPS};
+use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, AckFrom, Busy, Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
@@ -294,7 +295,7 @@ impl Relay {
             if self.delivered.contains(id, now) || self.delivery.iter().any(|q| q.msg_id == id) {
                 Case::AckOnly
             } else {
-                self.classify(&d, id, from_leaf, now)
+                self.classify(&d, id, from_leaf)
             };
         let owner = match case {
             Case::New | Case::FromLastChild => self.owns(d.dst_pos, now),
@@ -310,9 +311,15 @@ impl Relay {
         let completes = case == Case::FromLastChild && self.handing(id, d.src_hop);
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
+        let record_at = match case {
+            Case::New => self.record_place(),
+            _ => None,
+        };
         let mut place = 0;
         let refusal = if case == Case::AckOnly {
             None
+        } else if case == Case::New && record_at.is_none() {
+            Some(DropReason::NoRecord)
         } else if sends {
             let air = data_airtime(d.payload.len());
             match self.admit(air, ack_airtime(), d.hops, completes, now) {
@@ -361,7 +368,9 @@ impl Relay {
                 if owner {
                     record.set_owned();
                 }
-                self.keep(record, now, emit);
+                if let Some(at) = record_at {
+                    self.records.put(at, record);
+                }
                 if owner {
                     self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
                 } else {
@@ -369,12 +378,12 @@ impl Relay {
                 }
             }
             Case::AckOnly => {
-                if let Some(r) = self.records.get_mut(id, now) {
+                if let Some(r) = self.records.get_mut(id) {
                     r.received(d.hops, now);
                 }
             }
             Case::FromLastChild => {
-                if let Some(r) = self.records.get_mut(id, now) {
+                if let Some(r) = self.records.get_mut(id) {
                     r.received(d.hops, now);
                     if owner {
                         r.set_owned();
@@ -390,7 +399,7 @@ impl Relay {
                 }
             }
             Case::SendBack => {
-                if let Some(r) = self.records.get_mut(id, now) {
+                if let Some(r) = self.records.get_mut(id) {
                     r.received(d.hops, now);
                 }
                 self.send_on(&d, Kind::Bounce, place, emit);
@@ -400,8 +409,8 @@ impl Relay {
 
     /// The case of §9.2.4 for a DATA packet of a message this relay is not
     /// holding for delivery.
-    fn classify(&self, d: &Data<'_>, id: MsgId, from_leaf: bool, now: Instant) -> Case {
-        let Some(r) = self.records.get(id, now) else {
+    fn classify(&self, d: &Data<'_>, id: MsgId, from_leaf: bool) -> Case {
+        let Some(r) = self.records.get(id) else {
             return Case::New;
         };
         if r.owned() || d.hops <= r.highest_hops() {
@@ -449,26 +458,26 @@ impl Relay {
                 }
     }
 
-    /// Keep a new record. One that it displaces from a full table takes the
-    /// message's queued packets with it: without a record they cannot be
-    /// routed on.
-    fn keep(&mut self, record: Record, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Some(victim) = self.records.insert(record, now) else {
-            return;
-        };
-        let gone = victim.id();
-        let routed = |o: &Outgoing| o.kind != Kind::Deliver && o.msg_id() == Some(gone);
-        let front = self.queue.front().is_some_and(routed);
-        let before = self.queue.len();
-        self.queue.retain(|o| !routed(o));
-        if self.queue.len() != before {
-            self.feed_due = true;
-            if front {
-                self.handover.cancel();
-                self.skipped = 0;
+    /// Where a new record goes: never in place of the record of a message
+    /// this relay holds, in its send queue or set aside, which it needs to
+    /// route that message (`tables/records.rs`). `None` only if every
+    /// record is such, which the table's size rules out.
+    pub(super) fn record_place(&self) -> Option<usize> {
+        let mut held = [MsgId(0); HELD + 1];
+        let mut n = 0;
+        if self.records.is_full() {
+            let aside = self.held.and_then(|h| h.out.msg_id());
+            for id in self.queue.iter().filter_map(Outgoing::msg_id).chain(aside) {
+                held[n] = id;
+                n += 1;
             }
-            self.drop_msg(gone, DropReason::RecordLost, emit);
+            // Admission keeps the held message within the send queue's places.
+            debug_assert!(n <= HELD, "{n} messages held");
+            held[..n].sort_unstable_by_key(|id| id.0);
         }
+        let held = &held[..n];
+        self.records
+            .place(|id| held.binary_search_by_key(&id.0, |h| h.0).is_ok())
     }
 
     /// Queue `d` onward into `place`: a forward, addressed later, or
@@ -616,9 +625,13 @@ impl Relay {
             return;
         }
         let id = MsgId::of(dst_pos, dst_leaf, payload);
-        if self.records.get(id, now).is_some() || self.delivered.contains(id, now) {
+        if self.records.get(id).is_some() || self.delivered.contains(id, now) {
             return;
         }
+        // The table outnumbers what a relay holds (`tables/records.rs`).
+        let Some(at) = self.record_place() else {
+            return;
+        };
         self.set_own(Some(id));
         let d = Data {
             sender_home: self.home,
@@ -632,7 +645,7 @@ impl Relay {
         if self.owns(dst_pos, now) {
             let mut record = Record::new(id, None, 0, now);
             record.set_owned();
-            self.keep(record, now, emit);
+            self.records.put(at, record);
             if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
                 let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
                 self.held = Some(Held { out });
@@ -641,7 +654,7 @@ impl Relay {
             }
             return;
         }
-        self.keep(Record::new(id, None, 0, now), now, emit);
+        self.records.put(at, Record::new(id, None, 0, now));
         self.send_on(&d, Kind::Forward, 0, emit);
     }
 
@@ -724,12 +737,16 @@ impl Relay {
             return Routed::Done;
         };
         let id = d.msg_id();
-        let Some(record) = self.records.get(id, now).copied() else {
-            self.drop_msg(id, DropReason::RecordLost, emit);
+        debug_assert!(
+            self.records.get(id).is_some(),
+            "a held message keeps its record"
+        );
+        let Some(record) = self.records.get(id).copied() else {
+            self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
         if self.owns(d.dst_pos, now) {
-            if let Some(r) = self.records.get_mut(id, now) {
+            if let Some(r) = self.records.get_mut(id) {
                 r.set_owned();
             }
             if self.own == Some(id) && d.dst_leaf != LeafId::RELAY && self.delivery.is_full() {
@@ -759,7 +776,7 @@ impl Relay {
         }
         match record.parent() {
             Some((parent, stored)) => {
-                if let Some(r) = self.records.get_mut(id, now) {
+                if let Some(r) = self.records.get_mut(id) {
                     r.set_returned();
                 }
                 let home = self.home_of(parent).unwrap_or(stored);
@@ -862,12 +879,6 @@ impl Relay {
         self.handover.defer(until);
         let msg_id = out.msg_id().unwrap_or_default();
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
-        // Everything queued waits with the front.
-        for id in self.queue.iter().filter_map(|o| o.msg_id()) {
-            if let Some(r) = self.records.get_mut(id, now) {
-                r.held(now);
-            }
-        }
     }
 
     /// A CAD or RSSI check of the front hand-over completed.
@@ -915,7 +926,7 @@ impl Relay {
                 out.frame.channel,
             );
             let id = d.msg_id();
-            if let Some(r) = self.records.get_mut(id, now) {
+            if let Some(r) = self.records.get_mut(id) {
                 match out.kind {
                     Kind::Forward => {
                         let slot = self
@@ -995,7 +1006,7 @@ impl Relay {
             Kind::Forward => {
                 if let Some((slot, _)) = slot {
                     self.skipped |= 1 << slot;
-                    if let Some(r) = self.records.get_mut(msg_id, now) {
+                    if let Some(r) = self.records.get_mut(msg_id) {
                         r.not_handed(slot);
                     }
                 }

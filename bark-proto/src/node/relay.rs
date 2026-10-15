@@ -200,7 +200,7 @@ impl Relay {
                 check: Check::Idle,
             },
             mover: Mover::default(),
-            records: Records::from_config(&config),
+            records: Records::new(),
             queue: SendQueue::new(),
             handover: Transfer::new(),
             skipped: 0,
@@ -931,10 +931,7 @@ mod tests {
         actions.clear();
         r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
         assert!(actions.is_empty(), "{actions:?}");
-        assert!(
-            r.records.get(b.msg_id(), now).is_none(),
-            "B's packet was taken"
-        );
+        assert!(r.records.get(b.msg_id()).is_none(), "B's packet was taken");
 
         let until = now + Duration::from_millis(100);
         let sent = drive(&mut r, &mut now, until);
@@ -1104,5 +1101,88 @@ mod tests {
         r.queue.retain(|o| o.place != 1);
         assert_eq!(offer(&mut r, &mut now, 5, 2), (Some(1), None));
         assert_eq!(r.queue.regular(), 0);
+    }
+
+    /// A full record table gives up the least recently active record of a
+    /// message this relay does not hold: a message waiting in the send
+    /// queue keeps its record however old (protocol §9.2.2, roadmap D31).
+    #[test]
+    fn a_waiting_message_keeps_its_record() {
+        use crate::ids::{LeafId, MsgId};
+        use crate::position::ShortName;
+        use crate::tables::records::{Record, HELD, RECORDS};
+        use crate::wire::{Data, MAX_PAYLOAD};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        now = Instant::ZERO + Duration::from_secs(10);
+        // Room for replies only: what is taken waits in a hop place.
+        let spend = r.budget.available(now) - Duration::from_millis(300);
+        r.budget.record(spend, now);
+        let far = Position {
+            lat: r.config.position.lat + 100_000,
+            ..r.config.position
+        };
+        let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8| {
+            let payload = [tag; MAX_PAYLOAD];
+            let d = Data {
+                sender_home: Channel::new(5).unwrap(),
+                dst_hop: r.me(),
+                src_hop: ShortName(1),
+                dst_pos: far,
+                dst_leaf: LeafId::RELAY,
+                hops,
+                payload: &payload,
+            };
+            let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: r.home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut pending = Vec::new();
+            r.handle(event, *now, &mut |a| {
+                if matches!(a, Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)) {
+                    pending.push(a)
+                }
+            });
+            let until = *now + Duration::from_millis(100);
+            drive_from(r, now, until, pending);
+            d.msg_id()
+        };
+        let waiting = offer(&mut r, &mut now, 1, 2);
+        assert!(r.queue.iter().any(|o| o.msg_id() == Some(waiting)));
+        // Every other record newer.
+        let later = now + Duration::from_secs(1);
+        for i in 1..RECORDS as u32 {
+            let at = r.records.place(|_| false).unwrap();
+            r.records.put(at, Record::new(MsgId(i), None, 0, later));
+        }
+        assert!(r.records.is_full());
+        now = later + Duration::from_secs(1);
+        let next = offer(&mut r, &mut now, 2, 3);
+        assert!(
+            r.records.get(waiting).is_some(),
+            "the waiting message's record went"
+        );
+        assert!(r.records.get(next).is_some());
+        assert!(
+            r.records.get(MsgId(1)).is_none(),
+            "the oldest not held went"
+        );
+        // What a relay holds stays within its places, so a record place
+        // is always found.
+        assert!(r.queue.len() + usize::from(r.held.is_some()) <= HELD);
+        assert!(r.record_place().is_some());
     }
 }

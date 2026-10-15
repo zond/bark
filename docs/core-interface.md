@@ -130,22 +130,25 @@ test in `tables/mod.rs`:
 | Neighbours (§8.2) | 64 × 48 B | 3.0 KiB |
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
 | Delivery queue (§10.4) | 41 × 256 B | 10.3 KiB |
-| Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
+| Message records (§9.2.2) | 1788 × 32 B | 55.9 KiB |
 | Send queue (§9.3) | (40 + 254) × 272 B | 78.1 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget (§9.4) and busy estimate (§6.1) | 16 B + 348 B | 0.4 KiB |
-| **All** | | **116.4 KiB** |
+| **All** | | **152.7 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(design §9.3, roadmap D31). The delivery queue's 41 places hold what arrives in one delivery
-TTL for a full leaf table (§10.4). The whole `Relay` is 119 864 B (117.1 KiB): the tables
-and, in under 1 KiB around them, the medium access, the hand-over, its one owed reply and
-its application's message while it waits. There is no fixed target; the sizes follow from
-the design. The board's application has 255 KiB of RAM (`bark-fw/memory.x`); the BLE
-controller takes under 5 KiB (`implementation-research-2026-10-14.md`) and Embassy and the
-stacks about 16 KiB (design §15), which leaves 234 KiB, 117 KiB more than the relay needs.
-Checked by the tests in `tables/mod.rs` and `node/relay.rs`.
+(design §9.3, roadmap D31). The records hold the 1494 messages a relay can handle in the
+449.7 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
+holds, whose records are never given up (§9.2.2). The delivery queue's 41 places hold what
+arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 157 040 B
+(153.4 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
+its one owed reply and its application's message while it waits. There is no fixed target;
+the sizes follow from the design. The board's application has 255 KiB of RAM
+(`bark-fw/memory.x`); the BLE controller takes under 5 KiB
+(`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB (design
+§15), which leaves 234 KiB, 80 KiB more than the relay needs. Checked by the tests in
+`tables/mod.rs` and `node/relay.rs`.
 
 `Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).

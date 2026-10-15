@@ -433,25 +433,25 @@ slot changes hands, its bit is cleared in every record.
 The record is also how a relay recognises a repeat of a message it has
 handled (§9.2.4); there is no separate window of recent IDs.
 
-**Expiry.** A record is dropped after 188 s without the message being
-received or sent; each receipt or send restarts the clock. 188 s is how
-long the longest search the hop cap allows takes when every hand-over
-succeeds at the first attempt but waits the longest for the channel and
-carries a full frame: 255 hand-overs (§9.2.6) × (500 ms listen-before-talk
-give-up + 138.6 ms airtime of a 255-byte frame + 100 ms ACK timeout,
-§9.3) = 188.3 s. So in a search without failures no record expires while
-the message is away exploring beyond it. A message waiting in the relay's
-send queue, for the hand-overs ahead of it or for the duty-cycle budget
-(§9.4), is still here, and keeps its record alive: without it the
-message could not be routed when its turn comes.
+**Eviction.** A record has no lifetime. It is kept until the table
+needs its place; a new record then takes the place of the least recently
+active one among those whose message the relay does not hold. A relay
+holds a message while it is in its send queue (§9.3), the hand-over
+included, or set aside for a full delivery queue (§9.2.5). Without its
+record the message could not be routed when its turn comes, so a message
+is never lost for want of room (roadmap D31).
 
-**Bound and eviction.** A relay holds at most 626 records; when full, a
-new record replaces the least recently active one. 626 is the most
-messages a relay can handle in one record lifetime within its duty cycle
-(§3): every message it handles costs at least an ACK (9 bytes, 11.8 ms)
-and one DATA packet with no payload (21 bytes, 18.2 ms), together
-30.0 ms; 10% of 188.3 s is 18.8 s of airtime, and 18.8 s / 30.0 ms = 626.
-A record is 32 bytes, so 20 KB.
+**Bound.** A relay holds at most 1788 records. A message sent on can come
+back, returned by a child or offered by a split copy, and its record must
+still be here then. On its way it may wait at each relay as long as a
+full send queue takes to drain, each of the 294 places waiting out one
+ban of 1.53 s (§9.3): 449.7 s. Every message a relay handles costs at
+least an ACK (9 bytes, 11.8 ms) and one DATA packet with no payload (21
+bytes, 18.2 ms), together 30.1 ms; 10% of 449.7 s is 45.0 s of airtime,
+so a relay handles at most 1494 messages in that time (§3). The records
+of held messages are never evicted and may be older, so the table has
+room for the 294 a send queue holds on top: 1788. A record is 32 bytes,
+so 57 KB.
 
 #### 9.2.3 Choosing the next hop
 
@@ -606,8 +606,8 @@ queue (§9.3).
 A relay that would have to send a count above 255, the largest the
 one-byte field holds, drops the message. A search that keeps its records
 ends on its own (§9.5); the cap ends one that has lost its way because a
-record expired or was replaced, or because the message split in two,
-and it ends the chain of hop places (§9.3).
+record was replaced, or because the message split in two, and it ends
+the chain of hop places (§9.3).
 255 is generous: the longest straight route across the city of §13
 (≈30 km at the ≈750 m street range of §4) is about 40 hand-overs, leaving
 about 200 for routing around gaps.
@@ -850,7 +850,7 @@ hand-overs to it fail, and they route around it (roadmap D27, D29).
 
 Suppose that while a message is being routed the links do not change,
 every hand-over to a neighbour that answers succeeds within its attempts,
-and no record expires or is replaced. Then:
+and no record is replaced. Then:
 
 - The message moves as a single packet: a relay sends only what it has
   just received or originated, and every ACK-only case of §9.2.4 sends
@@ -876,7 +876,7 @@ the 255 hand-overs of §9.2.6.
 What breaks it:
 
 - **A lost record.** A message returning to a relay whose record has
-  expired or been replaced is new there; the relay searches again from
+  been replaced is new there; the relay searches again from
   itself, and the relays above it never get the message back. The search
   ends early, or wanders until the hop cap ends it.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
@@ -898,7 +898,7 @@ What breaks it:
   hand-overs from each end: a send and the return or the send back. In
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
-- **State per relay:** at most 626 records of 32 bytes, 20 KB
+- **State per relay:** at most 1788 records of 32 bytes, 57 KB
   (§9.2.2); a send queue of 294 packets of up to 255 bytes, 75 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
@@ -1221,8 +1221,8 @@ Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 41 × 256 B = 10.3 KB; message records
-(§9.2.2) 626 × 32 B = 20 KB; send queue (40 + 254) × 272 B = 80 KB;
-delivered window 1 KB; busy estimates and duty budget under 1 KB; 120 KB
+(§9.2.2) 1788 × 32 B = 57 KB; send queue (40 + 254) × 272 B = 80 KB;
+delivered window 1 KB; busy estimates and duty budget under 1 KB; 157 KB
 in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
 application has 255 KB; 1 KB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).

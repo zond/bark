@@ -119,10 +119,10 @@ pub enum DropReason {
     NoRoute,
     /// Sending it on would need a count above 255 (design §9.2.6).
     HopCap,
-    /// Its record was replaced because the table was full, or expired,
-    /// while its packet waited in the send queue (design §9.2.2): without
-    /// the record the search cannot go on from here.
-    RecordLost,
+    /// No place for its record: every record is of a message this relay
+    /// holds (design §9.2.2). Refused; the table outnumbers the send
+    /// queue's places, so this does not happen.
+    NoRecord,
     /// The send queue had no place (design §9.3).
     SendQueueFull,
     /// The duty-cycle bucket could not fit it with everything queued
