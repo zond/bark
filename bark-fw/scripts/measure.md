@@ -44,15 +44,17 @@ A prints one `rx ch=3 ... crc=ok` line per frame. B prints
 
 - `airtime_us` is the datasheet formula (`bark_proto::radio::time_on_air`);
   `tx_us` is SetTx to TxDone handled. `excess_us = tx_us − airtime_us` is
-  the TCXO start, PA ramp and SPI overhead: the start of a transmission.
+  the switch to TX, PA ramp and SPI overhead: the start of a transmission.
 - `rest_us` is the time from TX done back to listening.
 - Check `excess_us` is the same for all three lengths; if it grows with
   length, the airtime formula is wrong.
 
-Expected with the pinned driver: `excess_us` about 10 000. The driver
-starts every operation from STDBY_RC and programs a 10 ms TCXO start
-allowance, which the chip waits out on each start (DS §13.3.6, note).
-The simulator assumes 92 µs (RX→TX, DS Table 8-2).
+Expected: `excess_us` of a few hundred µs at most. The radio idles in
+STDBY_XOSC with the TCXO running, so SetTx waits for no TCXO start and
+the chip reaches TX in 105 µs (DS Table 8-2). The simulator assumes
+92 µs (RX→TX). An `excess_us` near 5 000 means the chip started the TCXO
+again (`radio::TCXO_START`): it was in STDBY_RC, and the driver's standby
+setting did not take.
 
 ### 1.2 Retune
 
@@ -63,11 +65,11 @@ A> ch 12
 A> ch 0      (twelve channels, 1.5 MHz)
 ```
 
-`retune_us` with and without a hop. The same caveat applies: the driver
-retunes through STDBY_RC, so expect about 10 ms, not the 86 µs the
-simulator assumes (§6.1 assumes ≈0.1 ms). If so, the sweep design of
-§6.1 does not hold with this driver, and the fix is in the driver
-(retune in RX or via STDBY_XOSC), not the protocol.
+`retune_us` with and without a hop. The radio retunes through
+STDBY_XOSC, so no TCXO start is expected: the chip's part is about 62 µs
+(STDBY_XOSC→RX, DS Table 8-2) plus the unlisted RX→STDBY_XOSC step, against
+the simulator's 86 µs (§6.1 assumes ≈0.1 ms); the SPI commands add to it.
+About 5 000 means a TCXO start (see 1.1).
 
 ### 1.3 RSSI settle time and noise floor
 
@@ -113,8 +115,10 @@ A> cad 5     (×50 while B beacons)
 B> stop
 ```
 
-`prepare_us`, `cad_us`, `rest_us`. `cad_us` contains the TCXO start
-(see 1.1) and the CAD itself, 8 symbols at SF5 ≈ 2.2 ms. B's frames are
+`prepare_us`, `cad_us`, `rest_us`. `cad_us` contains the CAD itself, 8
+symbols at SF5 ≈ 2.2 ms, and the TCXO start after it (`radio::TCXO_START`,
+5 ms): CAD ends in STDBY_RC, which turns the TCXO off (DS Table 13-73), and
+the driver starts it again before it returns. B's frames are
 on air 10 % of the time, so about 5 of the 50 CADs land on one; if far
 fewer report busy, CAD misses frames or detects only the preamble.
 
@@ -236,9 +240,9 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 | `interference_margin_db` | 10 | not measured | a modelling cut-off | 10 |
 
 The CAD phase in the simulator is its sampling time, computed from
-`cad_symbols` (2.2 ms at 8 symbols). If `cad_us` in 1.5 exceeds it by
-much more than the TCXO start, note it: the simulator has no field for
-it yet.
+`cad_symbols` (2.2 ms at 8 symbols). `cad_us` in 1.5 exceeds it by the
+TCXO start after the CAD, when the radio hears nothing; the simulator has
+no field for that yet, so note the excess.
 
 Into a scenario file:
 

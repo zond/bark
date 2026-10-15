@@ -8,7 +8,7 @@ use core::cell::Cell;
 use bark_driver::Heard;
 use bark_proto::radio::{
     time_on_air, Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MAX_ERP_DBM,
-    MIN_PREAMBLE_SYMBOLS, SPREADING_FACTOR,
+    MIN_PREAMBLE_SYMBOLS, SPREADING_FACTOR, SYMBOL_TIME,
 };
 use bark_proto::{Frame, MAX_FRAME};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
@@ -57,24 +57,33 @@ pub const MIN_TX_DBM: i8 = -9;
 pub const MAX_AIRTIME: Duration =
     Duration::from_micros(time_on_air(MAX_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
 
-/// TCXO start allowance lora-phy programs with SetDIO3AsTCXOCtrl (its
-/// `BRD_TCXO_WAKEUP_TIME`). The chip waits it out on every start of TX, RX,
-/// FS or CAD from STDBY_RC (DS §13.3.6, note), and the driver always idles
-/// in STDBY_RC.
-pub const DRIVER_TCXO_START: Duration = Duration::from_millis(10);
+/// TCXO start-up the chip waits out, in full, each time it powers the TCXO
+/// (SetDIO3AsTCXOCtrl, DS §13.3.6). The radio idles in STDBY_XOSC, so this
+/// is paid only at power-up and after each CAD, which ends in STDBY_RC
+/// (DS Table 13-73). No source names the module's TCXO or its start-up
+/// time; 5 ms is an assumption with margin. A delay too short raises
+/// XOSC_START_ERR (DS §13.3.6).
+pub const TCXO_START: Duration = Duration::from_millis(5);
 
-/// Cold start to STDBY_RC, the longest switching time in DS Table 8-2.
+/// Cold start to STDBY_RC, the longest switching time in DS Table 8-2; a
+/// full calibration takes as long (DS §13.1.12).
 const COLD_START: Duration = Duration::from_micros(3500);
 
 /// Bound on any one BUSY-high stretch: twice the longest the driver can
-/// cause, a cold start followed by a TCXO start. Past it the chip is absent,
+/// cause, a calibration after a TCXO start. Past it the chip is absent,
 /// unpowered or wedged, and the console says so instead of hanging.
 const BUSY_TIMEOUT: Duration =
-    Duration::from_micros(2 * (COLD_START.as_micros() + DRIVER_TCXO_START.as_micros()));
+    Duration::from_micros(2 * (COLD_START.as_micros() + TCXO_START.as_micros()));
 
-/// Interrupt latency allowed beyond an operation's own duration: twice the
-/// TCXO start plus the STBY_RC to TX switch, 126 µs (DS Table 8-2).
-pub const IRQ_SLACK: Duration = Duration::from_micros(2 * (DRIVER_TCXO_START.as_micros() + 126));
+/// Interrupt latency allowed beyond an operation's own duration. Operations
+/// start from STDBY_XOSC; this still allows twice a start from STDBY_RC, a
+/// TCXO start plus the 126 µs switch to TX (DS Table 8-2), so a chip that
+/// lost its oscillator is slow rather than an error.
+pub const IRQ_SLACK: Duration = Duration::from_micros(2 * (TCXO_START.as_micros() + 126));
+
+/// A CAD: its 8 symbols (fixed in the driver) and about half a symbol of
+/// processing (DS §6.1.5), rounded up to a whole one.
+const CAD_TIME: Duration = Duration::from_micros(9 * SYMBOL_TIME.as_micros());
 
 /// NRESET low time: twice the typical 100 µs of DS §8.1.
 const RESET_PULSE_US: u32 = 200;
@@ -167,7 +176,7 @@ impl InterfaceVariant for Pins<'_> {
 pub struct TxTiming {
     /// Retune, modulation, packet parameters and payload upload.
     pub prepare_us: u32,
-    /// SetTx to TxDone handled: the TCXO start, the PA ramp and the time on air.
+    /// SetTx to TxDone handled: the switch to TX, the PA ramp and the time on air.
     pub tx_us: u32,
 }
 
@@ -243,6 +252,9 @@ impl<'a> Radio<'a> {
         let chip = sx126x::Config {
             chip: sx126x::Sx1262,
             tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
+            tcxo_delay_us: TCXO_START.as_micros() as u32,
+            // So a retune, CAD or transmit starts without waiting for the TCXO.
+            standby_xosc: true,
             use_dcdc: true,
             rx_boost: false,
         };
@@ -331,7 +343,9 @@ impl<'a> Radio<'a> {
     }
 
     /// One CAD on `ch`: whether a preamble was seen, the preparation time
-    /// and the CAD time, µs. Leaves the radio in standby.
+    /// and the CAD time, µs. The CAD time includes the TCXO start after it,
+    /// since CAD ends in STDBY_RC (DS Table 13-73). Leaves the radio in
+    /// standby.
     pub async fn cad(&mut self, ch: Channel) -> Result<(bool, u32, u32), RadioError> {
         self.receiving = false;
         let t0 = self.clock.now();
@@ -339,7 +353,8 @@ impl<'a> Radio<'a> {
         self.lora.prepare_for_cad(&mdl).await?;
         let prepare_us = self.clock.since(t0);
         let t1 = self.clock.now();
-        self.irq_deadline.set(Some(Instant::now() + IRQ_SLACK));
+        self.irq_deadline
+            .set(Some(Instant::now() + CAD_TIME + IRQ_SLACK));
         let result = self.lora.cad(&mdl).await;
         self.irq_deadline.set(None);
         let cad_us = self.clock.since(t1);

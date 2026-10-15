@@ -165,6 +165,8 @@ no queue.
   RxDone is at least 4.9 ms after the one being read, so only a preamble notice can be lost
   this way, which costs at most an unheld check. Clearing only the flags read would close it;
   the driver clears them all.
-- Each retune, CAD and transmit costs a 10 ms oscillator start with the radio driver as it is
-  (`bark-fw/README.md`, Risks); the simulator assumes about 0.1 ms. That is a larger gap
-  between the two than anything in this note.
+- The radio keeps its oscillator running between operations, so a retune or a transmission
+  should cost about what the simulator assumes, 0.1 ms. A CAD still turns the oscillator off at
+  its end, and restarting it leaves the radio deaf for an assumed 5 ms after every CAD, which
+  the simulator does not model (`bark-fw/README.md`, Radio driver and Risks). Neither has been
+  measured.

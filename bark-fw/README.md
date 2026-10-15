@@ -70,7 +70,8 @@ Unverified, in the order they will fail if wrong:
 - The radio wiring of `src/board.rs`: SPI on P0.19/P0.22/P0.23, NSS P0.24,
   NRESET P0.25, BUSY P0.17, DIO1 P0.20; DIO2 drives the RF switch; DIO3
   supplies a TCXO at 1.8 V. A wrong TCXO voltage or a board without a TCXO
-  shows as `Busy` or `DIO1` errors on the first transmit or receive.
+  shows as `Busy` or `DIO1` errors when the radio starts or on its first
+  transmit or receive.
 - 8 MHz SPI works on the board's traces.
 - The driver's behaviour beyond what its source shows: CRC-failed frames
   can be read back after the error (`get_rx_result` in continuous receive),
@@ -199,26 +200,54 @@ radio parameters.
 
 `lora-phy`, copied into `vendor/lora-phy` from revision `7a9c2ec` of the
 lora-rs `main` branch (2026-10-06; roadmap D4, D20); `vendor/README.md` lists
-what differs from upstream and how to update it. That revision reports payload and header CRC failures as
-errors instead of returning the bytes as a good frame, and has `get_rssi`,
-`rx_switch_channel` and quarter-dB packet RSSI. The firmware gives the
+what differs from upstream and how to update it. That revision reports
+payload and header CRC failures as errors instead of returning the bytes as
+a good frame, and has `get_rssi`, `rx_switch_channel` and quarter-dB packet
+RSSI. The firmware gives the
 driver its own board interface (`radio::Pins`) instead of the driver's
 generic SX126x one: the generic one polls BUSY immediately after each
 command, but BUSY may take up to 600 ns to rise (DS §8.3.1), so the poll
 can see the previous low and send the next command too early. Ours waits
-out the rise first, bounds every BUSY wait (27 ms, twice a cold start plus
+out the rise first, bounds every BUSY wait (17 ms, twice a calibration plus
 a TCXO start) and can bound the wait for DIO1, so a radio that does not
 answer gives an error instead of a hung console.
 
+Between operations the radio waits in STDBY_XOSC, with its oscillator
+running, and transmit and receive end there (SetRxTxFallbackMode). The
+SX1262 powers the T-Echo's TCXO from DIO3 in every mode but sleep and
+STDBY_RC, and on each start it waits out a programmed delay in full
+(DS §13.3.6). From STDBY_XOSC no start is needed: the chip reaches RX in
+62 µs and TX in 105 µs (DS Table 8-2). A retune is a SetStandby, a
+SetRfFrequency and the SetRx with its three set-up commands; the chip's
+part, about 62 µs plus the unlisted RX to STDBY_XOSC step, is close to the
+simulator's 86 µs (RX to FS, hop, FS to RX), and the SPI commands add to
+it. Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC
+(DS Table 3-5), plus the TCXO's own current, nominally 1.5 mA (DS §4.1.4),
+which it also draws in RX (4.6 mA, DS Table 3-5). The radio listens
+whenever it is not transmitting or checking a channel, so it spends only
+the moments between operations in standby and the extra current does not
+matter.
+
+The programmed delay, 5 ms (`radio::TCXO_START`), is still paid where the
+chip turns the TCXO off on its own: at power-up, after a calibration and
+after every CAD, which ends in STDBY_RC whatever the driver asks
+(DS Table 13-73). The driver returns to STDBY_XOSC at once, so the wait
+falls inside the CAD (the console's `cad_us`), not inside the next
+operation.
+
 ## Risks
 
-- **Every retune, CAD and transmit costs a TCXO start, about 10 ms.** The
-  driver returns to STDBY_RC before each operation and programs a 10 ms
-  TCXO start allowance; the chip waits it out on every start of RX, TX or
-  CAD from STDBY_RC (DS §13.3.6, note). Protocol §6.1 assumes a retune of
-  about 0.1 ms, and the simulator 86 µs. If `ch` measures about 10 ms, the
-  sweep and listen-before-talk timings of the protocol need a driver that
-  retunes in RX or idles in STDBY_XOSC; the console measures it either way.
+- **Every CAD costs a TCXO start, assumed 5 ms.** No source names the
+  module's TCXO or its start-up time. Too short a delay raises
+  XOSC_START_ERR (the firmware does not read the chip's error flags yet)
+  and lets the chip run on a clock still settling. Too long a delay keeps
+  the radio deaf after each CAD, where the simulator counts 83 µs, and
+  widens the gap between a channel check and the transmission it clears.
+  `cad_us` minus the CAD's 2.2 ms shows the delay on the board; if the
+  TCXO's start-up can be measured or its part found, `TCXO_START` should
+  be cut to it with margin.
+- Retune, transmit and the return to listening are expected near the
+  simulator's figures, but only `ch`, `tx` and `rest_us` will show it.
 - The CAD parameters are fixed in the driver (8 symbols, detection peak
   SF + 13, minimum 10). Tuning them means patching it.
 - The sync word is 0x1424, the conventional private LoRa word, which other

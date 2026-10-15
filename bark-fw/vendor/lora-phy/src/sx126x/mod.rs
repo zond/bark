@@ -30,8 +30,8 @@ const SX126X_PLL_STEP_SCALED: u32 = SX126X_XTAL_FREQ >> (25 - SX126X_PLL_STEP_SH
 // Maximum value for parameter symbNum
 const SX126X_MAX_LORA_SYMB_NUM_TIMEOUT: u8 = 248;
 
-// Time required for the TCXO to wakeup [ms].
-const BRD_TCXO_WAKEUP_TIME: u32 = 10;
+// SetRxTxFallbackMode argument: end TX and RX in STDBY_XOSC (datasheet Table 13-23)
+const FALLBACK_STDBY_XOSC: u8 = 0x30;
 
 // SetRx timeout argument for enabling continuous mode
 const RX_CONTINUOUS_TIMEOUT: u32 = 0xffffff;
@@ -56,6 +56,15 @@ pub struct Config<C: Sx126xVariant + Sized> {
     /// set `tcxo_ctrl` to `None`. An incorrect setting will cause transmission & receiving
     /// functions (e.g., `lora.tx()`, `lora.rx()`) to hang indefinitely.
     pub tcxo_ctrl: Option<TcxoCtrlVoltage>,
+    /// Time the chip waits for the TCXO each time it powers it, in µs; used only with
+    /// `tcxo_ctrl`. The chip waits the whole time on every start, so it should cover the
+    /// board's TCXO start-up and no more.
+    pub tcxo_delay_us: u32,
+    /// Idle in STDBY_XOSC instead of STDBY_RC between operations, and fall back to it after
+    /// TX and RX. The oscillator then keeps running, and RX, TX and CAD start without waiting
+    /// for it, at the cost of its current while idle. CAD and calibration still end in
+    /// STDBY_RC; the driver returns to STDBY_XOSC after them, which waits for the oscillator.
+    pub standby_xosc: bool,
     /// Whether board is using optional DCDC in addition to LDO
     pub use_dcdc: bool,
     /// Whether to boost receive
@@ -66,6 +75,9 @@ pub struct Config<C: Sx126xVariant + Sized> {
 pub struct Sx126x<SPI, IV, C: Sx126xVariant + Sized> {
     intf: SpiInterface<SPI, IV>,
     config: Config<C>,
+    // The chip has been told how it is clocked. Before that, STDBY_XOSC would start the
+    // crystal driver on a TCXO board.
+    osc_configured: bool,
 }
 
 impl<SPI, IV, C> Sx126x<SPI, IV, C>
@@ -77,7 +89,11 @@ where
     /// Create an instance of the RadioKind implementation for the LoRa chip kind and board type
     pub fn new(spi: SPI, iv: IV, config: Config<C>) -> Self {
         let intf = SpiInterface::new(spi, iv);
-        Self { intf, config }
+        Self {
+            intf,
+            config,
+            osc_configured: false,
+        }
     }
 
     // Utility functions
@@ -259,7 +275,7 @@ where
                 .await?;
 
             // Each unit is 15.625uS (which is 1/64th ms)
-            let timeout = BRD_TCXO_WAKEUP_TIME << 6;
+            let timeout = (self.config.tcxo_delay_us * 64).div_ceil(1000);
             let op_code_and_tcxo_control = [
                 OpCode::SetTCXOMode.value(),
                 voltage.value() & 0x07,
@@ -274,6 +290,7 @@ where
                 .await?;
             self.intf.iv.wait_on_busy().await?;
         }
+        self.osc_configured = true;
 
         // Enable LoRa packet engine...
         self.intf
@@ -291,6 +308,12 @@ where
         self.set_tx_rx_buffer_base_address(0, 0).await?;
         // Update register list to support warm starts from sleep mode
         self.update_retention_list().await?;
+        if self.config.standby_xosc {
+            self.intf
+                .write(&[OpCode::SetTxFallbackMode.value(), FALLBACK_STDBY_XOSC], false)
+                .await?;
+            self.set_standby().await?;
+        }
         Ok(())
     }
 
@@ -358,6 +381,7 @@ where
     }
 
     async fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), RadioError> {
+        self.osc_configured = false;
         self.intf.iv.reset(delay).await
     }
 
@@ -373,9 +397,14 @@ where
         Ok(())
     }
 
-    // Use standby mode RC (not XOSC).
+    // STDBY_XOSC if so configured and the chip knows its clock, else STDBY_RC.
     async fn set_standby(&mut self) -> Result<(), RadioError> {
-        let op_code_and_standby_mode = [OpCode::SetStandby.value(), StandbyMode::RC.value()];
+        let mode = if self.config.standby_xosc && self.osc_configured {
+            StandbyMode::XOSC
+        } else {
+            StandbyMode::RC
+        };
+        let op_code_and_standby_mode = [OpCode::SetStandby.value(), mode.value()];
         self.intf.write(&op_code_and_standby_mode, false).await?;
         self.intf.iv.disable_rf_switch().await
     }
@@ -389,6 +418,9 @@ where
         };
         let op_code_and_sleep_params = [OpCode::SetSleep.value(), sleep_params.value()];
         self.intf.write(&op_code_and_sleep_params, true).await?;
+        if !warm_start_if_possible {
+            self.osc_configured = false;
+        }
         delay.delay_ms(2).await;
 
         Ok(())
@@ -533,8 +565,17 @@ where
             cal_freq[1] = 0x6F;
         }
 
+        // Calibration starts from STDBY_RC (datasheet §13.1.12) and ends there (§9.2).
+        if self.config.standby_xosc {
+            let op_code_and_standby_mode = [OpCode::SetStandby.value(), StandbyMode::RC.value()];
+            self.intf.write(&op_code_and_standby_mode, false).await?;
+        }
         let op_code_and_cal_freq = [OpCode::CalibrateImage.value(), cal_freq[0], cal_freq[1]];
-        self.intf.write(&op_code_and_cal_freq, false).await
+        self.intf.write(&op_code_and_cal_freq, false).await?;
+        if self.config.standby_xosc {
+            self.set_standby().await?;
+        }
+        Ok(())
     }
 
     async fn set_channel(&mut self, frequency_in_hz: u32) -> Result<(), RadioError> {
