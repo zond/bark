@@ -692,7 +692,6 @@ source = "git+https://github.com/lora-rs/lora-rs.git?rev=7a9c2ec4f6f926cae053ea8
 [[package]]
 name = "lora-phy"
 version = "3.0.2-alpha"
-source = "git+https://github.com/lora-rs/lora-rs.git?rev=7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185#7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185"
 dependencies = [
  "document-features",
  "embassy-futures",

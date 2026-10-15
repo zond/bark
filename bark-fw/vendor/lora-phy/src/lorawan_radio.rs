@@ -1,0 +1,407 @@
+#![allow(missing_docs)]
+
+use super::mod_params::{PacketParams, RadioError};
+use super::mod_traits::RadioKind;
+use super::{DelayNs, LoRa, RxMode};
+
+use lorawan_device::async_device::{
+    RxWindowTiming, Timings,
+    radio::{PhyRxTx, RxConfig, RxMode as LorawanRxMode, RxQuality, RxStatus, TxConfig},
+};
+
+const DEFAULT_RX_WINDOW_LEAD_TIME: u32 = 50;
+const DEFAULT_SYSTEM_MAX_RX_ERROR_MS: u32 = 10;
+
+/// LoRaWAN radio implementation.
+///
+/// The const generic P is the max power the radio may be instructed to transmit at.
+/// The const generic G is the antenna gain and board loss in dBi.
+pub struct LorawanRadio<RK, DLY, const P: u8, const G: i8 = 0>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    pub(crate) lora: LoRa<RK, DLY>,
+    rx_pkt_params: Option<PacketParams>,
+    rx_window_lead_time: u32,
+    rx_window_buffer: u32,
+    min_rx_symbols: u16,
+    system_max_rx_error_ms: u32,
+}
+
+impl<RK, DLY, const P: u8, const G: i8> From<LoRa<RK, DLY>> for LorawanRadio<RK, DLY, P, G>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    fn from(lora: LoRa<RK, DLY>) -> Self {
+        Self {
+            lora,
+            rx_pkt_params: None,
+            rx_window_lead_time: DEFAULT_RX_WINDOW_LEAD_TIME,
+            rx_window_buffer: DEFAULT_RX_WINDOW_LEAD_TIME,
+            min_rx_symbols: RK::DEFAULT_MIN_RX_SYMBOLS,
+            system_max_rx_error_ms: DEFAULT_SYSTEM_MAX_RX_ERROR_MS,
+        }
+    }
+}
+
+impl<RK, DLY, const P: u8, const G: i8> LorawanRadio<RK, DLY, P, G>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    pub fn set_rx_window_lead_time(&mut self, lt: u32) {
+        self.rx_window_lead_time = lt;
+    }
+
+    /// Set the maximum expected clock and scheduling error on either side of
+    /// the nominal receive-window time. The default is 10 ms, matching
+    /// LoRaMac-node.
+    pub fn set_system_max_rx_error(&mut self, error_ms: u32) {
+        self.system_max_rx_error_ms = error_ms;
+    }
+
+    /// Set the minimum preamble-detection timeout, in symbols. Values below 5
+    /// are raised to 5.
+    pub fn set_min_rx_symbols(&mut self, symbols: u16) {
+        self.min_rx_symbols = symbols.max(5);
+    }
+
+    /// Set the receive-window timeout margin, in milliseconds.
+    pub fn set_rx_window_buffer(&mut self, buffer: u32) {
+        self.rx_window_buffer = buffer;
+    }
+}
+
+/// Provide the timing values
+impl<RK, DLY, const P: u8, const G: i8> Timings for LorawanRadio<RK, DLY, P, G>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    fn get_rx_window_buffer(&self) -> u32 {
+        self.rx_window_buffer
+    }
+
+    fn get_rx_window_lead_time_ms(&self) -> u32 {
+        self.rx_window_lead_time
+    }
+
+    fn get_rx_window_timing(&self, rf: &lorawan_device::async_device::radio::RfConfig) -> RxWindowTiming {
+        compute_rx_window_timing(
+            rf.bb.symbol_duration_us(),
+            self.min_rx_symbols,
+            self.system_max_rx_error_ms,
+            self.rx_window_lead_time,
+            self.rx_window_buffer,
+        )
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt-03", derive(defmt::Format))]
+pub enum Error {
+    Radio(RadioError),
+    NoRxParams,
+}
+
+impl From<RadioError> for Error {
+    fn from(err: RadioError) -> Self {
+        Error::Radio(err)
+    }
+}
+
+/// Provide the LoRa physical layer rx/tx interface
+impl<RK, DLY, const P: u8, const G: i8> PhyRxTx for LorawanRadio<RK, DLY, P, G>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    type PhyError = Error;
+
+    const ANTENNA_GAIN: i8 = G;
+
+    const MAX_RADIO_POWER: u8 = P;
+
+    async fn tx(&mut self, config: TxConfig, buffer: &[u8]) -> Result<u32, Self::PhyError> {
+        let mdltn_params = self.lora.create_modulation_params(
+            config.rf.bb.sf,
+            config.rf.bb.bw,
+            config.rf.bb.cr,
+            config.rf.frequency,
+        )?;
+        let mut tx_pkt_params = self
+            .lora
+            .create_tx_packet_params(8, false, true, false, &mdltn_params)?;
+
+        self.lora
+            .prepare_for_tx(&mdltn_params, &mut tx_pkt_params, config.pw.into(), buffer)
+            .await?;
+        self.lora.tx().await?;
+        Ok(0)
+    }
+
+    async fn setup_rx(&mut self, config: RxConfig) -> Result<(), Self::PhyError> {
+        let mode = RxMode::from(config.mode, config.rf.bb);
+        self.setup_rx_mode(config, mode).await
+    }
+
+    async fn setup_rx_window(&mut self, config: RxConfig, timing: RxWindowTiming) -> Result<(), Self::PhyError> {
+        let mode = select_single_rx_mode(
+            timing.timeout_symbols,
+            config.rf.bb.symbol_duration_us(),
+            RK::MAX_SINGLE_RX_SYMBOLS,
+            RK::SUPPORTS_TIMED_SINGLE_RX,
+        );
+        self.setup_rx_mode(config, mode).await
+    }
+
+    async fn rx_single(&mut self, buf: &mut [u8]) -> Result<RxStatus, Self::PhyError> {
+        if let Some(rx_params) = &self.rx_pkt_params {
+            match self.lora.rx(rx_params, buf).await {
+                Ok((len, q)) => Ok(RxStatus::Rx(
+                    len as usize,
+                    RxQuality::new(q.rssi.dbm(), q.snr.db() as i8),
+                )),
+                // A frame that failed its header or payload CRC ends the
+                // window the same way silence does: the chip is back in
+                // standby and the stack moves on to the next window.
+                Err(RadioError::ReceiveTimeout | RadioError::CrcError | RadioError::HeaderError) => {
+                    Ok(RxStatus::RxTimeout)
+                }
+                Err(err) => Err(err.into()),
+            }
+        } else {
+            Err(Error::NoRxParams)
+        }
+    }
+    async fn rx_continuous(&mut self, receiving_buffer: &mut [u8]) -> Result<(usize, RxQuality), Self::PhyError> {
+        if let Some(rx_params) = &self.rx_pkt_params {
+            loop {
+                match self.lora.rx(rx_params, receiving_buffer).await {
+                    Ok((received_len, rx_pkt_status)) => {
+                        return Ok((
+                            received_len as usize,
+                            RxQuality::new(rx_pkt_status.rssi.dbm(), rx_pkt_status.snr.db() as i8), // downcast snr
+                        ));
+                    }
+                    // Continuous receive keeps the chip armed after a frame
+                    // that failed its CRC; wait for the next one.
+                    Err(RadioError::CrcError | RadioError::HeaderError) => continue,
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        } else {
+            Err(Error::NoRxParams)
+        }
+    }
+    async fn low_power(&mut self) -> Result<(), Self::PhyError> {
+        self.lora.sleep(false).await.map_err(|e| e.into())
+    }
+    async fn warm_sleep(&mut self) -> Result<(), Self::PhyError> {
+        // Warm sleep on chips that retain their configuration, so the next
+        // setup is a warm start instead of a full cold re-init. Chips without
+        // a retention sleep take the normal cold sleep.
+        self.lora.sleep(RK::SUPPORTS_WARM_START).await.map_err(|e| e.into())
+    }
+}
+
+impl<RK, DLY, const P: u8, const G: i8> LorawanRadio<RK, DLY, P, G>
+where
+    RK: RadioKind,
+    DLY: DelayNs,
+{
+    async fn setup_rx_mode(&mut self, config: RxConfig, mode: RxMode) -> Result<(), Error> {
+        let mdltn_params = self.lora.create_modulation_params(
+            config.rf.bb.sf,
+            config.rf.bb.bw,
+            config.rf.bb.cr,
+            config.rf.frequency,
+        )?;
+        let rx_pkt_params = self
+            .lora
+            .create_rx_packet_params(8, false, 255, true, true, &mdltn_params)?;
+        self.lora.prepare_for_rx(mode, &mdltn_params, &rx_pkt_params).await?;
+        self.rx_pkt_params = Some(rx_pkt_params);
+        Ok(())
+    }
+}
+
+impl RxMode {
+    fn from(mode: LorawanRxMode, bb: lora_modulation::BaseBandModulationParams) -> Self {
+        match mode {
+            LorawanRxMode::Continuous => RxMode::Continuous,
+            LorawanRxMode::Single { ms } => {
+                const PREAMBLE_SYMBOLS: u16 = 13;
+                RxMode::Single(PREAMBLE_SYMBOLS.saturating_add(bb.delay_in_symbols_ceil(ms)))
+            }
+        }
+    }
+}
+
+/// Choose how the chip should close a receive window `timeout_symbols` long.
+///
+/// Uses the symbol timeout when it fits, otherwise falls back to the
+/// wall-clock timeout when supported.
+///
+/// If neither timeout can represent the requested window, clamps it to
+/// `max_symbols` and logs a warning.
+fn select_single_rx_mode(
+    timeout_symbols: u16,
+    symbol_duration_us: u32,
+    max_symbols: u16,
+    timed_single_rx: bool,
+) -> RxMode {
+    if timeout_symbols <= max_symbols {
+        RxMode::Single(timeout_symbols)
+    } else if timed_single_rx {
+        let ms = (timeout_symbols as u64 * symbol_duration_us as u64).div_ceil(1_000) as u32;
+        RxMode::SingleMs(ms)
+    } else {
+        warn!(
+            "rx window of {} symbols exceeds the chip's {}-symbol timeout ceiling; clamping shortens the late edge",
+            timeout_symbols, max_symbols
+        );
+        RxMode::Single(max_symbols)
+    }
+}
+
+fn compute_rx_window_timing(
+    symbol_duration_us: u32,
+    min_rx_symbols: u16,
+    system_max_rx_error_ms: u32,
+    wake_up_time_ms: u32,
+    window_buffer_ms: u32,
+) -> RxWindowTiming {
+    let symbol_us = symbol_duration_us as u64;
+    let min_symbols = min_rx_symbols.max(5) as u64;
+    let error_us = system_max_rx_error_ms as u64 * 1_000;
+    let lead_us = wake_up_time_ms as u64 * 1_000;
+    let buffer_us = window_buffer_ms as u64 * 1_000;
+
+    // Start setup early enough to cover the radio wake-up time and the maximum
+    // clock or scheduling error.
+    let offset_us = -((lead_us + error_us) as i64);
+
+    // Keep the window open for the configured buffer plus the maximum error on
+    // both sides of the nominal receive time.
+    let span_us = buffer_us + 2 * error_us;
+
+    // Add enough preamble margin to detect a packet arriving at the latest
+    // expected time.
+    let timeout_symbols = (span_us.div_ceil(symbol_us) + min_symbols).min(u16::MAX as u64) as u16;
+
+    RxWindowTiming {
+        // Truncation toward zero on a negative value matches ceil(offset_us /
+        // 1000): the window opens no later than the microsecond-exact offset.
+        offset_ms: (offset_us / 1_000).clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        timeout_symbols,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_timeout_scales_with_symbol_duration() {
+        // The offset is set by the lead time and clock error (open lead + error
+        // = 60 ms early), not the data rate. The timeout, in symbols, grows as
+        // the symbols get shorter so the window spans the same wall-clock time,
+        // plus min_symbols of preamble margin for a latest-edge arrival.
+
+        // SF7/BW125: 1.024 ms per symbol. 70 ms span -> 69 symbols, +6 margin.
+        assert_eq!(
+            compute_rx_window_timing(1_024, 6, 10, 50, 50),
+            RxWindowTiming {
+                offset_ms: -60,
+                timeout_symbols: 75
+            }
+        );
+
+        // SF12/BW125: 32.768 ms per symbol. 3 symbols cover the span, +6 margin.
+        assert_eq!(
+            compute_rx_window_timing(32_768, 6, 10, 50, 50),
+            RxWindowTiming {
+                offset_ms: -60,
+                timeout_symbols: 9
+            }
+        );
+    }
+
+    #[test]
+    fn window_timeout_supports_faster_bandwidths() {
+        assert_eq!(
+            compute_rx_window_timing(512, 6, 10, 50, 50),
+            RxWindowTiming {
+                offset_ms: -60,
+                timeout_symbols: 143
+            }
+        );
+        assert_eq!(
+            compute_rx_window_timing(256, 6, 10, 50, 50),
+            RxWindowTiming {
+                offset_ms: -60,
+                timeout_symbols: 280
+            }
+        );
+    }
+
+    #[test]
+    fn over_cap_window_falls_back_to_wall_clock_close() {
+        // SF7/BW500 (256 us symbols), defaults: 280 symbols > the sx126x/lr11xx
+        // 248-symbol ceiling. The wall-clock close covers the full span
+        // (280 * 256 us = 71.68 ms, rounded up) instead of clamping to
+        // 248 * 256 us = 63.5 ms, which would close before a latest-edge
+        // packet inside the error bound arrives.
+        let timing = compute_rx_window_timing(256, 6, 10, 50, 50);
+        assert_eq!(timing.timeout_symbols, 280);
+        assert_eq!(select_single_rx_mode(280, 256, 248, true), RxMode::SingleMs(72));
+
+        // lr11xx min_rx_symbols default of 13: 287 symbols, same fallback.
+        let timing = compute_rx_window_timing(256, 13, 10, 50, 50);
+        assert_eq!(timing.timeout_symbols, 287);
+        assert_eq!(select_single_rx_mode(287, 256, 248, true), RxMode::SingleMs(74));
+    }
+
+    #[test]
+    fn under_cap_window_keeps_symbol_timeout() {
+        // At or below the ceiling nothing changes: EU868's fastest window
+        // (SF7/BW250 with defaults = 137 span + 6 margin) stays symbol-closed.
+        assert_eq!(select_single_rx_mode(143, 512, 248, true), RxMode::Single(143));
+        assert_eq!(select_single_rx_mode(248, 256, 248, true), RxMode::Single(248));
+    }
+
+    #[test]
+    fn over_cap_window_clamps_without_wall_clock_timer() {
+        // A chip with no wall-clock RX timer (sx127x) clamps to its ceiling;
+        // only reachable there with an extreme configured error (its ceiling
+        // is 1023 symbols).
+        assert_eq!(select_single_rx_mode(1030, 1_024, 1023, false), RxMode::Single(1023));
+    }
+
+    #[test]
+    fn larger_system_error_expands_and_shifts_window_earlier() {
+        // error 50 ms, lead 50 ms: open 100 ms early, span 150 ms -> 147
+        // symbols, +6 margin.
+        assert_eq!(
+            compute_rx_window_timing(1_024, 6, 50, 50, 50),
+            RxWindowTiming {
+                offset_ms: -100,
+                timeout_symbols: 153
+            }
+        );
+    }
+
+    #[test]
+    fn window_buffer_expands_timeout_without_changing_offset() {
+        assert_eq!(
+            compute_rx_window_timing(1_000, 6, 10, 50, 100),
+            RxWindowTiming {
+                offset_ms: -60,
+                timeout_symbols: 126
+            }
+        );
+    }
+}

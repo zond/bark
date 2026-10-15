@@ -197,8 +197,9 @@ radio parameters.
 
 ## Radio driver
 
-`lora-phy` from git (roadmap D4, D20), pinned to revision `7a9c2ec` of `main`
-(2026-10-06). That revision reports payload and header CRC failures as
+`lora-phy`, copied into `vendor/lora-phy` from revision `7a9c2ec` of the
+lora-rs `main` branch (2026-10-06; roadmap D4, D20); `vendor/README.md` lists
+what differs from upstream and how to update it. That revision reports payload and header CRC failures as
 errors instead of returning the bytes as a good frame, and has `get_rssi`,
 `rx_switch_channel` and quarter-dB packet RSSI. The firmware gives the
 driver its own board interface (`radio::Pins`) instead of the driver's
@@ -224,8 +225,8 @@ answer gives an error instead of a hung console.
   private networks also use. Their frames would reach the console, and
   bark's decoder rejects them by content. A bark-specific word is an open
   choice.
-- The driver is a moving git dependency; the pin must be reviewed before it
-  moves.
+- The driver is a copy of a moving upstream; an update must be reviewed and
+  our changes reapplied.
 
 ## Log
 

@@ -1,0 +1,41 @@
+[package]
+name = "lora-phy"
+version = "3.0.2-alpha"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/embassy-rs/lora-phy"
+categories = ["embedded", "no-std", "asynchronous"]
+keywords = ["lora", "radio", "embedded-hal-async", "iot", "semtech"]
+description = "A LoRa physical layer implementation enabling utilization of a range of MCU/LoRa board combinations within embedded frameworks supporting embedded-hal-async."
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+defmt = { version = "0.3", optional = true }
+embassy-futures = "0.1"
+lora-modulation = { git = "https://github.com/lora-rs/lora-rs.git", rev = "7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185" }
+lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev = "7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185", default-features = false, optional = true }
+num-traits = { version = "0.2", default-features = false }
+embedded-hal = { version = "1" }
+embedded-hal-async = { version = "1" }
+document-features = "0.2.8"
+
+[features]
+
+## Use [`defmt`](https://docs.rs/defmt/0.3.8/defmt/index.html) for logging.
+defmt-03 = ["dep:defmt", "lorawan-device?/defmt-03", "lora-modulation/defmt-03"]
+
+## Async LoRaWAN Rx/Tx interface implementation
+lorawan-radio = ["dep:lorawan-device"]
+
+[dev-dependencies]
+# Include lorawan-device unconditionally so all regions are enabled for tests
+lorawan-device = { git = "https://github.com/lora-rs/lora-rs.git", rev = "7a9c2ec4f6f926cae053ea8f7095dcf77e5d4185" }
+# Bindings to Semtech's reference driver (SWL2001), used to test our
+# implementation against the vendor's SPI byte stream
+smtc-modem-cores = "0.2.1"
+# Derive `OpCode::from_repr` for the sx126x behavioral emulator (test-only)
+strum = { version = "0.28", default-features = false, features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros"] }

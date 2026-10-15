@@ -1,0 +1,663 @@
+mod radio_kind_params;
+mod sx1272;
+pub use sx1272::Sx1272;
+mod sx1276;
+pub use sx1276::Sx1276;
+#[cfg(test)]
+mod test;
+
+use embedded_hal_async::delay::DelayNs;
+use embedded_hal_async::spi::*;
+use radio_kind_params::*;
+
+use crate::mod_params::*;
+use crate::mod_traits::IrqState;
+use crate::{InterfaceVariant, RadioKind, SpiInterface};
+use lora_modulation::BaseBandModulationParams;
+
+// TCXO flag
+const TCXO_FOR_OSCILLATOR: u8 = 0x10u8;
+
+// Limits for preamble detection window in single reception mode
+const SX127X_MIN_LORA_SYMB_NUM_TIMEOUT: u16 = 4;
+const SX127X_MAX_LORA_SYMB_NUM_TIMEOUT: u16 = 1023;
+
+// Constant values need to compute the RSSI value
+const SX1272_RSSI_OFFSET: i16 = -139;
+const SX1276_RSSI_OFFSET_LF: i16 = -164;
+const SX1276_RSSI_OFFSET_HF: i16 = -157;
+const SX1276_RF_MID_BAND_THRESH: u32 = 525_000_000;
+
+// Frequency synthesizer step: FXOSC (32 MHz) / 524288 (2^19) = 61.03515625 Hz
+fn freq_to_pll_step(freq_in_hz: u32) -> u32 {
+    // Full-precision integer form of freq / 61.03515625. The previous
+    // truncate-then-shift shortcut zeroed the low 8 pll-step bits, putting
+    // fractional-MHz channels (868.1, 903.9, ...) up to ~15 kHz off.
+    (((freq_in_hz as u64) << 19) / 32_000_000) as u32
+}
+
+fn pll_step_to_freq(pll_step: u32) -> u32 {
+    (((pll_step as u64) * 32_000_000) >> 19) as u32
+}
+
+// RSSI requires linearization when SNR >= 0
+// Section 3.5.5 - Note 3
+fn linearize_rssi_quarter(rssi: u8) -> i16 {
+    // Integer approximation for RSSI * 16.0 / 15.0, in units of 0.25 dB
+    // General formula for integer division with rounding:
+    // x / d == floor((x + floor(d / 2)) / d), when d > 0
+    const DIVISOR: i16 = 15;
+    (rssi as i16 * 64 + (DIVISOR / 2)) / DIVISOR
+}
+
+/// Configuration for SX127x-based boards
+pub struct Config<C: Sx127xVariant> {
+    /// LoRa chip used on specific board
+    pub chip: C,
+    /// Whether board is using crystal oscillator or external clock
+    pub tcxo_used: bool,
+    /// Whether to use PA_BOOST for transmit instead of RFO (sx1272) or RFO_LF (sx1276).
+    /// NB! Depends on board layout.
+    pub tx_boost: bool,
+    /// Whether to boost receive
+    pub rx_boost: bool,
+}
+
+/// Base for the RadioKind implementation for the LoRa chip kind and board type
+pub struct Sx127x<SPI, IV, C: Sx127xVariant + Sized> {
+    intf: SpiInterface<SPI, IV>,
+    config: Config<C>,
+    data: C::Data,
+}
+
+impl<SPI, IV, C> Sx127x<SPI, IV, C>
+where
+    SPI: SpiDevice<u8>,
+    IV: InterfaceVariant,
+    C: Sx127xVariant,
+{
+    /// Create an instance of the RadioKind implementation for the LoRa chip kind and board type
+    pub fn new(spi: SPI, iv: IV, config: Config<C>) -> Self {
+        let intf = SpiInterface::new(spi, iv);
+        Self {
+            intf,
+            config,
+            data: Default::default(),
+        }
+    }
+
+    // Utility functions
+    async fn write_register(&mut self, register: Register, value: u8) -> Result<(), RadioError> {
+        let write_buffer = [register.write_addr(), value];
+        self.intf.write(&write_buffer, false).await
+    }
+
+    async fn read_register(&mut self, register: Register) -> Result<u8, RadioError> {
+        let write_buffer = [register.read_addr()];
+        let mut read_buffer = [0x00u8];
+        self.intf.read(&write_buffer, &mut read_buffer).await?;
+        Ok(read_buffer[0])
+    }
+
+    async fn read_buffer(&mut self, register: Register, buf: &mut [u8]) -> Result<(), RadioError> {
+        self.intf.read(&[register.read_addr()], buf).await
+    }
+
+    async fn write_buffer(&mut self, register: Register, buf: &[u8]) -> Result<(), RadioError> {
+        self.intf.write_with_payload(&[register.write_addr()], buf, false).await
+    }
+
+    // Set the number of symbols the radio will wait to detect a reception (up to 1023 symbols)
+    async fn set_lora_symbol_num_timeout(&mut self, symbol_num: u16) -> Result<(), RadioError> {
+        let val = symbol_num.min(SX127X_MAX_LORA_SYMB_NUM_TIMEOUT);
+
+        let symbol_num_msb = ((val >> 8) & 0x03) as u8;
+        let symbol_num_lsb = (val & 0xff) as u8;
+        let mut config_2 = self.read_register(Register::RegModemConfig2).await?;
+        config_2 = (config_2 & 0xfcu8) | symbol_num_msb;
+        self.write_register(Register::RegModemConfig2, config_2).await?;
+        self.write_register(Register::RegSymbTimeoutLsb, symbol_num_lsb).await
+    }
+
+    // Set the over current protection (mA) on the radio
+    async fn set_ocp(&mut self, ocp_trim: OcpTrim) -> Result<(), RadioError> {
+        self.write_register(Register::RegOcp, ocp_trim.value()).await
+    }
+
+    #[cfg(test)]
+    fn take_spi(self) -> SPI {
+        self.intf.spi
+    }
+
+    #[cfg(test)]
+    fn spi_mut(&mut self) -> &mut SPI {
+        &mut self.intf.spi
+    }
+}
+
+impl<SPI, IV, C> RadioKind for Sx127x<SPI, IV, C>
+where
+    SPI: SpiDevice<u8>,
+    IV: InterfaceVariant,
+    C: Sx127xVariant,
+{
+    // The sx127x drives its single-receive timeout off SymbTimeout, which
+    // needs headroom over the 8-symbol LoRaWAN preamble to latch reliably; 6
+    // (the trait default) is too short and drops downlinks at higher rates.
+    const DEFAULT_MIN_RX_SYMBOLS: u16 = 8;
+
+    // RegSymbTimeout is 10 bits and there is no wall-clock RX timer to fall
+    // back on, so longer windows clamp (SUPPORTS_TIMED_SINGLE_RX stays false).
+    const MAX_SINGLE_RX_SYMBOLS: u16 = SX127X_MAX_LORA_SYMB_NUM_TIMEOUT;
+
+    async fn init_lora(&mut self, sync_word: u16) -> Result<(), RadioError> {
+        let sync_word = sync_word_to_legacy(sync_word)?;
+        if self.config.tcxo_used {
+            self.write_register(C::reg_txco(), TCXO_FOR_OSCILLATOR).await?;
+        }
+
+        self.write_register(Register::RegSyncWord, sync_word).await?;
+
+        self.set_tx_rx_buffer_base_address(0, 0).await?;
+
+        C::init_lora(self, sync_word).await?;
+
+        Ok(())
+    }
+
+    async fn set_lora_sync_word(&mut self, sync_word: u16) -> Result<(), RadioError> {
+        let sync_word = sync_word_to_legacy(sync_word)?;
+        self.write_register(Register::RegSyncWord, sync_word).await
+    }
+
+    fn create_modulation_params(
+        &self,
+        spreading_factor: SpreadingFactor,
+        bandwidth: Bandwidth,
+        coding_rate: CodingRate,
+        frequency_in_hz: u32,
+    ) -> Result<ModulationParams, RadioError> {
+        // Parameter validation
+        spreading_factor_value(spreading_factor)?;
+        coding_rate_value(coding_rate)?;
+        C::bandwidth_value(bandwidth)?;
+        if ((bandwidth == Bandwidth::_250KHz) || (bandwidth == Bandwidth::_500KHz)) && (frequency_in_hz < 400_000_000) {
+            return Err(RadioError::InvalidBandwidthForFrequency);
+        }
+
+        // Section 4.1.1.5 and 4.1.1.6
+        let low_data_rate_optimize = u8::from(BaseBandModulationParams::low_data_rate_optimize(
+            spreading_factor,
+            bandwidth,
+        ));
+
+        Ok(ModulationParams {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+            low_data_rate_optimize,
+            frequency_in_hz,
+        })
+    }
+
+    fn create_packet_params(
+        &self,
+        preamble_length: u16,
+        implicit_header: bool,
+        payload_length: u8,
+        crc_on: bool,
+        iq_inverted: bool,
+        modulation_params: &ModulationParams,
+    ) -> Result<PacketParams, RadioError> {
+        // Parameter validation
+        if (modulation_params.spreading_factor == SpreadingFactor::_6) && !implicit_header {
+            return Err(RadioError::InvalidSF6ExplicitHeaderRequest);
+        }
+
+        Ok(PacketParams {
+            preamble_length,
+            implicit_header,
+            payload_length,
+            crc_on,
+            iq_inverted,
+        })
+    }
+
+    async fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), RadioError> {
+        self.intf.iv.reset(delay).await?;
+        self.set_sleep(false, delay).await?; // ensure sleep mode is entered so that the LoRa mode bit is set
+        Ok(())
+    }
+
+    async fn ensure_ready(&mut self, _mode: RadioMode) -> Result<(), RadioError> {
+        Ok(())
+    }
+
+    async fn set_standby(&mut self) -> Result<(), RadioError> {
+        self.write_register(Register::RegOpMode, LoRaMode::Standby.value())
+            .await?;
+        self.intf.iv.disable_rf_switch().await
+    }
+
+    async fn set_sleep(&mut self, _warm_start_if_possible: bool, _delay: &mut impl DelayNs) -> Result<(), RadioError> {
+        // Warm start is unavailable for sx127x
+        self.intf.iv.disable_rf_switch().await?;
+        let buf = [Register::RegOpMode.write_addr(), LoRaMode::Sleep.value()];
+        // NB! Switching to sleep mode is "sleep" command...
+        self.intf.write(&buf, true).await?;
+
+        Ok(())
+    }
+
+    async fn set_tx_rx_buffer_base_address(
+        &mut self,
+        tx_base_addr: usize,
+        rx_base_addr: usize,
+    ) -> Result<(), RadioError> {
+        if tx_base_addr > 255 || rx_base_addr > 255 {
+            return Err(RadioError::InvalidBaseAddress(tx_base_addr, rx_base_addr));
+        }
+        self.write_register(Register::RegFifoTxBaseAddr, tx_base_addr as u8)
+            .await?;
+        self.write_register(Register::RegFifoRxBaseAddr, rx_base_addr as u8)
+            .await
+    }
+
+    // Set parameters associated with power for a send operation.
+    //   p_out                   desired RF output power (dBm)
+    //   mdltn_params            needed for a power vs channel frequency validation
+    //   is_tx_prep              indicates which ramp up time to use
+    async fn set_tx_power_and_ramp_time(
+        &mut self,
+        p_out: i32,
+        _mdltn_params: Option<&ModulationParams>,
+        is_tx_prep: bool,
+    ) -> Result<(), RadioError> {
+        debug!("tx power = {}", p_out);
+
+        // Configure tx power and boost
+        C::set_tx_power(self, p_out, self.config.tx_boost).await?;
+
+        let ramp_time = match is_tx_prep {
+            true => RampTime::Ramp40Us,   // for instance, prior to TX or CAD
+            false => RampTime::Ramp250Us, // for instance, on initialization
+        };
+
+        let val = C::ramp_value(ramp_time);
+        self.write_register(Register::RegPaRamp, val).await
+    }
+
+    async fn set_modulation_params(&mut self, mdltn_params: &ModulationParams) -> Result<(), RadioError> {
+        let sf_val = spreading_factor_value(mdltn_params.spreading_factor)?;
+        let bw_val = C::bandwidth_value(mdltn_params.bandwidth)?;
+        let coding_rate_denominator_val = coding_rate_denominator_value(mdltn_params.coding_rate)?;
+        debug!(
+            "sf = {}, bw = {}, cr_denom = {}",
+            sf_val, bw_val, coding_rate_denominator_val
+        );
+        // Configure LoRa optimization (0x31) and detection threshold registers (0x37)
+        let (opt, thr) = match mdltn_params.spreading_factor {
+            SpreadingFactor::_6 => (0x05, 0x0c),
+            _ => (0x03, 0x0a),
+        };
+        let reg_val = self.read_register(Register::RegDetectionOptimize).await?;
+        // Keep AutomaticIFOn [7] (errata 2.3) and reserved bits [6:3]
+        let val = (reg_val & 0b1111_1000) | opt;
+        self.write_register(Register::RegDetectionOptimize, val).await?;
+        self.write_register(Register::RegDetectionThreshold, thr).await?;
+
+        // Spreading Factor, Bandwidth, codingrate, ldro
+        C::set_modulation_params(self, mdltn_params).await?;
+
+        Ok(())
+    }
+
+    async fn set_packet_params(&mut self, pkt_params: &PacketParams) -> Result<(), RadioError> {
+        self.write_register(
+            Register::RegPreambleMsb,
+            ((pkt_params.preamble_length >> 8) & 0x00ff) as u8,
+        )
+        .await?;
+        self.write_register(Register::RegPreambleLsb, (pkt_params.preamble_length & 0x00ff) as u8)
+            .await?;
+
+        C::set_packet_params(self, pkt_params).await?;
+
+        if pkt_params.implicit_header {
+            // Set the expected packet receive size, which is only applicable for implicit header mode
+            self.write_register(Register::RegPayloadLength, pkt_params.payload_length)
+                .await?;
+        }
+
+        // IQ inversion:
+        // RegInvertiq - [0x33]
+        // [6] - InvertIQRX
+        // [5:1] - Reserved: 0x13
+        // [0] - InvertIQTX
+        // RegInvertiq2 - [0x3b]
+        // Set to 0x19 when RX, otherwise set 0x1d
+        let (iq1, iq2) = match pkt_params.iq_inverted {
+            true => (1 << 6, 0x19),
+            false => (1 << 0, 0x1d),
+        };
+        // Keep reserved value for InvertIq as well
+        self.write_register(Register::RegInvertiq, (0x13 << 1) | iq1).await?;
+        self.write_register(Register::RegInvertiq2, iq2).await?;
+        Ok(())
+    }
+
+    // Calibrate the image rejection based on the given frequency
+    async fn calibrate_image(&mut self, _frequency_in_hz: u32) -> Result<(), RadioError> {
+        // An automatic process, but can set bit ImageCalStart in RegImageCal, when the device is in Standby mode.
+        Ok(())
+    }
+
+    async fn set_channel(&mut self, frequency_in_hz: u32) -> Result<(), RadioError> {
+        debug!("channel = {}", frequency_in_hz);
+        let frf = freq_to_pll_step(frequency_in_hz);
+        self.write_register(Register::RegFrfMsb, ((frf & 0x00FF0000) >> 16) as u8)
+            .await?;
+        self.write_register(Register::RegFrfMid, ((frf & 0x0000FF00) >> 8) as u8)
+            .await?;
+        self.write_register(Register::RegFrfLsb, (frf & 0x000000FF) as u8).await
+    }
+
+    async fn set_payload(&mut self, payload: &[u8]) -> Result<(), RadioError> {
+        self.write_register(Register::RegFifoAddrPtr, 0x00u8).await?;
+        self.write_register(Register::RegPayloadLength, 0x00u8).await?;
+        self.write_buffer(Register::RegFifo, payload).await?;
+        self.write_register(Register::RegPayloadLength, payload.len() as u8)
+            .await
+    }
+
+    async fn do_tx(&mut self) -> Result<(), RadioError> {
+        self.intf.iv.enable_rf_switch_tx().await?;
+
+        self.write_register(Register::RegOpMode, LoRaMode::Tx.value()).await
+    }
+
+    async fn do_rx(&mut self, rx_mode: RxMode) -> Result<(), RadioError> {
+        let (num_symbols, mode) = match rx_mode {
+            RxMode::DutyCycle(_) => Err(RadioError::DutyCycleUnsupported),
+            RxMode::Single(ns) => Ok((ns.max(SX127X_MIN_LORA_SYMB_NUM_TIMEOUT), LoRaMode::RxSingle)),
+            RxMode::SingleMs(_) => Err(RadioError::TimedSingleRxUnsupported),
+            RxMode::Continuous => Ok((0, LoRaMode::RxContinuous)),
+        }?;
+
+        self.intf.iv.enable_rf_switch_rx().await?;
+
+        self.set_lora_symbol_num_timeout(num_symbols).await?;
+
+        let lna_gain = if self.config.rx_boost {
+            LnaGain::G1.boosted_value()
+        } else {
+            LnaGain::G1.value()
+        };
+        self.write_register(Register::RegLna, lna_gain).await?;
+
+        self.write_register(Register::RegFifoAddrPtr, 0x00u8).await?;
+
+        // Interrupt flags stay latched until the host clears them by writing a 1
+        // (SX1276 DS §4.1.2.4); entering Rx does not reset them. Clear here so a
+        // flag left over from an earlier operation can't read as a result of this
+        // one; this also covers listen(), which never calls set_irq_params.
+        self.clear_irq_status().await?;
+
+        self.write_register(Register::RegOpMode, mode.value()).await
+    }
+
+    async fn get_rx_payload(
+        &mut self,
+        rx_pkt_params: &PacketParams,
+        receiving_buffer: &mut [u8],
+    ) -> Result<u8, RadioError> {
+        let payload_length = if rx_pkt_params.implicit_header {
+            rx_pkt_params.payload_length
+        } else {
+            self.read_register(Register::RegRxNbBytes).await?
+        };
+        if (payload_length as usize) > receiving_buffer.len() {
+            return Err(RadioError::PayloadSizeMismatch(
+                payload_length as usize,
+                receiving_buffer.len(),
+            ));
+        }
+        let fifo_addr = self.read_register(Register::RegFifoRxCurrentAddr).await?;
+        self.write_register(Register::RegFifoAddrPtr, fifo_addr).await?;
+        self.read_buffer(Register::RegFifo, &mut receiving_buffer[0..payload_length as usize])
+            .await?;
+        self.write_register(Register::RegFifoAddrPtr, 0x00u8).await?;
+
+        Ok(payload_length)
+    }
+
+    async fn get_rx_packet_status(&mut self) -> Result<PacketStatus, RadioError> {
+        // RegPktSnrValue: SNR in 0.25 dB steps, two's complement
+        let snr_quarter_db = self.read_register(Register::RegPktSnrValue).await? as i8 as i16;
+        let packet_rssi = self.read_register(Register::RegPktRssiValue).await?;
+        let rssi_offset = C::rssi_offset(self).await?;
+
+        // Section 5.5.5: the 16/15 linearization applies to the raw packet
+        // RSSI in both branches (the reference driver and LoRaMac-node agree;
+        // only the negative-SNR term differs). Computed in 0.25 dB units, so
+        // the SNR term keeps its quarter-dB steps below 0 dB.
+        let snr_term = if snr_quarter_db < 0 { snr_quarter_db } else { 0 };
+        let rssi_quarter_dbm = 4 * rssi_offset + linearize_rssi_quarter(packet_rssi) + snr_term;
+
+        Ok(PacketStatus {
+            rssi: Rssi::from_quarter_dbm(rssi_quarter_dbm),
+            snr: Snr::from_quarter_db(snr_quarter_db),
+        })
+    }
+
+    async fn get_rssi(&mut self) -> Result<i16, RadioError> {
+        let rssi_value = self.read_register(Register::RegRssiValue).await?;
+        let rssi_offset = C::rssi_offset(self).await?;
+        Ok(rssi_offset + rssi_value as i16)
+    }
+
+    async fn do_cad(&mut self, _mdltn_params: &ModulationParams) -> Result<(), RadioError> {
+        self.intf.iv.enable_rf_switch_rx().await?;
+
+        let mut lna_gain_final = LnaGain::G1.value();
+        if self.config.rx_boost {
+            lna_gain_final = LnaGain::G1.boosted_value();
+        }
+        self.write_register(Register::RegLna, lna_gain_final).await?;
+
+        self.write_register(Register::RegOpMode, LoRaMode::Cad.value()).await
+    }
+
+    // Set the IRQ mask to disable unwanted interrupts,
+    // enable interrupts on DIO pins (sx127x has multiple),
+    // and allow interrupts.
+    async fn set_irq_params(&mut self, radio_mode: Option<RadioMode>) -> Result<(), RadioError> {
+        // Interrupt flags stay latched until the host clears them by writing a 1
+        // (SX1276 DS §4.1.2.4); mode changes do not reset them. Clear before the
+        // DIO remap so a leftover flag can't sit on a freshly mapped DIO line,
+        // where the MCU's edge-triggered interrupt would either fire on the stale
+        // flag or never see an edge for the next real one.
+        self.clear_irq_status().await?;
+
+        match radio_mode {
+            Some(RadioMode::Transmit) => {
+                self.write_register(
+                    Register::RegIrqFlagsMask,
+                    IrqMask::All.value() ^ IrqMask::TxDone.value(),
+                )
+                .await?;
+
+                let mut dio_mapping_1 = self.read_register(Register::RegDioMapping1).await?;
+                dio_mapping_1 = (dio_mapping_1 & DioMapping1Dio0::Mask.value()) | DioMapping1Dio0::TxDone.value();
+                self.write_register(Register::RegDioMapping1, dio_mapping_1).await?;
+            }
+            Some(RadioMode::Receive(_)) => {
+                self.write_register(
+                    Register::RegIrqFlagsMask,
+                    IrqMask::All.value()
+                        ^ (IrqMask::RxDone.value()
+                            | IrqMask::RxTimeout.value()
+                            | IrqMask::CRCError.value()
+                            | IrqMask::HeaderValid.value()),
+                )
+                .await?;
+
+                // HeaderValid and CRCError are mutually exclusive when attempting to
+                // trigger DIO-based interrupt, so our approach is to trigger HeaderValid
+                // as this is required for preamble detection.
+                let dio_mapping_1 = self.read_register(Register::RegDioMapping1).await?;
+                let val = (dio_mapping_1
+                    & DioMapping1Dio0::Mask.value()
+                    & DioMapping1Dio1::Mask.value()
+                    & DioMapping1Dio3::Mask.value())
+                    | (DioMapping1Dio0::RxDone.value()
+                        | DioMapping1Dio1::RxTimeOut.value()
+                        | DioMapping1Dio3::ValidHeader.value());
+                self.write_register(Register::RegDioMapping1, val).await?;
+            }
+            Some(RadioMode::ChannelActivityDetection) => {
+                self.write_register(
+                    Register::RegIrqFlagsMask,
+                    IrqMask::All.value() ^ (IrqMask::CADDone.value() | IrqMask::CADActivityDetected.value()),
+                )
+                .await?;
+
+                let mut dio_mapping_1 = self.read_register(Register::RegDioMapping1).await?;
+                dio_mapping_1 = (dio_mapping_1 & DioMapping1Dio0::Mask.value()) | DioMapping1Dio0::CadDone.value();
+                self.write_register(Register::RegDioMapping1, dio_mapping_1).await?;
+            }
+            _ => {
+                self.write_register(Register::RegIrqFlagsMask, IrqMask::All.value())
+                    .await?;
+
+                let mut dio_mapping_1 = self.read_register(Register::RegDioMapping1).await?;
+                dio_mapping_1 = (dio_mapping_1 & DioMapping1Dio0::Mask.value()) | DioMapping1Dio0::Other.value();
+                self.write_register(Register::RegDioMapping1, dio_mapping_1).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn await_irq(&mut self) -> Result<(), RadioError> {
+        self.intf.iv.await_irq().await
+    }
+
+    async fn get_irq_state(
+        &mut self,
+        radio_mode: RadioMode,
+        cad_activity_detected: Option<&mut bool>,
+    ) -> Result<Option<IrqState>, RadioError> {
+        let irq_flags = self.read_register(Register::RegIrqFlags).await?;
+        match radio_mode {
+            RadioMode::Transmit => {
+                if (irq_flags & IrqMask::TxDone.value()) == IrqMask::TxDone.value() {
+                    debug!("TxDone in radio mode {}", radio_mode);
+                    return Ok(Some(IrqState::Done));
+                }
+            }
+            RadioMode::Receive(RxMode::Continuous | RxMode::Single(_) | RxMode::SingleMs(_)) => {
+                if (irq_flags & IrqMask::RxDone.value()) == IrqMask::RxDone.value() {
+                    if IrqMask::CRCError.is_set_in(irq_flags) {
+                        debug!("RxDone with CRCError in radio mode {}", radio_mode);
+                        return Err(RadioError::CrcError);
+                    }
+                    debug!("RxDone in radio mode {}", radio_mode);
+                    return Ok(Some(IrqState::Done));
+                }
+                if (irq_flags & IrqMask::RxTimeout.value()) == IrqMask::RxTimeout.value() {
+                    debug!("RxTimeout in radio mode {}", radio_mode);
+                    return Err(RadioError::ReceiveTimeout);
+                }
+                if IrqMask::HeaderValid.is_set_in(irq_flags) {
+                    debug!("HeaderValid in radio mode {}", radio_mode);
+                    return Ok(Some(IrqState::PreambleReceived));
+                }
+            }
+            RadioMode::ChannelActivityDetection => {
+                if (irq_flags & IrqMask::CADDone.value()) == IrqMask::CADDone.value() {
+                    debug!("CADDone in radio mode {}", radio_mode);
+                    // TODO: don't like how we mutate the cad_activity_detected parameter
+                    if let Some(cad_activity_detected) = cad_activity_detected {
+                        // Check if the CAD (Channel Activity Detection) Activity Detected flag is set in irq_flags and then update the reference
+                        *(cad_activity_detected) =
+                            (irq_flags & IrqMask::CADActivityDetected.value()) == IrqMask::CADActivityDetected.value();
+                    }
+
+                    return Ok(Some(IrqState::Done));
+                }
+            }
+            RadioMode::Sleep | RadioMode::Standby | RadioMode::Listen => {
+                warn!("IRQ during sleep/standby/listen?");
+            }
+            RadioMode::FrequencySynthesis => todo!(),
+            RadioMode::Receive(RxMode::DutyCycle(_)) => todo!(),
+        }
+
+        // If no specific IRQ condition is met, return None
+        Ok(None)
+    }
+
+    async fn clear_irq_status(&mut self) -> Result<(), RadioError> {
+        self.write_register(Register::RegIrqFlags, 0xffu8).await // clear all interrupts
+    }
+
+    /// Process the radio IRQ. Log unexpected interrupts. Packets from other
+    /// devices can cause unexpected interrupts.
+    ///
+    /// NB! Do not await this future in a select branch as interrupting it
+    /// mid-flow could cause radio lock up.
+    async fn process_irq_event(
+        &mut self,
+        radio_mode: RadioMode,
+        cad_activity_detected: Option<&mut bool>,
+        clear_interrupts: bool,
+    ) -> Result<Option<IrqState>, RadioError> {
+        let irq_state = self.get_irq_state(radio_mode, cad_activity_detected).await;
+        if clear_interrupts {
+            self.clear_irq_status().await?;
+        }
+        irq_state
+    }
+
+    /// Set the LoRa chip into the TxContinuousWave mode
+    async fn set_tx_continuous_wave_mode(&mut self) -> Result<(), RadioError> {
+        C::set_tx_continuous_wave_mode(self).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // FXOSC[32 MHz] * 1000000 (Hz/MHz) / 524288 (2^19)
+    const FREQUENCY_SYNTHESIZER_STEP: f64 = 61.03515625;
+
+    #[test]
+    fn pll_step_freq_u32_vs_f64() {
+        // Simplified integer calculation converges with floating
+        // point formula for full and half megahertz values
+        const D: u32 = 2;
+        for freq in D * 137..=(D * 1020) {
+            let f = freq * (1_000_000 / D);
+
+            let pll = freq_to_pll_step(f);
+            assert_eq!(pll, (f as f64 / FREQUENCY_SYNTHESIZER_STEP) as u32);
+            assert_eq!(pll_step_to_freq(pll), f);
+        }
+    }
+
+    #[test]
+    fn test_rssi_linearization() {
+        // rounded to the nearest 0.25 dB, so never more than 0.125 dB off
+        const DELTA: f32 = 0.125;
+        for offset in [SX1272_RSSI_OFFSET, SX1276_RSSI_OFFSET_LF, SX1276_RSSI_OFFSET_HF] {
+            for rssi in 0..=u8::MAX {
+                let float_rssi = offset as f32 + rssi as f32 * 16.0 / 15.0;
+                let approx_rssi = (4 * offset + linearize_rssi_quarter(rssi)) as f32 / 4.0;
+                let error = float_rssi - approx_rssi;
+                assert!(error.abs() <= DELTA, "rssi {rssi}: {approx_rssi} vs {float_rssi}");
+            }
+        }
+    }
+}
