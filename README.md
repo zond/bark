@@ -29,6 +29,8 @@ Read, in order:
    ecosystem, hardware facts, and corrections to the design doc.
 6. `docs/reception-research-2026-10-15.md`: how the simulator decides
    that a packet near sensitivity is lost.
+7. `docs/firmware-adapter-2026-10-15.md`: the loop that runs the core on
+   the board, and what happens to frames that arrive while it is busy.
 
 ## Layout
 
