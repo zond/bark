@@ -74,6 +74,23 @@ impl Channel {
     }
 }
 
+/// Sync word and start-of-frame delimiter after the preamble at SF5 and
+/// SF6, in quarter symbols (datasheet §6.1.4: 6.25 symbols).
+const SYNC_QUARTER_SYMBOLS: u64 = 25;
+
+/// Symbols of the first block after the sync, sent at coding rate 4/8. In
+/// explicit header mode it carries the header and its checksum (datasheet
+/// §6.1.4: the `8` term of the time-on-air formula).
+const HEADER_BLOCK_SYMBOLS: u64 = 8;
+
+/// Time from a packet's start to the end of its header block, after which
+/// the receiver knows the header is sound and the packet's length.
+pub const fn header_end(preamble_symbols: u16) -> Duration {
+    let quarter_symbols =
+        4 * preamble_symbols as u64 + SYNC_QUARTER_SYMBOLS + 4 * HEADER_BLOCK_SYMBOLS;
+    Duration::from_micros(quarter_symbols * SYMBOL_TIME.as_micros() / 4)
+}
+
 /// Time on air of a LoRa packet with `payload_len` bytes and
 /// `preamble_symbols` preamble symbols, from the SX1261/2 datasheet §6.1.4,
 /// for SF5/SF6 (header on, CRC on, low data rate optimisation off):
@@ -89,9 +106,8 @@ pub const fn time_on_air(payload_len: u8, preamble_symbols: u16) -> Duration {
     let bits = 8 * payload_len as i64 + 16 - 4 * sf + 8;
     let bits = if bits < 0 { 0 } else { bits };
     let payload_symbols = (bits + 4 * sf - 1) / (4 * sf) * CODING_RATE_DENOMINATOR as i64;
-    // Symbols in quarter units so 6.25 stays exact: preamble + 6.25 + 8 + payload.
-    let quarter_symbols = 4 * preamble_symbols as i64 + 25 + 32 + 4 * payload_symbols;
-    Duration::from_micros(quarter_symbols as u64 * SYMBOL_TIME.as_micros() / 4)
+    let payload = SYMBOL_TIME.mul(payload_symbols as u64);
+    Duration::from_micros(header_end(preamble_symbols).as_micros() + payload.as_micros())
 }
 
 #[cfg(test)]
