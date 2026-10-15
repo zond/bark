@@ -506,10 +506,18 @@ regular room of its send queue only if the room has a place for it and
 its airtime bucket (§9.4) holds, as it stands, the ACK, the airtime of
 every frame in the send queue and of the new one, and the reply reserve.
 Failing that, it takes the packet into a free hop place numbered no
-higher than the packet's `hops`, whatever the bucket holds (§9.3). So a
-relay takes from its leaves and its own application no more than it can
-send now, and refuses a message already in the network only when the
-hop places it may use are taken too. It takes a packet to deliver only
+higher than the packet's `hops`, whatever the bucket holds (§9.3). A
+packet from a leaf, and its own application's message, also need a
+neighbour the relay could hand it to now: a live one that is not
+banned (§9.2.3, §9.3), demoted or not, since a message entering here has
+tried none. A relay whose neighbours are all banned would only hold the
+message until a ban ends, and its offer could be refused again; refused
+here, the message waits at its origin, where the application sees it. A relay with no live neighbour at all
+takes it, and the search ends as in §9.2.5. So a relay takes from its
+leaves and its own application no more than it can start sending now,
+and refuses a message already in the network only when the hop places
+it may use are taken too, whatever its bans: §9.3 needs every such
+message to move on (roadmap D34). It takes a packet to deliver only
 if its bucket holds the reply reserve and an ACK and, for one of its
 leaves, its delivery queue has room (§10.4). Otherwise it refuses: it
 sends an ACK that says refused, on the channel in `aux` after listening
@@ -586,7 +594,8 @@ own application's message waits the same way, longer after refusals in
 a row (§9.3), as a leaf's does (§10.2), and one for one of the relay's
 own leaves that finds the delivery queue full is kept aside until the
 queue has a place. Until a first hop takes it, the application is given
-no other message (§9.1).
+no other message (§9.1), nor one while every neighbour is banned
+(§9.2.4).
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
 and the search ends early. A parent that refuses the return has not
@@ -807,8 +816,9 @@ A packet received with count h that the regular room refuses takes the
 highest free hop place numbered h or lower, and keeps it until it leaves
 the queue. A hop place holds its packet whatever the bucket holds; the
 bucket still decides when it is sent. A packet from a leaf or from the
-relay's own application has count 0 and no hop place, so overload stops
-new messages where they enter, at the application (§9.1). A packet
+relay's own application has count 0 and no hop place, and is not taken
+while every neighbour is banned (§9.2.4), so overload stops new messages
+where they enter, at the application (§9.1). A packet
 received at 255 ends at the cap (§9.2.6), so 254 hop places are enough.
 Packets are handed over in the order they arrived, except that, when
 bans end, the packets that waited for them go first, as above.
@@ -978,7 +988,8 @@ again as above, for up to the delivery TTL (10 minutes, §10.4), the time
 the network itself would keep it. Only then is it dropped, and the app
 is not told (§9.1). The leaf holds one message at a time (roadmap D23)
 and takes the next from its app once this one is handed over or
-dropped. A relay that refuses the message is busy, not failing: the
+dropped. A relay that refuses the message, because it has no room or
+every way on from it is banned (§9.2.4), is busy, not failing: the
 leaf keeps it, counts no failed period, and offers the message again
 one ban, 1.56 s, after the first refusal, then twice as long after each
 further one in a row, up to the bucket's refill of 61 s, as a relay

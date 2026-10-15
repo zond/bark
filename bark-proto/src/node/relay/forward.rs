@@ -10,7 +10,10 @@
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (§9.2.4, roadmap D29); else into a free hop place numbered no
 //! higher than the packet's count (roadmap D31); else it is refused with
-//! an ACK that says so. A new message also needs a place for its record,
+//! an ACK that says so. A leaf's packet is refused too while every
+//! neighbour is banned (roadmap D34); one already in the network is not,
+//! since the hop places keep relays from locking up only if it moves on.
+//! A new message also needs a place for its record,
 //! which the size of the table guarantees (`tables/records.rs`). A
 //! delivery is refused when
 //! the delivery queue is full, or when the bucket holds less than the
@@ -324,6 +327,7 @@ impl Relay {
         } else if sends {
             let air = data_airtime(d.payload.len());
             match self.admit(air, ACK_AIRTIME, d.hops, completes, now) {
+                Ok(_) if from_leaf && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(k) => {
                     place = k;
                     None
@@ -558,29 +562,35 @@ impl Relay {
 
     // --- The relay's own application (§9.2) ---
 
-    /// Whether the application may send now (roadmap D29 rule 6): the
-    /// relay is running, holds no message of the application's, and its
-    /// send queue takes a full frame on top of what it holds, as a forward
-    /// would be taken but without the ACK.
+    /// Whether the application may send now (roadmap D29 rule 6, D34): the
+    /// relay is running, holds no message of the application's, its send
+    /// queue takes a full frame on top of what it holds, as a leaf's would
+    /// be taken but without the ACK, and not every neighbour is banned.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         !self.booting()
             && self.own.is_none()
             && self
                 .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
+            && self.bans_end(now).is_none()
     }
 
-    /// When the application may send again, if only the bucket keeps it
-    /// waiting; anything else ends with an event.
+    /// When the application may send again, if only the bucket and bans
+    /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
         if self.booting() || self.own.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need =
             self.queue.airtime() + self.held_airtime() + data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
-        self.budget
+        let bucket = self
+            .budget
             .allowed_at(Duration::ZERO, need, now)
-            .filter(|&t| t > now)
+            .filter(|&t| t > now);
+        match (bucket, self.bans_end(now)) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// The application's message is now `own`; a new one, or none, has
@@ -787,6 +797,24 @@ impl Relay {
                 Routed::Done
             }
         }
+    }
+
+    /// When fresh work could next start moving, if every live neighbour is
+    /// banned now: the earliest end of those bans. A message entering here
+    /// has no tried set, so these are all the candidates §9.2.3 would have
+    /// for it, demoted ones included as its last resort. Fresh work waits
+    /// at its origin meanwhile, where its application sees it, rather than
+    /// here for a ban, to be refused again (roadmap D34). With no live
+    /// neighbour at all it is no ban: the search ends as before.
+    fn bans_end(&self, now: Instant) -> Option<Instant> {
+        let mut until: Option<Instant> = None;
+        for (_, n) in self.neighbours.live(now) {
+            if !self.neighbours.is_banned(n, now) {
+                return None;
+            }
+            until = Some(until.map_or(n.banned_until, |t| t.min(n.banned_until)));
+        }
+        until
     }
 
     /// When the earliest ban ends among the neighbours that would be

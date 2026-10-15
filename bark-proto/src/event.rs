@@ -128,6 +128,9 @@ pub enum DropReason {
     /// The duty-cycle bucket could not fit it with everything queued
     /// (design §9.2.4, §9.4).
     Budget,
+    /// Fresh work, and every neighbour that could take it is banned
+    /// (design §9.2.4). Refused.
+    Banned,
     /// The hand-over back to the parent failed (design §9.2.5, §9.3).
     ReturnFailed,
     /// The hand-over straight back to a relay that offered it failed

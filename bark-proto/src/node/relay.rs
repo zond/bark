@@ -714,6 +714,7 @@ impl Core for Relay {
 mod tests {
     extern crate std;
     use super::*;
+    use crate::tables::budget::BAN;
     use std::vec::Vec;
 
     #[test]
@@ -1543,5 +1544,127 @@ mod tests {
         let refused_at = now;
         assert!(live(&r, taken_at + expiry), "refused: alive");
         assert!(!live(&r, refused_at + expiry), "silent: expired");
+    }
+
+    /// A running relay with two neighbours, both banned for one [`BAN`]
+    /// from the returned instant, and a destination far beyond them.
+    fn with_every_neighbour_banned() -> (Relay, Instant, Position) {
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        let me = r.config.position;
+        for k in 1..=2 {
+            let hb = Heartbeat {
+                surveyed: true,
+                home: Channel::new(5).unwrap(),
+                position: Position {
+                    lat: me.lat + 5_000 * k,
+                    ..me
+                },
+            };
+            r.neighbours.heard(&hb, &r.plane, now);
+            r.neighbours.refused(hb.position, now + BAN);
+        }
+        let far = Position {
+            lat: me.lat + 100_000,
+            ..me
+        };
+        (r, now, far)
+    }
+
+    /// Offer `r` a full DATA to `dst` received with `hops`, from a leaf at
+    /// 0, and send its reply. Returns the place it took and why it was
+    /// refused, if it was.
+    fn offer_data(
+        r: &mut Relay,
+        now: &mut Instant,
+        dst: Position,
+        tag: u8,
+        hops: u8,
+    ) -> (Option<u8>, Option<crate::event::DropReason>) {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::wire::{Data, MAX_PAYLOAD};
+        let payload = [tag; MAX_PAYLOAD];
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: ShortName(if hops == 0 { 0 } else { 1 }),
+            dst_pos: dst,
+            dst_leaf: LeafId::RELAY,
+            hops,
+            payload: &payload,
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let mut refused = None;
+        let mut pending = Vec::new();
+        r.handle(event, *now, &mut |a| match a {
+            Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            _ => {}
+        });
+        let until = *now + Duration::from_millis(100);
+        drive_from(r, now, until, pending);
+        let place = r
+            .queue
+            .iter()
+            .find(|o| o.msg_id() == Some(d.msg_id()))
+            .map(|o| o.place);
+        (place, refused)
+    }
+
+    /// A leaf's message is refused while every neighbour that could take it
+    /// on is banned, and taken once a ban has ended (roadmap D34): it waits
+    /// at the leaf, not here.
+    #[test]
+    fn a_leaf_s_message_waits_for_a_way_on() {
+        use crate::event::DropReason;
+        let (mut r, start, far) = with_every_neighbour_banned();
+        let mut now = start;
+        assert_eq!(
+            offer_data(&mut r, &mut now, far, 1, 0),
+            (None, Some(DropReason::Banned))
+        );
+        now = start + BAN;
+        assert_eq!(offer_data(&mut r, &mut now, far, 1, 0), (Some(0), None));
+    }
+
+    /// A packet already in the network is taken under the same bans, into
+    /// the regular room and, with the bucket spent, a hop place: the hop
+    /// places' argument against gridlock needs every such packet to move
+    /// on (§9.3, roadmap D31, D34).
+    #[test]
+    fn a_packet_in_the_network_is_taken_whatever_the_bans() {
+        let (mut r, mut now, far) = with_every_neighbour_banned();
+        assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
+        let spend = r.budget.available(now) - Duration::from_millis(300);
+        r.budget.record(spend, now);
+        assert_eq!(offer_data(&mut r, &mut now, far, 2, 2), (Some(2), None));
+    }
+
+    /// The relay's own application waits while every neighbour is banned,
+    /// and the relay wakes when the first ban ends (roadmap D34).
+    #[test]
+    fn the_application_waits_while_every_neighbour_is_banned() {
+        let (mut r, now, _) = with_every_neighbour_banned();
+        r.handle(Event::Wakeup, now, &mut |_| {});
+        assert!(!r.accepts_send(now));
+        assert_eq!(r.next_wakeup(), Some(now + BAN));
+        assert!(r.accepts_send(now + BAN));
     }
 }

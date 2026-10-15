@@ -198,6 +198,8 @@ pub struct DropCounts {
     pub send_queue_full: u64,
     /// The duty-cycle budget (§9.4).
     pub budget: u64,
+    /// Fresh work refused while every way on was banned (§9.2.4).
+    pub banned: u64,
     /// The return to the parent failed (§9.2.5).
     pub return_failed: u64,
     /// A send straight back failed (§9.3).
@@ -223,6 +225,7 @@ impl DropCounts {
             DropReason::NoRecord => &mut self.no_record,
             DropReason::SendQueueFull => &mut self.send_queue_full,
             DropReason::Budget => &mut self.budget,
+            DropReason::Banned => &mut self.banned,
             DropReason::ReturnFailed => &mut self.return_failed,
             DropReason::BounceFailed => &mut self.bounce_failed,
             DropReason::RelayGone => &mut self.relay_gone,
@@ -241,6 +244,7 @@ impl DropCounts {
             + self.no_record
             + self.send_queue_full
             + self.budget
+            + self.banned
             + self.return_failed
             + self.bounce_failed
             + self.relay_gone

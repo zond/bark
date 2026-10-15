@@ -91,10 +91,11 @@ whether the message arrived is for the app to find out inside its payload. A mes
 node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
 Each role holds one message of its application's at a time, until its first hop takes it.
-A relay accepts a message while it is running, holds none, and its send queue takes a full
-frame on top of what it holds (design §9.3). When only its bucket keeps it from accepting,
-its `next_wakeup()` includes the moment the bucket will have refilled enough. A relay whose
-remaining neighbours are all banned keeps the message and tries again when the first ban
+A relay accepts a message while it is running, holds none, its send queue takes a full
+frame on top of what it holds (design §9.3), and not every neighbour is banned (design
+§9.2.4). When only its bucket and bans keep it from accepting, its `next_wakeup()` includes
+the moment both allow it. A relay whose remaining neighbours are all banned once it holds
+the message keeps it and tries again when the first ban
 ends, or later after refusals in a row (design §9.3); one for its own leaf that finds the
 delivery queue full waits for a place (design §9.2.5). A leaf accepts a message while it
 holds none (design §10.2).
