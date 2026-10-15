@@ -364,12 +364,15 @@ fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
 /// one copy dies there, and the message is delivered once.
 ///
 /// Y's return must come after X has moved on; during X's retries it
-/// would end X's hand-over instead (case 4). So X retries at once, and
-/// Y's frames to P are lost until X has offered the message to Z: X's
-/// three attempts then end within three full frames and ACK timeouts,
-/// 3 × (138.6 + 100) = 716 ms, of its first, and Y's three to P take at
-/// least that, so P takes one only after X has moved on. No relay samples
-/// other channels (§6.1), so that Y hears X.
+/// would end X's hand-over instead (case 4). So the frames are full, X
+/// retries at once, and Y's first two frames to P are lost. X's three
+/// attempts end within 3 × (138.6 + 100) = 716 ms of its first frame's
+/// start. Y takes that frame at the earliest, ACKs it, and P takes Y's
+/// third frame, two attempts later: from 138.6 + 14.4 + 2 × 238.6 = 630
+/// ms. P's return and Y's return to X add two more frames and an ACK, so
+/// Y's return ends after 1075 ms, when X has long moved on to Z. Each
+/// relay has its own home channel, none samples other channels (§6.1),
+/// and P has just sent a heartbeat, so P hears every frame Y sends it.
 ///
 /// ```text
 ///   P - Y - X - Z - D
@@ -378,11 +381,12 @@ fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
 fn a_split_copy_returned_by_an_earlier_child_ends_there() {
     use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, p, z, d) = (0, 1, 2, 3, 4);
-    let relay_with = |east, north, seed, config: Config| {
+    let relay_with = |east, north, seed, config: Config, home| {
         Node::Relay(Relay::new(
             Config {
                 position: pos(east, north),
                 boot_listen: secs(5),
+                home_override: Some(ch(home)),
                 ..config
             },
             seed,
@@ -398,21 +402,37 @@ fn a_split_copy_returned_by_an_earlier_child_ends_there() {
     };
     let mut h = build(
         vec![
-            relay_with(500.0, 0.0, 131, at_once),
-            relay_with(800.0, 300.0, 132, listening),
-            relay_with(900.0, 700.0, 133, listening),
-            relay_with(700.0, -300.0, 134, listening),
-            relay_with(10_000.0, 0.0, 135, listening),
+            relay_with(500.0, 0.0, 131, at_once, 1),
+            relay_with(800.0, 300.0, 132, listening, 2),
+            relay_with(900.0, 700.0, 133, listening, 3),
+            relay_with(700.0, -300.0, 134, listening, 4),
+            relay_with(10_000.0, 0.0, 135, listening, 5),
         ],
         &[(x, y), (y, p), (x, z), (z, d)],
     );
-    let mut moved_on = false;
-    h.lose = Some(Box::new(move |_, from, to, bytes| {
-        let data = matches!(Packet::decode(bytes), Ok(Packet::Data(_)));
-        moved_on |= data && (from, to) == (x, z);
-        let ack = !data && matches!(Packet::decode(bytes), Ok(Packet::Ack(_)));
-        !moved_on && ((ack && (from, to) == (y, x)) || (data && (from, to) == (y, p)))
+    let [nx, ny, np, nz] = [x, y, p, z].map(|i| position(&h, i).short());
+    let (mut moved_on, mut to_p) = (false, 0);
+    h.lose = Some(Box::new(move |_, _, to, bytes| {
+        match Packet::decode(bytes) {
+            Ok(Packet::Data(d)) => {
+                moved_on |= (d.src_hop, d.dst_hop) == (nx, nz);
+                let lose = to == p && (d.src_hop, d.dst_hop) == (ny, np) && to_p < 2;
+                to_p += usize::from(lose);
+                lose
+            }
+            Ok(Packet::Ack(a)) => !moved_on && (a.from, a.to) == (ny.into(), nx.into()),
+            _ => false,
+        }
     }));
+    // Start just as P sends a heartbeat: its next is at least 5 s off
+    // (§7), so P is home for all of Y's frames.
+    let beats = h.nodes[p].sent.len();
+    let beat = |h: &Harness<Node>| {
+        h.nodes[p].sent[beats..]
+            .iter()
+            .any(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+    };
+    assert!(h.run_until(h.now + secs(20), beat));
     let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
     let name = |h: &Harness<Node>, i| position(h, i).short();
     let (ny, nx) = (name(&h, y), name(&h, x));
