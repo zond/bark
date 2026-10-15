@@ -646,8 +646,8 @@ ask its direct neighbours once whether they hold it (one hop, one round;
 the packet is open item O13); if none does, it queues. Nothing wider: a
 wider search is a flood.
 
-The owner remembers delivered message IDs for the delivery TTL (§10.4),
-and a later copy of the message, from any neighbour, is ACKed and not
+The owner remembers the message IDs it has delivered (§10.4), and a
+later copy of the message, from any neighbour, is ACKed and not
 delivered again.
 
 ### 9.3 Per-hop transfer
@@ -1015,9 +1015,11 @@ its leaf table's 256 (§10.2), at the 23 texts a day each that the
 network carries (§13): 256 × 23 / 144 ten-minute TTLs in a day = 40.9,
 so 41 messages, 10.3 KB.
 
-The owner remembers the last 64 delivered message IDs (§14) for the TTL
-and ACKs a repeat without delivering it twice; 64 is 400 leaves (§10.2)
-× 23 texts a day (§13) over the 144 ten-minute TTLs in a day. A queued
+The owner remembers 64 delivered message IDs (§14) and ACKs a repeat
+without delivering it twice. When it needs the place, it forgets the one
+delivered or last repeated longest ago; time alone forgets nothing. 64
+is what a relay delivers in 10 minutes at 400 leaves (§10.2) × 23 texts
+a day (§13). A queued
 message costs no airtime; a failed delivery costs a retry across the
 city.
 

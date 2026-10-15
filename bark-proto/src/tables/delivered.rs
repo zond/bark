@@ -1,67 +1,83 @@
-//! Message IDs this relay has delivered as owner, kept for the delivery
-//! TTL so that a later copy, from any neighbour, is ACKed and not
-//! delivered again (design §9.2.7, §10.4).
+//! Message IDs this relay has delivered as owner, so that a later copy,
+//! from any neighbour, is ACKed and not delivered again (design §9.2.7,
+//! §10.4).
 //!
-//! A ring of [`DELIVERED`] entries, oldest overwritten first; an entry
-//! older than the TTL counts as absent. The size is what a relay delivers
-//! in one TTL at the most load the design plans for: 400 leaves (§10.2, at
-//! 50 % adoption) receiving ≈23 texts a day each (§13, the network at
-//! capacity) is 9 200 a day, 64 per 10 minutes. Above that the oldest are
-//! forgotten early and a late copy of one is delivered twice, which the
-//! app, whose payloads are unique (§11), can recognise.
+//! [`DELIVERED`] entries with no lifetime: when full, a new one takes the
+//! place of the least recently active, the one delivered or last offered
+//! again longest ago, as message records do (`records.rs`, roadmap D31).
+//! The size is what a relay delivers in 10 minutes at the most load the
+//! design plans for: 400 leaves (§10.2, at 50 % adoption) receiving ≈23
+//! texts a day each (§13, the network at capacity) is 9 200 a day, 64 per
+//! 10 minutes. Above that a late copy of one forgotten is delivered twice,
+//! which the app, whose payloads are unique (§11), can recognise.
 
 use crate::ids::MsgId;
-use crate::node::Config;
-use crate::time::{Duration, Instant};
+use crate::time::Instant;
 
 const LEAVES_PLANNED: u64 = 400;
 const TEXTS_PER_LEAF_PER_DAY: u64 = 23;
 const DAY_S: u64 = 86_400;
-const DESIGN_TTL_S: u64 = 600;
+const SPAN_S: u64 = 600;
 
-/// Ring capacity; see the module documentation.
+/// Capacity; see the module documentation.
 pub const DELIVERED: usize =
-    (LEAVES_PLANNED * TEXTS_PER_LEAF_PER_DAY * DESIGN_TTL_S).div_ceil(DAY_S) as usize;
+    (LEAVES_PLANNED * TEXTS_PER_LEAF_PER_DAY * SPAN_S).div_ceil(DAY_S) as usize;
 
 const _: () = assert!(DELIVERED == 64);
 
 /// The delivered window.
 #[derive(Clone)]
 pub struct Delivered {
+    /// Each ID with when it was last active.
     entries: [(MsgId, Instant); DELIVERED],
-    next: usize,
     len: usize,
-    ttl: Duration,
 }
 
 impl Delivered {
-    /// Empty; entries live `ttl`.
-    pub const fn new(ttl: Duration) -> Delivered {
+    /// Empty.
+    pub const fn new() -> Delivered {
         Delivered {
             entries: [(MsgId(0), Instant::ZERO); DELIVERED],
-            next: 0,
             len: 0,
-            ttl,
         }
     }
 
-    /// Empty, with `config.delivery_ttl`.
-    pub fn from_config(config: &Config) -> Delivered {
-        Delivered::new(config.delivery_ttl)
+    /// Whether `id` is remembered as delivered.
+    pub fn contains(&self, id: MsgId) -> bool {
+        self.entries[..self.len].iter().any(|&(i, _)| i == id)
     }
 
-    /// Whether `id` was delivered less than the TTL before `now`.
-    pub fn contains(&self, id: MsgId, now: Instant) -> bool {
-        self.entries[..self.len]
-            .iter()
-            .any(|&(i, at)| i == id && now.since(at) < self.ttl)
+    /// A copy of `id` arrived at `now`: whether it was delivered. A
+    /// remembered one is active again.
+    pub fn offered(&mut self, id: MsgId, now: Instant) -> bool {
+        match self.entries[..self.len].iter_mut().find(|(i, _)| *i == id) {
+            Some(e) => {
+                e.1 = now;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Record that `id` was delivered at `now`.
     pub fn insert(&mut self, id: MsgId, now: Instant) {
-        self.entries[self.next] = (id, now);
-        self.next = (self.next + 1) % DELIVERED;
-        self.len = (self.len + 1).min(DELIVERED);
+        if self.offered(id, now) {
+            return;
+        }
+        if self.len < DELIVERED {
+            self.entries[self.len] = (id, now);
+            self.len += 1;
+            return;
+        }
+        if let Some(e) = self.entries.iter_mut().min_by_key(|(_, at)| *at) {
+            *e = (id, now);
+        }
+    }
+}
+
+impl Default for Delivered {
+    fn default() -> Self {
+        Delivered::new()
     }
 }
 
@@ -74,27 +90,20 @@ mod tests {
     }
 
     #[test]
-    fn ttl_and_ring() {
-        let mut d = Delivered::from_config(&Config::default());
-        assert!(
-            !d.contains(MsgId(0), at(0)),
-            "an empty slot is not message 0"
-        );
+    fn least_recently_active_goes_first() {
+        let mut d = Delivered::new();
+        assert!(!d.contains(MsgId(0)), "an empty slot is not message 0");
         d.insert(MsgId(7), at(0));
-        assert!(d.contains(MsgId(7), at(599)));
-        assert!(!d.contains(MsgId(7), at(600)), "kept for the delivery TTL");
+        assert!(d.contains(MsgId(7)), "no lifetime");
         for i in 0..DELIVERED as u32 - 1 {
-            d.insert(MsgId(100 + i), at(1));
+            d.insert(MsgId(100 + i), at(1 + i as u64));
         }
-        assert!(
-            d.contains(MsgId(7), at(1)),
-            "the ring is full, nothing overwritten yet"
-        );
-        d.insert(MsgId(999), at(1));
-        assert!(
-            !d.contains(MsgId(7), at(1)),
-            "the oldest is overwritten first"
-        );
-        assert!(d.contains(MsgId(100), at(1)) && d.contains(MsgId(999), at(1)));
+        assert!(d.contains(MsgId(7)), "full, nothing replaced yet");
+        // A copy makes 7 the most recently active; 100 goes instead.
+        assert!(d.offered(MsgId(7), at(100)));
+        assert!(!d.offered(MsgId(999), at(100)));
+        d.insert(MsgId(999), at(101));
+        assert!(d.contains(MsgId(7)) && d.contains(MsgId(999)));
+        assert!(!d.contains(MsgId(100)) && d.contains(MsgId(101)));
     }
 }

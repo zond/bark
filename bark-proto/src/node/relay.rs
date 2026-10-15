@@ -207,7 +207,7 @@ impl Relay {
             replies: Replies::new(),
             leaves: Leaves::from_config(&config),
             delivery: DeliveryQueue::from_config(&config),
-            delivered: Delivered::from_config(&config),
+            delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
             app_ready_at: None,
             own: None,

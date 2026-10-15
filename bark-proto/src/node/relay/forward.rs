@@ -291,12 +291,11 @@ impl Relay {
             msg_id: id,
             from: AckFrom::from(self.me()),
         };
-        let case =
-            if self.delivered.contains(id, now) || self.delivery.iter().any(|q| q.msg_id == id) {
-                Case::AckOnly
-            } else {
-                self.classify(&d, id, from_leaf)
-            };
+        let case = if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
+            Case::AckOnly
+        } else {
+            self.classify(&d, id, from_leaf)
+        };
         let owner = match case {
             Case::New | Case::FromLastChild => self.owns(d.dst_pos, now),
             Case::AckOnly | Case::SendBack => false,
@@ -381,6 +380,7 @@ impl Relay {
                 if let Some(r) = self.records.get_mut(id) {
                     r.received(d.hops, now);
                 }
+                self.delivered.offered(id, now);
             }
             Case::FromLastChild => {
                 if let Some(r) = self.records.get_mut(id) {
@@ -625,7 +625,7 @@ impl Relay {
             return;
         }
         let id = MsgId::of(dst_pos, dst_leaf, payload);
-        if self.records.get(id).is_some() || self.delivered.contains(id, now) {
+        if self.records.get(id).is_some() || self.delivered.contains(id) {
             return;
         }
         // The table outnumbers what a relay holds (`tables/records.rs`).
