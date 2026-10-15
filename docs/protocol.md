@@ -233,7 +233,7 @@ Every relay sends a heartbeat. Leaves do not (§10).
 | channel | 4 | home channel index 0–12 |
 | lat | 25 | WGS-84 latitude, fixed point: 180° / 2²⁵ ≈ 0.6 m |
 | lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
-| spare | 5 | zero |
+| spare | 5 | zero. A relay reads them as the sender's transmit power, a research prototype that is off (`power-research-2026-10-15.md`) |
 
 8 bytes, 11.8 ms on air at SF5 (§4). There is no node ID: a relay's position
 **is** its identity (§8.1).
