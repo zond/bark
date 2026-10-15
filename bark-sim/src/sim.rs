@@ -947,6 +947,12 @@ impl Sim {
                 .load
                 .get_or_insert_with(Default::default)
                 .add(&l, REPLY_RESERVE + full_frame, REPLY_RESERVE, NEIGHBOURS);
+            if self.power_on {
+                self.metrics.nodes[i]
+                    .tx_power
+                    .get_or_insert_with(Default::default)
+                    .sample(r.operating_power());
+            }
         }
     }
 

@@ -398,6 +398,12 @@ impl Relay {
             .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
     }
 
+    /// Operating power, dBm: what heartbeats state (research prototype,
+    /// `relay/power.rs`).
+    pub fn operating_power(&self) -> i8 {
+        self.heartbeat_power().0.operating_dbm
+    }
+
     /// How loaded the relay is at `now`, for a driver to sample. Reading
     /// it changes nothing.
     pub fn load(&self, now: Instant) -> Load {
