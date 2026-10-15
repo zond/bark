@@ -131,6 +131,7 @@ measurements use. Each file says in its header what it is for.
 | `s1b-hidden.toml` | S1 with both leaves sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
 | `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | attach, keepalive, delivery queue, dark phones |
 | `corridor.toml` | five relays in a line, a leaf at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
+| `ring.toml` | eight relays on an octagon, a leaf at each, every leaf sending to the leaf three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
 | `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
 | `mesh-spread.toml` | the same mesh and flows, each leaf starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
 

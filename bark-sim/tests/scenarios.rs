@@ -472,6 +472,31 @@ fn corridor_carries_crossing_flows() {
     }
 }
 
+/// The ring (`scenarios/ring.toml`): eight relays, each leaf sending to
+/// the leaf three relays on, every 2 s. The relays run at their duty cap
+/// with messages waiting for each other round the ring, and none is
+/// dropped for want of room (roadmap D31): seeds 1 to 5 deliver 0.995 to
+/// 0.997 of the settled phase, where returning or dropping what found
+/// every neighbour busy delivered 0.49 to 0.66. The bound leaves room for
+/// the spread between seeds.
+#[test]
+fn ring_carries_flows_that_wait_for_each_other() {
+    let sc = scenario("ring.toml");
+    for seed in 1..=3 {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        let mut sim = Sim::new(&sc).expect("builds");
+        sim.run();
+        let s = sim.summary();
+        let settled = &s.app.phases[1];
+        assert_eq!(settled.phase, "settled");
+        assert_eq!(settled.unreachable, 0, "the ring is connected");
+        assert!(settled.delivery_ratio >= 0.98, "seed {seed}: {}", s.table());
+        assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
+        accounted(&sim, &format!("ring seed {seed}"));
+    }
+}
+
 /// The random mesh (`scenarios/mesh-burst.toml`, `mesh-spread.toml`):
 /// every leaf sends across the mesh, all at once or each at its own time,
 /// and in the spread run the middle relay restarts. Seed 5 leaves a relay

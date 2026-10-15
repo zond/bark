@@ -1,0 +1,258 @@
+# A ring: eight relays on an octagon with 400 m sides, numbered clockwise,
+# each hearing only its two neighbours on the ring, and a leaf 50 m outside
+# each relay. Leaf i sends to leaf i + 3 every 2 s, all from the same
+# instant.
+#
+#            R0
+#       R7        R1
+#     R6            R2
+#       R5        R3
+#            R4
+#
+# Clockwise the destination is three hand-overs between relays away, the
+# other way five. So every relay takes messages from the relay behind it
+# and hands them to the relay ahead, and a relay in the middle of a path
+# holds messages for a relay whose send queue fills from the same flows:
+# waiting messages could close a circle round the ring.
+
+name = "ring"
+seed = 1
+duration_s = 1800.0
+# As S1: the relays know each other one worst-case rotation (13
+# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+settle_s = 345.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "table"
+table = [
+  # 400 m hops, about -106 dBm as in the corridor; farther pairs below
+  # sensitivity (-119 dBm), audible only as interference.
+  { a = "R0", b = "R1", dbm = -106.0 },
+  { a = "R0", b = "R2", dbm = -125.0 },
+  { a = "R0", b = "R3", dbm = -125.0 },
+  { a = "R0", b = "R4", dbm = -125.0 },
+  { a = "R0", b = "R5", dbm = -125.0 },
+  { a = "R0", b = "R6", dbm = -125.0 },
+  { a = "R0", b = "R7", dbm = -106.0 },
+  { a = "R1", b = "R2", dbm = -106.0 },
+  { a = "R1", b = "R3", dbm = -125.0 },
+  { a = "R1", b = "R4", dbm = -125.0 },
+  { a = "R1", b = "R5", dbm = -125.0 },
+  { a = "R1", b = "R6", dbm = -125.0 },
+  { a = "R1", b = "R7", dbm = -125.0 },
+  { a = "R2", b = "R3", dbm = -106.0 },
+  { a = "R2", b = "R4", dbm = -125.0 },
+  { a = "R2", b = "R5", dbm = -125.0 },
+  { a = "R2", b = "R6", dbm = -125.0 },
+  { a = "R2", b = "R7", dbm = -125.0 },
+  { a = "R3", b = "R4", dbm = -106.0 },
+  { a = "R3", b = "R5", dbm = -125.0 },
+  { a = "R3", b = "R6", dbm = -125.0 },
+  { a = "R3", b = "R7", dbm = -125.0 },
+  { a = "R4", b = "R5", dbm = -106.0 },
+  { a = "R4", b = "R6", dbm = -125.0 },
+  { a = "R4", b = "R7", dbm = -125.0 },
+  { a = "R5", b = "R6", dbm = -106.0 },
+  { a = "R5", b = "R7", dbm = -125.0 },
+  { a = "R6", b = "R7", dbm = -106.0 },
+  # Leaves 50 m from their relays; the relays beside them only as interference.
+  { a = "L0", b = "R0", dbm = -80.0 },
+  { a = "L0", b = "R1", dbm = -125.0 },
+  { a = "L0", b = "R7", dbm = -125.0 },
+  { a = "L1", b = "R1", dbm = -80.0 },
+  { a = "L1", b = "R2", dbm = -125.0 },
+  { a = "L1", b = "R0", dbm = -125.0 },
+  { a = "L2", b = "R2", dbm = -80.0 },
+  { a = "L2", b = "R3", dbm = -125.0 },
+  { a = "L2", b = "R1", dbm = -125.0 },
+  { a = "L3", b = "R3", dbm = -80.0 },
+  { a = "L3", b = "R4", dbm = -125.0 },
+  { a = "L3", b = "R2", dbm = -125.0 },
+  { a = "L4", b = "R4", dbm = -80.0 },
+  { a = "L4", b = "R5", dbm = -125.0 },
+  { a = "L4", b = "R3", dbm = -125.0 },
+  { a = "L5", b = "R5", dbm = -80.0 },
+  { a = "L5", b = "R6", dbm = -125.0 },
+  { a = "L5", b = "R4", dbm = -125.0 },
+  { a = "L6", b = "R6", dbm = -80.0 },
+  { a = "L6", b = "R7", dbm = -125.0 },
+  { a = "L6", b = "R5", dbm = -125.0 },
+  { a = "L7", b = "R7", dbm = -80.0 },
+  { a = "L7", b = "R0", dbm = -125.0 },
+  { a = "L7", b = "R6", dbm = -125.0 },
+]
+
+[[nodes]]
+place = "point"
+name = "R0"
+role = "relay"
+x = 0.0
+y = 522.6
+
+[[nodes]]
+place = "point"
+name = "L0"
+role = "leaf"
+x = 0.0
+y = 572.6
+
+[[nodes]]
+place = "point"
+name = "R1"
+role = "relay"
+x = 369.6
+y = 369.6
+
+[[nodes]]
+place = "point"
+name = "L1"
+role = "leaf"
+x = 404.9
+y = 404.9
+
+[[nodes]]
+place = "point"
+name = "R2"
+role = "relay"
+x = 522.6
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "L2"
+role = "leaf"
+x = 572.6
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "R3"
+role = "relay"
+x = 369.6
+y = -369.6
+
+[[nodes]]
+place = "point"
+name = "L3"
+role = "leaf"
+x = 404.9
+y = -404.9
+
+[[nodes]]
+place = "point"
+name = "R4"
+role = "relay"
+x = 0.0
+y = -522.6
+
+[[nodes]]
+place = "point"
+name = "L4"
+role = "leaf"
+x = 0.0
+y = -572.6
+
+[[nodes]]
+place = "point"
+name = "R5"
+role = "relay"
+x = -369.6
+y = -369.6
+
+[[nodes]]
+place = "point"
+name = "L5"
+role = "leaf"
+x = -404.9
+y = -404.9
+
+[[nodes]]
+place = "point"
+name = "R6"
+role = "relay"
+x = -522.6
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "L6"
+role = "leaf"
+x = -572.6
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "R7"
+role = "relay"
+x = -369.6
+y = 369.6
+
+[[nodes]]
+place = "point"
+name = "L7"
+role = "leaf"
+x = -404.9
+y = 404.9
+
+[[traffic]]
+kind = "periodic"
+from = "L0"
+to = "L3"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L1"
+to = "L4"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L2"
+to = "L5"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L3"
+to = "L6"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L4"
+to = "L7"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L5"
+to = "L0"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L6"
+to = "L1"
+interval_s = 2.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "L7"
+to = "L2"
+interval_s = 2.0
+payload_bytes = 40
+
+[metrics]
+cadence_s = 10.0
