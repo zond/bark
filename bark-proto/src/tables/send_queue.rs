@@ -168,6 +168,12 @@ impl SendQueue {
         self.len() == 0
     }
 
+    /// Empty again, in place.
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.current = None;
+    }
+
     /// Entries in the regular room.
     pub fn regular(&self) -> usize {
         self.iter().filter(|o| o.place == 0).count()

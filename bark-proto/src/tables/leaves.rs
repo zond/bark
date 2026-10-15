@@ -68,7 +68,7 @@ impl Leaves {
     }
 
     /// An empty table with the design's expiry for `config.keepalive`.
-    pub fn from_config(config: &Config) -> Leaves {
+    pub const fn from_config(config: &Config) -> Leaves {
         Leaves::new(config.keepalive.mul(MISSED_KEEPALIVES))
     }
 

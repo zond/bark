@@ -127,7 +127,7 @@ impl DeliveryQueue {
     }
 
     /// An empty queue with `config.delivery_ttl`.
-    pub fn from_config(config: &Config) -> DeliveryQueue {
+    pub const fn from_config(config: &Config) -> DeliveryQueue {
         DeliveryQueue::new(config.delivery_ttl)
     }
 

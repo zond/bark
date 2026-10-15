@@ -151,6 +151,14 @@ the sizes follow from the design. The board's application has 255 KiB of RAM
 §15), which leaves 234 KiB, 83 KiB more than the relay needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
+That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
+value, and on the board's target it takes 174 KiB of stack to build one (measured
+2026-10-15 in the firmware's release build), more than the 97 KiB left beside a
+relay in static memory. So `Relay::UNSET`, a relay with empty tables, is a constant a driver
+can keep in a static, built at compile time, and `Relay::reset(config, seed)` sets it up in
+place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
+`Relay::new`.
+
 `Leaf` is 752 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one

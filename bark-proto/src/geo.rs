@@ -82,6 +82,15 @@ pub struct LocalPlane {
 }
 
 impl LocalPlane {
+    /// The plane at latitude and longitude 0, where a longitude count is as
+    /// long as a latitude count: what [`LocalPlane::new`] gives there, as a
+    /// constant.
+    pub const ORIGIN: LocalPlane = LocalPlane {
+        centre: Position { lat: 0, lon: 0 },
+        north_per_count: UNIT_M as f32,
+        east_per_count: UNIT_M as f32,
+    };
+
     /// The plane centred on `centre`.
     pub fn new(centre: Position) -> LocalPlane {
         let lat_rad = centre.lat as f64 * UNIT_DEG * (core::f64::consts::PI / 180.0);

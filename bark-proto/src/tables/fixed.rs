@@ -21,6 +21,11 @@ impl<T: Copy, const N: usize> FixedVec<T, N> {
         self.len
     }
 
+    /// Empty again, in place.
+    pub(crate) fn clear(&mut self) {
+        self.len = 0;
+    }
+
     pub(crate) fn is_full(&self) -> bool {
         self.len == N
     }

@@ -254,6 +254,11 @@ impl Records {
         self.len == 0
     }
 
+    /// No records again, in place.
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
     /// Whether a new record must take an old one's place.
     pub fn is_full(&self) -> bool {
         self.len == RECORDS

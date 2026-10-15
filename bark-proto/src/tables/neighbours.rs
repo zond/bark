@@ -99,12 +99,9 @@ pub struct NeighbourParams {
 
 impl NeighbourParams {
     /// From the protocol configuration; see the module documentation.
-    pub fn from_config(c: &Config) -> NeighbourParams {
+    pub const fn from_config(c: &Config) -> NeighbourParams {
         let mean_rotation = Duration::from_micros(
-            (c.heartbeat_min + c.heartbeat_max)
-                .mul(CHANNELS as u64)
-                .as_micros()
-                / 2,
+            (c.heartbeat_min.as_micros() + c.heartbeat_max.as_micros()) * CHANNELS as u64 / 2,
         );
         NeighbourParams {
             demote_after: c.demote_after_failures,

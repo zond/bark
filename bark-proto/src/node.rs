@@ -98,35 +98,40 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
-            position: Position::default(),
-            surveyed: true,
-            leaf_id: LeafId::RELAY,
-            tx_power_dbm: 10,
-            heartbeat_min: Duration::from_secs(5),
-            heartbeat_max: Duration::from_secs(15),
-            ack_timeout: Duration::from_millis(100),
-            hop_attempts: 3,
-            hop_backoff_max: Duration::from_millis(50),
-            retry_backoff: crate::tables::RETRY_BACKOFF,
-            demote_after_failures: 2,
-            neighbour_expiry_rotations: 3,
-            demotion_rotations: 3,
-            keepalive: Duration::from_secs(60),
-            delivery_ttl: Duration::from_secs(600),
-            delivery_retry: Duration::from_secs(60),
-            busy_ema_inverse: 600,
-            sweep_interval: Duration::from_secs(1),
-            busy_threshold_db: 6,
-            move_threshold_percent: 5,
-            move_dwell: Duration::from_secs(600),
-            move_wait_max: Duration::from_secs(300),
-            lbt_attempts: 3,
-            lbt_backoff_max: Duration::from_millis(200),
-            boot_listen: Duration::from_secs(150),
-            home_override: None,
-        }
+        Config::DEFAULT
     }
+}
+
+impl Config {
+    /// The design's values, as a constant.
+    pub const DEFAULT: Config = Config {
+        position: Position { lat: 0, lon: 0 },
+        surveyed: true,
+        leaf_id: LeafId::RELAY,
+        tx_power_dbm: 10,
+        heartbeat_min: Duration::from_secs(5),
+        heartbeat_max: Duration::from_secs(15),
+        ack_timeout: Duration::from_millis(100),
+        hop_attempts: 3,
+        hop_backoff_max: Duration::from_millis(50),
+        retry_backoff: crate::tables::RETRY_BACKOFF,
+        demote_after_failures: 2,
+        neighbour_expiry_rotations: 3,
+        demotion_rotations: 3,
+        keepalive: Duration::from_secs(60),
+        delivery_ttl: Duration::from_secs(600),
+        delivery_retry: Duration::from_secs(60),
+        busy_ema_inverse: 600,
+        sweep_interval: Duration::from_secs(1),
+        busy_threshold_db: 6,
+        move_threshold_percent: 5,
+        move_dwell: Duration::from_secs(600),
+        move_wait_max: Duration::from_secs(300),
+        lbt_attempts: 3,
+        lbt_backoff_max: Duration::from_millis(200),
+        boot_listen: Duration::from_secs(150),
+        home_override: None,
+    };
 }
 
 /// A protocol state machine. Both roles implement it; drivers program
@@ -210,7 +215,7 @@ pub struct Rng(u64);
 
 impl Rng {
     /// Seed.
-    pub fn new(seed: u64) -> Rng {
+    pub const fn new(seed: u64) -> Rng {
         Rng(seed)
     }
 

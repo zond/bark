@@ -168,17 +168,20 @@ pub struct Relay {
 }
 
 impl Relay {
-    /// Create a relay. `seed` drives every random choice the relay makes;
-    /// two relays with the same config and seed behave identically.
-    pub fn new(config: Config, seed: u64) -> Relay {
-        let mut rng = Rng::new(seed);
-        let home = config
-            .home_override
-            .unwrap_or_else(|| random_channel(&mut rng));
-        let rotation = random_channel(&mut rng);
+    /// A relay with empty tables and the default configuration, not set
+    /// up: built at compile time, so that a driver can keep a relay in a
+    /// static and set it up in place with [`Relay::reset`]. A relay is
+    /// 150 KiB, and [`Relay::new`] needs about as much again on the stack
+    /// (`docs/core-interface.md` §6).
+    pub const UNSET: Relay = {
+        let config = Config::DEFAULT;
+        let channel = match Channel::new(0) {
+            Some(c) => c,
+            None => unreachable!(),
+        };
         Relay {
-            plane: LocalPlane::new(config.position),
-            home,
+            plane: LocalPlane::ORIGIN,
+            home: channel,
             stage: Stage::Off,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
@@ -186,7 +189,7 @@ impl Relay {
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
             sweep: Sweep {
                 next_at: Instant::ZERO,
-                channel: Channel::all().next().expect("the plan has channels"),
+                channel,
                 last_home: Instant::ZERO,
                 foreign: Duration::ZERO,
                 pending: None,
@@ -194,13 +197,16 @@ impl Relay {
             beacon: Beacon {
                 next_at: Instant::ZERO,
                 ready_at: Instant::ZERO,
-                rotation,
+                rotation: channel,
                 announce: None,
                 current: None,
                 busy_checks: 0,
                 check: Check::Idle,
             },
-            mover: Mover::default(),
+            mover: Mover {
+                excess_since: None,
+                move_at: None,
+            },
             records: Records::new(),
             queue: SendQueue::new(),
             handover: Transfer::new(),
@@ -217,8 +223,98 @@ impl Relay {
             feed_due: false,
             feed_at: None,
             config,
-            rng,
+            rng: Rng::new(0),
         }
+    };
+
+    /// Create a relay. `seed` drives every random choice the relay makes;
+    /// two relays with the same config and seed behave identically.
+    pub fn new(config: Config, seed: u64) -> Relay {
+        let mut relay = Relay::UNSET;
+        relay.reset(config, seed);
+        relay
+    }
+
+    /// Make this relay, in place, what [`Relay::new`] would build from
+    /// `config` and `seed`: everything it held is gone.
+    pub fn reset(&mut self, config: Config, seed: u64) {
+        let mut rng = Rng::new(seed);
+        let home = config
+            .home_override
+            .unwrap_or_else(|| random_channel(&mut rng));
+        let rotation = random_channel(&mut rng);
+        // Every field by name, so that a new one cannot be left out. The
+        // large tables are emptied where they lie.
+        let Relay {
+            config: c,
+            plane,
+            rng: r,
+            home: h,
+            stage,
+            radio,
+            busy,
+            budget,
+            neighbours,
+            sweep,
+            beacon,
+            mover,
+            records,
+            queue,
+            handover,
+            skipped,
+            replies,
+            leaves,
+            delivery,
+            delivered,
+            delivery_retry_at,
+            app_ready_at,
+            own,
+            own_refusals,
+            held,
+            feed_due,
+            feed_at,
+        } = self;
+        *plane = LocalPlane::new(config.position);
+        *h = home;
+        *stage = Stage::Off;
+        *radio = Radio::new();
+        *busy = BusyEstimator::from_config(&config);
+        *budget = Budget::new();
+        *neighbours = Neighbours::new(NeighbourParams::from_config(&config));
+        *sweep = Sweep {
+            next_at: Instant::ZERO,
+            channel: Channel::all().next().expect("the plan has channels"),
+            last_home: Instant::ZERO,
+            foreign: Duration::ZERO,
+            pending: None,
+        };
+        *beacon = Beacon {
+            next_at: Instant::ZERO,
+            ready_at: Instant::ZERO,
+            rotation,
+            announce: None,
+            current: None,
+            busy_checks: 0,
+            check: Check::Idle,
+        };
+        *mover = Mover::default();
+        records.clear();
+        queue.clear();
+        *handover = Transfer::new();
+        *skipped = 0;
+        *replies = Replies::new();
+        *leaves = Leaves::from_config(&config);
+        *delivery = DeliveryQueue::from_config(&config);
+        *delivered = Delivered::new();
+        *delivery_retry_at = Instant::ZERO;
+        *app_ready_at = None;
+        *own = None;
+        *own_refusals = 0;
+        *held = None;
+        *feed_due = false;
+        *feed_at = None;
+        *c = config;
+        *r = rng;
     }
 
     /// Current home channel.
@@ -777,6 +873,42 @@ mod tests {
                 _ => {}
             });
         }
+    }
+
+    /// A relay reset in place, after it has run and holds messages, does
+    /// what a new one does.
+    #[test]
+    fn a_reset_relay_is_a_new_one() {
+        use crate::ids::LeafId;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            ..Config::default()
+        };
+        let mut used = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut used, &mut now, Instant::ZERO + Duration::from_secs(30));
+        let send = AppCommand::Send {
+            dst_pos: config.position,
+            dst_leaf: LeafId([1; 4]),
+            payload: b"queued",
+        };
+        used.handle(Event::App(send), now, &mut |_| {});
+        assert_eq!(used.holding().count(), 1);
+
+        let other = Config {
+            position: Position::from_degrees(50.45, 30.52),
+            ..config
+        };
+        used.reset(other, 2);
+        let mut fresh = Relay::new(other, 2);
+        assert_eq!(used.holding().count(), 0);
+        let until = Instant::ZERO + Duration::from_secs(60);
+        let (mut t_used, mut t_fresh) = (Instant::ZERO, Instant::ZERO);
+        let sent_used = drive(&mut used, &mut t_used, until);
+        let sent_fresh = drive(&mut fresh, &mut t_fresh, until);
+        assert!(!sent_fresh.is_empty());
+        assert_eq!(sent_used, sent_fresh);
+        assert_eq!(used.home(), fresh.home());
     }
 
     /// A relay whose bucket is spent holds one message for a listening
