@@ -270,8 +270,9 @@ impl Relay {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
         let skipped = self.skipped;
-        let floor = self.busy.noise_floor_dbm();
-        let faint = |n: &Neighbour| !Neighbours::has_margin(n, floor);
+        // Computed once: it takes a logarithm.
+        let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
+        let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         self.neighbours
             .live(now)

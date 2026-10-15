@@ -221,11 +221,16 @@ impl Neighbours {
         n.fail_count >= self.params.demote_after && now.since(n.demoted_at) < self.params.demotion
     }
 
-    /// Whether `n` is heard strongly enough for a full-length frame to
-    /// reach it through a fade, with the noise floor at `noise_floor_dbm`
-    /// (§9.2.3, roadmap D38).
+    /// The averaged RSSI, dBm, from which a neighbour has margin: a
+    /// full-length frame reaches it through a fade, with the noise floor
+    /// at `noise_floor_dbm` (§9.2.3, roadmap D38).
+    pub fn margin_dbm(noise_floor_dbm: i16) -> f32 {
+        noise_floor_dbm as f32 + full_frame_rssi_above_noise_db()
+    }
+
+    /// Whether `n` has margin with the noise floor at `noise_floor_dbm`.
     pub fn has_margin(n: &Neighbour, noise_floor_dbm: i16) -> bool {
-        n.rssi >= noise_floor_dbm as f32 + full_frame_rssi_above_noise_db()
+        n.rssi >= Neighbours::margin_dbm(noise_floor_dbm)
     }
 
     /// Whether `n` is banned at `now`.
