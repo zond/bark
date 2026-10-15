@@ -14,7 +14,7 @@ use crate::geo::{Origin, Xy};
 use crate::links::{LinkParams, Site};
 use crate::phy::RadioParams;
 use crate::rng::{Purpose, Stream};
-use bark_proto::{Config, Duration};
+use bark_proto::{Config, Duration, PowerRule};
 use serde::{Deserialize, Serialize};
 
 /// Node role in a scenario.
@@ -130,6 +130,19 @@ pub struct ProtocolOverrides {
     pub lbt_backoff_max_ms: Option<u64>,
     pub hop_backoff_max_ms: Option<u64>,
     pub retry_backoff_ms: Option<u64>,
+    /// Power control rule: "fixed", "degree", "per_link" or "both".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_rule: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_degree: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_sectors: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_margin_db: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_reach_filter: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power_discovery_every: Option<u8>,
 }
 
 impl ProtocolOverrides {
@@ -175,6 +188,31 @@ impl ProtocolOverrides {
         set!(move_wait_max, move_wait_max_ms, ms);
         set!(lbt_attempts);
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
+        let p = &mut c.power;
+        if let Some(r) = &self.power_rule {
+            p.rule = match r.as_str() {
+                "degree" => PowerRule::Degree,
+                "per_link" => PowerRule::PerLink,
+                "both" => PowerRule::Both,
+                "fixed" => PowerRule::Fixed,
+                other => panic!("unknown power_rule {other:?}"),
+            };
+        }
+        if let Some(v) = self.power_degree {
+            p.degree = v;
+        }
+        if let Some(v) = self.power_sectors {
+            p.sectors = v;
+        }
+        if let Some(v) = self.power_margin_db {
+            p.margin_db = v;
+        }
+        if let Some(v) = self.power_reach_filter {
+            p.reach_filter = v;
+        }
+        if let Some(v) = self.power_discovery_every {
+            p.discovery_every = v;
+        }
         c
     }
 }

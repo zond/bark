@@ -37,7 +37,7 @@
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
-use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::{time_on_air, Channel, MAX_ERP_DBM, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
 use crate::tables::records::MAX_HOPS;
@@ -149,6 +149,7 @@ impl SendQueue {
         let frame = Frame {
             channel,
             preamble_symbols: 0,
+            power_dbm: MAX_ERP_DBM,
             len: 0,
             bytes: [0; MAX_FRAME],
         };
@@ -295,6 +296,7 @@ mod tests {
         let frame = Frame {
             channel: Channel::new(3).unwrap(),
             preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            power_dbm: MAX_ERP_DBM,
             len: 1,
             bytes,
         };
@@ -408,6 +410,7 @@ mod tests {
         let frame = Frame {
             channel: d.sender_home,
             preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            power_dbm: MAX_ERP_DBM,
             len,
             bytes,
         };

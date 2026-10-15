@@ -71,6 +71,7 @@ impl Relay {
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
         if a.reply {
             if self.leaves.answered(a.leaf, a.mode) {
+                self.leaves.measured(a.leaf, self.leaf_loss());
                 self.deliver_now(a.leaf, now);
             }
             return;
@@ -85,6 +86,8 @@ impl Relay {
         if self.leaves.attached(a.leaf, a.mode, lead, now).is_err() {
             return;
         }
+        self.leaves.measured(a.leaf, self.leaf_loss());
+        self.reply_power = self.reply_power_for(None);
         self.replies
             .owe(reply, self.home, now + self.config.ack_timeout, now);
         self.deliver_now(a.leaf, now);
@@ -183,7 +186,8 @@ impl Relay {
             return;
         }
         self.leaves.polled(leaf);
-        let frame = self.attached_frame(leaf, now);
+        let mut frame = self.attached_frame(leaf, now);
+        frame.power_dbm = self.leaf_power(leaf);
         self.budget.record(mac::airtime(&frame), now);
         self.poller.check = Check::Tx;
         self.radio.start(Job::Poll, Action::Transmit(frame), emit);

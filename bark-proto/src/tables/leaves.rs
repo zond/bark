@@ -111,6 +111,10 @@ pub struct LeafEntry {
     pub missed: bool,
     /// Polls sent or skipped since it last answered.
     pub unanswered: u8,
+    /// Path loss to it in whole dB, rounded up, from its last ATTACH,
+    /// sent at the ERP limit as every leaf sends. A byte keeps the entry
+    /// at 16 bytes.
+    pub loss_db: u8,
 }
 
 /// The table is full.
@@ -133,6 +137,7 @@ impl Leaves {
             mode: RxMode::Listening,
             missed: false,
             unanswered: 0,
+            loss_db: 0,
         };
         Leaves {
             entries: FixedVec::new(fill),
@@ -198,6 +203,7 @@ impl Leaves {
             mode,
             missed: false,
             unanswered: 0,
+            loss_db: 0,
         };
         let _ = self.entries.push(entry);
         Ok(self.get(leaf).expect("pushed"))
@@ -224,6 +230,13 @@ impl Leaves {
                 used[p / 64] & (1 << (p % 64)) == 0
             })
             .map_or(from, |g| Instant::from_micros(g * n))
+    }
+
+    /// An ATTACH from `leaf` arrived over a path loss of `loss_q`.
+    pub fn measured(&mut self, leaf: LeafId, loss_q: i16) {
+        if let Some(e) = self.get_mut(leaf) {
+            e.loss_db = ((loss_q as i32 + 3) / 4).clamp(0, u8::MAX as i32) as u8;
+        }
     }
 
     /// `leaf` answered a poll, so it is listening. Returns whether it is in

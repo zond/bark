@@ -40,7 +40,10 @@
 //!   by an ACK (roadmap D39).
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK, and all of a DELIVER's, are sent as zero and ignored
-//!   on receipt, as are the spare position bits.
+//!   on receipt, as are the spare position bits of DATA `dst_pos`.
+//! - A heartbeat's five spare position bits carry its sender's transmit
+//!   power ([`HeartbeatPower`]); all zero is the ERP limit, which is what
+//!   every relay sends with power control off.
 //! - ATTACH `aux` is the [`RxMode`] code in its low three bits, and
 //!   [`ATTACH_REPLY`] when the ATTACH answers a poll.
 //! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s; its `aux` is
@@ -50,7 +53,7 @@
 use crate::event::MAX_FRAME;
 use crate::ids::{LeafId, MsgId};
 use crate::position::{Position, ShortName};
-use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use crate::radio::{Channel, MAX_ERP_DBM, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use crate::time::Duration;
 
 // Field widths.
@@ -183,6 +186,68 @@ pub struct Heartbeat {
     pub home: Channel,
     /// The sender's position, which is its identity.
     pub position: Position,
+    /// The sender's transmit power.
+    pub power: HeartbeatPower,
+}
+
+/// The transmit power a heartbeat states, in the five spare bits of its
+/// position: four bits of the sender's operating power in 2 dB steps below
+/// [`MAX_ERP_DBM`], and one that says this heartbeat itself went at
+/// [`MAX_ERP_DBM`]. A receiver takes the path loss as the heartbeat's own
+/// power less its RSSI, and the operating power as what the sender's other
+/// frames use (research prototype, `docs/power-research-2026-10-15.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeartbeatPower {
+    /// The sender's operating power, dBm: a multiple of 2 dB below
+    /// [`MAX_ERP_DBM`], at least [`HeartbeatPower::FLOOR_DBM`].
+    pub operating_dbm: i8,
+    /// This heartbeat went at [`MAX_ERP_DBM`], whatever the operating power.
+    pub full: bool,
+}
+
+impl HeartbeatPower {
+    /// Every relay with power control off: all bits zero.
+    pub const LIMIT: HeartbeatPower = HeartbeatPower {
+        operating_dbm: MAX_ERP_DBM,
+        full: false,
+    };
+
+    /// Lowest operating power the four bits state: the lowest 2 dB step
+    /// at or above the SX1262's −9 dBm (datasheet §13.4.4, SetTxParams).
+    pub const FLOOR_DBM: i8 = MAX_ERP_DBM - 2 * ((MAX_ERP_DBM as i16 + 9) / 2) as i8;
+
+    /// The power this heartbeat went at.
+    pub const fn tx_dbm(self) -> i8 {
+        if self.full {
+            MAX_ERP_DBM
+        } else {
+            self.operating_dbm
+        }
+    }
+
+    /// The highest stated power at or below `dbm`, within the floor.
+    pub const fn step_down(dbm: i8) -> i8 {
+        let below = MAX_ERP_DBM as i16 - dbm as i16;
+        let steps = if below <= 0 { 0 } else { (below + 1) / 2 };
+        let p = MAX_ERP_DBM as i16 - 2 * steps;
+        if p < Self::FLOOR_DBM as i16 {
+            Self::FLOOR_DBM
+        } else {
+            p as i8
+        }
+    }
+
+    fn bits(self) -> u8 {
+        let steps = ((MAX_ERP_DBM as i16 - self.operating_dbm as i16) / 2).clamp(0, 15) as u8;
+        steps | (self.full as u8) << 4
+    }
+
+    fn from_bits(b: u8) -> HeartbeatPower {
+        HeartbeatPower {
+            operating_dbm: MAX_ERP_DBM - 2 * (b & 0x0f) as i8,
+            full: b & 0x10 != 0,
+        }
+    }
 }
 
 /// A party to an ACK: a relay's short name or a leaf's ID, in the 4 bytes
@@ -427,6 +492,7 @@ impl Packet<'_> {
                 };
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_POS, &h.position.encode());
+                buf[HEARTBEAT_LEN - 1] |= h.power.bits();
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
@@ -493,6 +559,7 @@ impl<'a> Packet<'a> {
                     surveyed: kind == T_HEARTBEAT_SURVEYED,
                     home: channel(aux)?,
                     position: get_pos(b, HEARTBEAT_POS),
+                    power: HeartbeatPower::from_bits(b[HEARTBEAT_LEN - 1] & 0x1f),
                 }))
             }
             T_ACK => {
@@ -606,8 +673,15 @@ mod tests {
 
     proptest! {
         #[test]
-        fn heartbeat_round_trips(surveyed: bool, home in chan(), position in position()) {
-            round_trip(&Packet::Heartbeat(Heartbeat { surveyed, home, position }));
+        fn heartbeat_round_trips(
+            surveyed: bool,
+            home in chan(),
+            position in position(),
+            steps in 0i8..10,
+            full: bool,
+        ) {
+            let power = HeartbeatPower { operating_dbm: MAX_ERP_DBM - 2 * steps, full };
+            round_trip(&Packet::Heartbeat(Heartbeat { surveyed, home, position, power }));
         }
 
         #[test]
@@ -767,6 +841,25 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_power_steps() {
+        assert_eq!(HeartbeatPower::FLOOR_DBM, -8);
+        assert_eq!(HeartbeatPower::step_down(MAX_ERP_DBM), MAX_ERP_DBM);
+        assert_eq!(HeartbeatPower::step_down(7), 6);
+        assert_eq!(HeartbeatPower::step_down(-20), -8);
+        assert_eq!(
+            HeartbeatPower::LIMIT.bits(),
+            0,
+            "power control off sends zero"
+        );
+        let full = HeartbeatPower {
+            operating_dbm: 0,
+            full: true,
+        };
+        assert_eq!(full.tx_dbm(), MAX_ERP_DBM);
+        assert_eq!(HeartbeatPower::from_bits(full.bits()), full);
+    }
+
+    #[test]
     fn exact_bytes() {
         // Pin the layouts: field order, big-endian names and IDs.
         let mut buf = [0; MAX_FRAME];
@@ -775,6 +868,7 @@ mod tests {
             surveyed: false,
             home: Channel::new(12).unwrap(),
             position,
+            power: HeartbeatPower::LIMIT,
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x2c);

@@ -16,7 +16,7 @@
 use std::time::Instant as Wall;
 
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use bark_proto::wire::{Data, Heartbeat, Packet, MAX_PAYLOAD};
+use bark_proto::wire::{Data, Heartbeat, HeartbeatPower, Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, Config, Core, Duration, Event, Instant, LeafId, Position, Relay, MAX_FRAME,
 };
@@ -101,6 +101,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     surveyed: true,
                     home: nhome,
                     position: pos,
+                    power: HeartbeatPower::LIMIT,
                 }),
                 false => Packet::Data(Data {
                     sender_home: nhome,

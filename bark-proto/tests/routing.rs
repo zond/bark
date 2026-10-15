@@ -1588,7 +1588,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// own application's message for longer after each refusal (§9.3).
 #[test]
 fn replies_stay_within_the_reserve() {
-    use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
+    use bark_proto::radio::{DUTY_CYCLE_WINDOW, MAX_ERP_DBM, MIN_PREAMBLE_SYMBOLS};
     use bark_proto::tables::budget::{ACK_AIRTIME, BAN, BUDGET};
     use bark_proto::wire::Data;
     use bark_proto::{Frame, MAX_FRAME};
@@ -1643,6 +1643,7 @@ fn replies_stay_within_the_reserve() {
             let mut frame = Frame {
                 channel: ch(0),
                 preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+                power_dbm: MAX_ERP_DBM,
                 len: 0,
                 bytes: [0; MAX_FRAME],
             };

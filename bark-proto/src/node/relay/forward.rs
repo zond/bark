@@ -281,6 +281,7 @@ impl Relay {
                     && skipped & (1 << slot) == 0
                     && Some(n.position.short()) != parent
                     && !self.neighbours.is_banned(n, now)
+                    && self.usable(n)
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
@@ -351,6 +352,7 @@ impl Relay {
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
+                self.reply_power = self.reply_power_for((d.hops > 0).then_some(d.src_hop));
                 self.replies.owe(reply, d.sender_home, deadline, now);
             }
             return;
@@ -362,6 +364,7 @@ impl Relay {
             }));
             return;
         }
+        self.reply_power = self.reply_power_for((d.hops > 0).then_some(d.src_hop));
         self.replies.owe(reply, d.sender_home, deadline, now);
         if completes {
             self.handover_done(now, emit);
@@ -919,6 +922,7 @@ impl Relay {
             self.defer_handover(&out, now, emit);
             return;
         }
+        frame.power_dbm = self.frame_power(&frame);
         if let Some(current) = self.queue.current_mut() {
             current.frame = frame;
         }
@@ -1136,7 +1140,8 @@ impl Relay {
         match self.replies.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Reply, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = self.reply_frame(o, now);
+                let mut frame = self.reply_frame(o, now);
+                frame.power_dbm = self.reply_power;
                 let airtime = mac::airtime(&frame);
                 if self.can_reply(airtime, now) {
                     self.budget.record(airtime, now);

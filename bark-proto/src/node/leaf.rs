@@ -605,10 +605,11 @@ impl Leaf {
                     self.transfer.hold(now);
                     return;
                 }
-                let Some(frame) = self.frame() else {
+                let Some(mut frame) = self.frame() else {
                     self.transfer.cancel();
                     return;
                 };
+                frame.power_dbm = self.config.tx_power_dbm;
                 let airtime = mac::airtime(&frame);
                 if !self.budget.would_allow(airtime, now) {
                     let until = self
@@ -799,7 +800,8 @@ impl Leaf {
         match self.acks.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Ack, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = Self::reply_frame(o);
+                let mut frame = Self::reply_frame(o);
+                frame.power_dbm = self.config.tx_power_dbm;
                 let airtime = mac::airtime(&frame);
                 if self.budget.would_allow(airtime, now) {
                     self.budget.record(airtime, now);

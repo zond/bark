@@ -14,8 +14,8 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use bark_driver::{App, Clock, Driver, Heard, Outgoing, Radio, MAX_AIRTIME, RSSI_DWELL};
-use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
+use bark_proto::radio::{time_on_air, Channel, MAX_ERP_DBM, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::wire::{Heartbeat, HeartbeatPower, Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, LeafId, Position, Relay,
     MAX_FRAME,
@@ -354,6 +354,7 @@ fn frame(channel: Channel, bytes: &[u8]) -> Frame {
     let mut f = Frame {
         channel,
         preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+        power_dbm: MAX_ERP_DBM,
         len: bytes.len() as u8,
         bytes: [0; MAX_FRAME],
     };
@@ -560,6 +561,7 @@ fn a_relay_runs_through_the_loop() {
         surveyed: true,
         home: ch(6),
         position: other,
+        power: HeartbeatPower::LIMIT,
     });
     let mut buf = [0u8; MAX_FRAME];
     let len = hb.encode(&mut buf).expect("encodes");
