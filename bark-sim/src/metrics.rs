@@ -206,6 +206,10 @@ pub struct CoreCounts {
     pub handovers_deferred: u64,
     /// Neighbours demoted (§8.2).
     pub demoted: u64,
+    /// Polls of a leaf that could not go out in their slot (§10.2).
+    pub polls_skipped: u64,
+    /// Leaves dropped for leaving their polls unanswered (§10.2).
+    pub leaves_dropped: u64,
     /// Messages a neighbour took: sent on (§9.2.3) or returned to the
     /// parent (§9.2.5).
     pub handed_over: u64,

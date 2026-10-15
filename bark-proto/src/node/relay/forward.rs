@@ -798,7 +798,7 @@ impl Relay {
     /// since the last attempt, listens elsewhere, and a leaf that changed
     /// its receive mode needs another preamble. A receiver no longer in its
     /// table keeps the address it had.
-    fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
+    fn readdress(&mut self) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
         let (channel, preamble) = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
@@ -806,7 +806,7 @@ impl Relay {
             Ok(Packet::Deliver(d)) => (
                 Some(self.home),
                 self.leaves
-                    .get(d.dst_leaf, now)
+                    .get(d.dst_leaf)
                     .map(|l| l.mode.preamble_symbols()),
             ),
             _ => (None, None),
@@ -825,7 +825,7 @@ impl Relay {
         if !self.handover.due(now) {
             return false;
         }
-        let Some(out) = self.readdress(now) else {
+        let Some(out) = self.readdress() else {
             return false;
         };
         if !self.affordable(mac::airtime(&out.frame), now) {
@@ -1111,7 +1111,7 @@ impl Relay {
         let Some(o) = self.replies.due(now) else {
             return false;
         };
-        let frame = mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS);
+        let frame = self.reply_frame(o, now);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.replies.abandon();
             return true;
@@ -1130,7 +1130,7 @@ impl Relay {
         match self.replies.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Reply, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS);
+                let frame = self.reply_frame(o, now);
                 let airtime = mac::airtime(&frame);
                 if self.can_reply(airtime, now) {
                     self.budget.record(airtime, now);

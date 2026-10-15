@@ -9,7 +9,8 @@
 //! [`RxMode::Listening`] in its ATTACH. The duty-cycled and hybrid modes,
 //! which sleep between CADs and need the relay's long preamble, are
 //! declared on the wire (`wire.rs`) and served by the relay, but no leaf
-//! runs them yet.
+//! runs them yet. The leaf keeps the window in which its next poll comes
+//! ([`Leaf::poll_window`]), which such a leaf would listen in.
 //!
 //! # Relay choice (§10.1)
 //!
@@ -23,21 +24,28 @@
 //! Attached, it moves to another relay only when that relay has been heard
 //! over at least [`SWITCH_HEARTBEATS`] heartbeats and is stronger by
 //! [`SWITCH_MARGIN_DB`]. It attaches to the new relay at once and leaves
-//! the old one to time it out.
+//! the old one to drop it.
 //!
 //! # Keeping the relay (§10.2)
 //!
-//! A hand-over to the relay that fails, keepalive or message, is tried
-//! again one keepalive period later, with an ATTACH first. The relay is
-//! given up only after failures in two periods in a row, or when it has
-//! not been heard for as long as a neighbour entry lasts (§8.2: three
-//! rotations, 390 s), whichever comes first. One period is 60 s, as long
-//! as the fading of a link lasts (correlation time 60 s in the scenarios),
-//! so one fade costs a keepalive, not the relay. A relay that ACKs is
-//! alive however its heartbeats fare, so an ACK counts as hearing it. A
-//! relay's announcement of a new home channel (§6.3) moves the leaf with
-//! it, and the leaf attaches again. A leaf that has lost its relay takes
-//! the strongest other one it has heard, as above.
+//! The leaf attaches with an ATTACH, which the relay answers with ATTACHED;
+//! that names the time of the leaf's first poll. After that the relay
+//! drives: at each poll, an ATTACHED that names the next, the leaf answers
+//! with one ATTACH marked as a reply, and sends no ATTACH otherwise. A
+//! poll is taken only in its window, so that another relay's poll of the
+//! same leaf ID on the same channel is ignored. A leaf whose window passes
+//! empty expects the next one a period later; after [`Polls::missed`] empty
+//! windows in a row its relay has dropped it, and it chooses again.
+//!
+//! A hand-over to the relay that fails, an ATTACH or a message, is tried
+//! again one `leaf_retry` (60 s) later, as long as the fading of a link
+//! lasts (correlation time 60 s in the scenarios), so one fade costs a
+//! wait, not the relay; failures in two periods in a row give the relay
+//! up. A relay's heartbeat that names a new home channel (§6.3) moves the
+//! leaf with it; the schedule goes on there. A leaf that has lost its
+//! relay takes the strongest other one it has heard, as above.
+//!
+//! [`Polls::missed`]: crate::tables::leaves::Polls::missed
 //!
 //! # Sending
 //!
@@ -70,15 +78,19 @@
 use crate::event::{Action, AppCommand, AppEvent, DropReason, Event, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac::{self, Radio};
-use crate::node::transfer::{Check, Missed, Replies, Step, Transfer};
+use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::{Position, ShortName};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, Budget};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
+use crate::tables::leaves::{Polls, POLL_AIRTIME, POLL_LATE};
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckName, Attach, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD};
+use crate::wire::{
+    Ack, AckName, Attach, Attached, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD,
+    POLL_UNIT,
+};
 
 /// How much stronger, in its mean over two heartbeats, another relay must
 /// be to take a leaf from its relay (§10.1).
@@ -104,9 +116,17 @@ pub const SWITCH_HEARTBEATS: u8 = 2;
 /// strongest.
 pub const CANDIDATES: usize = 4;
 
-/// Consecutive keepalive periods with a failed hand-over after which a
-/// leaf gives its relay up (§10.2).
+/// Consecutive retry periods with a failed hand-over after which a leaf
+/// gives its relay up (§10.2).
 pub const FAILED_PERIODS: u8 = 2;
+
+/// Frequency tolerance of each end's clock, parts per million (§10.2). A
+/// 32.768 kHz tuning-fork crystal is typically ±20 ppm at 25 °C and drifts
+/// by −0.034 ppm/°C² away from it, ≈ −30 ppm more at −5 °C; ±50 ppm covers
+/// a crystal from −5 to +55 °C. The nRF52840's internal RC oscillator, at
+/// ±500 ppm (Product Specification, CLOCK), would make the window 1.1 s
+/// instead of 0.58 s, so a sleeping leaf times its slot from a crystal.
+pub const CLOCK_PPM: u64 = 50;
 
 /// DELIVERs a leaf remembers; see the module documentation.
 pub const SEEN: usize = 2;
@@ -177,14 +197,20 @@ pub struct Leaf {
     /// When the leaf first heard a heartbeat since it last knew no relay at
     /// all: a rotation later it has heard every relay in range.
     listening_since: Option<Instant>,
-    /// The relay has ACKed an ATTACH since the leaf chose it, and no
-    /// hand-over to it has failed since.
+    /// The relay has answered an ATTACH with ATTACHED since the leaf chose
+    /// it.
     attached: bool,
-    /// When the next ATTACH is due: a keepalive (§10.2), or the retry a
-    /// period after a failure.
+    /// When the ATTACH that attaches is due: at once, or a retry period
+    /// after a failure.
     attach_at: Instant,
-    /// Keepalive periods in a row in which a hand-over to the relay failed.
+    /// Retry periods in a row in which a hand-over to the relay failed.
     failed_periods: u8,
+    /// When the next poll's slot begins, as the last ATTACHED said.
+    poll_at: Instant,
+    /// When the last ATTACHED arrived: the clocks drift from there.
+    told_at: Instant,
+    /// Windows in a row that passed without a poll.
+    polls_missed: u8,
     transfer: Transfer,
     sending: Sending,
     /// The message being sent, as DATA; readdressed for each hand-over.
@@ -226,6 +252,9 @@ impl Leaf {
             attached: false,
             attach_at: Instant::ZERO,
             failed_periods: 0,
+            poll_at: Instant::ZERO,
+            told_at: Instant::ZERO,
+            polls_missed: 0,
             transfer: Transfer::new(),
             sending: Sending::Attach,
             outgoing: None,
@@ -250,7 +279,7 @@ impl Leaf {
     }
 
     /// The relay this leaf is attached to: chosen, and its ATTACH
-    /// acknowledged. Its position plus [`Leaf::id`] is the leaf's address
+    /// answered. Its position plus [`Leaf::id`] is the leaf's address
     /// (§9.1).
     pub fn relay(&self) -> Option<Position> {
         self.relay.filter(|_| self.attached).map(|r| r.position)
@@ -266,8 +295,29 @@ impl Leaf {
         self.home
     }
 
-    /// How long a relay may go unheard before the leaf gives it up: the
-    /// life of a neighbour entry (§8.2).
+    /// When the next poll can come, while attached: from its slot less the
+    /// drift of two clocks at [`CLOCK_PPM`] since the last one and half a
+    /// [`POLL_UNIT`] of rounding, to the slot plus the poll's lateness and
+    /// airtime and the same margin. A sleeping leaf listens in it (§10.2).
+    pub fn poll_window(&self) -> Option<(Instant, Instant)> {
+        if !self.attached {
+            return None;
+        }
+        let since = self.poll_at.since(self.told_at).as_micros();
+        let margin = Duration::from_micros(
+            (since * 2 * CLOCK_PPM).div_ceil(1_000_000) + POLL_UNIT.as_micros() / 2,
+        );
+        let start =
+            Instant::from_micros(self.poll_at.as_micros().saturating_sub(margin.as_micros()));
+        Some((start, self.poll_at + POLL_LATE + POLL_AIRTIME + margin))
+    }
+
+    fn polls(&self) -> Polls {
+        Polls::from_config(&self.config)
+    }
+
+    /// How long a candidate relay may go unheard before the leaf forgets
+    /// it: the life of a neighbour entry (§8.2).
     fn silence(&self) -> Duration {
         NeighbourParams::from_config(&self.config).expire_after
     }
@@ -294,8 +344,10 @@ impl Leaf {
             relay.heard(&hb, rssi, now);
             self.relay = Some(relay);
             if moved {
-                // The announcement of a move (§6.3): follow, attach again.
-                self.switch(relay, now, emit);
+                // The announcement of a move (§6.3): follow; the polls go on
+                // on the new channel.
+                self.home = hb.home;
+                emit(Action::Listen(hb.home));
             }
         } else {
             self.remember(&hb, rssi, now);
@@ -386,7 +438,7 @@ impl Leaf {
         }
     }
 
-    /// The relay stopped answering or was not heard for too long.
+    /// The relay stopped answering hand-overs or polling.
     fn lose_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.relay = None;
         self.attached = false;
@@ -454,27 +506,27 @@ impl Leaf {
         }));
     }
 
-    /// Start a hand-over if none is running: a due ATTACH first, then the
-    /// message once the relay has ACKed one.
+    /// Start a hand-over if none is running: the ATTACH that attaches
+    /// until the relay has answered one, then the message.
     fn prepare(&mut self, now: Instant) {
         if !self.transfer.idle() {
             return;
         }
         let Some(relay) = self.relay else { return };
         let from = AckName::from(relay.position.short());
-        if now >= self.attach_at {
-            self.sending = Sending::Attach;
-            let expect = Ack {
-                msg_id: MsgId(u32::from_be_bytes(self.id.0)),
-                from,
-                to: self.id.into(),
-                refused: false,
-            };
-            self.transfer.start(expect, 0, now);
-        } else if let Some(msg_id) = self
-            .outgoing_id()
-            .filter(|_| self.attached && now >= self.outgoing_at)
-        {
+        if !self.attached {
+            if now >= self.attach_at {
+                self.sending = Sending::Attach;
+                // Answered by ATTACHED, never by an ACK (`attached_rx`).
+                let expect = Ack {
+                    msg_id: MsgId(0),
+                    from,
+                    to: self.id.into(),
+                    refused: false,
+                };
+                self.transfer.start(expect, 0, now);
+            }
+        } else if let Some(msg_id) = self.outgoing_id().filter(|_| now >= self.outgoing_at) {
             self.sending = Sending::Data;
             // A leaf's DATA names no sender (`src_hop` 0, §14).
             let expect = Ack {
@@ -494,7 +546,7 @@ impl Leaf {
             Sending::Attach => Packet::Attach(Attach {
                 leaf: self.id,
                 relay,
-                mode: RxMode::Listening,
+                mode: self.mode(),
                 reply: false,
             }),
             Sending::Data => {
@@ -529,7 +581,7 @@ impl Leaf {
             let until = self
                 .budget
                 .allowed_at(airtime, Duration::ZERO, now)
-                .unwrap_or(now + self.config.keepalive);
+                .unwrap_or(now + self.config.leaf_retry);
             self.transfer.defer(until);
             return false;
         }
@@ -562,7 +614,7 @@ impl Leaf {
                     let until = self
                         .budget
                         .allowed_at(airtime, Duration::ZERO, now)
-                        .unwrap_or(now + self.config.keepalive);
+                        .unwrap_or(now + self.config.leaf_retry);
                     self.transfer.defer(until);
                     return;
                 }
@@ -581,19 +633,24 @@ impl Leaf {
     }
 
     /// Every attempt of a hand-over to the relay went unanswered: try again
-    /// a keepalive period later, or give the relay up after failures in
+    /// a retry period later, or give the relay up after failures in
     /// [`FAILED_PERIODS`] periods in a row. A message stays held.
     fn send_failed(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.failed_periods = self.failed_periods.saturating_add(1);
         if self.failed_periods >= FAILED_PERIODS {
-            self.lose_relay(now, emit);
-        } else {
-            self.attached = false;
-            self.attach_at = now + self.config.keepalive;
+            return self.lose_relay(now, emit);
+        }
+        let later = now + self.config.leaf_retry;
+        match self.sending {
+            Sending::Attach => self.attach_at = later,
+            Sending::Data => self.outgoing_at = self.outgoing_at.max(later),
         }
     }
 
     fn acked(&mut self, ack: Ack, now: Instant) {
+        if self.sending != Sending::Data {
+            return;
+        }
         if ack.refused {
             return self.refused(ack, now);
         }
@@ -604,16 +661,71 @@ impl Leaf {
             r.last_heard = now;
         }
         self.failed_periods = 0;
-        match self.sending {
-            Sending::Attach => {
-                self.attached = true;
-                self.attach_at = now + self.config.keepalive;
+        self.outgoing = None;
+        self.refusals = 0;
+    }
+
+    /// The receive mode this leaf declares (§10.5).
+    fn mode(&self) -> RxMode {
+        RxMode::Listening
+    }
+
+    /// An ATTACHED for this leaf: the answer to its ATTACH, or in its window
+    /// a poll, which it answers once (§10.2). Either names the next poll.
+    fn attached_rx(&mut self, a: Attached, now: Instant) {
+        let Some(relay) = self.relay else { return };
+        let answer =
+            self.sending == Sending::Attach && !self.transfer.idle() && self.transfer.transmitted();
+        if answer {
+            self.transfer.cancel();
+            self.attached = true;
+            self.failed_periods = 0;
+        } else if self
+            .poll_window()
+            .is_some_and(|(start, end)| now >= start && now < end)
+        {
+            let reply = Reply::Attach(Attach {
+                leaf: self.id,
+                relay: relay.position.short(),
+                mode: self.mode(),
+                reply: true,
+            });
+            if self.acks.can_owe(reply, self.home, now) {
+                self.acks
+                    .owe(reply, self.home, now + self.config.ack_timeout, now);
             }
-            Sending::Data => {
-                self.outgoing = None;
-                self.refusals = 0;
-            }
+        } else {
+            return;
         }
+        self.poll_at = now + a.next_poll();
+        self.told_at = now;
+        self.polls_missed = 0;
+        if let Some(r) = &mut self.relay {
+            r.last_heard = now;
+        }
+    }
+
+    /// The window of the expected poll passed empty: the next is a period
+    /// later, unless the relay has dropped this leaf by now.
+    fn poll_missed(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let polls = self.polls();
+        self.polls_missed = self.polls_missed.saturating_add(1);
+        if self.polls_missed >= polls.missed {
+            self.lose_relay(now, emit);
+        } else {
+            self.poll_at += polls.period;
+        }
+    }
+
+    /// The frame of the owed reply.
+    fn reply_frame(o: crate::node::transfer::Owed) -> Frame {
+        let packet = match o.reply {
+            Reply::Ack(a) => Packet::Ack(a),
+            Reply::Attach(a) => Packet::Attach(a),
+            // A relay's reply.
+            Reply::Attached(leaf) => Packet::Attached(Attached { leaf, next_poll: 0 }),
+        };
+        mac::frame(&packet, o.channel, MIN_PREAMBLE_SYMBOLS)
     }
 
     /// The relay refused the message (§9.2.4). It hears the leaf, so this
@@ -668,7 +780,7 @@ impl Leaf {
         let Some(o) = self.acks.due(now) else {
             return false;
         };
-        let frame = mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS);
+        let frame = Self::reply_frame(o);
         if !self.budget.would_allow(mac::airtime(&frame), now) {
             self.acks.abandon();
             return true;
@@ -687,7 +799,7 @@ impl Leaf {
         match self.acks.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Ack, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS);
+                let frame = Self::reply_frame(o);
                 let airtime = mac::airtime(&frame);
                 if self.budget.would_allow(airtime, now) {
                     self.budget.record(airtime, now);
@@ -705,6 +817,7 @@ impl Leaf {
             Ok(Packet::Heartbeat(hb)) => self.heartbeat(hb, rssi, now, emit),
             Ok(Packet::Ack(a)) => self.acked(a, now),
             Ok(Packet::Deliver(d)) if d.dst_leaf == self.id => self.deliver(d, now, emit),
+            Ok(Packet::Attached(a)) if a.leaf == self.id => self.attached_rx(a, now),
             _ => {}
         }
     }
@@ -714,11 +827,8 @@ impl Leaf {
         if self.transfer.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
             self.send_failed(now, emit);
         }
-        if self
-            .relay
-            .is_some_and(|r| now.since(r.last_heard) >= self.silence())
-        {
-            self.lose_relay(now, emit);
+        if self.poll_window().is_some_and(|(_, end)| now >= end) {
+            self.poll_missed(now, emit);
         }
         if self.relay.is_none() {
             // The end of the first rotation of listening.
@@ -780,13 +890,14 @@ impl Core for Leaf {
         }
         let mut w: Option<Instant> = None;
         let mut at = |t: Instant| w = Some(w.map_or(t, |w| w.min(t)));
-        match self.relay {
-            Some(r) => at(r.last_heard + self.silence()),
-            None => {
+        match self.poll_window() {
+            Some((_, end)) => at(end),
+            None if self.relay.is_none() => {
                 if let Some(t) = self.listening_since {
                     at(t + self.rotation());
                 }
             }
+            None => {}
         }
         if self.outgoing.is_some() {
             at(self.outgoing_until);
@@ -801,8 +912,9 @@ impl Core for Leaf {
                 at(t);
             }
             if self.transfer.idle() && self.relay.is_some() {
-                at(self.attach_at);
-                if self.attached && self.outgoing.is_some() {
+                if !self.attached {
+                    at(self.attach_at);
+                } else if self.outgoing.is_some() {
                     at(self.outgoing_at);
                 }
             }

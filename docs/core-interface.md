@@ -142,9 +142,10 @@ for each hop count a message can be sent on with, keep overload from dropping me
 (design §9.3, roadmap D31). The records hold the 1401 messages a relay can handle in the
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (§9.2.2). The delivery queue's 41 places hold what
-arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 153 712 B
-(150.1 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
-its one owed reply and its application's message while it waits. There is no fixed target;
+arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 153 784 B
+(150.2 KiB, measured 2026-10-15 with roadmap D39): the tables and, in under 1 KiB around
+them, the medium access, the hand-over, the poll in progress, its one owed reply and its
+application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB (design
@@ -159,7 +160,7 @@ can keep in a static, built at compile time, and `Relay::reset(config, seed)` se
 place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
 `Relay::new`.
 
-`Leaf` is 752 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 776 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
@@ -180,8 +181,8 @@ action at a time, and the core never allocates.
   - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four
     opaque bytes in order. ACK `from` and `to` are each a short name or a leaf ID, four
     bytes either way, compared whole.
-  - The ACK of an ATTACH carries the leaf's ID as `id` and `to` and the relay's short name
-    as `from`: an ATTACH is not a message and has no message ID.
+  - An ATTACH is answered by ATTACHED, not by an ACK (roadmap D39). ATTACHED `next_poll`
+    is big-endian in 10 ms units; its `aux` is sent as zero and ignored.
   - ACK `to` of a DATA is its `src_hop`, zero from a leaf: DATA does not carry the
     leaf's ID. A leaf's ACK of a DELIVER has the short name of the relay it is attached
     to as `to`: DELIVER does not name its sender.
@@ -194,7 +195,8 @@ action at a time, and the core never allocates.
     header; the decoder rejects anything longer.
   - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
     payload onward.
-  - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
+  - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5), in
+    bits 0 to 2; bit 3 set when the ATTACH answers a poll (§10.2).
   - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK,
     and all of a DELIVER's, are sent as zero and ignored on receipt. A fixed-size packet
     with trailing bytes is rejected.

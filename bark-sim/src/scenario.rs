@@ -116,7 +116,9 @@ pub struct ProtocolOverrides {
     pub hop_attempts: Option<u8>,
     pub demote_after_failures: Option<u8>,
     pub neighbour_expiry_rotations: Option<u8>,
-    pub keepalive_ms: Option<u64>,
+    pub leaf_retry_ms: Option<u64>,
+    /// Override of `poll_interval` (design §10.2: 1171.875 ms), µs.
+    pub poll_interval_us: Option<u64>,
     pub delivery_ttl_ms: Option<u64>,
     pub busy_ema_inverse: Option<u16>,
     pub sweep_interval_ms: Option<u64>,
@@ -146,6 +148,11 @@ impl ProtocolOverrides {
                     c.$f = ms(v);
                 }
             };
+            ($f:ident, $src:ident, us) => {
+                if let Some(v) = self.$src {
+                    c.$f = Duration::from_micros(v);
+                }
+            };
         }
         set!(tx_power_dbm);
         set!(surveyed);
@@ -155,7 +162,8 @@ impl ProtocolOverrides {
         set!(hop_attempts);
         set!(demote_after_failures);
         set!(neighbour_expiry_rotations);
-        set!(keepalive, keepalive_ms, ms);
+        set!(leaf_retry, leaf_retry_ms, ms);
+        set!(poll_interval, poll_interval_us, us);
         set!(delivery_ttl, delivery_ttl_ms, ms);
         set!(busy_ema_inverse);
         set!(sweep_interval, sweep_interval_ms, ms);

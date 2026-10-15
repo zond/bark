@@ -288,4 +288,15 @@ pub enum Trace {
         /// The leaf.
         leaf: LeafId,
     },
+    /// A relay could not poll a leaf within its slot's lateness, for the
+    /// channel or the bucket; it counts as a poll the leaf missed (§10.2).
+    PollSkipped {
+        /// The leaf.
+        leaf: LeafId,
+    },
+    /// A relay dropped a leaf that left its polls unanswered (§10.2).
+    LeafDropped {
+        /// The leaf.
+        leaf: LeafId,
+    },
 }

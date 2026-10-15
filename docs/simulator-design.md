@@ -106,7 +106,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 |---|---|---|---|
 | message records | message ID (§14) | 1695 records, least recently active given up, never one of a message held (§9.2.2) | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
-| `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves and their keepalive age |
+| `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves, their poll slots and unanswered polls |
 | `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |
 
 `routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec §9.2.3, and applies the owner rule of §9.2.7. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
@@ -116,7 +116,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | # | Scenario | Checks | Bench twin |
 |---|---|---|---|
 | S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, drop after B dies | design step 4 |
-| S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | attach, keepalive load (≈2%), delivery, queue, dark phones | step 5 |
+| S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | attach, polls, delivery, queue, dark phones | step 5 |
 | S3 | S2 plus an interferer on channel 6 and three rooftop relays that all hear each other | avoidance, move hysteresis, no joint jumps | step 3 |
 | S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, §13 rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
 | S5 | S4 with the central relay removed / with a 2× hearing radius / with ACR_1 from 20 to 60 dB | sensitivity of S4 to the unknowns | C1 |
@@ -131,7 +131,7 @@ measurements use. Each file says in its header what it is for.
 |---|---|---|
 | `s1-line.toml` | S1: three relays in a line, a leaf at each end, one sending to the other every 30 s; the middle relay is removed at 20 minutes | forwarding, ACK, delivery; every message dropped at the first relay after the removal |
 | `s1b-hidden.toml` | S1 with both leaves sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
-| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | attach, keepalive, delivery queue, dark phones |
+| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | attach, polls, delivery queue, dark phones |
 | `corridor.toml` | five relays in a line, a leaf at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
 | `ring.toml` | eight relays on an octagon, a leaf at each, every leaf sending to the leaf three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
 | `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
@@ -188,7 +188,7 @@ other.
 
 ## 7. Performance target
 
-S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one keepalive per minute and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
+S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one answer to a poll every five minutes and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
 
 ## 8. Validation of the simulator itself
 

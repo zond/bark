@@ -1041,6 +1041,8 @@ impl Sim {
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::PollSkipped { .. } => c.polls_skipped += 1,
+                    Trace::LeafDropped { .. } => c.leaves_dropped += 1,
                     Trace::Forwarded { .. } | Trace::ReturnedToParent { .. } => c.handed_over += 1,
                     _ => {}
                 }

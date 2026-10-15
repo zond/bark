@@ -25,7 +25,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; stop using a neighbour that fails to ACK |
 | Addressing | A relay position plus a 4-byte leaf ID; a relay's position is its only identity; no registration, no network-wide tables |
-| Roles | **Relay**: a fixed node on mains, USB or solar that sends heartbeats, forwards, and holds messages for its leaves. **Leaf**: a carried node on battery that attaches to one relay and otherwise stays silent |
+| Roles | **Relay**: a fixed node on mains, USB or solar that sends heartbeats, forwards, and holds messages for its leaves. **Leaf**: a carried node on battery that attaches to one relay, answers its polls, and otherwise stays silent |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; GPS when available, else entered by the user; relays use surveyed coordinates; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -801,9 +801,10 @@ ACKs a packet as soon as it has received it, even while waiting for an
 ACK of its own; if that makes it miss its own ACK, its next attempt
 covers it.
 
-A relay owes at most one reply at a time. A packet, DATA or ATTACH,
-that arrives while its reply to another packet is still waiting for the
-channel is neither taken nor refused: the relay says nothing and changes
+A relay owes at most one reply at a time, an ACK or an ATTACHED
+(§10.2). A packet, DATA or ATTACH, that arrives while its reply to
+another packet is still waiting for the channel is neither taken nor
+refused: the relay says nothing and changes
 nothing, and the sender retries as for a lost ACK. A second reply would
 go out only after the first, which may wait for its channel until its
 own sender gives up, 100 ms; taking a packet it may not be able to
@@ -860,7 +861,8 @@ than 6 s / 9.83% = 61 s (roadmap D26).
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
 it is not dropped. Two reserves stay in the bucket. Replies, ACKs that
-take or refuse, leave one heartbeat's airtime, 11.8 ms, which the
+take or refuse, and ATTACHED, polls included (§10.2), leave one
+heartbeat's airtime, 11.8 ms, which the
 bucket refills in 120 ms, far less than the 5 s between heartbeats
 (§7), so heartbeats always go. Forwarding, and the ACK that takes on a
 packet, leave the **reply reserve**: the refusals the bucket refills
@@ -989,31 +991,109 @@ re-attaching on arrival.
 A leaf that hears no relay for 3 rotations stays on any channel and
 waits; every relay in range will appear within one rotation.
 
-### 10.2 Attach and keepalive
+### 10.2 Attach and polls
 
-`ATTACH {type, leaf_id, relay, flags}` (`relay` is the relay's short
-name, §8.1) is sent to the relay on its
-home channel with listen-before-talk and ACK. The flags carry the leaf's
-receive mode (§10.5). Repeat every 60 s as a keepalive, and immediately on
-changing relay. The relay's **leaf table** (`leaf_id, last_seen, rssi,
-rx_mode`) is separate from the neighbour table; entries expire after 3
-missed keepalives (180 s). Leaf table size: 256 entries per relay (≈80
-leaves per relay expected at indoor density in Kyiv with 10% adoption; 400
-at 50%).
+**Attaching.** `ATTACH {type, leaf_id, relay, flags}` (`relay` is the
+relay's short name, §8.1) is sent to the relay on its home channel with
+listen-before-talk and the retries of §9.3. The flags carry the leaf's
+receive mode (§10.5). The relay answers at once with `ATTACHED {type,
+leaf_id, next_poll}`, as it would with an ACK; that is what tells the
+leaf it is attached. A leaf sends an ATTACH that attaches at the start,
+after it gives its relay up, and after it chooses another (§10.1), and
+at no other time. The relay's **leaf table** (`leaf_id, next_poll,
+rx_mode`, and two counts) is separate from the neighbour table. Leaf
+table size: 256 entries per relay (≈80 leaves per relay expected at
+indoor density in Kyiv with 10% adoption; 400 at 50%). A relay whose
+table is full does not answer, and the leaf attaches elsewhere.
 
-Keepalive load per channel at 80 leaves per relay: ≈2%; at 400: ≈12%.
-That is why the interval is 60 s and not 10 s.
+**Polls.** From then on the relay checks that the leaf is there, not the
+leaf that the relay is. It polls one leaf at a time, at most one every
+**N = 300 s / 256 = 1.17 s**: at each poll it sends the leaf an
+ATTACHED, and the leaf answers with one ATTACH marked as a reply, which
+the relay does not answer. Time is cut into slots N apart, a cycle is
+256 slots, and each leaf in the table owns one slot of the cycle, so
+each is polled every **P = 256 N = 300 s** however many leaves the relay
+has. `next_poll` in every ATTACHED is the time from the end of that frame
+to the start of the leaf's next slot, so the leaf knows when its next
+poll comes, and the one after that if it misses one.
 
-**Keeping the relay.** A hand-over to the relay that fails, keepalive or
-message (§9.3: three attempts), is tried again one keepalive period
-later, ATTACH first. The leaf gives the relay up only when hand-overs
-have failed in two periods in a row, or when it has heard neither a
-heartbeat nor an ACK from it for as long as a neighbour entry lasts
-(§8.2: 390 s), whichever comes first. A fade lasts about a minute (the
-scenarios' correlation time), as long as one period, so one fade costs a
-keepalive, not the relay: the three attempts of one hand-over, a few
-hundred milliseconds apart, all fall inside it. Having given up its
-relay, the leaf takes the strongest other one it has heard (§10.1).
+| | Value | From |
+|---|---|---|
+| ATTACHED | 7 bytes, 10.56 ms | §14 |
+| Relay airtime for polls, full table of 256 | 10.56 ms / N = 0.90 %, 9.2 % of the duty budget | the bucket fills at 9.83 % (§9.4) |
+| The same at 80 leaves | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
+| Channel time at 80 leaves, polls and answers | 80 × (10.56 + 11.84) ms / 300 s = 0.60 % | |
+| Polls missed before the relay drops a leaf, k | ⌈TTL / P⌉ + 1 = 3 | below |
+| A dark leaf that keeps its relay | dark for less than (k − 1) P = 600 s, the delivery TTL | |
+| A returning leaf known to its relay | at its next poll, within 300 s, 150 s on average | |
+
+N follows from the share of the budget polls may take and from the
+delivery TTL (§10.4: 10 minutes). Polls cost the relay 10.56 ms per N
+whatever its table holds. A full table must leave forwarding at least
+nine tenths of the budget, so N ≥ 10.56 ms / (10 % × 9.83 %) = 1.07 s,
+P ≥ 275 s. The period is half the TTL, the next period up that divides
+it, so that with k = 3 the relay keeps a leaf through any dark spell
+shorter than a TTL, the five minutes of a metro ride or a basement
+(§10.4), and keeps a gone leaf at most one period past the life of the
+messages it held for it. A leaf that went dark just before a poll misses
+it and the next, (k − 1) P = 600 s, and answers the third. A longer N
+costs less and makes a returning phone, a dead relay and a moved leaf
+known later. The relay drops a leaf that has left k polls in a row
+unanswered once the answer to the last is overdue, 0.6 s after its slot
+(below). Its queued messages stay in the delivery queue until their TTL,
+as for any leaf not in the table, and go to it if it attaches again
+within it.
+
+**Lateness and the window.** A poll goes before the heartbeat and the
+hand-over, after an owed reply, and not while the relay waits for an ACK.
+So it waits at most for a hand-over already under way, a full frame and
+its ACK timeout, 238.6 ms, then for an owed ACK, 114.4 ms, and checks the
+channel with what is left of **500 ms**, listen-before-talk's give-up time
+(§9.3); a poll that cannot go out within 500 ms of its slot is skipped,
+and counts as missed. A leaf that sleeps (§10.5) hears only a long
+preamble, and 512 ms of preamble would make each poll 49 times longer.
+Instead it wakes for its slot and listens with the ordinary receiver:
+from the slot less the drift of two crystal clocks of ±50 ppm each over
+the time since the last ATTACHED (30 ms after one period, 90 ms after
+three) and half the 10 ms unit of `next_poll`, to 500 ms plus the
+poll's 10.56 ms after the slot, plus the same margin: about 0.58 s every
+5 minutes, 11 µA on average at the 5.8 mA of listening. A 32.768 kHz
+tuning-fork crystal is ±20 ppm at 25 °C and −0.034 ppm/°C² away from it,
+so ±50 ppm holds from −5 to +55 °C. The nRF52840's internal RC
+oscillator (±500 ppm, Product Specification, CLOCK), which the firmware's
+clock runs on today, would widen the window to 1.1 s, and 2.3 s by the
+third period; a sleeping leaf should time its slot from a crystal. An
+always-listening leaf keeps the same window: it takes a poll only there,
+so that a poll from a relay it has left, on the same channel and for
+the same leaf ID, is not taken for its own relay's.
+
+**Lost frames.** A lost ATTACHED that answers an ATTACH is a lost ACK:
+the leaf retries its ATTACH (§9.3), and the relay, which has the leaf
+already, answers with the same slot. A lost poll or a lost answer costs
+one round and nothing else: the relay counts one unanswered poll, the
+leaf one empty window, and the next period starts afresh.
+
+**Keeping the relay.** A leaf gives its relay up when its window has
+passed empty k times in a row, when the relay has dropped it: at most
+3 P + 0.6 s, 15 minutes, after the last poll it heard. A hand-over to the
+relay that fails, an ATTACH or a message (§9.3: three attempts), is tried
+again 60 s later; the leaf gives the relay up when hand-overs have failed
+in two periods in a row. A fade lasts about a minute (the scenarios'
+correlation time), as long as one period, so one fade costs a wait, not
+the relay: the three attempts of one hand-over, a few hundred
+milliseconds apart, all fall inside it. Having given up its relay, the
+leaf takes the strongest other one it has heard (§10.1).
+
+**Moves.** A relay that moves home channel (§6.3) keeps its leaves and
+their slots and polls them on the new channel. An always-listening leaf
+follows at once on the heartbeat the relay sends on the old channel, or
+at the relay's next heartbeat on its channel if it missed that one,
+within a rotation (≤195 s); a hybrid leaf follows in its next awake
+rotation (≤10 minutes, §10.5), and one that hears neither gives the
+relay up after k empty windows and attaches again. A leaf that moves to
+another relay stops answering the old one's polls, which drops it after
+k polls, at most 15 minutes after its last answer; until then a message
+sent to the old address waits there as for a dark leaf (§10.4).
 
 **A message without a relay.** A message the leaf cannot hand over,
 because it has no relay or its relay does not answer, is held and tried
@@ -1050,16 +1130,16 @@ leaf at a time and oldest first, when it arrives, when the leaf's
 previous one is ACKed, and whenever a hand-over ends and leaves room in
 the send queue. It needs room as any packet does (§9.3); one the bucket
 cannot fit yet goes the moment the bucket will. A leaf whose DELIVER went unanswered is not listening:
-its messages wait for its next keepalive and are retried every 60 s,
-not each time room frees up.
+its messages wait for its next answer to a poll (§10.2) and are retried
+every 60 s, not each time room frees up.
 
 A message stays long only for a leaf that does not answer. A leaf that
 listens takes its DELIVER at the first hand-over: a duty-cycled or
 hybrid one checks the channel every 500 ms, and the 512 ms preamble
 spans the check (§10.5). One that does not is a phone in a pocket, a
 basement or the metro for a few minutes, and its messages wait until
-its first keepalive after it is back, at most 60 s later (§10.2), or
-until the TTL. Leaves in one train or one basement go dark together, so
+the first retry after it is back, at most 60 s later, or its answer to
+a poll (§10.2), or until the TTL. Leaves in one train or one basement go dark together, so
 the queue holds what arrives in a TTL for every leaf a relay can serve,
 its leaf table's 256 (§10.2), at the 23 texts a day each that the
 network carries (§13): 256 × 23 / 144 ten-minute TTLs in a day = 40.9,
@@ -1085,9 +1165,11 @@ relays cannot overhear deliveries, because they are on different channels.
 | Duty-cycled (sleep, CAD every 500 ms) | ≈0.3 mA + sleep | months | ≥512 ms | no: blind to relay changes |
 | Hybrid: full listen one rotation every 10 min, CAD between | ≈1.3 mA | ≈25 days | ≥512 ms | during the awake rotation |
 
-The leaf declares its mode in ATTACH; the relay sets the preamble to
-match. Long preambles cost little airtime because deliveries are rare
-(≈0.5% of a channel per day at 80 leaves × 10 messages). Default: always
+The leaf declares its mode in ATTACH; the relay sets the preamble of
+DELIVER to match. Long preambles cost little airtime because deliveries
+are rare (≈0.5% of a channel per day at 80 leaves × 10 messages). Polls
+keep the short preamble: a sleeping leaf listens for its poll at the
+time the last one named (§10.2). Default: always
 listening while on USB or charging, hybrid on battery. GPS off after a
 fix, and off after 10 minutes without a fix (searching under jamming draws
 ≈27 mA, ≈1.3 days).
@@ -1177,7 +1259,10 @@ and its ACK (14.4 ms).
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
-cap (§9.4) binds there first.
+cap (§9.4) binds there first. The relays' polls of their leaves (§10.2)
+take at most 0.9 % of each relay's time, 9.2 % of its budget, at a full
+leaf table, and the domain's 20 000 leaves' polls 5.4 % of each channel
+where every relay hears every other.
 
 Common proposals that do not fit:
 
@@ -1221,15 +1306,15 @@ CRC covers everything.
 HEARTBEAT 0x1/0x2: first(1) pos(7)                                          = 8
           0x1 surveyed position, 0x2 GPS-derived position; aux = home channel
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
-          the answer to a DATA, ATTACH or DELIVER, taken or refused; sent on
+          the answer to a DATA or DELIVER, taken or refused; sent on
           the channel in the answered packet's aux; aux bit 0 = refused
           from = the answering relay's short name, or the leaf's ID
           to = the answered relay's short name, or the leaf's ID; for a
           leaf's DATA, which names no sender, 0
 ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
-          relay = short name of the relay attached to; aux = leaf receive mode (§10.5)
-          ACKed with id = leaf_id read as a 32-bit number, from = the relay's
-          short name, to = leaf_id
+          relay = short name of the relay attached to; aux bits 0-2 = leaf
+          receive mode (§10.5), aux bit 3 = answers a poll; one that attaches
+          is answered with ATTACHED, one that answers a poll is not answered
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
                payload                                                      = 21 + payload
           dst_hop, src_hop = short names of the receiving and the sending relay;
@@ -1237,6 +1322,11 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
 DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel,
           to = the short name of the relay it is attached to
+ATTACHED  0x7: first(1) leaf_id(4) next_poll(2)                             = 7
+          relay → leaf on the relay's own channel: the answer to an ATTACH
+          that attaches, or a poll (§10.2); next_poll = time from the end of
+          this frame to the leaf's next slot, big-endian, in 10 ms; 16 bits
+          reach 655 s, more than the 600 s TTL that bounds the period
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
@@ -1289,7 +1379,7 @@ the panic message (`bark-fw/memory.x`).
 4. Greedy forwarding + per-hop ACK across three relays in a line, with
    attenuators or distance so A cannot hear C. Demotion when the middle
    relay is powered off.
-5. Leaf attach, keepalive, delivery, queue. **This is the loop every
+5. Leaf attach, polls, delivery, queue. **This is the loop every
    user feels; prototype it before anything clever.**
 6. BLE GATT + minimal phone app.
 7. Field test: a dozen relays on windowsills across a few blocks.

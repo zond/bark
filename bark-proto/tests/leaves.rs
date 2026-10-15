@@ -313,7 +313,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
     dark.set(false);
     let all = |h: &Harness<Node>| ids.iter().all(|&id| received(h, l2, id) == 1);
     assert!(
-        h.run_until(h.now + c.keepalive + secs(30), all),
+        h.run_until(h.now + c.delivery_retry + secs(30), all),
         "not all delivered"
     );
 }
@@ -602,56 +602,6 @@ fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
     );
 }
 
-/// One failed keepalive, as in a fade, does not cost the leaf its relay;
-/// failures in two keepalive periods in a row do (§10.2).
-#[test]
-fn a_leaf_keeps_its_relay_through_one_failed_keepalive() {
-    use std::cell::Cell;
-    use std::rc::Rc;
-    let (r1, r2, l) = (0, 1, 2);
-    let mut h = Harness::new(vec![relay(0.0, 31), relay(400.0, 32), leaf(30.0, 1, 33)]);
-    h.link(l, r1);
-    h.link(l, r2);
-    h.set_rssi(l, r1, -90);
-    h.set_rssi(l, r2, -100);
-    settle(&mut h, &[(l, r1)]);
-    let cut = Rc::new(Cell::new((Instant::ZERO, Instant::ZERO)));
-    let window = cut.clone();
-    h.lose = Some(Box::new(move |now, from, to, _| {
-        let (a, b) = window.get();
-        from == l && to == r1 && a <= now && now < b
-    }));
-    let keepalive = Config::default().keepalive;
-    let attaches = |h: &Harness<Node>, from: Instant| {
-        h.nodes[l]
-            .sent
-            .iter()
-            .filter(|(t, f)| {
-                *t >= from && matches!(Packet::decode(f.payload()), Ok(Packet::Attach(_)))
-            })
-            .count()
-    };
-
-    // A little over one period: one keepalive fails.
-    let start = h.now;
-    cut.set((start, start + keepalive + secs(10)));
-    let moved = h.run_until(start + secs(600), |h| attached(h, l, r2));
-    assert!(!moved, "left its relay after one failed keepalive");
-    assert!(attached(&h, l, r1));
-    assert!(
-        attaches(&h, start) > 3,
-        "the keepalive failed and was retried"
-    );
-
-    // Two periods: the relay is given up for the other one.
-    let start = h.now;
-    cut.set((start, start + keepalive.mul(3)));
-    assert!(
-        h.run_until(start + secs(400), |h| attached(h, l, r2)),
-        "kept a relay that failed in two periods"
-    );
-}
-
 /// A leaf moves to a relay only when it is stronger by the margin over two
 /// heartbeats (§10.1).
 #[test]
@@ -686,4 +636,234 @@ fn a_leaf_switches_only_to_a_clearly_stronger_relay() {
         })
         .count();
     assert!(heard >= 2, "switched after {heard} heartbeat(s)");
+}
+
+// --- Polls (§10.2, roadmap D39) ---
+
+use bark_proto::tables::leaves::{Polls, POLL_AIRTIME, POLL_LATE};
+use bark_proto::wire::{Attach, Attached};
+
+/// The ATTACHEDs node `r` sent to leaf `id` from `from` on: when each went
+/// on air, and what it named.
+fn attacheds(h: &Harness<Node>, r: usize, id: LeafId, from: Instant) -> Vec<(Instant, Attached)> {
+    h.nodes[r]
+        .sent
+        .iter()
+        .filter(|(t, _)| *t >= from)
+        .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Attached(a)) if a.leaf == id => Some((*t, a)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The ATTACHes leaf `l` sent from `from` on.
+fn attaches(h: &Harness<Node>, l: usize, from: Instant) -> Vec<(Instant, Attach)> {
+    h.nodes[l]
+        .sent
+        .iter()
+        .filter(|(t, _)| *t >= from)
+        .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Attach(a)) => Some((*t, a)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn polls() -> Polls {
+    Polls::from_config(&Config::default())
+}
+
+/// A leaf's first ATTACH is answered with ATTACHED at once, which attaches
+/// it. Then the relay polls it at the slot each ATTACHED named, a period
+/// apart, and the leaf answers each poll with one ATTACH marked as a reply
+/// and sends no other ATTACH: no keepalive of its own.
+#[test]
+fn a_leaf_is_attached_by_attached_and_answers_only_polls() {
+    let (r, l) = (0, 1);
+    let mut h = Harness::new(vec![relay(0.0, 41), leaf(30.0, 1, 42)]);
+    h.link(l, r);
+    settle(&mut h, &[(l, r)]);
+    let id = the_leaf(&h, l).id();
+    let first = attaches(&h, l, Instant::ZERO);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(!first[0].1.reply);
+    let answer = attacheds(&h, r, id, Instant::ZERO);
+    assert_eq!(answer.len(), 1);
+    assert!(
+        answer[0].0.since(first[0].0) < Config::default().ack_timeout,
+        "answered at once"
+    );
+
+    let start = h.now;
+    h.run_for(polls().period.mul(4));
+    let sent = attacheds(&h, r, id, Instant::ZERO);
+    assert_eq!(sent.len(), 5, "the answer and four polls");
+    for w in sent.windows(2) {
+        let ((t0, a0), (t1, _)) = (w[0], w[1]);
+        let slot = t0 + POLL_AIRTIME + a0.next_poll();
+        assert!(
+            t1 + Duration::from_millis(5) >= slot && t1 <= slot + POLL_LATE,
+            "poll at {t1:?}, named {slot:?}"
+        );
+    }
+    for w in sent[1..].windows(2) {
+        let gap = w[1].0.since(w[0].0);
+        assert!(gap.as_micros().abs_diff(polls().period.as_micros()) <= POLL_LATE.as_micros());
+    }
+    // The leaf listened at the right time: each poll fell in its window
+    // and was answered once.
+    let replies = attaches(&h, l, start);
+    assert_eq!(replies.len(), 4, "{replies:?}");
+    for ((tp, _), (ta, a)) in sent[1..].iter().zip(&replies) {
+        assert!(a.reply);
+        assert!(ta > tp && ta.since(*tp) < Duration::from_millis(150));
+    }
+    assert!(attached(&h, l, r));
+}
+
+/// With several leaves, the relay polls at most one every N, and each
+/// every period (§10.2).
+#[test]
+fn a_relay_polls_one_leaf_per_slot() {
+    let r = 0;
+    let mut h = Harness::new(vec![
+        relay(0.0, 51),
+        leaf(30.0, 1, 52),
+        leaf(40.0, 2, 53),
+        leaf(50.0, 3, 54),
+    ]);
+    for l in 1..4 {
+        h.link(l, r);
+    }
+    settle(&mut h, &[(1, r), (2, r), (3, r)]);
+    let start = h.now + Duration::from_secs(1);
+    h.run_for(polls().period.mul(2) + secs(2));
+    let mut all = Vec::new();
+    for l in 1..4 {
+        let id = the_leaf(&h, l).id();
+        let mine = attacheds(&h, r, id, start);
+        assert!((2..=3).contains(&mine.len()), "leaf {l}: {mine:?}");
+        for w in mine.windows(2) {
+            let gap = w[1].0.since(w[0].0);
+            assert!(gap.as_micros().abs_diff(polls().period.as_micros()) <= POLL_LATE.as_micros());
+        }
+        all.extend(mine.iter().map(|(t, _)| *t));
+    }
+    all.sort_unstable();
+    for w in all.windows(2) {
+        assert!(
+            w[1].since(w[0]) + POLL_LATE >= polls().interval,
+            "two polls within a slot: {w:?}"
+        );
+    }
+}
+
+/// A leaf that stops answering is polled `missed` times and dropped once
+/// the last answer is overdue; until then it is kept (§10.2).
+#[test]
+fn a_leaf_that_misses_its_polls_is_dropped() {
+    let (r, l) = (0, 1);
+    let mut h = Harness::new(vec![relay(0.0, 61), leaf(30.0, 1, 62)]);
+    h.link(l, r);
+    settle(&mut h, &[(l, r)]);
+    let id = the_leaf(&h, l).id();
+    h.run_for(secs(5));
+    let gone = h.now;
+    h.kill(l);
+    let p = polls();
+    let dropped_at = |h: &Harness<Node>| {
+        h.nodes[r].traces.iter().find_map(|(t, tr)| match tr {
+            Trace::LeafDropped { leaf } if *leaf == id => Some(*t),
+            _ => None,
+        })
+    };
+    assert!(
+        h.run_until(gone + p.period.mul(p.missed as u64 + 1), |h| dropped_at(h)
+            .is_some())
+    );
+    let at = dropped_at(&h).unwrap();
+    let unanswered = attacheds(&h, r, id, gone);
+    assert_eq!(unanswered.len(), p.missed as usize, "{unanswered:?}");
+    let last = unanswered.last().unwrap().0;
+    assert!(
+        at >= last && at.since(last) <= p.reply_wait,
+        "{at:?} after {last:?}"
+    );
+    assert!(
+        at.since(gone) > p.period.mul(p.missed as u64 - 1),
+        "kept a dark spell shorter than a TTL"
+    );
+    assert_eq!(the_relay(&h, r).load(h.now).leaves, 0);
+}
+
+/// One poll lost to a fade costs one round: the leaf keeps its relay and
+/// the relay its leaf (§10.2).
+#[test]
+fn a_lost_poll_costs_one_round() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let (r, l) = (0, 1);
+    let mut h = Harness::new(vec![relay(0.0, 71), leaf(30.0, 1, 72)]);
+    h.link(l, r);
+    settle(&mut h, &[(l, r)]);
+    let lost = Rc::new(Cell::new(0));
+    let count = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let poll = from == r && to == l && matches!(Packet::decode(bytes), Ok(Packet::Attached(_)));
+        if poll && count.get() == 0 {
+            count.set(1);
+            return true;
+        }
+        false
+    }));
+    let start = h.now;
+    h.run_for(polls().period.mul(3));
+    assert_eq!(lost.get(), 1);
+    assert!(attached(&h, l, r));
+    assert_eq!(
+        attaches(&h, l, start)
+            .iter()
+            .filter(|(_, a)| !a.reply)
+            .count(),
+        0
+    );
+    assert!(!h.nodes[r]
+        .traces
+        .iter()
+        .any(|(_, t)| matches!(t, Trace::LeafDropped { .. })));
+    assert_eq!(the_relay(&h, r).load(h.now).leaves, 1);
+}
+
+/// A leaf whose relay stops polling gives it up once the relay would have
+/// dropped it, and attaches to the other one it hears (§10.1, §10.2).
+#[test]
+fn a_leaf_whose_relay_stops_polling_chooses_again() {
+    let (r1, r2, l) = (0, 1, 2);
+    let mut h = Harness::new(vec![relay(0.0, 81), relay(400.0, 82), leaf(30.0, 1, 83)]);
+    h.link(l, r1);
+    h.link(l, r2);
+    h.set_rssi(l, r1, -90);
+    h.set_rssi(l, r2, -100);
+    settle(&mut h, &[(l, r1)]);
+    let id = the_leaf(&h, l).id();
+    h.run_for(secs(5));
+    let last = attacheds(&h, r1, id, Instant::ZERO).last().unwrap().0;
+    let gone = h.now;
+    h.kill(r1);
+    let p = polls();
+    assert!(
+        h.run_until(gone + p.period.mul(p.missed as u64 + 1), |h| attached(
+            h, l, r2
+        ))
+    );
+    let moved = h.now;
+    assert!(
+        moved.since(last) > p.period.mul(p.missed as u64 - 1),
+        "left after {:?}",
+        moved.since(last)
+    );
+    assert!(moved.since(last) <= p.period.mul(p.missed as u64) + secs(2));
+    let fresh = attaches(&h, l, gone);
+    assert!(fresh.iter().all(|(_, a)| !a.reply), "{fresh:?}");
 }

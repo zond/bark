@@ -2,8 +2,8 @@
 # ten relays on windowsills, eighty phones indoors with their leaves, ten
 # texts per leaf per day to any other leaf in the block, for one hour.
 #
-# Checks attach and keepalive (protocol §10.2: about 2 % of a channel at
-# 80 leaves per relay, here 8), delivery and the delivery queue (§10.3,
+# Checks attach and polls (protocol §10.2: 0.6 % of a channel at 80
+# leaves per relay, here 8), delivery and the delivery queue (§10.3,
 # §10.4), and phones that go dark for minutes. Bench twin: protocol §15
 # step 5, then the windowsill field test of step 7.
 

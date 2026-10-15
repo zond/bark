@@ -1,7 +1,8 @@
 //! Per-hop transfer (design §9.3), shared by both roles: one frame handed
 //! to one receiver until it answers or the sender gives up ([`Transfer`]),
-//! and the one ACK, taking or refusing, this node can owe the sender of
-//! what it received ([`Replies`]).
+//! and the one reply this node can owe the sender of what it received
+//! ([`Replies`]): an ACK, taking or refusing, or between a relay and its
+//! leaf an ATTACHED or an ATTACH (§10.2).
 //!
 //! Both only keep the state; the role owns the radio (`mac.rs`), the frame
 //! and the duty-cycle budget, starts each excursion and reports its
@@ -29,11 +30,12 @@
 //! frame, the role decides what follows (D27).
 
 use crate::event::Action;
+use crate::ids::LeafId;
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckName};
+use crate::wire::{Ack, AckName, Attach};
 
 /// Where a hand-over is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -279,10 +281,28 @@ impl Transfer {
     }
 }
 
+/// What a node replies with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reply {
+    /// An ACK, taking or refusing (§9.3).
+    Ack(Ack),
+    /// A relay's ATTACHED to this leaf's ATTACH that attaches (§10.2). The
+    /// relay builds it as it transmits, from the leaf's slot.
+    Attached(LeafId),
+    /// A leaf's ATTACH that answers its relay's poll (§10.2).
+    Attach(Attach),
+}
+
+impl From<Ack> for Reply {
+    fn from(a: Ack) -> Reply {
+        Reply::Ack(a)
+    }
+}
+
 /// A reply this node owes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owed {
-    pub(crate) reply: Ack,
+    pub(crate) reply: Reply,
     /// The channel the sender listens on.
     pub(crate) channel: Channel,
     /// When the sender stops waiting; an ACK after that is useless.
@@ -327,7 +347,13 @@ impl Replies {
 
     /// Whether `reply` on `channel` can be owed now: the place is free, or
     /// holds that reply already, for an earlier copy of the packet.
-    pub(crate) fn can_owe(&mut self, reply: Ack, channel: Channel, now: Instant) -> bool {
+    pub(crate) fn can_owe(
+        &mut self,
+        reply: impl Into<Reply>,
+        channel: Channel,
+        now: Instant,
+    ) -> bool {
+        let reply = reply.into();
         self.forget_late(now);
         self.owed
             .is_none_or(|o| o.reply == reply && o.channel == channel)
@@ -337,7 +363,14 @@ impl Replies {
     /// answers this copy too. Another one that has not started out gives
     /// way, as the one whose packet is older; one being sent does not, and
     /// `reply` is then not owed.
-    pub(crate) fn owe(&mut self, reply: Ack, channel: Channel, deadline: Instant, now: Instant) {
+    pub(crate) fn owe(
+        &mut self,
+        reply: impl Into<Reply>,
+        channel: Channel,
+        deadline: Instant,
+        now: Instant,
+    ) {
+        let reply = reply.into();
         self.forget_late(now);
         if let Some(o) = self.owed {
             if (o.reply == reply && o.channel == channel) || self.step != ReplyStep::Idle {
@@ -588,7 +621,7 @@ mod tests {
         a.owe(ack(1), ch, at(110), at(10));
         assert!(!a.can_owe(ack(2), ch, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), at(10)));
-        assert_eq!(a.due(at(10)).unwrap().reply, ack(1));
+        assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
         assert_eq!(a.begin(), Some(Action::Cad(ch)));
         assert_eq!(a.due(at(10)), None, "one at a time");
         a.owe(ack(2), ch, at(111), at(11));
@@ -597,7 +630,7 @@ mod tests {
             Some((a.owed.unwrap(), false)),
             "the reply being sent keeps its place"
         );
-        assert_eq!(a.owed.unwrap().reply, ack(1));
+        assert_eq!(a.owed.unwrap().reply, Reply::Ack(ack(1)));
         assert_eq!(
             a.checked(false, at(12), &mut rng, ms(50)).map(|(_, tx)| tx),
             Some(true)
@@ -622,7 +655,7 @@ mod tests {
         // Not started: a newer one takes the place.
         a.owe(ack(3), ch, at(300), at(200));
         a.owe(ack(4), ch, at(301), at(200));
-        assert_eq!(a.due(at(201)).unwrap().reply, ack(4));
+        assert_eq!(a.due(at(201)).unwrap().reply, Reply::Ack(ack(4)));
         // A lapsed one frees the place.
         assert!(!a.can_owe(ack(5), ch, at(300)));
         assert!(a.can_owe(ack(5), ch, at(301)));

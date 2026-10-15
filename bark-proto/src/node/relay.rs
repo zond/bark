@@ -9,18 +9,19 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! reply (an ACK, taking or refusing) this relay owes, the heartbeat, the hand-over of
-//! one entry of the send queue, and the sweep. The relay keeps at most one
-//! excursion outstanding (`docs/core-interface.md` §3 rule 1). When the
-//! radio is free it starts the first job that is ready, in that order: an
-//! owed reply is worth nothing once its sender stops waiting, 100 ms after
-//! the frame (§9.3). A job that has begun a sequence of excursions (CAD,
+//! reply (an ACK, taking or refusing, or an ATTACHED) this relay owes, the
+//! poll of a leaf, the heartbeat, the hand-over of one entry of the send
+//! queue, and the sweep. The relay keeps at most one excursion outstanding
+//! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
+//! the first job that is ready, in that order: an owed reply is worth
+//! nothing once its sender stops waiting, 100 ms after the frame (§9.3),
+//! and a poll is skipped once it is 500 ms late (§10.2). A job that has begun a sequence of excursions (CAD,
 //! RSSI, transmit) continues it from each completion event, so sequences
 //! never interleave; the hand-over alone lets an owed reply in before it
 //! transmits, since its frame can take 139 ms on air. While a hand-over
 //! waits for its ACK, only an owed reply uses the radio: the heartbeat and
 //! the sweep would take the relay off its home channel, where the ACK
-//! arrives (§9.3). Jobs that are not ready say when they will be, and the earliest
+//! arrives (§9.3), and a poll would make it deaf to it. Jobs that are not ready say when they will be, and the earliest
 //! of those is `next_wakeup`.
 
 mod forward;
@@ -52,6 +53,7 @@ enum Job {
     Heartbeat,
     HandOver,
     Reply,
+    Poll,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +65,7 @@ enum Stage {
     Running,
 }
 
-/// Listen-before-talk progress of one heartbeat.
+/// Listen-before-talk progress of one heartbeat or poll.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Check {
     Idle,
@@ -159,6 +161,7 @@ pub struct Relay {
     skipped: u64,
     replies: Replies,
     leaves: Leaves,
+    poller: service::Poller,
     delivery: DeliveryQueue,
     delivered: Delivered,
     /// When queued deliveries are next retried (§10.4: every 60 s).
@@ -228,6 +231,7 @@ impl Relay {
             skipped: 0,
             replies: Replies::new(),
             leaves: Leaves::from_config(&config),
+            poller: service::Poller::IDLE,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -279,6 +283,7 @@ impl Relay {
             skipped,
             replies,
             leaves,
+            poller,
             delivery,
             delivered,
             delivery_retry_at,
@@ -319,6 +324,7 @@ impl Relay {
         *skipped = 0;
         *replies = Replies::new();
         *leaves = Leaves::from_config(&config);
+        *poller = service::Poller::IDLE;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -460,7 +466,9 @@ impl Relay {
         while self.radio.idle() {
             self.prepare(now, emit);
             let awaiting = self.handover.awaiting_ack();
+            let running = self.stage == Stage::Running;
             let started = self.start_reply(now, emit)
+                || (!awaiting && running && self.poll_due(now) && self.start_poll(now, emit))
                 || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
                 || self.start_handover(now, emit)
                 || (!awaiting && self.sweep_due(now) && self.start_sweep(emit));
@@ -522,7 +530,6 @@ impl Relay {
         }
         // Once per round of the channels.
         self.neighbours.expire(now);
-        self.leaves.expire(now);
         if self.stage == Stage::Running && self.config.home_override.is_none() {
             self.move_rule(now);
         }
@@ -763,6 +770,7 @@ impl Core for Relay {
                 Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                 Some(Job::HandOver) => self.handover_check(busy, now, emit),
                 Some(Job::Reply) => self.reply_check(busy, now, emit),
+                Some(Job::Poll) => self.poll_check(busy, now, emit),
                 Some(Job::Sweep) | None => {}
             },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
@@ -770,6 +778,7 @@ impl Core for Relay {
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
                 Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
                 Some(Job::Reply) => self.reply_check(dbm > threshold, now, emit),
+                Some(Job::Poll) => self.poll_check(dbm > threshold, now, emit),
                 None => {}
             },
             Event::TxDone => match self.radio.complete() {
@@ -779,6 +788,7 @@ impl Core for Relay {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
                 Some(Job::Reply) => self.replies.sent(),
+                Some(Job::Poll) => self.poll_sent(),
                 _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),
@@ -823,6 +833,9 @@ impl Core for Relay {
                     self.beacon.next_at
                 };
                 at(due.max(self.beacon.ready_at));
+                if let Some(t) = self.poll_wakeup() {
+                    at(t);
+                }
             }
             at(self.sweep.next_at);
         }
@@ -902,6 +915,93 @@ mod tests {
         }
     }
 
+    /// A hybrid leaf, which hears only long preambles while it sleeps,
+    /// is polled with the short one at the time its last ATTACHED named,
+    /// within the poll's lateness, so that it can listen for it then; a
+    /// DELIVER to it keeps the long preamble (protocol §10.2, §10.5).
+    #[test]
+    fn a_hybrid_leaf_is_polled_at_its_slot_with_a_short_preamble() {
+        use crate::ids::{LeafId, MsgId};
+        use crate::tables::delivery::Queued;
+        use crate::tables::leaves::{Polls, POLL_AIRTIME, POLL_LATE};
+        use crate::wire::{Attach, RxMode};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        now = Instant::ZERO + Duration::from_secs(10);
+        let leaf = LeafId([9; 4]);
+        let (me, home) = (r.me(), r.home);
+        let attach = |reply| {
+            let a = Attach {
+                leaf,
+                relay: me,
+                mode: RxMode::Hybrid,
+                reply,
+            };
+            let f = mac::frame(&Packet::Attach(a), home, MIN_PREAMBLE_SYMBOLS);
+            f.bytes[..f.len as usize].to_vec()
+        };
+        let receive = |r: &mut Relay, bytes: &[u8], now: Instant| {
+            let mut pending = Vec::new();
+            let event = Event::Received {
+                channel: r.home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes,
+            };
+            r.handle(event, now, &mut |a| pending.push(a));
+            pending
+        };
+        let pending = receive(&mut r, &attach(false), now);
+        let period = Polls::from_config(&config).period;
+        let until = now + period + Duration::from_secs(2);
+        let sent = drive_from(&mut r, &mut now, until, pending);
+        let polls: Vec<_> = sent
+            .iter()
+            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Attached(a)) => Some((*t, *f, a)),
+                _ => None,
+            })
+            .collect();
+        assert!(polls.len() >= 2, "{polls:?}");
+        for w in polls.windows(2) {
+            let ((t0, _, a0), (t1, f1, _)) = (w[0], w[1]);
+            let slot = t0 + POLL_AIRTIME + a0.next_poll();
+            assert!(t1 + Duration::from_millis(5) >= slot && t1 <= slot + POLL_LATE);
+            assert_eq!(f1.preamble_symbols, MIN_PREAMBLE_SYMBOLS);
+        }
+        // The answer to the poll keeps the leaf; a DELIVER to it has the
+        // long preamble.
+        let pending = receive(&mut r, &attach(true), now);
+        let at = now;
+        drive_from(&mut r, &mut now, at, pending);
+        assert_eq!(r.leaves.get(leaf).unwrap().unanswered, 0);
+        r.delivery
+            .push(Queued::new(MsgId(7), leaf, b"hi", now).unwrap());
+        r.feed_due = true;
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+        let until = now + Duration::from_secs(1);
+        let sent = drive_from(&mut r, &mut now, until, pending);
+        let deliver = sent
+            .iter()
+            .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
+            .expect("a DELIVER");
+        assert_eq!(
+            deliver.1.preamble_symbols,
+            RxMode::Hybrid.preamble_symbols()
+        );
+    }
+
     /// A relay reset in place, after it has run and holds messages, does
     /// what a new one does.
     #[test]
@@ -955,6 +1055,8 @@ mod tests {
             sweep_interval: hour,
             heartbeat_min: hour,
             heartbeat_max: hour,
+            // No poll within the test.
+            poll_interval: hour,
             ..Config::default()
         };
         let mut r = Relay::new(config, 1);
@@ -963,7 +1065,9 @@ mod tests {
         assert!(!r.booting());
         now = Instant::ZERO + Duration::from_secs(10);
         let leaf = LeafId([7; 4]);
-        r.leaves.attached(leaf, RxMode::Listening, now).unwrap();
+        r.leaves
+            .attached(leaf, RxMode::Listening, Duration::ZERO, now)
+            .unwrap();
         r.budget.record(r.budget.available(now), now);
         let q = Queued::new(MsgId(42), leaf, b"later", now).unwrap();
         r.delivery.push(q);

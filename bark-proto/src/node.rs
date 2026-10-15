@@ -63,12 +63,16 @@ pub struct Config {
     pub neighbour_expiry_rotations: u8,
     /// Rotations a demotion lasts without an ACK (design §8.2: 3, 390 s).
     pub demotion_rotations: u8,
-    /// Leaf keepalive interval (design §10.2: 60 s).
-    pub keepalive: Duration,
+    /// How long a leaf waits before it tries its relay again after a
+    /// hand-over to it failed (design §10.2: 60 s, the length of a fade).
+    pub leaf_retry: Duration,
+    /// N: a relay polls at most one leaf this often, and each leaf every
+    /// 256 N (design §10.2: 300 s / 256; `tables::leaves::POLL_INTERVAL`).
+    pub poll_interval: Duration,
     /// Delivery-queue entry lifetime (design §10.4: 10 min).
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages, besides the
-    /// retry on each keepalive (design §10.4: 60 s).
+    /// retry on each answer to a poll (design §10.4: 60 s).
     pub delivery_retry: Duration,
     /// Busy-estimate EMA coefficient as 1/N (design §6.1: 1/600).
     pub busy_ema_inverse: u16,
@@ -118,7 +122,8 @@ impl Config {
         demote_after_failures: 2,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
-        keepalive: Duration::from_secs(60),
+        leaf_retry: Duration::from_secs(60),
+        poll_interval: crate::tables::leaves::POLL_INTERVAL,
         delivery_ttl: Duration::from_secs(600),
         delivery_retry: Duration::from_secs(60),
         busy_ema_inverse: 600,

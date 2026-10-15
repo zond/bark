@@ -10,8 +10,8 @@
 //! listens, always or with a check of the channel every 500 ms, takes its
 //! DELIVER at the first hand-over, whose 512 ms preamble spans the check
 //! (§10.5). One that does not is a phone in a pocket, a basement or the
-//! metro, and its messages wait for its first keepalive after it is back,
-//! at most 60 s later (§10.2), or for the TTL. Leaves in one train or one
+//! metro, and its messages wait for the delivery retry after it is back,
+//! at most 60 s later, or its answer to a poll (§10.2), or for the TTL. Leaves in one train or one
 //! basement go dark together, so the queue holds what arrives in a TTL for
 //! every leaf the relay can serve, its leaf table's [`LEAVES`] (§10.2),
 //! at the [`TEXTS_PER_DAY`] each that the network carries (§13):
