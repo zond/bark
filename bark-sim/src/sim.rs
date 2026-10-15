@@ -418,6 +418,10 @@ pub struct Sim {
     address: Vec<Option<Position>>,
     availability: Option<(f64, f64)>,
     avail_rng: Vec<Stream>,
+    /// Per leaf, when it came back into reach, until a relay hears it.
+    back_at: Vec<Option<Instant>>,
+    /// Leaf ID to node index, for the leaves that go dark.
+    leaf_nodes: HashMap<[u8; 4], u32>,
     origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
@@ -559,6 +563,8 @@ impl Sim {
             address: vec![None; n],
             availability: None,
             avail_rng: Vec::new(),
+            back_at: Vec::new(),
+            leaf_nodes: HashMap::new(),
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
             msg_tags: HashMap::new(),
@@ -737,7 +743,9 @@ impl Sim {
                 let first = secs(r.exponential(a.mean_available_s));
                 self.avail_rng.push(r);
                 self.push(Instant::ZERO + first, Ev::Availability(i));
+                self.leaf_nodes.insert(self.leaf_id(i).0, i);
             }
+            self.back_at = vec![None; self.avail_rng.len()];
         }
         // Scripted events.
         for (k, e) in sc.events.iter().enumerate() {
@@ -945,6 +953,9 @@ impl Sim {
         if let Some(t) = &mut self.tracer {
             t.event(now, node, &ev, &self.msg_tags);
         }
+        if node < self.n_relays {
+            self.note_attach(node, &ev);
+        }
         let wake = if node < self.n_relays {
             let c = &mut self.relays[node as usize];
             self.was_booting = c.booting();
@@ -975,6 +986,33 @@ impl Sim {
         // The application asks again after every event (core-interface §4).
         if self.offers[node as usize].is_some() {
             self.offer(node);
+        }
+    }
+
+    /// A relay receives an ATTACH addressed to it from a leaf that came
+    /// back into reach: the network knows the leaf is back.
+    fn note_attach(&mut self, relay: u32, ev: &Event<'_>) {
+        if self.leaf_nodes.is_empty() {
+            return;
+        }
+        let Event::Received { bytes, .. } = ev else {
+            return;
+        };
+        let Ok(bark_proto::wire::Packet::Attach(a)) = bark_proto::wire::Packet::decode(bytes)
+        else {
+            return;
+        };
+        if a.relay != self.relays[relay as usize].config().position.short() {
+            return;
+        }
+        let Some(&leaf) = self.leaf_nodes.get(&a.leaf.0) else {
+            return;
+        };
+        let li = (leaf - self.n_relays) as usize;
+        if let Some(t) = self.back_at[li].take() {
+            let r = &mut self.metrics.returns;
+            r.known += 1;
+            r.latencies_us.push(self.now.since(t).as_micros());
         }
     }
 
@@ -1821,11 +1859,14 @@ impl Sim {
             self.abort_lock(n, Deaf::Absent);
             self.clear_arrivals(n);
             self.nodes[n as usize].present = false;
+            self.back_at[li] = None;
             self.avail_rng[li].exponential(mean_dark)
         } else {
             // Back in reach. Signals already on the air are not added: the
             // error is at most one packet's worth of interference.
             self.nodes[n as usize].present = true;
+            self.back_at[li] = Some(self.now);
+            self.metrics.returns.returned += 1;
             self.avail_rng[li].exponential(mean_up)
         };
         self.push(self.now + secs(next), Ev::Availability(n));

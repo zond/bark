@@ -387,8 +387,11 @@ pub struct ChannelMetrics {
 pub struct TypeAirtime {
     /// HEARTBEAT.
     pub heartbeat_us: u64,
-    /// ACK.
+    /// ACK, of anything but an ATTACH.
     pub ack_us: u64,
+    /// ACK of an ATTACH: its message ID is the leaf's ID, and so is `to`
+    /// (design §14).
+    pub attach_ack_us: u64,
     /// ATTACH.
     pub attach_us: u64,
     /// DATA.
@@ -405,6 +408,7 @@ impl TypeAirtime {
         use bark_proto::wire::Packet;
         let c = match p {
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
+            Some(Packet::Ack(a)) if a.msg_id.0.to_be_bytes() == a.to.0 => &mut self.attach_ack_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
             Some(Packet::Attach(_)) => &mut self.attach_us,
             Some(Packet::Data(_)) => &mut self.data_us,
@@ -444,6 +448,21 @@ pub struct AppMetrics {
     /// copies of one message may be dropped in two places).
     pub drops: DropCounts,
     /// Origination to destination application, µs, in arrival order.
+    #[serde(skip)]
+    pub latencies_us: Vec<u64>,
+}
+
+/// How soon the network learns that a dark leaf is back (design §10.4):
+/// from the moment it is in reach again to the first ATTACH from it that
+/// its relay, or any relay it names, receives.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct LeafReturns {
+    /// Leaves that came back into reach.
+    pub returned: u64,
+    /// Of those, ones a relay heard from before they went dark again or
+    /// the run ended.
+    pub known: u64,
+    /// Back in reach to known, µs, in order.
     #[serde(skip)]
     pub latencies_us: Vec<u64>,
 }
@@ -518,6 +537,8 @@ pub struct Metrics {
     pub channels: [ChannelMetrics; NCH],
     /// Application level.
     pub app: AppMetrics,
+    /// Dark leaves coming back.
+    pub returns: LeafReturns,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.

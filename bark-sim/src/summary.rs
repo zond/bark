@@ -164,6 +164,22 @@ pub struct NodeSummary {
     pub airtime_fraction: f64,
 }
 
+/// How soon relays heard from leaves that came back into reach.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ReturnsSummary {
+    /// Leaves that came back into reach.
+    pub returned: u64,
+    /// Of those, ones a relay heard an ATTACH from before they went dark
+    /// again or the run ended.
+    pub known: u64,
+    /// Back in reach to known, seconds, of those known.
+    pub p50_s: Option<f64>,
+    /// See `p50_s`.
+    pub p90_s: Option<f64>,
+    /// See `p50_s`.
+    pub max_s: Option<f64>,
+}
+
 /// The run summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Summary {
@@ -195,6 +211,9 @@ pub struct Summary {
     pub home_moves: u64,
     /// Leaves attaching to a relay other than their last (design §10.1).
     pub relay_changes: u64,
+    /// Dark leaves coming back, if any went dark.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub returns: Option<ReturnsSummary>,
     /// Per channel.
     pub channels: Vec<ChannelSummary>,
     /// Per observer.
@@ -327,6 +346,18 @@ impl Sim {
             max_airtime_fraction: max_air as f64 / dur_us as f64,
             home_moves: m.nodes.iter().map(|n| n.home_moves).sum(),
             relay_changes: m.nodes.iter().map(|n| n.relay_changes).sum(),
+            returns: (m.returns.returned > 0).then(|| {
+                let mut l = m.returns.latencies_us.clone();
+                l.sort_unstable();
+                let s = |p: f64| percentile(&l, p).map(|us| us as f64 / 1e6);
+                ReturnsSummary {
+                    returned: m.returns.returned,
+                    known: m.returns.known,
+                    p50_s: s(50.0),
+                    p90_s: s(90.0),
+                    max_s: s(100.0),
+                }
+            }),
             channels,
             observers,
             nodes,
@@ -503,6 +534,18 @@ impl Summary {
             self.home_moves,
             self.relay_changes
         );
+        if let Some(r) = &self.returns {
+            let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.1}"));
+            let _ = writeln!(
+                s,
+                "leaves back in reach: {}, heard by a relay {}; after s p50 {} p90 {} max {}",
+                r.returned,
+                r.known,
+                f(r.p50_s),
+                f(r.p90_s),
+                f(r.max_s)
+            );
+        }
         let _ = writeln!(
             s,
             "\n{:>3} {:>8} {:>9} {:>9} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
