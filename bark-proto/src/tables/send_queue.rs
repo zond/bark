@@ -30,7 +30,10 @@
 //! hand-over goes to the first entry that is due, except that one that has
 //! waited goes first, the most travelled first: the place one higher is
 //! free only for the message that has come farthest, and a lower one
-//! offered first would be refused and ban the neighbour again.
+//! offered first would be refused and ban the neighbour again. Choosing an
+//! entry does not move it: the hand-over refers to it where it stands, so
+//! of equals the one that arrived first is offered first, however often
+//! they wait (roadmap D31 rule 4).
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
@@ -135,6 +138,8 @@ pub struct Full;
 #[derive(Clone)]
 pub struct SendQueue {
     frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
+    /// The entry being handed over, or last chosen to be.
+    current: Option<usize>,
 }
 
 impl SendQueue {
@@ -152,6 +157,7 @@ impl SendQueue {
         };
         SendQueue {
             frames: FixedVec::new(Outgoing::new(frame, Kind::Return)),
+            current: None,
         }
     }
 
@@ -198,19 +204,31 @@ impl SendQueue {
         self.frames.push(out).map_err(|_| Full)
     }
 
-    /// The entry being handed over, or next to be.
-    pub fn front(&self) -> Option<&Outgoing> {
-        self.frames.as_slice().first()
+    /// Make entry `i` the hand-over's. The queue keeps its order.
+    pub fn select(&mut self, i: usize) {
+        self.current = (i < self.len()).then_some(i);
     }
 
-    /// The front entry, to readdress after a failed hand-over (§9.3 step 6).
-    pub fn front_mut(&mut self) -> Option<&mut Outgoing> {
-        self.frames.as_mut_slice().first_mut()
+    /// Where the hand-over's entry is.
+    pub fn current_index(&self) -> Option<usize> {
+        self.current
     }
 
-    /// Take the front entry: its hand-over is over.
-    pub fn pop(&mut self) -> Option<Outgoing> {
-        (!self.is_empty()).then(|| self.frames.remove(0))
+    /// The hand-over's entry.
+    pub fn current(&self) -> Option<&Outgoing> {
+        self.frames.as_slice().get(self.current?)
+    }
+
+    /// The hand-over's entry, to address or to let wait.
+    pub fn current_mut(&mut self) -> Option<&mut Outgoing> {
+        let i = self.current?;
+        self.frames.as_mut_slice().get_mut(i)
+    }
+
+    /// Take the hand-over's entry out: its hand-over is over.
+    pub fn take_current(&mut self) -> Option<Outgoing> {
+        let i = self.current.take()?;
+        Some(self.frames.remove(i))
     }
 
     /// The entry the next hand-over goes to: of those that have waited and
@@ -226,26 +244,33 @@ impl SendQueue {
             .or_else(|| self.iter().position(due))
     }
 
-    /// Move entry `i` to the front; the others keep their order.
-    pub fn to_front(&mut self, i: usize) {
-        if i < self.len() {
-            self.frames.as_mut_slice()[..=i].rotate_right(1);
-        }
-    }
-
     /// When the earliest waiting entry is due.
     pub fn earliest_due(&self) -> Option<Instant> {
         self.iter().map(|o| o.not_before).min()
     }
 
-    /// Queued entries, front first.
+    /// Queued entries, in the order they arrived.
     pub fn iter(&self) -> impl Iterator<Item = &Outgoing> {
         self.frames.as_slice().iter()
     }
 
-    /// Keep only the entries for which `keep` holds, in order.
-    pub fn retain(&mut self, keep: impl FnMut(&Outgoing) -> bool) {
-        self.frames.retain(keep)
+    /// Keep only the entries for which `keep` holds, in order; `keep` is
+    /// told whether the entry is the hand-over's, which follows its entry
+    /// or ends with it.
+    pub fn retain(&mut self, mut keep: impl FnMut(bool, &Outgoing) -> bool) {
+        let mut i = 0;
+        while i < self.len() {
+            if keep(self.current == Some(i), &self.frames.as_slice()[i]) {
+                i += 1;
+                continue;
+            }
+            self.frames.remove(i);
+            self.current = match self.current {
+                Some(c) if c == i => None,
+                Some(c) if c > i => Some(c - 1),
+                c => c,
+            };
+        }
     }
 }
 
@@ -257,6 +282,7 @@ impl Default for SendQueue {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
     use crate::tables::budget::REPLY_RESERVE;
 
@@ -295,24 +321,32 @@ mod tests {
         assert_eq!(q.airtime(), one + one);
     }
 
+    fn tags(q: &SendQueue) -> std::vec::Vec<u8> {
+        q.iter().map(|f| f.frame.bytes[0]).collect()
+    }
+
     #[test]
-    fn fifo_and_bounded() {
+    fn arrival_order_and_bounded() {
         let mut q = SendQueue::new();
-        assert!(q.is_empty() && q.front().is_none() && q.pop().is_none());
+        assert!(q.is_empty() && q.current().is_none() && q.take_current().is_none());
         for i in 0..SEND_QUEUE as u8 {
             assert_eq!(q.push(frame(i)), Ok(()));
         }
         assert_eq!(q.regular(), SEND_QUEUE);
-        q.front_mut().unwrap().frame.bytes[0] = 50;
-        assert_eq!(q.pop().unwrap().frame.bytes[0], 50);
-        assert_eq!(q.front().unwrap().frame.bytes[0], 1);
-        assert_eq!(
-            q.iter().map(|f| f.frame.bytes[0]).last(),
-            Some(SEND_QUEUE as u8 - 1)
-        );
+        // The hand-over's entry is changed and taken where it stands.
+        q.select(5);
+        q.current_mut().unwrap().frame.bytes[0] = 50;
+        assert_eq!(q.take_current().unwrap().frame.bytes[0], 50);
+        assert!(q.current().is_none());
+        assert_eq!(&tags(&q)[4..6], &[4, 6]);
         assert_eq!(q.len(), SEND_QUEUE - 1);
-        q.retain(|f| f.frame.bytes[0] % 2 == 0);
-        assert_eq!(q.len(), (SEND_QUEUE - 1) / 2);
+        // Removing entries before the hand-over's leaves it on its entry.
+        q.select(10);
+        q.retain(|current, f| current || f.frame.bytes[0] % 2 == 0);
+        assert_eq!(q.current().unwrap().frame.bytes[0], 11);
+        assert_eq!(q.len(), 21, "20 even tags and the current 11");
+        q.retain(|current, _| !current);
+        assert!(q.current().is_none());
     }
 
     #[test]
@@ -346,7 +380,8 @@ mod tests {
         assert_eq!(q.free_place(1, None), None);
         assert_eq!(q.free_place(1, Some(1)), Some(1));
         // The place frees when its frame leaves.
-        q.pop();
+        q.select(0);
+        q.take_current();
         assert_eq!(q.free_place(5, None), Some(5));
         assert_eq!(q.free_place(3, None), Some(3));
     }
@@ -394,13 +429,10 @@ mod tests {
         assert_eq!(q.next_due(t(5)), Some(0), "none has waited its time");
         assert_eq!(q.next_due(t(10)), Some(2), "the earlier of equals");
         assert_eq!(q.next_due(t(20)), Some(4));
-        q.to_front(4);
-        q.pop();
-        q.to_front(2);
-        assert_eq!(q.front().unwrap().hops(), 5);
-        q.pop();
-        q.pop();
-        q.pop();
+        q.select(4);
+        q.take_current();
+        assert_eq!(q.next_due(t(20)), Some(2));
+        q.retain(|_, o| !o.waited());
         assert_eq!(q.next_due(t(20)), Some(0), "the one that never waited");
     }
 
@@ -416,12 +448,9 @@ mod tests {
         assert_eq!(q.earliest_due(), Some(t(0)));
         assert_eq!(q.next_due(t(5)), Some(2));
         assert_eq!(q.next_due(t(10)), Some(1));
-        q.to_front(1);
-        let order: [u8; 3] = core::array::from_fn(|i| q.iter().nth(i).unwrap().frame.bytes[0]);
-        assert_eq!(order, [2, 1, 3]);
-        q.pop();
-        q.pop();
-        q.pop();
+        q.select(1);
+        assert_eq!(tags(&q), [1, 2, 3], "chosen, not moved");
+        q.retain(|_, _| false);
         assert_eq!(q.next_due(t(100)), None);
     }
 }

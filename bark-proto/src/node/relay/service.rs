@@ -137,7 +137,7 @@ impl Relay {
         }
     }
 
-    /// The leaf ACKed the DELIVER at the front of the send queue.
+    /// The leaf ACKed the DELIVER being handed over.
     pub(super) fn delivered_to(
         &mut self,
         d: Deliver<'_>,
@@ -160,11 +160,8 @@ impl Relay {
             // A DELIVER not yet on its way goes with it.
             let id = q.msg_id;
             let active = !self.handover.idle();
-            let mut first = true;
-            self.queue.retain(|o| {
-                let keep = (first && active) || o.kind != Kind::Deliver || o.msg_id() != Some(id);
-                first = false;
-                keep
+            self.queue.retain(|current, o| {
+                (current && active) || o.kind != Kind::Deliver || o.msg_id() != Some(id)
             });
             self.feed_due = true;
             emit(Action::Trace(Trace::Dropped {

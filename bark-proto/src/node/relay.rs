@@ -9,8 +9,8 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! reply (ACK or BUSY) this relay owes, the heartbeat, the hand-over at
-//! the front of the send queue, and the sweep. The relay keeps at most one
+//! reply (ACK or BUSY) this relay owes, the heartbeat, the hand-over of
+//! one entry of the send queue, and the sweep. The relay keeps at most one
 //! excursion outstanding (`docs/core-interface.md` §3 rule 1). When the
 //! radio is free it starts the first job that is ready, in that order: an
 //! owed reply is worth nothing once its sender stops waiting, 100 ms after
@@ -136,9 +136,9 @@ pub struct Relay {
     mover: Mover,
     records: Records,
     queue: SendQueue,
-    /// The hand-over of the front of `queue`.
+    /// The hand-over of `queue`'s current entry.
     handover: Transfer,
-    /// Neighbour slots the front forward passed over because
+    /// Neighbour slots the current forward passed over because
     /// listen-before-talk gave up on them (§9.3 step 2); not tried.
     skipped: u64,
     replies: Replies,
@@ -1098,7 +1098,7 @@ mod tests {
             offer(&mut r, &mut now, 4, 2),
             (None, Some(DropReason::Budget))
         );
-        r.queue.retain(|o| o.place != 1);
+        r.queue.retain(|_, o| o.place != 1);
         assert_eq!(offer(&mut r, &mut now, 5, 2), (Some(1), None));
         assert_eq!(r.queue.regular(), 0);
     }
@@ -1184,5 +1184,137 @@ mod tests {
         // is always found.
         assert!(r.queue.len() + usize::from(r.held.is_some()) <= HELD);
         assert!(r.record_place().is_some());
+    }
+
+    /// Entries waiting for one busy neighbour keep their arrival order
+    /// through bans that end and recur, and of equals the oldest is
+    /// offered first each time (roadmap D31 rule 4). Choosing an entry
+    /// used to move it to the front, which reversed the waiting entries
+    /// at every ban and left the oldest waiting for minutes.
+    #[test]
+    fn waiting_entries_keep_arrival_order_through_bans() {
+        use crate::ids::{LeafId, MsgId};
+        use crate::position::ShortName;
+        use crate::tables::budget::BAN;
+        use crate::tables::records::Record;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Ack, AckFrom, Busy, Data, Heartbeat};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        let me = r.config.position;
+        let b = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let far = Position {
+            lat: me.lat + 100_000,
+            ..me
+        };
+        let (home, b_home) = (r.home, Channel::new(5).unwrap());
+        let hear = |r: &mut Relay, now: Instant, p: &Packet<'_>| {
+            let f = mac::frame(p, home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut pending = Vec::new();
+            r.handle(event, now, &mut |a| pending.push(a));
+            pending
+        };
+        let hb = Heartbeat {
+            surveyed: true,
+            home: b_home,
+            position: b,
+        };
+        hear(&mut r, now, &Packet::Heartbeat(hb));
+        // Four forwards for B, queued in this order.
+        let mut ids = Vec::new();
+        for tag in 0..4u8 {
+            let payload = [tag];
+            let d = Data {
+                sender_home: home,
+                dst_hop: ShortName(0),
+                src_hop: r.me(),
+                dst_pos: far,
+                dst_leaf: LeafId::RELAY,
+                hops: 2,
+                payload: &payload,
+            };
+            let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+            let at = r.record_place().unwrap();
+            r.records.put(at, Record::new(d.msg_id(), parent, 1, now));
+            let f = mac::frame(&Packet::Data(d), home, MIN_PREAMBLE_SYMBOLS);
+            r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+            ids.push(d.msg_id());
+        }
+        // B refuses the first `refusals` offers, then takes everything.
+        let refusals = 3;
+        let mut offers: Vec<(Instant, MsgId)> = Vec::new();
+        let until = now + Duration::from_secs(20);
+        let mut pending: Vec<Action> = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+        loop {
+            let event = match pending.pop() {
+                Some(Action::Cad(channel)) => Event::CadDone {
+                    channel,
+                    busy: false,
+                },
+                Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+                Some(Action::Transmit(f)) => {
+                    now += mac::airtime(&f);
+                    r.handle(Event::TxDone, now, &mut |a| pending.push(a));
+                    if let Ok(Packet::Data(d)) = Packet::decode(f.payload()) {
+                        let id = d.msg_id();
+                        offers.push((now, id));
+                        now += Duration::from_millis(5);
+                        let reply = if offers.len() <= refusals {
+                            Packet::Busy(Busy::refusing(b.short(), id))
+                        } else {
+                            Packet::Ack(Ack {
+                                msg_id: id,
+                                from: AckFrom::from(b.short()),
+                            })
+                        };
+                        pending.extend(hear(&mut r, now, &reply));
+                    }
+                    continue;
+                }
+                Some(_) => continue,
+                None => match r.next_wakeup() {
+                    Some(t) if t <= until => {
+                        now = now.max(t);
+                        Event::Wakeup
+                    }
+                    _ => break,
+                },
+            };
+            r.handle(event, now, &mut |a| pending.push(a));
+            if offers.len() == refusals {
+                // Every ban has ended and recurred: the queue is as it came.
+                let queued: Vec<_> = r.queue.iter().filter_map(|o| o.msg_id()).collect();
+                assert_eq!(queued, ids, "arrival order");
+            }
+        }
+        let offered: Vec<_> = offers.iter().map(|(_, id)| *id).collect();
+        // The oldest is offered at every ban's end, then each in turn.
+        let mut expect = std::vec![ids[0]; refusals];
+        expect.extend(&ids);
+        assert_eq!(offered, expect);
+        for w in offers[..=refusals].windows(2) {
+            assert!(w[1].0.since(w[0].0) >= BAN, "offered within the ban");
+        }
+        assert!(r.queue.is_empty());
     }
 }

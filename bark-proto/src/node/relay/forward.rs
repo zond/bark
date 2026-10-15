@@ -67,7 +67,7 @@
 //! counts as one of the three attempts, and never as a failure against
 //! the neighbour.
 //!
-//! A BUSY from the receiver of the front hand-over, for its message, bans
+//! A BUSY from the receiver of the current hand-over, for its message, bans
 //! the receiver for [`BAN`], so no message takes it until then (§9.3,
 //! roadmap D27, D29, D30). A forward treats it as that give-up, and since
 //! the frame went out, the record's mark that the receiver was handed the
@@ -177,7 +177,7 @@ impl Relay {
     /// everything queued, the frame included, must fit in the bucket now
     /// with the reply reserve left (§9.2.4, §9.3). Failing that, the
     /// highest free hop place not above `hops` takes it, whatever the
-    /// bucket holds (roadmap D31). `freed`: the front's hand-over ends
+    /// bucket holds (roadmap D31). `freed`: the current hand-over ends
     /// first, giving up its place.
     pub(super) fn admit(
         &self,
@@ -187,10 +187,10 @@ impl Relay {
         freed: bool,
         now: Instant,
     ) -> Result<u8, DropReason> {
-        let front = self.queue.front().filter(|_| freed);
-        let front_air = front.map_or(Duration::ZERO, |o| mac::airtime(&o.frame));
-        let queued = self.queue.airtime() - front_air + self.held_airtime();
-        let regular = self.regular() - usize::from(front.is_some_and(|o| o.place == 0));
+        let current = self.queue.current().filter(|_| freed);
+        let current_air = current.map_or(Duration::ZERO, |o| mac::airtime(&o.frame));
+        let queued = self.queue.airtime() - current_air + self.held_airtime();
+        let regular = self.regular() - usize::from(current.is_some_and(|o| o.place == 0));
         let why = if regular >= SEND_QUEUE {
             DropReason::SendQueueFull
         } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
@@ -198,7 +198,7 @@ impl Relay {
         } else {
             return Ok(0);
         };
-        let freed_place = front.map(|o| o.place).filter(|&k| k > 0);
+        let freed_place = current.map(|o| o.place).filter(|&k| k > 0);
         self.queue.free_place(hops, freed_place).ok_or(why)
     }
 
@@ -446,7 +446,7 @@ impl Relay {
             .any(|o| matches!(o.kind, Kind::Forward | Kind::Return) && o.msg_id() == Some(id))
     }
 
-    /// Whether the front hand-over is of message `id` to `to`, sent at
+    /// Whether the current hand-over is of message `id` to `to`, sent at
     /// least once.
     fn handing(&self, id: MsgId, to: ShortName) -> bool {
         !self.handover.idle()
@@ -660,20 +660,20 @@ impl Relay {
 
     // --- The hand-over (§9.3) ---
 
-    /// Make sure the first due entry of the send queue, brought to the
-    /// front, has a hand-over: address a forward, or drop what cannot be
-    /// sent.
+    /// Make sure the send queue's next due entry has a hand-over: address
+    /// a forward, or drop what cannot be sent. The entry stays where it is
+    /// in the queue.
     pub(super) fn prepare(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         while self.handover.idle() {
             let Some(i) = self.queue.next_due(now) else {
                 return;
             };
-            if i > 0 {
-                // What was set aside belongs to the old front.
-                self.queue.to_front(i);
+            if self.queue.current_index() != Some(i) {
+                // What was set aside belongs to the entry chosen before.
+                self.queue.select(i);
                 self.skipped = 0;
             }
-            let Some(out) = self.queue.front().copied() else {
+            let Some(out) = self.queue.current().copied() else {
                 return;
             };
             let routed = match out.kind {
@@ -701,26 +701,26 @@ impl Relay {
             };
             match routed {
                 Routed::To(out, expect) => {
-                    if let Some(front) = self.queue.front_mut() {
-                        *front = out;
+                    if let Some(current) = self.queue.current_mut() {
+                        *current = out;
                     }
                     self.handover.start(expect, out.tries, now);
                 }
                 Routed::Done => {
-                    self.queue.pop();
+                    self.queue.take_current();
                     self.skipped = 0;
                     self.feed_due = true;
                 }
                 Routed::Hold => {
-                    if let Some(out) = self.queue.pop() {
+                    if let Some(out) = self.queue.take_current() {
                         self.held = Some(Held { out });
                     }
                     self.skipped = 0;
                     self.feed_due = true;
                 }
                 Routed::Wait(t) => {
-                    if let Some(front) = self.queue.front_mut() {
-                        front.not_before = t;
+                    if let Some(current) = self.queue.current_mut() {
+                        current.not_before = t;
                     }
                     self.skipped = 0;
                 }
@@ -825,13 +825,13 @@ impl Relay {
         self.neighbours.by_short(name).map(|(_, n)| n.home)
     }
 
-    /// Address the front frame as its receiver is now, before each attempt
+    /// Address the current frame as its receiver is now, before each attempt
     /// (§9.3): a neighbour that moved home since the frame was queued, or
     /// since the last attempt, listens elsewhere, and a leaf that changed
     /// its receive mode needs another preamble. A receiver no longer in its
     /// table keeps the address it had.
     fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
-        let mut out = self.queue.front().copied()?;
+        let mut out = self.queue.current().copied()?;
         let (channel, preamble) = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
             // The leaf listens on this relay's home, wherever that is now.
@@ -845,13 +845,13 @@ impl Relay {
         };
         out.frame.channel = channel.unwrap_or(out.frame.channel);
         out.frame.preamble_symbols = preamble.unwrap_or(out.frame.preamble_symbols);
-        if let Some(front) = self.queue.front_mut() {
-            *front = out;
+        if let Some(current) = self.queue.current_mut() {
+            *current = out;
         }
         Some(out)
     }
 
-    /// Start listen-before-talk for the front hand-over if it is due and
+    /// Start listen-before-talk for the current hand-over if it is due and
     /// the budget lets it (§9.4: deferred, never dropped).
     pub(super) fn start_handover(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if !self.handover.due(now) {
@@ -881,7 +881,7 @@ impl Relay {
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
     }
 
-    /// A CAD or RSSI check of the front hand-over completed.
+    /// A CAD or RSSI check of the current hand-over completed.
     pub(super) fn handover_check(
         &mut self,
         busy: bool,
@@ -893,7 +893,7 @@ impl Relay {
         if !matches!(step, Step::Cad | Step::Rssi) {
             return;
         }
-        let Some(out) = self.queue.front().copied() else {
+        let Some(out) = self.queue.current().copied() else {
             return;
         };
         let backoff = self.config.hop_backoff_max;
@@ -902,16 +902,16 @@ impl Relay {
                 self.radio
                     .start(Job::HandOver, Action::Rssi(out.frame.channel), emit)
             }
-            Check::Clear => self.transmit_front(out, now, emit),
+            Check::Clear => self.transmit_current(out, now, emit),
             Check::Busy => {}
             Check::GaveUp => self.handover_gave_up(out, now, emit),
         }
     }
 
-    /// Listen-before-talk is clear: transmit the front frame, with this
+    /// Listen-before-talk is clear: transmit the current frame, with this
     /// relay's home channel as it is now (§14 `aux`). An owed ACK goes
     /// first, and the check is then repeated.
-    fn transmit_front(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
+    fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.replies.wake_at().is_some_and(|t| t <= now) {
             self.handover.hold(now);
             return;
@@ -945,8 +945,8 @@ impl Relay {
             self.defer_handover(&out, now, emit);
             return;
         }
-        if let Some(front) = self.queue.front_mut() {
-            front.frame = frame;
+        if let Some(current) = self.queue.current_mut() {
+            current.frame = frame;
         }
         self.budget.record(airtime, now);
         self.handover.transmitting();
@@ -954,7 +954,7 @@ impl Relay {
             .start(Job::HandOver, Action::Transmit(frame), emit);
     }
 
-    /// Listen-before-talk gave up on the front hand-over's channel.
+    /// Listen-before-talk gave up on the current hand-over's channel.
     fn handover_gave_up(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         match out.kind {
             Kind::Forward => {
@@ -984,13 +984,13 @@ impl Relay {
         }
     }
 
-    /// A BUSY arrived: if from the receiver of the front hand-over, it
+    /// A BUSY arrived: if from the receiver of the current hand-over, it
     /// does not take the packet (§9.3); see the module documentation.
     pub(super) fn busy_received(&mut self, b: Busy, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self.handover.refused_by(b) {
             return;
         }
-        let Some(out) = self.queue.front().copied() else {
+        let Some(out) = self.queue.current().copied() else {
             return;
         };
         let msg_id = out.msg_id().unwrap_or_default();
@@ -1016,9 +1016,9 @@ impl Relay {
             Kind::Return | Kind::Bounce | Kind::Deliver => {
                 let tries = self.handover.refused();
                 self.skipped = 0;
-                if let Some(front) = self.queue.front_mut() {
-                    front.not_before = now + BAN;
-                    front.tries = tries;
+                if let Some(current) = self.queue.current_mut() {
+                    current.not_before = now + BAN;
+                    current.tries = tries;
                 }
             }
         }
@@ -1028,11 +1028,13 @@ impl Relay {
         self.neighbours.by_short(name).map(|(_, n)| n.position)
     }
 
-    /// The front hand-over succeeded: its receiver has the packet.
+    /// The current hand-over succeeded: its receiver has the packet.
     pub(super) fn handover_done(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.handover.cancel();
         self.skipped = 0;
-        let Some(out) = self.queue.pop() else { return };
+        let Some(out) = self.queue.take_current() else {
+            return;
+        };
         self.feed_due = true;
         let d = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) => d,
@@ -1061,7 +1063,7 @@ impl Relay {
         emit(Action::Trace(trace));
     }
 
-    /// Every attempt of the front hand-over went unanswered (§9.3 step 6).
+    /// Every attempt of the current hand-over went unanswered (§9.3 step 6).
     /// `counted`: a failure is counted against the neighbour (§8.2).
     fn handover_failed(
         &mut self,
@@ -1078,7 +1080,7 @@ impl Relay {
         }
         let reason = match out.kind {
             // The neighbour is the last child now; the next one in order is
-            // taken when the front is prepared again.
+            // taken when the entry is prepared again.
             Kind::Forward => return,
             Kind::Return => Some(DropReason::ReturnFailed),
             Kind::Bounce => Some(DropReason::BounceFailed),
@@ -1087,7 +1089,7 @@ impl Relay {
         if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
             self.leaves.set_missed(d.dst_leaf, true);
         }
-        self.queue.pop();
+        self.queue.take_current();
         self.skipped = 0;
         self.feed_due = true;
         if let Some(reason) = reason {
@@ -1150,7 +1152,7 @@ impl Relay {
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
         if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
-            if let Some(out) = self.queue.front().copied() {
+            if let Some(out) = self.queue.current().copied() {
                 self.handover_failed(out, true, now, emit);
             }
         }
