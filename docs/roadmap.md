@@ -59,7 +59,7 @@ See `simulator-design.md`. Milestones:
 1. Three relays in a line, one leaf: greedy forward, ACK, demotion when the middle relay dies. Mirrors bench step 4 so the same scenario later runs on hardware.
 2. One km² block, ~10 relays, ~80 leaves: attach, keepalive, delivery, queue (bench step 5).
 3. Channel selection: inject a busy channel, confirm avoidance and no oscillation among relays that all hear each other (bench step 3).
-4. Capacity: a 28 km² collision domain, ~270 relays, 20k leaves, texts at the §13 rates. Measure delivery ratio, latency, per-channel busy fraction, per-relay airtime, where the 10% cap binds first.
+4. Capacity: a 28 km² collision domain, ~270 relays, 20k leaves, texts at the §13 rates. Measure delivery ratio, latency, per-channel busy fraction, per-relay airtime, where the 10% cap binds first. *Measured 2026-10-15* (`capacity-research-2026-10-15.md`): the cap of centre windowsill relays binds from a quarter of the §13 rate, about 2.2 texts/s per domain at 90 % delivery, against §13's 5.7.
 5. Sweep the unknowns: adjacent-channel rejection at 125 kHz spacing (bench item C1), hearing radius, SF5 sensitivity, heartbeat interval. Produce the table that replaces §13.
 
 ### Phase 2: bring-up (boards in hand)
