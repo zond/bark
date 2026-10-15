@@ -118,11 +118,12 @@ impl Transfer {
         matches!(self.step, Step::AwaitAck(_))
     }
 
-    /// Begin a hand-over that ends with `expect`, ready at once.
-    pub(crate) fn start(&mut self, expect: Ack, now: Instant) {
+    /// Begin a hand-over that ends with `expect`, ready at once, after
+    /// `attempts` unanswered transmissions made before it waited.
+    pub(crate) fn start(&mut self, expect: Ack, attempts: u8, now: Instant) {
         *self = Transfer {
             step: Step::Wait(now),
-            attempts: 0,
+            attempts,
             lbt_since: None,
             expect,
         };
@@ -217,16 +218,11 @@ impl Transfer {
             && busy.refuses(self.expect.msg_id)
     }
 
-    /// The receiver refused a hand-over that has no other receiver to go
-    /// to: the transmission counts as unanswered.
-    pub(crate) fn refused(
-        &mut self,
-        now: Instant,
-        max: u8,
-        rng: &mut Rng,
-        retry_backoff: Duration,
-    ) -> Missed {
-        self.after_attempt(now, max, rng, retry_backoff)
+    /// The receiver refused the hand-over, which gives it up: the
+    /// unanswered transmissions before the refused one, to resume with.
+    pub(crate) fn refused(&mut self) -> u8 {
+        self.step = Step::Idle;
+        self.attempts.saturating_sub(1)
     }
 
     /// An ACK arrived. Returns whether it ends this hand-over, which it
@@ -488,7 +484,7 @@ mod tests {
     fn three_attempts_then_failure() {
         let mut rng = Rng::new(1);
         let mut t = Transfer::new();
-        t.start(ack(7), at(0));
+        t.start(ack(7), 0, at(0));
         assert!(t.due(at(0)) && !t.transmitted());
         for attempt in 0..3u64 {
             let now = t.wake_at().unwrap();
@@ -523,7 +519,7 @@ mod tests {
     fn ack_must_name_message_and_sender() {
         let mut rng = Rng::new(2);
         let mut t = Transfer::new();
-        t.start(ack(7), at(0));
+        t.start(ack(7), 0, at(0));
         assert!(!t.acked(ack(7)), "nothing sent yet");
         t.begin_lbt(at(0));
         t.checked(false, at(0), &mut rng, ms(50));
@@ -548,7 +544,7 @@ mod tests {
     fn busy_channel_backs_off_and_gives_up_after_500_ms() {
         let mut rng = Rng::new(3);
         let mut t = Transfer::new();
-        t.start(ack(1), at(0));
+        t.start(ack(1), 0, at(0));
         let mut now = at(0);
         let mut checks = 0;
         loop {
@@ -563,7 +559,7 @@ mod tests {
         assert!(now >= at(500) && now < at(550), "{now:?}");
         assert!(checks > 10 && t.idle());
         // A retry starts a fresh 500 ms.
-        t.start(ack(1), now);
+        t.start(ack(1), 0, now);
         t.begin_lbt(now);
         assert_eq!(
             t.checked(true, now + ms(499), &mut rng, ms(50)),
@@ -575,7 +571,7 @@ mod tests {
     fn a_budget_hold_starts_a_new_listen_before_talk_period() {
         let mut rng = Rng::new(5);
         let mut t = Transfer::new();
-        t.start(ack(1), at(0));
+        t.start(ack(1), 0, at(0));
         t.begin_lbt(at(0));
         assert_eq!(t.checked(true, at(0), &mut rng, ms(50)), Check::Busy);
         t.defer(at(60_000));

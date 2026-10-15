@@ -103,7 +103,7 @@ mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 256);
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 262);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 272);
         // The send queue's places follow from the duty bucket (§9.3), and
         // the delivery queue's from a full leaf table over one TTL
         // (§10.4); together 20.5 KiB, where 16 and 64 places took 20.1.
@@ -130,7 +130,7 @@ mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                send_queue::SEND_QUEUE * 262,
+                send_queue::SEND_QUEUE * 272,
             ),
             (
                 "delivered",

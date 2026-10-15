@@ -102,10 +102,7 @@ impl Relay {
                 return Err(self.budget.allowed_at(airtime, queued, now));
             }
         }
-        let _ = self.queue.push(Outgoing {
-            frame,
-            kind: Kind::Deliver,
-        });
+        let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())
     }
 

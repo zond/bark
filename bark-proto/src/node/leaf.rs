@@ -470,6 +470,7 @@ impl Leaf {
                     msg_id: MsgId(u32::from_be_bytes(self.id.0)),
                     from,
                 },
+                0,
                 now,
             );
         } else if let Some(msg_id) = self
@@ -477,7 +478,7 @@ impl Leaf {
             .filter(|_| self.attached && now >= self.outgoing_at)
         {
             self.sending = Sending::Data;
-            self.transfer.start(Ack { msg_id, from }, now);
+            self.transfer.start(Ack { msg_id, from }, 0, now);
         }
     }
 

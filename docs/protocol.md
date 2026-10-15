@@ -1221,7 +1221,7 @@ Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 41 × 256 B = 10.3 KB; message records
-(§9.2.2) 626 × 32 B = 20 KB; send queue 40 × 262 B = 10.2 KB; delivered
+(§9.2.2) 626 × 32 B = 20 KB; send queue 40 × 272 B = 10.6 KB; delivered
 window 1 KB; busy estimates and duty budget under 1 KB; 49 KB in all,
 measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB.
 

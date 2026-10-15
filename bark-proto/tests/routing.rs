@@ -602,104 +602,103 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     assert_eq!(forwarded(&h, third).map(|(_, to)| to), Some(n1));
 }
 
-/// P, O, F, D in a line. F's send queue is full: X, whose only neighbour
-/// it is, has handed it short messages for D until it refused one, and
-/// F's own frames are lost. F refuses P's message with BUSY (§9.2.4). F is
-/// the only neighbour O has not tried, so O's search ends at once: it
-/// returns the message to P, which, as the origin with no other
-/// neighbour, drops it (§9.2.5). Within the ban O hands its own message
-/// for D to P, though F is nearer D; after the ban, and with F's queue
-/// gone, F takes the next message (roadmap D29).
+/// P, O, F in a line. F's delivery queue is full of its own application's
+/// messages for its leaf L, which is not there, so F refuses P's message
+/// for L with BUSY (§9.2.4, §10.4). F is the only neighbour O has not
+/// tried, so the message waits in O's queue until F's ban ends, and O
+/// offers it to F again then, once a ban; it is not returned to P or
+/// dropped (§9.2.5, roadmap D31). Meanwhile O's queue moves on: its own
+/// message for P goes out. Once F's messages expire, F takes the waiting
+/// one.
 #[test]
-fn a_relay_with_only_banned_neighbours_ends_its_search_at_once() {
+fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
     use bark_proto::tables::budget::BAN;
-    let (p, o, f, d, x) = (0, 1, 2, 3, 4);
+    use bark_proto::tables::delivery::DELIVERY_QUEUE;
+    let (p, o, f) = (0, 1, 2);
     let mut h = build(
         vec![
             relay(-400.0, 0.0, 120),
             relay(0.0, 0.0, 121),
             relay(400.0, 0.0, 122),
-            relay(800.0, 0.0, 123),
-            relay(400.0, 400.0, 124),
         ],
-        &[(p, o), (o, f), (f, d), (x, f)],
+        &[(p, o), (o, f)],
     );
-    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
-    let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, _, bytes| {
-        losing.get() && from == f && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
-    }));
-    fill(&mut h, x, f, d);
-    let name = |h: &Harness<Node>, i| position(h, i).short();
-    let nf = name(&h, f);
-    let to_f = |h: &Harness<Node>, id: MsgId| {
-        h.nodes[o].sent.iter().any(|(_, fr)| {
-            matches!(Packet::decode(fr.payload()), Ok(Packet::Data(q)) if q.dst_hop == nf && q.msg_id() == id)
-        })
+    let (pf, l) = (position(&h, f), LeafId([7; 4]));
+    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+        h.command(
+            from,
+            AppCommand::Send {
+                dst_pos: pf,
+                dst_leaf: l,
+                payload: text,
+            },
+        );
+        MsgId::of(pf, l, text)
     };
-
-    let first = send(&mut h, p, d, b"first");
-    let gone = |h: &Harness<Node>, i: usize, id: MsgId| {
-        h.nodes[i].traces.iter().find_map(|(t, tr)| match tr {
-            Trace::Dropped { msg_id, reason } if *msg_id == id => Some((*t, *reason)),
-            _ => None,
-        })
-    };
-    assert!(h.run_until(h.now + secs(5), |h| gone(h, p, first).is_some()));
-    h.run_for(Duration::from_millis(200));
-    let refused_at = h.nodes[o]
-        .traces
-        .iter()
-        .find_map(|(t, tr)| match tr {
-            Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == nf => Some(*t),
-            _ => None,
-        })
-        .expect("F refused with BUSY");
-    let returned_at = h.nodes[o]
-        .traces
-        .iter()
-        .find_map(|(t, tr)| match tr {
-            Trace::ReturnedToParent { msg_id, .. } if *msg_id == first => Some(*t),
-            _ => None,
-        })
-        .expect("O did not return it to P");
-    assert!(
-        returned_at.since(refused_at) < Duration::from_millis(100),
-        "returned {:?} after the BUSY",
-        returned_at.since(refused_at)
-    );
-    assert_eq!(
-        gone(&h, p, first).map(|(_, r)| r),
-        Some(DropReason::NoRoute)
-    );
-    assert!(!traces(&h, o)
-        .iter()
-        .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == first)));
-
-    // Within the ban O's own message goes to P, farther from D, not to F.
-    let np = name(&h, p);
-    assert!(h.now < refused_at + BAN);
-    let second = send(&mut h, o, d, b"second");
-    let offered = |h: &Harness<Node>| {
+    for k in 0..DELIVERY_QUEUE as u8 {
+        to_l(&mut h, f, &[b'f', k]);
+    }
+    let nf = pf.short();
+    let offers_to_f = |h: &Harness<Node>, id: MsgId| {
         h.nodes[o]
             .sent
             .iter()
-            .find_map(|(t, fr)| match Packet::decode(fr.payload()) {
-                Ok(Packet::Data(q)) if q.msg_id() == second => Some((*t, q.dst_hop)),
+            .filter(|(_, fr)| {
+                matches!(Packet::decode(fr.payload()), Ok(Packet::Data(q)) if q.dst_hop == nf && q.msg_id() == id)
+            })
+            .map(|(t, _)| *t)
+            .collect::<Vec<_>>()
+    };
+    let ended = |h: &Harness<Node>, id: MsgId| {
+        h.nodes.iter().any(|n| {
+            n.traces.iter().any(|(_, tr)| {
+                matches!(tr, Trace::Dropped { msg_id, .. } | Trace::ReturnedToParent { msg_id, .. } if *msg_id == id)
+            })
+        })
+    };
+
+    let first = to_l(&mut h, p, b"first");
+    let refusals = |h: &Harness<Node>| {
+        h.nodes[o]
+            .traces
+            .iter()
+            .filter_map(|(t, tr)| match tr {
+                Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == nf => Some(*t),
                 _ => None,
             })
+            .collect::<Vec<_>>()
     };
-    assert!(h.run_until(h.now + secs(1), |h| offered(h).is_some()));
-    let (at, to) = offered(&h).unwrap();
-    assert!(at < refused_at + BAN);
-    assert_eq!(to, np, "offered to F within the ban");
+    assert!(h.run_until(h.now + secs(5), |h| !refusals(h).is_empty()));
+    let refused_at = refusals(&h)[0];
+    h.run_for(Duration::from_millis(200));
+    assert!(core(&h, o).holding().any(|m| m == first), "O let it go");
+    assert!(!ended(&h, first), "returned or dropped for a ban");
 
-    // After it, and with F's queue gone, F takes a message again.
-    lost.set(false);
+    // Within the ban O's queue moves on.
+    assert!(h.now < refused_at + BAN);
+    let second = send(&mut h, o, p, b"second");
+    assert!(h.run_until(h.now + secs(1), |h| delivered(h, p, second)));
+
+    // Offered again once each ban has ended, and never within one.
     h.run_for(secs(30));
-    let third = send(&mut h, o, d, b"third");
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
-    assert!(to_f(&h, third));
+    let (offers, refused) = (offers_to_f(&h, first), refusals(&h));
+    assert!(refused.len() >= 10, "{refused:?}");
+    for r in refused.iter().filter(|r| **r + BAN + secs(1) < h.now) {
+        let next = offers.iter().find(|t| *t > r).expect("offered again");
+        assert!(*next >= *r + BAN, "offered again within the ban");
+        assert!(*next < *r + BAN + secs(1), "not offered when the ban ended");
+    }
+    assert!(!ended(&h, first), "returned or dropped for a ban");
+
+    // Once F's own messages expire, it takes the message.
+    let queued = |h: &Harness<Node>| {
+        h.nodes[f]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == first))
+    };
+    assert!(h.run_until(h.now + secs(700), queued), "F never took it");
+    assert!(!ended(&h, first));
 }
 
 /// F, O's only neighbour, has its delivery queue full of its own

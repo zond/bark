@@ -12,14 +12,16 @@
 //! hand-overs of them still go out in a few seconds.
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
-//! what happens when the hand-over fails (§9.3).
+//! what happens when the hand-over fails (§9.3). An entry whose receivers
+//! are all banned waits in its place until a ban ends (§9.3, roadmap
+//! D31); the hand-over goes to the first entry that is due.
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
-use crate::time::Duration;
+use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
@@ -59,9 +61,24 @@ pub struct Outgoing {
     pub frame: Frame,
     /// What it is for.
     pub kind: Kind,
+    /// Not handed over before this: it waits for a ban to end.
+    pub not_before: Instant,
+    /// Transmissions of a return or send-back that went unanswered, kept
+    /// while it waits; a refusal does not count.
+    pub tries: u8,
 }
 
 impl Outgoing {
+    /// `frame` for `kind`, due at once.
+    pub const fn new(frame: Frame, kind: Kind) -> Outgoing {
+        Outgoing {
+            frame,
+            kind,
+            not_before: Instant::ZERO,
+            tries: 0,
+        }
+    }
+
     /// The message the frame carries: a DATA's computed ID (roadmap D15)
     /// or a DELIVER's.
     pub fn msg_id(&self) -> Option<MsgId> {
@@ -97,10 +114,7 @@ impl SendQueue {
             bytes: [0; MAX_FRAME],
         };
         SendQueue {
-            frames: FixedVec::new(Outgoing {
-                frame,
-                kind: Kind::Return,
-            }),
+            frames: FixedVec::new(Outgoing::new(frame, Kind::Return)),
         }
     }
 
@@ -146,6 +160,23 @@ impl SendQueue {
         (!self.is_empty()).then(|| self.frames.remove(0))
     }
 
+    /// The entry the next hand-over goes to: the first that is due.
+    pub fn next_due(&self, now: Instant) -> Option<usize> {
+        self.iter().position(|o| o.not_before <= now)
+    }
+
+    /// Move entry `i` to the front; the others keep their order.
+    pub fn to_front(&mut self, i: usize) {
+        if i < self.len() {
+            self.frames.as_mut_slice()[..=i].rotate_right(1);
+        }
+    }
+
+    /// When the earliest waiting entry is due.
+    pub fn earliest_due(&self) -> Option<Instant> {
+        self.iter().map(|o| o.not_before).min()
+    }
+
     /// Queued entries, front first.
     pub fn iter(&self) -> impl Iterator<Item = &Outgoing> {
         self.frames.as_slice().iter()
@@ -177,10 +208,7 @@ mod tests {
             len: 1,
             bytes,
         };
-        Outgoing {
-            frame,
-            kind: Kind::Bounce,
-        }
+        Outgoing::new(frame, Kind::Bounce)
     }
 
     #[test]
@@ -225,5 +253,26 @@ mod tests {
         assert_eq!(q.len(), SEND_QUEUE - 1);
         q.retain(|f| f.frame.bytes[0] % 2 == 0);
         assert_eq!(q.len(), (SEND_QUEUE - 1) / 2);
+    }
+
+    #[test]
+    fn waiting_entries_keep_their_place() {
+        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let mut q = SendQueue::new();
+        for (tag, due) in [(1, 30), (2, 10), (3, 0)] {
+            let mut o = frame(tag);
+            o.not_before = t(due);
+            q.push(o).unwrap();
+        }
+        assert_eq!(q.earliest_due(), Some(t(0)));
+        assert_eq!(q.next_due(t(5)), Some(2));
+        assert_eq!(q.next_due(t(10)), Some(1));
+        q.to_front(1);
+        let order: [u8; 3] = core::array::from_fn(|i| q.iter().nth(i).unwrap().frame.bytes[0]);
+        assert_eq!(order, [2, 1, 3]);
+        q.pop();
+        q.pop();
+        q.pop();
+        assert_eq!(q.next_due(t(100)), None);
     }
 }

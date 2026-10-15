@@ -131,14 +131,14 @@ test in `tables/mod.rs`:
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
 | Delivery queue (§10.4) | 41 × 256 B | 10.3 KiB |
 | Message records (§9.2.2) | 626 × 32 B | 19.6 KiB |
-| Send queue (§9.3) | 40 × 262 B | 10.2 KiB |
+| Send queue (§9.3) | 40 × 272 B | 10.6 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget (§9.4) and busy estimate (§6.1) | 16 B + 348 B | 0.4 KiB |
-| **All** | | **48.5 KiB** |
+| **All** | | **48.9 KiB** |
 
 The send queue's 40 places follow from the duty bucket (design §9.3), and the delivery
 queue gives up the memory for them: its 41 places hold what arrives in one delivery TTL for
-a full leaf table (§10.4). The whole `Relay` is 50 384 B (49.2 KiB), under the 50 KiB
+a full leaf table (§10.4). The whole `Relay` is 50 776 B (49.6 KiB), under the 50 KiB
 target; besides the tables it holds the medium access, the hand-over, its one owed reply
 and its application's message while it waits.
 Checked by the tests in `tables/mod.rs` and `node/relay.rs`.

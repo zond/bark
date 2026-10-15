@@ -155,9 +155,8 @@ pub struct Relay {
     /// Refusals in a row of `own` by banned neighbours: each doubles the
     /// hold before it is offered again (`budget::hold`).
     own_refusals: u8,
-    /// The application's message, set aside while every neighbour left
-    /// for it is banned or, for a leaf of this relay, while the delivery
-    /// queue is full.
+    /// The application's message for a leaf of this relay, set aside
+    /// while the delivery queue is full.
     held: Option<forward::Held>,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
@@ -721,7 +720,7 @@ mod tests {
 
     #[test]
     fn sizes() {
-        // docs/core-interface.md §6: under 50 KiB with every table; 50 384 B
+        // docs/core-interface.md §6: under 50 KiB with every table; 50 776 B
         // with a 40-place send queue, a 41-place delivery queue, one owed
         // reply and one held message.
         let relay = core::mem::size_of::<Relay>();
