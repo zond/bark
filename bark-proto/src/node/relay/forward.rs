@@ -982,6 +982,7 @@ impl Relay {
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
         let slot = self.neighbours.by_short(by).map(|(s, n)| (s, n.position));
         if let Some((_, position)) = slot {
+            self.neighbours.answered(position, now);
             self.neighbours.refused(position, now + BAN);
         }
         match out.kind {
@@ -1025,7 +1026,7 @@ impl Relay {
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
         if let Some(p) = self.neighbour_named(to) {
-            self.neighbours.succeeded(p);
+            self.neighbours.succeeded(p, now);
         }
         let trace = match out.kind {
             Kind::Forward => {

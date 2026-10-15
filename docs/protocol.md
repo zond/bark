@@ -315,7 +315,8 @@ Per node, up to 64 entries:
 | fail_count | consecutive ACK failures |
 | banned_until | when the ban of its last refusal ends (§9.3) |
 
-- **Expire** after 3 rotations (390 s) without a heartbeat.
+- **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
+  from it (§9.3).
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
   `fail_count ≥ 2` is a next hop only when no other is left (§9.2.3)
   until it ACKs a packet from this relay or three rotations (390 s)

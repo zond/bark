@@ -266,10 +266,21 @@ impl Neighbours {
         }
     }
 
-    /// `position` ACKed a packet from this relay: its failures are over.
-    pub fn succeeded(&mut self, position: Position) {
+    /// `position` took a packet from this relay at `now`: its failures
+    /// are over, and it is alive.
+    pub fn succeeded(&mut self, position: Position, now: Instant) {
         if let Some(n) = self.entry_mut(position) {
             n.fail_count = 0;
+        }
+        self.answered(position, now);
+    }
+
+    /// `position` answered a packet from this relay at `now`, taking or
+    /// refusing it: it is alive, whether or not its heartbeats are heard
+    /// (§9.3).
+    pub fn answered(&mut self, position: Position, now: Instant) {
+        if let Some(n) = self.entry_mut(position) {
+            n.last_heard = n.last_heard.max(now);
         }
     }
 
@@ -448,7 +459,7 @@ mod tests {
         let p = pos(1);
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
-        t.succeeded(p);
+        t.succeeded(p, at(1));
         assert_eq!(
             t.failed(p, at(1)),
             Some(false),
@@ -472,7 +483,7 @@ mod tests {
         assert_eq!(t.failed(p, at(393)), Some(false));
         assert_eq!(t.failed(p, at(394)), Some(true));
         // An ACK lifts it at once.
-        t.succeeded(p);
+        t.succeeded(p, at(394));
         assert_eq!(t.candidates(at(395)).count(), 1);
     }
 

@@ -1438,4 +1438,110 @@ mod tests {
             Action::Trace(Trace::Forwarded { msg_id, .. }) if *msg_id == id
         )));
     }
+
+    /// A neighbour whose heartbeats this relay stops hearing, but which
+    /// answers its hand-overs, taking or refusing them, is alive and stays
+    /// in the table past the 390 s a heartbeat alone keeps it (§8.2, §9.3).
+    /// Without this, a relay whose only neighbour's heartbeats were lost
+    /// for a few rotations dropped it while it was carrying every message.
+    #[test]
+    fn a_neighbour_that_answers_stays_live() {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::tables::records::Record;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Ack, Data};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        let me = r.config.position;
+        let d_pos = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let far = Position {
+            lat: me.lat + 100_000,
+            ..me
+        };
+        let home = r.home;
+        let hear = |r: &mut Relay, now: Instant, p: &Packet<'_>| {
+            let f = mac::frame(p, home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut actions = Vec::new();
+            r.handle(event, now, &mut |a| actions.push(a));
+            actions
+        };
+        let heard_at = now;
+        hear(
+            &mut r,
+            now,
+            &Packet::Heartbeat(Heartbeat {
+                surveyed: true,
+                home: Channel::new(5).unwrap(),
+                position: d_pos,
+            }),
+        );
+        let expiry = r.neighbours.params().expire_after;
+        assert_eq!(expiry, Duration::from_secs(390));
+        let live = |r: &Relay, now| r.neighbours.live(now).any(|(_, n)| n.position == d_pos);
+
+        // Hand D a message and let D answer, taking it, then refusing one.
+        let answer = |r: &mut Relay, now: &mut Instant, tag: u8, refused: bool| {
+            let payload = [tag];
+            let data = Data {
+                sender_home: home,
+                dst_hop: ShortName(0),
+                src_hop: r.me(),
+                dst_pos: far,
+                dst_leaf: LeafId::RELAY,
+                hops: 2,
+                payload: &payload,
+            };
+            let id = data.msg_id();
+            let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+            let at = r.record_place().unwrap();
+            r.records.put(at, Record::new(id, parent, 1, *now));
+            let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+            r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+            let until = *now + Duration::from_millis(100);
+            let mut pending = Vec::new();
+            r.handle(Event::Wakeup, *now, &mut |a| pending.push(a));
+            let sent = drive_from(r, now, until, pending);
+            assert!(sent
+                .iter()
+                .any(|(_, f)| f.channel == Channel::new(5).unwrap()));
+            let ack = Ack {
+                msg_id: id,
+                from: d_pos.short().into(),
+                to: r.me().into(),
+                refused,
+            };
+            let pending = hear(r, *now, &Packet::Ack(ack));
+            r.queue.retain(|_, _| false);
+            r.handover.cancel();
+            let until = *now + Duration::from_millis(100);
+            drive_from(r, now, until, pending);
+        };
+        now = heard_at + (expiry - Duration::from_secs(10));
+        answer(&mut r, &mut now, 1, false);
+        let taken_at = now;
+        assert!(live(&r, heard_at + expiry), "taken: alive");
+        now = taken_at + (expiry - Duration::from_secs(10));
+        answer(&mut r, &mut now, 2, true);
+        let refused_at = now;
+        assert!(live(&r, taken_at + expiry), "refused: alive");
+        assert!(!live(&r, refused_at + expiry), "silent: expired");
+    }
 }
