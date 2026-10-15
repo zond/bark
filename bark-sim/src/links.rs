@@ -47,7 +47,8 @@ pub fn free_space_loss_1m_db() -> f64 {
 pub const SHADOW_TRUNCATE_SIGMA: f64 = 3.0;
 
 /// Where a node's antenna is, as far as the link generator cares.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Site {
     /// In the open at street or window height.
     Outdoor,

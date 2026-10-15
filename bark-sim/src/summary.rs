@@ -3,8 +3,8 @@
 //! The summary is a pure function of the run (no wall-clock time), so two
 //! runs of one scenario produce byte-identical JSON.
 
-use crate::links::BuildStats;
-use crate::metrics::{percentile, DropCounts, NodeMetrics, RxCounts};
+use crate::links::{BuildStats, Site};
+use crate::metrics::{percentile, DropCounts, NodeMetrics, RxCounts, TypeAirtime};
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
 use bark_proto::Instant;
@@ -124,6 +124,8 @@ pub struct ChannelSummary {
     pub tx_frames: u64,
     /// Airtime on this channel, seconds.
     pub airtime_s: f64,
+    /// The same airtime by packet type.
+    pub airtime_by_type: TypeAirtime,
     /// Busy fraction over the run, mean over observers.
     pub busy_fraction: Option<f64>,
 }
@@ -144,6 +146,17 @@ pub struct NodeSummary {
     pub id: u32,
     /// Label.
     pub label: String,
+    /// Metres east of the origin.
+    pub x: f64,
+    /// Metres north of the origin.
+    pub y: f64,
+    /// Where its antenna is.
+    pub site: Site,
+    /// The channel it rests on at the end: a relay's home channel.
+    pub channel: Option<u8>,
+    /// For a leaf, the relay it is attached to at the end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay: Option<u32>,
     /// Counters.
     #[serde(flatten)]
     pub m: NodeMetrics,
@@ -245,6 +258,7 @@ impl Sim {
                     rx: ch.rx,
                     tx_frames: ch.tx_frames,
                     airtime_s: ch.airtime_us as f64 / 1e6,
+                    airtime_by_type: ch.airtime_by_type,
                     busy_fraction: busy,
                 }
             })
@@ -266,6 +280,13 @@ impl Sim {
                 .map(|(i, n)| NodeSummary {
                     id: i as u32,
                     label: self.label(i as u32),
+                    x: self.xy(i as u32).x,
+                    y: self.xy(i as u32).y,
+                    site: self.site(i as u32),
+                    channel: self.resting(i as u32).map(|c| c.index()),
+                    relay: (i as u32 >= self.relays())
+                        .then(|| self.attached_relay(i as u32))
+                        .flatten(),
                     m: n.clone(),
                     airtime_fraction: n.airtime_us as f64 / dur_us as f64,
                 })

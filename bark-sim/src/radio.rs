@@ -34,6 +34,7 @@ use crate::metrics::Outcome;
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{Arrival, ExKind, Lock, Rx, Sim};
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::wire::Packet as WirePacket;
 use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 
 /// Tolerance for threshold comparisons in dB, so that an exact 5.0 dB
@@ -113,11 +114,26 @@ impl Sim {
             preamble_weight: (MIN_PREAMBLE_SYMBOLS as f64 / preamble as f64).min(1.0),
         };
         let air = end.since(start).as_micros();
+        let decoded = WirePacket::decode(tx.frame.payload()).ok();
+        let msg = match decoded {
+            Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops)),
+            Some(WirePacket::Deliver(d)) => Some((d.msg_id, 0)),
+            Some(WirePacket::Ack(a)) => Some((a.msg_id, 0)),
+            _ => None,
+        };
         let m = &mut self.metrics;
         m.nodes[src as usize].tx_frames += 1;
         m.nodes[src as usize].airtime_us += air;
-        m.channels[ch.index() as usize].tx_frames += 1;
-        m.channels[ch.index() as usize].airtime_us += air;
+        m.nodes[src as usize]
+            .airtime_by_type
+            .add(decoded.as_ref(), air);
+        let chm = &mut m.channels[ch.index() as usize];
+        chm.tx_frames += 1;
+        chm.airtime_us += air;
+        chm.airtime_by_type.add(decoded.as_ref(), air);
+        if let Some((id, hops)) = msg {
+            self.message_frame(id, hops, air);
+        }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
             return; // A dark leaf transmits into a tunnel.
@@ -182,6 +198,11 @@ impl Sim {
             let snr = (phy::dbm(s_mw) - phy::dbm(self.noise_mw + i_mw))
                 .round()
                 .clamp(-128.0, 127.0) as i8;
+            let heartbeat = match WirePacket::decode(&bytes[..len]) {
+                Ok(WirePacket::Heartbeat(h)) if b < self.relays() => Some(h.position),
+                _ => None,
+            };
+            let before = heartbeat.map(|p| self.table_holds(b, p));
             self.deliver(
                 b,
                 Event::Received {
@@ -191,6 +212,18 @@ impl Sim {
                     bytes: &bytes[..len],
                 },
             );
+            if let (Some(p), Some((false, len))) = (heartbeat, before) {
+                use bark_proto::tables::neighbours::NEIGHBOURS;
+                if len >= NEIGHBOURS {
+                    let added = self.table_holds(b, p).0;
+                    let c = &mut self.metrics.nodes[b as usize].core;
+                    if added {
+                        c.evictions += 1;
+                    } else {
+                        c.rejections += 1;
+                    }
+                }
+            }
         }
     }
 

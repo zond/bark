@@ -163,6 +163,8 @@ pub struct NodeMetrics {
     pub tx_frames: u64,
     /// Time on air, µs.
     pub airtime_us: u64,
+    /// The same time on air by packet type.
+    pub airtime_by_type: TypeAirtime,
     /// CAD excursions.
     pub cad: u64,
     /// RSSI excursions.
@@ -178,6 +180,122 @@ pub struct NodeMetrics {
     pub messages_in: u64,
     /// Messages this node dropped, by reason.
     pub drops: DropCounts,
+    /// What the core reported in its traces.
+    pub core: CoreCounts,
+    /// A relay's tables and bucket, sampled; `None` for a leaf or when
+    /// not sampled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load: Option<LoadStats>,
+}
+
+/// Counts of what a core reported in its traces (`bark_proto::Trace`), and
+/// of what heartbeats did to a relay's neighbour table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct CoreCounts {
+    /// Home channel moves after the boot choice (design §6.3).
+    pub home_moves: u64,
+    /// Heartbeats skipped because every listen-before-talk check was busy (§7).
+    pub heartbeats_skipped: u64,
+    /// Heartbeats the bucket held back (§9.4).
+    pub heartbeats_deferred: u64,
+    /// DATA packets this relay refused, by what it lacked (§9.2.4).
+    pub refused: DropCounts,
+    /// Refusals this node received, each a ban on the refuser (§9.3).
+    pub turned_away: u64,
+    /// Hand-overs the bucket held back (§9.4).
+    pub handovers_deferred: u64,
+    /// Neighbours demoted (§8.2).
+    pub demoted: u64,
+    /// Messages a neighbour took: sent on (§9.2.3) or returned to the
+    /// parent (§9.2.5).
+    pub handed_over: u64,
+    /// Heartbeats from a relay not in the table that took the place of
+    /// one that was (D12).
+    pub evictions: u64,
+    /// Heartbeats from a relay not in the full table that found no place
+    /// (D12).
+    pub rejections: u64,
+}
+
+/// A relay's load, sampled at the metrics cadence: the bucket, the queues
+/// and the tables (`bark_proto::Load`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct LoadStats {
+    /// Samples taken while running (after the boot listen).
+    pub samples: u64,
+    /// Samples at the cap: the bucket held less than the reply reserve and
+    /// one full frame, so the relay could take no full frame of new work.
+    pub at_cap: u64,
+    /// Samples below the reply reserve: only heartbeats and replies go.
+    pub below_reserve: u64,
+    /// Runs of consecutive samples at the cap.
+    pub cap_episodes: u64,
+    /// The longest such run, samples.
+    pub longest_cap: u64,
+    /// The run in progress, samples.
+    #[serde(skip)]
+    pub cap_run: u64,
+    /// Bucket content summed over samples, µs.
+    pub bucket_sum_us: u64,
+    /// Largest send queue.
+    pub send_queue_max: u64,
+    /// Send queue summed over samples.
+    pub send_queue_sum: u64,
+    /// Largest delivery queue.
+    pub delivery_max: u64,
+    /// Delivery queue summed over samples.
+    pub delivery_sum: u64,
+    /// Largest neighbour table.
+    pub neighbours_max: u64,
+    /// Neighbour table summed over samples.
+    pub neighbours_sum: u64,
+    /// Samples with the neighbour table full.
+    pub neighbours_full: u64,
+    /// Largest leaf table.
+    pub leaves_max: u64,
+    /// Leaf table summed over samples.
+    pub leaves_sum: u64,
+}
+
+impl LoadStats {
+    /// Add one sample. `cap` is the bucket content below which the
+    /// relay is at the cap, `reserve` the reply reserve.
+    pub fn add(
+        &mut self,
+        l: &bark_proto::Load,
+        cap: bark_proto::Duration,
+        reserve: bark_proto::Duration,
+        full_table: usize,
+    ) {
+        self.samples += 1;
+        if l.bucket < cap {
+            self.at_cap += 1;
+            if self.cap_run == 0 {
+                self.cap_episodes += 1;
+            }
+            self.cap_run += 1;
+            self.longest_cap = self.longest_cap.max(self.cap_run);
+        } else {
+            self.cap_run = 0;
+        }
+        self.below_reserve += u64::from(l.bucket < reserve);
+        self.bucket_sum_us += l.bucket.as_micros();
+        let (sq, dq, nb, lv) = (
+            l.send_queue as u64,
+            l.delivery_queue as u64,
+            l.neighbours as u64,
+            l.leaves as u64,
+        );
+        self.send_queue_max = self.send_queue_max.max(sq);
+        self.send_queue_sum += sq;
+        self.delivery_max = self.delivery_max.max(dq);
+        self.delivery_sum += dq;
+        self.neighbours_max = self.neighbours_max.max(nb);
+        self.neighbours_sum += nb;
+        self.neighbours_full += u64::from(l.neighbours >= full_table);
+        self.leaves_max = self.leaves_max.max(lv);
+        self.leaves_sum += lv;
+    }
 }
 
 /// Why a node dropped a message: the core's own reasons, reported in
@@ -260,6 +378,41 @@ pub struct ChannelMetrics {
     pub tx_frames: u64,
     /// Time on air on this channel, µs.
     pub airtime_us: u64,
+    /// The same time on air by packet type.
+    pub airtime_by_type: TypeAirtime,
+}
+
+/// Time on air by packet type (design §14), µs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct TypeAirtime {
+    /// HEARTBEAT.
+    pub heartbeat_us: u64,
+    /// ACK.
+    pub ack_us: u64,
+    /// ATTACH.
+    pub attach_us: u64,
+    /// DATA.
+    pub data_us: u64,
+    /// DELIVER.
+    pub deliver_us: u64,
+    /// Anything else: a scripted test signal.
+    pub other_us: u64,
+}
+
+impl TypeAirtime {
+    /// Count `us` against the type of `p`.
+    pub fn add(&mut self, p: Option<&bark_proto::wire::Packet<'_>>, us: u64) {
+        use bark_proto::wire::Packet;
+        let c = match p {
+            Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
+            Some(Packet::Ack(_)) => &mut self.ack_us,
+            Some(Packet::Attach(_)) => &mut self.attach_us,
+            Some(Packet::Data(_)) => &mut self.data_us,
+            Some(Packet::Deliver(_)) => &mut self.deliver_us,
+            None => &mut self.other_us,
+        };
+        *c += us;
+    }
 }
 
 /// Application-level counters, matched through a tag the traffic model
@@ -514,6 +667,25 @@ mod tests {
         assert_eq!(t.deaf.cad, 1);
         assert_eq!(t.sinr_fail_adjacent, 1);
         assert_eq!(m.nodes[1].rx, t);
+    }
+
+    #[test]
+    fn load_counts_runs_at_the_cap() {
+        let ms = bark_proto::Duration::from_millis;
+        let mut l = LoadStats::default();
+        for bucket in [500, 100, 100, 500, 100, 10, 100, 500] {
+            let load = bark_proto::Load {
+                bucket: ms(bucket),
+                send_queue: 2,
+                delivery_queue: 1,
+                leaves: 70,
+                neighbours: 64,
+            };
+            l.add(&load, ms(380), ms(242), 64);
+        }
+        assert_eq!((l.samples, l.at_cap, l.below_reserve), (8, 5, 5));
+        assert_eq!((l.cap_episodes, l.longest_cap), (2, 3));
+        assert_eq!((l.neighbours_full, l.send_queue_sum), (8, 16));
     }
 
     #[test]

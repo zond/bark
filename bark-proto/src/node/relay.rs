@@ -120,6 +120,21 @@ struct Mover {
     move_at: Option<Instant>,
 }
 
+/// A snapshot of a relay's tables and budget ([`Relay::load`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Load {
+    /// Airtime in the duty-cycle bucket (design §9.4).
+    pub bucket: Duration,
+    /// Frames in the send queue, hop places included (§9.3).
+    pub send_queue: usize,
+    /// Messages waiting for a leaf (§10.4).
+    pub delivery_queue: usize,
+    /// Leaf table entries, expired ones not yet removed included (§10.2).
+    pub leaves: usize,
+    /// Neighbour table entries, expired ones not yet removed included (§8.2).
+    pub neighbours: usize,
+}
+
 /// Relay role.
 pub struct Relay {
     config: Config,
@@ -352,6 +367,18 @@ impl Relay {
             .filter_map(|o| o.msg_id())
             .chain(self.delivery.iter().map(|q| q.msg_id))
             .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
+    }
+
+    /// How loaded the relay is at `now`, for a driver to sample. Reading
+    /// it changes nothing.
+    pub fn load(&self, now: Instant) -> Load {
+        Load {
+            bucket: self.budget.available(now),
+            send_queue: self.queue.len(),
+            delivery_queue: self.delivery.len(),
+            leaves: self.leaves.len(),
+            neighbours: self.neighbours.len(),
+        }
     }
 
     fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {

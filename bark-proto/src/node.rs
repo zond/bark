@@ -17,7 +17,7 @@ mod relay;
 mod transfer;
 
 pub use leaf::Leaf;
-pub use relay::Relay;
+pub use relay::{Load, Relay};
 
 /// Which half of the protocol a node runs (design §1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

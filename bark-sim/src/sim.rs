@@ -266,6 +266,7 @@ pub enum Fate {
 }
 
 struct OriginRecord {
+    src: u32,
     dst: u32,
     /// When the traffic model first had it for its origin.
     t: Instant,
@@ -273,6 +274,41 @@ struct OriginRecord {
     /// Whether the destination could be reached from the origin at the
     /// start of the run; see [`Sim::reachable`].
     reachable: bool,
+    /// When it first reached its destination's application.
+    delivered_at: Option<Instant>,
+    /// Frames that carried it or answered it (DATA, DELIVER, their ACKs),
+    /// and their time on air, µs.
+    frames: u32,
+    airtime_us: u64,
+    /// The largest hand-over count a DATA frame of it carried (§9.2.6).
+    hops: u8,
+}
+
+/// One originated message, for the per-message table (`Sim::message_rows`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageRow {
+    /// Traffic tag, in origination order.
+    pub tag: u32,
+    /// Origin node.
+    pub src: u32,
+    /// Destination node.
+    pub dst: u32,
+    /// When the traffic model had it, seconds.
+    pub t_s: f64,
+    /// What became of it.
+    pub fate: Fate,
+    /// Whether its destination was reachable ([`Sim::reachable`]).
+    pub reachable: bool,
+    /// Origination to delivery, seconds.
+    pub latency_s: Option<f64>,
+    /// Frames that carried or answered it.
+    pub frames: u32,
+    /// Time on air of those frames, seconds.
+    pub airtime_s: f64,
+    /// The largest hand-over count it carried.
+    pub hops: u8,
+    /// Straight-line distance from origin to destination, metres.
+    pub distance_m: f64,
 }
 
 /// A message an application waits to hand to its core.
@@ -350,6 +386,12 @@ pub struct Sim {
     pub(crate) links: LinkTable,
     names: Vec<Option<String>>,
     xy: Vec<Xy>,
+    sites: Vec<Site>,
+    /// Relay node by short name (§8.1).
+    relay_index: HashMap<u32, u32>,
+    /// Whether the relay a core event is being delivered to was booting
+    /// before it, so that its boot choice is not counted as a move.
+    was_booting: bool,
     positions: Vec<Position>,
     n_relays: u32,
     relays: Vec<Relay>,
@@ -488,7 +530,12 @@ impl Sim {
             links,
             names,
             xy,
+            relay_index: (0..n_relays)
+                .map(|i| (positions[i as usize].short().0, i))
+                .collect(),
             positions,
+            sites: site,
+            was_booting: false,
             n_relays,
             relays,
             leaves,
@@ -549,8 +596,16 @@ impl Sim {
             self.push(Instant::ZERO + at, Ev::Boot(i as u32));
         }
         // Observers.
-        for o in &sc.metrics.observers {
-            let i = resolve(placed, o)?;
+        let all_relays: Vec<String> = (0..self.n_relays).map(|i| format!("relay:{i}")).collect();
+        let observers = sc.metrics.observers.iter().flat_map(|o| {
+            if o == "relay:*" {
+                all_relays.clone()
+            } else {
+                vec![o.clone()]
+            }
+        });
+        for o in observers {
+            let i = resolve(placed, &o)?;
             self.nodes[i as usize].observer = Some(self.metrics.observers.len() as u32);
             self.metrics.observers.push(Observer {
                 node: i,
@@ -852,9 +907,27 @@ impl Sim {
             }
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
+                self.sample_load();
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
             }
+        }
+    }
+
+    /// Sample every running relay's bucket, queues and tables.
+    fn sample_load(&mut self) {
+        use bark_proto::tables::budget::REPLY_RESERVE;
+        use bark_proto::tables::neighbours::NEIGHBOURS;
+        let full_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
+        for (i, r) in self.relays.iter().enumerate() {
+            if !self.nodes[i].alive || r.booting() {
+                continue;
+            }
+            let l = r.load(self.now);
+            self.metrics.nodes[i]
+                .load
+                .get_or_insert_with(Default::default)
+                .add(&l, REPLY_RESERVE + full_frame, REPLY_RESERVE, NEIGHBOURS);
         }
     }
 
@@ -871,6 +944,7 @@ impl Sim {
         }
         let wake = if node < self.n_relays {
             let c = &mut self.relays[node as usize];
+            self.was_booting = c.booting();
             c.handle(ev, now, &mut |a| buf.push(a));
             c.next_wakeup()
         } else {
@@ -916,7 +990,20 @@ impl Sim {
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
                 self.message_dropped(node, msg_id, reason)
             }
-            Action::Trace(_) => {}
+            Action::Trace(t) => {
+                let c = &mut self.metrics.nodes[node as usize].core;
+                match t {
+                    Trace::HomeChannelMoved { .. } if !self.was_booting => c.home_moves += 1,
+                    Trace::HeartbeatSkipped { .. } => c.heartbeats_skipped += 1,
+                    Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
+                    Trace::Refused { reason, .. } => c.refused.add(reason),
+                    Trace::TurnedAway { .. } => c.turned_away += 1,
+                    Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
+                    Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::Forwarded { .. } | Trace::ReturnedToParent { .. } => c.handed_over += 1,
+                    _ => {}
+                }
+            }
         }
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
@@ -1182,6 +1269,7 @@ impl Sim {
         match self.origins.get_mut(tag as usize) {
             Some(o) if o.dst == node && o.fate != Fate::Delivered => {
                 o.fate = Fate::Delivered;
+                o.delivered_at = Some(self.now);
                 m.app.delivered += 1;
                 m.app.latencies_us.push(self.now.since(o.t).as_micros());
             }
@@ -1207,6 +1295,27 @@ impl Sim {
         }
     }
 
+    /// A frame of message `id` went on the air: it carried `hops` (DATA)
+    /// and took `air_us`.
+    pub(crate) fn message_frame(&mut self, id: MsgId, hops: u8, air_us: u64) {
+        if let Some(o) = self
+            .msg_tags
+            .get(&id.0)
+            .and_then(|&t| self.origins.get_mut(t as usize))
+        {
+            o.frames += 1;
+            o.airtime_us += air_us;
+            o.hops = o.hops.max(hops);
+        }
+    }
+
+    /// Whether relay `r`'s neighbour table holds `p`, and how many entries
+    /// it has.
+    pub(crate) fn table_holds(&self, r: u32, p: Position) -> (bool, usize) {
+        let t = self.relays[r as usize].neighbours();
+        t.fold((false, 0), |(held, n), e| (held || e.position == p, n + 1))
+    }
+
     /// Fate of every originated message, in origination order.
     pub fn fates(&self) -> impl Iterator<Item = Fate> + '_ {
         self.originated().map(|(_, f)| f)
@@ -1230,6 +1339,74 @@ impl Sim {
             };
             (o.t, fate, o.reachable)
         })
+    }
+
+    /// Every originated message, in origination order.
+    pub fn message_rows(&self) -> Vec<MessageRow> {
+        self.messages()
+            .zip(&self.origins)
+            .enumerate()
+            .map(|(tag, ((t, fate, reachable), o))| MessageRow {
+                tag: tag as u32,
+                src: o.src,
+                dst: o.dst,
+                t_s: t.as_micros() as f64 / 1e6,
+                fate,
+                reachable,
+                latency_s: o.delivered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
+                frames: o.frames,
+                airtime_s: o.airtime_us as f64 / 1e6,
+                hops: o.hops,
+                distance_m: self.xy[o.src as usize].dist(self.xy[o.dst as usize]),
+            })
+            .collect()
+    }
+
+    /// The per-message table as CSV.
+    pub fn messages_csv(&self) -> String {
+        let mut s = String::from(
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m\n",
+        );
+        for r in self.message_rows() {
+            let (fate, node, reason) = match r.fate {
+                Fate::Delivered => ("delivered", String::new(), String::new()),
+                Fate::InFlight => ("in_flight", String::new(), String::new()),
+                Fate::Unaccounted => ("unaccounted", String::new(), String::new()),
+                Fate::Dropped { node, reason } => {
+                    ("dropped", node.to_string(), format!("{reason:?}"))
+                }
+            };
+            let latency = r.latency_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            s.push_str(&format!(
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1}\n",
+                r.tag,
+                r.src,
+                r.dst,
+                r.t_s,
+                r.reachable,
+                r.frames,
+                r.airtime_s,
+                r.hops,
+                r.distance_m
+            ));
+        }
+        s
+    }
+
+    /// Position on the local grid.
+    pub fn xy(&self, node: u32) -> Xy {
+        self.xy[node as usize]
+    }
+
+    /// Where a node's antenna is.
+    pub fn site(&self, node: u32) -> Site {
+        self.sites[node as usize]
+    }
+
+    /// The relay a leaf is attached to now, as a node index.
+    pub fn attached_relay(&self, leaf: u32) -> Option<u32> {
+        let p = self.leaves[(leaf - self.n_relays) as usize].relay()?;
+        self.relay_index.get(&p.short().0).copied()
     }
 
     /// Traffic tags of the messages some live core still holds, or its
@@ -1378,10 +1555,15 @@ impl Sim {
         let tag = self.origins.len() as u32;
         let reachable = self.reachable(src, dst_pos);
         self.origins.push(OriginRecord {
+            src,
             dst,
             t: self.now,
             fate: Fate::Unaccounted,
             reachable,
+            delivered_at: None,
+            frames: 0,
+            airtime_us: 0,
+            hops: 0,
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -1677,10 +1859,15 @@ mod tests {
         for id in [7, 8] {
             let tag = sim.origins.len() as u32;
             sim.origins.push(OriginRecord {
+                src: 0,
                 dst: 2,
                 t: Instant::ZERO,
                 fate: Fate::Unaccounted,
                 reachable: true,
+                delivered_at: None,
+                frames: 0,
+                airtime_us: 0,
+                hops: 0,
             });
             sim.msg_tags.insert(id, tag);
         }

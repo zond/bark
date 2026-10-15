@@ -1,14 +1,14 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
-//! [--json FILE] [--csv FILE] [--trace FILE]`. Prints a short table;
-//! writes the JSON summary, the CSV time series and the per-node event
-//! trace when asked.
+//! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE]`. Prints a
+//! short table; writes the JSON summary, the CSV time series, the
+//! per-message CSV and the per-node event trace when asked.
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--trace FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -24,6 +24,7 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let mut path = None;
     let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
+    let mut messages = None;
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -47,6 +48,7 @@ fn run() -> Result<(), String> {
             "--json" => json = Some(PathBuf::from(val("--json")?)),
             "--csv" => csv = Some(PathBuf::from(val("--csv")?)),
             "--trace" => trace = Some(PathBuf::from(val("--trace")?)),
+            "--messages" => messages = Some(PathBuf::from(val("--messages")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -84,6 +86,9 @@ fn run() -> Result<(), String> {
     );
     if let Some(p) = json {
         std::fs::write(&p, summary.json()).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if let Some(p) = messages {
+        std::fs::write(&p, sim.messages_csv()).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let Some(p) = csv {
         std::fs::write(&p, sim.metrics.csv()).map_err(|e| format!("{}: {e}", p.display()))?;
