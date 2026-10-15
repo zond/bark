@@ -1692,7 +1692,10 @@ mod tests {
         let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
         r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
         // A copy with a higher count arrived since it was queued.
-        r.records.get_mut(id).unwrap().received(6, now);
+        r.records
+            .get_mut(id)
+            .unwrap()
+            .received(ShortName(8), 6, now);
 
         let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u8> {
             sent.iter()
@@ -1714,7 +1717,10 @@ mod tests {
         }
         assert_eq!(counts(&sent, nearest), [7, 7, 7], "stamped, then repeated");
         // Another copy arrives during the last attempt.
-        r.records.get_mut(id).unwrap().received(9, now);
+        r.records
+            .get_mut(id)
+            .unwrap()
+            .received(ShortName(8), 9, now);
         while counts(&sent, near).is_empty() {
             let until = now + Duration::from_millis(10);
             sent.extend(drive(&mut r, &mut now, until));
@@ -1737,6 +1743,139 @@ mod tests {
         };
         r.handle(event, now, &mut |_| {});
         assert_eq!(r.records.get(id).unwrap().highest_hops(), 10);
+    }
+
+    /// A retransmission, the same sender and count again, is ACKed and not
+    /// taken; so is another copy while this relay holds one (§9.2.4 cases
+    /// 3 and 4, roadmap D35). Here the relay holds the message, waiting
+    /// for its banned neighbours.
+    #[test]
+    fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::wire::Data;
+        let (mut r, mut now, far) = with_every_neighbour_banned();
+        let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u8| {
+            let d = Data {
+                sender_home: Channel::new(5).unwrap(),
+                dst_hop: r.me(),
+                src_hop: ShortName(from),
+                dst_pos: far,
+                dst_leaf: LeafId::RELAY,
+                hops,
+                payload: b"again",
+            };
+            let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: r.home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut pending = Vec::new();
+            r.handle(event, *now, &mut |a| pending.push(a));
+            let until = *now + Duration::from_millis(100);
+            let acks: Vec<_> = drive_from(r, now, until, pending)
+                .into_iter()
+                .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+                    Ok(Packet::Ack(a)) => Some(a),
+                    _ => None,
+                })
+                .collect();
+            let held = r.queue.iter().filter(|o| o.msg_id() == Some(d.msg_id()));
+            (acks, held.count())
+        };
+        let taken = |acks: &[crate::wire::Ack]| acks.len() == 1 && !acks[0].refused;
+        let (acks, held) = offer(&mut r, &mut now, 1, 2);
+        assert!(taken(&acks) && held == 1, "the first is taken");
+        let (acks, held) = offer(&mut r, &mut now, 1, 2);
+        assert!(
+            taken(&acks) && held == 1,
+            "its retransmission is only ACKed"
+        );
+        let (acks, held) = offer(&mut r, &mut now, 9, 2);
+        assert!(taken(&acks) && held == 1, "another copy too, while held");
+    }
+
+    /// Once the relay a message is addressed to has taken it from this
+    /// one, the message has arrived: a later copy is only ACKed, wherever
+    /// it comes from (§9.2.4 case 1, roadmap D35).
+    #[test]
+    fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::tables::records::Record;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Ack, Data};
+        let (mut r, start, _) = with_every_neighbour_banned();
+        let mut now = start + BAN;
+        let me = r.config.position;
+        let addressed = Position {
+            lat: me.lat + 10_000,
+            ..me
+        };
+        let data = Data {
+            sender_home: r.home,
+            dst_hop: ShortName(0),
+            src_hop: r.me(),
+            dst_pos: addressed,
+            dst_leaf: LeafId::RELAY,
+            hops: 2,
+            payload: b"arrived",
+        };
+        let id = data.msg_id();
+        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let at = r.record_place().unwrap();
+        r.records.put(at, Record::new(id, parent, 1, now));
+        let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+        let until = now + Duration::from_millis(50);
+        let sent = drive_from(&mut r, &mut now, until, pending);
+        assert!(sent.iter().any(|(_, f)| matches!(
+            Packet::decode(f.payload()),
+            Ok(Packet::Data(d)) if d.dst_hop == addressed.short()
+        )));
+        let hear = |r: &mut Relay, now: &mut Instant, p: &Packet<'_>| {
+            let f = mac::frame(p, r.home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: r.home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut pending = Vec::new();
+            r.handle(event, *now, &mut |a| pending.push(a));
+            let until = *now + Duration::from_millis(100);
+            drive_from(r, now, until, pending)
+        };
+        let ack = Ack {
+            msg_id: id,
+            from: addressed.short().into(),
+            to: r.me().into(),
+            refused: false,
+        };
+        hear(&mut r, &mut now, &Packet::Ack(ack));
+        assert!(r.records.get(id).unwrap().arrived());
+        assert!(r.queue.is_empty());
+        let copy = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: ShortName(9),
+            hops: 5,
+            ..data
+        };
+        let sent = hear(&mut r, &mut now, &Packet::Data(copy));
+        let acks: Vec<_> = sent
+            .iter()
+            .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Ack(a)) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert!(acks.len() == 1 && !acks[0].refused, "{acks:?}");
+        assert!(r.queue.is_empty(), "taken");
     }
 
     /// The relay's own application waits while every neighbour is banned,

@@ -202,8 +202,6 @@ pub struct DropCounts {
     pub banned: u64,
     /// The return to the parent failed (§9.2.5).
     pub return_failed: u64,
-    /// A send straight back failed (§9.3).
-    pub bounce_failed: u64,
     /// For a relay that is gone (§9.2.7).
     pub relay_gone: u64,
     /// The delivery TTL ran out (§10.4).
@@ -227,7 +225,6 @@ impl DropCounts {
             DropReason::Budget => &mut self.budget,
             DropReason::Banned => &mut self.banned,
             DropReason::ReturnFailed => &mut self.return_failed,
-            DropReason::BounceFailed => &mut self.bounce_failed,
             DropReason::RelayGone => &mut self.relay_gone,
             DropReason::QueueExpired => &mut self.queue_expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
@@ -246,7 +243,6 @@ impl DropCounts {
             + self.budget
             + self.banned
             + self.return_failed
-            + self.bounce_failed
             + self.relay_gone
             + self.queue_expired
             + self.delivery_full

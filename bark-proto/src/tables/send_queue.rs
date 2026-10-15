@@ -69,9 +69,6 @@ pub enum Kind {
     Forward,
     /// A DATA back to the parent (§9.2.5); dropped if it fails.
     Return,
-    /// A DATA straight back to a relay that offered a message this relay
-    /// has (§9.2.4 case 6); dropped if it fails.
-    Bounce,
     /// A DELIVER to an attached leaf (§10.3); left in the delivery queue
     /// if it fails.
     Deliver,
@@ -87,7 +84,7 @@ pub struct Outgoing {
     pub kind: Kind,
     /// Not handed over before this: it waits for a ban to end.
     pub not_before: Instant,
-    /// Transmissions of a return or send-back that went unanswered, kept
+    /// Transmissions of a return or DELIVER that went unanswered, kept
     /// while it waits; a refusal does not count.
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
@@ -295,7 +292,7 @@ mod tests {
             len: 1,
             bytes,
         };
-        Outgoing::new(frame, Kind::Bounce)
+        Outgoing::new(frame, Kind::Return)
     }
 
     #[test]

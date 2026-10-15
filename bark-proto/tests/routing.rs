@@ -177,16 +177,16 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
     }
 }
 
-/// A neighbour that already has the message sends it straight back
-/// (§9.2.4 case 6), and the sender moves on. O, P and Q all hear each
-/// other; only R reaches D.
+/// A relay that has had the message, and holds none of it now, takes it
+/// when it is offered and goes on with its own search (§9.2.4 case 5).
+/// O, P and Q all hear each other; only R reaches D.
 ///
-/// O → P → Q → O: O has it, sends it back to Q. Q and then P have nothing
-/// left and return it. O tries its next, Q, which has finished its part
-/// of the search and sends it straight back. O moves on to R, and R
-/// delivers to D.
+/// O → P → Q → O: O goes on, to Q, its next candidate. For Q, O is a
+/// neighbour it handed the message to, so this is O's return: Q has
+/// nothing left and returns it to P, and P to O. O moves on to R, and R
+/// delivers to D. Nothing is sent straight back.
 #[test]
-fn a_neighbour_that_has_the_message_sends_it_straight_back() {
+fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
     let (o, p, q, r, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -204,34 +204,18 @@ fn a_neighbour_that_has_the_message_sends_it_straight_back() {
         "not delivered"
     );
     let name = |i| position(&h, i).short();
-    let bounced = |h: &Harness<Node>, at: usize, to: usize| {
-        traces(h, at).contains(&Trace::Bounced {
+    let returned = |at: usize, to: usize| {
+        traces(&h, at).contains(&Trace::ReturnedToParent {
             msg_id: id,
             to: name(to),
         })
     };
-    assert!(bounced(&h, o, q), "O sends Q's offer straight back");
-    assert!(
-        bounced(&h, q, o),
-        "Q, finished, sends O's offer straight back"
-    );
-    let forwards: Vec<_> = traces(&h, o)
-        .into_iter()
-        .filter_map(|t| match t {
-            Trace::Forwarded { msg_id, to, .. } if msg_id == id => Some(to),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(forwards, vec![name(p), name(q), name(r)]);
+    assert_eq!(forwards(&h, o, id), vec![name(p), name(q), name(r)]);
+    assert_eq!(forwards(&h, p, id), vec![name(q)]);
+    assert_eq!(forwards(&h, q, id), vec![name(o)]);
+    assert!(returned(q, p) && returned(p, o));
     assert_eq!(messages(&h, d, id), 1);
-    for i in 0..5 {
-        assert!(
-            !traces(&h, i)
-                .iter()
-                .any(|t| matches!(t, Trace::Dropped { .. })),
-            "relay {i} dropped"
-        );
-    }
+    no_drops(&h);
 }
 
 /// The forwards of message `id` at relay `i`, in order.
@@ -257,16 +241,18 @@ fn no_drops(h: &Harness<Node>) {
     }
 }
 
-/// An earlier child that offers the message during its own search is sent
-/// it straight back (§9.2.4 case 5): its copy is the one searching. Here
-/// it has the message before this relay hands it over, sends that
-/// hand-over straight back, and offers the message itself later.
+/// A relay that took the message from this one and then offers it back
+/// during its own search is taken for its return: this relay goes on with
+/// its search. Here the child had the message before this relay handed
+/// it over, and went on with its own search; as it has not tried this
+/// relay, the search comes back to it.
 ///
-/// W → Y → C → X. X offers Y, which has the message and sends it straight
-/// back (case 6); X moves on to Z, a dead end, and returns to C, which
-/// returns to Y. Y now offers X, for which Y is an earlier child. X sends
-/// it straight back, and Y goes on to E, which reaches D. ACK-only there
-/// ended the only searching copy without a trace.
+/// W → Y → C → X. X offers Y, which has had the message and holds none of
+/// it: it goes on with its own search, to X. For X, Y took the message from
+/// it, so this is Y's return: X goes on to Z, a dead end, and returns to
+/// C, which returns to Y. Y goes on to E, which reaches D. Before, Y sent
+/// X's offer straight back, and ACKing it only would have ended the only
+/// copy.
 ///
 /// ```text
 ///   W - Y - C          D (far east)
@@ -275,18 +261,21 @@ fn no_drops(h: &Harness<Node>) {
 ///            X - Z
 /// ```
 #[test]
-fn an_earlier_child_that_had_the_message_is_sent_it_back() {
+fn an_earlier_child_that_had_the_message_is_a_return() {
     let (w, y, c, x, z, e, d) = (0, 1, 2, 3, 4, 5, 6);
+    // One at a time: seven relays at once would overflow a test's stack.
+    let at = [
+        (0.0, 0.0),
+        (600.0, 0.0),
+        (900.0, 200.0),
+        (800.0, -200.0),
+        (100.0, -400.0),
+        (500.0, 300.0),
+        (10_000.0, 0.0),
+    ];
+    let nodes = (0..).zip(at).map(|(i, (e, n))| relay(e, n, 111 + i));
     let mut h = build(
-        vec![
-            relay(0.0, 0.0, 111),
-            relay(600.0, 0.0, 112),
-            relay(900.0, 200.0, 113),
-            relay(800.0, -200.0, 114),
-            relay(100.0, -400.0, 115),
-            relay(500.0, 300.0, 116),
-            relay(10_000.0, 0.0, 117),
-        ],
+        nodes.collect(),
         &[(w, y), (y, c), (y, x), (c, x), (x, z), (y, e), (e, d)],
     );
     let id = send(&mut h, w, d, b"its own search");
@@ -296,25 +285,22 @@ fn an_earlier_child_that_had_the_message_is_sent_it_back() {
         traces(&h, x)
     );
     let name = |i| position(&h, i).short();
-    let bounced = |at: usize, to: usize| {
-        traces(&h, at).contains(&Trace::Bounced {
-            msg_id: id,
-            to: name(to),
-        })
-    };
-    assert!(bounced(y, x), "Y sends X's offer straight back");
-    assert!(bounced(x, y), "X sends Y's later offer straight back");
     assert_eq!(forwards(&h, x, id), vec![name(y), name(z)]);
     assert_eq!(forwards(&h, y, id), vec![name(c), name(x), name(e)]);
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
 }
 
-/// The same for a hand-over this relay counted as failed, though the
-/// neighbour never took the message: X's three frames to Y are lost, as
-/// three refusals whose refusals were lost would be. X moves on to Z,
-/// Z hands to Y, and Y offers X, an earlier child of X's. X sends it
-/// straight back, and Y goes on to E, which reaches D.
+/// A neighbour whose hand-over failed, and which never had the message,
+/// later offers it here (§9.2.4 case 5): X's three frames to Y are lost,
+/// as three refusals whose refusals were lost would be. X moves on to Z,
+/// and Z hands it to Y, which offers it to X. X holds none of it and takes
+/// it, but has tried every neighbour, so as the origin it drops it for
+/// want of a route. Y's own search ends there, though E would have
+/// reached D: a failed hand-over can leave part of the network unsearched
+/// (§9.5). The message ends where the search ends, with a drop. Before,
+/// X sent it straight back and Y went on; the same send-back lost a
+/// message whenever the relay it went to had returned it (roadmap D35).
 ///
 /// ```text
 ///   E - Y - X          D (far east)
@@ -322,7 +308,7 @@ fn an_earlier_child_that_had_the_message_is_sent_it_back() {
 ///   D     Z-+
 /// ```
 #[test]
-fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
+fn a_neighbour_whose_hand_over_failed_offers_it_back() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -342,26 +328,31 @@ fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
         lose
     }));
     let id = send(&mut h, x, d, b"failed, not taken");
+    let dropped = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute,
+    };
     assert!(
-        h.run_until(h.now + secs(20), |h| delivered(h, d, id)),
-        "not delivered: X {:?}",
+        h.run_until(h.now + secs(20), |h| traces(h, x).contains(&dropped)),
+        "X {:?}",
         traces(&h, x)
     );
+    h.run_for(secs(10));
     let name = |i| position(&h, i).short();
-    assert!(traces(&h, x).contains(&Trace::Bounced {
-        msg_id: id,
-        to: name(y),
-    }));
-    assert_eq!(forwards(&h, y, id), vec![name(x), name(e)]);
-    assert_eq!(messages(&h, d, id), 1);
-    no_drops(&h);
+    assert_eq!(forwards(&h, x, id), vec![name(z)]);
+    assert_eq!(forwards(&h, y, id), vec![name(x)]);
+    assert!(!delivered(&h, d, id));
+    assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
 }
 
 /// A split: X's hand-over to Y succeeds but every ACK is lost, so X
 /// counts it failed and moves on to Z, which reaches D. Y searches too,
-/// finds a dead end and returns the message to X. X sends it straight
-/// back (§9.2.4 case 5), and Y, receiving it from its parent, only ACKs:
-/// one copy dies there, and the message is delivered once.
+/// finds a dead end and returns the message to X. X holds none of it, so
+/// it takes it as Y's return (§9.2.4 case 5), has nothing left to try and,
+/// as the origin, drops it. That copy ends at the origin, as a search
+/// does, and the message is delivered once. Before, X sent it straight
+/// back and Y only ACKed it from its parent: had Z's way failed, that was
+/// the last copy.
 ///
 /// Y's return must come after X has moved on; during X's retries it
 /// would end X's hand-over instead (case 4). So the frames are full, X
@@ -378,7 +369,7 @@ fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
 ///   P - Y - X - Z - D
 /// ```
 #[test]
-fn a_split_copy_returned_by_an_earlier_child_ends_there() {
+fn a_split_copy_returned_to_a_relay_holding_none_searches_on() {
     use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, p, z, d) = (0, 1, 2, 3, 4);
     let relay_with = |east, north, seed, config: Config, home| {
@@ -435,16 +426,366 @@ fn a_split_copy_returned_by_an_earlier_child_ends_there() {
     assert!(h.run_until(h.now + secs(20), beat));
     let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
     let name = |h: &Harness<Node>, i| position(h, i).short();
-    let (ny, nx) = (name(&h, y), name(&h, x));
+    let nx = name(&h, x);
     let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
     assert!(h.run_until(h.now + secs(20), |h| {
         delivered(h, d, id) && traces(h, y).contains(&back_at_y)
     }));
     h.run_for(secs(10));
-    assert!(traces(&h, x).contains(&Trace::Bounced { msg_id: id, to: ny }));
+    assert_eq!(forwards(&h, x, id), vec![name(&h, z)]);
     assert_eq!(forwards(&h, y, id), vec![name(&h, p)]);
+    let returns = traces(&h, y).iter().filter(|t| **t == back_at_y).count();
+    assert_eq!(returns, 1);
+    assert_eq!(messages(&h, d, id), 1);
+    let dropped = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute,
+    };
+    assert_eq!(traces(&h, x).iter().filter(|t| **t == dropped).count(), 1);
+    for i in [y, p, z, d] {
+        assert!(!traces(&h, i)
+            .iter()
+            .any(|t| matches!(t, Trace::Dropped { .. })));
+    }
+}
+
+/// A relay at `east`, `north` with `config`, its position aside.
+fn relay_with(east: f64, north: f64, seed: u64, config: Config) -> Node {
+    Node::Relay(Relay::new(
+        Config {
+            position: pos(east, north),
+            boot_listen: secs(5),
+            ..config
+        },
+        seed,
+    ))
+}
+
+/// The DATA in `bytes`, by sender and receiver, if it is one.
+fn data_names(bytes: &[u8]) -> Option<(bark_proto::ShortName, bark_proto::ShortName)> {
+    match Packet::decode(bytes) {
+        Ok(Packet::Data(d)) => Some((d.src_hop, d.dst_hop)),
+        _ => None,
+    }
+}
+
+/// The ACK in `bytes`, by its sender and the one it answers, if it is one.
+fn ack_names(bytes: &[u8]) -> Option<(bark_proto::wire::AckName, bark_proto::wire::AckName)> {
+    match Packet::decode(bytes) {
+        Ok(Packet::Ack(a)) => Some((a.from, a.to)),
+        _ => None,
+    }
+}
+
+/// How often relay `i` returned message `id` to its parent.
+fn returns(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
+    traces(h, i)
+        .iter()
+        .filter(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
+        .count()
+}
+
+/// A child returns the message to a parent that gave up on it (roadmap
+/// D35, A). P's hand-over to C is taken, but C's ACKs are lost, so P
+/// moves on to S. S hands it to C while C is still offering it to S, so
+/// C takes it as S's return; C has nothing left and returns it to P,
+/// which holds none of it. Before, P took this for an offer from an
+/// earlier child and sent it straight back, and C, receiving it from its
+/// parent, only ACKed it: no copy was left, and T, which reaches D, was
+/// never tried. Now P takes it as C's return and goes on to T.
+///
+/// ```text
+///       C              D (far east)
+///      / \             |
+///     P - S            |
+///      \               |
+///       T -------------+
+/// ```
+#[test]
+fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
+    let (p, c, s, t, d) = (0, 1, 2, 3, 4);
+    let hasty = Config {
+        retry_backoff: Duration::ZERO,
+        ..Config::default()
+    };
+    let patient = Config {
+        hop_attempts: 20,
+        ..hasty
+    };
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 141, hasty),
+        (600.0, 100.0, 142, patient),
+        (500.0, -150.0, 143, Config::default()),
+        (300.0, 400.0, 144, Config::default()),
+        (10_000.0, 0.0, 145, Config::default()),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(p, c), (p, s), (p, t), (c, s), (t, d)]);
+    let [np, nc, ns] = [p, c, s].map(|i| position(&h, i).short());
+    let mut p_moved = false;
+    h.lose = Some(Box::new(move |_, _, _, bytes| {
+        if let Some(names) = data_names(bytes) {
+            p_moved |= names == (np, ns);
+            return names == (nc, ns);
+        }
+        ack_names(bytes) == Some((nc.into(), np.into())) && !p_moved
+    }));
+    let id = send(&mut h, p, d, b"gave up");
+    assert!(
+        h.run_until(h.now + secs(30), |h| delivered(h, d, id)),
+        "lost: P {:?} C {:?}",
+        traces(&h, p),
+        traces(&h, c)
+    );
+    let name = |i| position(&h, i).short();
+    assert_eq!(forwards(&h, p, id), vec![name(s), name(t)]);
+    assert_eq!(forwards(&h, s, id), vec![name(c)]);
+    assert_eq!(returns(&h, c, id), 1);
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
+}
+
+/// A parent offers the message again to a child it forgot (roadmap D35,
+/// B). P's message is for L, a leaf of Q's that is not there, and Q's
+/// delivery queue is full of its own messages for L, so Q refuses it
+/// (§10.4) and P waits for each ban to end (§9.3). Meanwhile P has tried
+/// C, a dead end, which returned it. C is then out of P's hearing long
+/// enough for its entry to expire, and comes back into a new slot, which
+/// clears the mark that P handed it the message (§9.2.2). When Q next
+/// refuses, P offers it to C again. Before, C, which had returned it and
+/// holds none of it, only ACKed what came from its parent: no copy was
+/// left. Now C takes it and returns it at once, and P waits for Q, which
+/// takes it once its queue has room.
+///
+/// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
+/// three rotations, 58.5 s (§8.2), so the test runs in minutes, not
+/// hours.
+#[test]
+fn a_child_offered_the_message_again_by_its_parent_returns_it() {
+    use bark_proto::tables::delivery::DELIVERY_QUEUE;
+    let (p, c, q) = (0, 1, 2);
+    let quick = Config {
+        heartbeat_min: secs(1),
+        heartbeat_max: secs(2),
+        ..Config::default()
+    };
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 151, quick),
+        (-300.0, 100.0, 152, quick),
+        (400.0, 0.0, 153, quick),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
+    let (pq, l) = (position(&h, q), LeafId([7; 4]));
+    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+        h.command(
+            from,
+            AppCommand::Send {
+                dst_pos: pq,
+                dst_leaf: l,
+                payload: text,
+            },
+        );
+        MsgId::of(pq, l, text)
+    };
+    for k in 0..DELIVERY_QUEUE as u8 {
+        to_l(&mut h, q, &[b'q', k]);
+    }
+    let id = to_l(&mut h, p, b"forgotten");
+    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let back = |h: &Harness<Node>| returns(h, c, id) == 1;
+    assert!(h.run_until(h.now + secs(10), back), "C did not return it");
+    let returned_at = h.now;
+    h.unlink(p, c);
+    let expiry = secs(59);
+    h.run_for(expiry + secs(1));
+    let nc = name(&h, c);
+    assert!(
+        !core(&h, p).neighbours().any(|n| n.position.short() == nc),
+        "C did not expire at P"
+    );
+    h.link(p, c);
+    let offered_again = |h: &Harness<Node>| forwards(h, p, id).len() == 2;
+    assert!(
+        h.run_until(h.now + secs(300), offered_again),
+        "P did not offer C again"
+    );
+    assert!(h.now > returned_at + expiry);
+    let queued = |h: &Harness<Node>| {
+        h.nodes[q]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id))
+    };
+    assert!(
+        h.run_until(h.now + secs(700), queued),
+        "lost: P {:?} C {:?}",
+        traces(&h, p),
+        traces(&h, c)
+    );
+    // Q's ACK.
+    h.run_for(secs(1));
+    assert_eq!(forwards(&h, p, id), vec![nc, nc, name(&h, q)]);
+    assert_eq!(returns(&h, c, id), 2);
+    // Q's own messages expire in its queue; nothing else ends.
+    for i in [p, c] {
+        assert!(!traces(&h, i)
+            .iter()
+            .any(|t| matches!(t, Trace::Dropped { .. })));
+    }
+}
+
+/// A copy taken for a retransmission (roadmap D35, C). X's hand-over to
+/// Y is taken, but Y's ACKs are lost, so X moves on to Z. Y and Z are dead
+/// ends and return it, Y after X has handed it to Z, and Z after Y, with
+/// the count Y's return raised X's highest to. Before, X took Y's return
+/// for an earlier child's offer and sent it straight back, where Y only
+/// ACKed it, and took Z's return for a retransmission of a packet it had
+/// handled, and only ACKed it: no copy was left, and W, which reaches D,
+/// was never tried. A retransmission is now the last packet's sender and
+/// count again. X, holding none, takes Y's return and goes on to W; Z's
+/// return then finds nothing left to try, and X, the origin, drops that
+/// copy.
+///
+/// ```text
+///       Y              D (far east)
+///      /               |
+///     X - Z            |
+///      \               |
+///       W -------------+
+/// ```
+#[test]
+fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
+    let (x, y, z, w, d) = (0, 1, 2, 3, 4);
+    let hasty = Config {
+        retry_backoff: Duration::ZERO,
+        ..Config::default()
+    };
+    let patient = Config {
+        hop_attempts: 20,
+        ..hasty
+    };
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 161, hasty),
+        (600.0, 100.0, 162, patient),
+        (500.0, -150.0, 163, patient),
+        (300.0, 400.0, 164, Config::default()),
+        (10_000.0, 0.0, 165, Config::default()),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(x, y), (x, z), (x, w), (w, d)]);
+    let [nx, ny, nz] = [x, y, z].map(|i| position(&h, i).short());
+    let (mut x_moved, mut y_back) = (false, false);
+    h.lose = Some(Box::new(move |_, _, _, bytes| {
+        if let Some(names) = data_names(bytes) {
+            x_moved |= names == (nx, nz);
+            if names == (ny, nx) {
+                y_back |= x_moved;
+                return !x_moved;
+            }
+            return names == (nz, nx) && !y_back;
+        }
+        ack_names(bytes) == Some((ny.into(), nx.into())) && !x_moved
+    }));
+    let id = send(&mut h, x, d, b"seen before");
+    assert!(
+        h.run_until(h.now + secs(30), |h| delivered(h, d, id)),
+        "lost: X {:?}",
+        traces(&h, x)
+    );
+    // Z's return.
+    h.run_for(secs(10));
+    let name = |i| position(&h, i).short();
+    assert_eq!(forwards(&h, x, id), vec![name(z), name(w)]);
+    assert_eq!((returns(&h, y, id), returns(&h, z, id)), (1, 1));
+    assert_eq!(messages(&h, d, id), 1);
+    let dropped = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute,
+    };
+    let drops = |i| {
+        traces(&h, i)
+            .into_iter()
+            .filter(|t| matches!(t, Trace::Dropped { .. }))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(drops(x), vec![dropped]);
+    assert!([y, z, w, d].into_iter().all(|i| drops(i).is_empty()));
+}
+
+/// A return cannot go back and forth between a parent and a child that
+/// both hold none of the message (roadmap D35). P's only neighbour C
+/// takes P's hand-over, but its ACKs are lost, so P, with no candidate
+/// left, drops the message for want of a route. C, a dead end, returns
+/// it after that. P holds none of it and takes it as C's return; with
+/// nothing left to try it drops that copy too. C gets nothing back: one
+/// return, and nothing more on the air. Before, P sent it straight back
+/// and C only ACKed it.
+#[test]
+fn a_return_does_not_go_back_and_forth() {
+    let (p, c) = (0, 1);
+    let patient = Config {
+        hop_attempts: 20,
+        retry_backoff: Duration::ZERO,
+        ..Config::default()
+    };
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 171, Config::default()),
+        (400.0, 0.0, 172, patient),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(p, c)]);
+    let [np, nc] = [p, c].map(|i| position(&h, i).short());
+    // C's return waits until P has given up: after P's third frame and
+    // its ACK timeout, 100 ms.
+    let (mut offers, mut open_at) = (0, None);
+    h.lose = Some(Box::new(move |now, _, _, bytes| match data_names(bytes) {
+        Some(n) if n == (np, nc) => {
+            offers += 1;
+            if offers == 3 {
+                open_at = Some(now + Duration::from_millis(150));
+            }
+            false
+        }
+        Some(n) if n == (nc, np) => open_at.is_none_or(|t| now < t),
+        _ => offers <= 3 && ack_names(bytes) == Some((nc.into(), np.into())),
+    }));
+    let (dst_pos, text) = (pos(5_000.0, 0.0), b"back and forth");
+    h.command(
+        p,
+        AppCommand::Send {
+            dst_pos,
+            dst_leaf: LeafId::RELAY,
+            payload: text,
+        },
+    );
+    let id = MsgId::of(dst_pos, LeafId::RELAY, text);
+    h.run_for(secs(60));
+    let datas = |from: usize, to: bark_proto::ShortName| {
+        h.nodes[from]
+            .sent
+            .iter()
+            .filter(|(_, f)| matches!(data_names(f.payload()), Some((_, d)) if d == to))
+            .count()
+    };
+    assert!(forwards(&h, p, id).is_empty());
+    assert_eq!(returns(&h, c, id), 1);
+    assert_eq!(datas(p, nc), 3, "three unanswered, then none");
+    let dropped = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute,
+    };
+    assert_eq!(traces(&h, p).iter().filter(|t| **t == dropped).count(), 2);
+    assert!(core(&h, p).holding().next().is_none());
+    assert!(core(&h, c).holding().next().is_none());
 }
 
 /// With D unreachable, the same search ends at the origin with a drop

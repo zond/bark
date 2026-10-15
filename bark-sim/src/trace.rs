@@ -216,14 +216,6 @@ impl Tracer {
                         self.msg(msg_id, tags),
                         n.relay(to)
                     ),
-                    Trace::Bounced { msg_id, to } => {
-                        write!(
-                            what,
-                            "bounced {} to {}",
-                            self.msg(msg_id, tags),
-                            n.relay(to)
-                        )
-                    }
                     Trace::Demoted { neighbour } => write!(what, "demoted {}", n.relay(neighbour)),
                     Trace::Delivered { msg_id, leaf } => write!(
                         what,

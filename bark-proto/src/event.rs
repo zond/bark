@@ -133,9 +133,6 @@ pub enum DropReason {
     Banned,
     /// The hand-over back to the parent failed (design §9.2.5, §9.3).
     ReturnFailed,
-    /// The hand-over straight back to a relay that offered it failed
-    /// (design §9.3). That relay's copy ends; this relay's goes on.
-    BounceFailed,
     /// Addressed to a relay itself (leaf 0), reached an owner within 50 m
     /// that is not that relay: the relay it was for is gone (design §9.2.7).
     RelayGone,
@@ -269,14 +266,6 @@ pub enum Trace {
         /// The message.
         msg_id: MsgId,
         /// The parent.
-        to: ShortName,
-    },
-    /// A relay that offered a message this relay already had acknowledged
-    /// it being sent straight back (design §9.2.4 case 6).
-    Bounced {
-        /// The message.
-        msg_id: MsgId,
-        /// The relay that offered it.
         to: ShortName,
     },
     /// A neighbour reached the demotion threshold and is no longer a next

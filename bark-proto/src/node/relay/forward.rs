@@ -3,9 +3,9 @@
 //!
 //! # Receiving a DATA packet (§9.2.4)
 //!
-//! [`Relay::data`] classifies the packet by the six cases of §9.2.4 in
-//! order and decides whether acting on it is work: a forward, a return, a
-//! packet sent straight back, or a delivery. Work to send on goes into the
+//! [`Relay::data`] classifies the packet by the five cases of §9.2.4 in
+//! order and decides whether acting on it is work: sending it on, which
+//! may be a forward or a return, or a delivery. Work to send on goes into the
 //! send queue's regular room if it has a place and the bucket holds the
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (§9.2.4, roadmap D29); else into a free hop place numbered no
@@ -18,10 +18,11 @@
 //! delivery is refused when
 //! the delivery queue is full, or when the bucket holds less than the
 //! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
-//! owed before acting. A packet that gives no work (cases 2, 3 and 5) is
-//! ACKed from the reply reserve: this relay already has the message, and
-//! a refusal would send its sender on with a second copy. A relay that
-//! cannot afford even the reply stays silent, and its sender retries.
+//! owed before acting. A packet that gives no work (cases 1, 3 and 4) is
+//! ACKed from the reply reserve: the message has arrived, the packet was
+//! acted on already, or a copy held here goes on, and a refusal would send
+//! its sender on with a second copy. A relay that cannot afford even the
+//! reply stays silent, and its sender retries.
 //!
 //! A relay owes one reply at a time (`transfer.rs`, roadmap D29). A packet
 //! that arrives while it owes another one, its ACK still waiting for the
@@ -29,21 +30,14 @@
 //! sender's retry brings the packet again. A copy of the packet the owed
 //! reply answers is answered by it too.
 //!
-//! Three refinements the spec does not spell out:
-//!
-//! - A return from the last child while the send queue still holds the
-//!   relay's searching copy (a forward or a return to someone else) is
-//!   only ACKed. That happens when the hand-over to the child was given up
-//!   (its ACKs were lost) and the relay has already moved on: like case
-//!   5, the relay's search has moved on, and a second one would split the
-//!   message.
-//! - An offer from the last child after the relay has returned the
-//!   message to its parent is sent straight back (case 6), not taken for a
-//!   return (case 4); see [`Record::returned`].
-//! - A message delivered here, or waiting in the delivery queue, is only
-//!   ACKed whatever its record says: the delivered window and the
-//!   delivery queue remember it, and its record may have made way for
-//!   newer ones (§9.2.7).
+//! A packet is ACKed without being acted on only where that cannot end the
+//! last copy (roadmap D35). A hand-over under way whose frame has been on
+//! air does not count as a copy held here: its receiver may have taken it,
+//! the ACK been lost, and the copy now offered be that one come back. A
+//! message delivered here, or waiting in the delivery queue, is only
+//! ACKed whatever its record says: the delivered window and the delivery
+//! queue remember it, and its record may have made way for newer ones
+//! (§9.2.7).
 //!
 //! # The send queue (§9.3)
 //!
@@ -66,17 +60,17 @@
 //! When listen-before-talk gives up on a forward's neighbour (§9.3 step
 //! 2), the neighbour is set aside for this hand-over only (`skipped`):
 //! it was not handed the message, so it stays a candidate for later
-//! choices, but choosing again at once must not pick it again. A return,
-//! a send-back and a DELIVER have nowhere else to go; for them a give-up
-//! counts as one of the three attempts, and never as a failure against
-//! the neighbour.
+//! choices, but choosing again at once must not pick it again. A return
+//! and a DELIVER have nowhere else to go; for them a give-up counts as one
+//! of the three attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
 //! [`BAN`], so no message takes it until then (§9.3, roadmap D27, D29,
-//! D32). A forward treats it as that give-up, and since the frame went out, the record's mark that the receiver was handed the
-//! message is taken back. A return or a send-back has nowhere else to go:
-//! it waits in its place for the ban to end, and the refused transmission
-//! does not count as one of its attempts.
+//! D32). A forward treats it as that give-up, and since the frame went
+//! out, the record's mark that the receiver was handed the message is taken
+//! back. A return has nowhere else to go: it waits in its place for the
+//! ban to end, and the refused transmission does not count as one of its
+//! attempts.
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
@@ -116,14 +110,14 @@ pub const OWNER_RADIUS_M: f32 = 50.0;
 /// What a received DATA packet is (§9.2.4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Case {
-    /// Case 1: no record.
+    /// Case 2: no record.
     New,
-    /// Cases 2, 3 and 5: ACK only.
+    /// Cases 1, 3 and 4: arrived, a retransmission, or a copy while
+    /// this relay holds one. ACK only.
     AckOnly,
-    /// Case 4: back from the last child.
-    FromLastChild,
-    /// Case 6: offered by a relay that does not know this one has it.
-    SendBack,
+    /// Case 5: a copy, and this relay holds none. It goes on with its own
+    /// search.
+    Search,
 }
 
 /// What became of a forward when it was addressed. Short-lived, so the
@@ -296,23 +290,16 @@ impl Relay {
     pub(super) fn data(&mut self, d: Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         let from_leaf = d.hops == 0;
-        let case = if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
-            Case::AckOnly
-        } else {
-            self.classify(&d, id, from_leaf)
-        };
-        let owner = match case {
-            Case::New | Case::FromLastChild => self.owns(d.dst_pos, now),
-            Case::AckOnly | Case::SendBack => false,
-        };
-        let sends = match case {
-            Case::New | Case::FromLastChild => !owner,
-            Case::SendBack => true,
-            Case::AckOnly => false,
-        };
-        // A return from the child being handed the message ends that
-        // hand-over, which frees its place in the queue.
-        let completes = case == Case::FromLastChild && self.handing(id, d.src_hop);
+        let repeat = self
+            .records
+            .get(id)
+            .is_some_and(|r| r.repeats(d.src_hop, d.hops));
+        // A packet from the relay this one is handing the message to shows
+        // that it took it, and ends that hand-over, which frees its place.
+        let completes = !repeat && self.handing(id, d.src_hop);
+        let case = self.classify(id, repeat);
+        let owner = case != Case::AckOnly && self.owns(d.dst_pos, now);
+        let sends = case != Case::AckOnly && !owner;
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
         let record_at = match case {
@@ -367,91 +354,63 @@ impl Relay {
             return;
         }
         self.replies.owe(reply, d.sender_home, deadline, now);
-
-        match case {
-            Case::New => {
-                let parent = (!from_leaf).then_some((d.src_hop, d.sender_home));
-                let mut record = Record::new(id, parent, d.hops, now);
-                if owner {
-                    record.set_owned();
-                }
-                if let Some(at) = record_at {
-                    self.records.put(at, record);
-                }
-                if owner {
-                    self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
-                } else {
-                    self.send_on(&d, Kind::Forward, place, emit);
-                }
+        if completes {
+            self.handover_done(now, emit);
+        }
+        if case == Case::New {
+            let parent = (!from_leaf).then_some((d.src_hop, d.sender_home));
+            let mut record = Record::new(id, parent, d.hops, now);
+            if owner {
+                record.set_arrived();
             }
+            if let Some(at) = record_at {
+                self.records.put(at, record);
+            }
+        } else if let Some(r) = self.records.get_mut(id) {
+            r.received(d.src_hop, d.hops, now);
+            if owner {
+                r.set_arrived();
+            }
+        }
+        match case {
             Case::AckOnly => {
-                if let Some(r) = self.records.get_mut(id) {
-                    r.received(d.hops, now);
-                }
                 self.delivered.offered(id, now);
             }
-            Case::FromLastChild => {
-                if let Some(r) = self.records.get_mut(id) {
-                    r.received(d.hops, now);
-                    if owner {
-                        r.set_owned();
-                    }
-                }
-                if completes {
-                    self.handover_done(now, emit);
-                }
-                if owner {
-                    self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
-                } else {
-                    self.send_on(&d, Kind::Forward, place, emit);
-                }
+            Case::New | Case::Search if owner => {
+                self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
             }
-            Case::SendBack => {
-                if let Some(r) = self.records.get_mut(id) {
-                    r.received(d.hops, now);
-                }
-                self.send_on(&d, Kind::Bounce, place, emit);
-            }
+            Case::New | Case::Search => self.send_on(&d, place, emit),
         }
     }
 
-    /// The case of §9.2.4 for a DATA packet of a message this relay is not
-    /// holding for delivery.
-    fn classify(&self, d: &Data<'_>, id: MsgId, from_leaf: bool) -> Case {
+    /// The case of §9.2.4 for a DATA packet of message `id`; `repeat`:
+    /// from the sender and with the count of the last one received.
+    fn classify(&self, id: MsgId, repeat: bool) -> Case {
+        if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
+            return Case::AckOnly;
+        }
         let Some(r) = self.records.get(id) else {
             return Case::New;
         };
-        if r.owned() || d.hops <= r.highest_hops() {
+        if r.arrived() || repeat || self.holds(id) {
             return Case::AckOnly;
         }
-        // Past the copy test a leaf's packet (`hops` 0) cannot get.
-        debug_assert!(!from_leaf);
-        let sender = d.src_hop;
-        if r.last_child() == Some(sender) {
-            return if self.handing(id, sender) {
-                Case::FromLastChild
-            } else if self.searching(id) {
-                Case::AckOnly
-            } else if r.returned() {
-                Case::SendBack
-            } else {
-                Case::FromLastChild
-            };
-        }
-        // An earlier child may be offering its own searching copy, which
-        // only a send-back keeps alive (§9.2.4 case 6).
-        if r.parent().map(|(name, _)| name) == Some(sender) {
-            return Case::AckOnly;
-        }
-        Case::SendBack
+        Case::Search
     }
 
-    /// Whether the send queue holds this relay's searching copy of message
-    /// `id`: a forward or a return.
-    fn searching(&self, id: MsgId) -> bool {
+    /// Whether this relay holds a copy of message `id` that is sure to live
+    /// on: in its send queue or set aside, but not the frame of a hand-over
+    /// under way, once it has been on air. Its receiver may have taken it
+    /// and only the ACK been lost, and the copy now offered here may be
+    /// that one, come back.
+    fn holds(&self, id: MsgId) -> bool {
+        let sent = !self.handover.idle() && self.handover.transmitted();
+        let current = self.queue.current_index().filter(|_| sent);
         self.queue
             .iter()
-            .any(|o| matches!(o.kind, Kind::Forward | Kind::Return) && o.msg_id() == Some(id))
+            .enumerate()
+            .any(|(i, o)| Some(i) != current && o.msg_id() == Some(id))
+            || self.held.and_then(|h| h.out.msg_id()) == Some(id)
     }
 
     /// Whether the current hand-over is of message `id` to `to`, sent at
@@ -484,30 +443,26 @@ impl Relay {
             .place(|id| held.binary_search_by_key(&id.0, |h| h.0).is_ok())
     }
 
-    /// Queue `d` onward into `place`: a forward, addressed later, or
-    /// straight back to its sender. Carries the received count plus one,
-    /// which places it among waiting entries, until its hand-over stamps
-    /// the count it is sent with (§9.2.6).
-    fn send_on(&mut self, d: &Data<'_>, kind: Kind, place: u8, emit: &mut dyn FnMut(Action)) {
+    /// Queue `d` onward into `place`, a forward addressed when its
+    /// hand-over starts. Carries the received count plus one, which places
+    /// it among waiting entries, until its hand-over stamps the count it is
+    /// sent with (§9.2.6).
+    fn send_on(&mut self, d: &Data<'_>, place: u8, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
             return;
         }
-        let (dst_hop, channel) = match kind {
-            Kind::Bounce => (d.src_hop, d.sender_home),
-            _ => (ShortName(0), self.home),
-        };
         let out = Data {
             sender_home: self.home,
-            dst_hop,
+            dst_hop: ShortName(0),
             src_hop: self.me(),
             hops: d.hops + 1,
             ..*d
         };
         let out = Outgoing {
             place,
-            ..Outgoing::new(data_frame(&out, channel), kind)
+            ..Outgoing::new(data_frame(&out, self.home), Kind::Forward)
         };
         if self.queue.push(out).is_err() {
             self.drop_msg(id, DropReason::SendQueueFull, emit);
@@ -551,7 +506,7 @@ impl Relay {
             Pushed::Duplicate => return,
             Pushed::Full => {
                 // Only when ownership is found at the hand-over, too late
-                // to refuse (§9.2.4 case 4).
+                // to refuse (§9.2.4 case 5).
                 self.drop_msg(id, DropReason::DeliveryFull, emit);
                 return;
             }
@@ -655,7 +610,7 @@ impl Relay {
         };
         if self.owns(dst_pos, now) {
             let mut record = Record::new(id, None, 0, now);
-            record.set_owned();
+            record.set_arrived();
             self.records.put(at, record);
             if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
                 let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
@@ -666,7 +621,7 @@ impl Relay {
             return;
         }
         self.records.put(at, Record::new(id, None, 0, now));
-        self.send_on(&d, Kind::Forward, 0, emit);
+        self.send_on(&d, 0, emit);
     }
 
     // --- The hand-over (§9.3) ---
@@ -689,7 +644,7 @@ impl Relay {
             };
             let routed = match out.kind {
                 Kind::Forward => self.route(out, now, emit),
-                Kind::Return | Kind::Bounce => match Packet::decode(out.frame.payload()) {
+                Kind::Return => match Packet::decode(out.frame.payload()) {
                     Ok(Packet::Data(d)) => {
                         Routed::To(out, self.expect(d.msg_id(), d.dst_hop.into()))
                     }
@@ -734,7 +689,7 @@ impl Relay {
     /// Address the forward `out` (§9.2.3), or let it wait for a ban to
     /// end, or return it to the parent (§9.2.5), or drop it at the origin.
     /// Ownership is checked again first: a closer neighbour may have been
-    /// demoted since (§9.2.4 case 4).
+    /// demoted since (§9.2.4 case 5).
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return Routed::Done;
@@ -750,7 +705,7 @@ impl Relay {
         };
         if self.owns(d.dst_pos, now) {
             if let Some(r) = self.records.get_mut(id) {
-                r.set_owned();
+                r.set_arrived();
             }
             if self.own == Some(id) && d.dst_leaf != LeafId::RELAY && self.delivery.is_full() {
                 return Routed::Hold;
@@ -773,9 +728,6 @@ impl Relay {
         }
         match record.parent() {
             Some((parent, stored)) => {
-                if let Some(r) = self.records.get_mut(id) {
-                    r.set_returned();
-                }
                 let home = self.home_of(parent).unwrap_or(stored);
                 let frame = data_frame(
                     &Data {
@@ -901,7 +853,7 @@ impl Relay {
         emit: &mut dyn FnMut(Action),
     ) {
         let step = self.handover.step();
-        // The hand-over may have ended meanwhile (§9.2.4 case 4).
+        // The hand-over may have ended meanwhile (§9.2.4 case 5).
         if !matches!(step, Step::Cad | Step::Rssi) {
             return;
         }
@@ -954,7 +906,7 @@ impl Relay {
                             .neighbours
                             .by_short(d.dst_hop)
                             .map_or(usize::MAX, |(s, _)| s);
-                        r.sent_to_child(d.dst_hop, slot, now);
+                        r.sent_to_child(slot, now);
                     }
                     _ => r.sent(now),
                 }
@@ -1009,7 +961,7 @@ impl Relay {
                     self.skipped |= 1 << slot;
                 }
             }
-            Kind::Return | Kind::Bounce | Kind::Deliver => {
+            Kind::Return | Kind::Deliver => {
                 let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
                 if self.handover.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
@@ -1054,7 +1006,7 @@ impl Relay {
                 self.handover.cancel();
             }
             // No other receiver: wait for the ban, and let the queue move.
-            Kind::Return | Kind::Bounce | Kind::Deliver => {
+            Kind::Return | Kind::Deliver => {
                 let tries = self.handover.refused();
                 self.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
@@ -1083,11 +1035,16 @@ impl Relay {
             _ => return,
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
-        if let Some(p) = self.neighbour_named(to) {
+        let receiver = self.neighbour_named(to);
+        if let Some(p) = receiver {
             self.neighbours.succeeded(p, now);
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(d.hops);
+            if receiver == Some(d.dst_pos) {
+                // The relay it is addressed to took it: it has arrived.
+                r.set_arrived();
+            }
         }
         let trace = match out.kind {
             Kind::Forward => {
@@ -1100,8 +1057,7 @@ impl Relay {
                     hops: d.hops,
                 }
             }
-            Kind::Return => Trace::ReturnedToParent { msg_id: id, to },
-            Kind::Bounce | Kind::Deliver => Trace::Bounced { msg_id: id, to },
+            Kind::Return | Kind::Deliver => Trace::ReturnedToParent { msg_id: id, to },
         };
         debug_assert!(out.kind != Kind::Deliver, "a DELIVER is not a DATA");
         emit(Action::Trace(trace));
@@ -1123,11 +1079,10 @@ impl Relay {
             }
         }
         let reason = match out.kind {
-            // The neighbour is the last child now; the next one in order is
-            // taken when the entry is prepared again.
+            // The neighbour has been handed the message, so the next one
+            // in order is taken when the entry is prepared again.
             Kind::Forward => return,
             Kind::Return => Some(DropReason::ReturnFailed),
-            Kind::Bounce => Some(DropReason::BounceFailed),
             Kind::Deliver => None,
         };
         if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
