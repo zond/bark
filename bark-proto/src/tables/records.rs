@@ -37,14 +37,15 @@
 //! D17 defined the tried set as the parent, the last child, and every
 //! neighbour before the last child in the order of §9.2.3 (distance to the
 //! destination, then short name), which is fixed for a message. The record
-//! keeps instead the neighbours this relay actually handed the message to,
-//! as a mask over neighbour-table slots ([`Record::handed`]). With the
-//! table unchanged and every neighbour before the last child a candidate
-//! when passed over, the two agree; the last child itself is no longer
-//! kept (roadmap D35). They differ for a relay passed over
-//! because it was demoted, expired or not in the table: the order counts
-//! it as tried, the mask as untried, so it stays a candidate for later
-//! choices. When a slot changes hands its bit is cleared in every record
+//! keeps instead the neighbours that took the message from this relay,
+//! each by ACKing a hand-over of it, as a mask over neighbour-table slots
+//! ([`Record::handed`]). With the table unchanged and every hand-over
+//! answered, the two agree; the last child itself is no longer kept
+//! (roadmap D35). They differ for a relay passed over because it was
+//! demoted, expired or not in the table, and for one that refused the
+//! message or never answered (roadmap D36): the order counts it as tried,
+//! the mask as untried, so it stays a candidate for later choices. When a
+//! slot changes hands its bit is cleared in every record
 //! ([`Records::slot_reoccupied`]), so a newcomer is never taken for a
 //! neighbour that was handed the message.
 
@@ -167,7 +168,8 @@ impl Record {
         self.last_active
     }
 
-    /// Whether the neighbour now in `slot` was handed the message.
+    /// Whether the neighbour now in `slot` took the message from this
+    /// relay.
     pub fn handed(&self, slot: usize) -> bool {
         slot < NEIGHBOURS && self.handed & (1 << slot) != 0
     }
@@ -201,24 +203,15 @@ impl Record {
         self.highest_hops = self.highest_hops.max(hops);
     }
 
-    /// The message was sent at `now` to the neighbour in neighbour-table
-    /// `slot`: that neighbour is tried.
-    pub fn sent_to_child(&mut self, slot: usize, now: Instant) {
+    /// The neighbour in neighbour-table `slot` acknowledged the message:
+    /// it has it, and is tried.
+    pub fn handed_to(&mut self, slot: usize) {
         if slot < NEIGHBOURS {
             self.handed |= 1 << slot;
         }
-        self.last_active = now;
     }
 
-    /// The neighbour in `slot` refused the message it was sent (§9.3): it
-    /// was not handed it, and stays a candidate.
-    pub fn not_handed(&mut self, slot: usize) {
-        if slot < NEIGHBOURS {
-            self.handed &= !(1 << slot);
-        }
-    }
-
-    /// The message was sent back to the parent at `now`.
+    /// The message was sent at `now`.
     pub fn sent(&mut self, now: Instant) {
         self.last_active = now;
     }
@@ -362,12 +355,10 @@ mod tests {
         r.handed_over(12);
         r.handed_over(10);
         assert_eq!(r.highest_hops(), 12, "what it sent counts too");
-        r.sent_to_child(63, at(4));
+        r.handed_to(63);
         assert!(r.handed(63) && !r.handed(0) && !r.handed(64));
-        r.sent_to_child(0, at(5));
+        r.handed_to(0);
         assert!(r.handed(63) && r.handed(0), "every child stays handed");
-        r.not_handed(63);
-        assert!(!r.handed(63) && r.handed(0));
         r.sent(at(6));
         assert_eq!(r.last_active(), at(6));
         r.set_arrived();
@@ -425,8 +416,8 @@ mod tests {
         for id in 0..3 {
             keep(&mut t, Record::new(MsgId(id), None, 0, at(0)));
             let r = t.get_mut(MsgId(id)).unwrap();
-            r.sent_to_child(7, at(0));
-            r.sent_to_child(8, at(0));
+            r.handed_to(7);
+            r.handed_to(8);
         }
         t.slot_reoccupied(7);
         for id in 0..3 {

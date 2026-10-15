@@ -57,25 +57,29 @@
 //! moves home (§6.3) between attempts, or while a message waits to come
 //! back to it, is followed.
 //!
-//! When listen-before-talk gives up on a forward's neighbour (§9.3 step
-//! 2), the neighbour is set aside for this hand-over only (`skipped`):
-//! it was not handed the message, so it stays a candidate for later
-//! choices, but choosing again at once must not pick it again. A return
-//! and a DELIVER have nowhere else to go; for them a give-up counts as one
-//! of the three attempts, and never as a failure against the neighbour.
+//! A neighbour is tried, marked in the record, only once it has ACKed
+//! the message (roadmap D36). When listen-before-talk gives up on a
+//! forward's neighbour (§9.3 step 2), the neighbour refuses it, or its
+//! three attempts go unanswered (step 6), it is set aside for this
+//! hand-over only (`skipped`): choosing again at once must not pick it
+//! again, but it stays a candidate for later choices. An unanswered frame
+//! is more often lost than its ACK, so the neighbour most likely lacks the
+//! message; marked tried, it would end its own search if it later got the
+//! message elsewhere and offered it here. A return and a DELIVER have
+//! nowhere else to go; for them a give-up counts as one of the three
+//! attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
 //! [`BAN`], so no message takes it until then (§9.3, roadmap D27, D29,
-//! D32). A forward treats it as that give-up, and since the frame went
-//! out, the record's mark that the receiver was handed the message is taken
-//! back. A return has nowhere else to go: it waits in its place for the
-//! ban to end, and the refused transmission does not count as one of its
-//! attempts.
+//! D32). A forward treats it as that give-up. A return has nowhere else
+//! to go: it waits in its place for the ban to end, and the refused
+//! transmission does not count as one of its attempts.
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
 //! is not returned or dropped: overload makes a message wait, never end.
-//! Only a search exhausted by tried and failed neighbours returns or drops.
+//! Only a search exhausted by neighbours tried or set aside returns or
+//! drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
 //! over the first entry that is due. The application's own message waits
 //! the same way, longer after refusals in a row ([`hold`]); one for an own
@@ -900,16 +904,7 @@ impl Relay {
                 out.frame.channel,
             );
             if let Some(r) = self.records.get_mut(id) {
-                match out.kind {
-                    Kind::Forward => {
-                        let slot = self
-                            .neighbours
-                            .by_short(d.dst_hop)
-                            .map_or(usize::MAX, |(s, _)| s);
-                        r.sent_to_child(slot, now);
-                    }
-                    _ => r.sent(now),
-                }
+                r.sent(now);
             }
         }
         let airtime = mac::airtime(&frame);
@@ -999,9 +994,6 @@ impl Relay {
             Kind::Forward => {
                 if let Some((slot, _)) = slot {
                     self.skipped |= 1 << slot;
-                    if let Some(r) = self.records.get_mut(msg_id) {
-                        r.not_handed(slot);
-                    }
                 }
                 self.handover.cancel();
             }
@@ -1015,10 +1007,6 @@ impl Relay {
                 }
             }
         }
-    }
-
-    fn neighbour_named(&self, name: ShortName) -> Option<Position> {
-        self.neighbours.by_short(name).map(|(_, n)| n.position)
     }
 
     /// The current hand-over succeeded: its receiver has the packet.
@@ -1035,12 +1023,16 @@ impl Relay {
             _ => return,
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
-        let receiver = self.neighbour_named(to);
+        let slot = self.neighbours.by_short(to).map(|(s, n)| (s, n.position));
+        let receiver = slot.map(|(_, p)| p);
         if let Some(p) = receiver {
             self.neighbours.succeeded(p, now);
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(d.hops);
+            if let (Kind::Forward, Some((s, _))) = (out.kind, slot) {
+                r.handed_to(s);
+            }
             if receiver == Some(d.dst_pos) {
                 // The relay it is addressed to took it: it has arrived.
                 r.set_arrived();
@@ -1073,14 +1065,19 @@ impl Relay {
         emit: &mut dyn FnMut(Action),
     ) {
         let id = out.msg_id().unwrap_or_default();
-        if counted {
-            if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
+        if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
+            if counted {
                 self.count_failure(d.dst_hop, now, emit);
+            }
+            if out.kind == Kind::Forward {
+                // Most likely the frame, not the ACK, was lost: the
+                // neighbour stays untried, set aside for this choice only.
+                if let Some((slot, _)) = self.neighbours.by_short(d.dst_hop) {
+                    self.skipped |= 1 << slot;
+                }
             }
         }
         let reason = match out.kind {
-            // The neighbour has been handed the message, so the next one
-            // in order is taken when the entry is prepared again.
             Kind::Forward => return,
             Kind::Return => Some(DropReason::ReturnFailed),
             Kind::Deliver => None,

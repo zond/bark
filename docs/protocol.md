@@ -418,17 +418,19 @@ originated:
 |---|---|
 | ID | the message ID (§14) |
 | parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin. The channel is used only if that relay is no longer in the neighbour table (§9.2.5) |
-| handed | the neighbours this relay has handed the message to, or tried to, as one bit per neighbour-table slot |
+| handed | the neighbours that took the message from this relay, each by ACKing a hand-over of it (§9.3), as one bit per neighbour-table slot |
 | last packet | `src_hop` and `hops` of the last DATA of the message it received (0 and 0 from a leaf): the same pair again is a retransmission (§9.2.4) |
 | highest hops | the largest `hops` (§9.2.6) received for the message, or sent in a hand-over of it that succeeded |
 | arrived | whether the message has reached its owner: this relay owns the destination (§9.2.7), or the relay it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
 The relay's **tried set** for the message is the parent and the
-neighbours in `handed`. A neighbour that was passed over without being
-handed the message, because it was demoted, expired or not in the table
-at the time, is not tried: it stays a candidate. When a neighbour-table
-slot changes hands, its bit is cleared in every record.
+neighbours in `handed`: those known to have the message. A neighbour that
+has not ACKed it is not tried, whether it was passed over, because it was
+demoted, expired or not in the table at the time, or was offered the
+message and refused it or never answered (§9.3): it stays a candidate.
+When a neighbour-table slot changes hands, its bit is cleared in every
+record.
 
 The record is also how a relay recognises a repeat of a message it has
 handled (§9.2.4); there is no separate window of recent IDs.
@@ -458,7 +460,9 @@ so 54 KB.
 One function chooses the next hop for a first send, for the next try after
 the message comes back, and after a failed hand-over (§9.3). The
 **candidates** are the neighbour-table entries that are live (§8.2),
-except those in the tried set (§9.2.2) and those banned (§9.3).
+except those in the tried set (§9.2.2), those banned (§9.3), and those
+set aside for the current hand-over because they did not take it (§9.3
+steps 2 and 6, refusal).
 
 The **order** is: neighbours that are not demoted before demoted ones;
 within each, distance to the destination position in the local plane
@@ -475,8 +479,9 @@ should not drop a message whose only route is that link. Two hand-overs
 lost to collisions demote a neighbour that works, and on a line it is
 the only route, so without the last resort every message is dropped
 until the demotion lapses, six and a half minutes. A neighbour that is
-really gone costs each message routed to it three attempts until its
-entry expires (§8.2: 390 s after its last heartbeat) (roadmap D25). A
+really gone costs a message three attempts each time the message is
+routed past it, until its entry expires (§8.2: 390 s after its last
+heartbeat) (roadmap D25, D36). A
 banned neighbour is not tried at all: it has just said it cannot take
 the message, and trying it again before its bucket has refilled would
 only cost it another reply (roadmap D29).
@@ -570,8 +575,8 @@ it (roadmap D35).
 
 #### 9.2.5 Returning to the parent, and the end of the search
 
-When §9.2.3 finds no candidate, because every neighbour has been tried,
-the relay sends the message back to its parent: a
+When §9.2.3 finds no candidate, because every neighbour has been tried
+or set aside, the relay sends the message back to its parent: a
 DATA packet with `dst_hop` the parent's short name, from the record, on
 the parent's home channel as the neighbour table has it at the moment of
 sending, so a return follows a parent that has moved home (§6.3) since
@@ -611,8 +616,10 @@ hand-over that succeeded. So along the path of a message the count only
 grows, and a relay sends a count for a message once, but in retries: to
 send another packet of it, it must have received one since its last
 hand-over that succeeded, or that hand-over failed and the packet goes
-elsewhere. A receiver therefore tells a retransmission by the sender and
-the count (§9.2.4, case 3). A frame that waited in the send queue, or
+elsewhere. After a wait for a ban it may also go again to the neighbour
+that did not answer; if that neighbour took the first, the second is in
+fact a retransmission to it. A receiver therefore tells a retransmission
+by the sender and the count (§9.2.4, case 3). A frame that waited in the send queue, or
 goes to another neighbour after a failed hand-over, carries the count as
 it stands when it goes. The count also numbers the hop places of the
 send queue (§9.3).
@@ -692,9 +699,14 @@ waiting their turn are held in the relay's send queue.
 6. On timeout: wait a random time, retry, up to 3 attempts. Then the
    hand-over has failed: count a failure against the neighbour (§8.2:
    demoted after 2 consecutive failures) and choose the next hop again
-   (§9.2.3). The neighbour has been handed the message, so it is tried:
-   the next one in order is taken, or the message goes back to the
-   parent.
+   (§9.2.3). The neighbour is set aside for this hand-over, as in step
+   2, but not counted as tried: in the simulated loaded corridor an
+   attempt was lost to a collision at the receiver about four times as
+   often as by its ACK going astray (roadmap D34), so the neighbour most
+   likely does not have the message. It stays a candidate when the
+   message is next routed here. If it did take it, the next offer costs
+   one round trip: it holds the message and only ACKs, or has finished
+   with it and returns it (§9.2.4) (roadmap D36).
 
 **Refusal.** An ACK that answers the outstanding hand-over and says
 refused means the receiver does not take the packet (§9.2.4). The
@@ -878,10 +890,15 @@ and no record is replaced. Then:
   just received or originated, and every ACK-only case of §9.2.4 sends
   nothing.
 - A relay holding the message either owns the destination, sends to its
-  next candidate, or returns it to its parent. Candidates advance in a
-  fixed order and never repeat, so each relay sends to each neighbour at
-  most once; a return goes up the parents, which lead to the origin
-  without a loop; so the search ends.
+  next candidate, or returns it to its parent. A neighbour that takes the
+  message is tried and never offered it again from that record, so each
+  relay hands the message to each neighbour at most once; a return goes
+  up the parents, which lead to the origin without a loop. So each stay
+  of the message at a relay ends with a hand-over that succeeds, or at
+  the origin with a drop, and there are finitely many of those: the
+  search ends. A neighbour that does not answer is never tried; it costs
+  three attempts each time the message is routed past it, and the hop
+  cap bounds the stays (§9.2.6).
 - A send to a relay that already has the message hands it the search
   (§9.2.4, case 5): it goes on with its own candidates. The sender is
   one of them unless the relay has tried it, so the search comes back
@@ -906,25 +923,30 @@ What breaks it:
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
   sender moves on while the receiver also carries the message: two copies
   search at once. They share the relays' records, so each goes on from
-  where the other left a relay. A copy ends where it meets the other
-  held at a relay (§9.2.4, case 4), where the message has arrived (case
-  1), at the origin with the search, or at the hop cap. A copy is never
-  ended where it is the last one.
-- **A failed hand-over that was not taken.** The neighbour counts as
-  tried. If it later gets the message by another path and offers it
-  back, the sender takes that as its return, and the neighbour's own
-  search ends there; part of the network may go unsearched.
+  where the other left a relay. The sender has not marked the receiver
+  tried, so a copy that comes back to it is offered there again. A copy
+  ends where it meets the other held at a relay (§9.2.4, case 4), where
+  the message has arrived (case 1), at the origin with the search, or at
+  the hop cap. A copy is never ended where it is the last one.
 - **Links that change** during the search, including a parent that moves
   to another home channel (§9.2.5): parts of the graph go unsearched.
 
 ### 9.6 Bounds
 
 - **Hand-overs per message:** at most 256 that succeed (the first, at
-  count 0, and 255 more, §9.2.6). A relay makes at most 3 attempts per
-  neighbour it tries, and tries each neighbour at most once per record.
+  count 0, and 255 more, §9.2.6). A relay hands the message to each
+  neighbour at most once per record, in at most 3 attempts. A neighbour
+  that does not answer costs 3 attempts each time the message is routed
+  past it: once per stay of the message at the relay, and once more
+  after each wait for a ban. After two such failures it is a last resort
+  (§8.2), and a dead one leaves the table within 390 s.
 - **Cost of a search:** each link between two relays costs at most two
-  hand-overs from each end: a send and a return. In the usual case it is
-  two in all. Within the hop cap a search can
+  hand-overs that succeed from each end: a send and a return. In the
+  usual case it is two in all; a split adds a round trip on the link
+  whose ACKs were lost. A link that does not answer costs three attempts
+  each time the message is routed past it, so a search that comes back
+  through a relay often, as one with no owner does, pays for it at every
+  stay (roadmap D36). Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
 - **State per relay:** at most 1695 records of 32 bytes, 54 KB
   (§9.2.2); a send queue of 294 packets of up to 255 bytes, 75 KB (§9.3);

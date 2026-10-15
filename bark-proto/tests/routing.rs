@@ -292,15 +292,13 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 }
 
 /// A neighbour whose hand-over failed, and which never had the message,
-/// later offers it here (§9.2.4 case 5): X's three frames to Y are lost,
-/// as three refusals whose refusals were lost would be. X moves on to Z,
-/// and Z hands it to Y, which offers it to X. X holds none of it and takes
-/// it, but has tried every neighbour, so as the origin it drops it for
-/// want of a route. Y's own search ends there, though E would have
-/// reached D: a failed hand-over can leave part of the network unsearched
-/// (§9.5). The message ends where the search ends, with a drop. Before,
-/// X sent it straight back and Y went on; the same send-back lost a
-/// message whenever the relay it went to had returned it (roadmap D35).
+/// later offers it here (§9.2.4 case 5): X's three frames to Y are lost.
+/// Y stays untried (roadmap D36), so X moves on to Z, and Z hands it to
+/// Y, which offers it to X. X holds none of it and takes it, and hands it
+/// to Y, its one candidate left. For Y, X is a neighbour it handed the
+/// message to, so this is X's return: Y goes on to E, which reaches D.
+/// Before, a failed hand-over marked Y tried, X dropped the message for
+/// want of a route, and E was never tried.
 ///
 /// ```text
 ///   E - Y - X          D (far east)
@@ -308,7 +306,7 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 ///   D     Z-+
 /// ```
 #[test]
-fn a_neighbour_whose_hand_over_failed_offers_it_back() {
+fn a_neighbour_whose_hand_over_failed_is_tried_again() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -328,31 +326,30 @@ fn a_neighbour_whose_hand_over_failed_offers_it_back() {
         lose
     }));
     let id = send(&mut h, x, d, b"failed, not taken");
-    let dropped = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::NoRoute,
-    };
     assert!(
-        h.run_until(h.now + secs(20), |h| traces(h, x).contains(&dropped)),
-        "X {:?}",
-        traces(&h, x)
+        h.run_until(h.now + secs(20), |h| delivered(h, d, id)),
+        "lost: X {:?} Y {:?}",
+        traces(&h, x),
+        traces(&h, y)
     );
     h.run_for(secs(10));
     let name = |i| position(&h, i).short();
-    assert_eq!(forwards(&h, x, id), vec![name(z)]);
-    assert_eq!(forwards(&h, y, id), vec![name(x)]);
-    assert!(!delivered(&h, d, id));
+    assert_eq!(forwards(&h, x, id), vec![name(z), name(y)]);
+    assert_eq!(forwards(&h, z, id), vec![name(y)]);
+    assert_eq!(forwards(&h, y, id), vec![name(x), name(e)]);
+    assert_eq!(messages(&h, d, id), 1);
+    no_drops(&h);
     assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
 }
 
 /// A split: X's hand-over to Y succeeds but every ACK is lost, so X
 /// counts it failed and moves on to Z, which reaches D. Y searches too,
 /// finds a dead end and returns the message to X. X holds none of it, so
-/// it takes it as Y's return (§9.2.4 case 5), has nothing left to try and,
-/// as the origin, drops it. That copy ends at the origin, as a search
-/// does, and the message is delivered once. Before, X sent it straight
-/// back and Y only ACKed it from its parent: had Z's way failed, that was
-/// the last copy.
+/// it takes it as Y's return (§9.2.4 case 5). Y is still untried for X,
+/// as its ACKs never came (roadmap D36), so X hands it to Y once more; Y
+/// has nothing left and returns it again. X has then tried every
+/// neighbour and, as the origin, drops that copy, as a search ends, and
+/// the message is delivered once. The split costs one round trip more.
 ///
 /// Y's return must come after X has moved on; during X's retries it
 /// would end X's hand-over instead (case 4). So the frames are full, X
@@ -432,10 +429,10 @@ fn a_split_copy_returned_to_a_relay_holding_none_searches_on() {
         delivered(h, d, id) && traces(h, y).contains(&back_at_y)
     }));
     h.run_for(secs(10));
-    assert_eq!(forwards(&h, x, id), vec![name(&h, z)]);
+    assert_eq!(forwards(&h, x, id), vec![name(&h, z), name(&h, y)]);
     assert_eq!(forwards(&h, y, id), vec![name(&h, p)]);
     let returns = traces(&h, y).iter().filter(|t| **t == back_at_y).count();
-    assert_eq!(returns, 1);
+    assert_eq!(returns, 2);
     assert_eq!(messages(&h, d, id), 1);
     let dropped = Trace::Dropped {
         msg_id: id,
@@ -492,7 +489,9 @@ fn returns(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
 /// which holds none of it. Before, P took this for an offer from an
 /// earlier child and sent it straight back, and C, receiving it from its
 /// parent, only ACKed it: no copy was left, and T, which reaches D, was
-/// never tried. Now P takes it as C's return and goes on to T.
+/// never tried. Now P takes it as C's return. C never ACKed it, so it is
+/// untried (roadmap D36), and P hands it to C again; C has nothing left
+/// and returns it at once, and P goes on to T.
 ///
 /// ```text
 ///       C              D (far east)
@@ -540,9 +539,9 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
         traces(&h, c)
     );
     let name = |i| position(&h, i).short();
-    assert_eq!(forwards(&h, p, id), vec![name(s), name(t)]);
+    assert_eq!(forwards(&h, p, id), vec![name(s), name(c), name(t)]);
     assert_eq!(forwards(&h, s, id), vec![name(c)]);
-    assert_eq!(returns(&h, c, id), 1);
+    assert_eq!(returns(&h, c, id), 2);
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
 }
@@ -647,9 +646,10 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
 /// ACKed it, and took Z's return for a retransmission of a packet it had
 /// handled, and only ACKed it: no copy was left, and W, which reaches D,
 /// was never tried. A retransmission is now the last packet's sender and
-/// count again. X, holding none, takes Y's return and goes on to W; Z's
-/// return then finds nothing left to try, and X, the origin, drops that
-/// copy.
+/// count again. X, holding none, takes Y's return, offers Y again, as Y
+/// never ACKed it (roadmap D36), takes Y's second return and goes on to
+/// W. Z's return comes while X still holds the copy going to W, and merges
+/// with it (§9.2.4 case 4): nothing is dropped.
 ///
 /// ```text
 ///       Y              D (far east)
@@ -702,31 +702,23 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
     // Z's return.
     h.run_for(secs(10));
     let name = |i| position(&h, i).short();
-    assert_eq!(forwards(&h, x, id), vec![name(z), name(w)]);
-    assert_eq!((returns(&h, y, id), returns(&h, z, id)), (1, 1));
+    assert_eq!(forwards(&h, x, id), vec![name(z), name(y), name(w)]);
+    assert_eq!((returns(&h, y, id), returns(&h, z, id)), (2, 1));
     assert_eq!(messages(&h, d, id), 1);
-    let dropped = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::NoRoute,
-    };
-    let drops = |i| {
-        traces(&h, i)
-            .into_iter()
-            .filter(|t| matches!(t, Trace::Dropped { .. }))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(drops(x), vec![dropped]);
-    assert!([y, z, w, d].into_iter().all(|i| drops(i).is_empty()));
+    no_drops(&h);
+    assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
 }
 
 /// A return cannot go back and forth between a parent and a child that
 /// both hold none of the message (roadmap D35). P's only neighbour C
 /// takes P's hand-over, but its ACKs are lost, so P, with no candidate
 /// left, drops the message for want of a route. C, a dead end, returns
-/// it after that. P holds none of it and takes it as C's return; with
-/// nothing left to try it drops that copy too. C gets nothing back: one
-/// return, and nothing more on the air. Before, P sent it straight back
-/// and C only ACKed it.
+/// it after that. P holds none of it and takes it as C's return. C never
+/// ACKed it, so it is untried (roadmap D36), and P hands it to C again.
+/// C, receiving it from its parent with nothing left to try, returns it;
+/// P has now tried C and drops that copy too. Two returns, and nothing
+/// more on the air. Before D35, P sent it straight back and C only ACKed
+/// it.
 #[test]
 fn a_return_does_not_go_back_and_forth() {
     let (p, c) = (0, 1);
@@ -776,9 +768,9 @@ fn a_return_does_not_go_back_and_forth() {
             .filter(|(_, f)| matches!(data_names(f.payload()), Some((_, d)) if d == to))
             .count()
     };
-    assert!(forwards(&h, p, id).is_empty());
-    assert_eq!(returns(&h, c, id), 1);
-    assert_eq!(datas(p, nc), 3, "three unanswered, then none");
+    assert_eq!(forwards(&h, p, id), vec![nc]);
+    assert_eq!(returns(&h, c, id), 2);
+    assert_eq!(datas(p, nc), 4, "three unanswered, then one taken");
     let dropped = Trace::Dropped {
         msg_id: id,
         reason: DropReason::NoRoute,
@@ -786,6 +778,101 @@ fn a_return_does_not_go_back_and_forth() {
     assert_eq!(traces(&h, p).iter().filter(|t| **t == dropped).count(), 2);
     assert!(core(&h, p).holding().next().is_none());
     assert!(core(&h, c).holding().next().is_none());
+}
+
+/// A split met by the search coming back (roadmap D36). X's message is
+/// for L, a leaf of P's that is not there, and P's delivery queue is full
+/// of its own messages for L, so P refuses it (§10.4) and Y, P's only
+/// neighbour but its parent, waits for each ban to end (§9.3). X's
+/// hand-over to Y was taken, but Y's ACKs were lost, so X counts it
+/// failed, leaves Y untried and moves on to Z, a dead end, which returns
+/// it. X then hands it to Y again, with a higher count. Y holds its copy,
+/// so it only ACKs (§9.2.4 case 4): the two copies merge, one round trip
+/// more than had Y's first ACK come through, and nothing is lost. Once
+/// P's messages expire, P takes Y's.
+///
+/// ```text
+///   X - Y - P
+///   |
+///   Z
+/// ```
+#[test]
+fn a_split_met_again_merges() {
+    use bark_proto::tables::delivery::DELIVERY_QUEUE;
+    let (x, y, z, p) = (0, 1, 2, 3);
+    let hasty = Config {
+        retry_backoff: Duration::ZERO,
+        ..Config::default()
+    };
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 181, hasty),
+        (400.0, 0.0, 182, Config::default()),
+        (300.0, -300.0, 183, Config::default()),
+        (800.0, 0.0, 184, Config::default()),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(x, y), (x, z), (y, p)]);
+    let (pp, l) = (position(&h, p), LeafId([7; 4]));
+    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+        h.command(
+            from,
+            AppCommand::Send {
+                dst_pos: pp,
+                dst_leaf: l,
+                payload: text,
+            },
+        );
+        MsgId::of(pp, l, text)
+    };
+    for k in 0..DELIVERY_QUEUE as u8 {
+        to_l(&mut h, p, &[b'p', k]);
+    }
+    let [nx, ny, nz] = [x, y, z].map(|i| position(&h, i).short());
+    let mut x_moved = false;
+    h.lose = Some(Box::new(move |_, _, _, bytes| {
+        x_moved |= data_names(bytes) == Some((nx, nz));
+        ack_names(bytes) == Some((ny.into(), nx.into())) && !x_moved
+    }));
+    let id = to_l(&mut h, x, b"merged");
+    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let again = |h: &Harness<Node>| forwards(h, x, id).len() == 2;
+    assert!(
+        h.run_until(h.now + secs(10), again),
+        "X {:?} Y {:?}",
+        traces(&h, x),
+        traces(&h, y)
+    );
+    assert_eq!(forwards(&h, x, id), vec![name(&h, z), name(&h, y)]);
+    assert_eq!(returns(&h, z, id), 1);
+    let acks = h.nodes[y]
+        .sent
+        .iter()
+        .filter(|(_, f)| ack_names(f.payload()) == Some((ny.into(), nx.into())))
+        .count();
+    assert!(acks >= 2, "Y took X's first offer, and answered the second");
+    assert!(traces(&h, y)
+        .iter()
+        .any(|t| matches!(t, Trace::TurnedAway { msg_id, .. } if *msg_id == id)));
+    assert!(core(&h, x).holding().next().is_none());
+    assert_eq!(core(&h, y).holding().filter(|m| *m == id).count(), 1);
+    let queued = |h: &Harness<Node>| {
+        h.nodes[p]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id))
+    };
+    assert!(h.run_until(h.now + secs(700), queued), "P never took it");
+    h.run_for(secs(1));
+    assert_eq!(forwards(&h, y, id), vec![name(&h, p)]);
+    assert_eq!(returns(&h, y, id), 0);
+    // P's own messages expire in its queue; nothing else ends.
+    for i in [x, y, z] {
+        assert!(!traces(&h, i)
+            .iter()
+            .any(|t| matches!(t, Trace::Dropped { .. })));
+    }
 }
 
 /// With D unreachable, the same search ends at the origin with a drop

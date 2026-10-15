@@ -139,7 +139,8 @@ pub struct Relay {
     /// The hand-over of `queue`'s current entry.
     handover: Transfer,
     /// Neighbour slots the current forward passed over because
-    /// listen-before-talk gave up on them (§9.3 step 2); not tried.
+    /// listen-before-talk gave up on them, they refused it, or its
+    /// attempts went unanswered (§9.3); not tried.
     skipped: u64,
     replies: Replies,
     leaves: Leaves,
