@@ -313,6 +313,7 @@ impl Sim {
                     rate: 0.0,
                     cause: Loss::Noise,
                     threshold_ok: true,
+                    rated_for: None,
                 });
             }
         }
@@ -375,6 +376,10 @@ impl Sim {
             return;
         }
         let (co, adj) = interference(&st.arrivals, rest.index(), r.key, &self.rej);
+        if r.rated_for == Some((co, adj)) {
+            return;
+        }
+        r.rated_for = Some((co, adj));
         (r.rate, r.cause) = self.curve.hazard(r.dbm, co, adj);
         r.max_i_mw = r.max_i_mw.max(co + adj);
         r.threshold_ok &= self.curve.passes_threshold(r.dbm, co + adj);

@@ -179,6 +179,9 @@ pub(crate) struct Rx {
     pub cause: Loss,
     /// Whether the threshold rule would pass the packet so far.
     pub threshold_ok: bool,
+    /// The interference `rate` was computed for, co-channel and adjacent
+    /// mW, so that a change elsewhere in the band costs no recomputation.
+    pub rated_for: Option<(f64, f64)>,
 }
 
 /// Driver state of one node.
