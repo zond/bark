@@ -104,7 +104,17 @@ impl Tracer {
                     if a.refused { ", refused" } else { "" }
                 )
             }
-            Ok(Packet::Attach(a)) => format!("ATTACH {} to {}", n.leaf(a.leaf), n.relay(a.relay)),
+            Ok(Packet::Attach(a)) => format!(
+                "ATTACH {} to {}{}",
+                n.leaf(a.leaf),
+                n.relay(a.relay),
+                if a.reply { ", answering a poll" } else { "" }
+            ),
+            Ok(Packet::Attached(a)) => format!(
+                "ATTACHED {}, next poll in {} ms",
+                n.leaf(a.leaf),
+                a.next_poll().as_millis()
+            ),
             Ok(Packet::Data(d)) => {
                 let src = if d.hops == 0 {
                     "a leaf".into()

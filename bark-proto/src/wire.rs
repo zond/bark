@@ -15,6 +15,7 @@
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
 //!                    payload                                        = 21 + payload
 //! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
+//! ATTACHED  0x7      first leaf_id next_poll                        = 7
 //! ```
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
@@ -33,16 +34,17 @@
 //! - The payload is at most [`MAX_PAYLOAD`] = 234 bytes, what a frame holds
 //!   after the DATA header. DELIVER only carries a DATA payload onward, so
 //!   it has the same cap although its header is shorter.
-//! - The ACK of an ATTACH carries the leaf's ID as `id`: an ATTACH is not a
-//!   message and has no message ID, and the leaf ID is what the leaf
-//!   matches.
 //! - ACK `to` names the sender of what is answered: a DATA's `src_hop`,
-//!   zero from a leaf, whose ID DATA does not carry; for an ATTACH, the
-//!   leaf's ID; for a DELIVER, the relay the leaf is attached to.
+//!   zero from a leaf, whose ID DATA does not carry; for a DELIVER, the
+//!   relay the leaf is attached to. An ATTACH is answered by ATTACHED, not
+//!   by an ACK (roadmap D39).
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK, and all of a DELIVER's, are sent as zero and ignored
 //!   on receipt, as are the spare position bits.
-//! - ATTACH `aux` is the [`RxMode`] code.
+//! - ATTACH `aux` is the [`RxMode`] code in its low three bits, and
+//!   [`ATTACH_REPLY`] when the ATTACH answers a poll.
+//! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s; its `aux` is
+//!   sent as zero and ignored.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
@@ -71,6 +73,7 @@ const T_ACK: u8 = 0x3;
 const T_ATTACH: u8 = 0x4;
 const T_DATA: u8 = 0x5;
 const T_DELIVER: u8 = 0x6;
+const T_ATTACHED: u8 = 0x7;
 
 // HEARTBEAT.
 const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
@@ -91,6 +94,17 @@ const ATTACH_LEAF: usize = FIRST + FIRST_LEN;
 const ATTACH_RELAY: usize = ATTACH_LEAF + LEAF_ID_LEN;
 /// ATTACH length (design §14: 9).
 pub const ATTACH_LEN: usize = ATTACH_RELAY + NAME_LEN;
+/// The `aux` bit of an ATTACH that answers a poll (design §10.2).
+const ATTACH_REPLY: u8 = 0x8;
+/// The `aux` bits of an ATTACH that hold the receive mode.
+const ATTACH_MODE: u8 = 0x7;
+
+// ATTACHED.
+const ATTACHED_LEAF: usize = FIRST + FIRST_LEN;
+const ATTACHED_NEXT: usize = ATTACHED_LEAF + LEAF_ID_LEN;
+const NEXT_POLL_LEN: usize = 2;
+/// ATTACHED length (design §14: 7).
+pub const ATTACHED_LEN: usize = ATTACHED_NEXT + NEXT_POLL_LEN;
 
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
@@ -112,6 +126,7 @@ pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
 const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 13 && ATTACH_LEN == 9);
+const _: () = assert!(ATTACHED_LEN == 7);
 const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9);
 const _: () = assert!(MAX_PAYLOAD == 234);
 
@@ -219,6 +234,55 @@ pub struct Attach {
     pub relay: ShortName,
     /// The leaf's receive mode.
     pub mode: RxMode,
+    /// It answers the relay's poll; otherwise it asks to attach.
+    pub reply: bool,
+}
+
+impl Attach {
+    /// The ATTACH that answers a poll, rather than one that attaches.
+    pub const fn reply(self) -> Attach {
+        Attach {
+            reply: true,
+            ..self
+        }
+    }
+}
+
+/// Unit of ATTACHED's time to the next poll (design §10.2). Sixteen bits
+/// of it reach 655 s, past the delivery TTL of 600 s, which bounds the
+/// poll period (design §10.2); it is a third of the clock
+/// drift over the default period, so a poll time rounded to it costs a
+/// sleeping leaf's window little.
+pub const POLL_UNIT: Duration = Duration::from_millis(10);
+
+/// ATTACHED, type 0x7 (design §10.2): the relay to one of its leaves, on
+/// the relay's home channel. It answers an ATTACH that attaches, and on
+/// its own it is a poll, which the leaf answers with an ATTACH.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Attached {
+    /// The leaf.
+    pub leaf: LeafId,
+    /// From the end of this frame to the start of the next poll of this
+    /// leaf, in [`POLL_UNIT`]s.
+    pub next_poll: u16,
+}
+
+impl Attached {
+    /// The time to the next poll.
+    pub const fn next_poll(&self) -> Duration {
+        POLL_UNIT.mul(self.next_poll as u64)
+    }
+
+    /// `d` in whole [`POLL_UNIT`]s, rounded to the nearest and capped at
+    /// what the field holds.
+    pub const fn units(d: Duration) -> u16 {
+        let u = (d.as_micros() + POLL_UNIT.as_micros() / 2) / POLL_UNIT.as_micros();
+        if u > u16::MAX as u64 {
+            u16::MAX
+        } else {
+            u as u16
+        }
+    }
 }
 
 /// DATA, type 0x5 (design §9, §14).
@@ -272,6 +336,8 @@ pub enum Packet<'a> {
     Data(Data<'a>),
     /// DELIVER.
     Deliver(Deliver<'a>),
+    /// ATTACHED.
+    Attached(Attached),
 }
 
 /// Why a frame did not decode.
@@ -372,7 +438,8 @@ impl Packet<'_> {
                 Ok(ACK_LEN)
             }
             Packet::Attach(a) => {
-                buf[FIRST] = first(T_ATTACH, a.mode as u8);
+                let reply = if a.reply { ATTACH_REPLY } else { 0 };
+                buf[FIRST] = first(T_ATTACH, a.mode as u8 | reply);
                 put(buf, ATTACH_LEAF, &a.leaf.0);
                 put(buf, ATTACH_RELAY, &a.relay.0.to_be_bytes());
                 Ok(ATTACH_LEN)
@@ -399,6 +466,12 @@ impl Packet<'_> {
                 put(buf, DELIVER_ID, &d.msg_id.0.to_be_bytes());
                 put(buf, DELIVER_HEADER_LEN, d.payload);
                 Ok(DELIVER_HEADER_LEN + d.payload.len())
+            }
+            Packet::Attached(a) => {
+                buf[FIRST] = first(T_ATTACHED, 0);
+                put(buf, ATTACHED_LEAF, &a.leaf.0);
+                put(buf, ATTACHED_NEXT, &a.next_poll.to_be_bytes());
+                Ok(ATTACHED_LEN)
             }
         }
     }
@@ -436,7 +509,16 @@ impl<'a> Packet<'a> {
                 Ok(Packet::Attach(Attach {
                     leaf: LeafId(get4(b, ATTACH_LEAF)),
                     relay: get_name(b, ATTACH_RELAY),
-                    mode: RxMode::from_code(aux).ok_or(DecodeError::BadRxMode(aux))?,
+                    mode: RxMode::from_code(aux & ATTACH_MODE)
+                        .ok_or(DecodeError::BadRxMode(aux & ATTACH_MODE))?,
+                    reply: aux & ATTACH_REPLY != 0,
+                }))
+            }
+            T_ATTACHED => {
+                exact(b, ATTACHED_LEN)?;
+                Ok(Packet::Attached(Attached {
+                    leaf: LeafId(get4(b, ATTACHED_LEAF)),
+                    next_poll: u16::from_be_bytes([b[ATTACHED_NEXT], b[ATTACHED_NEXT + 1]]),
                 }))
             }
             T_DATA => {
@@ -516,6 +598,7 @@ mod tests {
             Packet::Attach(_) => 9,
             Packet::Data(d) => 21 + d.payload.len(),
             Packet::Deliver(d) => 9 + d.payload.len(),
+            Packet::Attached(_) => 7,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -538,8 +621,15 @@ mod tests {
         }
 
         #[test]
-        fn attach_round_trips(leaf in leaf(), relay in name(), mode in rx_mode()) {
-            round_trip(&Packet::Attach(Attach { leaf, relay, mode }));
+        fn attach_round_trips(leaf in leaf(), relay in name(), mode in rx_mode(), reply: bool) {
+            round_trip(&Packet::Attach(Attach { leaf, relay, mode, reply }));
+        }
+
+        #[test]
+        fn attached_round_trips(leaf in leaf(), next_poll: u16) {
+            let a = Attached { leaf, next_poll };
+            round_trip(&Packet::Attached(a));
+            prop_assert_eq!(Attached::units(a.next_poll()), next_poll);
         }
 
         #[test]
@@ -570,7 +660,7 @@ mod tests {
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
             // the same, apart from bits the decoder ignores (unused aux bits
-            // of ACK and DELIVER, spare position bits).
+            // of ACK, DELIVER and ATTACHED, spare position bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -631,7 +721,9 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        assert_eq!(Packet::decode(&[0x70; 7]), Err(BadType(7)));
+        assert_eq!(Packet::decode(&[0x70; 7 - 1]), Err(Short));
+        assert_eq!(Packet::decode(&[0x70; 7 + 1]), Err(BadLength));
+        assert_eq!(Packet::decode(&[0x80; 7]), Err(BadType(8)));
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
         assert_eq!(
             Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]),
@@ -647,6 +739,11 @@ mod tests {
         assert_eq!(
             Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(BadRxMode(3))
+        );
+        assert_eq!(
+            Packet::decode(&[0x4b, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(BadRxMode(3)),
+            "the reply bit is not part of the mode"
         );
         assert_eq!(Packet::decode(&[0x40; ATTACH_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0x60, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
@@ -712,9 +809,26 @@ mod tests {
             leaf: LeafId([1, 2, 3, 4]),
             relay: ShortName(0x0506_0708),
             mode: RxMode::Hybrid,
+            reply: false,
         };
         let len = Packet::Attach(attach).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x42, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let len = Packet::Attach(attach.reply()).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x4a, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let attached = Attached {
+            leaf: LeafId([1, 2, 3, 4]),
+            next_poll: 0x0506,
+        };
+        let len = Packet::Attached(attached).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..len], &[0x70, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(10_560),
+            "41.25 symbols at SF5, as for 5 or 6 bytes"
+        );
+        assert_eq!(Attached::units(Duration::from_millis(300_004)), 30_000);
+        assert_eq!(Attached::units(Duration::from_secs(1000)), u16::MAX);
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),

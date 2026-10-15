@@ -495,6 +495,7 @@ impl Leaf {
                 leaf: self.id,
                 relay,
                 mode: RxMode::Listening,
+                reply: false,
             }),
             Sending::Data => {
                 let Ok(Packet::Data(d)) = Packet::decode(self.outgoing.as_ref()?.payload()) else {

@@ -398,6 +398,8 @@ pub struct TypeAirtime {
     pub data_us: u64,
     /// DELIVER.
     pub deliver_us: u64,
+    /// ATTACHED.
+    pub attached_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
 }
@@ -413,6 +415,7 @@ impl TypeAirtime {
             Some(Packet::Attach(_)) => &mut self.attach_us,
             Some(Packet::Data(_)) => &mut self.data_us,
             Some(Packet::Deliver(_)) => &mut self.deliver_us,
+            Some(Packet::Attached(_)) => &mut self.attached_us,
             None => &mut self.other_us,
         };
         *c += us;
