@@ -145,14 +145,27 @@ built afresh with a new random seed and boots: a relay listens before
 choosing a home channel (protocol §6.2) and takes no traffic until then,
 while its neighbours still list it.
 
+**Pushback.** Each origin's application holds at most one message. The
+traffic model's message is handed to the origin's core at the first
+moment the core says it will take one (`core-interface.md` §4): at once
+if it is ready, or after the next event that makes it so. A message the
+traffic model has for an origin whose application still waits with the
+previous one is skipped. Latency counts from when the traffic model had
+the message, so a busy network shows as latency. The summary gives how
+many messages waited, how many still waited at the end, the longest wait
+and how many were skipped. The simulator tags each message with its ID,
+which it computes as the core does (`MsgId::of`), to follow its traces.
+
 **Accounting.** Every message the traffic model sends ends up in one of
 these:
 
 - **delivered** to the destination's application;
-- **lost**, where a core reported it: dropped by a relay, or failed at
-  its origin, with the node and the reason;
-- **in flight**: a core still holds it when the run ends, in a send
-  queue, a delivery queue, or a leaf waiting to hand it over;
+- **lost**, where a core reported it in a `Dropped` trace: by a relay,
+  or by a leaf that could not hand it over, with the node and the
+  reason;
+- **in flight**: it is still held when the run ends, by its origin's
+  application waiting to hand it over, in a send queue, a delivery
+  queue, or a leaf waiting to hand it over;
 - **unaccounted**: none of these. It was lost without a trace.
 
 A message is also marked **unreachable** when, at the start of the run,

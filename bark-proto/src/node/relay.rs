@@ -147,6 +147,8 @@ pub struct Relay {
     delivered: Delivered,
     /// When queued deliveries are next retried (§10.4: every 60 s).
     delivery_retry_at: Instant,
+    /// When the bucket lets the application send, if only it is missing.
+    app_ready_at: Option<Instant>,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
@@ -198,6 +200,7 @@ impl Relay {
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::from_config(&config),
             delivery_retry_at: Instant::ZERO,
+            app_ready_at: None,
             feed_due: false,
             feed_at: None,
             config,
@@ -648,6 +651,7 @@ impl Core for Relay {
         self.forward_timers(now, emit);
         self.service_timers(now, emit);
         self.pump(now, emit);
+        self.app_ready_at = self.send_ready_at(now);
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
@@ -667,6 +671,10 @@ impl Core for Relay {
         if let Some(t) = self.service_wakeup() {
             at(t);
         }
+        // The application waits for the bucket (core-interface §4).
+        if let Some(t) = self.app_ready_at {
+            at(t);
+        }
         let awaiting = self.handover.awaiting_ack();
         // Radio jobs only once the radio is free: their completion event
         // wakes the core otherwise.
@@ -684,6 +692,10 @@ impl Core for Relay {
         }
         w
     }
+
+    fn accepts_send(&self, now: Instant) -> bool {
+        Relay::accepts_send(self, now)
+    }
 }
 
 #[cfg(test)]
@@ -694,7 +706,7 @@ mod tests {
 
     #[test]
     fn sizes() {
-        // docs/core-interface.md §6: under 50 KiB with every table; 50 080 B
+        // docs/core-interface.md §6: under 50 KiB with every table; 50 096 B
         // with a 40-place send queue, a 41-place delivery queue and one
         // owed reply.
         let relay = core::mem::size_of::<Relay>();
@@ -916,5 +928,65 @@ mod tests {
         let until = now + Duration::from_millis(100);
         let sent = drive_from(&mut r, &mut now, until, actions);
         assert_eq!(acks(&sent, &b, b_home), 1);
+    }
+
+    /// The application may send only while the relay can take a message
+    /// (roadmap D29 rule 6): not while it boots, not while its delivery
+    /// queue is full, and not while its bucket cannot hold a full frame on
+    /// top of what it has queued; then the relay wakes when it can. A send
+    /// offered anyway is ignored.
+    #[test]
+    fn the_application_waits_for_room() {
+        use crate::ids::LeafId;
+        use crate::tables::budget::DEPTH;
+        use crate::tables::delivery::DELIVERY_QUEUE;
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        r.handle(Event::Wakeup, now, &mut |_| {});
+        assert!(!r.accepts_send(now), "booting");
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        assert!(r.accepts_send(now));
+
+        // Messages for a leaf of this relay that is not attached fill the
+        // delivery queue.
+        let me = r.config.position;
+        let send = |r: &mut Relay, k: u8, now| {
+            let cmd = AppCommand::Send {
+                dst_pos: me,
+                dst_leaf: LeafId([1; 4]),
+                payload: &[k],
+            };
+            r.handle(Event::App(cmd), now, &mut |_| {});
+        };
+        for k in 0..DELIVERY_QUEUE as u8 {
+            assert!(r.accepts_send(now), "message {k}");
+            send(&mut r, k, now);
+        }
+        assert_eq!(r.holding().count(), DELIVERY_QUEUE);
+        assert!(!r.accepts_send(now));
+        send(&mut r, 255, now);
+        assert_eq!(r.holding().count(), DELIVERY_QUEUE, "taken while full");
+
+        // A bucket spent down to a full frame keeps the application
+        // waiting until it has refilled that much, and wakes the relay then.
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        r.budget.record(DEPTH, now);
+        r.handle(Event::Wakeup, now, &mut |_| {});
+        assert!(!r.accepts_send(now));
+        let ready = r.next_wakeup().expect("a wakeup for the application");
+        assert!(ready > now);
+        assert!(!r.accepts_send(Instant::from_micros(ready.as_micros() - 1)));
+        assert!(r.accepts_send(ready));
     }
 }

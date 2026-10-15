@@ -42,17 +42,17 @@
 //! # Sending
 //!
 //! A message from the application goes to the relay as DATA with `hops`
-//! and `src_hop` zero (§14), with the per-hop transfer of §9.3:
-//! `Accepted`, then `Sent` at the relay's ACK. The leaf holds one message
-//! at a time; a second while it is busy fails with
-//! [`FailReason::QueueFull`]. A message the leaf cannot hand over, because
-//! it has no relay or its relay does not answer, is held and tried again
-//! as above for up to the delivery TTL (§10.4: 10 minutes), the time the
-//! network itself would keep it; then it fails with [`FailReason::NoRelay`]
-//! or [`FailReason::NoAck`]. A relay that answers the message with BUSY
-//! (§9.2.4) is busy, not failing: the leaf holds the message and offers it
-//! again after [`BAN`], the time the relay's bucket takes to refill what
-//! it could not fit (roadmap D27, D29).
+//! and `src_hop` zero (§14), with the per-hop transfer of §9.3. The leaf
+//! holds one message at a time, and takes one from the application only
+//! when it holds none ([`Core::accepts_send`]); nothing about it is
+//! reported back. A message the leaf cannot hand over, because it has no
+//! relay or its relay does not answer, is held and tried again as above
+//! for up to the delivery TTL (§10.4: 10 minutes), the time the network
+//! itself would keep it; then it is dropped with [`DropReason::NoRelay`].
+//! A relay that answers the message with BUSY (§9.2.4) is busy, not
+//! failing: the leaf holds the message and offers it again after [`BAN`],
+//! the time the relay's bucket takes to refill what it could not fit
+//! (roadmap D27, D29).
 //!
 //! # Receiving
 //!
@@ -63,7 +63,7 @@
 //! nothing from that relay in between; remembering the last [`SEEN`]
 //! messages covers the relay and the one the leaf has just left.
 
-use crate::event::{Action, AppCommand, AppEvent, Event, FailReason, Frame, MAX_FRAME};
+use crate::event::{Action, AppCommand, AppEvent, DropReason, Event, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
@@ -407,17 +407,8 @@ impl Leaf {
         else {
             return;
         };
-        let msg_id = crate::ids::MsgId::of(dst_pos, dst_leaf, payload);
-        let fail = |reason, emit: &mut dyn FnMut(Action)| {
-            emit(Action::App(AppEvent::Failed { msg_id, reason }))
-        };
-        if payload.len() > MAX_PAYLOAD {
-            fail(FailReason::PayloadTooLong, emit);
-            return;
-        }
-        emit(Action::App(AppEvent::Accepted(msg_id)));
-        if self.outgoing.is_some() {
-            fail(FailReason::QueueFull, emit);
+        if payload.len() > MAX_PAYLOAD || !self.accepts_send(now) {
+            // The driver broke its contract (`docs/core-interface.md` §4).
             return;
         }
         // Addressed when its hand-over starts.
@@ -450,12 +441,10 @@ impl Leaf {
             self.transfer.cancel();
         }
         self.outgoing = None;
-        let reason = if self.relay.is_some() {
-            FailReason::NoAck
-        } else {
-            FailReason::NoRelay
-        };
-        emit(Action::App(AppEvent::Failed { msg_id, reason }));
+        emit(Action::Trace(Trace::Dropped {
+            msg_id,
+            reason: DropReason::NoRelay,
+        }));
     }
 
     /// Start a hand-over if none is running: a due ATTACH first, then the
@@ -589,7 +578,7 @@ impl Leaf {
         }
     }
 
-    fn acked(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
+    fn acked(&mut self, ack: Ack, now: Instant) {
         if !self.transfer.acked(ack) {
             return;
         }
@@ -602,12 +591,7 @@ impl Leaf {
                 self.attached = true;
                 self.attach_at = now + self.config.keepalive;
             }
-            Sending::Data => {
-                if let Some(msg_id) = self.outgoing_id() {
-                    emit(Action::App(AppEvent::Sent(msg_id)));
-                }
-                self.outgoing = None;
-            }
+            Sending::Data => self.outgoing = None,
         }
     }
 
@@ -693,7 +677,7 @@ impl Leaf {
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(hb)) => self.heartbeat(hb, rssi, now, emit),
-            Ok(Packet::Ack(a)) => self.acked(a, now, emit),
+            Ok(Packet::Ack(a)) => self.acked(a, now),
             Ok(Packet::Busy(b)) => self.refused(b, now),
             Ok(Packet::Deliver(d)) if d.dst_leaf == self.id => self.deliver(d, now, emit),
             _ => {}
@@ -799,6 +783,11 @@ impl Core for Leaf {
             }
         }
         w
+    }
+
+    /// A leaf holds one message at a time (§10.2).
+    fn accepts_send(&self, _now: Instant) -> bool {
+        self.outgoing.is_none()
     }
 }
 

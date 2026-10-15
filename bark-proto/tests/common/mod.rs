@@ -8,7 +8,8 @@
 //! harness enforces the driver side of `docs/core-interface.md` §3: it
 //! panics if a core starts a second excursion, sends a short preamble or
 //! an oversized frame, or exceeds the duty cycle; and it holds a channel
-//! check while a reception is in progress (rule 8).
+//! check while a reception is in progress (rule 8). It also panics if a
+//! test offers a message to a core that does not accept one (§4).
 
 #![allow(dead_code)]
 
@@ -16,6 +17,7 @@ use bark_proto::radio::{
     time_on_air, Channel, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
 };
 use bark_proto::tables::budget::BUDGET;
+use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, Trace};
 use std::collections::{HashMap, HashSet};
 
@@ -212,7 +214,19 @@ impl<C: Core> Harness<C> {
 
     /// Hand node `i` an application command now.
     pub fn command(&mut self, i: usize, cmd: AppCommand<'_>) {
+        if let AppCommand::Send { payload, .. } = cmd {
+            assert!(
+                self.accepts(i),
+                "node {i} offered a message it does not accept"
+            );
+            assert!(payload.len() <= MAX_PAYLOAD, "payload over the limit");
+        }
         self.deliver(i, Event::App(cmd));
+    }
+
+    /// Whether node `i` would take an `AppCommand::Send` now.
+    pub fn accepts(&self, i: usize) -> bool {
+        self.nodes[i].core.accepts_send(self.now)
     }
 
     pub fn run_for(&mut self, d: Duration) {

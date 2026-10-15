@@ -89,8 +89,10 @@ pub enum Event<'a> {
 /// Commands from the application side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppCommand<'a> {
-    /// Originate a message to `(dst_pos, dst_leaf)` with an opaque payload.
-    /// Its ID is [`MsgId::of`] the three, reported in `AppEvent::Accepted`.
+    /// Originate a message to `(dst_pos, dst_leaf)` with an opaque payload,
+    /// whose ID is [`MsgId::of`] the three. Offered only while
+    /// [`crate::Core::accepts_send`] holds, and nothing is reported back
+    /// (`docs/core-interface.md` §4).
     Send {
         /// Position of the destination's relay (design §9.1).
         dst_pos: Position,
@@ -108,27 +110,7 @@ pub enum AppCommand<'a> {
     },
 }
 
-/// Why a message failed at this node. Every reason is local: the network
-/// sends no failure notices (roadmap D10).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FailReason {
-    /// A leaf with no relay to hand the message to.
-    NoRelay,
-    /// The first hop never acknowledged it, after every attempt.
-    NoAck,
-    /// The duty-cycle budget could not fit it (design §9.4).
-    Budget,
-    /// This relay originated it and has no neighbour left to try (design §9.2.5).
-    NoRoute,
-    /// The send queue or, for one of this relay's leaves, the delivery
-    /// queue had no room for it (design §9.3, §10.4); a leaf holds one
-    /// message at a time.
-    QueueFull,
-    /// The payload is longer than a DATA frame holds (design §14: 234 bytes).
-    PayloadTooLong,
-}
-
-/// Why a relay dropped a message, or refused one (design §9). The network
+/// Why a node dropped a message, or refused one (design §9). The network
 /// sends no failure notices (roadmap D10); these reach only the
 /// simulator's metrics and the firmware's log, through [`Trace`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -161,25 +143,18 @@ pub enum DropReason {
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (design §14).
     PayloadTooLong,
+    /// A leaf could not hand it to a relay within the delivery TTL: it
+    /// had none, or its relay did not answer (design §10.2).
+    NoRelay,
 }
 
-/// Events for the application side. `Message` carries its payload by value
-/// for the same reason `Action::Transmit` does.
+/// Events for the application side: only a message for it. What becomes
+/// of a message it sent is not reported (`docs/core-interface.md` §4).
+/// `Message` carries its payload by value for the same reason
+/// `Action::Transmit` does.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppEvent {
-    /// A `Send` was queued; here is its id.
-    Accepted(MsgId),
-    /// The first hop acknowledged the message. Nothing more is reported
-    /// about it: the protocol has no end-to-end acknowledgement (design §9.1).
-    Sent(MsgId),
-    /// The message failed here, before or at the first hop.
-    Failed {
-        /// Message that failed.
-        msg_id: MsgId,
-        /// Why.
-        reason: FailReason,
-    },
     /// A message arrived for this node's application.
     Message {
         /// Its id.
@@ -242,8 +217,8 @@ pub enum Trace {
         /// When the budget may next allow it.
         until: Instant,
     },
-    /// This relay dropped the message; nothing else is reported about it
-    /// here (design §9.1).
+    /// This node dropped the message; nothing else is reported about it,
+    /// to the application either (design §9.1).
     Dropped {
         /// The message.
         msg_id: MsgId,

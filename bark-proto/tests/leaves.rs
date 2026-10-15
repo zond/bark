@@ -76,16 +76,20 @@ fn send(h: &mut Harness<Node>, from: usize, to: usize, at: usize, text: &[u8]) -
     MsgId::of(dst_pos, dst_leaf, text)
 }
 
+/// What node `i`'s application heard about message `id`.
 fn reports(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<AppEvent> {
     h.nodes[i]
         .app
         .iter()
         .map(|(_, e)| *e)
-        .filter(|e| match e {
-            AppEvent::Accepted(m) | AppEvent::Sent(m) => *m == id,
-            AppEvent::Failed { msg_id, .. } | AppEvent::Message { msg_id, .. } => *msg_id == id,
-        })
+        .filter(|AppEvent::Message { msg_id, .. }| *msg_id == id)
         .collect()
+}
+
+/// Leaf `l` handed message `id` to its relay: it holds it no longer, and
+/// its application was told nothing (`docs/core-interface.md` §4).
+fn handed_over(h: &Harness<Node>, l: usize, id: MsgId) -> bool {
+    the_leaf(h, l).holding() != Some(id) && reports(h, l, id).is_empty()
 }
 
 fn received(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
@@ -116,8 +120,8 @@ fn settle(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
 }
 
 /// Two relays and a leaf at each: a message from one leaf reaches the
-/// other. The origin leaf hears `Accepted` and `Sent`, the destination leaf
-/// `Message`, once.
+/// other. The origin leaf's application hears nothing of it, the
+/// destination leaf's `Message`, once.
 #[test]
 fn leaf_to_leaf_across_two_relays() {
     let (r1, r2, l1, l2) = (0, 1, 2, 3);
@@ -145,15 +149,10 @@ fn leaf_to_leaf_across_two_relays() {
         "not delivered"
     );
     println!("delivered in {} ms", h.now.since(start).as_millis());
-    assert_eq!(
-        reports(&h, l1, id),
-        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
-    );
+    assert!(handed_over(&h, l1, id));
     h.run_for(secs(30));
     assert_eq!(received(&h, l2, id), 1);
-    let AppEvent::Message { payload, len, .. } = reports(&h, l2, id)[0] else {
-        panic!()
-    };
+    let AppEvent::Message { payload, len, .. } = reports(&h, l2, id)[0];
     assert_eq!(&payload[..len as usize], b"hello across");
     assert!(the_relay(&h, r2).config().position == position(&h, r2));
     assert!(h.nodes[r2].traces.iter().any(|(_, t)| *t
@@ -240,10 +239,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
         );
     }
     assert!(attached(&h, l1, r1), "a busy relay is not a failing one");
-    assert_eq!(
-        reports(&h, l1, id),
-        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
-    );
+    assert!(handed_over(&h, l1, id));
 }
 
 /// L2 goes dark while R1's application sends it more messages than R2's
@@ -358,10 +354,7 @@ fn a_repeated_deliver_is_acked_and_surfaced_once() {
     h.run_for(secs(70));
     assert_eq!(acks(&h), 2);
     assert_eq!(received(&h, l2, id), 1);
-    assert_eq!(
-        reports(&h, l1, id),
-        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
-    );
+    assert!(handed_over(&h, l1, id));
 }
 
 /// Three relays in a line with a leaf at each end (design §15 step 4).
@@ -421,11 +414,7 @@ fn line_of_three_loses_its_middle() {
         assert_eq!(reason, DropReason::NoRoute);
         times.push(t.since(start));
         h.run_until(start + interval, |_| false);
-        assert_eq!(
-            reports(&h, la, id),
-            vec![AppEvent::Accepted(id), AppEvent::Sent(id)],
-            "A took it"
-        );
+        assert!(handed_over(&h, la, id), "A took it");
     }
     let ms: Vec<u64> = times.iter().map(|d| d.as_millis()).collect();
     println!(
@@ -583,10 +572,7 @@ fn a_message_waits_for_a_relay() {
     let id = MsgId::of(dst, LeafId::RELAY, text);
     assert!(h.run_until(Instant::ZERO + secs(600), |h| received(h, r, id) == 1));
     h.run_for(secs(1));
-    assert_eq!(
-        reports(&h, l, id),
-        vec![AppEvent::Accepted(id), AppEvent::Sent(id)]
-    );
+    assert!(handed_over(&h, l, id));
     let (heard, attach) = first_heartbeat_and_attach(&h, l);
     assert!(
         attach.since(heard) < Duration::from_millis(100),
@@ -595,10 +581,10 @@ fn a_message_waits_for_a_relay() {
     );
 }
 
-/// A message no relay takes fails after the delivery TTL (§10.4), not at
-/// once.
+/// A message no relay takes is dropped after the delivery TTL (§10.4),
+/// not at once, and the application is not told.
 #[test]
-fn a_message_without_a_relay_fails_after_the_delivery_ttl() {
+fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
     let mut h = Harness::new(vec![leaf(0.0, 1, 43)]);
     h.run_until(Instant::ZERO + secs(1), |_| false);
     let (dst, text) = (pos(500.0, 0.0), b"nobody there");
@@ -612,17 +598,17 @@ fn a_message_without_a_relay_fails_after_the_delivery_ttl() {
     );
     let id = MsgId::of(dst, LeafId([9; 4]), text);
     h.run_for(secs(599));
-    assert_eq!(reports(&h, 0, id), vec![AppEvent::Accepted(id)]);
+    assert_eq!(the_leaf(&h, 0).holding(), Some(id));
+    assert!(!h.accepts(0), "a leaf holds one message");
     h.run_for(secs(2));
     assert_eq!(
-        reports(&h, 0, id),
-        vec![
-            AppEvent::Accepted(id),
-            AppEvent::Failed {
-                msg_id: id,
-                reason: bark_proto::FailReason::NoRelay
-            }
-        ]
+        dropped(&h, 0, id).map(|(_, r)| r),
+        Some(DropReason::NoRelay)
+    );
+    assert!(h.accepts(0));
+    assert!(
+        reports(&h, 0, id).is_empty(),
+        "the application is told nothing"
     );
 }
 

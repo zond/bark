@@ -168,19 +168,12 @@ impl Tracer {
                     self.packet(f.payload(), tags)
                 );
             }
-            Action::App(e) => {
-                let _ = match e {
-                    AppEvent::Accepted(id) => write!(what, "app accepted {}", self.msg(*id, tags)),
-                    AppEvent::Sent(id) => write!(what, "app sent {}", self.msg(*id, tags)),
-                    AppEvent::Failed { msg_id, reason } => {
-                        write!(what, "app failed {} {reason:?}", self.msg(*msg_id, tags))
-                    }
-                    AppEvent::Message { len, payload, .. } => write!(
-                        what,
-                        "app message {}",
-                        payload_tag(&payload[..*len as usize])
-                    ),
-                };
+            Action::App(AppEvent::Message { len, payload, .. }) => {
+                let _ = write!(
+                    what,
+                    "app message {}",
+                    payload_tag(&payload[..*len as usize])
+                );
             }
             Action::Trace(tr) => {
                 let n = &self.names;

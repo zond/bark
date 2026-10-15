@@ -143,6 +143,14 @@ pub trait Core {
     /// When the core next needs `Event::Wakeup`, if ever. May change after
     /// every `handle` call; the driver re-reads it after each call.
     fn next_wakeup(&self) -> Option<Instant>;
+
+    /// Whether the core would take an `AppCommand::Send` at `now`. The
+    /// driver offers its application's message only while this holds, and
+    /// asks again after every `handle` call; until then the application
+    /// waits, which is how a busy network pushes back on its user. A
+    /// `Send` offered while this is false is a driver bug, and the core
+    /// ignores it (`docs/core-interface.md` §4).
+    fn accepts_send(&self, now: Instant) -> bool;
 }
 
 /// Either role, for a driver that switches role at run time (the firmware).
@@ -184,6 +192,13 @@ impl Core for Node {
         match self {
             Node::Relay(r) => r.next_wakeup(),
             Node::Leaf(l) => l.next_wakeup(),
+        }
+    }
+
+    fn accepts_send(&self, now: Instant) -> bool {
+        match self {
+            Node::Relay(r) => r.accepts_send(now),
+            Node::Leaf(l) => l.accepts_send(now),
         }
     }
 }

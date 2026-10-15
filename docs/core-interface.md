@@ -1,6 +1,7 @@
 # Core interface
 
-**Status:** fixed for Phase 0, 2026-10-14. Roadmap decision D3. The types are in
+**Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
+2026-10-15, roadmap D29. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -11,6 +12,7 @@ The core is a state machine behind the `Core` trait:
 ```rust
 fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action));
 fn next_wakeup(&self) -> Option<Instant>;
+fn accepts_send(&self, now: Instant) -> bool;
 ```
 
 Two roles, two structs: `Relay` and `Leaf`. `Node` is an enum over both for a driver that
@@ -75,11 +77,29 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 ## 4. Application
 
-`AppCommand::Send` originates a message to `(dst_pos, dst_leaf)` with an opaque payload;
-the core answers with `AppEvent::Accepted(msg_id)` and later either `Sent`, when the first
-hop has acknowledged it, or `Failed` with a `FailReason`, when it failed at this node.
-Nothing is reported after that: the protocol has no end-to-end acknowledgement (design §9.1),
-so whether the message arrived is for the app to find out inside its payload.
+Leaf and relay have the same application interface: the readiness query
+`accepts_send`, the commands `AppCommand::Send` and `AppCommand::SetPosition`, and the
+one event `AppEvent::Message`.
+
+`AppCommand::Send` originates a message to `(dst_pos, dst_leaf)` with an opaque payload of
+at most 234 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+asks again after every `handle`, so an application waits for its node; a firmware's async
+send awaits it. The core reports nothing back about the message, not even the first hop's
+ACK, which a user could read as delivered: from the moment it is taken the node is either
+sending it or waiting to. The protocol has no end-to-end acknowledgement (design §9.1), so
+whether the message arrived is for the app to find out inside its payload. A message the
+node drops is reported only as `Trace::Dropped` (§3 rule 9).
+
+A relay accepts a message while it is running, its send queue takes a full frame on top of
+what it holds (design §9.3), and its delivery queue has a place, should the message be for
+one of its own leaves (design §10.4). When only its bucket keeps it from accepting, its
+`next_wakeup()` includes the moment the bucket will have refilled enough. A leaf accepts a
+message while it holds none (design §10.2).
+
+A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
+a second outstanding excursion: the core ignores it, and the test and simulator drivers
+panic or never offer it.
+
 `AppCommand::SetPosition` updates own position (relay identity changes with it, so the
 driver does this rarely). `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (design §11: the app owns identity and encryption).
@@ -115,8 +135,9 @@ test in `tables/mod.rs`:
 
 The send queue's 40 places follow from the duty bucket (design §9.3), and the delivery
 queue gives up the memory for them: its 41 places hold what arrives in one delivery TTL for
-a full leaf table (§10.4). The whole `Relay` is 50 080 B (48.9 KiB), under the 50 KiB
-target; besides the tables it holds the medium access, the hand-over and its one owed reply.
+a full leaf table (§10.4). The whole `Relay` is 50 096 B (48.9 KiB), under the 50 KiB
+target; besides the tables it holds the medium access, the hand-over, its one owed reply
+and when its application may next send.
 Checked by the tests in `tables/mod.rs` and `node/relay.rs`.
 
 `Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty

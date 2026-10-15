@@ -25,8 +25,8 @@ use crate::scenario::{
 use crate::trace::{Names, Tracer};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::{
-    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, FailReason, Frame,
-    Instant, Leaf, LeafId, MsgId, Position, Relay, Trace, MAX_FRAME,
+    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, Leaf,
+    LeafId, MsgId, Position, Relay, Trace, MAX_FRAME,
 };
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -231,22 +231,16 @@ struct PoissonTraffic {
 /// What became of a message, as far as the simulator has seen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fate {
-    /// Still held by a core at the end: queued at a relay, waiting for its
-    /// leaf, or held by the leaf that sent it.
+    /// Still held at the end: waiting for its origin's core to take it,
+    /// queued at a relay, waiting for its leaf, or held by the leaf that
+    /// sent it.
     InFlight,
     /// Neither delivered, nor reported lost, nor held by any core: lost
     /// without a trace.
     Unaccounted,
     /// Reached its destination's application.
     Delivered,
-    /// Failed locally at its origin.
-    Failed {
-        /// The origin.
-        node: u32,
-        /// Why.
-        reason: FailReason,
-    },
-    /// Dropped by a relay; the last drop reported wins.
+    /// Dropped by a core; the last drop reported wins.
     Dropped {
         /// Where.
         node: u32,
@@ -257,11 +251,20 @@ pub enum Fate {
 
 struct OriginRecord {
     dst: u32,
+    /// When the traffic model first had it for its origin.
     t: Instant,
     fate: Fate,
     /// Whether the destination could be reached from the origin at the
     /// start of the run; see [`Sim::reachable`].
     reachable: bool,
+}
+
+/// A message an application waits to hand to its core.
+struct Offer {
+    tag: u32,
+    dst_pos: Position,
+    dst_leaf: LeafId,
+    len: u8,
 }
 
 /// A scripted excursion's result.
@@ -354,7 +357,8 @@ pub struct Sim {
     availability: Option<(f64, f64)>,
     avail_rng: Vec<Stream>,
     origins: Vec<OriginRecord>,
-    pending_tag: Option<u32>,
+    /// Per node, the message its application waits to send.
+    offers: Vec<Option<Offer>>,
     /// Message id (kept across hops) to traffic tag.
     msg_tags: HashMap<u32, u32>,
     script: Vec<ScriptEntry>,
@@ -487,7 +491,7 @@ impl Sim {
             availability: None,
             avail_rng: Vec::new(),
             origins: Vec::new(),
-            pending_tag: None,
+            offers: (0..n).map(|_| None).collect(),
             msg_tags: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
@@ -872,12 +876,15 @@ impl Sim {
                 self.push(t.max(now), Ev::Wakeup(node, g));
             }
         }
+        // The application asks again after every event (core-interface §4).
+        if self.offers[node as usize].is_some() {
+            self.offer(node);
+        }
     }
 
     /// Perform one action for `node`. `scripted` actions come from the
     /// scenario rather than the core; their completions go to the log.
     fn apply(&mut self, node: u32, a: Action, scripted: bool) {
-        // After the action, so that an accepted message has its tag.
         let traced = (!scripted && self.tracer.is_some()).then_some(a);
         match a {
             Action::Listen(c) => self.listen(node, c),
@@ -1142,52 +1149,24 @@ impl Sim {
     // ---- Application ---------------------------------------------------
 
     /// Every application event the core can emit is interpreted here and
-    /// nowhere else.
+    /// nowhere else: a message for this node's application.
     fn app_event(&mut self, node: u32, e: AppEvent) {
         let m = &mut self.metrics;
-        match e {
-            AppEvent::Accepted(MsgId(id)) => {
-                m.app.accepted += 1;
-                if let Some(tag) = self.pending_tag {
-                    self.msg_tags.insert(id, tag);
-                }
+        let AppEvent::Message { len, payload, .. } = e;
+        m.nodes[node as usize].messages_in += 1;
+        if len < 4 {
+            m.app.misdelivered += 1;
+            return;
+        }
+        let tag = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        match self.origins.get_mut(tag as usize) {
+            Some(o) if o.dst == node && o.fate != Fate::Delivered => {
+                o.fate = Fate::Delivered;
+                m.app.delivered += 1;
+                m.app.latencies_us.push(self.now.since(o.t).as_micros());
             }
-            // The first hop acknowledged the message.
-            AppEvent::Sent(MsgId(_)) => {
-                m.app.sent += 1;
-                m.nodes[node as usize].sent += 1;
-            }
-            // A local failure at the origin.
-            AppEvent::Failed { msg_id, reason } => {
-                *m.app.failed.entry(format!("{reason:?}")).or_insert(0) += 1;
-                m.nodes[node as usize].failed += 1;
-                if let Some(o) = self
-                    .msg_tags
-                    .get(&msg_id.0)
-                    .and_then(|&t| self.origins.get_mut(t as usize))
-                {
-                    if o.fate == Fate::Unaccounted {
-                        o.fate = Fate::Failed { node, reason };
-                    }
-                }
-            }
-            AppEvent::Message { len, payload, .. } => {
-                m.nodes[node as usize].messages_in += 1;
-                if len < 4 {
-                    m.app.misdelivered += 1;
-                    return;
-                }
-                let tag = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                match self.origins.get_mut(tag as usize) {
-                    Some(o) if o.dst == node && o.fate != Fate::Delivered => {
-                        o.fate = Fate::Delivered;
-                        m.app.delivered += 1;
-                        m.app.latencies_us.push(self.now.since(o.t).as_micros());
-                    }
-                    Some(o) if o.dst == node => m.app.duplicates += 1,
-                    _ => m.app.misdelivered += 1,
-                }
-            }
+            Some(o) if o.dst == node => m.app.duplicates += 1,
+            _ => m.app.misdelivered += 1,
         }
     }
 
@@ -1233,7 +1212,8 @@ impl Sim {
         })
     }
 
-    /// Traffic tags of the messages some live core still holds.
+    /// Traffic tags of the messages some live core still holds, or its
+    /// application still waits to hand it.
     fn held_tags(&self) -> std::collections::HashSet<u32> {
         let alive = |i: usize| self.nodes[i].alive;
         let relays = self
@@ -1248,9 +1228,16 @@ impl Sim {
             .enumerate()
             .filter(|(i, _)| alive(self.n_relays as usize + i))
             .filter_map(|(_, l)| l.holding());
+        let waiting = self
+            .offers
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| alive(*i))
+            .filter_map(|(_, o)| o.as_ref().map(|o| o.tag));
         relays
             .chain(leaves)
             .filter_map(|id| self.msg_tags.get(&id.0).copied())
+            .chain(waiting)
             .collect()
     }
 
@@ -1350,9 +1337,18 @@ impl Sim {
         }
     }
 
+    /// The traffic model has a message from `src` to `dst`. Its
+    /// application holds one at a time and hands it to the core the moment
+    /// the core takes one (core-interface §4); a message due while the last
+    /// still waits is skipped. Latency counts from here, so a busy network
+    /// shows as latency.
     fn originate(&mut self, src: u32, dst: u32, len: u8) {
         let st = &self.nodes[src as usize];
         if !st.alive || !st.present || self.n_relays == 0 {
+            return;
+        }
+        if self.offers[src as usize].is_some() {
+            self.metrics.app.skipped += 1;
             return;
         }
         let Some(dst_pos) = self.address_of(dst) else {
@@ -1367,18 +1363,60 @@ impl Sim {
             fate: Fate::Unaccounted,
             reachable,
         });
-        let mut payload = [0u8; MAX_FRAME];
-        payload[..4].copy_from_slice(&tag.to_le_bytes());
-        let cmd = AppCommand::Send {
-            dst_pos,
-            dst_leaf: self.leaf_id(dst),
-            payload: &payload[..len as usize],
-        };
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
-        self.pending_tag = Some(tag);
+        self.offers[src as usize] = Some(Offer {
+            tag,
+            dst_pos,
+            dst_leaf: self.leaf_id(dst),
+            len,
+        });
+        self.offer(src);
+    }
+
+    /// How long each message its application still waits to hand over
+    /// has waited so far.
+    pub(crate) fn waiting(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.offers
+            .iter()
+            .flatten()
+            .map(|o| self.now.since(self.origins[o.tag as usize].t))
+    }
+
+    /// Hand `src`'s waiting message to its core, if the core takes one now.
+    fn offer(&mut self, src: u32) {
+        let now = self.now;
+        let ready = self.nodes[src as usize].alive
+            && if src < self.n_relays {
+                self.relays[src as usize].accepts_send(now)
+            } else {
+                self.leaves[(src - self.n_relays) as usize].accepts_send(now)
+            };
+        if !ready {
+            return;
+        }
+        let Some(o) = self.offers[src as usize].take() else {
+            return;
+        };
+        let wait = now.since(self.origins[o.tag as usize].t);
+        if wait > Duration::ZERO {
+            let app = &mut self.metrics.app;
+            app.waited += 1;
+            app.longest_wait_us = app.longest_wait_us.max(wait.as_micros());
+        }
+        let mut payload = [0u8; MAX_FRAME];
+        payload[..4].copy_from_slice(&o.tag.to_le_bytes());
+        let payload = &payload[..o.len as usize];
+        // The ID the core gives it (core-interface §7), to follow its
+        // traces and drops.
+        let id = MsgId::of(o.dst_pos, o.dst_leaf, payload);
+        self.msg_tags.insert(id.0, o.tag);
+        let cmd = AppCommand::Send {
+            dst_pos: o.dst_pos,
+            dst_leaf: o.dst_leaf,
+            payload,
+        };
         self.deliver(src, Event::App(cmd));
-        self.pending_tag = None;
     }
 
     fn poisson_arrival(&mut self, n: u32) {
@@ -1614,7 +1652,7 @@ mod tests {
             .point("L", RoleSpec::Leaf, 450.0, 0.0)
             .link("A", "B", -100.0);
         let mut sim = Sim::new(&sc).unwrap();
-        // Two messages from A to L, accepted as msg ids 7 and 8.
+        // Two messages from A to L, with msg ids 7 and 8.
         for id in [7, 8] {
             let tag = sim.origins.len() as u32;
             sim.origins.push(OriginRecord {
@@ -1623,10 +1661,8 @@ mod tests {
                 fate: Fate::Unaccounted,
                 reachable: true,
             });
-            sim.pending_tag = Some(tag);
-            sim.app_event(0, AppEvent::Accepted(MsgId(id)));
+            sim.msg_tags.insert(id, tag);
         }
-        sim.pending_tag = None;
         sim.message_dropped(1, MsgId(7), DropReason::NoRoute);
         sim.message_dropped(1, MsgId(8), DropReason::QueueExpired);
         let mut payload = [0u8; MAX_FRAME];

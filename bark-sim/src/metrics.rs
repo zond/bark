@@ -11,7 +11,6 @@
 use crate::phy::Deaf;
 use bark_proto::radio::CHANNELS;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 const NCH: usize = CHANNELS as usize;
 
@@ -166,17 +165,13 @@ pub struct NodeMetrics {
     pub relay_changes: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
-    /// Own messages whose first hop acknowledged them.
-    pub sent: u64,
-    /// Own messages that failed locally.
-    pub failed: u64,
     /// `AppEvent::Message` at this node.
     pub messages_in: u64,
     /// Messages this node dropped, by reason.
     pub drops: DropCounts,
 }
 
-/// Why a relay dropped a message: the core's own reasons, reported in
+/// Why a node dropped a message: the core's own reasons, reported in
 /// `Trace::Dropped`. The protocol sends no failure notice (roadmap D10),
 /// so a lost message is only visible where it died.
 pub use bark_proto::DropReason;
@@ -206,6 +201,8 @@ pub struct DropCounts {
     pub delivery_full: u64,
     /// The payload was too long (§14).
     pub payload_too_long: u64,
+    /// A leaf found no relay to take it within the delivery TTL (§10.2).
+    pub no_relay: u64,
 }
 
 impl DropCounts {
@@ -223,6 +220,7 @@ impl DropCounts {
             DropReason::QueueExpired => &mut self.queue_expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
+            DropReason::NoRelay => &mut self.no_relay,
         };
         *c += 1;
     }
@@ -240,6 +238,7 @@ impl DropCounts {
             + self.queue_expired
             + self.delivery_full
             + self.payload_too_long
+            + self.no_relay
     }
 }
 
@@ -260,24 +259,26 @@ pub struct ChannelMetrics {
 /// the destination; nothing in the protocol reports it back.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AppMetrics {
-    /// Messages the traffic model asked a core to send.
+    /// Messages the traffic model had for a core to send.
     pub originated: u64,
-    /// `AppEvent::Accepted`.
-    pub accepted: u64,
+    /// Of those, ones the core did not take the moment they were due, so
+    /// the application waited (`Core::accepts_send`).
+    pub waited: u64,
+    /// The longest such wait, µs.
+    pub longest_wait_us: u64,
+    /// Messages the traffic model did not send because its application
+    /// still waited with the previous one.
+    pub skipped: u64,
     /// Distinct messages that reached their destination's application.
     pub delivered: u64,
     /// Further copies of already delivered messages.
     pub duplicates: u64,
     /// Messages that reached a node other than their destination.
     pub misdelivered: u64,
-    /// Messages whose first hop acknowledged them, reported at origins.
-    pub sent: u64,
-    /// Local failures reported at origins, by reason.
-    pub failed: BTreeMap<String, u64>,
     /// Messages the traffic model did not send because their destination
     /// leaf had never attached, so no sender could know its address (§9.1).
     pub unaddressed: u64,
-    /// Drops reported by relays, by reason (events, not messages: two
+    /// Drops reported by cores, by reason (events, not messages: two
     /// copies of one message may be dropped in two places).
     pub drops: DropCounts,
     /// Origination to destination application, µs, in arrival order.

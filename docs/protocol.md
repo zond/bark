@@ -360,6 +360,16 @@ only acknowledgement in the protocol is the per-hop ACK (§9.3); whether a
 message arrived, and what to do if it did not, is the app's business, with
 whatever acknowledgement it puts inside the encrypted payload.
 
+The app hands a node a message only when the node says it will take one,
+and hears nothing about it afterwards: not the first hop's ACK, which a
+user could take for delivery, and not a drop. From then on the node is
+either sending the message or waiting to. A relay takes one while it is
+running, its send queue and bucket have room for a full frame on top of
+what they hold (§9.3), and its delivery queue has a place (§10.4); a
+leaf takes one while it holds none (§10.2). A busy network so makes its
+users wait rather than lose their messages at the first step (roadmap
+D29).
+
 ### 9.2 Routing
 
 A message travels as a DATA packet (§14) handed from relay to relay, each
@@ -559,8 +569,7 @@ child (§9.2.4, case 4) and continues with its next neighbour.
 The origin has no parent. With no candidate left it drops the message:
 no relay that can be reached from it, through neighbours that answer and
 are not banned, owns the destination. Nobody is told (§9.1, roadmap
-D10). A relay's own application hears that its message failed; a leaf
-has already had the first relay's ACK and hears nothing, the cost of
+D10), the origin's own application included: that is the cost of
 having no end-to-end acknowledgement.
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
@@ -674,7 +683,7 @@ Nothing waits for another node. A ban ends when the refuser's bucket
 has refilled what it could not fit, whatever either node does. A
 message whose every remaining candidate is banned goes back to its
 parent, or is dropped at the origin (§9.2.5): that loss is the
-overload's, and a relay's application hears of it, a leaf's does not.
+overload's.
 Waiting instead could hold two neighbours forever, each full of messages
 waiting for the other, since what a relay holds drains only as it sends
 (roadmap D29).
@@ -908,8 +917,10 @@ relay, the leaf takes the strongest other one it has heard (§10.1).
 **A message without a relay.** A message the leaf cannot hand over,
 because it has no relay or its relay does not answer, is held and tried
 again as above, for up to the delivery TTL (10 minutes, §10.4), the time
-the network itself would keep it. Only then is it reported failed. The
-leaf holds one message at a time (roadmap D23). A relay that answers the
+the network itself would keep it. Only then is it dropped, and the app
+is not told (§9.1). The leaf holds one message at a time (roadmap D23)
+and takes the next from its app once this one is handed over or
+dropped. A relay that answers the
 message with BUSY is busy, not failing: the leaf keeps it, counts no
 failed period, and offers the message again 1.53 s later (§9.3, roadmap
 D27, D29).

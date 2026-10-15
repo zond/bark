@@ -30,8 +30,8 @@ pub struct Latency {
 pub struct AppSummary {
     /// Messages originated.
     pub originated: u64,
-    /// Accepted by the origin's core.
-    pub accepted: u64,
+    /// How long applications waited for their core to take a message.
+    pub offers: Offers,
     /// Delivered to the destination's application (distinct).
     pub delivered: u64,
     /// `delivered / originated`, 0 if nothing was originated.
@@ -40,16 +40,10 @@ pub struct AppSummary {
     pub duplicates: u64,
     /// Deliveries to the wrong node.
     pub misdelivered: u64,
-    /// First-hop acknowledgements reported at origins.
-    pub sent: u64,
-    /// Local failures reported at origins, by reason.
-    pub failed: BTreeMap<String, u64>,
-    /// Drop reports from relays, by reason.
+    /// Drop reports from cores, by reason.
     pub drops: DropCounts,
     /// Messages whose last reported fate is a drop, by reason.
     pub lost_dropped: DropCounts,
-    /// Messages that failed locally and were never delivered.
-    pub lost_failed: u64,
     /// Every message lost, by where and why: `"<node>: <reason>"`.
     pub lost_at: BTreeMap<String, u64>,
     /// Messages not sent because their destination had no address yet.
@@ -70,6 +64,23 @@ pub struct AppSummary {
     /// removal, and after it. A message originated as the run ends has
     /// had no time to arrive and is in no phase. Empty phases are left out.
     pub phases: Vec<PhaseSummary>,
+}
+
+/// The pushback applications felt (core-interface §4): each holds one
+/// message and hands it over when its core takes one.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Offers {
+    /// Messages the core did not take the moment they were due, those
+    /// still waiting at the end included.
+    pub waited: u64,
+    /// Of those, still waiting at the end.
+    pub still_waiting: u64,
+    /// The longest of those waits, ms, until the end for one still
+    /// waiting.
+    pub longest_wait_ms: f64,
+    /// Messages not sent because the application still waited with the
+    /// previous one.
+    pub skipped: u64,
 }
 
 /// Delivery of the messages originated in one phase of the run.
@@ -194,13 +205,12 @@ impl Sim {
             p99_ms: ms(99.0),
             max_ms: ms(100.0),
         });
-        let (mut lost_dropped, mut lost_failed, mut unaccounted) = (DropCounts::default(), 0, 0);
+        let (mut lost_dropped, mut unaccounted) = (DropCounts::default(), 0);
         let (mut in_flight, mut unreachable) = (0, 0);
         let mut lost_at = BTreeMap::new();
         for (_, f, reachable) in self.messages() {
             unreachable += u64::from(!reachable);
             match f {
-                Fate::Failed { .. } => lost_failed += 1,
                 Fate::Dropped { reason, .. } => lost_dropped.add(reason),
                 Fate::Unaccounted => unaccounted += 1,
                 Fate::InFlight => in_flight += 1,
@@ -209,6 +219,17 @@ impl Sim {
             if let Some(at) = self.lost_label(f) {
                 *lost_at.entry(at).or_insert(0) += 1;
             }
+        }
+        let mut offers = Offers {
+            waited: m.app.waited,
+            still_waiting: 0,
+            longest_wait_ms: m.app.longest_wait_us as f64 / 1e3,
+            skipped: m.app.skipped,
+        };
+        for w in self.waiting() {
+            offers.waited += 1;
+            offers.still_waiting += 1;
+            offers.longest_wait_ms = offers.longest_wait_ms.max(w.as_micros() as f64 / 1e3);
         }
         let busy_run =
             |o: &crate::metrics::Observer, c: usize| o.busy_until(c, dur_us) as f64 / dur_us as f64;
@@ -260,7 +281,7 @@ impl Sim {
             events: m.events,
             app: AppSummary {
                 originated: m.app.originated,
-                accepted: m.app.accepted,
+                offers,
                 delivered: m.app.delivered,
                 delivery_ratio: if m.app.originated == 0 {
                     0.0
@@ -269,11 +290,8 @@ impl Sim {
                 },
                 duplicates: m.app.duplicates,
                 misdelivered: m.app.misdelivered,
-                sent: m.app.sent,
-                failed: m.app.failed.clone(),
                 drops: m.app.drops,
                 lost_dropped,
-                lost_failed,
                 lost_at,
                 unaddressed: m.app.unaddressed,
                 in_flight,
@@ -299,9 +317,6 @@ impl Sim {
     /// Where and why a lost message was lost; `None` unless it was.
     fn lost_label(&self, f: Fate) -> Option<String> {
         match f {
-            Fate::Failed { node, reason } => {
-                Some(format!("{}: failed {reason:?}", self.label(node)))
-            }
             Fate::Dropped { node, reason } => {
                 Some(format!("{}: dropped {reason:?}", self.label(node)))
             }
@@ -399,16 +414,24 @@ impl Summary {
             .unwrap_or_else(|| "no latency samples".into());
         let _ = writeln!(
             s,
-            "messages: {} originated, {} delivered ({:.1}%), {} dropped, {} failed, {} in flight, \
+            "messages: {} originated, {} delivered ({:.1}%), {} dropped, {} in flight, \
              {} unaccounted; {lat}",
             a.originated,
             a.delivered,
             100.0 * a.delivery_ratio,
             a.lost_dropped.total(),
-            a.lost_failed,
             a.in_flight,
             a.unaccounted
         );
+        let o = &a.offers;
+        if o.waited + o.skipped > 0 {
+            let _ = writeln!(
+                s,
+                "pushback: {} waited for their origin to take them ({} still at the end), \
+                 longest {:.0} ms; {} skipped while one waited",
+                o.waited, o.still_waiting, o.longest_wait_ms, o.skipped
+            );
+        }
         if a.unreachable > 0 {
             let _ = writeln!(
                 s,

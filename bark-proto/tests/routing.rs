@@ -142,13 +142,8 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
         vec![name(x), name(y)],
         "nearest first, then the next"
     );
-    // Reported sent once, at the first hop's ACK (core-interface §4).
-    let sent = h.nodes[o]
-        .app
-        .iter()
-        .filter(|(_, e)| *e == AppEvent::Sent(id))
-        .count();
-    assert_eq!(sent, 1);
+    // The origin's application is told nothing (core-interface §4).
+    assert!(h.nodes[o].app.is_empty());
     assert_eq!(messages(&h, d, id), 1);
     for i in [o, x, y, d] {
         assert!(
@@ -384,8 +379,8 @@ fn a_split_copy_returned_by_an_earlier_child_ends_there() {
 }
 
 /// With D unreachable, the same search ends at the origin with a drop
-/// for want of a route (§9.2.5). The application heard `Sent` at the first
-/// hop's ACK and hears nothing more (core-interface §4).
+/// for want of a route (§9.2.5). The origin's application hears nothing
+/// of it (core-interface §4).
 #[test]
 fn search_without_owner_ends_at_the_origin() {
     let (o, p, q) = (0, 1, 2);
@@ -407,13 +402,7 @@ fn search_without_owner_ends_at_the_origin() {
         h.run_until(h.now + secs(10), |h| traces(h, o).contains(&dropped)),
         "no drop at the origin"
     );
-    let reports: Vec<AppEvent> = h.nodes[o]
-        .app
-        .iter()
-        .map(|(_, e)| *e)
-        .filter(|e| !matches!(e, AppEvent::Accepted(_)))
-        .collect();
-    assert_eq!(reports, vec![AppEvent::Sent(id)]);
+    assert!(h.nodes[o].app.is_empty(), "the application was told");
     for i in [p, q] {
         assert!(
             !traces(&h, i)
@@ -438,7 +427,11 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
         ack
     }));
     let id = send(&mut h, a, d, b"once");
-    let sent = |h: &Harness<Node>| h.nodes[a].app.iter().any(|(_, e)| *e == AppEvent::Sent(id));
+    let sent = |h: &Harness<Node>| {
+        traces(h, a)
+            .iter()
+            .any(|t| matches!(t, Trace::Forwarded { msg_id, .. } if *msg_id == id))
+    };
     assert!(h.run_until(h.now + secs(5), sent), "never acknowledged");
     h.run_for(secs(5));
     assert_eq!(messages(&h, d, id), 1, "delivered once");
@@ -1067,16 +1060,42 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         *n += 1;
         *n <= LOST
     }));
+    // O's application has a message every 2.5 s. It holds one at a time
+    // and offers it the moment O takes one (core-interface §4); one due
+    // while it still waits is skipped. Latency counts from when it was due.
     let end = h.now + DUTY_CYCLE_WINDOW.mul(3);
-    let mut k = 0u32;
+    let period = Duration::from_millis(2500);
+    let (mut k, mut skipped, mut waited, mut longest_wait) = (0u32, 0u32, 0u32, Duration::ZERO);
     let mut sent_at = std::collections::HashMap::new();
-    while h.now < end {
-        let mut text = [0u8; MAX_PAYLOAD];
-        text[..4].copy_from_slice(&k.to_be_bytes());
-        sent_at.insert(send(&mut h, o, d, &text), h.now);
-        k += 1;
-        let next = h.now + Duration::from_millis(2500);
-        h.run_until(next, |_| false);
+    let mut due = h.now;
+    let mut waiting: Option<Instant> = None;
+    loop {
+        if due < end && h.now >= due {
+            if waiting.is_some() {
+                skipped += 1;
+            } else {
+                waiting = Some(due);
+            }
+            due += period;
+        }
+        if let Some(first) = waiting.filter(|_| h.accepts(o)) {
+            let mut text = [0u8; MAX_PAYLOAD];
+            text[..4].copy_from_slice(&k.to_be_bytes());
+            sent_at.insert(send(&mut h, o, d, &text), first);
+            k += 1;
+            let wait = h.now.since(first);
+            if wait > Duration::ZERO {
+                waited += 1;
+                longest_wait = longest_wait.max(wait);
+            }
+            waiting = None;
+        }
+        if due >= end && waiting.is_none() {
+            break;
+        }
+        let holding = waiting.is_some();
+        let until = if due < end { due } else { h.now + secs(1) };
+        h.run_until(until, |h| holding && h.accepts(o));
     }
     h.run_for(secs(600));
     let tf = traces(&h, f);
@@ -1129,7 +1148,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         })
     };
     println!(
-        "{k} sent; F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
+        "F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
          its queue full and {broke} for its bucket, {busy_sent} BUSY sent; \
          O turned away {turned_away} times",
         tf.iter()
@@ -1174,10 +1193,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     let mut latency: Vec<Duration> = h.nodes[d]
         .app
         .iter()
-        .filter_map(|(t, e)| match e {
-            AppEvent::Message { msg_id, .. } => Some(t.since(sent_at[msg_id])),
-            _ => None,
-        })
+        .map(|(t, AppEvent::Message { msg_id, .. })| t.since(sent_at[msg_id]))
         .collect();
     latency.sort();
     let mut offered = to_f.clone();
@@ -1189,14 +1205,10 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             *o_drops.entry(format!("{reason:?}")).or_insert(0) += 1;
         }
     }
-    let o_failed = h.nodes[o]
-        .app
-        .iter()
-        .filter(|(_, e)| matches!(e, AppEvent::Failed { .. }))
-        .count();
     println!(
-        "longest gap between F's DATA frames {gap:?}; D's ACKs lost at F {acks_lost}; \
-         O's frames to F {}, of which retries {}; O dropped {o_drops:?}, told its application of {o_failed} failures; \
+        "O's application offered {k}, {waited} after waiting, longest {longest_wait:?}, \
+         skipped {skipped}; longest gap between F's DATA frames {gap:?}; D's ACKs lost at F {acks_lost}; \
+         O's frames to F {}, of which retries {}; O dropped {o_drops:?}; \
          D received {} messages, latency median {:?}, max {:?}",
         to_f.len(),
         to_f.len() - offered.len(),

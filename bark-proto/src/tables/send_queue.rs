@@ -40,11 +40,7 @@ const _: () = assert!(SEND_QUEUE == 40);
 pub enum Kind {
     /// A DATA to the next hop toward the destination (§9.2.3). Its next
     /// hop is chosen when its hand-over starts, and again after a failure.
-    /// `report`: the relay's own application waits for `Sent` or `Failed`.
-    Forward {
-        /// Whether the application waits for the first hop's ACK.
-        report: bool,
-    },
+    Forward,
     /// A DATA back to the parent (§9.2.5); dropped if it fails.
     Return,
     /// A DATA straight back to a relay that offered a message this relay

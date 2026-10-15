@@ -76,7 +76,7 @@
 //! [`Transfer`]: crate::node::transfer::Transfer
 
 use super::{Job, Relay};
-use crate::event::{Action, AppEvent, DropReason, FailReason, Frame, Trace, MAX_FRAME};
+use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Reply, Step};
@@ -302,7 +302,7 @@ impl Relay {
                 if owner {
                     self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
                 } else {
-                    self.send_on(&d, Kind::Forward { report: false }, emit);
+                    self.send_on(&d, Kind::Forward, emit);
                 }
             }
             Case::AckOnly => {
@@ -323,7 +323,7 @@ impl Relay {
                 if owner {
                     self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
                 } else {
-                    self.send_on(&d, Kind::Forward { report: false }, emit);
+                    self.send_on(&d, Kind::Forward, emit);
                 }
             }
             Case::SendBack => {
@@ -369,9 +369,9 @@ impl Relay {
     /// Whether the send queue holds this relay's searching copy of message
     /// `id`: a forward or a return.
     fn searching(&self, id: MsgId) -> bool {
-        self.queue.iter().any(|o| {
-            matches!(o.kind, Kind::Forward { .. } | Kind::Return) && o.msg_id() == Some(id)
-        })
+        self.queue
+            .iter()
+            .any(|o| matches!(o.kind, Kind::Forward | Kind::Return) && o.msg_id() == Some(id))
     }
 
     /// Whether the front hand-over is of message `id` to `to`, sent at
@@ -437,7 +437,7 @@ impl Relay {
     }
 
     /// The message has reached its owner, this relay (§9.2.7): deliver it
-    /// to the application or queue it for the leaf. Returns whether it was.
+    /// to the application or queue it for the leaf.
     fn arrive(
         &mut self,
         id: MsgId,
@@ -446,11 +446,11 @@ impl Relay {
         payload: &[u8],
         now: Instant,
         emit: &mut dyn FnMut(Action),
-    ) -> bool {
+    ) {
         if leaf == LeafId::RELAY {
             if dst != self.config.position {
                 self.drop_msg(id, DropReason::RelayGone, emit);
-                return false;
+                return;
             }
             self.delivered.insert(id, now);
             let mut buf = [0; MAX_FRAME];
@@ -460,37 +460,63 @@ impl Relay {
                 len: payload.len() as u8,
                 payload: buf,
             }));
-            return true;
+            return;
         }
         let Some(q) = Queued::new(id, leaf, payload, now) else {
             self.drop_msg(id, DropReason::PayloadTooLong, emit);
-            return false;
+            return;
         };
         match self.delivery.push(q) {
-            Pushed::Duplicate => return true,
+            Pushed::Duplicate => return,
             Pushed::Full => {
                 // Only when ownership is found at the hand-over, too late
                 // to refuse (§9.2.4 case 4).
                 self.drop_msg(id, DropReason::DeliveryFull, emit);
-                return false;
+                return;
             }
             Pushed::Queued => self.feed_due = true,
         }
         emit(Action::Trace(Trace::Queued { msg_id: id, leaf }));
         self.deliver_now(leaf, now);
-        true
     }
 
     // --- The relay's own application (§9.2) ---
 
-    /// `AppCommand::Send`: this relay is the origin.
+    /// Whether the application may send now (roadmap D29 rule 6): the
+    /// relay is running, its send queue takes a full frame on top of what
+    /// it holds, as a forward would be taken but without the ACK, and its
+    /// delivery queue has a place, should the message be for one of its
+    /// own leaves.
+    pub(super) fn accepts_send(&self, now: Instant) -> bool {
+        !self.booting()
+            && !self.delivery.is_full()
+            && self
+                .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, false, now)
+                .is_none()
+    }
+
+    /// When the application may send again, if only the bucket keeps it
+    /// waiting; a place or a running relay comes with an event.
+    pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
+        if self.booting() || self.delivery.is_full() || self.queue.is_full() {
+            return None;
+        }
+        let need = self.queue.airtime() + data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
+        self.budget
+            .allowed_at(Duration::ZERO, need, now)
+            .filter(|&t| t > now)
+    }
+
+    /// `AppCommand::Send`: this relay is the origin. Offered only when
+    /// [`Relay::accepts_send`]; anything else is the driver's bug and is
+    /// ignored.
     ///
     /// The application is the first sender and sends count 0 (§9.2.6), as
     /// a leaf does; this relay then sends 1, what it received plus one. It
     /// cannot put 0 on the air itself: a relay receiving count 0 takes the
     /// sender for a leaf and itself for the origin (§9.2.1). A message the
-    /// relay already has a record of is in the network already; it is
-    /// reported sent. So is one delivered or queued here (§9.2.7).
+    /// relay already has a record of is in the network already, as is one
+    /// delivered or queued here (§9.2.7).
     pub(super) fn originate(
         &mut self,
         dst_pos: Position,
@@ -499,44 +525,18 @@ impl Relay {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        let id = MsgId::of(dst_pos, dst_leaf, payload);
-        let fail = |reason, emit: &mut dyn FnMut(Action)| {
-            emit(Action::App(AppEvent::Failed { msg_id: id, reason }))
-        };
-        if payload.len() > MAX_PAYLOAD {
-            fail(FailReason::PayloadTooLong, emit);
-            self.drop_msg(id, DropReason::PayloadTooLong, emit);
+        if payload.len() > MAX_PAYLOAD || !self.accepts_send(now) {
             return;
         }
-        emit(Action::App(AppEvent::Accepted(id)));
+        let id = MsgId::of(dst_pos, dst_leaf, payload);
         if self.records.get(id, now).is_some() || self.delivered.contains(id, now) {
-            emit(Action::App(AppEvent::Sent(id)));
             return;
         }
         if self.owns(dst_pos, now) {
-            if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
-                fail(FailReason::QueueFull, emit);
-                self.drop_msg(id, DropReason::DeliveryFull, emit);
-                return;
-            }
             let mut record = Record::new(id, None, 0, now);
             record.set_owned();
             self.keep(record, now, emit);
-            if self.arrive(id, dst_pos, dst_leaf, payload, now, emit) {
-                emit(Action::App(AppEvent::Sent(id)));
-            } else {
-                fail(FailReason::NoRoute, emit);
-            }
-            return;
-        }
-        let airtime = data_airtime(payload.len());
-        if let Some(reason) = self.no_room(airtime, Duration::ZERO, false, now) {
-            let f = match reason {
-                DropReason::SendQueueFull => FailReason::QueueFull,
-                _ => FailReason::Budget,
-            };
-            fail(f, emit);
-            self.drop_msg(id, reason, emit);
+            self.arrive(id, dst_pos, dst_leaf, payload, now, emit);
             return;
         }
         self.keep(Record::new(id, None, 0, now), now, emit);
@@ -549,7 +549,7 @@ impl Relay {
             hops: 0,
             payload,
         };
-        self.send_on(&d, Kind::Forward { report: true }, emit);
+        self.send_on(&d, Kind::Forward, emit);
     }
 
     // --- The hand-over (§9.3) ---
@@ -562,7 +562,7 @@ impl Relay {
                 return;
             };
             let routed = match out.kind {
-                Kind::Forward { report } => self.route(out, report, now, emit),
+                Kind::Forward => self.route(out, now, emit),
                 Kind::Return | Kind::Bounce => match Packet::decode(out.frame.payload()) {
                     Ok(Packet::Data(d)) => Routed::To(
                         out,
@@ -603,24 +603,12 @@ impl Relay {
     /// Address the forward `out` (§9.2.3), or return it to the parent
     /// (§9.2.5), or drop it at the origin. Ownership is checked again
     /// first: a closer neighbour may have been demoted since (§9.2.4 case 4).
-    fn route(
-        &mut self,
-        out: Outgoing,
-        report: bool,
-        now: Instant,
-        emit: &mut dyn FnMut(Action),
-    ) -> Routed {
+    fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return Routed::Done;
         };
         let id = d.msg_id();
-        let fail = |reason, emit: &mut dyn FnMut(Action)| {
-            if report {
-                emit(Action::App(AppEvent::Failed { msg_id: id, reason }));
-            }
-        };
         let Some(record) = self.records.get(id, now).copied() else {
-            fail(FailReason::NoRoute, emit);
             self.drop_msg(id, DropReason::RecordLost, emit);
             return Routed::Done;
         };
@@ -628,17 +616,7 @@ impl Relay {
             if let Some(r) = self.records.get_mut(id, now) {
                 r.set_owned();
             }
-            let delivered = self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
-            if report {
-                emit(Action::App(if delivered {
-                    AppEvent::Sent(id)
-                } else {
-                    AppEvent::Failed {
-                        msg_id: id,
-                        reason: FailReason::NoRoute,
-                    }
-                }));
-            }
+            self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
             return Routed::Done;
         }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
@@ -680,7 +658,6 @@ impl Relay {
                 )
             }
             None => {
-                fail(FailReason::NoRoute, emit);
                 self.drop_msg(id, DropReason::NoRoute, emit);
                 Routed::Done
             }
@@ -802,7 +779,7 @@ impl Relay {
             let id = d.msg_id();
             if let Some(r) = self.records.get_mut(id, now) {
                 match out.kind {
-                    Kind::Forward { .. } => {
+                    Kind::Forward => {
                         let slot = self
                             .neighbours
                             .by_short(d.dst_hop)
@@ -831,7 +808,7 @@ impl Relay {
     /// Listen-before-talk gave up on the front hand-over's channel.
     fn handover_gave_up(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         match out.kind {
-            Kind::Forward { .. } => {
+            Kind::Forward => {
                 // Choose again, past this neighbour (§9.3 step 2).
                 let to = self.handover.expect().from;
                 if let Some((slot, _)) = self
@@ -877,7 +854,7 @@ impl Relay {
             self.neighbours.refused(position, now + BAN);
         }
         match out.kind {
-            Kind::Forward { .. } => {
+            Kind::Forward => {
                 if let Some((slot, _)) = slot {
                     self.skipped |= 1 << slot;
                     if let Some(r) = self.records.get_mut(msg_id, now) {
@@ -915,16 +892,11 @@ impl Relay {
             self.neighbours.succeeded(p);
         }
         let trace = match out.kind {
-            Kind::Forward { report } => {
-                if report {
-                    emit(Action::App(AppEvent::Sent(id)));
-                }
-                Trace::Forwarded {
-                    msg_id: id,
-                    to,
-                    hops: d.hops,
-                }
-            }
+            Kind::Forward => Trace::Forwarded {
+                msg_id: id,
+                to,
+                hops: d.hops,
+            },
             Kind::Return => Trace::ReturnedToParent { msg_id: id, to },
             Kind::Bounce | Kind::Deliver => Trace::Bounced { msg_id: id, to },
         };
@@ -950,7 +922,7 @@ impl Relay {
         let reason = match out.kind {
             // The neighbour is the last child now; the next one in order is
             // taken when the front is prepared again.
-            Kind::Forward { .. } => return,
+            Kind::Forward => return,
             Kind::Return => Some(DropReason::ReturnFailed),
             Kind::Bounce => Some(DropReason::BounceFailed),
             Kind::Deliver => None,
