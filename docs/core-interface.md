@@ -142,8 +142,8 @@ for each hop count a message can be sent on with, keep overload from dropping me
 (design §9.3, roadmap D31). The records hold the 1401 messages a relay can handle in the
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (§9.2.2). The delivery queue's 41 places hold what
-arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 154 080 B
-(150.5 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
+arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 153 712 B
+(150.1 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
 its one owed reply and its application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB

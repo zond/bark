@@ -5,25 +5,20 @@
 //! [`DELIVERED`] entries with no lifetime: when full, a new one takes the
 //! place of the least recently active, the one delivered or last offered
 //! again longest ago, as message records do (`records.rs`, roadmap D31).
-//! The size is what a relay delivers in 10 minutes at the most load the
-//! design plans for: 400 leaves (§10.2, at 50 % adoption) receiving ≈23
-//! texts a day each (§13, the network at capacity) is 9 200 a day, 64 per
-//! 10 minutes. Above that a late copy of one forgotten is delivered twice,
-//! which the app, whose payloads are unique (§11), can recognise.
+//! The size is the delivery queue's, [`DELIVERY_QUEUE`]: what a relay
+//! delivers in one delivery TTL for a full leaf table, 256 leaves (§10.2)
+//! at ≈23 texts a day each (§13, the network at capacity), 41. Above that
+//! a late copy of one forgotten is delivered twice, which the app, whose
+//! payloads are unique (§11), can recognise.
 
 use crate::ids::MsgId;
+use crate::tables::delivery::DELIVERY_QUEUE;
 use crate::time::Instant;
 
-const LEAVES_PLANNED: u64 = 400;
-const TEXTS_PER_LEAF_PER_DAY: u64 = 23;
-const DAY_S: u64 = 86_400;
-const SPAN_S: u64 = 600;
-
 /// Capacity; see the module documentation.
-pub const DELIVERED: usize =
-    (LEAVES_PLANNED * TEXTS_PER_LEAF_PER_DAY * SPAN_S).div_ceil(DAY_S) as usize;
+pub const DELIVERED: usize = DELIVERY_QUEUE;
 
-const _: () = assert!(DELIVERED == 64);
+const _: () = assert!(DELIVERED == 41);
 
 /// The delivered window.
 #[derive(Clone)]

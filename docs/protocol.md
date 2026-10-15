@@ -1065,11 +1065,11 @@ its leaf table's 256 (§10.2), at the 23 texts a day each that the
 network carries (§13): 256 × 23 / 144 ten-minute TTLs in a day = 40.9,
 so 41 messages, 10.3 KB.
 
-The owner remembers 64 delivered message IDs (§14) and ACKs a repeat
+The owner remembers 41 delivered message IDs (§14) and ACKs a repeat
 without delivering it twice. When it needs the place, it forgets the one
-delivered or last repeated longest ago; time alone forgets nothing. 64
-is what a relay delivers in 10 minutes at 400 leaves (§10.2) × 23 texts
-a day (§13). A queued
+delivered or last repeated longest ago; time alone forgets nothing. 41
+is the delivery queue's size: what a relay delivers in one TTL for a
+full leaf table. A queued
 message costs no airtime; a failed delivery costs a retry across the
 city.
 
@@ -1270,8 +1270,8 @@ Crate layout is D7.
 **RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
 256 × 16 B = 4 KB; delivery queue 41 × 256 B = 10.3 KB; message records
 (§9.2.2) 1695 × 32 B = 54 KB; send queue (40 + 254) × 272 B = 80 KB;
-delivered window 1 KB; busy estimates and duty budget under 1 KB; 154 KB
-in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
+delivered window 41 × 16 B = 0.7 KB; busy estimates and duty budget under
+1 KB; 154 KB in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
 application has 255 KB; 1 KB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 
