@@ -736,6 +736,134 @@ fn a_relay_whose_candidates_failed_returns_to_the_parent() {
     );
 }
 
+/// P hands a message to C and moves its home channel (§6.3) while C is
+/// still searching; C then returns the message to P's new home, as C's
+/// neighbour table has it from P's announcement, not to the channel P
+/// was on when it handed the message over (§9.2.5). P then tries Y, which
+/// reaches D. C searches for a while because its four other neighbours,
+/// X, no longer hear it: each costs three unanswered attempts. C listens
+/// on P's old home, so it hears the announcement.
+///
+/// ```text
+///        X X X X
+///         \ \/ /
+///           C          D (1000, 0)
+///          /          /
+///         P -------- Y
+/// ```
+#[test]
+fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
+    use bark_proto::tables::busy::percent;
+    use bark_proto::{Action, Channel, CHANNELS};
+    let (p, c, y, d) = (0, 1, 2, 3);
+    let xs = [4, 5, 6, 7];
+    // Move once the home has been busy this long, at once (§6.3: 10 min
+    // and up to 5 min more, which only make the test longer).
+    let dwell = secs(20);
+    let topology = |c_home: u8| {
+        let fixed = |east: f64, north: f64, home: u8, seed: u64| {
+            Node::Relay(Relay::new(
+                Config {
+                    position: pos(east, north),
+                    boot_listen: secs(5),
+                    home_override: Some(ch(home)),
+                    ..Config::default()
+                },
+                seed,
+            ))
+        };
+        let mut nodes = vec![
+            Node::Relay(Relay::new(
+                Config {
+                    position: pos(0.0, 0.0),
+                    boot_listen: secs(5),
+                    move_dwell: dwell,
+                    move_wait_max: Duration::ZERO,
+                    ..Config::default()
+                },
+                141,
+            )),
+            fixed(400.0, 100.0, c_home, 142),
+            fixed(300.0, -300.0, 5, 143),
+            fixed(1000.0, 0.0, 7, 144),
+        ];
+        for (k, east) in [200.0, 400.0, 600.0, 800.0].into_iter().enumerate() {
+            nodes.push(fixed(east, 500.0, 8 + k as u8, 145 + k as u64));
+        }
+        let mut links = vec![(p, c), (p, y), (y, d)];
+        links.extend(xs.iter().map(|&x| (c, x)));
+        build(nodes, &links)
+    };
+    // C listens where P chooses to: find out where that is.
+    let old = core(&topology(0), p).home();
+    let mut h = topology(old.index());
+    assert_eq!(core(&h, p).home(), old);
+    for x in xs {
+        h.unlink(c, x);
+    }
+
+    // A carrier on P's home for 30 % of the time (as in `tests/mac.rs`).
+    h.jam_part(
+        p,
+        old,
+        Duration::from_millis(32),
+        Duration::from_millis(107),
+    );
+    // The move rule runs at the end of each round of the sweep, after the
+    // reading of the last channel (`relay.rs`); P moves `dwell` after the
+    // first round that ends with its home too busy.
+    let last = Action::Rssi(Channel::new(CHANNELS - 1).unwrap());
+    let round_ends_busy = |h: &Harness<Node>| {
+        let b = core(h, p).busy();
+        let min = Channel::all().map(|c| b.fraction(c)).min().unwrap();
+        let busy = b.fraction(old).saturating_sub(min) > percent(5);
+        let round = h.nodes[p]
+            .checks
+            .last()
+            .is_some_and(|&(_, end, a, _)| a == last && end == h.now);
+        busy && round
+    };
+    assert!(h.run_until(h.now + secs(1800), round_ends_busy));
+    h.run_for(dwell - Duration::from_millis(300));
+    let id = send(&mut h, p, d, b"after the move");
+    assert!(
+        h.run_until(h.now + secs(30), |h| delivered(h, d, id)),
+        "not delivered"
+    );
+
+    let moved = h.nodes[p].traces.iter().rev().find_map(|(t, tr)| match tr {
+        Trace::HomeChannelMoved { to, .. } => Some((*t, *to)),
+        _ => None,
+    });
+    let (moved_at, new) = moved.expect("P did not move");
+    assert_ne!(new, old);
+    let data_to = |i: usize, to: usize| {
+        let to = position(&h, to).short();
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter_map(|(t, fr)| match Packet::decode(fr.payload()) {
+                Ok(Packet::Data(q)) if q.msg_id() == id && q.dst_hop == to => {
+                    Some((*t, fr.channel))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let (handed_at, _) = data_to(p, c)[0];
+    assert!(handed_at < moved_at, "P moved before handing to C");
+    let returns = data_to(c, p);
+    assert_eq!(returns.len(), 1, "{returns:?}");
+    let (returned_at, channel) = returns[0];
+    assert!(returned_at > moved_at, "C returned before P moved");
+    assert_eq!(channel, new, "returned to P's old home");
+    assert!(traces(&h, c).contains(&Trace::ReturnedToParent {
+        msg_id: id,
+        to: position(&h, p).short()
+    }));
+    no_drops(&h);
+}
+
 /// Twenty-six relays, F their only neighbour, offer F short messages for
 /// an hour and five minutes; F, its frames to D all lost, keeps its send
 /// queue full and refuses nearly all of them with BUSY. A sender drops

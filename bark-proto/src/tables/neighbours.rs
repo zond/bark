@@ -273,6 +273,20 @@ impl Neighbours {
         }
     }
 
+    /// A packet from the neighbour named `name` gave its home channel in
+    /// `aux` (§14): that is where it listens now, newer than its last
+    /// heartbeat if it has moved since.
+    pub fn home_heard(&mut self, name: ShortName, home: Channel) {
+        if let Some(n) = self
+            .slots
+            .iter_mut()
+            .flatten()
+            .find(|n| n.position.short() == name)
+        {
+            n.home = home;
+        }
+    }
+
     /// `position` refused a hand-over: banned until `until`.
     pub fn refused(&mut self, position: Position, until: Instant) {
         if let Some(n) = self.entry_mut(position) {
@@ -406,6 +420,13 @@ mod tests {
             "a heartbeat is not an ACK"
         );
         assert_eq!(t.len(), 1);
+        t.home_heard(n.position.short(), Channel::new(7).unwrap());
+        assert_eq!(t.get(n.position).unwrap().home.index(), 7);
+        assert_eq!(
+            t.get(n.position).unwrap().last_heard,
+            at(10),
+            "a packet's channel is not a heartbeat"
+        );
     }
 
     #[test]

@@ -309,7 +309,7 @@ Per node, up to 64 entries:
 | Field | Content |
 |---|---|
 | x, y | from heartbeat; the entry key and the neighbour's identity |
-| channel | from heartbeat (the channel to transmit to this neighbour on) |
+| channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent (§9.2.1), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
 | fail_count | consecutive ACK failures |
@@ -386,7 +386,8 @@ A relay acts on a DATA packet whose `dst_hop` is its own short name
 the sender's short name, and gives the sender's home channel in `aux`
 (§14). Those two are all a relay needs to send something back: `dst_hop`
 set to `src_hop`, on the channel in `aux`. It needs no neighbour-table
-entry for the sender.
+entry for the sender; if it has one, `aux` becomes its channel there,
+as a heartbeat's would (§8.2).
 
 A packet with `hops = 0` comes from a leaf (§9.2.6): the receiving relay
 is the origin, and the message has no parent.
@@ -403,7 +404,7 @@ originated:
 | Field | Content |
 |---|---|
 | ID | the message ID (§14) |
-| parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin |
+| parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin. The channel is used only if that relay is no longer in the neighbour table (§9.2.5) |
 | last child | the neighbour it last sent the message to, as a short name; none before the first send |
 | handed | the neighbours this relay has handed the message to, as one bit per neighbour-table slot |
 | highest hops | the largest `hops` (§9.2.6) received for the message |
@@ -547,9 +548,12 @@ last-active time.
 
 When §9.2.3 finds no candidate, because every neighbour has been tried
 or is banned (§9.3), the relay sends the message back to its parent: a
-DATA packet with `dst_hop` the parent's short name, on the parent's
-channel, both from the record. The parent receives it from its
-last child (§9.2.4, case 4) and continues with its next neighbour.
+DATA packet with `dst_hop` the parent's short name, from the record, on
+the parent's home channel as the neighbour table has it at the moment of
+sending, so a return follows a parent that has moved home (§6.3) since
+it handed the message over. Only a parent no longer in the table is sent
+to on the channel in the record. The parent receives it from its last
+child (§9.2.4, case 4) and continues with its next neighbour.
 
 The origin has no parent. With no candidate left it drops the message:
 no relay that can be reached from it, through neighbours that answer and
@@ -559,8 +563,7 @@ has already had the first relay's ACK and hears nothing, the cost of
 having no end-to-end acknowledgement.
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
-and the search ends early. The usual cause is a parent that has since
-moved to another home channel (§6.3).
+and the search ends early.
 
 #### 9.2.6 The hop counter
 
@@ -627,7 +630,11 @@ time. An ACK carries the message ID and the name of the relay or leaf
 sending it, and matches the outstanding hand-over only if both agree.
 Packets waiting their turn are held in the relay's send queue.
 
-1. Retune to the next hop's home channel.
+1. Retune to the next hop's home channel. Addresses and channels are
+   read at the moment of sending, before each attempt, from the latest
+   heartbeats (and DATA `aux`, §8.2): a retry goes to a neighbour's new
+   home if it has moved since the last attempt, and a DELIVER takes the
+   leaf's receive mode as the leaf table has it then (§10.5).
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
    retry; give up after 500 ms and choose the next hop again (§9.2.3),
    without counting a failure against the neighbour. The neighbour is set

@@ -515,7 +515,15 @@ impl Relay {
         // A booting relay has no home channel yet to be reached on, nor
         // neighbours to forward to: it takes no traffic (§6.2).
         let running = self.stage == Stage::Running;
-        match Packet::decode(bytes) {
+        let decoded = Packet::decode(bytes);
+        // A relay's DATA says where it listens now (§9.2.1); a leaf's
+        // (`hops` 0) names no relay.
+        if let Ok(Packet::Data(d)) = decoded {
+            if d.hops > 0 {
+                self.neighbours.home_heard(d.src_hop, d.sender_home);
+            }
+        }
+        match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Busy(b)) => self.busy_received(b, now, emit),

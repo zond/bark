@@ -99,7 +99,10 @@ pub struct Record {
     id: MsgId,
     parent: ShortName,
     last_child: ShortName,
-    /// The parent's home channel; `None` at the origin, which has no parent.
+    /// The parent's home channel when the message arrived; `None` at the
+    /// origin, which has no parent. A return goes to the parent's home as
+    /// the neighbour table has it then, and to this one only if the parent
+    /// has left the table (§9.2.5).
     parent_home: Option<Channel>,
     highest_hops: u8,
     flags: u8,
@@ -132,8 +135,8 @@ impl Record {
         self.id
     }
 
-    /// The relay the message first came from and its home channel; `None`
-    /// at the origin.
+    /// The relay the message first came from and its home channel when
+    /// the message arrived; `None` at the origin.
     pub fn parent(&self) -> Option<(ShortName, Channel)> {
         self.parent_home.map(|home| (self.parent, home))
     }

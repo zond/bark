@@ -44,6 +44,14 @@
 //! carries is fixed when it is queued: what the relay received plus one
 //! (§9.2.6).
 //!
+//! Where a frame goes is read at the moment of sending (roadmap D29 rule
+//! 7): before each attempt its channel is the receiver's home as the
+//! neighbour table has it, from the latest heartbeat or packet of that
+//! neighbour, and a DELIVER's is this relay's home, with the preamble of
+//! the leaf's receive mode as the leaf table has it. A neighbour that
+//! moves home (§6.3) between attempts, or while a message waits to come
+//! back to it, is followed.
+//!
 //! When listen-before-talk gives up on a forward's neighbour (§9.3 step
 //! 2), the neighbour is set aside for this hand-over only (`skipped`):
 //! it was not handed the message, so it stays a candidate for later
@@ -635,10 +643,11 @@ impl Relay {
             );
         }
         match record.parent() {
-            Some((parent, home)) => {
+            Some((parent, stored)) => {
                 if let Some(r) = self.records.get_mut(id, now) {
                     r.set_returned();
                 }
+                let home = self.home_of(parent).unwrap_or(stored);
                 let frame = data_frame(
                     &Data {
                         dst_hop: parent,
@@ -665,13 +674,45 @@ impl Relay {
         }
     }
 
+    /// The home channel of the neighbour named `name`, as its latest
+    /// heartbeat or packet gave it.
+    fn home_of(&self, name: ShortName) -> Option<Channel> {
+        self.neighbours.by_short(name).map(|(_, n)| n.home)
+    }
+
+    /// Address the front frame as its receiver is now, before each attempt
+    /// (§9.3): a neighbour that moved home since the frame was queued, or
+    /// since the last attempt, listens elsewhere, and a leaf that changed
+    /// its receive mode needs another preamble. A receiver no longer in its
+    /// table keeps the address it had.
+    fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
+        let mut out = self.queue.front().copied()?;
+        let (channel, preamble) = match Packet::decode(out.frame.payload()) {
+            Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
+            // The leaf listens on this relay's home, wherever that is now.
+            Ok(Packet::Deliver(d)) => (
+                Some(self.home),
+                self.leaves
+                    .get(d.dst_leaf, now)
+                    .map(|l| l.mode.preamble_symbols()),
+            ),
+            _ => (None, None),
+        };
+        out.frame.channel = channel.unwrap_or(out.frame.channel);
+        out.frame.preamble_symbols = preamble.unwrap_or(out.frame.preamble_symbols);
+        if let Some(front) = self.queue.front_mut() {
+            *front = out;
+        }
+        Some(out)
+    }
+
     /// Start listen-before-talk for the front hand-over if it is due and
     /// the budget lets it (§9.4: deferred, never dropped).
     pub(super) fn start_handover(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if !self.handover.due(now) {
             return false;
         }
-        let Some(out) = self.queue.front().copied() else {
+        let Some(out) = self.readdress(now) else {
             return false;
         };
         if !self.affordable(mac::airtime(&out.frame), now) {
@@ -737,10 +778,6 @@ impl Relay {
             return;
         }
         let mut frame = out.frame;
-        if out.kind == Kind::Deliver {
-            // The leaf listens on this relay's home, wherever that is now.
-            frame.channel = self.home;
-        }
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             frame = data_frame(
                 &Data {

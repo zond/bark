@@ -59,7 +59,7 @@ pub enum Kind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outgoing {
     /// The frame as it will be sent; a forward's address is filled in when
-    /// its hand-over starts.
+    /// its hand-over starts, and every frame's channel before each attempt.
     pub frame: Frame,
     /// What it is for.
     pub kind: Kind,
