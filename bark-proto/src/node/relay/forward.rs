@@ -18,6 +18,12 @@
 //! BUSY would send its sender on with a second copy. A relay that cannot
 //! afford even the reply stays silent, and its sender retries.
 //!
+//! A relay owes one reply at a time (`transfer.rs`, roadmap D29). A packet
+//! that arrives while it owes another one, its ACK still waiting for the
+//! channel, is neither taken nor refused: the relay says nothing, and the
+//! sender's retry brings the packet again. A copy of the packet the owed
+//! reply answers is answered by it too.
+//!
 //! Three refinements the spec does not spell out:
 //!
 //! - A return from the last child while the send queue still holds the
@@ -260,11 +266,19 @@ impl Relay {
         } else {
             None
         };
+        let reply = match refusal {
+            Some(_) => Reply::Busy(Busy::refusing(self.me(), id)),
+            None => Reply::Ack(ack),
+        };
+        if !self.replies.can_owe(reply, d.sender_home, now) {
+            // The packet could not be answered; its sender's retry
+            // brings it again (§9.3, roadmap D29).
+            return;
+        }
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(BUSY_AIRTIME, now) {
-                let busy = Reply::Busy(Busy::refusing(self.me(), id));
-                self.replies.owe(busy, d.sender_home, deadline, now);
+                self.replies.owe(reply, d.sender_home, deadline, now);
             }
             return;
         }
@@ -275,8 +289,7 @@ impl Relay {
             }));
             return;
         }
-        self.replies
-            .owe(Reply::Ack(ack), d.sender_home, deadline, now);
+        self.replies.owe(reply, d.sender_home, deadline, now);
 
         match case {
             Case::New => {
@@ -802,7 +815,7 @@ impl Relay {
         }
         let airtime = mac::airtime(&frame);
         if !self.affordable(airtime, now) {
-            // Owed replies spent the budget since the check began.
+            // An owed reply spent the budget since the check began.
             self.defer_handover(&out, now, emit);
             return;
         }
@@ -963,9 +976,9 @@ impl Relay {
         }
     }
 
-    // --- Owed replies (§9.3) ---
+    // --- The owed reply (§9.3) ---
 
-    /// Start sending the first owed reply, if one is ready. Without budget
+    /// Start sending the owed reply, if it is ready. Without budget
     /// for it the relay cannot reply (§9.4); the reply is abandoned.
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         let Some(o) = self.replies.due(now) else {

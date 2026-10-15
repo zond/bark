@@ -39,22 +39,21 @@ use crate::wire::{Ack, AckFrom, Attach, Deliver, Packet, ACK_LEN};
 impl Relay {
     /// An ATTACH or keepalive for this relay (§10.2).
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
-        if !self.can_reply(time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS), now) {
+        let ack = Reply::Ack(Ack {
+            msg_id: MsgId(u32::from_be_bytes(a.leaf.0)),
+            from: AckFrom::from(self.me()),
+        });
+        // Taken only if it can be answered, as a DATA packet is (§9.3).
+        if !self.can_reply(time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS), now)
+            || !self.replies.can_owe(ack, self.home, now)
+        {
             return;
         }
         if self.leaves.attached(a.leaf, a.mode, now).is_err() {
             return;
         }
-        let ack = Ack {
-            msg_id: MsgId(u32::from_be_bytes(a.leaf.0)),
-            from: AckFrom::from(self.me()),
-        };
-        self.replies.owe(
-            Reply::Ack(ack),
-            self.home,
-            now + self.config.ack_timeout,
-            now,
-        );
+        self.replies
+            .owe(ack, self.home, now + self.config.ack_timeout, now);
         self.deliver_now(a.leaf, now);
     }
 

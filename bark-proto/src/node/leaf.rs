@@ -190,7 +190,7 @@ pub struct Leaf {
     outgoing_until: Instant,
     /// Not before this is the message offered: the relay said it was busy.
     outgoing_at: Instant,
-    acks: Replies<1>,
+    acks: Replies,
     budget: Budget,
     seen: [MsgId; SEEN],
     seen_next: u8,

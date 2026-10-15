@@ -115,11 +115,11 @@ test in `tables/mod.rs`:
 
 The send queue's 40 places follow from the duty bucket (design §9.3), and the delivery
 queue gives up the memory for them: its 41 places hold what arrives in one delivery TTL for
-a full leaf table (§10.4). The whole `Relay` is 50 344 B (49.2 KiB), under the 50 KiB
-target; besides the tables it holds the medium access, the hand-over and nine owed replies.
+a full leaf table (§10.4). The whole `Relay` is 50 080 B (48.9 KiB), under the 50 KiB
+target; besides the tables it holds the medium access, the hand-over and its one owed reply.
 Checked by the tests in `tables/mod.rs` and `node/relay.rs`.
 
-`Leaf` is 744 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.

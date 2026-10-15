@@ -9,7 +9,7 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! replies (ACK or BUSY) this relay owes, the heartbeat, the hand-over at
+//! reply (ACK or BUSY) this relay owes, the heartbeat, the hand-over at
 //! the front of the send queue, and the sweep. The relay keeps at most one
 //! excursion outstanding (`docs/core-interface.md` §3 rule 1). When the
 //! radio is free it starts the first job that is ready, in that order: an
@@ -18,7 +18,7 @@
 //! RSSI, transmit) continues it from each completion event, so sequences
 //! never interleave; the hand-over alone lets an owed reply in before it
 //! transmits, since its frame can take 139 ms on air. While a hand-over
-//! waits for its ACK, only owed replies use the radio: the heartbeat and
+//! waits for its ACK, only an owed reply uses the radio: the heartbeat and
 //! the sweep would take the relay off its home channel, where the ACK
 //! arrives (§9.3). Jobs that are not ready say when they will be, and the earliest
 //! of those is `next_wakeup`.
@@ -30,7 +30,7 @@ use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::MsgId;
 use crate::node::mac::{self, Radio};
-use crate::node::transfer::{Replies, Step, Transfer, RELAY_REPLIES};
+use crate::node::transfer::{Replies, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
@@ -141,7 +141,7 @@ pub struct Relay {
     /// Neighbour slots the front forward passed over because
     /// listen-before-talk gave up on them (§9.3 step 2); not tried.
     skipped: u64,
-    replies: Replies<RELAY_REPLIES>,
+    replies: Replies,
     leaves: Leaves,
     delivery: DeliveryQueue,
     delivered: Delivered,
@@ -694,8 +694,9 @@ mod tests {
 
     #[test]
     fn sizes() {
-        // docs/core-interface.md §6: under 50 KiB with every table; 50 344 B
-        // with a 40-place send queue and a 41-place delivery queue.
+        // docs/core-interface.md §6: under 50 KiB with every table; 50 080 B
+        // with a 40-place send queue, a 41-place delivery queue and one
+        // owed reply.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
         std::println!("Relay {relay} B, Leaf {leaf} B");
@@ -706,8 +707,17 @@ mod tests {
     /// Drive `r` from its own wakeups until `until`, completing every radio
     /// action at once on a quiet channel. Returns the frames it sent.
     fn drive(r: &mut Relay, now: &mut Instant, until: Instant) -> Vec<(Instant, Frame)> {
+        drive_from(r, now, until, Vec::new())
+    }
+
+    /// [`drive`], with `pending` the actions `r` has asked for already.
+    fn drive_from(
+        r: &mut Relay,
+        now: &mut Instant,
+        until: Instant,
+        mut pending: Vec<Action>,
+    ) -> Vec<(Instant, Frame)> {
         let mut sent = Vec::new();
-        let mut pending: Vec<Action> = Vec::new();
         loop {
             let event = match pending.pop() {
                 Some(Action::Cad(channel)) => Event::CadDone {
@@ -805,5 +815,106 @@ mod tests {
             "sent {:?} after the bucket fit it",
             first.since(fits)
         );
+    }
+
+    /// Two packets arrive within one reply time. The second finds the one
+    /// owed-reply place holding the first one's ACK, which waits out a
+    /// busy channel: it is neither taken nor refused, and gets no answer.
+    /// Its sender's retry, after the first ACK is gone, is taken (roadmap
+    /// D29 rule 4).
+    #[test]
+    fn a_packet_that_cannot_be_answered_is_not_taken() {
+        use crate::event::AppEvent;
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::wire::Data;
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        assert!(!r.booting());
+        let (a_home, b_home) = (Channel::new(5).unwrap(), Channel::new(6).unwrap());
+        let packet = |home: Channel, from: u32, text: &'static [u8]| Data {
+            sender_home: home,
+            dst_hop: r.me(),
+            src_hop: ShortName(from),
+            dst_pos: r.config.position,
+            dst_leaf: LeafId::RELAY,
+            hops: 1,
+            payload: text,
+        };
+        let (a, b) = (packet(a_home, 1, b"first"), packet(b_home, 2, b"second"));
+        let bytes = |d: &Data<'_>| {
+            let f = mac::frame(&Packet::Data(*d), r.home, MIN_PREAMBLE_SYMBOLS);
+            f.bytes[..f.len as usize].to_vec()
+        };
+        let (a_bytes, b_bytes) = (bytes(&a), bytes(&b));
+        let received = |bytes| Event::Received {
+            channel: Channel::new(3).unwrap(),
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes,
+        };
+        let taken = |actions: &[Action], d: &Data<'_>| {
+            actions.iter().any(
+                |x| matches!(x, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == d.msg_id()),
+            )
+        };
+        let acks = |sent: &[(Instant, Frame)], d: &Data<'_>, home| {
+            sent.iter()
+                .filter(|(_, f)| {
+                    f.channel == home
+                        && matches!(Packet::decode(f.payload()), Ok(Packet::Ack(k)) if k.msg_id == d.msg_id())
+                })
+                .count()
+        };
+
+        now = Instant::ZERO + Duration::from_secs(10);
+        let mut actions = Vec::new();
+        r.handle(received(&a_bytes), now, &mut |x| actions.push(x));
+        assert!(taken(&actions, &a));
+        assert!(actions.contains(&Action::Cad(a_home)), "{actions:?}");
+        // A's channel is busy: its ACK waits a backoff.
+        now += Duration::from_millis(1);
+        r.handle(
+            Event::CadDone {
+                channel: a_home,
+                busy: true,
+            },
+            now,
+            &mut |_| {},
+        );
+        assert!(r.replies.pending());
+
+        now += Duration::from_millis(1);
+        actions.clear();
+        r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
+        assert!(actions.is_empty(), "{actions:?}");
+        assert!(
+            r.records.get(b.msg_id(), now).is_none(),
+            "B's packet was taken"
+        );
+
+        let until = now + Duration::from_millis(100);
+        let sent = drive(&mut r, &mut now, until);
+        assert_eq!(acks(&sent, &a, a_home), 1);
+        assert_eq!(sent.len(), 1, "B's packet was answered");
+
+        // B's retry, after the retry wait (§9.3).
+        now += Duration::from_millis(200);
+        actions.clear();
+        r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
+        assert!(taken(&actions, &b));
+        let until = now + Duration::from_millis(100);
+        let sent = drive_from(&mut r, &mut now, until, actions);
+        assert_eq!(acks(&sent, &b, b_home), 1);
     }
 }

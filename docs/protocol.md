@@ -485,6 +485,7 @@ on to the next.
 
 A relay answers a DATA packet addressed to it (§9.2.1, §9.3) before
 acting on it: with an ACK if it takes it, with BUSY (§14) if it does not.
+It does either only when it owes no other reply (§9.3).
 It takes a packet that would give it something to send on only if its
 send queue has a place for it and its airtime bucket (§9.4) holds, as
 it stands, the ACK, the airtime of every frame in the send queue and of
@@ -717,6 +718,16 @@ produce, would end the wrong hand-over and strand the message. A relay
 ACKs a packet as soon as it has received it, even while waiting for an
 ACK of its own; if that makes it miss its own ACK, its next attempt
 covers it.
+
+A relay owes at most one reply at a time. A packet, DATA or ATTACH,
+that arrives while its reply to another packet is still waiting for the
+channel is neither taken nor refused: the relay says nothing and changes
+nothing, and the sender retries as for a lost ACK. A second reply would
+go out only after the first, which may wait for its channel until its
+own sender gives up, 100 ms; taking a packet it may not be able to
+answer in time would let its sender hand the message to someone else
+as well. A copy of the packet the owed reply answers, sent again because
+that reply is late, is answered by it (roadmap D29).
 
 So: **a node receives everything, ACKs included, on its home channel, and
 leaves it only to transmit.** A leaf's home channel is its relay's, so
