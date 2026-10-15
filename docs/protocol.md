@@ -311,15 +311,43 @@ Per node, up to 64 entries:
 | x, y | from heartbeat; the entry key and the neighbour's identity |
 | channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent (§9.2.1), whichever came last |
 | last_heard | local monotonic time |
-| rssi_ema | averaged RSSI, for a leaf's choice of relay and for tie-breaking |
+| rssi_ema | averaged RSSI of every frame heard from it: heartbeats, its DATA and its ACKs; each new frame counts half. Says whether it has margin |
 | fail_count | consecutive ACK failures |
 | banned_until | when the ban of its last refusal ends (§9.3) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
   from it (§9.3).
+- **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
+  above the noise floor (§6.1). A 255-byte frame is then still lost no
+  more than one time in a hundred, the standard the datasheet sets for
+  sensitivity, after a fade of 4 dB. A neighbour without margin is a
+  next hop only when no other is left (§9.2.3). It stays in the table:
+  its heartbeats show it is alive. The 4.1 dB is worked out from the
+  radio:
+  - A packet arrives only if every one of its symbols does. A 255-byte
+    frame has 541 symbols, the datasheet's 64-byte reference packet 156,
+    a heartbeat 46. With the symbol error rate of the modulation (32
+    possible symbols, detected without phase), a 255-byte frame needs
+    0.44 dB more signal than the reference packet for the same 1 % loss.
+    A heartbeat needs 0.46 dB less, and half of all heartbeats still
+    arrive 3.2 dB below the full frame's level. So a heartbeat says
+    little about a full frame.
+  - Sensitivity is 2.5 dB below the noise at SF5 (datasheet Table 6-1).
+    The full frame's level is therefore 2.5 − 0.44 = 2.06 dB below the
+    noise floor.
+  - The fade is 4 dB, the standard deviation of fading over time and
+    channel in the simulated links. A frame goes out on the neighbour's
+    channel, and this relay hears the neighbour on its own, where the
+    fading is different, so the average must cover a fade it cannot see.
+    No one has measured this on our hardware yet; it is to be replaced by
+    Phase 2 measurements.
+  - So the signal must average −2.06 + 4 = 1.94 dB above the noise
+    floor. The radio's packet RSSI is the power in the channel, signal
+    and noise together (datasheet §13.5.3), so it reads
+    10 log10(1 + 10^0.194) = 4.1 dB above the floor.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
-  `fail_count ≥ 2` is a next hop only when no other is left (§9.2.3)
-  until it ACKs a packet from this relay or three rotations (390 s)
+  `fail_count ≥ 2` is a next hop only when no other with margin is left
+  (§9.2.3) until it ACKs a packet from this relay or three rotations (390 s)
   pass. Its heartbeats keep it in
   the table but do not clear the demotion: a heartbeat proves the
   neighbour is alive, not that it hears us, and a link that works one way
@@ -464,16 +492,27 @@ except those in the tried set (§9.2.2), those banned (§9.3), and those
 set aside for the current hand-over because they did not take it (§9.3
 steps 2 and 6, refusal).
 
-The **order** is: neighbours that are not demoted before demoted ones;
-within each, distance to the destination position in the local plane
-(§11), nearest first; equal distances are ordered by short name. The
+The **order** is: neighbours with margin (§8.2) before those without;
+within each, neighbours that are not demoted before demoted ones; within
+each, distance to the destination position in the local plane (§11),
+nearest first; equal distances are ordered by short name. The
 relay sends to the first candidate. If there is none but neighbours that
 are only banned, the message waits until the earliest ban ends and is
 routed again then (§9.3). If there is none at all, the relay returns the
 message to its parent (§9.2.5).
 
-A demoted neighbour is thus a last resort: tried only when every other
-has been, its failures counted as usual. Demotion keeps a failing link
+A neighbour without margin is tried only after every neighbour with
+margin, demoted ones included. Fading lets a relay hear the 8-byte
+heartbeat of a neighbour whose link usually cannot carry a full DATA
+frame. Such a neighbour is often the farthest, so the nearest to the
+destination, and without this rule every message would try it first and
+send three DATA frames that are not answered. It stays a last resort, and
+is not left out, because on a sparse line it may be the only way on, and
+a weak link still carries some frames. When it does take one, its ACK
+is heard and counts toward its margin (roadmap D38).
+
+Among neighbours with margin, a demoted one is thus a last resort: tried
+only when every other has been, its failures counted as usual. Demotion keeps a failing link
 from costing every message its attempts while another route exists; it
 should not drop a message whose only route is that link. Two hand-overs
 lost to collisions demote a neighbour that works, and on a line it is

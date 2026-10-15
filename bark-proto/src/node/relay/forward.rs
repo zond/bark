@@ -98,7 +98,7 @@ use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
-use crate::tables::neighbours::Neighbour;
+use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
@@ -264,11 +264,14 @@ impl Relay {
     /// The next hop for the message of `record` to `dst` (§9.2.3): the
     /// live neighbour nearest `dst` that is not in the tried set, not set
     /// aside and not banned, ties broken by short name; a demoted one only
-    /// when no other is left (roadmap D25, D29).
+    /// when no other with margin is left, and one without margin only when
+    /// no other at all (roadmap D25, D29, D38).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
         let skipped = self.skipped;
+        let floor = self.busy.noise_floor_dbm();
+        let faint = |n: &Neighbour| !Neighbours::has_margin(n, floor);
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         self.neighbours
             .live(now)
@@ -280,8 +283,9 @@ impl Relay {
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                demoted(a)
-                    .cmp(&demoted(b))
+                faint(a)
+                    .cmp(&faint(b))
+                    .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.position.short().0.cmp(&b.position.short().0))
             })
@@ -759,7 +763,8 @@ impl Relay {
     /// When fresh work could next start moving, if every live neighbour is
     /// banned now: the earliest end of those bans. A message entering here
     /// has no tried set, so these are all the candidates §9.2.3 would have
-    /// for it, demoted ones included as its last resort. Fresh work waits
+    /// for it, demoted ones and those without margin included as its last
+    /// resort. Fresh work waits
     /// at its origin meanwhile, where its application sees it, rather than
     /// here for a ban, to be refused again (roadmap D34). With no live
     /// neighbour at all it is no ban: the search ends as before.

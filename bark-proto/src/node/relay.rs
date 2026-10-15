@@ -33,7 +33,7 @@ use crate::ids::MsgId;
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer};
 use crate::node::{Config, Core, Rng};
-use crate::position::Position;
+use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
@@ -658,21 +658,28 @@ impl Relay {
 
     // --- Reception ---
 
-    fn received(&mut self, bytes: &[u8], now: Instant, emit: &mut dyn FnMut(Action)) {
+    fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.count_busy(bytes, now);
         // A booting relay has no home channel yet to be reached on, nor
         // neighbours to forward to: it takes no traffic (§6.2).
         let running = self.stage == Stage::Running;
         let decoded = Packet::decode(bytes);
         // A relay's DATA says where it listens now (§9.2.1); a leaf's
-        // (`hops` 0) names no relay.
-        if let Ok(Packet::Data(d)) = decoded {
-            if d.hops > 0 {
+        // (`hops` 0) names no relay. Its DATA and ACKs show how well it is
+        // heard (§8.2).
+        match decoded {
+            Ok(Packet::Data(d)) if d.hops > 0 => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
+                self.neighbours.frame_heard(d.src_hop, rssi);
             }
+            Ok(Packet::Ack(a)) => {
+                let from = ShortName(u32::from_be_bytes(a.from.0));
+                self.neighbours.frame_heard(from, rssi);
+            }
+            _ => {}
         }
         match decoded {
-            Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
+            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
             Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
@@ -710,9 +717,10 @@ impl Relay {
         }
     }
 
-    fn heard(&mut self, hb: Heartbeat, now: Instant, emit: &mut dyn FnMut(Action)) {
+    fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         if hb.position != self.config.position {
-            if let Some(slot) = self.neighbours.heard(&hb, &self.plane, now).new_occupant() {
+            let heard = self.neighbours.heard(&hb, rssi, &self.plane, now);
+            if let Some(slot) = heard.new_occupant() {
                 self.records.slot_reoccupied(slot);
                 self.skipped &= !(1 << slot);
             }
@@ -765,7 +773,9 @@ impl Core for Relay {
         let threshold = self.busy.threshold_dbm();
         match event {
             Event::Wakeup => {}
-            Event::Received { bytes, .. } => self.received(bytes, now, emit),
+            Event::Received {
+                bytes, rssi_dbm, ..
+            } => self.received(bytes, rssi_dbm, now, emit),
             Event::CadDone { busy, .. } => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                 Some(Job::HandOver) => self.handover_check(busy, now, emit),
@@ -1835,7 +1845,7 @@ mod tests {
                     ..me
                 },
             };
-            r.neighbours.heard(&hb, &r.plane, now);
+            r.neighbours.heard(&hb, -80, &r.plane, now);
             r.neighbours.refused(hb.position, now + BAN);
         }
         let far = Position {

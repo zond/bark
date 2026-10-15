@@ -4,6 +4,7 @@
 
 mod common;
 
+use bark_proto::tables::neighbours::Neighbours;
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node, Position,
@@ -990,6 +991,102 @@ fn a_demoted_neighbour_is_the_last_resort() {
     let id = send(&mut h, o, d, b"through anyway");
     h.run_for(secs(5));
     assert!(delivered(&h, d, id), "{:?}", traces(&h, o));
+}
+
+/// Packet RSSI of a link heard 2 dB above the test medium's noise
+/// (`common::NOISE_DBM`, −121 dBm): a heartbeat gets through, but a
+/// full-length frame would not ride out a fade (§9.2.3, roadmap D38).
+const FAINT_DBM: i16 = -119;
+
+/// The DATA frames relay `from` sent to relay `to`.
+fn data_sent(h: &Harness<Node>, from: usize, to: usize) -> usize {
+    let (a, b) = (position(h, from).short(), position(h, to).short());
+    h.nodes[from]
+        .sent
+        .iter()
+        .filter(|(_, f)| data_names(f.payload()) == Some((a, b)))
+        .count()
+}
+
+/// O hears F, the neighbour nearest D, only faintly: F is no candidate
+/// while M, heard well, is left (§9.2.3, roadmap D38).
+///
+/// ```text
+///          F
+///        .   \
+///       O     D
+///        \   /
+///          M
+/// ```
+#[test]
+fn a_faint_neighbour_is_not_chosen() {
+    let (o, f, m, d) = (0, 1, 2, 3);
+    let mut h = Harness::new(vec![
+        relay(0.0, 0.0, 71),
+        relay(700.0, 100.0, 72),
+        relay(400.0, -200.0, 73),
+        relay(1000.0, 0.0, 74),
+    ]);
+    let links = [(o, f), (o, m), (f, d), (m, d)];
+    for (a, b) in links {
+        h.link(a, b);
+    }
+    h.set_rssi(o, f, FAINT_DBM);
+    discover(&mut h, &links);
+    let id = send(&mut h, o, d, b"the strong way");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    let name = |i| position(&h, i).short();
+    assert_eq!(forwards(&h, o, id), vec![name(m)]);
+    assert_eq!(data_sent(&h, o, f), 0);
+}
+
+/// O's only way to D is F, heard faintly. F is the last resort: the
+/// message goes through it (§9.2.3, roadmap D38). F's ACK, heard as well
+/// as the link now is, gives F margin.
+///
+/// ```text
+///       O . F - D
+/// ```
+#[test]
+fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
+    let (o, f, d) = (0, 1, 2);
+    let mut h = Harness::new(vec![
+        relay(0.0, 0.0, 81),
+        relay(400.0, 0.0, 82),
+        relay(800.0, 0.0, 83),
+    ]);
+    let links = [(o, f), (f, d)];
+    for (a, b) in links {
+        h.link(a, b);
+    }
+    h.set_rssi(o, f, FAINT_DBM);
+    discover(&mut h, &links);
+    let target = position(&h, f);
+    let margin = |h: &Harness<Node>| {
+        let r = core(h, o);
+        let n = r.neighbours().find(|n| n.position == target).unwrap();
+        Neighbours::has_margin(n, r.busy().noise_floor_dbm())
+    };
+    assert!(!margin(&h));
+    let heartbeats = |h: &Harness<Node>| {
+        h.nodes[o]
+            .received
+            .iter()
+            .filter(|(_, b)| {
+                matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.position == target)
+            })
+            .count()
+    };
+    let id = send(&mut h, o, d, b"the only way");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert!(!margin(&h), "an ACK as faint as the heartbeats");
+    let before = heartbeats(&h);
+    h.set_rssi(o, f, -100);
+    let id = send(&mut h, o, d, b"the link is better now");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert_eq!(heartbeats(&h), before, "no heartbeat of F heard meanwhile");
+    assert!(margin(&h), "F's ACK was heard well");
+    no_drops(&h);
 }
 
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose

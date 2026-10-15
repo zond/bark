@@ -110,6 +110,34 @@ pub const fn time_on_air(payload_len: u8, preamble_symbols: u16) -> Duration {
     Duration::from_micros(header_end(preamble_symbols).as_micros() + payload.as_micros())
 }
 
+/// Signal to noise ratio at sensitivity at SF5 (datasheet Table 6-1:
+/// −2.5 dB). The datasheet states sensitivity as the level where a 64-byte
+/// packet is lost 1 % of the time (§3.5).
+pub const DEMOD_SNR_DB: f32 = -2.5;
+
+/// How far above sensitivity a 255-byte frame must be received to be lost
+/// no more than 1 % of the time, the datasheet's own standard (§3.5). A
+/// packet arrives only if every symbol does, and longer packets have more
+/// symbols; the symbol error rate is that of noncoherent detection of 32
+/// orthogonal signals, anchored at the datasheet's 64-byte point
+/// (`docs/reception-research-2026-10-15.md`). Derived in the tests below.
+pub const FULL_FRAME_ABOVE_SENSITIVITY_DB: f32 = 0.44;
+
+/// The fade a link must ride out: the standard deviation of fading over
+/// time and channel in the scenarios, 4 dB (`docs/roadmap.md` D38). Not
+/// measured; to be replaced by the bench and field measurements of Phase 2.
+pub const FADE_DEPTH_DB: f32 = 4.0;
+
+/// The packet RSSI, in dB above the noise floor, at which a frame of full
+/// length still arrives 99 times in 100 through a fade of
+/// [`FADE_DEPTH_DB`]: about 4.1 dB. The radio's packet RSSI is the power
+/// in the channel, signal plus noise (datasheet §13.5.3, RssiPkt), so the
+/// signal's level above the floor, 1.9 dB, reads higher.
+pub fn full_frame_rssi_above_noise_db() -> f32 {
+    let signal = DEMOD_SNR_DB + FULL_FRAME_ABOVE_SENSITIVITY_DB + FADE_DEPTH_DB;
+    10.0 * libm::log10f(1.0 + libm::powf(10.0, signal / 10.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +163,57 @@ mod tests {
         // which is the "≈12 ms" of design §7.
         let t = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
         assert_eq!(t.as_micros(), 11_840);
+    }
+
+    /// Symbol error of noncoherent detection of M = 32 orthogonal signals
+    /// at symbol energy to noise density `es_n0` (Proakis and Salehi,
+    /// Digital Communications, 5th ed., §4.5).
+    fn symbol_error(es_n0: f64) -> f64 {
+        let m = 1u32 << SPREADING_FACTOR;
+        let (mut binom, mut sum) = (1.0, 0.0);
+        for k in 1..m {
+            binom *= (m - k) as f64 / k as f64;
+            let term = binom / (k + 1) as f64 * libm::exp(-(k as f64) / (k + 1) as f64 * es_n0);
+            sum += if k % 2 == 1 { term } else { -term };
+        }
+        sum
+    }
+
+    /// Es/N0 at which a packet of `len` bytes with `preamble` symbols is
+    /// lost with probability `per`: every symbol must arrive.
+    fn es_n0_for(len: u8, preamble: u16, per: f64) -> f64 {
+        let n = time_on_air(len, preamble).as_micros() as f64 / SYMBOL_TIME.as_micros() as f64;
+        let p_sym = 1.0 - libm::pow(1.0 - per, 1.0 / n);
+        let (mut lo, mut hi) = (0.0f64, 1e3f64);
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if symbol_error(mid) > p_sym {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        hi
+    }
+
+    #[test]
+    fn full_frame_level_follows_the_symbol_error_rate() {
+        // The datasheet's sensitivity packet: 64 bytes, 8-symbol preamble,
+        // 1 % lost (§3.5). Its Es/N0 is sensitivity.
+        let sens = es_n0_for(64, 8, 0.01);
+        let above = |len: u8, per: f64| {
+            10.0 * libm::log10(es_n0_for(len, MIN_PREAMBLE_SYMBOLS, per) / sens)
+        };
+        let full = above(255, 0.01);
+        assert!(
+            (full - FULL_FRAME_ABOVE_SENSITIVITY_DB as f64).abs() < 0.005,
+            "{full}"
+        );
+        // An 8-byte heartbeat is lost 1 % of the time 0.9 dB lower, and
+        // half the time 3.2 dB lower.
+        assert!((full - above(8, 0.01) - 0.90).abs() < 0.01);
+        assert!((full - above(8, 0.5) - 3.23).abs() < 0.01);
+        let rssi = full_frame_rssi_above_noise_db();
+        assert!((rssi - 4.09).abs() < 0.01, "{rssi}");
     }
 }
