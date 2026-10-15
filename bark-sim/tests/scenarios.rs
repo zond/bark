@@ -1,6 +1,6 @@
 //! Whole-scenario tests: determinism, the capacity-sized run, and S1.
 
-use bark_sim::links::{FadingParams, Model};
+use bark_sim::links::{FadingParams, Model, Site};
 use bark_sim::metrics::DropReason;
 use bark_sim::scenario::{
     Availability, Destination, InterfererSpec, Placement, RoleSpec, ScriptAction, TrafficSpec,
@@ -154,57 +154,11 @@ fn same_seed_gives_bit_identical_output() {
 }
 
 #[test]
-fn capacity_sized_scenario_runs_a_minute_quickly() {
-    // Design §13 collision domain: 28 km², 270 relays, 20 000 leaves, texts
-    // at ten per leaf per day.
-    let side = 28e6f64.sqrt();
-    let area_km2 = side * side / 1e6;
-    let mut sc = Scenario::new("capacity", 7, 60.0)
-        .place(Placement::Density {
-            role: RoleSpec::Relay,
-            x0: 0.0,
-            y0: 0.0,
-            width_m: side,
-            height_m: side,
-            per_km2: 270.0 / area_km2,
-            indoor: false,
-            rooftop: false,
-        })
-        .place(Placement::Density {
-            role: RoleSpec::Leaf,
-            x0: 0.0,
-            y0: 0.0,
-            width_m: side,
-            height_m: side,
-            per_km2: 20_000.0 / area_km2,
-            indoor: true,
-            rooftop: false,
-        });
-    sc.links.exponent = 3.5;
-    sc.links.indoor_loss_db = 15.0;
-    sc.links.shadowing_sigma_db = 6.0;
-    sc.links.fading = FadingParams {
-        sigma_db: 4.0,
-        correlation_time_s: 60.0,
-        step_s: 10.0,
-    };
-    sc.traffic.push(TrafficSpec::Poisson {
-        per_leaf_per_hour: 10.0 / 24.0,
-        payload_min: 20,
-        payload_max: 140,
-        destination: Destination::Uniform,
-    });
-    sc.interferers.push(InterfererSpec {
-        x: side / 2.0,
-        y: side / 2.0,
-        channel: 6,
-        power_dbm: 10.0,
-        lora: false,
-        mean_on_s: 1.0,
-        mean_off_s: 4.0,
-    });
-    sc.metrics.observers = vec!["relay:0".into(), "relay:100".into(), "relay:200".into()];
-    sc.metrics.per_node = false;
+fn capacity_scenario_runs_a_minute_quickly() {
+    // S4 (`scenarios/s4-capacity.toml`): design §13's collision domain,
+    // 28 km² with 269 relays, a fifth of them on roofs, and 20 000 leaves.
+    let mut sc = scenario("s4-capacity.toml");
+    sc.duration_s = 60.0;
     let t0 = Wall::now();
     let mut sim = Sim::new(&sc).expect("builds");
     let built = t0.elapsed();
@@ -224,11 +178,22 @@ fn capacity_sized_scenario_runs_a_minute_quickly() {
         (total - built).as_secs_f64(),
         total.as_secs_f64()
     );
-    assert_eq!((s.relays, s.leaves), (270, 20_000));
+    assert_eq!((s.relays, s.leaves), (269, 20_000));
+    let roofs = (0..s.relays)
+        .filter(|&r| sim.site(r) == Site::Rooftop)
+        .count();
+    assert_eq!(roofs, 53);
+    // Two rooftops 3 km apart hear each other at sensitivity on average
+    // (§4, §13); a windowsill pair that far apart does not.
+    let p = &sc.links;
+    let at_3km = 10.0 - p.path_loss_db(3000.0);
+    let sens = sc.radio.sensitivity_dbm();
+    assert!((at_3km - p.site_loss_db(Site::Rooftop, Site::Rooftop) - sens).abs() < 0.1);
+    assert!(at_3km - p.site_loss_db(Site::Outdoor, Site::Rooftop) < sens - 20.0);
     // Within the relays' boot listen (design §6.2) no leaf has attached,
     // so the texts have no address yet.
     let texts = s.app.originated + s.app.unaddressed;
-    assert!(texts > 50, "{texts} texts in a minute");
+    assert!(texts > 200, "{texts} texts in a minute");
     // "A few seconds" on an optimised build; unoptimised test builds are
     // several times slower, so the bound is looser there.
     let limit = if cfg!(debug_assertions) { 30.0 } else { 5.0 };
