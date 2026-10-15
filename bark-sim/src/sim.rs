@@ -15,7 +15,7 @@
 //! The reception model is in `radio.rs`.
 
 use crate::geo::{Grid, Origin, Xy};
-use crate::links::{LinkTable, NodeRadio};
+use crate::links::{LinkTable, NodeRadio, Site};
 use crate::metrics::{DropReason, Metrics, Observer, Outcome};
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
@@ -421,13 +421,13 @@ impl Sim {
         let positions: Vec<Position> = xy.iter().map(|&p| origin.position(p)).collect();
         let names: Vec<Option<String>> = placed.iter().map(|p| p.name.clone()).collect();
         let tx_dbm = vec![base.tx_power_dbm as f64; n];
-        let indoor: Vec<bool> = placed.iter().map(|p| p.indoor).collect();
+        let site: Vec<Site> = placed.iter().map(PlacedNode::site).collect();
         let links = LinkTable::build(
             &sc.links,
             &NodeRadio {
                 xy: &xy,
                 tx_dbm: &tx_dbm,
-                indoor: &indoor,
+                site: &site,
                 names: &names,
             },
             radio.cutoff_dbm(),

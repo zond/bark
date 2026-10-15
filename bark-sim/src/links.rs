@@ -20,10 +20,9 @@
 //! process exceeds 0.6 % of the time.
 //!
 //! Generators find candidate pairs with spatial grids whose cell side is
-//! the cut-off distance for the pair's class (outdoor–outdoor,
-//! outdoor–indoor, indoor–indoor, since indoor loss shortens reach), so
-//! building the table visits each node's 3 × 3 cell neighbourhoods and
-//! never all N².
+//! the cut-off distance for the pair's sites (indoor loss shortens reach,
+//! two rooftops lengthen it), so building the table visits each node's
+//! 3 × 3 cell neighbourhoods and never all N².
 
 use crate::geo::{Grid, Xy};
 use crate::rng::{normal_at, normal_fast_at, stream_seed, Purpose};
@@ -46,6 +45,22 @@ pub fn free_space_loss_1m_db() -> f64 {
 /// Shadowing draws are truncated at this many standard deviations, so that
 /// the generator's cut-off distance is a hard bound.
 pub const SHADOW_TRUNCATE_SIGMA: f64 = 3.0;
+
+/// Where a node's antenna is, as far as the link generator cares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Site {
+    /// In the open at street or window height.
+    Outdoor,
+    /// Behind a wall: [`LinkParams::indoor_loss_db`] at this end.
+    Indoor,
+    /// On a roof: [`LinkParams::rooftop_bonus_db`] on links to another
+    /// rooftop.
+    Rooftop,
+}
+
+impl Site {
+    const ALL: [Site; 3] = [Site::Outdoor, Site::Indoor, Site::Rooftop];
+}
 
 /// Which generator fills the table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -110,6 +125,9 @@ pub struct LinkParams {
     pub reference_loss_db: Option<f64>,
     /// Extra loss in dB for each end of a link that is an indoor node.
     pub indoor_loss_db: f64,
+    /// Less loss in dB on a link between two rooftop nodes, both above
+    /// the clutter that the exponent describes.
+    pub rooftop_bonus_db: f64,
     /// Log-normal shadowing standard deviation in dB; 0 disables it.
     pub shadowing_sigma_db: f64,
     /// Per-channel time-varying fading.
@@ -125,6 +143,7 @@ impl Default for LinkParams {
             exponent: 3.0,
             reference_loss_db: None,
             indoor_loss_db: 0.0,
+            rooftop_bonus_db: 0.0,
             shadowing_sigma_db: 0.0,
             fading: FadingParams::default(),
             table: Vec::new(),
@@ -144,12 +163,20 @@ impl LinkParams {
         self.l0() + 10.0 * self.exponent * d.max(1.0).log10()
     }
 
+    /// Loss in dB on a link between sites `a` and `b` on top of the path
+    /// loss: the walls, less the rooftop bonus.
+    pub fn site_loss_db(&self, a: Site, b: Site) -> f64 {
+        let walls = [a, b].iter().filter(|&&s| s == Site::Indoor).count();
+        let roofs = a == Site::Rooftop && b == Site::Rooftop;
+        self.indoor_loss_db * walls as f64 - if roofs { self.rooftop_bonus_db } else { 0.0 }
+    }
+
     /// Largest distance at which a transmitter of `tx_dbm` can deliver
-    /// `floor_dbm` through `indoor_ends` indoor ends, with shadowing at its
+    /// `floor_dbm` between sites `a` and `b`, with shadowing at its
     /// truncation in its favour.
-    pub fn cutoff_distance_m(&self, tx_dbm: f64, floor_dbm: f64, indoor_ends: u8) -> f64 {
+    pub fn cutoff_distance_m(&self, tx_dbm: f64, floor_dbm: f64, a: Site, b: Site) -> f64 {
         let budget = tx_dbm + SHADOW_TRUNCATE_SIGMA * self.shadowing_sigma_db
-            - self.indoor_loss_db * indoor_ends as f64
+            - self.site_loss_db(a, b)
             - floor_dbm
             - self.l0();
         10f64.powf(budget / (10.0 * self.exponent)).max(1.0)
@@ -186,7 +213,8 @@ pub struct BuildStats {
     pub pairs: u64,
     /// Directed links stored.
     pub links: u64,
-    /// Largest cut-off distance (outdoor–outdoor), metres; 0 for a table.
+    /// Largest cut-off distance over the pairs of sites present, metres;
+    /// 0 for a table.
     pub cutoff_m: f64,
 }
 
@@ -207,8 +235,8 @@ pub struct NodeRadio<'a> {
     pub xy: &'a [Xy],
     /// Transmit power in dBm.
     pub tx_dbm: &'a [f64],
-    /// Indoor flag.
-    pub indoor: &'a [bool],
+    /// Sites.
+    pub site: &'a [Site],
     /// Names, for table lookups.
     pub names: &'a [Option<String>],
 }
@@ -230,28 +258,34 @@ impl LinkTable {
         match p.model {
             Model::LogDistance => {
                 let tx_max = nodes.tx_dbm.iter().cloned().fold(f64::MIN, f64::max);
-                let cut = |ends: u8| p.cutoff_distance_m(tx_max, cutoff_dbm, ends);
-                stats.cutoff_m = cut(0);
-                // Per indoor class, the class's members and their positions.
-                let class: [Vec<u32>; 2] = [false, true].map(|c| {
+                let cut = |a: Site, b: Site| p.cutoff_distance_m(tx_max, cutoff_dbm, a, b);
+                // Per site, its members and their positions.
+                let class: [Vec<u32>; 3] = Site::ALL.map(|c| {
                     (0..n as u32)
-                        .filter(|&i| nodes.indoor[i as usize] == c)
+                        .filter(|&i| nodes.site[i as usize] == c)
                         .collect()
                 });
-                let class_xy: [Vec<Xy>; 2] =
-                    [0, 1].map(|c| class[c].iter().map(|&i| nodes.xy[i as usize]).collect());
-                // grids[from][to]: class `to` gridded at the cut-off for the pair class.
-                let grids: [[Option<Grid>; 2]; 2] = [0u8, 1].map(|from| {
-                    [0u8, 1].map(|to| {
-                        let members = &class_xy[to as usize];
-                        (!members.is_empty()).then(|| Grid::new(members, cut(from + to)))
+                let class_xy: [Vec<Xy>; 3] =
+                    [0, 1, 2].map(|c| class[c].iter().map(|&i| nodes.xy[i as usize]).collect());
+                // grids[from][to]: site `to` gridded at the cut-off for the pair.
+                let grids: [[Option<Grid>; 3]; 3] = [0, 1, 2].map(|from| {
+                    [0, 1, 2].map(|to| {
+                        let members = &class_xy[to];
+                        (!members.is_empty())
+                            .then(|| Grid::new(members, cut(Site::ALL[from], Site::ALL[to])))
                     })
                 });
+                stats.cutoff_m = grids
+                    .iter()
+                    .flatten()
+                    .flatten()
+                    .map(Grid::side)
+                    .fold(0.0, f64::max);
                 let shadow_seed = stream_seed(run_seed, Purpose::Shadowing, 0);
                 for a in 0..n {
-                    let from = nodes.indoor[a] as usize;
-                    for to in 0..2 {
-                        let Some(grid) = &grids[from][to] else {
+                    let from = nodes.site[a];
+                    for (to, site_to) in Site::ALL.into_iter().enumerate() {
+                        let Some(grid) = &grids[from as usize][to] else {
                             continue;
                         };
                         let radius = grid.side();
@@ -265,8 +299,7 @@ impl LinkTable {
                             if d > radius {
                                 return;
                             }
-                            let mut loss =
-                                p.path_loss_db(d) + p.indoor_loss_db * (from + to) as f64;
+                            let mut loss = p.path_loss_db(d) + p.site_loss_db(from, site_to);
                             if p.shadowing_sigma_db > 0.0 {
                                 loss -= p.shadowing_sigma_db
                                     * truncated_normal(shadow_seed, a as u64, b as u64);
@@ -493,11 +526,18 @@ mod tests {
         let n = 1500;
         let xy = scatter(n, 20_000.0, 1);
         let tx = vec![10.0; n];
-        let indoor: Vec<bool> = (0..n).map(|i| i % 3 == 0).collect();
+        let site: Vec<Site> = (0..n)
+            .map(|i| match (i % 3, i % 7) {
+                (0, _) => Site::Indoor,
+                (_, 1) => Site::Rooftop,
+                _ => Site::Outdoor,
+            })
+            .collect();
         let names = vec![None; n];
         let p = LinkParams {
             exponent: 3.5,
             indoor_loss_db: 10.0,
+            rooftop_bonus_db: 10.0,
             shadowing_sigma_db: 4.0,
             ..LinkParams::default()
         };
@@ -505,18 +545,16 @@ mod tests {
         let nodes = NodeRadio {
             xy: &xy,
             tx_dbm: &tx,
-            indoor: &indoor,
+            site: &site,
             names: &names,
         };
         let t = LinkTable::build(&p, &nodes, cutoff, 9).unwrap();
         let cut = t.stats.cutoff_m;
         assert!(
-            cut < 5000.0,
+            cut < 10_000.0,
             "cut-off {cut} m should be a fraction of the area"
         );
-        let cut_for = |a: usize, b: usize| {
-            p.cutoff_distance_m(10.0, cutoff, indoor[a] as u8 + indoor[b] as u8)
-        };
+        let cut_for = |a: usize, b: usize| p.cutoff_distance_m(10.0, cutoff, site[a], site[b]);
 
         // Every stored link is within its class's cut-off distance and above the cut-off power.
         let mut stored = 0;
@@ -544,8 +582,9 @@ mod tests {
                     continue;
                 }
                 let d = xy[a].dist(xy[b]);
-                let mut loss =
-                    p.path_loss_db(d) + 10.0 * (indoor[a] as u8 + indoor[b] as u8) as f64;
+                let roofs = site[a] == Site::Rooftop && site[b] == Site::Rooftop;
+                let walls = (site[a] == Site::Indoor) as u8 + (site[b] == Site::Indoor) as u8;
+                let mut loss = p.path_loss_db(d) + 10.0 * walls as f64 - 10.0 * roofs as u8 as f64;
                 loss -= 4.0 * truncated_normal(seed, a.min(b) as u64, a.max(b) as u64);
                 let expect = 10.0 - loss >= cutoff;
                 if expect {
@@ -563,16 +602,13 @@ mod tests {
         }
 
         // The generator evaluated no more pairs than the 3 × 3 neighbourhoods
-        // of the class grids hold, counting each pair from both ends.
+        // of the site grids hold, counting each pair from both ends.
         let mut bound = 0u64;
-        for from in [false, true] {
-            for to in [false, true] {
-                let members: Vec<Xy> = (0..n).filter(|&i| indoor[i] == to).map(|i| xy[i]).collect();
-                let grid = Grid::new(
-                    &members,
-                    p.cutoff_distance_m(10.0, cutoff, from as u8 + to as u8),
-                );
-                for i in (0..n).filter(|&i| indoor[i] == from) {
+        for from in Site::ALL {
+            for to in Site::ALL {
+                let members: Vec<Xy> = (0..n).filter(|&i| site[i] == to).map(|i| xy[i]).collect();
+                let grid = Grid::new(&members, p.cutoff_distance_m(10.0, cutoff, from, to));
+                for i in (0..n).filter(|&i| site[i] == from) {
                     grid.neighbourhood(xy[i], |_| bound += 1);
                 }
             }
@@ -603,7 +639,7 @@ mod tests {
         let nodes = NodeRadio {
             xy: &xy,
             tx_dbm: &[10.0, 10.0],
-            indoor: &[false, false],
+            site: &[Site::Outdoor, Site::Outdoor],
             names: &[None, None],
         };
         let mut t = LinkTable::build(&p, &nodes, -129.0, 3).unwrap();

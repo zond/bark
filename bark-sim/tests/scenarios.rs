@@ -23,6 +23,7 @@ fn busy_block(seed: u64) -> Scenario {
             spacing_m: 500.0,
             jitter_m: 50.0,
             indoor: false,
+            rooftop: false,
         })
         .place(Placement::Density {
             role: RoleSpec::Leaf,
@@ -32,6 +33,7 @@ fn busy_block(seed: u64) -> Scenario {
             height_m: 2000.0,
             per_km2: 50.0,
             indoor: true,
+            rooftop: false,
         });
     sc.links.exponent = 3.5;
     sc.links.indoor_loss_db = 10.0;
@@ -166,6 +168,7 @@ fn capacity_sized_scenario_runs_a_minute_quickly() {
             height_m: side,
             per_km2: 270.0 / area_km2,
             indoor: false,
+            rooftop: false,
         })
         .place(Placement::Density {
             role: RoleSpec::Leaf,
@@ -175,6 +178,7 @@ fn capacity_sized_scenario_runs_a_minute_quickly() {
             height_m: side,
             per_km2: 20_000.0 / area_km2,
             indoor: true,
+            rooftop: false,
         });
     sc.links.exponent = 3.5;
     sc.links.indoor_loss_db = 15.0;

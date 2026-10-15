@@ -11,7 +11,7 @@
 //! referenced.
 
 use crate::geo::{Origin, Xy};
-use crate::links::LinkParams;
+use crate::links::{LinkParams, Site};
 use crate::phy::RadioParams;
 use crate::rng::{Purpose, Stream};
 use bark_proto::{Config, Duration};
@@ -46,6 +46,9 @@ pub enum Placement {
         /// Indoor (adds the link model's indoor loss at this end).
         #[serde(default)]
         indoor: bool,
+        /// On a roof (the link model's rooftop bonus to other rooftops).
+        #[serde(default)]
+        rooftop: bool,
     },
     /// A square lattice over a rectangle, each point jittered uniformly by
     /// up to `jitter_m` in x and y.
@@ -70,6 +73,9 @@ pub enum Placement {
         /// Indoor.
         #[serde(default)]
         indoor: bool,
+        /// On a roof.
+        #[serde(default)]
+        rooftop: bool,
     },
     /// Uniformly random over a rectangle, `round(per_km2 × area)` nodes.
     Density {
@@ -90,6 +96,9 @@ pub enum Placement {
         /// Indoor.
         #[serde(default)]
         indoor: bool,
+        /// On a roof.
+        #[serde(default)]
+        rooftop: bool,
     },
 }
 
@@ -370,6 +379,19 @@ pub struct PlacedNode {
     pub xy: Xy,
     /// Indoor.
     pub indoor: bool,
+    /// On a roof.
+    pub rooftop: bool,
+}
+
+impl PlacedNode {
+    /// Where its antenna is, for the link generator.
+    pub fn site(&self) -> Site {
+        match (self.indoor, self.rooftop) {
+            (true, _) => Site::Indoor,
+            (false, true) => Site::Rooftop,
+            (false, false) => Site::Outdoor,
+        }
+    }
 }
 
 impl Scenario {
@@ -402,6 +424,7 @@ impl Scenario {
             x,
             y,
             indoor: false,
+            rooftop: false,
         });
         self
     }
@@ -477,11 +500,13 @@ impl Scenario {
                     x,
                     y,
                     indoor,
+                    rooftop,
                 } => out.push(PlacedNode {
                     name: name.clone(),
                     role: *role,
                     xy: Xy { x: *x, y: *y },
                     indoor: *indoor,
+                    rooftop: *rooftop,
                 }),
                 Placement::Lattice {
                     role,
@@ -492,6 +517,7 @@ impl Scenario {
                     spacing_m,
                     jitter_m,
                     indoor,
+                    rooftop,
                 } => {
                     if *spacing_m <= 0.0 {
                         return Err("lattice spacing_m must be positive".into());
@@ -510,6 +536,7 @@ impl Scenario {
                                     y: y0 + j as f64 * spacing_m + jy,
                                 },
                                 indoor: *indoor,
+                                rooftop: *rooftop,
                             });
                         }
                     }
@@ -522,6 +549,7 @@ impl Scenario {
                     height_m,
                     per_km2,
                     indoor,
+                    rooftop,
                 } => {
                     let n = (per_km2 * width_m * height_m / 1e6).round() as usize;
                     for _ in 0..n {
@@ -533,10 +561,14 @@ impl Scenario {
                                 y: y0 + rng.uniform() * height_m,
                             },
                             indoor: *indoor,
+                            rooftop: *rooftop,
                         });
                     }
                 }
             }
+        }
+        if let Some(n) = out.iter().find(|n| n.indoor && n.rooftop) {
+            return Err(format!("node at {:?} is both indoor and on a roof", n.xy));
         }
         // Stable partition: relays first.
         let (mut relays, leaves): (Vec<_>, Vec<_>) =
@@ -593,6 +625,7 @@ mod tests {
                 spacing_m: 500.0,
                 jitter_m: 20.0,
                 indoor: false,
+                rooftop: false,
             })
             .place(Placement::Density {
                 role: RoleSpec::Leaf,
@@ -602,6 +635,7 @@ mod tests {
                 height_m: 1000.0,
                 per_km2: 25.0,
                 indoor: true,
+                rooftop: false,
             });
         let n = s.placed().unwrap();
         assert_eq!(n.len(), 1 + 1 + 6 + 25);
