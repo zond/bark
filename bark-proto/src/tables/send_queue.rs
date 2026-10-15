@@ -1,26 +1,43 @@
 //! The send queue (design §9.3): packets waiting for their hand-over, the
-//! one being handed over included, first in first out.
+//! one being handed over included, in the order they arrived.
 //!
-//! A relay takes a packet only if the airtime of everything queued, that
-//! packet included, fits in its duty bucket as it stands (§9.2.4, roadmap
-//! D29), so the queue never holds more than the bucket can send at once.
-//! Its length follows: the bucket's depth, 6 s, over the time of one full
-//! frame and its ACK, `138.6 + 11.8 = 150.4 ms`: ⌈39.9⌉ = 40. Each packet
-//! taken also costs the ACK that takes it, so from a full bucket with the
-//! reply reserve left in at most 38 full frames fit, and for full frames
-//! the bucket binds first. Short frames fill the 40 places first: forty
-//! hand-overs of them still go out in a few seconds.
+//! **Regular room.** A relay takes a packet into it only if the airtime of
+//! everything queued, that packet included, fits in its duty bucket as it
+//! stands (§9.2.4, roadmap D29). Its length follows: the bucket's depth,
+//! 6 s, over the time of one full frame and its ACK, `138.6 + 11.8 =
+//! 150.4 ms`: ⌈39.9⌉ = 40. Each packet taken also costs the ACK that takes
+//! it, so from a full bucket with the reply reserve left in at most 38
+//! full frames fit, and for full frames the bucket binds first. Short
+//! frames fill the 40 places first: forty hand-overs of them still go out
+//! in a few seconds.
+//!
+//! **Hop places.** Beyond the regular room there is one place for each
+//! hop count. A packet received with count `h` that the regular room
+//! refuses takes the highest free place numbered `h` or lower, whatever
+//! the bucket holds; the bucket still decides when it is sent. A packet
+//! from a leaf or the relay's own application, count 0, has none, so
+//! overload pushes back where messages enter (roadmap D31). The places
+//! keep the network from locking up while nothing is dropped for want of
+//! room: take the highest-numbered place held anywhere, `k`. Its message
+//! has made at least `k` hops and sends `k + 1` or more, and place `k + 1`
+//! is free everywhere, so its next hop can take it, unless the count is at
+//! the cap, where the message ends (§9.2.6). By induction downwards, every
+//! message held moves.
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (§9.3). An entry whose receivers
-//! are all banned waits in its place until a ban ends (§9.3, roadmap
-//! D31); the hand-over goes to the first entry that is due.
+//! are all banned waits in its place until a ban ends (§9.3). The next
+//! hand-over goes to the first entry that is due, except that one that has
+//! waited goes first, the most travelled first: the place one higher is
+//! free only for the message that has come farthest, and a lower one
+//! offered first would be refused and ban the neighbour again.
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
+use crate::tables::records::MAX_HOPS;
 use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
@@ -36,6 +53,10 @@ pub const fn queue_for(depth: Duration) -> usize {
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 40);
+
+/// Hop places: one for each count a packet can be received with and still
+/// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
+pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +87,8 @@ pub struct Outgoing {
     /// Transmissions of a return or send-back that went unanswered, kept
     /// while it waits; a refusal does not count.
     pub tries: u8,
+    /// The hop place it holds; 0 for the regular room.
+    pub place: u8,
 }
 
 impl Outgoing {
@@ -76,7 +99,21 @@ impl Outgoing {
             kind,
             not_before: Instant::ZERO,
             tries: 0,
+            place: 0,
         }
+    }
+
+    /// The hop count the frame carries; a DELIVER's is 0.
+    pub fn hops(&self) -> u8 {
+        match Packet::decode(self.frame.payload()) {
+            Ok(Packet::Data(d)) => d.hops,
+            _ => 0,
+        }
+    }
+
+    /// Whether it has waited for a ban.
+    fn waited(&self) -> bool {
+        self.not_before > Instant::ZERO
     }
 
     /// The message the frame carries: a DATA's computed ID (roadmap D15)
@@ -97,7 +134,7 @@ pub struct Full;
 /// The send queue.
 #[derive(Clone)]
 pub struct SendQueue {
-    frames: FixedVec<Outgoing, SEND_QUEUE>,
+    frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
 }
 
 impl SendQueue {
@@ -128,9 +165,23 @@ impl SendQueue {
         self.len() == 0
     }
 
-    /// Whether a packet that needs a place must be refused (§9.2.4).
-    pub fn is_full(&self) -> bool {
-        self.frames.is_full()
+    /// Entries in the regular room.
+    pub fn regular(&self) -> usize {
+        self.iter().filter(|o| o.place == 0).count()
+    }
+
+    /// The highest free hop place for a packet received with `hops`,
+    /// counting `freed` as free.
+    pub fn free_place(&self, hops: u8, freed: Option<u8>) -> Option<u8> {
+        let mut taken = [false; HOP_PLACES + 1];
+        for o in self.iter() {
+            taken[o.place as usize] = true;
+        }
+        if let Some(k) = freed {
+            taken[k as usize] = false;
+        }
+        let top = (hops as usize).min(HOP_PLACES);
+        (1..=top).rev().find(|&k| !taken[k]).map(|k| k as u8)
     }
 
     /// The airtime of every queued frame, sent once each.
@@ -140,7 +191,9 @@ impl SendQueue {
             .fold(Duration::ZERO, |a, b| a + b)
     }
 
-    /// Queue `out` last, unless the queue is full.
+    /// Queue `out` last. Admission (§9.2.4) keeps the regular room and the
+    /// hop places within bounds, so only a caller that skipped it finds the
+    /// queue full.
     pub fn push(&mut self, out: Outgoing) -> Result<(), Full> {
         self.frames.push(out).map_err(|_| Full)
     }
@@ -160,9 +213,17 @@ impl SendQueue {
         (!self.is_empty()).then(|| self.frames.remove(0))
     }
 
-    /// The entry the next hand-over goes to: the first that is due.
+    /// The entry the next hand-over goes to: of those that have waited and
+    /// are due, the most travelled, the earliest of equals; else the first
+    /// that is due.
     pub fn next_due(&self, now: Instant) -> Option<usize> {
-        self.iter().position(|o| o.not_before <= now)
+        let due = |o: &Outgoing| o.not_before <= now;
+        self.iter()
+            .enumerate()
+            .filter(|(_, o)| due(o) && o.waited())
+            .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
+            .map(|(i, _)| i)
+            .or_else(|| self.iter().position(due))
     }
 
     /// Move entry `i` to the front; the others keep their order.
@@ -241,8 +302,7 @@ mod tests {
         for i in 0..SEND_QUEUE as u8 {
             assert_eq!(q.push(frame(i)), Ok(()));
         }
-        assert!(q.is_full());
-        assert_eq!(q.push(frame(99)), Err(Full));
+        assert_eq!(q.regular(), SEND_QUEUE);
         q.front_mut().unwrap().frame.bytes[0] = 50;
         assert_eq!(q.pop().unwrap().frame.bytes[0], 50);
         assert_eq!(q.front().unwrap().frame.bytes[0], 1);
@@ -253,6 +313,95 @@ mod tests {
         assert_eq!(q.len(), SEND_QUEUE - 1);
         q.retain(|f| f.frame.bytes[0] % 2 == 0);
         assert_eq!(q.len(), (SEND_QUEUE - 1) / 2);
+    }
+
+    #[test]
+    fn every_place_fits() {
+        let mut q = SendQueue::new();
+        for i in 0..SEND_QUEUE {
+            q.push(frame(i as u8)).unwrap();
+        }
+        for k in (1..=HOP_PLACES as u8).rev() {
+            assert_eq!(q.free_place(MAX_HOPS, None), Some(k));
+            let mut o = frame(0);
+            o.place = k;
+            q.push(o).unwrap();
+        }
+        assert_eq!(q.free_place(MAX_HOPS, None), None);
+        assert_eq!(q.push(frame(0)), Err(Full));
+    }
+
+    #[test]
+    fn a_packet_takes_the_highest_free_place_not_above_its_count() {
+        let mut q = SendQueue::new();
+        assert_eq!(q.free_place(0, None), None, "nothing for count 0");
+        assert_eq!(q.free_place(3, None), Some(3));
+        for k in [3, 1] {
+            let mut o = frame(k);
+            o.place = k;
+            q.push(o).unwrap();
+        }
+        assert_eq!(q.regular(), 0);
+        assert_eq!(q.free_place(3, None), Some(2));
+        assert_eq!(q.free_place(1, None), None);
+        assert_eq!(q.free_place(1, Some(1)), Some(1));
+        // The place frees when its frame leaves.
+        q.pop();
+        assert_eq!(q.free_place(5, None), Some(5));
+        assert_eq!(q.free_place(3, None), Some(3));
+    }
+
+    /// A DATA frame with `hops` that has waited until `due` ms, if given.
+    fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::wire::Data;
+        let d = Data {
+            sender_home: Channel::new(3).unwrap(),
+            dst_hop: ShortName(1),
+            src_hop: ShortName(2),
+            dst_pos: crate::position::Position { lat: 0, lon: 0 },
+            dst_leaf: LeafId::RELAY,
+            hops,
+            payload: &[tag],
+        };
+        let mut bytes = [0; MAX_FRAME];
+        let len = Packet::Data(d).encode(&mut bytes).unwrap() as u8;
+        let frame = Frame {
+            channel: d.sender_home,
+            preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            len,
+            bytes,
+        };
+        let mut o = Outgoing::new(frame, Kind::Forward);
+        if let Some(ms) = due {
+            o.not_before = Instant::ZERO + Duration::from_millis(ms);
+        }
+        o
+    }
+
+    /// When bans end, the most travelled of the frames that waited goes
+    /// first, ahead of the queue's order; one that never waited keeps it.
+    #[test]
+    fn the_most_travelled_waiting_frame_goes_first() {
+        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let mut q = SendQueue::new();
+        q.push(data(0, 1, None)).unwrap();
+        q.push(data(1, 2, Some(10))).unwrap();
+        q.push(data(2, 5, Some(10))).unwrap();
+        q.push(data(3, 5, Some(10))).unwrap();
+        q.push(data(4, 9, Some(20))).unwrap();
+        assert_eq!(q.next_due(t(5)), Some(0), "none has waited its time");
+        assert_eq!(q.next_due(t(10)), Some(2), "the earlier of equals");
+        assert_eq!(q.next_due(t(20)), Some(4));
+        q.to_front(4);
+        q.pop();
+        q.to_front(2);
+        assert_eq!(q.front().unwrap().hops(), 5);
+        q.pop();
+        q.pop();
+        q.pop();
+        assert_eq!(q.next_due(t(20)), Some(0), "the one that never waited");
     }
 
     #[test]

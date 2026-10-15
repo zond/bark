@@ -90,7 +90,7 @@ pub const fn retrying_span(
 
 /// Table sizes against the RAM budget of design §15.
 #[cfg(test)]
-mod sizes {
+pub(crate) mod sizes {
     extern crate std;
     use super::*;
     use core::mem::size_of;
@@ -104,12 +104,20 @@ mod sizes {
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), 272);
-        // The send queue's places follow from the duty bucket (§9.3), and
-        // the delivery queue's from a full leaf table over one TTL
-        // (§10.4); together 20.5 KiB, where 16 and 64 places took 20.1.
+        // The send queue's regular room follows from the duty bucket, its
+        // hop places from the hop count (§9.3), and the delivery queue's
+        // places from a full leaf table over one TTL (§10.4).
         assert_eq!(send_queue::SEND_QUEUE, 40);
+        assert_eq!(send_queue::HOP_PLACES, 254);
         assert_eq!(delivery::DELIVERY_QUEUE, 41);
-        // Whole tables: entries times capacity, and a few words of bookkeeping.
+        let sum = tables();
+        std::println!("{:>10}: {sum:>6} B", "tables");
+        assert!(size_of::<busy::BusyEstimator>() <= 512);
+    }
+
+    /// The bytes of every table, each checked to be what its entries take
+    /// and a few words of bookkeeping.
+    pub(crate) fn tables() -> usize {
         let tables = [
             (
                 "neighbours",
@@ -130,7 +138,7 @@ mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                send_queue::SEND_QUEUE * 272,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 272,
             ),
             (
                 "delivered",
@@ -146,10 +154,6 @@ mod sizes {
             assert!(size <= entries + 64 || name == "busy", "{name}: {size} B");
             sum += size;
         }
-        std::println!("{:>10}: {sum:>6} B", "tables");
-        assert!(size_of::<busy::BusyEstimator>() <= 512);
-        // docs/core-interface.md §6: the whole Relay under 50 KiB, which
-        // leaves a little over 1 KiB for the medium access around the tables.
-        assert!(sum <= 49 * 1024, "{sum} B");
+        sum
     }
 }

@@ -92,7 +92,7 @@ impl Relay {
             entry.mode.preamble_symbols(),
         );
         let airtime = mac::airtime(&frame);
-        match self.no_room(airtime, Duration::ZERO, false, now) {
+        match self.no_room(airtime, Duration::ZERO, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
             // With what is queued in the bucket too; `None` if that is more

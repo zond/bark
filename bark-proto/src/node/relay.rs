@@ -720,13 +720,20 @@ mod tests {
 
     #[test]
     fn sizes() {
-        // docs/core-interface.md §6: under 50 KiB with every table; 50 776 B
-        // with a 40-place send queue, a 41-place delivery queue, one owed
-        // reply and one held message.
+        // docs/core-interface.md §6: the tables, and around them the medium
+        // access, the hand-over, one owed reply and one held message in
+        // under 1 KiB.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
-        std::println!("Relay {relay} B, Leaf {leaf} B");
-        assert!(relay < 50 * 1024, "{relay}");
+        let tables = crate::tables::sizes::tables();
+        std::println!("Relay {relay} B, tables {tables} B, Leaf {leaf} B");
+        assert!(relay <= tables + 1024, "{relay}");
+        // It fits the board's RAM: 255 KiB for the application
+        // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
+        // (docs/implementation-research-2026-10-14.md), and Embassy and the
+        // stacks, about 16 KiB (design §15).
+        let ram = (255 - 5 - 16) * 1024;
+        assert!(relay <= ram, "{relay} of {ram}");
         assert!(leaf < 1024, "{leaf}");
     }
 
@@ -1016,5 +1023,86 @@ mod tests {
         assert!(ready > now);
         assert!(!r.accepts_send(Instant::from_micros(ready.as_micros() - 1)));
         assert!(r.accepts_send(ready));
+    }
+
+    /// With the regular room closed by the bucket, a packet that has come
+    /// two hops takes hop place 2, then 1, whatever the bucket holds; one
+    /// from a leaf, or a third from two hops out, is refused. A place frees
+    /// when its frame leaves (roadmap D31).
+    #[test]
+    fn a_packet_that_has_travelled_takes_a_hop_place() {
+        use crate::event::DropReason;
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::wire::{Data, MAX_PAYLOAD};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        now = Instant::ZERO + Duration::from_secs(10);
+        // Room for replies, not for a full frame on top of the reserve.
+        let spend = r.budget.available(now) - Duration::from_millis(300);
+        r.budget.record(spend, now);
+        let far = Position {
+            lat: r.config.position.lat + 100_000,
+            ..r.config.position
+        };
+        let home = Channel::new(5).unwrap();
+        let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8| {
+            let payload = [tag; MAX_PAYLOAD];
+            let d = Data {
+                sender_home: home,
+                dst_hop: r.me(),
+                src_hop: ShortName(1),
+                dst_pos: far,
+                dst_leaf: LeafId::RELAY,
+                hops,
+                payload: &payload,
+            };
+            let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: r.home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut refused = None;
+            let mut pending = Vec::new();
+            r.handle(event, *now, &mut |a| match a {
+                Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                _ => {}
+            });
+            // Send the reply, so the next packet can be answered.
+            let until = *now + Duration::from_millis(100);
+            drive_from(r, now, until, pending);
+            let place = r
+                .queue
+                .iter()
+                .find(|o| o.msg_id() == Some(d.msg_id()))
+                .map(|o| o.place);
+            (place, refused)
+        };
+        assert_eq!(
+            offer(&mut r, &mut now, 1, 0),
+            (None, Some(DropReason::Budget))
+        );
+        assert_eq!(offer(&mut r, &mut now, 2, 2), (Some(2), None));
+        assert_eq!(offer(&mut r, &mut now, 3, 2), (Some(1), None));
+        assert_eq!(
+            offer(&mut r, &mut now, 4, 2),
+            (None, Some(DropReason::Budget))
+        );
+        r.queue.retain(|o| o.place != 1);
+        assert_eq!(offer(&mut r, &mut now, 5, 2), (Some(1), None));
+        assert_eq!(r.queue.regular(), 0);
     }
 }

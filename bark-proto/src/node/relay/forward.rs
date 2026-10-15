@@ -5,12 +5,12 @@
 //!
 //! [`Relay::data`] classifies the packet by the six cases of §9.2.4 in
 //! order and decides whether acting on it is work: a forward, a return, a
-//! packet sent straight back, or a delivery. Work to send on is refused
-//! with BUSY unless the send queue has a place for it and the bucket holds
-//! the ACK, the airtime of everything queued with the new frame, and the
-//! reply reserve (§9.2.4, roadmap D29). So the queue never holds more than
-//! the bucket can send now, and a packet waits in it for the hand-overs
-//! ahead of it, not for the bucket to refill. A delivery is refused when
+//! packet sent straight back, or a delivery. Work to send on goes into the
+//! send queue's regular room if it has a place and the bucket holds the
+//! ACK, the airtime of everything queued with the new frame, and the reply
+//! reserve (§9.2.4, roadmap D29); else into a free hop place numbered no
+//! higher than the packet's count (roadmap D31); else it is refused with
+//! BUSY. A delivery is refused when
 //! the delivery queue is full, or when the bucket holds less than the
 //! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
 //! owed before acting. A packet that gives no work (cases 2, 3 and 5) is
@@ -170,36 +170,51 @@ impl Relay {
         self.budget.would_allow_keeping(airtime, REPLY_RESERVE, now)
     }
 
-    /// Why the send queue cannot take a frame of `airtime` after this
-    /// relay spends `spend` (the ACK that takes the packet), if it cannot:
-    /// it needs a place, and everything queued, the frame included, must
-    /// fit in the bucket now with the reply reserve left (§9.2.4, §9.3).
-    /// `freed`: the front's hand-over ends first, giving up its place.
+    /// The place in the send queue for a frame of `airtime`, received with
+    /// `hops`, after this relay spends `spend` (the ACK that takes the
+    /// packet); 0 is the regular room. The regular room needs a place, and
+    /// everything queued, the frame included, must fit in the bucket now
+    /// with the reply reserve left (§9.2.4, §9.3). Failing that, the
+    /// highest free hop place not above `hops` takes it, whatever the
+    /// bucket holds (roadmap D31). `freed`: the front's hand-over ends
+    /// first, giving up its place.
+    pub(super) fn admit(
+        &self,
+        airtime: Duration,
+        spend: Duration,
+        hops: u8,
+        freed: bool,
+        now: Instant,
+    ) -> Result<u8, DropReason> {
+        let front = self.queue.front().filter(|_| freed);
+        let front_air = front.map_or(Duration::ZERO, |o| mac::airtime(&o.frame));
+        let queued = self.queue.airtime() - front_air + self.held_airtime();
+        let regular = self.regular() - usize::from(front.is_some_and(|o| o.place == 0));
+        let why = if regular >= SEND_QUEUE {
+            DropReason::SendQueueFull
+        } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
+            DropReason::Budget
+        } else {
+            return Ok(0);
+        };
+        let freed_place = front.map(|o| o.place).filter(|&k| k > 0);
+        self.queue.free_place(hops, freed_place).ok_or(why)
+    }
+
+    /// Why the regular room cannot take a frame of `airtime`, if it cannot;
+    /// for what enters the network here and has no hop place.
     pub(super) fn no_room(
         &self,
         airtime: Duration,
         spend: Duration,
-        freed: bool,
         now: Instant,
     ) -> Option<DropReason> {
-        let front = match (freed, self.queue.front()) {
-            (true, Some(o)) => mac::airtime(&o.frame),
-            _ => Duration::ZERO,
-        };
-        let queued = self.queue.airtime() - front + self.held_airtime();
-        if self.places_full() && !freed {
-            Some(DropReason::SendQueueFull)
-        } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
-            Some(DropReason::Budget)
-        } else {
-            None
-        }
+        self.admit(airtime, spend, 0, false, now).err()
     }
 
-    /// Whether the send queue has no place, the held message counting as
-    /// one.
-    fn places_full(&self) -> bool {
-        self.queue.len() + usize::from(self.held.is_some()) >= SEND_QUEUE
+    /// Entries in the regular room, the held message counting as one.
+    fn regular(&self) -> usize {
+        self.queue.regular() + usize::from(self.held.is_some())
     }
 
     fn held_airtime(&self) -> Duration {
@@ -295,10 +310,18 @@ impl Relay {
         let completes = case == Case::FromLastChild && self.handing(id, d.src_hop);
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
+        let mut place = 0;
         let refusal = if case == Case::AckOnly {
             None
         } else if sends {
-            self.no_room(data_airtime(d.payload.len()), ack_airtime(), completes, now)
+            let air = data_airtime(d.payload.len());
+            match self.admit(air, ack_airtime(), d.hops, completes, now) {
+                Ok(k) => {
+                    place = k;
+                    None
+                }
+                Err(why) => Some(why),
+            }
         } else if for_leaf && self.delivery.is_full() {
             Some(DropReason::DeliveryFull)
         } else if !self.affordable(ack_airtime(), now) {
@@ -342,7 +365,7 @@ impl Relay {
                 if owner {
                     self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
                 } else {
-                    self.send_on(&d, Kind::Forward, emit);
+                    self.send_on(&d, Kind::Forward, place, emit);
                 }
             }
             Case::AckOnly => {
@@ -363,14 +386,14 @@ impl Relay {
                 if owner {
                     self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
                 } else {
-                    self.send_on(&d, Kind::Forward, emit);
+                    self.send_on(&d, Kind::Forward, place, emit);
                 }
             }
             Case::SendBack => {
                 if let Some(r) = self.records.get_mut(id, now) {
                     r.received(d.hops, now);
                 }
-                self.send_on(&d, Kind::Bounce, emit);
+                self.send_on(&d, Kind::Bounce, place, emit);
             }
         }
     }
@@ -448,9 +471,10 @@ impl Relay {
         }
     }
 
-    /// Queue `d` onward: a forward, addressed later, or straight back to
-    /// its sender. Carries the received count plus one (§9.2.6).
-    fn send_on(&mut self, d: &Data<'_>, kind: Kind, emit: &mut dyn FnMut(Action)) {
+    /// Queue `d` onward into `place`: a forward, addressed later, or
+    /// straight back to its sender. Carries the received count plus one
+    /// (§9.2.6).
+    fn send_on(&mut self, d: &Data<'_>, kind: Kind, place: u8, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
@@ -467,7 +491,10 @@ impl Relay {
             hops: d.hops + 1,
             ..*d
         };
-        let out = Outgoing::new(data_frame(&out, channel), kind);
+        let out = Outgoing {
+            place,
+            ..Outgoing::new(data_frame(&out, channel), kind)
+        };
         if self.queue.push(out).is_err() {
             self.drop_msg(id, DropReason::SendQueueFull, emit);
         }
@@ -530,14 +557,14 @@ impl Relay {
         !self.booting()
             && self.own.is_none()
             && self
-                .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, false, now)
+                .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
     }
 
     /// When the application may send again, if only the bucket keeps it
     /// waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.booting() || self.own.is_some() || self.places_full() {
+        if self.booting() || self.own.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need =
@@ -615,7 +642,7 @@ impl Relay {
             return;
         }
         self.keep(Record::new(id, None, 0, now), now, emit);
-        self.send_on(&d, Kind::Forward, emit);
+        self.send_on(&d, Kind::Forward, 0, emit);
     }
 
     // --- The hand-over (§9.3) ---
