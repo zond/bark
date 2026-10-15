@@ -363,10 +363,12 @@ whatever acknowledgement it puts inside the encrypted payload.
 The app hands a node a message only when the node says it will take one,
 and hears nothing about it afterwards: not the first hop's ACK, which a
 user could take for delivery, and not a drop. From then on the node is
-either sending the message or waiting to. A relay takes one while it is
-running, its send queue and bucket have room for a full frame on top of
-what they hold (§9.3), and its delivery queue has a place (§10.4); a
-leaf takes one while it holds none (§10.2). A busy network so makes its
+either sending the message or waiting to. Each node holds one message
+of its app's at a time, until its first hop takes it. A relay takes one
+while it is running, holds none, and its send queue and bucket have room
+for a full frame on top of what they hold (§9.3); a leaf takes one while
+it holds none (§10.2). A node whose neighbours are busy keeps the
+message and offers it again (§9.2.5, §10.2), so a busy network makes its
 users wait rather than lose their messages at the first step (roadmap
 D29).
 
@@ -572,6 +574,16 @@ are not banned, owns the destination. Nobody is told (§9.1, roadmap
 D10), the origin's own application included: that is the cost of
 having no end-to-end acknowledgement.
 
+Its own application's message, until a first hop has taken it, is the
+exception. If neighbours are left that are only banned, the relay keeps
+the message aside and chooses again when the earliest of their bans
+ends, or later after refusals in a row (§9.3), as a leaf does with its
+message (§10.2); only when every
+neighbour has been tried, or has failed, is it dropped. A message for
+one of the relay's own leaves that finds the delivery queue full is kept
+the same way until the queue has a place. Meanwhile the application is
+given no other message (§9.1).
+
 If the hand-over to the parent fails (§9.3), the relay drops the message
 and the search ends early.
 
@@ -686,7 +698,17 @@ parent, or is dropped at the origin (§9.2.5): that loss is the
 overload's.
 Waiting instead could hold two neighbours forever, each full of messages
 waiting for the other, since what a relay holds drains only as it sends
-(roadmap D29).
+(roadmap D29). The one exception, a relay's own application's message,
+waits, and that cannot hold anyone: it is one frame of airtime that does
+not grow, kept with its place in the send queue's count, so it cannot
+fill the relay's bucket against its neighbours' packets the way a queue
+of waiting forwards could. Offered once a ban, though, a full frame
+every 1.53 s would probe the refuser's channel at 9 %, hiding its ACKs,
+and spend the holder's bucket as fast as it refills; so after the k-th
+refusal in a row the held message waits one ban times 2^(k−1), 1.53 s,
+3.06 s, 6.1 s and so on, up to the bucket's whole refill, 61 s, the
+longest anything waits for a bucket (§9.4), and the wait starts again
+from one ban once the message is taken or dropped.
 
 BUSY carries the low 16 bits of the message ID because two senders on
 one channel can hand to the same relay within one reply time. Without
@@ -922,8 +944,11 @@ is not told (§9.1). The leaf holds one message at a time (roadmap D23)
 and takes the next from its app once this one is handed over or
 dropped. A relay that answers the
 message with BUSY is busy, not failing: the leaf keeps it, counts no
-failed period, and offers the message again 1.53 s later (§9.3, roadmap
-D27, D29).
+failed period, and offers the message again one ban, 1.53 s, after the
+first refusal, then twice as long after each further one in a row, up
+to the bucket's refill of 61 s, as a relay with its own message does
+(§9.3): a leaf on an overloaded relay would otherwise probe it with a
+full frame every 1.53 s (roadmap D27, D29).
 
 ### 10.3 Delivery
 

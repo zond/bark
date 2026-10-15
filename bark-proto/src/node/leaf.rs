@@ -50,9 +50,12 @@
 //! for up to the delivery TTL (§10.4: 10 minutes), the time the network
 //! itself would keep it; then it is dropped with [`DropReason::NoRelay`].
 //! A relay that answers the message with BUSY (§9.2.4) is busy, not
-//! failing: the leaf holds the message and offers it again after [`BAN`],
-//! the time the relay's bucket takes to refill what it could not fit
-//! (roadmap D27, D29).
+//! failing: the leaf holds the message and offers it again after one
+//! [`BAN`], the time the relay's bucket takes to refill what it could not
+//! fit, doubled after each further refusal in a row ([`hold`]; roadmap
+//! D27, D29).
+//!
+//! [`BAN`]: crate::tables::budget::BAN
 //!
 //! # Receiving
 //!
@@ -70,7 +73,7 @@ use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{Budget, BAN};
+use crate::tables::budget::{hold, Budget};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
@@ -191,6 +194,9 @@ pub struct Leaf {
     outgoing_until: Instant,
     /// Not before this is the message offered: the relay said it was busy.
     outgoing_at: Instant,
+    /// Refusals of the message in a row; each doubles the hold
+    /// (`budget::hold`).
+    refusals: u8,
     acks: Replies,
     budget: Budget,
     seen: [MsgId; SEEN],
@@ -226,6 +232,7 @@ impl Leaf {
             outgoing: None,
             outgoing_until: Instant::ZERO,
             outgoing_at: Instant::ZERO,
+            refusals: 0,
             acks: Replies::new(),
             budget: Budget::new(),
             seen: [MsgId(0); SEEN],
@@ -441,6 +448,7 @@ impl Leaf {
             self.transfer.cancel();
         }
         self.outgoing = None;
+        self.refusals = 0;
         emit(Action::Trace(Trace::Dropped {
             msg_id,
             reason: DropReason::NoRelay,
@@ -591,7 +599,10 @@ impl Leaf {
                 self.attached = true;
                 self.attach_at = now + self.config.keepalive;
             }
-            Sending::Data => self.outgoing = None,
+            Sending::Data => {
+                self.outgoing = None;
+                self.refusals = 0;
+            }
         }
     }
 
@@ -607,7 +618,8 @@ impl Leaf {
             r.last_heard = now;
         }
         self.failed_periods = 0;
-        self.outgoing_at = now + BAN;
+        self.refusals = self.refusals.saturating_add(1);
+        self.outgoing_at = now + hold(self.refusals);
     }
 
     // --- Receiving (§10.3) ---

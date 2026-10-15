@@ -162,56 +162,43 @@ fn leaf_to_leaf_across_two_relays() {
         }));
 }
 
-/// R1's send queue is full: its application has queued a short message
-/// for R2 in each of its places, and R1's frames to R2 are lost for a
-/// while. R1 answers L1's message with BUSY (§9.2.4); L1 keeps its relay,
-/// holds the message and offers it again only after the ban (§9.3,
-/// §10.2, roadmap D27, D29), until R1 takes it and it arrives.
+/// R1's delivery queue is full: its application has filled it with
+/// messages for L3, which is dark. R1 answers L1's message for L3 with
+/// BUSY (§9.2.4, §10.4); L1 keeps its relay, holds the message and offers
+/// it again one ban after the first refusal, twice that after the second,
+/// and so on (§9.3, §10.2, roadmap D27, D29), until L3 is back, R1 has
+/// room, and it arrives.
 #[test]
 fn a_leaf_told_busy_holds_its_message_for_the_ban() {
-    use bark_proto::tables::budget::BAN;
-    use bark_proto::tables::send_queue::SEND_QUEUE;
-    let (r1, r2, l1, l2) = (0, 1, 2, 3);
-    let mut h = Harness::new(vec![
-        relay(0.0, 11),
-        relay(400.0, 12),
-        leaf(-30.0, 1, 13),
-        leaf(430.0, 2, 14),
-    ]);
-    for (a, b) in [(r1, r2), (l1, r1), (l2, r2)] {
-        h.link(a, b);
-    }
-    settle(&mut h, &[(l1, r1), (l2, r2)]);
-    let knows = |h: &Harness<Node>| {
-        the_relay(h, r1)
-            .neighbours()
-            .any(|n| n.position == position(h, r2))
-    };
-    assert!(h.run_until(h.now + secs(400), knows));
-    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
-    let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, to, bytes| {
-        losing.get()
-            && (from, to) == (r1, r2)
-            && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    use bark_proto::tables::budget::hold;
+    use bark_proto::tables::delivery::DELIVERY_QUEUE;
+    let (r1, l1, l3) = (0, 1, 2);
+    let mut h = Harness::new(vec![relay(0.0, 11), leaf(-30.0, 1, 13), leaf(30.0, 3, 14)]);
+    h.link(l1, r1);
+    h.link(l3, r1);
+    settle(&mut h, &[(l1, r1), (l3, r1)]);
+    let dark = std::rc::Rc::new(std::cell::Cell::new(true));
+    let darkness = dark.clone();
+    h.lose = Some(Box::new(move |_, from, to, _| {
+        darkness.get() && (from == l3 || to == l3)
     }));
-    let p2 = position(&h, r2);
-    for k in 0..SEND_QUEUE as u8 {
+    let (p1, leaf3) = (position(&h, r1), the_leaf(&h, l3).id());
+    for k in 0..DELIVERY_QUEUE as u8 {
         h.command(
             r1,
             AppCommand::Send {
-                dst_pos: p2,
-                dst_leaf: LeafId::RELAY,
+                dst_pos: p1,
+                dst_leaf: leaf3,
                 payload: &[b'q', k],
             },
         );
     }
     let start = h.now;
-    let id = send(&mut h, l1, l2, r2, b"after the ban");
+    let id = send(&mut h, l1, l3, r1, b"after the ban");
     h.run_until(start + secs(10), |_| false);
-    lost.set(false);
+    dark.set(false);
     assert!(
-        h.run_until(h.now + secs(60), |h| received(h, l2, id) > 0),
+        h.run_until(h.now + secs(180), |h| received(h, l3, id) > 0),
         "not delivered"
     );
     let offers: Vec<Instant> = h.nodes[l1]
@@ -230,12 +217,15 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
         .collect();
     println!("offers at {offers:?}, BUSY at {refusals:?}");
     assert!(!refusals.is_empty(), "R1 never refused");
-    for b in refusals {
-        let next = offers.iter().find(|&&t| t > b).expect("offered again");
+    assert!(refusals.len() >= 3, "{refusals:?}");
+    for (j, b) in refusals.iter().enumerate() {
+        let next = offers.iter().find(|&&t| t > *b).expect("offered again");
+        let due = hold(j as u8 + 1);
         assert!(
-            next.since(b) >= BAN,
-            "offered again after {:?}",
-            next.since(b)
+            next.since(*b) >= due && next.since(*b) < due + secs(1),
+            "refusal {}: offered again after {:?}, not {due:?}",
+            j + 1,
+            next.since(*b)
         );
     }
     assert!(attached(&h, l1, r1), "a busy relay is not a failing one");
@@ -244,10 +234,12 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
 
 /// L2 goes dark while R1's application sends it more messages than R2's
 /// delivery queue holds. R2 queues them until the queue is full and then
-/// refuses the next with BUSY (§9.2.4, §10.4), keeping what it has. Its
-/// DELIVERs to L2 go unanswered, and R2 does not hand L2 another each time
-/// its send queue frees up: until L2 is heard again only the 60 s retry
-/// tries it. Back, L2 gets every queued message.
+/// refuses the next with BUSY (§9.2.4, §10.4), keeping what it has. R1
+/// holds that one, its application's, and offers it again after each ban
+/// (§9.3), so its application waits. R2's DELIVERs to L2 go unanswered,
+/// and R2 does not hand L2 another each time its send queue frees up:
+/// until L2 is heard again only the 60 s retry tries it. Back, L2 gets
+/// every message, the held one too.
 #[test]
 fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
     use bark_proto::tables::delivery::DELIVERY_QUEUE;
@@ -272,6 +264,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
     let mut ids = Vec::new();
     for k in 0..=DELIVERY_QUEUE as u8 {
         let text = [b'd', k];
+        assert!(h.run_until(h.now + secs(5), |h| h.accepts(r1)));
         h.command(
             r1,
             AppCommand::Send {
@@ -294,10 +287,9 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
         refused,
         "R2 took a message its delivery queue had no room for"
     );
-    assert_eq!(
-        dropped(&h, r1, last).map(|(_, r)| r),
-        Some(DropReason::NoRoute)
-    );
+    assert_eq!(dropped(&h, r1, last), None);
+    assert!(the_relay(&h, r1).holding().any(|id| id == last));
+    assert!(!h.accepts(r1), "the application waits");
     assert!(ids[..DELIVERY_QUEUE]
         .iter()
         .all(|&id| dropped(&h, r2, id).is_none()));
@@ -317,11 +309,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
         "{delivers} DELIVERs to a dark leaf in a minute"
     );
     dark.set(false);
-    let all = |h: &Harness<Node>| {
-        ids[..DELIVERY_QUEUE]
-            .iter()
-            .all(|&id| received(h, l2, id) == 1)
-    };
+    let all = |h: &Harness<Node>| ids.iter().all(|&id| received(h, l2, id) == 1);
     assert!(
         h.run_until(h.now + c.keepalive + secs(30), all),
         "not all delivered"

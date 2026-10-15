@@ -99,6 +99,28 @@ fn delivered(h: &Harness<Node>, i: usize, id: MsgId) -> bool {
     messages(h, i, id) > 0
 }
 
+/// Relay `x`'s application sends `d` one short message after another,
+/// each as soon as `x` takes it, until relay `f`, `x`'s only neighbour,
+/// refuses one (§9.2.4): `f`'s send queue is then full, as long as `f`'s
+/// own frames are lost.
+fn fill(h: &mut Harness<Node>, x: usize, f: usize, d: usize) {
+    let refused = |h: &Harness<Node>| {
+        traces(h, f)
+            .iter()
+            .any(|t| matches!(t, Trace::Refused { .. }))
+    };
+    for k in 0u16.. {
+        assert!(
+            h.accepts(x) || h.run_until(h.now + secs(5), |h| h.accepts(x)),
+            "{x} took no message"
+        );
+        send(h, x, d, &k.to_be_bytes());
+        if h.run_until(h.now + Duration::from_millis(200), refused) {
+            return;
+        }
+    }
+}
+
 /// Four relays; the greedy choice at O, X, is a dead end. X has no
 /// neighbour but its parent, so it returns the message (§9.2.5); O takes
 /// its next candidate, Y, which reaches D.
@@ -495,9 +517,9 @@ fn a_demoted_neighbour_is_the_last_resort() {
     assert!(delivered(&h, d, id), "{:?}", traces(&h, o));
 }
 
-/// F1, O's nearest neighbour toward D, has its send queue full: its
-/// application has just queued a short message for D in each of its
-/// places, and its frames to D are lost. F1 answers O's DATA with BUSY
+/// F1, O's nearest neighbour toward D, has its send queue full: X, whose
+/// only neighbour it is, has handed it short messages for D until it
+/// refused one, and F1's own frames are lost. F1 answers O's DATA with BUSY
 /// (§9.2.4), and O hands the message to F2 at once, counting no failure
 /// against F1 (§9.3). O bans F1: no message is offered to it until the
 /// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
@@ -512,27 +534,23 @@ fn a_demoted_neighbour_is_the_last_resort() {
 #[test]
 fn a_ban_excludes_the_neighbour_and_expires() {
     use bark_proto::tables::budget::BAN;
-    use bark_proto::tables::send_queue::SEND_QUEUE;
-    let (o, f1, f2, d) = (0, 1, 2, 3);
+    let (o, f1, f2, d, x) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
             relay(0.0, 0.0, 71),
             relay(400.0, 50.0, 72),
             relay(400.0, -100.0, 73),
             relay(800.0, 0.0, 74),
+            relay(400.0, 400.0, 75),
         ],
-        &[(o, f1), (o, f2), (f1, d), (f2, d)],
+        &[(o, f1), (o, f2), (f1, d), (f2, d), (x, f1)],
     );
     let lost = std::rc::Rc::new(std::cell::Cell::new(true));
     let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, to, bytes| {
-        losing.get()
-            && (from, to) == (f1, d)
-            && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    h.lose = Some(Box::new(move |_, from, _, bytes| {
+        losing.get() && from == f1 && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    for k in 0..SEND_QUEUE as u8 {
-        send(&mut h, f1, d, &[b'q', k]);
-    }
+    fill(&mut h, x, f1, d);
     let name = |h: &Harness<Node>, i| position(h, i).short();
     let (n1, n2) = (name(&h, f1), name(&h, f2));
     let to_f1 = |h: &Harness<Node>, id: MsgId| {
@@ -584,9 +602,9 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     assert_eq!(forwarded(&h, third).map(|(_, to)| to), Some(n1));
 }
 
-/// P, O, F, D in a line. F's send queue is full: its application has
-/// queued a short message for D in each of its places, and its frames to D
-/// are lost for a while. F refuses P's message with BUSY (§9.2.4). F is
+/// P, O, F, D in a line. F's send queue is full: X, whose only neighbour
+/// it is, has handed it short messages for D until it refused one, and
+/// F's own frames are lost. F refuses P's message with BUSY (§9.2.4). F is
 /// the only neighbour O has not tried, so O's search ends at once: it
 /// returns the message to P, which, as the origin with no other
 /// neighbour, drops it (§9.2.5). Within the ban O hands its own message
@@ -595,25 +613,23 @@ fn a_ban_excludes_the_neighbour_and_expires() {
 #[test]
 fn a_relay_with_only_banned_neighbours_ends_its_search_at_once() {
     use bark_proto::tables::budget::BAN;
-    use bark_proto::tables::send_queue::SEND_QUEUE;
-    let (p, o, f, d) = (0, 1, 2, 3);
+    let (p, o, f, d, x) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
             relay(-400.0, 0.0, 120),
             relay(0.0, 0.0, 121),
             relay(400.0, 0.0, 122),
             relay(800.0, 0.0, 123),
+            relay(400.0, 400.0, 124),
         ],
-        &[(p, o), (o, f), (f, d)],
+        &[(p, o), (o, f), (f, d), (x, f)],
     );
     let lost = std::rc::Rc::new(std::cell::Cell::new(true));
     let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, to, bytes| {
-        losing.get() && (from, to) == (f, d) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    h.lose = Some(Box::new(move |_, from, _, bytes| {
+        losing.get() && from == f && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    for k in 0..SEND_QUEUE as u8 {
-        send(&mut h, f, d, &[b'q', k]);
-    }
+    fill(&mut h, x, f, d);
     let name = |h: &Harness<Node>, i| position(h, i).short();
     let nf = name(&h, f);
     let to_f = |h: &Harness<Node>, id: MsgId| {
@@ -684,6 +700,135 @@ fn a_relay_with_only_banned_neighbours_ends_its_search_at_once() {
     let third = send(&mut h, o, d, b"third");
     assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
     assert!(to_f(&h, third));
+}
+
+/// F, O's only neighbour, has its delivery queue full of its own
+/// application's messages for its leaf L, which is not there, and so
+/// refuses O's message for L with BUSY (§9.2.4, §10.4). O holds the
+/// message rather than drop it, says it takes no other, and offers it
+/// again one ban after the first refusal, two after the second, four
+/// after the third, and so on up to the bucket's refill (§9.3,
+/// `budget::hold`). Once F's messages expire F takes it, and O's
+/// application may send again; its next message starts from one ban
+/// (§9.2.5, roadmap D29).
+#[test]
+fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
+    use bark_proto::tables::budget::{hold, BAN};
+    use bark_proto::tables::delivery::DELIVERY_QUEUE;
+    let (o, f) = (0, 1);
+    let mut h = build(
+        vec![relay(0.0, 0.0, 141), relay(400.0, 0.0, 142)],
+        &[(o, f)],
+    );
+    let (pf, l) = (position(&h, f), LeafId([7; 4]));
+    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+        h.command(
+            from,
+            AppCommand::Send {
+                dst_pos: pf,
+                dst_leaf: l,
+                payload: text,
+            },
+        );
+        MsgId::of(pf, l, text)
+    };
+    let fill = |h: &mut Harness<Node>, n: usize| {
+        for k in 0..n as u8 {
+            to_l(h, f, &[b'f', k]);
+        }
+    };
+    let nf = pf.short();
+    let refusals = |h: &Harness<Node>, id: MsgId| {
+        h.nodes[o]
+            .traces
+            .iter()
+            .filter_map(|(t, tr)| match tr {
+                Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nf => Some(*t),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let offers = |h: &Harness<Node>, id: MsgId| {
+        h.nodes[o]
+            .sent
+            .iter()
+            .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Data(q)) if q.msg_id() == id))
+            .map(|(t, _)| *t)
+            .collect::<Vec<_>>()
+    };
+    // The wait from each refusal to the offer after it.
+    let waits = |h: &Harness<Node>, id: MsgId| {
+        let sent = offers(h, id);
+        refusals(h, id)
+            .into_iter()
+            .filter_map(|r| sent.iter().find(|t| **t > r).map(|t| t.since(r)))
+            .collect::<Vec<_>>()
+    };
+
+    fill(&mut h, DELIVERY_QUEUE);
+    let id = to_l(&mut h, o, b"held");
+    assert!(h.run_until(h.now + secs(1), |h| !refusals(h, id).is_empty()));
+    h.run_for(Duration::from_millis(100));
+    assert!(core(&h, o).holding().any(|m| m == id), "O let it go");
+    assert!(!h.accepts(o), "O takes a second message while it holds one");
+    h.run_for(secs(300));
+    let w = waits(&h, id);
+    println!("waits after each refusal {w:?}");
+    assert!(w.len() >= 8, "{w:?}");
+    for (j, wait) in w.iter().enumerate() {
+        let due = hold(j as u8 + 1);
+        assert!(
+            *wait >= due && *wait < due + secs(1),
+            "refusal {}: offered again after {wait:?}, not {due:?}",
+            j + 1
+        );
+    }
+    let queued = |h: &Harness<Node>, id: MsgId| {
+        h.nodes[f]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id))
+    };
+    assert!(
+        h.run_until(h.now + secs(400), |h| queued(h, id)),
+        "F never took it"
+    );
+    h.run_for(secs(1));
+    assert!(h.accepts(o));
+    assert!(!traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id)));
+
+    // Taken, the hold starts again from one ban.
+    fill(&mut h, DELIVERY_QUEUE - 1);
+    let next = to_l(&mut h, o, b"next");
+    assert!(h.run_until(h.now + secs(5), |h| !waits(h, next).is_empty()));
+    let w = waits(&h, next)[0];
+    assert!(w >= BAN && w < hold(2), "offered again after {w:?}");
+}
+
+/// O's only neighbour C never answers. O's own message fails its three
+/// attempts there and, with no neighbour left that is merely banned, is
+/// dropped for want of a route (§9.2.5); O's application may send again.
+#[test]
+fn a_relay_origin_whose_neighbour_fails_drops_and_is_ready() {
+    let (o, c) = (0, 1);
+    let mut h = build(
+        vec![relay(0.0, 0.0, 151), relay(400.0, 0.0, 152)],
+        &[(o, c)],
+    );
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (o, c) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let id = send(&mut h, o, c, b"nobody answers");
+    assert!(!h.accepts(o));
+    let dropped = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute,
+    };
+    assert!(h.run_until(h.now + secs(5), |h| traces(h, o).contains(&dropped)));
+    assert!(h.accepts(o));
+    assert!(h.nodes[o].app.is_empty());
 }
 
 /// P, R, C, D in a line; every frame from R to C is lost. R's only
@@ -857,20 +1002,24 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     no_drops(&h);
 }
 
-/// Twenty-six relays, F their only neighbour, offer F short messages for
-/// an hour and five minutes; F, its frames to D all lost, keeps its send
-/// queue full and refuses nearly all of them with BUSY. A sender drops
-/// what it has for a banned F without offering it (§9.2.5), so each asks
-/// for at most one reply per ban, 1.53 s: together seventeen a second, 18 % of F's
-/// time on air against the 9.83 % its bucket refills. So the replies run
-/// down the reply reserve, and F stays silent rather than spend the
-/// heartbeat reserve (§9.4, roadmap D27, D29). No hour holds more than
-/// 360 s, replies included (the harness checks every transmission), and
-/// no heartbeat of F is held back.
+/// Twenty-six relays, F their only neighbour, each forwarding for others,
+/// offer F a new short message each time their ban of F ends, for an hour
+/// and five minutes; F, its frames to D all lost, keeps its send queue
+/// full and refuses nearly all of them with BUSY. A forward is not held
+/// (§9.2.5): each sender asks for one reply per ban, 1.53 s, together
+/// seventeen a second, 18 % of F's time on air against the 9.83 % its
+/// bucket refills. So the replies run down the reply reserve, and F stays
+/// silent rather than spend the heartbeat reserve (§9.4, roadmap D27,
+/// D29). No hour holds more than 360 s, replies included (the harness
+/// checks every transmission), and no heartbeat of F is held back. The
+/// senders' frames are put on the air past their cores, which hold their
+/// own application's message for longer after each refusal (§9.3).
 #[test]
 fn replies_stay_within_the_reserve() {
-    use bark_proto::radio::DUTY_CYCLE_WINDOW;
-    use bark_proto::tables::budget::{BUDGET, BUSY_AIRTIME};
+    use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
+    use bark_proto::tables::budget::{BAN, BUDGET, BUSY_AIRTIME};
+    use bark_proto::wire::Data;
+    use bark_proto::{Frame, MAX_FRAME};
     let (f, d) = (0, 1);
     let senders: Vec<usize> = (2..28).collect();
     let fixed = |east: f64, north: f64, home: u8, seed: u64| {
@@ -904,14 +1053,33 @@ fn replies_stay_within_the_reserve() {
     }));
     let start = h.now;
     let end = start + DUTY_CYCLE_WINDOW + secs(300);
+    let (pf, pd) = (position(&h, f), position(&h, d));
+    let step = BAN.div(senders.len() as u64);
     let mut k = 0u32;
     while h.now < end {
-        for &s in &senders {
-            send(&mut h, s, d, &k.to_be_bytes());
+        for (i, &s) in senders.iter().enumerate() {
+            let text = k.to_be_bytes();
+            let data = Data {
+                sender_home: ch(2 + (i % 11) as u8),
+                dst_hop: pf.short(),
+                src_hop: position(&h, s).short(),
+                dst_pos: pd,
+                dst_leaf: LeafId::RELAY,
+                hops: 1,
+                payload: &text,
+            };
+            let mut frame = Frame {
+                channel: ch(0),
+                preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+                len: 0,
+                bytes: [0; MAX_FRAME],
+            };
+            frame.len = Packet::Data(data).encode(&mut frame.bytes).unwrap() as u8;
+            h.inject(s, frame);
             k += 1;
+            let next = h.now + step;
+            h.run_until(next, |_| false);
         }
-        let next = h.now + Duration::from_millis(250);
-        h.run_until(next, |_| false);
     }
     let sent = &h.nodes[f].sent;
     let busy = sent
@@ -1004,11 +1172,13 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// more than 10 %, replies included.
 ///
 /// O, told BUSY, bans F without counting a failure (§9.3); F is its only
-/// neighbour, so it drops the message as the origin with no route, and
-/// drops the messages that follow while the ban lasts (§9.2.5). O and D
+/// neighbour, so O holds its application's message and offers it again
+/// after its hold, and its application waits (§9.2.5, §9.3). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
 /// frames, all four of F's attempts go unanswered, and F returns the
-/// message to O as the search requires (§9.2.5). That is not a drop.
+/// message to O as the search requires (§9.2.5). O, its bucket spent on
+/// offering its held message once a ban, may refuse the return, and F
+/// then drops it: the only drops F makes.
 ///
 /// The home channels are fixed. The frames this test loses on the way to D
 /// are on the air at D but never received, so D cannot tell them from
@@ -1067,6 +1237,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     let period = Duration::from_millis(2500);
     let (mut k, mut skipped, mut waited, mut longest_wait) = (0u32, 0u32, 0u32, Duration::ZERO);
     let mut sent_at = std::collections::HashMap::new();
+    let mut taken_at = std::collections::HashMap::new();
     let mut due = h.now;
     let mut waiting: Option<Instant> = None;
     loop {
@@ -1081,7 +1252,9 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         if let Some(first) = waiting.filter(|_| h.accepts(o)) {
             let mut text = [0u8; MAX_PAYLOAD];
             text[..4].copy_from_slice(&k.to_be_bytes());
-            sent_at.insert(send(&mut h, o, d, &text), first);
+            let id = send(&mut h, o, d, &text);
+            sent_at.insert(id, first);
+            taken_at.insert(id, h.now);
             k += 1;
             let wait = h.now.since(first);
             if wait > Duration::ZERO {
@@ -1196,6 +1369,12 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .map(|(t, AppEvent::Message { msg_id, .. })| t.since(sent_at[msg_id]))
         .collect();
     latency.sort();
+    let mut since_taken: Vec<Duration> = h.nodes[d]
+        .app
+        .iter()
+        .map(|(t, AppEvent::Message { msg_id, .. })| t.since(taken_at[msg_id]))
+        .collect();
+    since_taken.sort();
     let mut offered = to_f.clone();
     offered.sort_by_key(|m| m.0);
     offered.dedup();
@@ -1209,12 +1388,19 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         "O's application offered {k}, {waited} after waiting, longest {longest_wait:?}, \
          skipped {skipped}; longest gap between F's DATA frames {gap:?}; D's ACKs lost at F {acks_lost}; \
          O's frames to F {}, of which retries {}; O dropped {o_drops:?}; \
-         D received {} messages, latency median {:?}, max {:?}",
+         F dropped {} returns O refused; \
+         D received {} messages, latency from when due median {:?}, max {:?}, \
+         from when O took it median {:?}, max {:?}",
         to_f.len(),
         to_f.len() - offered.len(),
+        tf.iter()
+            .filter(|t| matches!(t, Trace::Dropped { reason: DropReason::ReturnFailed, .. }))
+            .count(),
         latency.len(),
         latency.get(latency.len() / 2),
         latency.last(),
+        since_taken.get(since_taken.len() / 2),
+        since_taken.last(),
     );
     assert!(full + broke > 0, "F never refused a message");
     assert!(busy_sent > 0 && turned_away > 0, "no BUSY reached O");
@@ -1222,13 +1408,21 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         !deferred.is_empty(),
         "the budget never held a hand-over back"
     );
+    let return_failed = |id: MsgId| {
+        tf.contains(&Trace::Dropped {
+            msg_id: id,
+            reason: DropReason::ReturnFailed,
+        })
+    };
     assert!(
-        deferred.iter().all(|&id| handed(id)),
+        deferred.iter().all(|&id| handed(id) || return_failed(id)),
         "a deferred message was neither forwarded nor returned"
     );
     let drops: Vec<_> = tf
         .iter()
-        .filter(|t| matches!(t, Trace::Dropped { .. }))
+        .filter(
+            |t| matches!(t, Trace::Dropped { reason, .. } if *reason != DropReason::ReturnFailed),
+        )
         .collect();
     assert!(drops.is_empty(), "F dropped: {drops:?}");
     assert!(

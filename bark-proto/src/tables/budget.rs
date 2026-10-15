@@ -141,6 +141,24 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
 
 const _: () = assert!(REPLIES == 22);
 
+/// How long a sender holds a message after the `refusals`-th refusal in a
+/// row before offering it again (§9.3, §10.2): one [`BAN`] after the
+/// first, doubling after each further one, up to the refill of the whole
+/// bucket, 61 s, the longest anything waits for a bucket. Offered once a
+/// ban, a full frame every 1.53 s would be a 9 % probe on the refuser's
+/// channel and spend the holder's bucket as fast as it refills.
+pub const fn hold(refusals: u8) -> Duration {
+    let cap = refill_time(DEPTH).as_micros();
+    let doublings = refusals.saturating_sub(1);
+    let mut wait = BAN.as_micros();
+    let mut k = 0;
+    while k < doublings && wait < cap {
+        wait *= 2;
+        k += 1;
+    }
+    Duration::from_micros(if wait < cap { wait } else { cap })
+}
+
 /// The duty-cycle token bucket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
@@ -451,5 +469,15 @@ mod tests {
                 prop_assert!(b.would_allow(a, now));
             }
         }
+    }
+
+    #[test]
+    fn a_hold_doubles_up_to_the_bucket_s_refill() {
+        assert_eq!(hold(1), BAN);
+        assert_eq!(hold(2), BAN.mul(2));
+        assert_eq!(hold(3), BAN.mul(4));
+        assert_eq!(hold(6), BAN.mul(32));
+        assert_eq!(hold(7), refill_time(DEPTH));
+        assert_eq!(hold(255), refill_time(DEPTH));
     }
 }

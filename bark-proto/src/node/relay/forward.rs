@@ -73,6 +73,14 @@
 //! that the receiver was handed the message is taken back. A return, a
 //! send-back or a DELIVER refused this way has used one of its attempts.
 //!
+//! The application's own message, until its first hop takes it, is not
+//! dropped when only bans exhaust its search: it is set aside ([`Held`])
+//! until the earliest ban ends, or longer after refusals in a row
+//! ([`hold`]), and a message for an own leaf waits there
+//! for a place in the delivery queue (§9.2.5). It keeps its place and
+//! airtime in the admission of §9.3, so it can always go back, and the
+//! application is given no other meanwhile (roadmap D29).
+//!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
 use super::{Job, Relay};
@@ -82,11 +90,11 @@ use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Reply, Step};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{BAN, BUSY_AIRTIME, HEARTBEAT_RESERVE, REPLY_RESERVE};
+use crate::tables::budget::{hold, BAN, BUSY_AIRTIME, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::Neighbour;
 use crate::tables::records::{Record, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing};
+use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, AckFrom, Busy, Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -118,6 +126,20 @@ enum Routed {
     To(Outgoing, Ack),
     /// Dropped or delivered here; it leaves the queue.
     Done,
+    /// The application's message waits, set aside: until the earliest ban
+    /// ends, or for a place in the delivery queue.
+    Hold(Option<Instant>),
+}
+
+/// The application's message, set aside (roadmap D29). It keeps its
+/// place and airtime in the send queue's admission, so it can always go
+/// back.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Held {
+    pub(super) out: Outgoing,
+    /// When the earliest ban among its candidates ends; `None` while it
+    /// waits for a place in the delivery queue.
+    until: Option<Instant>,
 }
 
 fn ack_airtime() -> Duration {
@@ -161,14 +183,26 @@ impl Relay {
             (true, Some(o)) => mac::airtime(&o.frame),
             _ => Duration::ZERO,
         };
-        let queued = self.queue.airtime() - front;
-        if self.queue.is_full() && !freed {
+        let queued = self.queue.airtime() - front + self.held_airtime();
+        if self.places_full() && !freed {
             Some(DropReason::SendQueueFull)
         } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
             Some(DropReason::Budget)
         } else {
             None
         }
+    }
+
+    /// Whether the send queue has no place, the held message counting as
+    /// one.
+    fn places_full(&self) -> bool {
+        self.queue.len() + usize::from(self.held.is_some()) >= SEND_QUEUE
+    }
+
+    fn held_airtime(&self) -> Duration {
+        self.held
+            .as_ref()
+            .map_or(Duration::ZERO, |h| mac::airtime(&h.out.frame))
     }
 
     /// Whether a reply may spend `airtime` now: it must leave the
@@ -179,6 +213,9 @@ impl Relay {
     }
 
     fn drop_msg(&mut self, msg_id: MsgId, reason: DropReason, emit: &mut dyn FnMut(Action)) {
+        if self.own == Some(msg_id) {
+            self.set_own(None);
+        }
         emit(Action::Trace(Trace::Dropped { msg_id, reason }));
     }
 
@@ -447,6 +484,9 @@ impl Relay {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
+        if self.own == Some(id) {
+            self.set_own(None);
+        }
         if leaf == LeafId::RELAY {
             if dst != self.config.position {
                 self.drop_msg(id, DropReason::RelayGone, emit);
@@ -483,33 +523,65 @@ impl Relay {
     // --- The relay's own application (§9.2) ---
 
     /// Whether the application may send now (roadmap D29 rule 6): the
-    /// relay is running, its send queue takes a full frame on top of what
-    /// it holds, as a forward would be taken but without the ACK, and its
-    /// delivery queue has a place, should the message be for one of its
-    /// own leaves.
+    /// relay is running, holds no message of the application's, and its
+    /// send queue takes a full frame on top of what it holds, as a forward
+    /// would be taken but without the ACK.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         !self.booting()
-            && !self.delivery.is_full()
+            && self.own.is_none()
             && self
                 .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, false, now)
                 .is_none()
     }
 
     /// When the application may send again, if only the bucket keeps it
-    /// waiting; a place or a running relay comes with an event.
+    /// waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.booting() || self.delivery.is_full() || self.queue.is_full() {
+        if self.booting() || self.own.is_some() || self.places_full() {
             return None;
         }
-        let need = self.queue.airtime() + data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
+        let need =
+            self.queue.airtime() + self.held_airtime() + data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
         self.budget
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now)
     }
 
+    /// The application's message is now `own`; a new one, or none, has
+    /// been refused no time yet.
+    fn set_own(&mut self, own: Option<MsgId>) {
+        self.own = own;
+        self.own_refusals = 0;
+    }
+
+    /// Put the held message back in the send queue once its earliest ban
+    /// has ended, or deliver it once the delivery queue has a place.
+    pub(super) fn release_held(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(h) = self.held else { return };
+        match h.until {
+            Some(t) if now >= t => {
+                self.held = None;
+                // Its place was kept for it.
+                if self.queue.push(h.out).is_err() {
+                    if let Some(id) = h.out.msg_id() {
+                        self.drop_msg(id, DropReason::SendQueueFull, emit);
+                    }
+                }
+            }
+            None if !self.delivery.is_full() => {
+                self.held = None;
+                if let Ok(Packet::Data(d)) = Packet::decode(h.out.frame.payload()) {
+                    self.arrive(d.msg_id(), d.dst_pos, d.dst_leaf, d.payload, now, emit);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// `AppCommand::Send`: this relay is the origin. Offered only when
     /// [`Relay::accepts_send`]; anything else is the driver's bug and is
-    /// ignored.
+    /// ignored. The message is the application's until its first hop
+    /// takes it (`own`).
     ///
     /// The application is the first sender and sends count 0 (§9.2.6), as
     /// a leaf does; this relay then sends 1, what it received plus one. It
@@ -532,14 +604,7 @@ impl Relay {
         if self.records.get(id, now).is_some() || self.delivered.contains(id, now) {
             return;
         }
-        if self.owns(dst_pos, now) {
-            let mut record = Record::new(id, None, 0, now);
-            record.set_owned();
-            self.keep(record, now, emit);
-            self.arrive(id, dst_pos, dst_leaf, payload, now, emit);
-            return;
-        }
-        self.keep(Record::new(id, None, 0, now), now, emit);
+        self.set_own(Some(id));
         let d = Data {
             sender_home: self.home,
             dst_hop: ShortName(0),
@@ -549,6 +614,22 @@ impl Relay {
             hops: 0,
             payload,
         };
+        if self.owns(dst_pos, now) {
+            let mut record = Record::new(id, None, 0, now);
+            record.set_owned();
+            self.keep(record, now, emit);
+            if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+                let out = Outgoing {
+                    frame: data_frame(&d, self.home),
+                    kind: Kind::Forward,
+                };
+                self.held = Some(Held { out, until: None });
+            } else {
+                self.arrive(id, dst_pos, dst_leaf, payload, now, emit);
+            }
+            return;
+        }
+        self.keep(Record::new(id, None, 0, now), now, emit);
         self.send_on(&d, Kind::Forward, emit);
     }
 
@@ -596,6 +677,13 @@ impl Relay {
                     self.skipped = 0;
                     self.feed_due = true;
                 }
+                Routed::Hold(until) => {
+                    if let Some(out) = self.queue.pop() {
+                        self.held = Some(Held { out, until });
+                    }
+                    self.skipped = 0;
+                    self.feed_due = true;
+                }
             }
         }
     }
@@ -615,6 +703,9 @@ impl Relay {
         if self.owns(d.dst_pos, now) {
             if let Some(r) = self.records.get_mut(id, now) {
                 r.set_owned();
+            }
+            if self.own == Some(id) && d.dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+                return Routed::Hold(None);
             }
             self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
             return Routed::Done;
@@ -658,10 +749,29 @@ impl Relay {
                 )
             }
             None => {
+                if self.own == Some(id) {
+                    if let Some(t) = self.ban_ends(&record, now) {
+                        self.own_refusals = self.own_refusals.saturating_add(1);
+                        return Routed::Hold(Some(t.max(now + hold(self.own_refusals))));
+                    }
+                }
                 self.drop_msg(id, DropReason::NoRoute, emit);
                 Routed::Done
             }
         }
+    }
+
+    /// When the earliest ban ends among the neighbours that would be
+    /// candidates for the message of `record` but for their ban; `None`
+    /// if the search was exhausted by tried and failed ones alone.
+    /// A BUSY also sets its sender aside for this hand-over, so being set
+    /// aside does not count against a banned neighbour.
+    fn ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
+        self.neighbours
+            .live(now)
+            .filter(|(slot, n)| !record.handed(*slot) && self.neighbours.is_banned(n, now))
+            .map(|(_, n)| n.banned_until)
+            .min()
     }
 
     /// The home channel of the neighbour named `name`, as its latest
@@ -892,11 +1002,16 @@ impl Relay {
             self.neighbours.succeeded(p);
         }
         let trace = match out.kind {
-            Kind::Forward => Trace::Forwarded {
-                msg_id: id,
-                to,
-                hops: d.hops,
-            },
+            Kind::Forward => {
+                if self.own == Some(id) {
+                    self.set_own(None);
+                }
+                Trace::Forwarded {
+                    msg_id: id,
+                    to,
+                    hops: d.hops,
+                }
+            }
             Kind::Return => Trace::ReturnedToParent { msg_id: id, to },
             Kind::Bounce | Kind::Deliver => Trace::Bounced { msg_id: id, to },
         };
@@ -1013,6 +1128,9 @@ impl Relay {
             if let Some(t) = self.replies.wake_at() {
                 at(t);
             }
+        }
+        if let Some(t) = self.held.and_then(|h| h.until) {
+            at(t);
         }
         w
     }

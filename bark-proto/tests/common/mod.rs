@@ -224,6 +224,19 @@ impl<C: Core> Harness<C> {
         self.deliver(i, Event::App(cmd));
     }
 
+    /// Put `f` on the air now as node `i`'s, past its core: for a test that
+    /// needs more traffic than cores would send. No budget or excursion
+    /// is checked or recorded for it.
+    pub fn inject(&mut self, i: usize, f: Frame) {
+        self.txs.push(Tx {
+            from: i,
+            channel: f.channel,
+            start: self.now,
+            end: self.now + time_on_air(f.len, f.preamble_symbols),
+            bytes: f.payload().to_vec(),
+        });
+    }
+
     /// Whether node `i` would take an `AppCommand::Send` now.
     pub fn accepts(&self, i: usize) -> bool {
         self.nodes[i].core.accepts_send(self.now)

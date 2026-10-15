@@ -149,6 +149,16 @@ pub struct Relay {
     delivery_retry_at: Instant,
     /// When the bucket lets the application send, if only it is missing.
     app_ready_at: Option<Instant>,
+    /// The application's message, from when it is taken until its first
+    /// hop takes it, it arrives here, or it is dropped (roadmap D29).
+    own: Option<MsgId>,
+    /// Refusals in a row of `own` by banned neighbours: each doubles the
+    /// hold before it is offered again (`budget::hold`).
+    own_refusals: u8,
+    /// The application's message, set aside while every neighbour left
+    /// for it is banned or, for a leaf of this relay, while the delivery
+    /// queue is full.
+    held: Option<forward::Held>,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
@@ -201,6 +211,9 @@ impl Relay {
             delivered: Delivered::from_config(&config),
             delivery_retry_at: Instant::ZERO,
             app_ready_at: None,
+            own: None,
+            own_refusals: 0,
+            held: None,
             feed_due: false,
             feed_at: None,
             config,
@@ -242,6 +255,7 @@ impl Relay {
             .iter()
             .filter_map(|o| o.msg_id())
             .chain(self.delivery.iter().map(|q| q.msg_id))
+            .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
     }
 
     fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -316,6 +330,7 @@ impl Relay {
 
     /// Start whatever is ready until the radio is busy or nothing is.
     fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.release_held(now, emit);
         if self.feed_due || self.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
@@ -706,9 +721,9 @@ mod tests {
 
     #[test]
     fn sizes() {
-        // docs/core-interface.md §6: under 50 KiB with every table; 50 096 B
-        // with a 40-place send queue, a 41-place delivery queue and one
-        // owed reply.
+        // docs/core-interface.md §6: under 50 KiB with every table; 50 384 B
+        // with a 40-place send queue, a 41-place delivery queue, one owed
+        // reply and one held message.
         let relay = core::mem::size_of::<Relay>();
         let leaf = core::mem::size_of::<crate::node::Leaf>();
         std::println!("Relay {relay} B, Leaf {leaf} B");
@@ -931,10 +946,12 @@ mod tests {
     }
 
     /// The application may send only while the relay can take a message
-    /// (roadmap D29 rule 6): not while it boots, not while its delivery
-    /// queue is full, and not while its bucket cannot hold a full frame on
-    /// top of what it has queued; then the relay wakes when it can. A send
-    /// offered anyway is ignored.
+    /// (roadmap D29 rule 6): not while it boots, not while it holds one of
+    /// the application's, and not while its bucket cannot hold a full
+    /// frame on top of what it has queued; then the relay wakes when it
+    /// can. A send offered anyway is ignored. A message for a leaf of this
+    /// relay that finds the delivery queue full is held until it has a
+    /// place.
     #[test]
     fn the_application_waits_for_room() {
         use crate::ids::LeafId;
@@ -967,14 +984,26 @@ mod tests {
             };
             r.handle(Event::App(cmd), now, &mut |_| {});
         };
-        for k in 0..DELIVERY_QUEUE as u8 {
+        for k in 0..=DELIVERY_QUEUE as u8 {
             assert!(r.accepts_send(now), "message {k}");
             send(&mut r, k, now);
         }
-        assert_eq!(r.holding().count(), DELIVERY_QUEUE);
+        assert_eq!(r.holding().count(), DELIVERY_QUEUE + 1, "one held");
         assert!(!r.accepts_send(now));
-        send(&mut r, 255, now);
-        assert_eq!(r.holding().count(), DELIVERY_QUEUE, "taken while full");
+        send(&mut r, 254, now);
+        assert_eq!(
+            r.holding().count(),
+            DELIVERY_QUEUE + 1,
+            "taken while holding"
+        );
+        // The oldest expire after the delivery TTL; the held one takes a
+        // place, and the application may send again.
+        let ttl = r.config.delivery_ttl;
+        let until = now + ttl + Duration::from_secs(1);
+        drive(&mut r, &mut now, until);
+        assert!(r.held.is_none());
+        assert_eq!(r.holding().count(), 1, "the held one, now queued");
+        assert!(r.accepts_send(now));
 
         // A bucket spent down to a full frame keeps the application
         // waiting until it has refilled that much, and wakes the relay then.

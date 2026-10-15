@@ -90,11 +90,14 @@ sending it or waiting to. The protocol has no end-to-end acknowledgement (design
 whether the message arrived is for the app to find out inside its payload. A message the
 node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
-A relay accepts a message while it is running, its send queue takes a full frame on top of
-what it holds (design §9.3), and its delivery queue has a place, should the message be for
-one of its own leaves (design §10.4). When only its bucket keeps it from accepting, its
-`next_wakeup()` includes the moment the bucket will have refilled enough. A leaf accepts a
-message while it holds none (design §10.2).
+Each role holds one message of its application's at a time, until its first hop takes it.
+A relay accepts a message while it is running, holds none, and its send queue takes a full
+frame on top of what it holds (design §9.3). When only its bucket keeps it from accepting,
+its `next_wakeup()` includes the moment the bucket will have refilled enough. A relay whose
+remaining neighbours are all banned keeps the message and tries again when the first ban
+ends, or later after refusals in a row (design §9.3); one for its own leaf that finds the
+delivery queue full waits for a place (design §9.2.5). A leaf accepts a message while it
+holds none (design §10.2).
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
@@ -135,9 +138,9 @@ test in `tables/mod.rs`:
 
 The send queue's 40 places follow from the duty bucket (design §9.3), and the delivery
 queue gives up the memory for them: its 41 places hold what arrives in one delivery TTL for
-a full leaf table (§10.4). The whole `Relay` is 50 096 B (48.9 KiB), under the 50 KiB
+a full leaf table (§10.4). The whole `Relay` is 50 384 B (49.2 KiB), under the 50 KiB
 target; besides the tables it holds the medium access, the hand-over, its one owed reply
-and when its application may next send.
+and its application's message while it waits.
 Checked by the tests in `tables/mod.rs` and `node/relay.rs`.
 
 `Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty
