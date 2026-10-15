@@ -1657,6 +1657,88 @@ mod tests {
         assert_eq!(offer_data(&mut r, &mut now, far, 2, 2), (Some(2), None));
     }
 
+    /// A hand-over carries the record's highest count plus one, stamped at
+    /// its first transmission and repeated by its retries; readdressed
+    /// after a failure it carries the count of its new first transmission;
+    /// one that succeeds raises the highest to its count (§9.2.6, roadmap
+    /// D35). Stamped when queued, the frame would carry 2 throughout.
+    #[test]
+    fn a_hand_over_stamps_its_count_at_its_first_transmission() {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::tables::records::Record;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Ack, Data};
+        let (mut r, start, far) = with_every_neighbour_banned();
+        let mut now = start + BAN;
+        let me = r.config.position;
+        let [near, nearest] = [1, 2].map(|k| Position {
+            lat: me.lat + 5_000 * k,
+            ..me
+        });
+        let data = Data {
+            sender_home: r.home,
+            dst_hop: ShortName(0),
+            src_hop: r.me(),
+            dst_pos: far,
+            dst_leaf: LeafId::RELAY,
+            hops: 2,
+            payload: b"count",
+        };
+        let id = data.msg_id();
+        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let at = r.record_place().unwrap();
+        r.records.put(at, Record::new(id, parent, 1, now));
+        let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        // A copy with a higher count arrived since it was queued.
+        r.records.get_mut(id).unwrap().received(6, now);
+
+        let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u8> {
+            sent.iter()
+                .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+                    Ok(Packet::Data(d)) if d.dst_hop == to.short() => Some(d.hops),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+        let until = now;
+        let mut sent = drive_from(&mut r, &mut now, until, pending);
+        while counts(&sent, nearest).len() < 3 {
+            let until = now + Duration::from_millis(10);
+            sent.extend(drive(&mut r, &mut now, until));
+            now = now.max(until);
+            assert!(now < start + Duration::from_secs(10), "no third attempt");
+        }
+        assert_eq!(counts(&sent, nearest), [7, 7, 7], "stamped, then repeated");
+        // Another copy arrives during the last attempt.
+        r.records.get_mut(id).unwrap().received(9, now);
+        while counts(&sent, near).is_empty() {
+            let until = now + Duration::from_millis(10);
+            sent.extend(drive(&mut r, &mut now, until));
+            now = now.max(until);
+            assert!(now < start + Duration::from_secs(10), "not readdressed");
+        }
+        assert_eq!(counts(&sent, near), [10], "readdressed: stamped again");
+        let ack = Ack {
+            msg_id: id,
+            from: near.short().into(),
+            to: r.me().into(),
+            refused: false,
+        };
+        let f = mac::frame(&Packet::Ack(ack), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        r.handle(event, now, &mut |_| {});
+        assert_eq!(r.records.get(id).unwrap().highest_hops(), 10);
+    }
+
     /// The relay's own application waits while every neighbour is banned,
     /// and the relay wakes when the first ban ends (roadmap D34).
     #[test]

@@ -52,8 +52,8 @@
 //! when its hand-over starts, by the one next-hop function of §9.2.3, and
 //! readdressed by it after a failure; with no candidate left it becomes a
 //! return to the parent, or at the origin a drop. The hop count a packet
-//! carries is fixed when it is queued: what the relay received plus one
-//! (§9.2.6).
+//! carries is stamped at each hand-over's first transmission, the record's
+//! highest count plus one, and repeated by its retries (§9.2.6).
 //!
 //! Where a frame goes is read at the moment of sending (roadmap D29 rule
 //! 7): before each attempt its channel is the receiver's home as the
@@ -485,8 +485,9 @@ impl Relay {
     }
 
     /// Queue `d` onward into `place`: a forward, addressed later, or
-    /// straight back to its sender. Carries the received count plus one
-    /// (§9.2.6).
+    /// straight back to its sender. Carries the received count plus one,
+    /// which places it among waiting entries, until its hand-over stamps
+    /// the count it is sent with (§9.2.6).
     fn send_on(&mut self, d: &Data<'_>, kind: Kind, place: u8, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
@@ -929,14 +930,23 @@ impl Relay {
         }
         let mut frame = out.frame;
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
+            let id = d.msg_id();
+            let Some(hops) = self.count(&d, id) else {
+                self.handover.cancel();
+                self.queue.take_current();
+                self.skipped = 0;
+                self.feed_due = true;
+                self.drop_msg(id, DropReason::HopCap, emit);
+                return;
+            };
             frame = data_frame(
                 &Data {
                     sender_home: self.home,
+                    hops,
                     ..d
                 },
                 out.frame.channel,
             );
-            let id = d.msg_id();
             if let Some(r) = self.records.get_mut(id) {
                 match out.kind {
                     Kind::Forward => {
@@ -963,6 +973,26 @@ impl Relay {
         self.handover.transmitting();
         self.radio
             .start(Job::HandOver, Action::Transmit(frame), emit);
+    }
+
+    /// The count the current hand-over of `d` carries (§9.2.6): stamped at
+    /// its first transmission as the record's highest plus one, repeated by
+    /// its retries. Stamped when queued, a frame would keep a count older
+    /// than one this relay has since received or sent, and a relay that
+    /// readdressed it would offer a count it had already used. `None` past
+    /// the hop cap.
+    fn count(&self, d: &Data<'_>, id: MsgId) -> Option<u8> {
+        if self.handover.transmitted() {
+            return Some(d.hops);
+        }
+        debug_assert!(
+            self.records.get(id).is_some(),
+            "a held message keeps its record"
+        );
+        match self.records.get(id) {
+            Some(r) => r.highest_hops().checked_add(1),
+            None => Some(d.hops),
+        }
     }
 
     /// Listen-before-talk gave up on the current hand-over's channel.
@@ -1055,6 +1085,9 @@ impl Relay {
         let (id, to) = (d.msg_id(), d.dst_hop);
         if let Some(p) = self.neighbour_named(to) {
             self.neighbours.succeeded(p, now);
+        }
+        if let Some(r) = self.records.get_mut(id) {
+            r.handed_over(d.hops);
         }
         let trace = match out.kind {
             Kind::Forward => {

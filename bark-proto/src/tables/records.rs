@@ -149,7 +149,8 @@ impl Record {
         (self.flags & HAS_CHILD != 0).then_some(self.last_child)
     }
 
-    /// The largest `hops` received for the message.
+    /// The largest count received for the message, or carried by a
+    /// hand-over of it from this relay that succeeded (§9.2.6).
     pub fn highest_hops(&self) -> u8 {
         self.highest_hops
     }
@@ -203,6 +204,13 @@ impl Record {
         let higher = hops > self.highest_hops;
         self.highest_hops = self.highest_hops.max(hops);
         higher
+    }
+
+    /// A hand-over of the message with count `hops` succeeded. The next
+    /// one starts above it, so this relay never sends the same count twice
+    /// but as a retry (§9.2.6).
+    pub fn handed_over(&mut self, hops: u8) {
+        self.highest_hops = self.highest_hops.max(hops);
     }
 
     /// The message was sent at `now` to `child`, in neighbour-table `slot`:

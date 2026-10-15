@@ -420,7 +420,7 @@ originated:
 | parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin. The channel is used only if that relay is no longer in the neighbour table (§9.2.5) |
 | last child | the neighbour it last sent the message to, as a short name; none before the first send |
 | handed | the neighbours this relay has handed the message to, as one bit per neighbour-table slot |
-| highest hops | the largest `hops` (§9.2.6) received for the message |
+| highest hops | the largest `hops` (§9.2.6) received for the message, or sent in a hand-over of it that succeeded |
 | owned | whether this relay owns the destination (§9.2.7) |
 | returned | whether this relay has returned the message to its parent, or dropped it as origin |
 | last active | when it last received or sent the message |
@@ -605,13 +605,19 @@ failed: the return waits for the ban and goes again (§9.3).
 
 `hops` in the DATA header counts hand-overs. A leaf sends 0; a relay
 sending for its own application sends 1, as if it had received the
-message at 0, since 0 means "from a leaf" (§9.2.1); every relay sends
-what it received plus one, whether it is forwarding, returning to its
-parent or sending straight back. A retransmission repeats the count. So
-along the path of a message the count only grows, and a count no higher
-than one a relay has already received for the message marks a copy
-(§9.2.4, case 3). The count also numbers the hop places of the send
-queue (§9.3).
+message at 0, since 0 means "from a leaf" (§9.2.1). A relay sends its
+record's highest count plus one (§9.2.2), whether it is forwarding,
+returning to its parent or sending straight back. The count is set when
+a hand-over's first frame goes out, and its retries repeat it (§9.3).
+The highest count is the largest the relay has received for the message
+or sent in a hand-over that succeeded. So along the path of a message
+the count only grows, and a count no higher than one a relay has
+already received for the message marks a copy (§9.2.4, case 3). A frame
+that waited in the send queue, or goes to another neighbour after a
+failed hand-over, carries the count as it stands when it goes; set when
+the frame was queued, it would be lower than one the relay has since
+received, and the receiver would take it for a copy. The count also
+numbers the hop places of the send queue (§9.3).
 
 A relay that would have to send a count above 255, the largest the
 one-byte field holds, drops the message. A search that keeps its records
