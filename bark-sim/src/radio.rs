@@ -7,40 +7,38 @@
 //!
 //! A node listening on channel `c`, with no excursion in progress:
 //!
-//! 1. **Detectability.** A packet on `c` below sensitivity is not received
-//!    (it still counts as interference).
-//! 2. **Lock.** With no lock, the receiver locks to the packet if the
-//!    interference already on the air (co-channel, plus ±1 and ±2 channels
-//!    after rejection) is below it by the capture threshold. A second
-//!    packet on `c` that arrives during the locked packet's preamble steals
-//!    the lock if it is stronger by the capture threshold; otherwise it is
-//!    lost to capture.
-//! 3. **Survival.** Interference only rises when a signal starts, so the
-//!    lock is re-checked at every start that overlaps it: this is the worst
-//!    instantaneous interference over the packet, the quantity that decides
-//!    whether symbols are lost. If the packet falls below the capture
-//!    threshold it is lost, and the receiver is deaf, demodulating garbage,
-//!    until both it and the signal that broke it have ended.
+//! 1. **Lock.** With no lock, the receiver locks to a packet on `c` that
+//!    arrives. A second packet on `c` that arrives during the locked
+//!    packet's preamble steals the lock if it is stronger by the capture
+//!    threshold; otherwise it is lost to capture.
+//! 2. **Survival.** While locked, every symbol may be lost, at a hazard
+//!    the error curve gives from the signal against noise and the
+//!    interference on the air (co-channel, plus ±1 and ±2 channels after
+//!    rejection). Interference changes only when a signal starts or ends,
+//!    so the hazard is constant between those moments and is summed over
+//!    them. The packet is lost when the summed hazard reaches a budget
+//!    drawn at lock from the exponential distribution, which loses it with
+//!    the probability that not every symbol survives.
+//! 3. **Loss.** A packet lost before its header has ended frees the
+//!    receiver to search for a preamble again: a weak packet costs it a
+//!    few symbols. One lost later leaves it deaf, demodulating garbage,
+//!    until the packet's end, the length its header gave.
 //! 4. **Delivery.** A locked packet that reaches its end is delivered as
 //!    `Event::Received`, CRC assumed perfect.
 //!
-//! Interference is evaluated online, so no interval needs to outlive the
-//! signal: the worst value seen is carried in the lock.
+//! The hazard is summed lazily: whenever a node's lock is looked at, it is
+//! first brought up to the present (`settle`), and a loss found then is
+//! dated to when the budget ran out.
 
 use crate::metrics::Outcome;
-use crate::phy::{self, Deaf};
+use crate::phy::{self, Deaf, Loss};
 use crate::sim::{Arrival, ExKind, Lock, Rx, Sim};
-use bark_proto::radio::{CHANNELS, SYMBOL_TIME};
-use bark_proto::{Event, Instant, MAX_FRAME};
+use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 
 /// Tolerance for threshold comparisons in dB, so that an exact 5.0 dB
 /// margin computed through milliwatts counts as 5.0 dB.
 const DB_EPS: f64 = 1e-9;
-
-/// Whether a signal at `s_dbm` survives interference `i_mw` with `cap_db`.
-fn captures(s_dbm: f64, i_mw: f64, cap_db: f64) -> bool {
-    i_mw <= 0.0 || s_dbm - phy::dbm(i_mw) >= cap_db - DB_EPS
-}
 
 /// Interference at a receiver resting on `rest`, excluding `exclude`, as
 /// (co-channel, adjacent) milliwatts after rejection.
@@ -63,6 +61,40 @@ fn interference(arrivals: &[Arrival], rest: u8, exclude: u64, rej: &[f64; 3]) ->
 #[derive(Clone, Copy)]
 pub(crate) struct Packet {
     pub preamble_end: Instant,
+    pub header_end: Instant,
+    /// A receiver needs only the minimum preamble to detect a packet
+    /// (datasheet §6.1.1.1: 12 symbols at SF5), so a longer preamble
+    /// gives it more chances, not more ways to fail: its symbols together
+    /// weigh as much as the minimum.
+    pub preamble_weight: f64,
+}
+
+impl Rx {
+    /// Sum the hazard up to `now`. Returns when the packet was lost, if it
+    /// was.
+    fn accrue(&mut self, now: Instant) -> Option<Instant> {
+        if self.rate == f64::INFINITY {
+            return Some(self.since);
+        }
+        let symbol_us = SYMBOL_TIME.as_micros() as f64;
+        let mut t = self.since;
+        for (until, weight) in [(self.preamble_end, self.preamble_weight), (now, 1.0)] {
+            let e = until.min(now);
+            if e <= t {
+                continue;
+            }
+            let per_us = self.rate * weight / symbol_us;
+            let h = e.since(t).as_micros() as f64 * per_us;
+            if self.spent + h >= self.budget {
+                let us = ((self.budget - self.spent) / per_us).ceil() as u64;
+                return Some((t + Duration::from_micros(us)).min(e));
+            }
+            self.spent += h;
+            t = e;
+        }
+        self.since = now;
+        None
+    }
 }
 
 impl Sim {
@@ -74,7 +106,12 @@ impl Sim {
         tx.on_air = true;
         let (src, key, end, start) = (tx.src, tx.key, tx.end, tx.start);
         let ch = tx.frame.channel;
-        let preamble_end = start + SYMBOL_TIME.mul(tx.frame.preamble_symbols as u64);
+        let preamble = tx.frame.preamble_symbols;
+        let packet = Packet {
+            preamble_end: start + SYMBOL_TIME.mul(preamble as u64),
+            header_end: start + header_end(preamble),
+            preamble_weight: (MIN_PREAMBLE_SYMBOLS as f64 / preamble as f64).min(1.0),
+        };
         let air = end.since(start).as_micros();
         let m = &mut self.metrics;
         m.nodes[src as usize].tx_frames += 1;
@@ -85,7 +122,6 @@ impl Sim {
         if !self.nodes[src as usize].present {
             return; // A dark leaf transmits into a tunnel.
         }
-        let packet = Packet { preamble_end };
         for i in 0..self.links.row(src).len() {
             let l = self.links.row(src)[i];
             let dbm = self.links.rx_dbm(&l, ch);
@@ -127,6 +163,9 @@ impl Sim {
                         self.metrics.outcome(b, r.channel, Outcome::Truncated);
                     } else {
                         self.metrics.outcome(b, r.channel, Outcome::Delivered);
+                        if !r.threshold_ok {
+                            self.metrics.disagreement(b, r.channel, true);
+                        }
                         got.push((b, r.mw, r.max_i_mw));
                     }
                 }
@@ -160,11 +199,11 @@ impl Sim {
         let now = self.now;
         let sens = self.sens_dbm;
         let cap = self.radio.capture_db;
-        let rej = self.rej;
-        let st = &mut self.nodes[b as usize];
-        if !st.alive || !st.present {
+        if !self.nodes[b as usize].alive || !self.nodes[b as usize].present {
             return;
         }
+        self.settle(b);
+        let st = &mut self.nodes[b as usize];
         if let Lock::Corrupt(until) = st.lock {
             if now >= until {
                 st.lock = Lock::Idle;
@@ -196,46 +235,25 @@ impl Sim {
             }
             return;
         }
+        let mut locked = false;
         if let (Some(p), 0) = (packet, offset) {
             self.metrics.candidate(b, a.channel);
-            let outcome = if a.dbm < sens {
-                Some(Outcome::BelowSensitivity)
-            } else if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
+            let outcome = if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
                 Some(Outcome::Deaf(ex.reason_at(now)))
             } else if now < st.listen_from {
                 Some(Outcome::Deaf(Deaf::Retune))
             } else {
-                let new_lock = |max_i_mw| Rx {
-                    key: a.key,
-                    channel: a.channel,
-                    dbm: a.dbm,
-                    mw: a.mw,
-                    preamble_end: p.preamble_end,
-                    end: a.end,
-                    max_i_mw,
-                };
                 match st.lock {
                     Lock::Corrupt(_) => Some(Outcome::Deaf(Deaf::Corrupt)),
                     Lock::Idle => {
-                        let (co, adj) = interference(&st.arrivals, rest, a.key, &rej);
-                        if captures(a.dbm, co + adj, cap) {
-                            st.lock = Lock::Rx(new_lock(co + adj));
-                            None
-                        } else {
-                            Some(Outcome::SinrFail { adjacent: adj > co })
-                        }
+                        locked = true;
+                        None
                     }
                     Lock::Rx(r) if now < r.preamble_end && a.dbm >= r.dbm + cap - DB_EPS => {
                         // Stronger preamble during the locked one's: steal.
                         self.metrics.outcome(b, r.channel, Outcome::LostCapture);
-                        let (co, adj) = interference(&st.arrivals, rest, a.key, &rej);
-                        if captures(a.dbm, co + adj, cap) {
-                            st.lock = Lock::Rx(new_lock(co + adj));
-                            None
-                        } else {
-                            st.lock = Lock::Corrupt(a.end);
-                            Some(Outcome::SinrFail { adjacent: adj > co })
-                        }
+                        locked = true;
+                        None
                     }
                     Lock::Rx(_) => Some(Outcome::LostCapture),
                 }
@@ -243,27 +261,30 @@ impl Sim {
             if let Some(o) = outcome {
                 self.metrics.outcome(b, a.channel, o);
             }
-        }
-        // The new signal raises interference on any packet being received.
-        let st = &mut self.nodes[b as usize];
-        if st.ex.as_ref().is_none_or(|e| !e.deaf) {
-            if let Lock::Rx(mut r) = st.lock {
-                if r.key != a.key {
-                    let (co, adj) = interference(&st.arrivals, rest, r.key, &rej);
-                    r.max_i_mw = r.max_i_mw.max(co + adj);
-                    if captures(r.dbm, co + adj, cap) {
-                        st.lock = Lock::Rx(r);
-                    } else {
-                        st.lock = Lock::Corrupt(r.end.max(a.end));
-                        self.metrics.outcome(
-                            b,
-                            r.channel,
-                            Outcome::SinrFail { adjacent: adj > co },
-                        );
-                    }
-                }
+            if locked {
+                let st = &mut self.nodes[b as usize];
+                let budget = st.rx_rng.exponential(1.0);
+                st.lock = Lock::Rx(Rx {
+                    key: a.key,
+                    channel: a.channel,
+                    dbm: a.dbm,
+                    mw: a.mw,
+                    preamble_end: p.preamble_end,
+                    header_end: p.header_end,
+                    end: a.end,
+                    preamble_weight: p.preamble_weight,
+                    max_i_mw: 0.0,
+                    spent: 0.0,
+                    budget,
+                    since: now,
+                    rate: 0.0,
+                    cause: Loss::Noise,
+                    threshold_ok: true,
+                });
             }
         }
+        // A new lock, or a new signal raising interference on the one held.
+        self.rate_changed(b);
         if observed {
             self.observe(b, a.channel);
         }
@@ -271,13 +292,61 @@ impl Sim {
 
     /// A signal leaves node `b`.
     pub(crate) fn remove_arrival(&mut self, b: u32, key: u64) {
+        self.settle(b);
         let st = &mut self.nodes[b as usize];
         if let Some(i) = st.arrivals.iter().position(|a| a.key == key) {
             let ch = st.arrivals.swap_remove(i).channel;
-            if st.observer.is_some() {
+            self.rate_changed(b);
+            if self.nodes[b as usize].observer.is_some() {
                 self.observe(b, ch);
             }
         }
+    }
+
+    /// Bring `b`'s lock up to now, and if its packet has been lost, count
+    /// it and free or deafen the receiver (module doc, step 3).
+    pub(crate) fn settle(&mut self, b: u32) {
+        let now = self.now;
+        let st = &mut self.nodes[b as usize];
+        let Lock::Rx(mut r) = st.lock else {
+            return;
+        };
+        let Some(lost_at) = r.accrue(now) else {
+            st.lock = Lock::Rx(r);
+            return;
+        };
+        st.lock = if lost_at < r.header_end {
+            Lock::Idle
+        } else {
+            Lock::Corrupt(r.end)
+        };
+        let o = match r.cause {
+            Loss::Noise => Outcome::BelowSensitivity,
+            Loss::CoChannel => Outcome::SinrFail { adjacent: false },
+            Loss::Adjacent => Outcome::SinrFail { adjacent: true },
+        };
+        self.metrics.outcome(b, r.channel, o);
+        if r.threshold_ok {
+            self.metrics.disagreement(b, r.channel, false);
+        }
+    }
+
+    /// The signals at `b` have changed: give its lock, already settled to
+    /// now, the hazard of the present interference.
+    fn rate_changed(&mut self, b: u32) {
+        let st = &mut self.nodes[b as usize];
+        let (Lock::Rx(mut r), Some(rest)) = (st.lock, st.resting) else {
+            return;
+        };
+        if st.ex.as_ref().is_some_and(|e| e.deaf) {
+            return;
+        }
+        let (co, adj) = interference(&st.arrivals, rest.index(), r.key, &self.rej);
+        (r.rate, r.cause) = self.curve.hazard(r.dbm, co, adj);
+        r.max_i_mw = r.max_i_mw.max(co + adj);
+        r.threshold_ok &= self.curve.passes_threshold(r.dbm, co + adj);
+        st.lock = Lock::Rx(r);
+        self.settle(b);
     }
 
     /// Drop every signal at `b` (it left radio reach or was removed).

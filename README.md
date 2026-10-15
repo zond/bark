@@ -27,6 +27,8 @@ Read, in order:
 4. `docs/simulator-design.md`: the capacity simulator we build first.
 5. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
    ecosystem, hardware facts, and corrections to the design doc.
+6. `docs/reception-research-2026-10-15.md`: how the simulator decides
+   that a packet near sensitivity is lost.
 
 ## Layout
 

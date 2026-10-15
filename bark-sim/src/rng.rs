@@ -33,6 +33,8 @@ pub enum Purpose {
     Availability = 8,
     /// Boot time spread per node.
     Boot = 9,
+    /// Symbol error draws per receiving node.
+    Reception = 10,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

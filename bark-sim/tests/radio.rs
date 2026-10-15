@@ -5,15 +5,23 @@
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::Instant;
 use bark_sim::metrics::RxCounts;
-use bark_sim::phy::RadioParams;
+use bark_sim::phy::{RadioParams, Reception};
 use bark_sim::scenario::{RoleSpec::Leaf, ScriptAction};
 use bark_sim::sim::ScriptResult;
 use bark_sim::{Scenario, Sim};
 
 /// Two transmitters T1 (node 0) and T2 (node 1) heard by receiver R (node
 /// 2) at the given powers; R listens on channel 3 from t = 0. T1 and T2 do
-/// not hear each other.
+/// not hear each other. Threshold reception, so that single packets have
+/// exact outcomes; the error curve has its own tests below.
 fn trio(t1_dbm: f64, t2_dbm: f64) -> Scenario {
+    let mut sc = curve_trio(t1_dbm, t2_dbm);
+    sc.radio.reception = Reception::Threshold;
+    sc
+}
+
+/// [`trio`] with the error curve.
+fn curve_trio(t1_dbm: f64, t2_dbm: f64) -> Scenario {
     Scenario::new("trio", 1, 2.0)
         .point("T1", Leaf, 0.0, 0.0)
         .point("T2", Leaf, 10.0, 0.0)
@@ -253,12 +261,13 @@ fn below_sensitivity_is_counted_and_still_interferes() {
         2,
     );
     assert_eq!(r.delivered, 1);
-    // A packet 2 dB above sensitivity is killed by one 1 dB below it.
+    // A packet 2 dB above sensitivity is killed by one 1 dB below it,
+    // which finds the receiver locked.
     let sc = trio(s + 2.0, s - 1.0)
         .script_tx(1.0, "T1", 3, 40, 12)
         .script_tx(1.002, "T2", 3, 40, 12);
     let r = rx(&run(&sc), 2);
-    assert_eq!((r.delivered, r.sinr_fail, r.below_sensitivity), (0, 1, 1));
+    assert_eq!((r.delivered, r.sinr_fail, r.lost_capture), (0, 1, 1));
 }
 
 #[test]
@@ -370,4 +379,92 @@ fn two_outstanding_excursions_panic_naming_the_node() {
 #[should_panic(expected = "leaf 1 (T2): transmit with a 8-symbol preamble")]
 fn short_preamble_panics_naming_the_node() {
     run(&trio(-100.0, -100.0).script_tx(1.0, "T2", 3, 40, 8));
+}
+
+/// `n` packets of `len` bytes from T1 at `dbm`, 0.2 s apart, through the
+/// error curve. Returns R's counters.
+fn curve_burst(dbm: f64, len: u8, n: u32, seed: u64) -> RxCounts {
+    let mut sc = curve_trio(dbm, -200.0);
+    sc.seed = seed;
+    sc.duration_s = 1.0 + n as f64 * 0.2;
+    for i in 0..n {
+        sc = sc.script_tx(1.0 + i as f64 * 0.2, "T1", 3, len, MIN_PREAMBLE_SYMBOLS);
+    }
+    rx(&run(&sc), 2)
+}
+
+#[test]
+fn the_curve_loses_one_reference_packet_in_a_hundred_at_sensitivity() {
+    // The datasheet's sensitivity packet has 64 bytes; ours has a 12-symbol
+    // preamble where it has 8, 156.25 symbols to its 152.25, so 1.03 %.
+    let s = RadioParams::default().sensitivity_dbm();
+    let r = curve_burst(s, 64, 4000, 1);
+    let lost = r.candidates - r.delivered;
+    assert!((20..=65).contains(&lost), "lost {lost} of 4000");
+    assert_eq!(lost, r.below_sensitivity, "noise alone");
+    assert_eq!(r.curve_lost_threshold_passed, lost);
+    assert_eq!(r.curve_received_threshold_failed, 0);
+}
+
+#[test]
+fn the_curve_is_steep_and_longer_packets_fail_more() {
+    let s = RadioParams::default().sensitivity_dbm();
+    // 2 dB below sensitivity half the reference packets get through, and
+    // each of them is one the threshold would have lost.
+    let r = curve_burst(s - 2.0, 64, 1000, 2);
+    assert!((400..=640).contains(&r.delivered), "{r:?}");
+    assert_eq!(r.curve_received_threshold_failed, r.delivered);
+    // 4 dB below nearly none; 1 dB above nearly all.
+    assert!(curve_burst(s - 4.0, 64, 1000, 3).delivered < 10);
+    assert!(curve_burst(s + 1.0, 64, 1000, 4).delivered > 995);
+    // At one SNR, a 200-byte packet fails more often than an 8-byte one.
+    let short = curve_burst(s - 1.0, 8, 1000, 5).delivered;
+    let long = curve_burst(s - 1.0, 200, 1000, 5).delivered;
+    assert!(short > 900 && long < 850, "short {short}, long {long}");
+}
+
+#[test]
+fn the_curve_is_deterministic_per_seed() {
+    let s = RadioParams::default().sensitivity_dbm();
+    let a = curve_burst(s - 1.0, 64, 200, 7);
+    assert_eq!(a, curve_burst(s - 1.0, 64, 200, 7));
+    assert_ne!(a, curve_burst(s - 1.0, 64, 200, 8));
+}
+
+#[test]
+fn a_weak_packet_frees_the_receiver_and_a_late_loss_deafens_it() {
+    // T1 far below sensitivity (but above the link cut-off) is lost
+    // within its preamble, so T2 arriving 1 ms later, inside T1's preamble
+    // but not stronger by the capture threshold, still gets the receiver.
+    let s = RadioParams::default().sensitivity_dbm();
+    let sc = curve_trio(s - 9.0, s - 8.0)
+        .script_tx(1.0, "T1", 3, 40, 12)
+        .script_tx(1.001, "T2", 3, 40, 12);
+    let r = rx(&run(&sc), 2);
+    assert_eq!((r.below_sensitivity, r.lost_capture), (2, 0));
+    let sc = curve_trio(s - 9.0, s + 3.0)
+        .script_tx(1.0, "T1", 3, 40, 12)
+        .script_tx(1.001, "T2", 3, 40, 12);
+    let r = rx(&run(&sc), 2);
+    assert_eq!(
+        (r.delivered, r.below_sensitivity, r.lost_capture),
+        (1, 1, 0)
+    );
+    // T1 locked at -100 dBm is broken after its header (6.7 ms) by T2 at
+    // -95 dBm; the receiver demodulates garbage to T1's end and misses T3,
+    // which starts after T2 has ended.
+    let air40 = time_on_air(40, 12).as_micros() as f64 / 1e6;
+    let air8 = time_on_air(8, 12).as_micros() as f64 / 1e6;
+    let sc = curve_trio(-100.0, -95.0)
+        .point("T3", Leaf, 5.0, 5.0)
+        .link("T3", "R", -90.0)
+        .script_tx(1.0, "T1", 3, 40, 12)
+        .script_tx(1.010, "T2", 3, 8, 12)
+        .script_tx(1.0102 + air8, "T3", 3, 8, 12);
+    assert!(1.0102 + air8 < 1.0 + air40);
+    let r = rx(&run(&sc), 2);
+    assert_eq!(
+        (r.delivered, r.sinr_fail, r.lost_capture, r.deaf.corrupt),
+        (0, 1, 1, 1)
+    );
 }

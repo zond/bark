@@ -3,8 +3,8 @@
 //! Reception accounting: every time a transmission on channel `c` reaches a
 //! node whose resting channel is `c` (it would have heard the packet had
 //! nothing gone wrong), that is a *candidate*, and each candidate ends in
-//! exactly one outcome: delivered, below sensitivity, lost capture, SINR
-//! failure, truncated, deaf for a stated reason, or half duplex. Nodes
+//! exactly one outcome: delivered, lost to noise, lost capture, lost to
+//! interference, truncated, deaf for a stated reason, or half duplex. Nodes
 //! resting on other channels are not candidates: a packet sent elsewhere is
 //! not a loss.
 
@@ -19,13 +19,14 @@ const NCH: usize = CHANNELS as usize;
 pub enum Outcome {
     /// Delivered to the core as `Event::Received`.
     Delivered,
-    /// Below sensitivity at the receiver.
+    /// Lost with receiver noise the larger part of what it faced: below
+    /// sensitivity, under the threshold rule.
     BelowSensitivity,
     /// Another packet held the receiver's lock (or a stronger one stole it
     /// during the preamble).
     LostCapture,
-    /// Overlapping interference exceeded the capture margin; `adjacent` if
-    /// adjacent-channel leakage was the larger part of it.
+    /// Lost with interference the larger part of what it faced; `adjacent`
+    /// if adjacent-channel leakage was the larger part of that.
     SinrFail {
         /// Adjacent channels dominated the interference.
         adjacent: bool,
@@ -102,6 +103,12 @@ pub struct RxCounts {
     pub deaf: DeafCounts,
     /// Receiver transmitting.
     pub half_duplex: u64,
+    /// Locked packets the error curve lost that the threshold rule would
+    /// have passed, judged against the same signal and interference.
+    pub curve_lost_threshold_passed: u64,
+    /// Packets the error curve delivered that the threshold rule would
+    /// have lost.
+    pub curve_received_threshold_failed: u64,
 }
 
 impl RxCounts {
@@ -142,6 +149,8 @@ impl RxCounts {
         self.truncated += o.truncated;
         self.deaf.merge(&o.deaf);
         self.half_duplex += o.half_duplex;
+        self.curve_lost_threshold_passed += o.curve_lost_threshold_passed;
+        self.curve_received_threshold_failed += o.curve_received_threshold_failed;
     }
 }
 
@@ -391,6 +400,21 @@ impl Metrics {
     pub fn outcome(&mut self, node: u32, channel: u8, o: Outcome) {
         self.nodes[node as usize].rx.add(o);
         self.channels[channel as usize].rx.add(o);
+    }
+
+    /// A locked packet on which the error curve and the threshold rule
+    /// disagree: `delivered` is the curve's verdict.
+    pub fn disagreement(&mut self, node: u32, channel: u8, delivered: bool) {
+        for r in [
+            &mut self.nodes[node as usize].rx,
+            &mut self.channels[channel as usize].rx,
+        ] {
+            if delivered {
+                r.curve_received_threshold_failed += 1;
+            } else {
+                r.curve_lost_threshold_passed += 1;
+            }
+        }
     }
 
     /// Reception totals over all channels.

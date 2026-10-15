@@ -489,7 +489,7 @@ impl Summary {
             "frames",
             "candid.",
             "delivrd",
-            "<sens",
+            "noise",
             "capture",
             "sinr",
             "deaf",
@@ -530,6 +530,11 @@ impl Summary {
             s,
             "deaf by reason: retune {}, cad {}, rssi {}, tx {}, corrupt {}, absent {}; sinr of which adjacent {}",
             d.retune, d.cad, d.rssi, d.tx, d.corrupt, d.absent, self.rx.sinr_fail_adjacent
+        );
+        let _ = writeln!(
+            s,
+            "error curve against threshold: lost {} it passes, received {} it fails",
+            self.rx.curve_lost_threshold_passed, self.rx.curve_received_threshold_failed
         );
         s
     }

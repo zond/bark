@@ -40,11 +40,13 @@ Discrete-event, microsecond resolution, single-threaded, deterministic for a giv
 
 For a transmission from a on channel c, each node b that is listening on c (or on c±1, c±2 for adjacent-channel leakage) evaluates:
 
-1. **Detectability.** `rx_dbm[a][b][c](t) ≥ sensitivity`, evaluated at the start of the packet; a packet is short compared with the correlation time, so the value is held for its duration. SF5 at 125 kHz is not in the datasheet table; default −119 dBm, extrapolated 2.5 dB per SF step from SF7's −124 dBm. Parameter.
-2. **Capture.** LoRa receivers lock onto the first preamble they detect. The simulator tracks, per listening node, the packet it is locked to. A second same-channel arrival during the locked packet's preamble steals the lock if it is stronger by the capture threshold (datasheet co-channel rejection: 5 dB at SF7, SF5 unlisted; parameter, default 5 dB). After lock, the packet survives if its power exceeds the sum of all overlapping interferers, each attenuated by the rejection for its channel offset (co-channel 0 dB, ±1 channel ACR_1, ±2 channels ACR_2; both parameters, since the datasheet only gives 60 dB at 1.5 × BW offset), by the capture threshold. Otherwise it is lost, and the receiver stays deaf until the stronger interferer ends (it is now locked to garbage).
-3. **CRC.** Hardware CRC is assumed perfect: a packet is either delivered intact or not at all.
+1. **Signal.** `rx_dbm[a][b][c](t)`, taken at the start of the packet and held for its duration: a packet is short compared with the correlation time.
+2. **Lock.** LoRa receivers lock onto the first preamble they detect. The simulator tracks, per listening node, the packet it is locked to. A second same-channel arrival during the locked packet's preamble steals the lock if it is stronger by the capture threshold (datasheet co-channel rejection: 5 dB at SF7, SF5 unlisted; parameter, default 5 dB); otherwise it is lost to capture.
+3. **Symbol errors.** While locked, each symbol is lost with a probability that falls with its signal against noise plus interference; the packet survives if every symbol does (CR 4/5 detects errors but cannot correct them). Interference is every overlapping signal, each attenuated by the rejection for its channel offset (co-channel 0 dB, ±1 channel ACR_1, ±2 channels ACR_2; both parameters, since the datasheet only gives 60 dB at 1.5 × BW offset), and counts as noise weighted so that the capture threshold against interference alone costs what sensitivity costs against noise alone. Interference is followed as signals start and end, so only the symbols that overlap it face it. The curve is the error rate of noncoherent detection of 32 orthogonal symbols, placed so that the datasheet's reference packet (64 bytes) loses 1% at sensitivity. SF5 at 125 kHz is not in the datasheet table; default sensitivity −119 dBm, extrapolated 2.5 dB per SF step from SF7's −124 dBm. Parameter. `docs/reception-research-2026-10-15.md` gives the sources and the curve. The parameter `reception = "threshold"` replaces the curve by a line: a packet survives if it is at or above sensitivity and above its interference by the capture threshold.
+4. **Loss.** A packet lost before its header ends frees the receiver. One lost later keeps it deaf, locked to garbage, until the packet's end.
+5. **CRC.** Hardware CRC is assumed perfect: a packet is either delivered intact or not at all.
 
-Interferers participate in step 2 as transmitters that never carry packets.
+Interferers participate in steps 2 to 4 as transmitters that never carry packets. The losses are drawn from the run's seed.
 
 ### 3.4 Listen-before-talk
 
@@ -173,8 +175,9 @@ A message is also marked **unreachable** when, at the start of the run,
 no chain of relays that hear each other above sensitivity joins its
 origin relay (the sender itself, or the relay the sending leaf is
 attached to) to the destination's relay. Such a message is lost whatever
-the protocol does; the summary counts it apart and gives the delivery
-ratio over the reachable ones too.
+the protocol does, unless links just below sensitivity carry some of its
+packets (§3.3); the summary counts it apart and gives the delivery ratio
+over the reachable ones too.
 
 The scenario tests require that no message to a reachable destination is
 unaccounted. A message to an unreachable destination can end untraced

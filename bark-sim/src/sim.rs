@@ -17,7 +17,7 @@
 use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio};
 use crate::metrics::{DropReason, Metrics, Observer, Outcome};
-use crate::phy::{self, Deaf, RadioParams};
+use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
     resolve, Destination, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
@@ -161,9 +161,24 @@ pub(crate) struct Rx {
     pub dbm: f64,
     pub mw: f64,
     pub preamble_end: Instant,
+    /// Until here a lost packet frees the receiver: the header has not
+    /// yet told it the packet's length.
+    pub header_end: Instant,
     pub end: Instant,
+    /// Weight of a preamble symbol in the hazard (`radio::Packet`).
+    pub preamble_weight: f64,
     /// Worst instantaneous interference so far, mW.
     pub max_i_mw: f64,
+    /// Error hazard accrued up to `since`, and the hazard at which the
+    /// packet is lost, drawn at lock.
+    pub spent: f64,
+    pub budget: f64,
+    /// Since when `rate` (hazard per symbol) and `cause` hold.
+    pub since: Instant,
+    pub rate: f64,
+    pub cause: Loss,
+    /// Whether the threshold rule would pass the packet so far.
+    pub threshold_ok: bool,
 }
 
 /// Driver state of one node.
@@ -182,6 +197,7 @@ pub(crate) struct NodeState {
     pub arrivals: Vec<Arrival>,
     pub observer: Option<u32>,
     pub cad_rng: Stream,
+    pub rx_rng: Stream,
     /// A CAD or RSSI held while a packet is being received (core-interface
     /// §3 rule 8), and its generation.
     pub held: Option<(ExKind, Channel)>,
@@ -323,6 +339,7 @@ struct ScriptEntry {
 /// The simulator.
 pub struct Sim {
     pub(crate) radio: RadioParams,
+    pub(crate) curve: ErrorCurve,
     pub(crate) sens_dbm: f64,
     pub(crate) noise_mw: f64,
     /// Linear rejection factor by channel offset 0, 1, 2.
@@ -443,6 +460,7 @@ impl Sim {
                 arrivals: Vec::new(),
                 observer: None,
                 cad_rng: Stream::new(sc.seed, Purpose::CadMiss, i as u64),
+                rx_rng: Stream::new(sc.seed, Purpose::Reception, i as u64),
                 held: None,
                 held_gen: 0,
                 restarts: 0,
@@ -461,6 +479,7 @@ impl Sim {
         let busy_signal_mw = phy::mw(noise_dbm) * (phy::mw(base.busy_threshold_db as f64) - 1.0);
 
         let mut sim = Sim {
+            curve: ErrorCurve::new(&radio),
             radio,
             sens_dbm,
             noise_mw: phy::mw(noise_dbm),
@@ -930,6 +949,7 @@ impl Sim {
     /// (docs/core-interface.md §3 rule 8; design §6.1: a reading is taken
     /// only when no packet is in progress). Scripted checks are not held.
     fn check(&mut self, node: u32, kind: ExKind, c: Channel, scripted: bool) {
+        self.settle(node);
         let now = self.now;
         let st = &mut self.nodes[node as usize];
         let deaf = !(kind == ExKind::Rssi && st.resting == Some(c));
@@ -1630,6 +1650,7 @@ impl Sim {
 
     /// Abort a reception in progress at `node`, recording why.
     pub(crate) fn abort_lock(&mut self, node: u32, why: Deaf) {
+        self.settle(node);
         let st = &mut self.nodes[node as usize];
         if let Lock::Rx(r) = st.lock {
             self.metrics.outcome(node, r.channel, Outcome::Deaf(why));
