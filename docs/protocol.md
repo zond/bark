@@ -919,6 +919,9 @@ D27, D29).
 The owning relay sends the message to the leaf on the relay's own home
 channel (the leaf listens there), listen-before-talk first, and waits for
 the leaf's ACK. Preamble length per the leaf's receive mode (§10.5).
+A leaf, like a relay, owes one reply at a time: a DELIVER that arrives
+while its ACK of another is still waiting for the channel is ignored,
+and the relay's retry brings it again (§9.3, roadmap D29).
 
 ### 10.4 Delivery queue
 

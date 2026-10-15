@@ -57,7 +57,8 @@
 //! # Receiving
 //!
 //! A DELIVER for this leaf is ACKed with the leaf's ID (§14) and surfaced
-//! once. A relay re-sends the oldest message it holds for a leaf before
+//! once. One that arrives while the leaf's one owed reply is another's
+//! is ignored, as a relay ignores DATA then (§9.3). A relay re-sends the oldest message it holds for a leaf before
 //! any other (`relay/service.rs`), so a repeat follows its first copy with
 //! nothing from that relay in between; remembering the last [`SEEN`]
 //! messages covers the relay and the one the leaf has just left.
@@ -628,16 +629,17 @@ impl Leaf {
     // --- Receiving (§10.3) ---
 
     fn deliver(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let ack = Ack {
+        let ack = Reply::Ack(Ack {
             msg_id: d.msg_id,
             from: AckFrom::from(self.id),
-        };
-        self.acks.owe(
-            Reply::Ack(ack),
-            self.home,
-            now + self.config.ack_timeout,
-            now,
-        );
+        });
+        // Taken only if it can be answered, as a relay takes DATA: the
+        // relay's retry brings it again (§9.3, roadmap D29).
+        if !self.acks.can_owe(ack, self.home, now) {
+            return;
+        }
+        self.acks
+            .owe(ack, self.home, now + self.config.ack_timeout, now);
         if self.seen.contains(&d.msg_id) {
             return;
         }
@@ -802,12 +804,107 @@ impl Core for Leaf {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use std::vec::Vec;
 
     #[test]
     fn size() {
         // docs/core-interface.md §6: under 1 KiB.
         let leaf = core::mem::size_of::<Leaf>();
         assert!(leaf < 1024, "{leaf} B");
+    }
+
+    /// A second DELIVER arrives while the ACK of the first waits out a
+    /// busy channel. It is neither ACKed nor surfaced; the relay's retry,
+    /// after the first ACK is gone, is (roadmap D29 rule 4).
+    #[test]
+    fn a_deliver_that_cannot_be_answered_is_not_taken() {
+        let home = Channel::new(3).unwrap();
+        let config = Config {
+            home_override: Some(home),
+            leaf_id: LeafId([0, 0, 0, 7]),
+            ..Config::default()
+        };
+        let mut l = Leaf::new(config, 1);
+        let mut now = Instant::ZERO;
+        l.handle(Event::Wakeup, now, &mut |_| {});
+        let deliver = |text: &'static [u8]| {
+            let d = Deliver {
+                dst_leaf: l.id,
+                msg_id: MsgId(text.len() as u32),
+                payload: text,
+            };
+            let f = mac::frame(&Packet::Deliver(d), home, MIN_PREAMBLE_SYMBOLS);
+            (d.msg_id, f.bytes[..f.len as usize].to_vec())
+        };
+        let ((a, a_bytes), (b, b_bytes)) = (deliver(b"first"), deliver(b"second"));
+        let received = |bytes| Event::Received {
+            channel: home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes,
+        };
+        let surfaced = |actions: &[Action], id: MsgId| {
+            actions.iter().any(
+                |x| matches!(x, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == id),
+            )
+        };
+
+        now += Duration::from_secs(1);
+        let mut actions = Vec::new();
+        l.handle(received(&a_bytes), now, &mut |x| actions.push(x));
+        assert!(surfaced(&actions, a));
+        assert!(actions.contains(&Action::Cad(home)), "{actions:?}");
+        // The channel is busy: A's ACK waits a backoff.
+        now += Duration::from_millis(1);
+        l.handle(
+            Event::CadDone {
+                channel: home,
+                busy: true,
+            },
+            now,
+            &mut |_| {},
+        );
+        assert!(l.acks.pending());
+
+        now += Duration::from_millis(1);
+        actions.clear();
+        l.handle(received(&b_bytes), now, &mut |x| actions.push(x));
+        assert!(actions.is_empty(), "{actions:?}");
+
+        // A's ACK goes out; B was never owed one.
+        let mut acked = Vec::new();
+        let until = now + Duration::from_millis(100);
+        while let Some(t) = l.next_wakeup().filter(|t| *t <= until) {
+            now = now.max(t);
+            let mut pending = Vec::new();
+            l.handle(Event::Wakeup, now, &mut |x| pending.push(x));
+            while let Some(x) = pending.pop() {
+                let event = match x {
+                    Action::Cad(channel) => Event::CadDone {
+                        channel,
+                        busy: false,
+                    },
+                    Action::Rssi(channel) => Event::RssiSample { channel, dbm: -130 },
+                    Action::Transmit(f) => {
+                        if let Ok(Packet::Ack(k)) = Packet::decode(f.payload()) {
+                            acked.push(k.msg_id);
+                        }
+                        Event::TxDone
+                    }
+                    _ => continue,
+                };
+                l.handle(event, now, &mut |x| pending.push(x));
+            }
+        }
+        assert_eq!(acked, [a]);
+
+        // The relay's retry of B.
+        now += Duration::from_millis(200);
+        actions.clear();
+        l.handle(received(&b_bytes), now, &mut |x| actions.push(x));
+        assert!(surfaced(&actions, b));
+        assert!(l.acks.pending());
     }
 }

@@ -333,8 +333,9 @@ enum ReplyStep {
 /// transmission promised: a second packet it took or refused meanwhile
 /// would be answered only after the first reply, and its sender may have
 /// stopped waiting by then. A relay takes or refuses a packet only when
-/// [`Replies::can_owe`] its reply; otherwise it stays silent and the
-/// sender's retry brings the packet again.
+/// [`Replies::can_owe`] its reply, and a leaf takes a DELIVER only then;
+/// otherwise the node stays silent and the sender's retry brings the
+/// packet again.
 #[derive(Clone)]
 pub(crate) struct Replies {
     owed: Option<Owed>,
