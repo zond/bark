@@ -130,27 +130,27 @@ test in `tables/mod.rs`:
 | Neighbours (§8.2) | 64 × 48 B | 3.0 KiB |
 | Leaves (§10.2) | 256 × 16 B | 4.0 KiB |
 | Delivery queue (§10.4) | 41 × 256 B | 10.3 KiB |
-| Message records (§9.2.2) | 1788 × 32 B | 55.9 KiB |
+| Message records (§9.2.2) | 1695 × 32 B | 53.0 KiB |
 | Send queue (§9.3) | (40 + 254) × 272 B | 78.1 KiB |
 | Delivered window (§10.4) | 64 × 16 B | 1.0 KiB |
 | Duty budget (§9.4) and busy estimate (§6.1) | 16 B + 348 B | 0.4 KiB |
-| **All** | | **152.7 KiB** |
+| **All** | | **149.8 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(design §9.3, roadmap D31). The records hold the 1494 messages a relay can handle in the
-449.7 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
+(design §9.3, roadmap D31). The records hold the 1401 messages a relay can handle in the
+457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (§9.2.2). The delivery queue's 41 places hold what
-arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 157 024 B
-(153.3 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
+arrives in one delivery TTL for a full leaf table (§10.4). The whole `Relay` is 154 080 B
+(150.5 KiB): the tables and, in under 1 KiB around them, the medium access, the hand-over,
 its one owed reply and its application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB (design
-§15), which leaves 234 KiB, 80 KiB more than the relay needs. Checked by the tests in
+§15), which leaves 234 KiB, 83 KiB more than the relay needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
-`Leaf` is 736 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 752 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
@@ -169,10 +169,13 @@ action at a time, and the core never allocates.
 - Everything else in design §14 is encoded by the codecs in `wire.rs`. Choices made
   there, 2026-10-14:
   - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four
-    opaque bytes in order. ACK `from` is a short name or a leaf ID, four bytes either way,
-    compared whole.
-  - The ACK of an ATTACH carries the leaf's ID as `id` and the relay's short name as
-    `from`: an ATTACH is not a message and has no message ID.
+    opaque bytes in order. ACK `from` and `to` are each a short name or a leaf ID, four
+    bytes either way, compared whole.
+  - The ACK of an ATTACH carries the leaf's ID as `id` and `to` and the relay's short name
+    as `from`: an ATTACH is not a message and has no message ID.
+  - ACK `to` of a DATA is its `src_hop`, zero from a leaf: DATA does not carry the
+    leaf's ID. A leaf's ACK of a DELIVER has the short name of the relay it is attached
+    to as `to`: DELIVER does not name its sender.
   - A leaf's own DATA has `src_hop` zero and `hops` zero. A relay sending for its own
     application sends `hops` 1, as if it had received the message from the
     application at 0: a receiver takes `hops` 0 for a leaf's packet (design §9.2.1).
@@ -183,8 +186,6 @@ action at a time, and the core never allocates.
   - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
     payload onward.
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (§10.5).
-  - `aux` is unused in ACK, DELIVER and BUSY: sent as zero, ignored on receipt. A
-    fixed-size packet with trailing bytes is rejected.
-  - BUSY `from` is a relay's short name, big-endian like every other, and
-    `id_low` the low 16 bits of the refused message's ID, big-endian
-    (roadmap D30). A sender matches both against its hand-over.
+  - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK,
+    and all of a DELIVER's, are sent as zero and ignored on receipt. A fixed-size packet
+    with trailing bytes is rejected.

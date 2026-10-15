@@ -9,7 +9,7 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! reply (ACK or BUSY) this relay owes, the heartbeat, the hand-over of
+//! reply (an ACK, taking or refusing) this relay owes, the heartbeat, the hand-over of
 //! one entry of the send queue, and the sweep. The relay keeps at most one
 //! excursion outstanding (`docs/core-interface.md` §3 rule 1). When the
 //! radio is free it starts the first job that is ready, in that order: an
@@ -543,7 +543,6 @@ impl Relay {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
-            Ok(Packet::Busy(b)) => self.busy_received(b, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
             Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
             _ => {}
@@ -567,7 +566,6 @@ impl Relay {
             Ok(Packet::Data(d)) => d.dst_hop == me,
             Ok(Packet::Attach(a)) => a.relay == me,
             Ok(Packet::Ack(a)) => self.handover.answered_by(a),
-            Ok(Packet::Busy(b)) => self.handover.refused_by(b),
             _ => false,
         };
         if !own {
@@ -1198,7 +1196,7 @@ mod tests {
         use crate::tables::budget::BAN;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
-        use crate::wire::{Ack, AckFrom, Busy, Data, Heartbeat};
+        use crate::wire::{Ack, Data, Heartbeat};
         let hour = Duration::from_secs(3600);
         let config = Config {
             boot_listen: Duration::from_secs(1),
@@ -1279,14 +1277,12 @@ mod tests {
                         let id = d.msg_id();
                         offers.push((now, id));
                         now += Duration::from_millis(5);
-                        let reply = if offers.len() <= refusals {
-                            Packet::Busy(Busy::refusing(b.short(), id))
-                        } else {
-                            Packet::Ack(Ack {
-                                msg_id: id,
-                                from: AckFrom::from(b.short()),
-                            })
-                        };
+                        let reply = Packet::Ack(Ack {
+                            msg_id: id,
+                            from: b.short().into(),
+                            to: r.me().into(),
+                            refused: offers.len() <= refusals,
+                        });
                         pending.extend(hear(&mut r, now, &reply));
                     }
                     continue;
@@ -1316,5 +1312,130 @@ mod tests {
             assert!(w[1].0.since(w[0].0) >= BAN, "offered within the ban");
         }
         assert!(r.queue.is_empty());
+    }
+
+    /// Two relays offer one message to the same neighbour D at once, as a
+    /// retry after a lost ACK and a return can (roadmap D32). D's answers
+    /// to the other sender, C, taking or refusing, neither end this
+    /// relay's hand-over nor ban D here; only D's answer to this relay
+    /// does. When an ACK named only the message and D, D's ACK to C ended
+    /// this hand-over too, and the message, which D had not taken from
+    /// this relay, was lost.
+    #[test]
+    fn an_answer_to_another_sender_is_not_ours() {
+        use crate::ids::LeafId;
+        use crate::position::ShortName;
+        use crate::tables::records::Record;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Ack, Data, Heartbeat};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        let me = r.config.position;
+        let d_pos = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let far = Position {
+            lat: me.lat + 100_000,
+            ..me
+        };
+        let home = r.home;
+        let hear = |r: &mut Relay, now: Instant, p: &Packet<'_>| {
+            let f = mac::frame(p, home, MIN_PREAMBLE_SYMBOLS);
+            let event = Event::Received {
+                channel: home,
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            };
+            let mut actions = Vec::new();
+            r.handle(event, now, &mut |a| actions.push(a));
+            actions
+        };
+        let hb = Heartbeat {
+            surveyed: true,
+            home: Channel::new(5).unwrap(),
+            position: d_pos,
+        };
+        hear(&mut r, now, &Packet::Heartbeat(hb));
+        let data = Data {
+            sender_home: home,
+            dst_hop: ShortName(0),
+            src_hop: r.me(),
+            dst_pos: far,
+            dst_leaf: LeafId::RELAY,
+            hops: 2,
+            payload: b"one message, two senders",
+        };
+        let id = data.msg_id();
+        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let at = r.record_place().unwrap();
+        r.records.put(at, Record::new(id, parent, 1, now));
+        let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+
+        // Run until the offer to D has gone out.
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+        loop {
+            let event = match pending.pop().expect("the offer is sent") {
+                Action::Cad(channel) => Event::CadDone {
+                    channel,
+                    busy: false,
+                },
+                Action::Rssi(channel) => Event::RssiSample { channel, dbm: -130 },
+                Action::Transmit(f) => {
+                    assert!(matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))));
+                    now += mac::airtime(&f);
+                    r.handle(Event::TxDone, now, &mut |_| {});
+                    break;
+                }
+                _ => continue,
+            };
+            r.handle(event, now, &mut |a| pending.push(a));
+        }
+        let to_me = Ack {
+            msg_id: id,
+            from: d_pos.short().into(),
+            to: r.me().into(),
+            refused: false,
+        };
+        let to_c = Ack {
+            to: ShortName(0x0c0c_0c0c).into(),
+            ..to_me
+        };
+        let banned = |r: &Relay, now| {
+            r.neighbours()
+                .any(|n| n.position == d_pos && r.neighbours.is_banned(n, now))
+        };
+        now += Duration::from_millis(5);
+        for answer in [
+            to_c,
+            Ack {
+                refused: true,
+                ..to_c
+            },
+        ] {
+            let actions = hear(&mut r, now, &Packet::Ack(answer));
+            assert!(r.handover.awaiting_ack(), "{answer:?} ended the hand-over");
+            assert!(!banned(&r, now), "{answer:?} banned D");
+            assert!(!actions.iter().any(|a| matches!(a, Action::Trace(_))));
+        }
+        let actions = hear(&mut r, now, &Packet::Ack(to_me));
+        assert!(r.handover.idle() && r.queue.is_empty());
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::Trace(Trace::Forwarded { msg_id, .. }) if *msg_id == id
+        )));
     }
 }

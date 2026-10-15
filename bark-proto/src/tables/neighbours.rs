@@ -28,7 +28,7 @@
 //!
 //! # Bans
 //!
-//! A neighbour that refuses a hand-over with BUSY (§9.2.4) is banned for
+//! A neighbour that refuses a hand-over (§9.2.4) is banned for
 //! [`BAN`]: no next hop at all until then (§9.2.3, roadmap D29). A refusal
 //! is no failure: it says the neighbour hears us.
 //!
@@ -76,7 +76,7 @@ pub struct Neighbour {
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
     pub demoted_at: Instant,
-    /// Until when it is banned: it refused a hand-over with BUSY.
+    /// Until when it is banned: it refused a hand-over.
     pub banned_until: Instant,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,

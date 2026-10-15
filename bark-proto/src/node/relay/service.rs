@@ -19,8 +19,8 @@
 //! An unknown leaf is queued like an absent one: §9.2.7 has the owner
 //! queue when nobody knows the leaf, and it may attach within the TTL.
 //!
-//! The ACK of an ATTACH carries the leaf's ID as the message ID and the
-//! relay's short name (§14). A relay whose leaf table is full of live
+//! The ACK of an ATTACH carries the leaf's ID as the message ID and as
+//! `to`, and the relay's short name as `from` (§14). A relay whose leaf table is full of live
 //! leaves does not ACK, so the leaf attaches elsewhere (`tables/leaves.rs`).
 //! The ACK of an ATTACH is a reply and may spend the reply reserve (§9.4):
 //! a busy relay still keeps its leaves.
@@ -29,24 +29,22 @@ use super::Relay;
 use crate::event::{Action, DropReason, Trace};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
-use crate::node::transfer::Reply;
-use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::REPLY_RESERVE;
+use crate::tables::budget::{ACK_AIRTIME, REPLY_RESERVE};
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckFrom, Attach, Deliver, Packet, ACK_LEN};
+use crate::wire::{Ack, Attach, Deliver, Packet};
 
 impl Relay {
     /// An ATTACH or keepalive for this relay (§10.2).
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
-        let ack = Reply::Ack(Ack {
+        let ack = Ack {
             msg_id: MsgId(u32::from_be_bytes(a.leaf.0)),
-            from: AckFrom::from(self.me()),
-        });
+            from: self.me().into(),
+            to: a.leaf.into(),
+            refused: false,
+        };
         // Taken only if it can be answered, as a DATA packet is (§9.3).
-        if !self.can_reply(time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS), now)
-            || !self.replies.can_owe(ack, self.home, now)
-        {
+        if !self.can_reply(ACK_AIRTIME, now) || !self.replies.can_owe(ack, self.home, now) {
             return;
         }
         if self.leaves.attached(a.leaf, a.mode, now).is_err() {

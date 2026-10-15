@@ -144,15 +144,15 @@ retune times.
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
 | `power <dbm>` | transmit power, clamped to −9..10 dBm | the power in effect |
-| `beacon <k> <ms> [len]` | send a bench frame (default 9 bytes) on k every ms; refused below a 10 % duty cycle | one line per beacon |
+| `beacon <k> <ms> [len]` | send a bench frame (default 13 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
-| `ping <k>` | send a 9-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (protocol §9.3) |
+| `ping <k>` | send a 13-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (protocol §9.3) |
 | `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
 home channel answers it like an ACK (protocol §9.3): CAD on the sender's
-home channel (named in the ping), then a 9-byte pong, then back home; it
+home channel (named in the ping), then a 13-byte pong, then back home; it
 prints the time of each part. It does not do the RSSI half of
 listen-before-talk.
 

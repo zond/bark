@@ -225,9 +225,10 @@ pub enum Trace {
         /// Why.
         reason: DropReason,
     },
-    /// A DATA packet was refused, with BUSY if the budget allowed one,
-    /// because acting on it needed what `reason` names (design §9.2.4). Not
-    /// a drop: the sender still holds the message and will try elsewhere.
+    /// A DATA packet was refused, with an ACK that says so if the budget
+    /// allowed one, because acting on it needed what `reason` names
+    /// (design §9.2.4). Not a drop: the sender still holds the message and
+    /// will try elsewhere.
     Refused {
         /// The message.
         msg_id: MsgId,
@@ -235,7 +236,7 @@ pub enum Trace {
         /// [`DropReason::DeliveryFull`].
         reason: DropReason,
     },
-    /// The receiver of a hand-over refused it with BUSY (design §9.3).
+    /// The receiver of a hand-over refused it (design §9.3).
     TurnedAway {
         /// The message, or for a DELIVER the delivered message.
         msg_id: MsgId,

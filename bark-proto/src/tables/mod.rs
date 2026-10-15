@@ -34,7 +34,7 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
 }
 
 /// The time one hand-over holds its receiver: a full frame and its ACK,
-/// 138.6 + 11.8 = 150.4 ms (design §9.3).
+/// 138.56 + 14.40 = 152.96 ms (design §9.3).
 ///
 /// It is the unit of the wait before a retry. Two senders that cannot hear
 /// each other and have collided at one receiver both miss the ACK and
@@ -49,7 +49,7 @@ pub const RETRY_BACKOFF: Duration = Duration::from_micros(
 );
 
 /// The window of the random wait before the retry that follows `attempts`
-/// transmissions: `2^attempts × unit`, 301 ms and then 602 ms with the
+/// transmissions: `2^attempts × unit`, 306 ms and then 612 ms with the
 /// design's three attempts and [`RETRY_BACKOFF`]. Doubling also spreads
 /// out more than two senders, where a fixed window would not.
 pub const fn retry_window(unit: Duration, attempts: u8) -> Duration {
@@ -75,7 +75,7 @@ pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
 /// How long an upstream sender spends retrying a hand-over after its
 /// first attempt, when every attempt goes unanswered: the retries, each
 /// waiting the longest before it ([`retry_waits`]) and for the channel,
-/// carrying a full frame and waiting out the ACK timeout. 2.38 s with the
+/// carrying a full frame and waiting out the ACK timeout. 2.39 s with the
 /// design's 100 ms timeout and three attempts (§9.3).
 pub const fn retrying_span(
     ack_timeout: Duration,

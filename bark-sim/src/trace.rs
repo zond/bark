@@ -7,7 +7,7 @@
 //! Channel checks and sweep readings are left out: a relay takes thirteen a
 //! second and they would drown everything else.
 
-use bark_proto::wire::{AckFrom, Packet};
+use bark_proto::wire::{AckName, Packet};
 use bark_proto::{Action, AppCommand, AppEvent, Event, Instant, LeafId, MsgId, ShortName, Trace};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -39,10 +39,13 @@ impl Names {
         }
     }
 
-    /// An ACK names a relay or a leaf; try both.
-    fn from(&self, f: AckFrom) -> String {
+    /// An ACK names a relay or a leaf; try both. Zero is a leaf's DATA,
+    /// which names no sender.
+    fn party(&self, f: AckName) -> String {
         let s = ShortName(u32::from_be_bytes(f.0));
-        if self.relays.contains_key(&s.0) {
+        if s.0 == 0 {
+            "a leaf".into()
+        } else if self.relays.contains_key(&s.0) {
             self.relay(s)
         } else {
             self.leaf(LeafId(f.0))
@@ -93,7 +96,13 @@ impl Tracer {
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(h)) => format!("HEARTBEAT home {}", h.home.index()),
             Ok(Packet::Ack(a)) => {
-                format!("ACK {} from {}", self.msg(a.msg_id, tags), n.from(a.from))
+                format!(
+                    "ACK {} from {} to {}{}",
+                    self.msg(a.msg_id, tags),
+                    n.party(a.from),
+                    n.party(a.to),
+                    if a.refused { ", refused" } else { "" }
+                )
             }
             Ok(Packet::Attach(a)) => format!("ATTACH {} to {}", n.leaf(a.leaf), n.relay(a.relay)),
             Ok(Packet::Data(d)) => {
@@ -116,7 +125,6 @@ impl Tracer {
                 payload_tag(d.payload),
                 n.leaf(d.dst_leaf)
             ),
-            Ok(Packet::Busy(b)) => format!("BUSY from {}", n.relay(b.from)),
             Err(e) => format!("undecodable {e:?}"),
         }
     }

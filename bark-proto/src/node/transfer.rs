@@ -1,7 +1,7 @@
 //! Per-hop transfer (design §9.3), shared by both roles: one frame handed
-//! to one receiver until it ACKs or the sender gives up ([`Transfer`]), and
-//! the one reply, ACK or BUSY, this node can owe the sender of what it
-//! received ([`Replies`]).
+//! to one receiver until it answers or the sender gives up ([`Transfer`]),
+//! and the one ACK, taking or refusing, this node can owe the sender of
+//! what it received ([`Replies`]).
 //!
 //! Both only keep the state; the role owns the radio (`mac.rs`), the frame
 //! and the duty-cycle budget, starts each excursion and reports its
@@ -21,18 +21,19 @@
 //!    senders that cannot hear each other and have collided at the
 //!    receiver come apart (§9.3, roadmap D22).
 //!
-//! An ACK matches only if it names both the message and the receiver
-//! (roadmap D19). An ACK that arrives after the timeout but before the
-//! next attempt still counts: the receiver has the frame. A BUSY matches
-//! if it names the receiver and the low 16 bits of the message ID (D27,
-//! D30); the role decides what follows.
+//! An ACK answers the hand-over only if it names the message, the
+//! receiver as `from` and this node as `to` (roadmap D19, D32): another
+//! sender may be offering the same message to the same receiver. One
+//! that arrives after the timeout but before the next attempt still
+//! counts: the receiver has the frame. Whether it takes or refuses the
+//! frame, the role decides what follows (D27).
 
 use crate::event::Action;
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckFrom, Busy, Packet};
+use crate::wire::{Ack, AckName};
 
 /// Where a hand-over is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +92,9 @@ impl Transfer {
             lbt_since: None,
             expect: Ack {
                 msg_id: crate::ids::MsgId(0),
-                from: AckFrom([0; 4]),
+                from: AckName([0; 4]),
+                to: AckName([0; 4]),
+                refused: false,
             },
         }
     }
@@ -109,7 +112,7 @@ impl Transfer {
         self.attempts > 0
     }
 
-    /// The ACK that ends this hand-over.
+    /// The ACK that takes this hand-over's frame.
     pub(crate) fn expect(&self) -> Ack {
         self.expect
     }
@@ -204,18 +207,10 @@ impl Transfer {
         self.step = Step::AwaitAck(now + ack_timeout);
     }
 
-    /// Whether `ack` ends this hand-over.
+    /// Whether `ack` answers this hand-over, taking or refusing a frame
+    /// that has been sent.
     pub(crate) fn answered_by(&self, ack: Ack) -> bool {
-        !self.idle() && self.transmitted() && ack == self.expect
-    }
-
-    /// Whether `busy` refuses this hand-over: it names the receiver of a
-    /// frame that has been sent, and its message.
-    pub(crate) fn refused_by(&self, busy: Busy) -> bool {
-        !self.idle()
-            && self.transmitted()
-            && AckFrom::from(busy.from) == self.expect.from
-            && busy.refuses(self.expect.msg_id)
+        !self.idle() && self.transmitted() && ack.answers(&self.expect)
     }
 
     /// The receiver refused the hand-over, which gives it up: the
@@ -225,14 +220,14 @@ impl Transfer {
         self.attempts.saturating_sub(1)
     }
 
-    /// An ACK arrived. Returns whether it ends this hand-over, which it
-    /// then does.
+    /// An ACK arrived. Returns whether it takes this hand-over's frame,
+    /// which ends the hand-over.
     pub(crate) fn acked(&mut self, ack: Ack) -> bool {
-        let matched = self.answered_by(ack);
-        if matched {
+        let taken = self.answered_by(ack) && !ack.refused;
+        if taken {
             self.step = Step::Idle;
         }
-        matched
+        taken
     }
 
     /// Count an attempt that could not be made, as if it had gone
@@ -284,26 +279,10 @@ impl Transfer {
     }
 }
 
-/// What a node answers a packet with (§9.3, §9.2.4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Reply {
-    Ack(Ack),
-    Busy(Busy),
-}
-
-impl Reply {
-    pub(crate) fn packet(self) -> Packet<'static> {
-        match self {
-            Reply::Ack(a) => Packet::Ack(a),
-            Reply::Busy(b) => Packet::Busy(b),
-        }
-    }
-}
-
 /// A reply this node owes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owed {
-    pub(crate) reply: Reply,
+    pub(crate) reply: Ack,
     /// The channel the sender listens on.
     pub(crate) channel: Channel,
     /// When the sender stops waiting; an ACK after that is useless.
@@ -348,7 +327,7 @@ impl Replies {
 
     /// Whether `reply` on `channel` can be owed now: the place is free, or
     /// holds that reply already, for an earlier copy of the packet.
-    pub(crate) fn can_owe(&mut self, reply: Reply, channel: Channel, now: Instant) -> bool {
+    pub(crate) fn can_owe(&mut self, reply: Ack, channel: Channel, now: Instant) -> bool {
         self.forget_late(now);
         self.owed
             .is_none_or(|o| o.reply == reply && o.channel == channel)
@@ -358,7 +337,7 @@ impl Replies {
     /// answers this copy too. Another one that has not started out gives
     /// way, as the one whose packet is older; one being sent does not, and
     /// `reply` is then not owed.
-    pub(crate) fn owe(&mut self, reply: Reply, channel: Channel, deadline: Instant, now: Instant) {
+    pub(crate) fn owe(&mut self, reply: Ack, channel: Channel, deadline: Instant, now: Instant) {
         self.forget_late(now);
         if let Some(o) = self.owed {
             if (o.reply == reply && o.channel == channel) || self.step != ReplyStep::Idle {
@@ -476,7 +455,9 @@ mod tests {
     fn ack(id: u32) -> Ack {
         Ack {
             msg_id: MsgId(id),
-            from: AckFrom([1, 2, 3, 4]),
+            from: AckName([1, 2, 3, 4]),
+            to: AckName([5, 6, 7, 8]),
+            refused: false,
         }
     }
 
@@ -516,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn ack_must_name_message_and_sender() {
+    fn ack_must_name_message_and_both_parties() {
         let mut rng = Rng::new(2);
         let mut t = Transfer::new();
         t.start(ack(7), 0, at(0));
@@ -529,11 +510,25 @@ mod tests {
         assert!(!t.acked(ack(8)));
         assert!(
             !t.acked(Ack {
-                msg_id: MsgId(7),
-                from: AckFrom([9; 4])
+                from: AckName([9; 4]),
+                ..ack(7)
             }),
-            "same message, other relay (D19)"
+            "same message, other receiver (D19)"
         );
+        let to_another = Ack {
+            to: AckName([9; 4]),
+            ..ack(7)
+        };
+        assert!(
+            !t.answered_by(to_another) && !t.acked(to_another),
+            "same message and receiver, answering another sender (D32)"
+        );
+        let refused = Ack {
+            refused: true,
+            ..ack(7)
+        };
+        assert!(t.answered_by(refused) && !t.acked(refused), "a refusal");
+        assert!(!t.idle(), "a refusal is the role's to act on");
         // Late, during the retry backoff: still the receiver's ACK.
         assert_eq!(t.timeout(at(102), 3, &mut rng, ms(50)), Some(Missed::Retry));
         assert!(t.acked(ack(7)));
@@ -588,7 +583,6 @@ mod tests {
         let mut rng = Rng::new(4);
         let ch = Channel::new(3).unwrap();
         let mut a = Replies::new();
-        let ack = |id| Reply::Ack(ack(id));
         a.owe(ack(1), ch, at(100), at(0));
         assert!(a.can_owe(ack(1), ch, at(10)), "a copy is answered too");
         a.owe(ack(1), ch, at(110), at(10));
@@ -633,8 +627,11 @@ mod tests {
         assert!(!a.can_owe(ack(5), ch, at(300)));
         assert!(a.can_owe(ack(5), ch, at(301)));
         assert_eq!(a.due(at(301)), None);
-        // One BUSY answers a retransmission too, but not another message.
-        let busy = |id| Reply::Busy(Busy::refusing(crate::position::ShortName(9), MsgId(id)));
+        // One refusal answers a retransmission too, but not another message.
+        let busy = |id| Ack {
+            refused: true,
+            ..ack(id)
+        };
         a.owe(busy(1), ch, at(500), at(400));
         assert!(a.can_owe(busy(1), ch, at(410)));
         assert!(!a.can_owe(busy(2), ch, at(410)));

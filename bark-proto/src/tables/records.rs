@@ -22,15 +22,15 @@
 //! each entry waiting out one ban (§9.3, roadmap D31):
 //!
 //! ```text
-//! (40 + 254) places × 1.53 s = 449.7 s
+//! (40 + 254) places × 1.56 s = 457.3 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (§3): each costs at least an ACK (9 bytes, 11.84 ms) and one DATA
-//! packet with no payload (21 bytes, 18.24 ms), together 30.08 ms; 10 % of
-//! 449.7 s is 44.97 s of airtime, and ⌊44.97 s / 30.08 ms⌋ = 1494. The
-//! records of held messages are not evicted and may be older than that,
-//! so the table has room for them on top: 1494 + 294 = 1788.
+//! cycle (§3): each costs at least an ACK (13 bytes, 14.40 ms) and one
+//! DATA packet with no payload (21 bytes, 18.24 ms), together 32.64 ms;
+//! 10 % of 457.3 s is 45.73 s of airtime, and ⌊45.73 s / 32.64 ms⌋ = 1401.
+//! The records of held messages are not evicted and may be older than
+//! that, so the table has room for them on top: 1401 + 294 = 1695.
 //!
 //! # The tried set
 //!
@@ -80,7 +80,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1788);
+const _: () = assert!(RECORDS == 1695);
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -216,8 +216,8 @@ impl Record {
         self.last_active = now;
     }
 
-    /// The neighbour in `slot` refused the message it was sent (BUSY,
-    /// §9.3): it was not handed it. It stays the last child, so a later
+    /// The neighbour in `slot` refused the message it was sent
+    /// (§9.3): it was not handed it. It stays the last child, so a later
     /// offer from it still counts as its return (§9.2.4 case 4).
     pub fn not_handed(&mut self, slot: usize) {
         if slot < NEIGHBOURS {
@@ -343,11 +343,11 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 294 places × one ban, 1.53 s.
+        // 294 places × one ban, 1.56 s.
         assert_eq!(DRAIN, BAN.mul(294));
-        assert_eq!(DRAIN.as_millis(), 449_670);
+        assert_eq!(DRAIN.as_millis(), 457_324);
         assert_eq!(HELD, 294);
-        assert_eq!(RECORDS, 1494 + 294);
+        assert_eq!(RECORDS, 1401 + 294);
         assert_eq!(core::mem::size_of::<Record>(), 32);
     }
 

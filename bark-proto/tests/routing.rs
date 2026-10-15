@@ -312,7 +312,7 @@ fn an_earlier_child_that_had_the_message_is_sent_it_back() {
 
 /// The same for a hand-over this relay counted as failed, though the
 /// neighbour never took the message: X's three frames to Y are lost, as
-/// three refusals whose BUSY replies were lost would be. X moves on to Z,
+/// three refusals whose refusals were lost would be. X moves on to Z,
 /// Z hands to Y, and Y offers X, an earlier child of X's. X sends it
 /// straight back, and Y goes on to E, which reaches D.
 ///
@@ -357,36 +357,63 @@ fn an_earlier_child_whose_hand_over_failed_is_sent_it_back() {
     no_drops(&h);
 }
 
-/// A split: X's hand-over to Y succeeds but all three ACKs are lost, so X
+/// A split: X's hand-over to Y succeeds but every ACK is lost, so X
 /// counts it failed and moves on to Z, which reaches D. Y searches too,
 /// finds a dead end and returns the message to X. X sends it straight
 /// back (§9.2.4 case 5), and Y, receiving it from its parent, only ACKs:
 /// one copy dies there, and the message is delivered once.
+///
+/// Y's return must come after X has moved on; during X's retries it
+/// would end X's hand-over instead (case 4). So X retries at once, and
+/// Y's frames to P are lost until X has offered the message to Z: X's
+/// three attempts then end within three full frames and ACK timeouts,
+/// 3 × (138.6 + 100) = 716 ms, of its first, and Y's three to P take at
+/// least that, so P takes one only after X has moved on. No relay samples
+/// other channels (§6.1), so that Y hears X.
 ///
 /// ```text
 ///   P - Y - X - Z - D
 /// ```
 #[test]
 fn a_split_copy_returned_by_an_earlier_child_ends_there() {
+    use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, p, z, d) = (0, 1, 2, 3, 4);
+    let relay_with = |east, north, seed, config: Config| {
+        Node::Relay(Relay::new(
+            Config {
+                position: pos(east, north),
+                boot_listen: secs(5),
+                ..config
+            },
+            seed,
+        ))
+    };
+    let listening = Config {
+        sweep_interval: secs(3600),
+        ..Config::default()
+    };
+    let at_once = Config {
+        retry_backoff: Duration::ZERO,
+        ..listening
+    };
     let mut h = build(
         vec![
-            relay(500.0, 0.0, 131),
-            relay(800.0, 300.0, 132),
-            relay(900.0, 700.0, 133),
-            relay(700.0, -300.0, 134),
-            relay(10_000.0, 0.0, 135),
+            relay_with(500.0, 0.0, 131, at_once),
+            relay_with(800.0, 300.0, 132, listening),
+            relay_with(900.0, 700.0, 133, listening),
+            relay_with(700.0, -300.0, 134, listening),
+            relay_with(10_000.0, 0.0, 135, listening),
         ],
         &[(x, y), (y, p), (x, z), (z, d)],
     );
-    let mut lost = 0;
+    let mut moved_on = false;
     h.lose = Some(Box::new(move |_, from, to, bytes| {
-        let ack = (from, to) == (y, x) && matches!(Packet::decode(bytes), Ok(Packet::Ack(_)));
-        let lose = ack && lost < 3;
-        lost += usize::from(lose);
-        lose
+        let data = matches!(Packet::decode(bytes), Ok(Packet::Data(_)));
+        moved_on |= data && (from, to) == (x, z);
+        let ack = !data && matches!(Packet::decode(bytes), Ok(Packet::Ack(_)));
+        !moved_on && ((ack && (from, to) == (y, x)) || (data && (from, to) == (y, p)))
     }));
-    let id = send(&mut h, x, d, b"split");
+    let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
     let name = |h: &Harness<Node>, i| position(h, i).short();
     let (ny, nx) = (name(&h, y), name(&h, x));
     let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
@@ -519,7 +546,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
 
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose
 /// only neighbour it is, has handed it short messages for D until it
-/// refused one, and F1's own frames are lost. F1 answers O's DATA with BUSY
+/// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
 /// (§9.2.4), and O hands the message to F2 at once, counting no failure
 /// against F1 (§9.3). O bans F1: no message is offered to it until the
 /// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
@@ -574,7 +601,7 @@ fn a_ban_excludes_the_neighbour_and_expires() {
             Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == n1 => Some(*t),
             _ => None,
         })
-        .expect("F1 refused with BUSY");
+        .expect("F1 refused");
     let (at, to) = forwarded(&h, first).unwrap();
     assert_eq!(to, n2);
     assert!(
@@ -604,7 +631,7 @@ fn a_ban_excludes_the_neighbour_and_expires() {
 
 /// P, O, F in a line. F's delivery queue is full of its own application's
 /// messages for its leaf L, which is not there, so F refuses P's message
-/// for L with BUSY (§9.2.4, §10.4). F is the only neighbour O has not
+/// for L (§9.2.4, §10.4). F is the only neighbour O has not
 /// tried, so the message waits in O's queue until F's ban ends, and O
 /// offers it to F again then, once a ban; it is not returned to P or
 /// dropped (§9.2.5, roadmap D31). Meanwhile O's queue moves on: its own
@@ -703,7 +730,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
 
 /// F, O's only neighbour, has its delivery queue full of its own
 /// application's messages for its leaf L, which is not there, and so
-/// refuses O's message for L with BUSY (§9.2.4, §10.4). O holds the
+/// refuses O's message for L (§9.2.4, §10.4). O holds the
 /// message rather than drop it, says it takes no other, and offers it
 /// again one ban after the first refusal, two after the second, four
 /// after the third, and so on up to the bucket's refill (§9.3,
@@ -1005,7 +1032,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// Twenty-six relays, F their only neighbour, each forwarding for others,
 /// offer F a new short message each time their ban of F ends, for an hour
 /// and five minutes; F, its frames to D all lost, keeps its send queue
-/// full and refuses nearly all of them with BUSY. A forward is not held
+/// full and refuses nearly all of them. A forward is not held
 /// (§9.2.5): each sender asks for one reply per ban, 1.53 s, together
 /// seventeen a second, 18 % of F's time on air against the 9.83 % its
 /// bucket refills. So the replies run down the reply reserve, and F stays
@@ -1017,7 +1044,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 #[test]
 fn replies_stay_within_the_reserve() {
     use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
-    use bark_proto::tables::budget::{BAN, BUDGET, BUSY_AIRTIME};
+    use bark_proto::tables::budget::{ACK_AIRTIME, BAN, BUDGET};
     use bark_proto::wire::Data;
     use bark_proto::{Frame, MAX_FRAME};
     let (f, d) = (0, 1);
@@ -1084,7 +1111,7 @@ fn replies_stay_within_the_reserve() {
     let sent = &h.nodes[f].sent;
     let busy = sent
         .iter()
-        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Busy(_))))
+        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Ack(a)) if a.refused))
         .count();
     let refused = traces(&h, f)
         .iter()
@@ -1100,8 +1127,8 @@ fn replies_stay_within_the_reserve() {
     };
     let spent = hour(start + secs(300));
     println!(
-        "{refused} refused, {busy} BUSY sent ({:.1} s), {:.1} s on air in the last hour",
-        (BUSY_AIRTIME.as_micros() * busy as u64) as f64 / 1e6,
+        "{refused} refused, {busy} refusals sent ({:.1} s), {:.1} s on air in the last hour",
+        (ACK_AIRTIME.as_micros() * busy as u64) as f64 / 1e6,
         spent.as_micros() as f64 / 1e6
     );
     assert!(spent <= BUDGET);
@@ -1111,7 +1138,7 @@ fn replies_stay_within_the_reserve() {
     );
     assert!(
         refused > busy,
-        "the reserve never ran out: {refused} refused, {busy} BUSY"
+        "the reserve never ran out: {refused} refused, {busy} refusals"
     );
     assert!(
         !traces(&h, f)
@@ -1164,14 +1191,14 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
 /// bucket lets through (§9.4). F works at the edge of its bucket: it
-/// refuses a message with BUSY when the message's frame and everything it
+/// refuses a message when the message's frame and everything it
 /// has queued would not fit in the bucket (§9.2.4), and a hand-over whose
 /// retries the bucket cannot fit yet waits for it, never longer than the
 /// refill of a frame and the reply reserve, instead of being dropped. Its
 /// heartbeats are never held back. The harness panics if any hour holds
 /// more than 10 %, replies included.
 ///
-/// O, told BUSY, bans F without counting a failure (§9.3); F is its only
+/// O, refused, bans F without counting a failure (§9.3); F is its only
 /// neighbour, so O holds its application's message and offers it again
 /// after its hold, and its application waits (§9.2.5, §9.3). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
@@ -1309,7 +1336,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     let busy_sent = h.nodes[f]
         .sent
         .iter()
-        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Busy(_))))
+        .filter(|(_, fr)| matches!(Packet::decode(fr.payload()), Ok(Packet::Ack(a)) if a.refused))
         .count();
     let turned_away = traces(&h, o)
         .iter()
@@ -1322,7 +1349,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     };
     println!(
         "F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
-         its queue full and {broke} for its bucket, {busy_sent} BUSY sent; \
+         its queue full and {broke} for its bucket, {busy_sent} refusals sent; \
          O turned away {turned_away} times",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))
@@ -1403,7 +1430,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         since_taken.last(),
     );
     assert!(full + broke > 0, "F never refused a message");
-    assert!(busy_sent > 0 && turned_away > 0, "no BUSY reached O");
+    assert!(busy_sent > 0 && turned_away > 0, "no refusal reached O");
     assert!(
         !deferred.is_empty(),
         "the budget never held a hand-over back"

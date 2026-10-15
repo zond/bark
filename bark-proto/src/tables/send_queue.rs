@@ -4,10 +4,10 @@
 //! **Regular room.** A relay takes a packet into it only if the airtime of
 //! everything queued, that packet included, fits in its duty bucket as it
 //! stands (§9.2.4, roadmap D29). Its length follows: the bucket's depth,
-//! 6 s, over the time of one full frame and its ACK, `138.6 + 11.8 =
-//! 150.4 ms`: ⌈39.9⌉ = 40. Each packet taken also costs the ACK that takes
-//! it, so from a full bucket with the reply reserve left in at most 38
-//! full frames fit, and for full frames the bucket binds first. Short
+//! 6 s, over the time of one full frame and its ACK, `138.56 + 14.40 =
+//! 152.96 ms`: ⌈39.2⌉ = 40. Each packet taken also costs the ACK that
+//! takes it, so from a full bucket with the reply reserve left in at most
+//! 37 full frames fit, and for full frames the bucket binds first. Short
 //! frames fill the 40 places first: forty hand-overs of them still go out
 //! in a few seconds.
 //!
@@ -307,7 +307,7 @@ mod tests {
         let per = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS)
             + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         let fit = (DEPTH - REPLY_RESERVE).as_micros() / per.as_micros();
-        assert_eq!(fit, 38);
+        assert_eq!(fit, 37);
         assert!((fit as usize) < SEND_QUEUE);
     }
 

@@ -128,8 +128,8 @@ A> ping 5    (×20)
 A prints `ping … rtt_us=… within=…`; B prints `pong … cad_us=…
 tx_us=… rx_to_tx_done_us=…`. `rtt_us` runs from A's TxDone to the pong
 received, which is what the 100 ms ACK timeout of §9.3 must cover: B's
-reception handling, CAD on A's channel, its transmit start and the 9-byte
-pong (11.8 ms on air). If `within=false`, the ACK timeout or the
+reception handling, CAD on A's channel, its transmit start and the 13-byte
+pong (14.4 ms on air). If `within=false`, the ACK timeout or the
 receiver's path needs changing; note which part of B's line dominates.
 
 ### 1.7 Sensitivity

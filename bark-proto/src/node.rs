@@ -55,7 +55,7 @@ pub struct Config {
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
     /// `k` waits up to `2^k` units (design §9.3: a full frame and its ACK,
-    /// 150.4 ms; `tables::RETRY_BACKOFF`).
+    /// 152.96 ms; `tables::RETRY_BACKOFF`).
     pub retry_backoff: Duration,
     /// Failed transfers before a neighbour is demoted (design §8.2: 2).
     pub demote_after_failures: u8,

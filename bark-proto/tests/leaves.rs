@@ -163,8 +163,8 @@ fn leaf_to_leaf_across_two_relays() {
 }
 
 /// R1's delivery queue is full: its application has filled it with
-/// messages for L3, which is dark. R1 answers L1's message for L3 with
-/// BUSY (§9.2.4, §10.4); L1 keeps its relay, holds the message and offers
+/// messages for L3, which is dark. R1 refuses L1's message for L3
+/// (§9.2.4, §10.4); L1 keeps its relay, holds the message and offers
 /// it again one ban after the first refusal, twice that after the second,
 /// and so on (§9.3, §10.2, roadmap D27, D29), until L3 is back, R1 has
 /// room, and it arrives.
@@ -212,10 +212,12 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
     let refusals: Vec<Instant> = h.nodes[l1]
         .received
         .iter()
-        .filter(|(t, b)| *t >= start && matches!(Packet::decode(b), Ok(Packet::Busy(_))))
+        .filter(|(t, b)| {
+            *t >= start && matches!(Packet::decode(b), Ok(Packet::Ack(a)) if a.refused)
+        })
         .map(|(t, _)| *t)
         .collect();
-    println!("offers at {offers:?}, BUSY at {refusals:?}");
+    println!("offers at {offers:?}, refusals at {refusals:?}");
     assert!(!refusals.is_empty(), "R1 never refused");
     assert!(refusals.len() >= 3, "{refusals:?}");
     for (j, b) in refusals.iter().enumerate() {
@@ -234,7 +236,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
 
 /// L2 goes dark while R1's application sends it more messages than R2's
 /// delivery queue holds. R2 queues them until the queue is full and then
-/// refuses the next with BUSY (§9.2.4, §10.4), keeping what it has. R1
+/// refuses the next (§9.2.4, §10.4), keeping what it has. R1
 /// holds that one, its application's, and offers it again after each ban
 /// (§9.3), so its application waits. R2's DELIVERs to L2 go unanswered,
 /// and R2 does not hand L2 another each time its send queue frees up:

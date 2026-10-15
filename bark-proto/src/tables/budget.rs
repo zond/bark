@@ -43,32 +43,33 @@
 //! # Reply reserve
 //!
 //! Below [`REPLY_RESERVE`] a relay takes no new work: it answers every
-//! packet offered to it with BUSY, or the ACK of a copy it already has,
-//! and sends nothing else but heartbeats (§9.2.4, §9.4, roadmap D27). So
-//! forwarding and the ACKs that accept work leave the reply reserve in the
-//! bucket, and replies leave the heartbeat reserve.
+//! packet offered to it with an ACK that refuses, or the ACK of a copy it
+//! already has, and sends nothing else but heartbeats (§9.2.4, §9.4,
+//! roadmap D27, D32). So forwarding and the ACKs that accept work leave
+//! the reply reserve in the bucket, and replies leave the heartbeat
+//! reserve.
 //!
-//! The reserve holds the BUSY replies the bucket refills while a sender
-//! retries a hand-over that goes unanswered, 2.38 s (§9.3):
-//! `r × 2.38 s = 234 ms`, ⌊234 / 10.56⌋ = [`REPLIES`] = 22 replies of
-//! 10.56 ms, and the heartbeat reserve on top, 244.2 ms in all: a relay at
-//! the reserve can answer with BUSY, from the refill alone, as many
-//! senders as would otherwise have spent that time retrying it.
+//! The reserve holds the refusals the bucket refills while a sender
+//! retries a hand-over that goes unanswered, 2.39 s (§9.3):
+//! `r × 2.39 s = 235.5 ms`, ⌊235.5 / 14.40⌋ = [`REPLIES`] = 16 ACKs of
+//! 14.40 ms, and the heartbeat reserve on top, 242.2 ms in all: a relay at
+//! the reserve can refuse, from the refill alone, as many senders as would
+//! otherwise have spent that time retrying it.
 //!
 //! # Ban
 //!
 //! A relay refuses a packet to send on when the packet's frame and the ACK
 //! that takes it do not fit in its bucket on top of what it has queued
 //! (§9.2.4, roadmap D29). The sender bans it for [`BAN`], the time the
-//! bucket takes to refill a full frame and its ACK, 150.4 ms at 9.83 %:
-//! 1.53 s: by then the bucket has refilled what the refusal lacked, unless
-//! the relay has spent it on what it already held.
+//! bucket takes to refill a full frame and its ACK, 138.56 + 14.40 =
+//! 152.96 ms at 9.83 %: 1.56 s: by then the bucket has refilled what the
+//! refusal lacked, unless the relay has spent it on what it already held.
 
 use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::{retrying_span, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
-use crate::wire::{ACK_LEN, BUSY_LEN, HEARTBEAT_LEN};
+use crate::wire::{ACK_LEN, HEARTBEAT_LEN};
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration =
@@ -107,8 +108,8 @@ const _: () = assert!(MAX_TRANSMISSION.as_micros() <= DEPTH.as_micros());
 /// documentation.
 pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// Airtime of a BUSY reply, 10.56 ms.
-pub const BUSY_AIRTIME: Duration = time_on_air(BUSY_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+/// Airtime of an ACK, taking or refusing, 14.40 ms.
+pub const ACK_AIRTIME: Duration = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
 /// The airtime the bucket refills in `d`.
 const fn refilled(d: Duration) -> Duration {
@@ -120,32 +121,31 @@ const fn refill_time(d: Duration) -> Duration {
     Duration::from_micros((d.as_micros() * RATE_DEN).div_ceil(RATE_NUM))
 }
 
-/// BUSY replies the reply reserve holds: those the bucket refills while a
+/// Refusals the reply reserve holds: those the bucket refills while a
 /// sender with the design's 100 ms ACK timeout and 3 attempts retries
 /// (§9.3); see the module documentation.
 pub const REPLIES: u64 = refilled(retrying_span(Duration::from_millis(100), 3, RETRY_BACKOFF))
     .as_micros()
-    / BUSY_AIRTIME.as_micros();
+    / ACK_AIRTIME.as_micros();
 
 /// Airtime below which a relay takes no new work; see the module
 /// documentation.
 pub const REPLY_RESERVE: Duration =
-    Duration::from_micros(REPLIES * BUSY_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
+    Duration::from_micros(REPLIES * ACK_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
 
-/// How long a sender told BUSY bans the relay (§9.3); see the module
+/// How long a sender refused bans the relay (§9.3); see the module
 /// documentation.
 pub const BAN: Duration = refill_time(Duration::from_micros(
-    time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
+    time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
 ));
 
-const _: () = assert!(REPLIES == 22);
+const _: () = assert!(REPLIES == 16);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
 /// row before offering it again (§9.3, §10.2): one [`BAN`] after the
 /// first, doubling after each further one, up to the refill of the whole
 /// bucket, 61 s, the longest anything waits for a bucket. Offered once a
-/// ban, a full frame every 1.53 s would be a 9 % probe on the refuser's
+/// ban, a full frame every 1.56 s would be a 9 % probe on the refuser's
 /// channel and spend the holder's bucket as fast as it refills.
 pub const fn hold(refusals: u8) -> Duration {
     let cap = refill_time(DEPTH).as_micros();
@@ -300,10 +300,10 @@ mod tests {
 
     #[test]
     fn reply_reserve_and_ban() {
-        assert_eq!(BUSY_AIRTIME, Duration::from_micros(10_560));
-        assert_eq!(REPLY_RESERVE, Duration::from_micros(244_160));
+        assert_eq!(ACK_AIRTIME, Duration::from_micros(14_400));
+        assert_eq!(REPLY_RESERVE, Duration::from_micros(242_240));
         let ban = BAN.as_micros();
-        assert!((1_529_000..1_530_000).contains(&ban), "{ban} µs");
+        assert!((1_555_000..1_556_000).contains(&ban), "{ban} µs");
         // The ban refills exactly a full frame and its ACK.
         let mut b = Budget::new();
         let t = Instant::from_micros(1_000_000);
