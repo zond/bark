@@ -463,7 +463,9 @@ except those in the tried set (§9.2.2) and those banned (§9.3).
 The **order** is: neighbours that are not demoted before demoted ones;
 within each, distance to the destination position in the local plane
 (§11), nearest first; equal distances are ordered by short name. The
-relay sends to the first candidate. If there is none, it returns the
+relay sends to the first candidate. If there is none but neighbours that
+are only banned, the message waits until the earliest ban ends and is
+routed again then (§9.3). If there is none at all, the relay returns the
 message to its parent (§9.2.5).
 
 A demoted neighbour is thus a last resort: tried only when every other
@@ -498,17 +500,20 @@ on to the next.
 A relay answers a DATA packet addressed to it (§9.2.1, §9.3) before
 acting on it: with an ACK if it takes it, with BUSY (§14) if it does not.
 It does either only when it owes no other reply (§9.3).
-It takes a packet that would give it something to send on only if its
-send queue has a place for it and its airtime bucket (§9.4) holds, as
-it stands, the ACK, the airtime of every frame in the send queue and of
-the new one, and the reply reserve. So a relay takes no more than it can
-send now, and the sender hears at once that it should go elsewhere,
-instead of the packet waiting here for the bucket to refill (§9.3). It
-takes a packet to deliver only if its bucket holds the reply reserve and
-an ACK and, for one of its leaves, its delivery queue has room (§10.4).
-Otherwise it refuses: it sends BUSY where the ACK would have gone, on
-the channel in `aux` after listening before talking, changes nothing,
-and the sender tries elsewhere at once. A packet that gives it no work,
+It takes a packet that would give it something to send on into the
+regular room of its send queue only if the room has a place for it and
+its airtime bucket (§9.4) holds, as it stands, the ACK, the airtime of
+every frame in the send queue and of the new one, and the reply reserve.
+Failing that, it takes the packet into a free hop place numbered no
+higher than the packet's `hops`, whatever the bucket holds (§9.3). So a
+relay takes from its leaves and its own application no more than it can
+send now, and refuses a message already in the network only when the
+hop places it may use are taken too. It takes a packet to deliver only
+if its bucket holds the reply reserve and an ACK and, for one of its
+leaves, its delivery queue has room (§10.4). Otherwise it refuses: it
+sends BUSY where the ACK would have gone, on the channel in `aux` after
+listening before talking, changes nothing, and the sender tries
+elsewhere at once or waits (§9.3). A packet that gives it no work,
 cases 2, 3 and 5 below, is ACKed even then: the relay already has the
 message, and BUSY would send its sender on with a second copy. A relay
 that cannot afford even the reply stays silent, and its sender retries
@@ -559,8 +564,8 @@ last-active time.
 
 #### 9.2.5 Returning to the parent, and the end of the search
 
-When §9.2.3 finds no candidate, because every neighbour has been tried
-or is banned (§9.3), the relay sends the message back to its parent: a
+When §9.2.3 finds no candidate, because every neighbour has been tried,
+the relay sends the message back to its parent: a
 DATA packet with `dst_hop` the parent's short name, from the record, on
 the parent's home channel as the neighbour table has it at the moment of
 sending, so a return follows a parent that has moved home (§6.3) since
@@ -569,23 +574,22 @@ to on the channel in the record. The parent receives it from its last
 child (§9.2.4, case 4) and continues with its next neighbour.
 
 The origin has no parent. With no candidate left it drops the message:
-no relay that can be reached from it, through neighbours that answer and
-are not banned, owns the destination. Nobody is told (§9.1, roadmap
-D10), the origin's own application included: that is the cost of
-having no end-to-end acknowledgement.
+no relay that can be reached from it through neighbours that answer
+owns the destination. Nobody is told (§9.1, roadmap D10), the origin's
+own application included: that is the cost of having no end-to-end
+acknowledgement.
 
-Its own application's message, until a first hop has taken it, is the
-exception. If neighbours are left that are only banned, the relay keeps
-the message aside and chooses again when the earliest of their bans
-ends, or later after refusals in a row (§9.3), as a leaf does with its
-message (§10.2); only when every
-neighbour has been tried, or has failed, is it dropped. A message for
-one of the relay's own leaves that finds the delivery queue full is kept
-the same way until the queue has a place. Meanwhile the application is
-given no other message (§9.1).
+A message whose neighbours left are only banned is neither returned nor
+dropped: it waits (§9.3), at the origin or anywhere else. The relay's
+own application's message waits the same way, longer after refusals in
+a row (§9.3), as a leaf's does (§10.2), and one for one of the relay's
+own leaves that finds the delivery queue full is kept aside until the
+queue has a place. Until a first hop takes it, the application is given
+no other message (§9.1).
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
-and the search ends early.
+and the search ends early. A parent that answers BUSY has not failed:
+the return waits for the ban and goes again (§9.3).
 
 #### 9.2.6 The hop counter
 
@@ -596,12 +600,14 @@ what it received plus one, whether it is forwarding, returning to its
 parent or sending straight back. A retransmission repeats the count. So
 along the path of a message the count only grows, and a count no higher
 than one a relay has already received for the message marks a copy
-(§9.2.4, case 3).
+(§9.2.4, case 3). The count also numbers the hop places of the send
+queue (§9.3).
 
 A relay that would have to send a count above 255, the largest the
 one-byte field holds, drops the message. A search that keeps its records
 ends on its own (§9.5); the cap ends one that has lost its way because a
-record expired or was replaced, or because the message split in two.
+record expired or was replaced, or because the message split in two,
+and it ends the chain of hop places (§9.3).
 255 is generous: the longest straight route across the city of §13
 (≈30 km at the ≈750 m street range of §4) is about 40 hand-overs, leaving
 about 200 for routing around gaps.
@@ -679,36 +685,48 @@ says the receiver does not take the packet (§9.2.4); any other BUSY is
 ignored. The sender treats it as a listen-before-talk
 give-up (step 2): the neighbour is set aside for this hand-over, not
 counted as tried, no failure is counted, and the next hop is chosen at
-once. A return to the parent, a packet sent straight back, or a DELIVER
-has no other candidate: BUSY uses up the attempt, the next one follows
-the retry wait, and after the last the packet is dropped as when its
-ACKs are missing, but with no failure counted against the receiver. The
-neighbour is also **banned** for 1.53 s. A relay refuses a packet to
-send on when the frame and the ACK that takes it, at most 150.4 ms, do
-not fit in its bucket on top of what it holds (§9.2.4), and its bucket
-refills that much in 150.4 ms / 9.83 % = 1.53 s (§9.4). Until then it
+once. A return to the parent or a packet sent straight back has no
+other candidate: it waits in the send queue until the ban ends and is
+sent again, and the refused transmission does not count as one of its
+attempts. The neighbour is also **banned** for 1.53 s. A relay refuses a
+packet to send on when the frame and the ACK that takes it, at most
+150.4 ms, do not fit in its bucket on top of what it holds and no hop
+place takes it (§9.2.4), and its bucket refills that much in 150.4 ms /
+9.83 % = 1.53 s (§9.4). Until then it
 is no candidate for any message (§9.2.3). A leaf told BUSY by its relay
 keeps the relay and the message, and offers the message again 1.53 s
 later (§10.2).
 
-Nothing waits for another node. A ban ends when the refuser's bucket
-has refilled what it could not fit, whatever either node does. A
-message whose every remaining candidate is banned goes back to its
-parent, or is dropped at the origin (§9.2.5): that loss is the
-overload's.
-Waiting instead could hold two neighbours forever, each full of messages
-waiting for the other, since what a relay holds drains only as it sends
-(roadmap D29). The one exception, a relay's own application's message,
-waits, and that cannot hold anyone: it is one frame of airtime that does
-not grow, kept with its place in the send queue's count, so it cannot
-fill the relay's bucket against its neighbours' packets the way a queue
-of waiting forwards could. Offered once a ban, though, a full frame
-every 1.53 s would probe the refuser's channel at 9 %, hiding its ACKs,
-and spend the holder's bucket as fast as it refills; so after the k-th
-refusal in a row the held message waits one ban times 2^(k−1), 1.53 s,
-3.06 s, 6.1 s and so on, up to the bucket's whole refill, 61 s, the
-longest anything waits for a bucket (§9.4), and the wait starts again
-from one ban once the message is taken or dropped.
+**Overload makes a message wait, never ends it.** A message whose every
+remaining candidate is banned waits in its place in the send queue,
+with its airtime still counted (§9.2.4), until the earliest ban ends,
+and is routed again then, at the origin or anywhere else. A message
+ends only when it is delivered, when a hand-over's attempts all go
+unanswered (step 6), when its leaf never wakes (§10.4), at the hop cap
+(§9.2.6), or when a node holding it dies (roadmap D31).
+
+Waiting alone can lock relays up: two neighbours whose queues are full
+of messages for each other would refuse each other forever, since what
+a relay holds drains only as it sends (roadmap D29). The hop places of
+the send queue prevent it. Take the highest-numbered hop place held at
+any relay, k. Its message has made at least k hand-overs and is sent
+with a higher count, and place k + 1 is free at every relay, so the
+neighbour it is offered to can take it, unless its count is at the cap,
+where it ends. That message moves, then the next highest, and so on down
+to the regular room. For this the message that has come farthest must
+be offered when a ban ends: a less travelled one offered first would be
+refused and ban the neighbour again, each time. So when bans end, the
+messages that waited for them go first, the most travelled first; the
+rest of the queue keeps its order, as ordering it all by count would
+starve messages that have just entered.
+
+The relay's own application's message, offered once a ban, would be a
+full frame every 1.53 s on the refuser's channel, 9 %, hiding its ACKs,
+and would spend the holder's bucket as fast as it refills; so after the
+k-th refusal in a row it waits one ban times 2^(k−1), 1.53 s, 3.06 s,
+6.1 s and so on, up to the bucket's whole refill, 61 s, the longest
+anything waits for a bucket (§9.4), and the wait starts again from one
+ban once the message is taken or dropped.
 
 BUSY carries the low 16 bits of the message ID because two senders on
 one channel can hand to the same relay within one reply time. Without
@@ -766,17 +784,27 @@ leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
 That is the cost of having one radio.
 
-**Send queue.** At most 40 packets, the one being handed over included,
-first in first out. A relay queues a packet only if everything queued,
-that packet included, fits in its bucket as it stands (§9.2.4), so the
-queue never holds more than the relay can send at once, and a packet in
-it waits for the hand-overs ahead of it, not for the bucket to refill.
-The number of places follows: the bucket holds at most 6 s (§9.4), and
-a full frame and the ACK that took it on cost 138.6 + 11.8 = 150.4 ms,
-so ⌈6 s / 150.4 ms⌉ = 40. With the reply reserve left in, a full bucket
-takes at most 38 full frames, so for full frames the bucket is the
-limit; shorter frames fill the 40 places first, and forty hand-overs of
-them go out within a few seconds.
+**Send queue.** A regular room of 40 places, and one hop place for each
+count from 1 to 254; the packet being handed over keeps its place. A
+relay queues a packet in the regular room only if everything queued,
+that packet included, fits in its bucket as it stands (§9.2.4), so a
+packet there waits for the hand-overs ahead of it, not for the bucket
+to refill. The number of places follows: the bucket holds at most 6 s
+(§9.4), and a full frame and the ACK that took it on cost 138.6 +
+11.8 = 150.4 ms, so ⌈6 s / 150.4 ms⌉ = 40. With the reply reserve left
+in, a full bucket takes at most 38 full frames, so for full frames the
+bucket is the limit; shorter frames fill the 40 places first, and forty
+hand-overs of them go out within a few seconds.
+
+A packet received with count h that the regular room refuses takes the
+highest free hop place numbered h or lower, and keeps it until it leaves
+the queue. A hop place holds its packet whatever the bucket holds; the
+bucket still decides when it is sent. A packet from a leaf or from the
+relay's own application has count 0 and no hop place, so overload stops
+new messages where they enter, at the application (§9.1). A packet
+received at 255 ends at the cap (§9.2.6), so 254 hop places are enough.
+Packets are handed over in the order they arrived, except that, when
+bans end, the packets that waited for them go first, as above.
 
 ### 9.4 Duty cycle cap
 
@@ -807,11 +835,12 @@ the two retry waits, 301 + 602 ms, and two more attempts of 500 ms
 listen-before-talk give-up, a 138.6 ms full frame and the 100 ms ACK
 timeout (§9.3), 2.38 s in all; the bucket refills 9.83 % × 2.38 s =
 234 ms of it, ⌊234 / 10.6⌋ = 22 replies, and with the heartbeat the
-reserve is 244 ms. A relay takes new work only if its bucket holds the
-reply reserve on top of the work's ACK and of everything it has queued
-to send (§9.2.4); otherwise it answers BUSY. A hand-over therefore waits
-for the bucket only when retries or replies have spent it since its
-packet was taken. A relay below the reserve sends nothing but heartbeats
+reserve is 244 ms. A relay takes new work into its regular room only
+if its bucket holds the reply reserve on top of the work's ACK and of
+everything it has queued to send (§9.2.4); otherwise it takes it into a
+hop place or answers BUSY. A hand-over therefore waits for the bucket
+only when retries or replies have spent it since its packet was taken,
+or when its packet holds a hop place. A relay below the reserve sends nothing but heartbeats
 and replies until its bucket refills. Each sender it refuses bans it
 for 1.53 s (§9.3), so a sender costs it at most one reply per ban.
 Without budget even for a reply it stays silent, its neighbours'
@@ -870,7 +899,7 @@ What breaks it:
   the usual case it is two in all. Within the hop cap a search can
   explore about 64 to 128 links beyond the route that led into the gap.
 - **State per relay:** at most 626 records of 32 bytes, 20 KB
-  (§9.2.2); a send queue of 40 packets of up to 255 bytes, 10.2 KB (§9.3);
+  (§9.2.2); a send queue of 294 packets of up to 255 bytes, 75 KB (§9.3);
   the owner's delivered IDs, kept with the delivery queue (§10.4).
 
 ---
