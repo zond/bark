@@ -1036,52 +1036,95 @@ waits; every relay in range will appear within one rotation.
 relay's short name, §8.1) is sent to the relay on its home channel with
 listen-before-talk and the retries of §9.3. The flags carry the leaf's
 receive mode (§10.5). The relay answers at once with `ATTACHED {type,
-leaf_id, next_poll}`, as it would with an ACK; that is what tells the
-leaf it is attached. A leaf sends an ATTACH that attaches at the start,
-after it gives its relay up, and after it chooses another (§10.1), and
-at no other time. The relay's **leaf table** (`leaf_id, next_poll,
-rx_mode`, and two counts) is separate from the neighbour table. Leaf
-table size: 256 entries per relay (≈80 leaves per relay expected at
-indoor density in Kyiv with 10% adoption; 400 at 50%). A relay whose
-table is full does not answer, and the leaf attaches elsewhere.
+leaf_id, next_poll, waiting}`, as it would with an ACK; that is what
+tells the leaf it is attached. `waiting`, in the first byte's spare
+bits, counts the messages the relay holds for the leaf (§10.5). A leaf
+sends an ATTACH that attaches at the start, after it chooses another
+relay (§10.1), and after its polls stop (below), and at no other time.
+The relay's **leaf table** (`leaf_id`, its next slot, the slot of its
+last poll and of the first it left unanswered, when it was last told and
+last heard, `rx_mode`, and a few counts) is separate from the neighbour
+table. Leaf table size: 256 entries per relay (≈80 leaves per relay
+expected at indoor density in Kyiv with 10% adoption; 400 at 50%). A
+relay whose table is full does not answer, and the leaf attaches
+elsewhere.
 
 **Polls.** From then on the relay checks that the leaf is there, not the
-leaf that the relay is. It polls one leaf at a time, at most one every
-**N = 300 s / 256 = 1.17 s**: at each poll it sends the leaf an
-ATTACHED, and the leaf answers with one ATTACH marked as a reply, which
-the relay does not answer. Time is cut into slots N apart, a cycle is
-256 slots, and each leaf in the table owns one slot of the cycle, so
-each is polled every **P = 256 N = 300 s** however many leaves the relay
-has. `next_poll` in every ATTACHED is the time from the end of that frame
-to the start of the leaf's next slot, so the leaf knows when its next
-poll comes, and the one after that if it misses one.
+leaf that the relay is. It polls one leaf at a time: at each poll it
+sends the leaf an ATTACHED, and the leaf answers with one ATTACH marked
+as a reply, which the relay does not answer. The poll is sent by the
+relay after its own channel check, so every neighbour of the relay hears
+it, and the answer follows right behind it. Keeping its relay, a leaf
+never speaks at a time it chose itself, where its frame would meet DATA
+it cannot hear (roadmap D41); it does so only to attach. `next_poll` in
+every ATTACHED is the delay from the end of that frame to the start of
+the leaf's next slot. It is not a period: the leaf knows only when its
+next poll comes, and each ATTACHED names the next one afresh, so the
+relay may change its period without telling anyone.
+
+**The period.** With L leaves in its table, each is polled once a period
+
+P = L × N, but at least 10 s and at most 300 s, with **N = 4 s**,
+
+while the relay's home channel is quiet, and P = 300 s while it is not.
+No two slots are closer than the spacing S = P / L, which is N unless a
+bound holds the period. Each poll, sent or skipped, gives the leaf the
+first time at least one period after its slot that lies S from every
+other leaf's next slot; a new leaf gets the first such time a period
+after it attached. So the relay never polls two leaves closer than S,
+and with the table steady the round settles to one poll every S, each
+leaf every P: every slot of the round is used, so the polls are spread
+evenly over it however the leaves attached, together after a mass start
+or a restart or one by one. When L or the rule changes, the slots
+already named hold, and each leaf's next slot follows the new period;
+the round settles within a period.
 
 | | Value | From |
 |---|---|---|
-| ATTACHED | 7 bytes, 10.56 ms | §14 |
-| Relay airtime for polls, full table of 256 | 10.56 ms / N = 0.90 %, 9.2 % of the duty budget | the bucket fills at 9.83 % (§9.4) |
-| The same at 80 leaves | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
-| Channel time at 80 leaves, polls and answers | 80 × (10.56 + 11.84) ms / 300 s = 0.60 % | |
-| Polls missed before the relay drops a leaf, k | ⌈TTL / P⌉ + 1 = 3 | below |
-| A dark leaf that keeps its relay | dark for less than (k − 1) P = 600 s, the delivery TTL | |
-| A returning leaf known to its relay | at its next poll, within 300 s, 150 s on average | |
+| ATTACHED, ATTACH | 7 and 9 bytes, 10.56 and 11.84 ms | §14 |
+| Relay airtime, quiet, 3 to 75 leaves | 10.56 ms / N = 0.26 %, 2.7 % of the duty budget | the bucket fills at 9.83 % (§9.4) |
+| The same, full table of 256 | 10.56 ms / (300 s / 256) = 0.90 %, 9.2 % of the budget | |
+| The same at 80 leaves, quiet or not | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
+| Channel time at 80 leaves, polls and answers | 80 × 22.40 ms / 300 s = 0.60 % | |
+| Channel time at 10 leaves | quiet, 22.40 ms / 4 s = 0.56 %; busy, 0.075 % | |
+| Shortest period, one or two leaves | 10 s | |
 
-N follows from the share of the budget polls may take and from the
-delivery TTL (§10.4: 10 minutes). Polls cost the relay 10.56 ms per N
-whatever its table holds. A full table must leave forwarding at least
-nine tenths of the budget, so N ≥ 10.56 ms / (10 % × 9.83 %) = 1.07 s,
-P ≥ 275 s. The period is half the TTL, the next period up that divides
-it, so that with k = 3 the relay keeps a leaf through any dark spell
-shorter than a TTL, the five minutes of a metro ride or a basement
-(§10.4), and keeps a gone leaf at most one period past the life of the
-messages it held for it. A leaf that went dark just before a poll misses
-it and the next, (k − 1) P = 600 s, and answers the third. A longer N
-costs less and makes a returning phone, a dead relay and a moved leaf
-known later. The relay drops a leaf that has left k polls in a row
-unanswered once the answer to the last is overdue, 0.6 s after its slot
-(below). Its queued messages stay in the delivery queue until their TTL,
-as for any leaf not in the table, and go to it if it attaches again
-within it.
+Three bounds set the period. While L × N lies between 10 s and 300 s, N
+bounds the share of the relay's budget polls take: each costs the relay
+one ATTACHED, 10.56 ms, so at one every N the relay spends 10.56 ms / N
+whatever its table holds. Polls may take 3 % of the budget, what those
+of roadmap D39 took at the ≈70 leaves of a relay in the capacity domain,
+where the domain worked at twice the §13 rate; so N ≥ 10.56 ms / (3 % ×
+9.83 %) = 3.6 s, and N = 4 s, 2.7 %; N = 300 s / 256 = 1.17 s would take
+a tenth of the budget at every table of more than 8 leaves, and the
+domain collapsed at a lower rate with it (roadmap D41). At more than 300
+s / N = 75 leaves the 300 s cap wins: it is half the delivery TTL, so a
+gone leaf is kept at most a period past the life of its messages
+(below), and the slots are 300 s / L apart, never closer than 300 s /
+256 = 1.17 s, so that a full table costs 0.90 % of the relay's time, 9.2
+% of its budget. The 10 s floor serves small cells: a phone back from
+the dark there is heard within 10 s, for 0.12 % of each leaf's time on
+air.
+
+**Only on a quiet channel.** Every shortened period is extra frames on
+the relay's channel, and extra frames on a loaded channel are what tip
+the capacity domain into collapse (`collapse-research-2026-10-16.md`).
+So the relay shortens its period below 300 s only while its own
+measure of its home channel, the `busy` of §6.1 that the move rule
+reads, says the channel is quiet: it becomes quiet below 3.5 % and
+stays so until 4.5 %. The domain works at the §13 rate and at twice
+it, where relays read a median of 3.2 to 3.4 % and 5.3 to 5.8 %
+(roadmap D41); 4.5 % lies halfway between them in load, and a relay
+below it that polls one leaf every N adds at most 0.56 % of the channel
+in polls and answers, which keeps it under the median of twice the
+rate. The band between 3.5 and 4.5 % is the hysteresis. It is 2.4 times
+the median standard deviation of a relay's reading over time at a steady
+load, 0.41 %, and more than the 0.56 % a co-channel neighbour's
+shortened polls can add to the reading; a relay's own polls and the
+answers to them do not count in its own reading (§6.1), so shortening
+cannot by itself end the quiet. The busy estimate moves slowly, over 10
+minutes (§6.1), so the rule changes the period a few times an hour at
+most.
 
 **Lateness and the window.** A poll goes before the heartbeat and the
 hand-over, after an owed reply, and not while the relay waits for an ACK.
@@ -1089,50 +1132,117 @@ So it waits at most for a hand-over already under way, a full frame and
 its ACK timeout, 238.6 ms, then for an owed ACK, 114.4 ms, and checks the
 channel with what is left of **500 ms**, listen-before-talk's give-up time
 (§9.3); a poll that cannot go out within 500 ms of its slot is skipped,
-and counts as missed. A leaf that sleeps (§10.5) hears only a long
+and counts as unanswered. A leaf that sleeps (§10.5) hears only a long
 preamble, and 512 ms of preamble would make each poll 49 times longer.
 Instead it wakes for its slot and listens with the ordinary receiver:
 from the slot less the drift of two crystal clocks of ±50 ppm each over
-the time since the last ATTACHED (30 ms after one period, 90 ms after
-three) and half the 10 ms unit of `next_poll`, to 500 ms plus the
-poll's 10.56 ms after the slot, plus the same margin: about 0.58 s every
-5 minutes, 11 µA on average at the 5.8 mA of listening. A 32.768 kHz
-tuning-fork crystal is ±20 ppm at 25 °C and −0.034 ppm/°C² away from it,
-so ±50 ppm holds from −5 to +55 °C. The nRF52840's internal RC
-oscillator (±500 ppm, Product Specification, CLOCK), which the firmware's
-clock runs on today, would widen the window to 1.1 s, and 2.3 s by the
-third period; a sleeping leaf should time its slot from a crystal. An
-always-listening leaf keeps the same window: it takes a poll only there,
-so that a poll from a relay it has left, on the same channel and for
-the same leaf ID, is not taken for its own relay's.
+the time since the last ATTACHED (30 ms after a 300 s period) and half
+the 10 ms unit of `next_poll`, to 500 ms plus the poll's 10.56 ms after
+the slot, plus the same margin: about 0.58 s a period, 11 µA on average
+at the 5.8 mA of listening at 300 s. A 32.768 kHz tuning-fork crystal is
+±20 ppm at 25 °C and −0.034 ppm/°C² away from it, so ±50 ppm holds from
+−5 to +55 °C. The nRF52840's internal RC oscillator (±500 ppm, Product
+Specification, CLOCK), which the firmware's clock runs on today, would
+widen the window to 1.1 s; a sleeping leaf should time its slot from a
+crystal. An always-listening leaf keeps the same window: it takes a
+poll only there, so that a poll from a relay it has left, on the same
+channel and for the same leaf ID, is not taken for its own relay's.
+
+**The answer.** After a poll the relay listens for the answer as it
+does for the ACK of a hand-over (§9.3): until the answer comes or the
+ACK timeout, 100 ms, has passed, it sends nothing but an owed reply.
+Otherwise its next frame, a hand-over queued behind the poll, starts a
+few milliseconds after the poll ends and makes it deaf to the answer.
+On a relay at its cap whose traffic repeats in step with its period,
+that happened at every poll of one leaf and the relay dropped a leaf
+that was there (roadmap D41).
 
 **Lost frames.** A lost ATTACHED that answers an ATTACH is a lost ACK:
 the leaf retries its ATTACH (§9.3), and the relay, which has the leaf
-already, answers with the same slot. A lost poll or a lost answer costs
-one round and nothing else: the relay counts one unanswered poll, the
-leaf one empty window, and the next period starts afresh.
+already, answers with the same slot. A leaf whose window passes empty,
+because the poll or its answer was lost, the relay skipped it, or the
+leaf was out of reach, no longer knows when its next poll comes. It
+takes the next poll whenever it comes, and if none has come by then,
+attaches again as below.
 
-**Keeping the relay.** A leaf gives its relay up when its window has
-passed empty k times in a row, when the relay has dropped it: at most
-3 P + 0.6 s, 15 minutes, after the last poll it heard. A hand-over to the
-relay that fails, an ATTACH or a message (§9.3: three attempts), is tried
-again 60 s later; the leaf gives the relay up when hand-overs have failed
-in two periods in a row. A fade lasts about a minute (the scenarios'
-correlation time), as long as one period, so one fade costs a wait, not
-the relay: the three attempts of one hand-over, a few hundred
-milliseconds apart, all fall inside it. Having given up its relay, the
-leaf takes the strongest other one it has heard (§10.1).
+**Keeping the leaf.** The relay drops a leaf whose polls have gone
+unanswered for a delivery TTL: at the first slot at least 600 s after
+the first poll it left unanswered, once the answer to that one is
+overdue, 0.6 s after its slot. So a phone dark for less than a TTL,
+the five minutes of a metro ride or a basement (§10.4), is still in the
+table when it is back, and its messages are still here; a gone leaf is
+kept at most a TTL and a period, 15 minutes, after its last answer, a
+period past the life of the messages held for it. Queued messages of a
+dropped leaf stay in the delivery queue until their TTL, as for any
+leaf not in the table, and go to it if it attaches again within it.
+
+**Keeping the relay.** A leaf does not give its relay up on a clock: a
+phone in a pocket or the metro is out of reach of every relay, and
+should find its relay when it is back. A leaf whose window has passed
+empty stays silent until it hears a heartbeat, from any relay, and then
+sends an ATTACH that attaches after a random wait of 0 to 60 s, unless
+a poll comes first. Only heartbeats count, not other leaves' frames, so
+that phones dark together in one train do not wake each other. A leaf
+that hears no heartbeat tries once a rotation after the window,
+13 × 15 s = 195 s, the longest any relay in reach can stay unheard (§7),
+and after each ATTACH unanswered at all its attempts waits again for a
+heartbeat or a rotation. The ATTACH goes to the leaf's own relay if it
+has heard that relay since the polls stopped; if it has not, but has
+heard another, its relay is dead or out of reach, and it attaches to
+the strongest of those it has heard since (§10.1). A relay that still
+has the leaf answers with its slot unchanged; one that dropped it takes
+it as new. A message the relay did not take at any attempt (§9.3) is
+tried again 60 s later. A fade lasts about a minute (the scenarios'
+correlation time), so one fade costs a wait, not the relay: the three
+attempts of one hand-over, a few hundred milliseconds apart, all fall
+inside it. The leaf gives the relay up when hand-overs have failed in
+two retries in a row and it has heard another relay since the first
+failure, and then chooses as in §10.1. Having heard none, it may be out
+of reach of every relay, and keeps the relay.
+
+What this costs and gains:
+
+- A dark phone sends at most one ATTACH, three frames, per rotation.
+- A phone back in reach before its window is polled at its next slot.
+  One that missed a window is heard at its first heartbeat and 0 to
+  60 s later, or at the next poll if that is sooner. With r relays in
+  earshot, a heartbeat reaches the leaf's channel every 130 s / r on
+  average (§7); at the design density's 2.7 relays indoors (§10.1) that
+  is every 48 s, so the phone is heard 78 s after its return on
+  average, and at most 195 + 60 = 255 s.
+- A train of n phones surfacing by one relay offers it n / 60 ATTACHes a
+  second. For 300 phones that is 5 a second, 53 ms of ATTACHED in each
+  second, within the 98 ms a second the bucket refills (§9.4), rather
+  than hundreds at once. The relay gives them slots a period on, spread
+  by the spacing like any others.
+- A leaf whose relay has died and that hears another moves at its next
+  window, a heartbeat from the other relay and up to 60 s: at most
+  P + 0.6 s + 195 s + 60 s after its last poll, 556 s at 300 s, 266 s at
+  10 s.
+- A leaf that hears no other relay keeps trying its own once a rotation
+  for ever.
+
+**When each side knows.**
+
+| | Known to | After |
+|---|---|---|
+| A leaf goes dark, or away | its relay, which counts its poll unanswered | its next slot: within P |
+| | its relay, which drops it | 600 s after its first unanswered poll, and at most one period more |
+| A dark leaf comes back | its relay, still its relay | its next slot if it missed none; else its first heartbeat and 0 to 60 s, at most 255 s |
+| A leaf moves to another relay | the new relay | at once, its first ATTACH |
+| | the old relay | a TTL and up to a period after its last answer there |
+| A relay dies | its leaves, which move | their next window, a heartbeat from another relay and 0 to 60 s: at most P + 256 s |
 
 **Moves.** A relay that moves home channel (§6.3) keeps its leaves and
 their slots and polls them on the new channel. An always-listening leaf
 follows at once on the heartbeat the relay sends on the old channel, or
 at the relay's next heartbeat on its channel if it missed that one,
 within a rotation (≤195 s); a hybrid leaf follows in its next awake
-rotation (≤10 minutes, §10.5), and one that hears neither gives the
-relay up after k empty windows and attaches again. A leaf that moves to
-another relay stops answering the old one's polls, which drops it after
-k polls, at most 15 minutes after its last answer; until then a message
-sent to the old address waits there as for a dark leaf (§10.4).
+rotation (≤10 minutes, §10.5). A leaf that misses its window meanwhile
+attaches again as above, on whichever channel its relay's heartbeat
+names by then. A leaf that moves to another relay stops answering the
+old one's polls, which drops it a TTL later; until then a message sent
+to the old address waits there as for a dark leaf (§10.4).
 
 **A message without a relay.** A message the leaf cannot hand over,
 because it has no relay or its relay does not answer, is held and tried
@@ -1168,21 +1278,22 @@ A queued message goes to the send queue (§9.3) as a DELIVER, one per
 leaf at a time and oldest first, when it arrives, when the leaf's
 previous one is ACKed, and whenever a hand-over ends and leaves room in
 the send queue. It needs room as any packet does (§9.3); one the bucket
-cannot fit yet goes the moment the bucket will. A leaf whose DELIVER went unanswered is not listening:
-its messages wait for its next answer to a poll (§10.2) and are retried
-every 60 s, not each time room frees up.
+cannot fit yet goes the moment the bucket will. A leaf whose DELIVER
+went unanswered is not listening: its messages wait for its next answer
+to a poll (§10.2) and are retried every 60 s, not each time room frees
+up.
 
 A message stays long only for a leaf that does not answer. A leaf that
 listens takes its DELIVER at the first hand-over: a duty-cycled or
 hybrid one checks the channel every 500 ms, and the 512 ms preamble
 spans the check (§10.5). One that does not is a phone in a pocket, a
-basement or the metro for a few minutes, and its messages wait until
-the first retry after it is back, at most 60 s later, or its answer to
-a poll (§10.2), or until the TTL. Leaves in one train or one basement go dark together, so
-the queue holds what arrives in a TTL for every leaf a relay can serve,
-its leaf table's 256 (§10.2), at the 23 texts a day each that the
-network carries (§13): 256 × 23 / 144 ten-minute TTLs in a day = 40.9,
-so 41 messages, 10.3 KB.
+basement or the metro for a few minutes, and its messages wait until the
+first retry after it is back, at most 60 s later, or its answer to a
+poll (§10.2), or until the TTL. Leaves in one train or one basement go
+dark together, so the queue holds what arrives in a TTL for every leaf a
+relay can serve, its leaf table's 256 (§10.2), at the 23 texts a day
+each that the network carries (§13): 256 × 23 / 144 ten-minute TTLs in a
+day = 40.9, so 41 messages, 10.3 KB.
 
 The owner remembers 41 delivered message IDs (§14) and ACKs a repeat
 without delivering it twice. When it needs the place, it forgets the one
@@ -1208,7 +1319,24 @@ The leaf declares its mode in ATTACH; the relay sets the preamble of
 DELIVER to match. Long preambles cost little airtime because deliveries
 are rare (≈0.5% of a channel per day at 80 leaves × 10 messages). Polls
 keep the short preamble: a sleeping leaf listens for its poll at the
-time the last one named (§10.2). Default: always
+time the last one named (§10.2).
+
+Each ATTACHED also says how many messages the relay holds for the leaf,
+`waiting`, up to 15. A sleeping leaf that answers a poll counting n of
+them stays
+listening with the ordinary receiver, unless it has them all sooner, for
+as long as the relay can take to bring them: the DELIVERs that may be
+ahead of them, a full send queue of full frames and their ACKs,
+40 × 152.96 ms = 6.12 s (§9.3), and each of the n with all its attempts,
+3.13 s (§10.2), so 6.12 s + n × 3.13 s, at most 53 s. While that lasts
+the relay sends
+those n with the 12-symbol preamble; a message that arrived after the
+poll, or one still queued after the wait, gets the long one. So the
+messages of a sleeping leaf that is in reach reach it at its next poll
+at the latest, at the short preamble's airtime, and the long preamble
+is kept for messages between polls. The leaf core runs only the
+always-listening mode today; the relay side of this is built and
+tested. Default: always
 listening while on USB or charging, hybrid on battery. GPS off after a
 fix, and off after 10 minutes without a fix (searching under jamming draws
 ≈27 mA, ≈1.3 days).
@@ -1298,10 +1426,20 @@ and its ACK (14.4 ms).
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
-cap (§9.4) binds there first. The relays' polls of their leaves (§10.2)
-take at most 0.9 % of each relay's time, 9.2 % of its budget, at a full
-leaf table, and the domain's 20 000 leaves' polls 5.4 % of each channel
-where every relay hears every other.
+cap (§9.4) binds there first.
+
+The relays' polls of their leaves (§10.2) cost a relay one ATTACHED,
+10.56 ms, per poll, and its channel the poll and the 11.84 ms answer. At
+the ≈70 leaves of a relay in the capacity domain the period is 280 s on
+a quiet channel and 300 s on a busy one, so polls take 0.26 % of the
+relay's time, 2.7 % of its budget, and 0.56 % of its channel; at 80
+leaves the 300 s cap holds and it is 0.28 %, 2.9 % and 0.60 %. A full
+table of 256 takes 0.90 % of the relay's time, 9.2 % of its budget.
+Summed over the domain, the 20 000 leaves are polled 67 times a second
+whatever the rule, 1.49 s of airtime a second, 11.5 % of one channel's
+time over the 13, where every relay hears every other. A relay with few
+leaves polls them more often only while its channel is quiet: at 10
+leaves every 40 s, 0.56 % of its channel, against 0.075 % at 300 s.
 
 Common proposals that do not fit:
 

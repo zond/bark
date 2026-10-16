@@ -8,10 +8,11 @@
 //! poll, and the leaf answers with an ATTACH marked as a reply, which is
 //! not answered. A poll goes after an owed reply and before the heartbeat
 //! and the hand-over; one that cannot start within [`POLL_LATE`] of its
-//! slot is skipped, so that a sleeping leaf's window bounds it. A leaf
-//! that leaves [`Polls::missed`] polls in a row unanswered is dropped.
-//!
-//! [`Polls::missed`]: crate::tables::leaves::Polls::missed
+//! slot is skipped, so that a sleeping leaf's window bounds it. Each
+//! ATTACHED counts the messages queued for the leaf, and while a sleeping
+//! leaf listens for those after answering, their DELIVERs have the short
+//! preamble (§10.5). A leaf that leaves its polls unanswered for a
+//! delivery TTL is dropped (`tables/leaves.rs`).
 //!
 //! Every message for a leaf goes through the delivery queue (§10.4): it is
 //! queued when it arrives here, whether or not the leaf is attached, and
@@ -38,7 +39,7 @@
 
 use super::{Check, Job, Relay};
 use crate::event::{Action, DropReason, Frame, Trace};
-use crate::ids::LeafId;
+use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
 use crate::node::transfer::{Owed, Reply};
 use crate::radio::MIN_PREAMBLE_SYMBOLS;
@@ -46,7 +47,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::leaves::{POLL_AIRTIME, POLL_LATE};
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
-use crate::wire::{Attach, Attached, Deliver, Packet, WAITING_MAX};
+use crate::wire::{Attach, Attached, Deliver, Packet, RxMode, WAITING_MAX};
 
 /// The poll in progress (design §10.2).
 pub(super) struct Poller {
@@ -55,6 +56,9 @@ pub(super) struct Poller {
     /// Not before this: a listen-before-talk backoff.
     pub(super) ready_at: Instant,
     pub(super) check: Check,
+    /// The poll sent last, while its answer may still come: the leaf and
+    /// the end of the wait.
+    pub(super) answer: Option<(LeafId, Instant)>,
 }
 
 impl Poller {
@@ -62,6 +66,7 @@ impl Poller {
         current: None,
         ready_at: Instant::ZERO,
         check: Check::Idle,
+        answer: None,
     };
 }
 
@@ -70,7 +75,10 @@ impl Relay {
     /// ATTACHED; one that answers a poll is not answered.
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
         if a.reply {
-            if self.leaves.answered(a.leaf, a.mode) {
+            if self.poller.answer.is_some_and(|(l, _)| l == a.leaf) {
+                self.poller.answer = None;
+            }
+            if self.leaves.answered(a.leaf, a.mode, now) {
                 self.leaves.measured(a.leaf, self.leaf_loss());
                 self.deliver_now(a.leaf, now);
             }
@@ -81,9 +89,8 @@ impl Relay {
         if !self.can_reply(POLL_AIRTIME, now) || !self.replies.can_owe(reply, self.home, now) {
             return;
         }
-        // The ATTACHED goes within the ACK timeout and names a slot after it.
-        let lead = self.config.ack_timeout + POLL_AIRTIME;
-        if self.leaves.attached(a.leaf, a.mode, lead, now).is_err() {
+        let waiting = self.waiting(a.leaf);
+        if self.leaves.attached(a.leaf, a.mode, waiting, now).is_err() {
             return;
         }
         self.leaves.measured(a.leaf, self.leaf_loss());
@@ -93,13 +100,16 @@ impl Relay {
         self.deliver_now(a.leaf, now);
     }
 
-    /// ATTACHED for `leaf`, sent at `now`, naming its slot.
+    /// Messages queued for `leaf`, as ATTACHED counts them.
+    fn waiting(&self, leaf: LeafId) -> u8 {
+        self.delivery.count_for(leaf).min(WAITING_MAX as usize) as u8
+    }
+
+    /// ATTACHED for `leaf`, sent at `now`, naming its next slot.
     fn attached_frame(&self, leaf: LeafId, now: Instant) -> Frame {
-        let next = self
-            .leaves
-            .get(leaf)
-            .map_or(Duration::ZERO, |e| e.next_poll.since(now + POLL_AIRTIME));
-        let waiting = self.delivery.count_for(leaf).min(WAITING_MAX as usize) as u8;
+        let entry = self.leaves.get(leaf);
+        let next = entry.map_or(Duration::ZERO, |e| e.next_poll.since(now + POLL_AIRTIME));
+        let waiting = entry.map_or(0, |e| e.waiting);
         let a = Attached {
             leaf,
             next_poll: Attached::units(next),
@@ -188,6 +198,7 @@ impl Relay {
             return;
         }
         self.leaves.polled(leaf);
+        self.leaves.told(leaf, self.waiting(leaf), now);
         let mut frame = self.attached_frame(leaf, now);
         frame.power_dbm = self.leaf_power(leaf);
         self.budget.record(mac::airtime(&frame), now);
@@ -196,12 +207,32 @@ impl Relay {
     }
 
     /// The poll left the antenna.
-    pub(super) fn poll_sent(&mut self) {
-        self.poller = Poller::IDLE;
+    pub(super) fn poll_sent(&mut self, now: Instant) {
+        let answer = self
+            .poller
+            .current
+            .map(|(leaf, _)| (leaf, now + self.config.ack_timeout));
+        self.poller = Poller {
+            answer,
+            ..Poller::IDLE
+        };
+    }
+
+    /// Until when the relay keeps listening for the answer to its last
+    /// poll, as it does for the ACK of a hand-over (§9.3): a frame of its
+    /// own would make it deaf to it. Cleared once that is past.
+    pub(super) fn answer_wait(&mut self, now: Instant) -> Option<Instant> {
+        if self.poller.answer.is_some_and(|(_, t)| t <= now) {
+            self.poller.answer = None;
+        }
+        self.poller.answer.map(|(_, t)| t)
     }
 
     /// When the poll in progress, or the next slot, needs the radio.
     pub(super) fn poll_wakeup(&self) -> Option<Instant> {
+        if let Some((_, t)) = self.poller.answer {
+            return Some(t);
+        }
         match self.poller.current {
             Some(_) if self.poller.check == Check::Idle => Some(self.poller.ready_at),
             Some(_) => None,
@@ -238,11 +269,8 @@ impl Relay {
             msg_id: q.msg_id,
             payload: q.payload(),
         };
-        let frame = mac::frame(
-            &Packet::Deliver(deliver),
-            self.home,
-            entry.mode.preamble_symbols(),
-        );
+        let preamble = self.deliver_preamble(leaf, q.msg_id, now);
+        let frame = mac::frame(&Packet::Deliver(deliver), self.home, preamble);
         let airtime = mac::airtime(&frame);
         match self.no_room(airtime, Duration::ZERO, now) {
             None => {}
@@ -256,6 +284,23 @@ impl Relay {
         }
         let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())
+    }
+
+    /// The preamble of a DELIVER of `msg_id` to `leaf` sent at `now`: the
+    /// leaf's mode's, unless the leaf sleeps and listens with the ordinary
+    /// receiver for what its last answered poll counted (§10.5).
+    pub(super) fn deliver_preamble(&self, leaf: LeafId, msg_id: MsgId, now: Instant) -> u16 {
+        let mode = self.leaves.get(leaf).map_or(RxMode::Listening, |e| e.mode);
+        let counted = self
+            .delivery
+            .iter()
+            .find(|q| q.msg_id == msg_id)
+            .is_some_and(|q| self.leaves.awake_for(leaf, q.enqueued, now));
+        if counted {
+            MIN_PREAMBLE_SYMBOLS
+        } else {
+            mode.preamble_symbols()
+        }
     }
 
     /// Offer the send queue the oldest queued message of each leaf, oldest

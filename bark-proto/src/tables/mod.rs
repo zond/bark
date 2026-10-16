@@ -99,7 +99,7 @@ pub(crate) mod sizes {
     fn table_sizes() {
         // Per-entry sizes the capacities multiply.
         assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 48);
-        assert_eq!(size_of::<leaves::LeafEntry>(), 16);
+        assert_eq!(size_of::<leaves::LeafEntry>(), 56);
         assert_eq!(size_of::<delivery::Queued>(), 256);
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
@@ -124,7 +124,7 @@ pub(crate) mod sizes {
                 size_of::<neighbours::Neighbours>(),
                 neighbours::NEIGHBOURS * 48,
             ),
-            ("leaves", size_of::<leaves::Leaves>(), leaves::LEAVES * 16),
+            ("leaves", size_of::<leaves::Leaves>(), leaves::LEAVES * 56),
             (
                 "delivery",
                 size_of::<delivery::DeliveryQueue>(),

@@ -66,8 +66,9 @@ pub struct Config {
     /// How long a leaf waits before it tries its relay again after a
     /// hand-over to it failed (design §10.2: 60 s, the length of a fade).
     pub leaf_retry: Duration,
-    /// N: a relay polls at most one leaf this often, and each leaf every
-    /// 256 N (design §10.2: 300 s / 256; `tables::leaves::POLL_INTERVAL`).
+    /// N: with L leaves on a quiet channel a relay polls each every L N,
+    /// within 10 s and 300 s (design §10.2: 4 s;
+    /// `tables::leaves::POLL_INTERVAL`).
     pub poll_interval: Duration,
     /// Delivery-queue entry lifetime (design §10.4: 10 min).
     pub delivery_ttl: Duration,

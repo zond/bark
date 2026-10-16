@@ -33,19 +33,31 @@
 //! drives: at each poll, an ATTACHED that names the next, the leaf answers
 //! with one ATTACH marked as a reply, and sends no ATTACH otherwise. A
 //! poll is taken only in its window, so that another relay's poll of the
-//! same leaf ID on the same channel is ignored. A leaf whose window passes
-//! empty expects the next one a period later; after [`Polls::missed`] empty
-//! windows in a row its relay has dropped it, and it chooses again.
+//! same leaf ID on the same channel is ignored.
 //!
-//! A hand-over to the relay that fails, an ATTACH or a message, is tried
-//! again one `leaf_retry` (60 s) later, as long as the fading of a link
-//! lasts (correlation time 60 s in the scenarios), so one fade costs a
-//! wait, not the relay; failures in two periods in a row give the relay
-//! up. A relay's heartbeat that names a new home channel (§6.3) moves the
-//! leaf with it; the schedule goes on there. A leaf that has lost its
-//! relay takes the strongest other one it has heard, as above.
+//! A leaf whose window passes empty no longer knows when its next poll
+//! comes, and takes the next one whenever it comes. It does not give its
+//! relay up on a clock: a phone in a pocket or a metro is out of reach of
+//! every relay, and should find its relay when it is back. It attaches
+//! again, a random 0 to `leaf_retry` (60 s) after the next heartbeat it
+//! hears, from any relay, unless a poll comes first; if it hears none, a
+//! rotation (195 s) after the window, so that a dark phone sends little
+//! and phones that come back together, a train surfacing, do not attach
+//! at once. The ATTACH goes to its relay if the leaf has heard it since
+//! the polls stopped; to the strongest other relay heard since then if it
+//! has not, which is how a leaf leaves a dead relay; and to its relay if
+//! it has heard none. A relay that still has the leaf answers and keeps
+//! its slot.
 //!
-//! [`Polls::missed`]: crate::tables::leaves::Polls::missed
+//! A message the relay did not take is tried again one `leaf_retry` later,
+//! as long as the fading of a link lasts (correlation time 60 s in the
+//! scenarios), so one fade costs a wait, not the relay. An ATTACH
+//! unanswered at every attempt waits for a heartbeat as above. Failures in
+//! two retries in a row give the relay up only if the leaf has heard
+//! another relay since the first. A relay's heartbeat that names a new
+//! home channel (§6.3) moves the leaf with it; the schedule goes on there.
+//! A leaf that has lost its relay takes the strongest other one it has
+//! heard, as above.
 //!
 //! # Sending
 //!
@@ -84,7 +96,7 @@ use crate::position::{Position, ShortName};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, Budget};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
-use crate::tables::leaves::{Polls, POLL_AIRTIME, POLL_LATE};
+use crate::tables::leaves::{POLL_AIRTIME, POLL_LATE};
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
 use crate::wire::{
@@ -200,17 +212,23 @@ pub struct Leaf {
     /// The relay has answered an ATTACH with ATTACHED since the leaf chose
     /// it.
     attached: bool,
-    /// When the ATTACH that attaches is due: at once, or a retry period
-    /// after a failure.
+    /// When the ATTACH that attaches is due, while not attached or adrift.
     attach_at: Instant,
     /// Retry periods in a row in which a hand-over to the relay failed.
     failed_periods: u8,
+    /// When the first of them failed.
+    failing_since: Instant,
+    /// The next ATTACH waits for a heartbeat: then it is due a random
+    /// wait later, unless `attach_at` comes first.
+    awaiting_heartbeat: bool,
     /// When the next poll's slot begins, as the last ATTACHED said.
     poll_at: Instant,
-    /// When the last ATTACHED arrived: the clocks drift from there.
+    /// When the last ATTACHED arrived: the clocks drift from there, and
+    /// the polls stopped then if they did.
     told_at: Instant,
-    /// Windows in a row that passed without a poll.
-    polls_missed: u8,
+    /// A window passed without a poll: the leaf does not know when the
+    /// next comes, takes one whenever it does, and attaches again.
+    adrift: bool,
     transfer: Transfer,
     sending: Sending,
     /// The message being sent, as DATA; readdressed for each hand-over.
@@ -254,7 +272,9 @@ impl Leaf {
             failed_periods: 0,
             poll_at: Instant::ZERO,
             told_at: Instant::ZERO,
-            polls_missed: 0,
+            failing_since: Instant::ZERO,
+            awaiting_heartbeat: false,
+            adrift: false,
             transfer: Transfer::new(),
             sending: Sending::Attach,
             outgoing: None,
@@ -295,12 +315,13 @@ impl Leaf {
         self.home
     }
 
-    /// When the next poll can come, while attached: from its slot less the
+    /// When the next poll can come, while attached and not adrift: from its
+    /// slot less the
     /// drift of two clocks at [`CLOCK_PPM`] since the last one and half a
     /// [`POLL_UNIT`] of rounding, to the slot plus the poll's lateness and
     /// airtime and the same margin. A sleeping leaf listens in it (§10.2).
     pub fn poll_window(&self) -> Option<(Instant, Instant)> {
-        if !self.attached {
+        if !self.attached || self.adrift {
             return None;
         }
         let since = self.poll_at.since(self.told_at).as_micros();
@@ -310,10 +331,6 @@ impl Leaf {
         let start =
             Instant::from_micros(self.poll_at.as_micros().saturating_sub(margin.as_micros()));
         Some((start, self.poll_at + POLL_LATE + POLL_AIRTIME + margin))
-    }
-
-    fn polls(&self) -> Polls {
-        Polls::from_config(&self.config)
     }
 
     /// How long a candidate relay may go unheard before the leaf forgets
@@ -339,6 +356,13 @@ impl Leaf {
 
     fn heartbeat(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.listening_since.get_or_insert(now);
+        if self.awaiting_heartbeat {
+            // A relay is in reach again. The wait spreads the leaves that
+            // come back together over a minute (§10.2).
+            self.awaiting_heartbeat = false;
+            let wait = self.rng.duration(Duration::ZERO, self.config.leaf_retry);
+            self.attach_at = self.attach_at.min(now + wait);
+        }
         if let Some(mut relay) = self.relay.filter(|r| r.position == hb.position) {
             let moved = relay.home != hb.home;
             relay.heard(&hb, rssi, now);
@@ -428,6 +452,8 @@ impl Leaf {
     fn switch(&mut self, relay: Heard, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.relay = Some(relay);
         self.attached = false;
+        self.adrift = false;
+        self.awaiting_heartbeat = false;
         self.attach_at = now;
         self.failed_periods = 0;
         // A hand-over in progress was for the old relay or channel.
@@ -438,13 +464,42 @@ impl Leaf {
         }
     }
 
-    /// The relay stopped answering hand-overs or polling.
+    /// The relay stopped answering hand-overs, and another relay has been
+    /// heard since.
     fn lose_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.relay = None;
         self.attached = false;
+        self.adrift = false;
         self.failed_periods = 0;
         self.transfer.cancel();
         self.choose(now, emit);
+    }
+
+    /// Whether a relay other than the leaf's own has been heard since `t`.
+    fn heard_other_since(&self, t: Instant) -> bool {
+        self.candidates.iter().flatten().any(|c| c.last_heard > t)
+    }
+
+    /// Before an ATTACH of a leaf adrift: if it has not heard its relay
+    /// since the polls stopped but has heard another, its relay is dead or
+    /// out of reach, and it takes the strongest of those (§10.1).
+    fn reconsider(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let since = self.told_at;
+        let Some(relay) = self.relay else { return };
+        if relay.last_heard > since {
+            return;
+        }
+        let best = self
+            .candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.map(|c| (i, c)))
+            .filter(|(_, c)| c.last_heard > since)
+            .max_by_key(|(_, c)| c.rssi);
+        if let Some((slot, best)) = best {
+            self.candidates[slot] = self.relay.take();
+            self.switch(best, now, emit);
+        }
     }
 
     // --- Sending (§9.3, §10.2) ---
@@ -506,27 +561,35 @@ impl Leaf {
         }));
     }
 
-    /// Start a hand-over if none is running: the ATTACH that attaches
-    /// until the relay has answered one, then the message.
-    fn prepare(&mut self, now: Instant) {
-        if !self.transfer.idle() {
+    /// Start a hand-over if none is running: the ATTACH that attaches when
+    /// it is due, until the relay has answered one and again while adrift;
+    /// else the message.
+    fn prepare(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if !self.transfer.idle() || self.relay.is_none() {
             return;
+        }
+        let attach = (!self.attached || self.adrift) && now >= self.attach_at;
+        if attach && self.adrift {
+            self.reconsider(now, emit);
         }
         let Some(relay) = self.relay else { return };
         let from = AckName::from(relay.position.short());
-        if !self.attached {
-            if now >= self.attach_at {
-                self.sending = Sending::Attach;
-                // Answered by ATTACHED, never by an ACK (`attached_rx`).
-                let expect = Ack {
-                    msg_id: MsgId(0),
-                    from,
-                    to: self.id.into(),
-                    refused: false,
-                };
-                self.transfer.start(expect, 0, now);
-            }
-        } else if let Some(msg_id) = self.outgoing_id().filter(|_| now >= self.outgoing_at) {
+        if attach {
+            self.sending = Sending::Attach;
+            let relay = relay.position.short();
+            emit(Action::Trace(Trace::Attaching { relay }));
+            // Answered by ATTACHED, never by an ACK (`attached_rx`).
+            let expect = Ack {
+                msg_id: MsgId(0),
+                from,
+                to: self.id.into(),
+                refused: false,
+            };
+            self.transfer.start(expect, 0, now);
+        } else if let Some(msg_id) = self
+            .outgoing_id()
+            .filter(|_| self.attached && now >= self.outgoing_at)
+        {
             self.sending = Sending::Data;
             // A leaf's DATA names no sender (`src_hop` 0, §14).
             let expect = Ack {
@@ -637,15 +700,34 @@ impl Leaf {
     /// a retry period later, or give the relay up after failures in
     /// [`FAILED_PERIODS`] periods in a row. A message stays held.
     fn send_failed(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if let (Sending::Attach, Some(r)) = (self.sending, self.relay) {
+            let relay = r.position.short();
+            emit(Action::Trace(Trace::AttachFailed { relay }));
+        }
         self.failed_periods = self.failed_periods.saturating_add(1);
-        if self.failed_periods >= FAILED_PERIODS {
+        if self.failed_periods == 1 {
+            self.failing_since = now;
+        }
+        // A leaf that has heard no other relay since may be out of reach of
+        // all, not left by its relay: it keeps it and tries again.
+        if self.failed_periods >= FAILED_PERIODS && self.heard_other_since(self.failing_since) {
             return self.lose_relay(now, emit);
         }
-        let later = now + self.config.leaf_retry;
         match self.sending {
-            Sending::Attach => self.attach_at = later,
-            Sending::Data => self.outgoing_at = self.outgoing_at.max(later),
+            Sending::Attach => self.await_heartbeat(now),
+            Sending::Data => {
+                let later = now + self.config.leaf_retry;
+                self.outgoing_at = self.outgoing_at.max(later);
+            }
         }
+    }
+
+    /// The next ATTACH waits for a heartbeat, which says a relay is in
+    /// reach; at the latest it goes a rotation on, when every relay in
+    /// reach would have been heard (§10.2).
+    fn await_heartbeat(&mut self, now: Instant) {
+        self.awaiting_heartbeat = true;
+        self.attach_at = now + self.rotation();
     }
 
     fn acked(&mut self, ack: Ack, now: Instant) {
@@ -675,16 +757,20 @@ impl Leaf {
     /// a poll, which it answers once (§10.2). Either names the next poll.
     fn attached_rx(&mut self, a: Attached, now: Instant) {
         let Some(relay) = self.relay else { return };
-        let answer =
-            self.sending == Sending::Attach && !self.transfer.idle() && self.transfer.transmitted();
+        let attaching = self.sending == Sending::Attach && !self.transfer.idle();
+        let answer = attaching && self.transfer.transmitted();
+        let in_window = self
+            .poll_window()
+            .is_some_and(|(start, end)| now >= start && now < end);
         if answer {
             self.transfer.cancel();
             self.attached = true;
             self.failed_periods = 0;
-        } else if self
-            .poll_window()
-            .is_some_and(|(start, end)| now >= start && now < end)
-        {
+        } else if in_window || (self.attached && self.adrift) {
+            if attaching {
+                // The poll came first: no ATTACH is needed.
+                self.transfer.cancel();
+            }
             let reply = Reply::Attach(Attach {
                 leaf: self.id,
                 relay: relay.position.short(),
@@ -700,22 +786,19 @@ impl Leaf {
         }
         self.poll_at = now + a.next_poll();
         self.told_at = now;
-        self.polls_missed = 0;
+        self.adrift = false;
+        self.awaiting_heartbeat = false;
         if let Some(r) = &mut self.relay {
             r.last_heard = now;
         }
     }
 
-    /// The window of the expected poll passed empty: the next is a period
-    /// later, unless the relay has dropped this leaf by now.
-    fn poll_missed(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let polls = self.polls();
-        self.polls_missed = self.polls_missed.saturating_add(1);
-        if self.polls_missed >= polls.missed {
-            self.lose_relay(now, emit);
-        } else {
-            self.poll_at += polls.period;
-        }
+    /// The window of the expected poll passed empty: the leaf no longer
+    /// knows when its next poll comes, and attaches again after the next
+    /// heartbeat it hears.
+    fn poll_missed(&mut self, now: Instant) {
+        self.adrift = true;
+        self.await_heartbeat(now);
     }
 
     /// The frame of the owed reply.
@@ -834,7 +917,7 @@ impl Leaf {
             self.send_failed(now, emit);
         }
         if self.poll_window().is_some_and(|(_, end)| now >= end) {
-            self.poll_missed(now, emit);
+            self.poll_missed(now);
         }
         if self.relay.is_none() {
             // The end of the first rotation of listening.
@@ -847,7 +930,7 @@ impl Leaf {
 
     fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         while self.radio.idle() {
-            self.prepare(now);
+            self.prepare(now, emit);
             if !(self.start_ack(now, emit) || self.start_send(now, emit)) {
                 break;
             }
@@ -918,9 +1001,10 @@ impl Core for Leaf {
                 at(t);
             }
             if self.transfer.idle() && self.relay.is_some() {
-                if !self.attached {
+                if !self.attached || self.adrift {
                     at(self.attach_at);
-                } else if self.outgoing.is_some() {
+                }
+                if self.attached && self.outgoing.is_some() {
                     at(self.outgoing_at);
                 }
             }

@@ -915,6 +915,10 @@ impl Relay {
             if let Some(r) = self.records.get_mut(id) {
                 r.sent(now);
             }
+        } else if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
+            // Whether a sleeping leaf listens is a matter of now, not of
+            // when the DELIVER was queued (§10.5).
+            frame.preamble_symbols = self.deliver_preamble(d.dst_leaf, d.msg_id, now);
         }
         let airtime = mac::airtime(&frame);
         if !self.affordable(airtime, now) {

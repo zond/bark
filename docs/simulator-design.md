@@ -188,7 +188,7 @@ other.
 
 ## 7. Performance target
 
-S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one answer to a poll every five minutes and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
+S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one answer to a poll every five minutes (at the capacity domain's 70 leaves a relay) and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
 
 ## 8. Validation of the simulator itself
 
