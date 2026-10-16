@@ -8,8 +8,8 @@ use bark_proto::tables::budget::{hold, BAN};
 use bark_proto::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
-    AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, Node, NodeId, Position,
-    Relay, Trace,
+    AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, NodeId, Position, Relay,
+    Trace,
 };
 use common::{ch, secs, Harness};
 
@@ -25,36 +25,33 @@ fn pos(east: f64, north: f64) -> Position {
 
 /// The boot listen is a full rotation in the design (spec "Channel at boot"); a short one
 /// keeps the tests quick and changes nothing after it.
-fn relay(east: f64, north: f64, seed: u64) -> Node {
-    Node::Relay(Relay::new(
+fn relay(east: f64, north: f64, seed: u64) -> Relay {
+    Relay::new(
         Config {
             position: pos(east, north),
             boot_listen: secs(5),
             ..Config::default()
         },
         seed,
-    ))
+    )
 }
 
-fn core(h: &Harness<Node>, i: usize) -> &Relay {
-    match &h.nodes[i].core {
-        Node::Relay(r) => r,
-        Node::Leaf(_) => panic!("node {i} is a leaf"),
-    }
+fn core(h: &Harness<Relay>, i: usize) -> &Relay {
+    &h.nodes[i].core
 }
 
-fn position(h: &Harness<Node>, i: usize) -> Position {
+fn position(h: &Harness<Relay>, i: usize) -> Position {
     core(h, i).config().position
 }
 
-fn knows(h: &Harness<Node>, a: usize, b: usize) -> bool {
+fn knows(h: &Harness<Relay>, a: usize, b: usize) -> bool {
     let target = position(h, b);
     core(h, a).neighbours().any(|n| n.position == target)
 }
 
 /// Run until every linked pair knows each other (spec "Heartbeat": within about a
 /// rotation after boot).
-fn discover(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
+fn discover(h: &mut Harness<Relay>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
     let found = h.run_until(Instant::ZERO + secs(600), |h| {
         pairs.iter().all(|&(a, b)| knows(h, a, b) && knows(h, b, a))
@@ -62,7 +59,7 @@ fn discover(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
     assert!(found, "neighbours not discovered");
 }
 
-fn build(nodes: Vec<Node>, links: &[(usize, usize)]) -> Harness<Node> {
+fn build(nodes: Vec<Relay>, links: &[(usize, usize)]) -> Harness<Relay> {
     let mut h = Harness::new(nodes);
     for &(a, b) in links {
         h.link(a, b);
@@ -72,7 +69,7 @@ fn build(nodes: Vec<Node>, links: &[(usize, usize)]) -> Harness<Node> {
 }
 
 /// Relay `from`'s application sends `text` to relay `to` itself.
-fn send(h: &mut Harness<Node>, from: usize, to: usize, text: &[u8]) -> MsgId {
+fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
     let (dst_pos, dst_id) = (position(h, to), core(h, to).id());
     h.command(
         from,
@@ -88,7 +85,7 @@ fn send(h: &mut Harness<Node>, from: usize, to: usize, text: &[u8]) -> MsgId {
 /// The ID of a node no test builds.
 const NOBODY: NodeId = NodeId([9; 4]);
 
-fn messages(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
+fn messages(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
     h.nodes[i]
         .app
         .iter()
@@ -96,11 +93,11 @@ fn messages(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
         .count()
 }
 
-fn traces(h: &Harness<Node>, i: usize) -> Vec<Trace> {
+fn traces(h: &Harness<Relay>, i: usize) -> Vec<Trace> {
     h.nodes[i].traces.iter().map(|(_, t)| *t).collect()
 }
 
-fn delivered(h: &Harness<Node>, i: usize, id: MsgId) -> bool {
+fn delivered(h: &Harness<Relay>, i: usize, id: MsgId) -> bool {
     messages(h, i, id) > 0
 }
 
@@ -108,8 +105,8 @@ fn delivered(h: &Harness<Node>, i: usize, id: MsgId) -> bool {
 /// each as soon as `x` takes it, until relay `f`, `x`'s only neighbour,
 /// refuses one (spec "Receiving DATA"): `f`'s send queue is then full, as long as `f`'s
 /// own frames are lost.
-fn fill(h: &mut Harness<Node>, x: usize, f: usize, d: usize) {
-    let refused = |h: &Harness<Node>| {
+fn fill(h: &mut Harness<Relay>, x: usize, f: usize, d: usize) {
+    let refused = |h: &Harness<Relay>| {
         traces(h, f)
             .iter()
             .any(|t| matches!(t, Trace::Refused { .. }))
@@ -224,7 +221,7 @@ fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
 }
 
 /// The forwards of message `id` at relay `i`, in order.
-fn forwards(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<NodeId> {
+fn forwards(h: &Harness<Relay>, i: usize, id: MsgId) -> Vec<NodeId> {
     traces(h, i)
         .into_iter()
         .filter_map(|t| match t {
@@ -234,7 +231,7 @@ fn forwards(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<NodeId> {
         .collect()
 }
 
-fn no_drops(h: &Harness<Node>) {
+fn no_drops(h: &Harness<Relay>) {
     for i in 0..h.nodes.len() {
         assert!(
             !traces(h, i)
@@ -372,7 +369,7 @@ fn a_split_heals_at_a_sender_that_waits() {
     use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, p, z, d) = (0, 1, 2, 3, 4);
     let relay_with = |east, north, seed, config: Config, home| {
-        Node::Relay(Relay::new(
+        Relay::new(
             Config {
                 position: pos(east, north),
                 boot_listen: secs(5),
@@ -380,7 +377,7 @@ fn a_split_heals_at_a_sender_that_waits() {
                 ..config
             },
             seed,
-        ))
+        )
     };
     let listening = Config {
         sweep_interval: secs(3600),
@@ -417,14 +414,14 @@ fn a_split_heals_at_a_sender_that_waits() {
     // Start just as P sends a heartbeat: its next is at least 5 s off
     // (spec "Heartbeat"), so P is home for all of Y's frames.
     let beats = h.nodes[p].sent.len();
-    let beat = |h: &Harness<Node>| {
+    let beat = |h: &Harness<Relay>| {
         h.nodes[p].sent[beats..]
             .iter()
             .any(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
     };
     assert!(h.run_until(h.now + secs(20), beat));
     let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
-    let name = |h: &Harness<Node>, i| core(h, i).id();
+    let name = |h: &Harness<Relay>, i| core(h, i).id();
     let nx = name(&h, x);
     let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
     assert!(h.run_until(h.now + secs(20), |h| {
@@ -439,7 +436,6 @@ fn a_split_heals_at_a_sender_that_waits() {
     no_drops(&h);
 }
 
-/// A relay at `east`, `north` with `config`, its position aside.
 /// A relay whose full delivery queue frees well within a message's time:
 /// its own messages, which fill it, are kept 400 s, and a message waiting
 /// for a place there has 600 s on its way (spec "Receiving DATA", "Delivery queue").
@@ -450,15 +446,16 @@ fn brief(config: Config) -> Config {
     }
 }
 
-fn relay_with(east: f64, north: f64, seed: u64, config: Config) -> Node {
-    Node::Relay(Relay::new(
+/// A relay at `east`, `north` with `config`, its position aside.
+fn relay_with(east: f64, north: f64, seed: u64, config: Config) -> Relay {
+    Relay::new(
         Config {
             position: pos(east, north),
             boot_listen: secs(5),
             ..config
         },
         seed,
-    ))
+    )
 }
 
 /// The DATA in `bytes`, by sender and receiver, if it is one.
@@ -478,7 +475,7 @@ fn ack_names(bytes: &[u8]) -> Option<(NodeId, NodeId)> {
 }
 
 /// How often relay `i` returned message `id` to its parent.
-fn returns(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
+fn returns(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
     traces(h, i)
         .iter()
         .filter(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
@@ -584,7 +581,7 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
     let (pq, l) = (position(&h, q), NodeId([7; 4]));
-    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+    let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
@@ -599,8 +596,8 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
         to_l(&mut h, q, &[b'q', k]);
     }
     let id = to_l(&mut h, p, b"forgotten");
-    let name = |h: &Harness<Node>, i| core(h, i).id();
-    let back = |h: &Harness<Node>| returns(h, c, id) == 1;
+    let name = |h: &Harness<Relay>, i| core(h, i).id();
+    let back = |h: &Harness<Relay>| returns(h, c, id) == 1;
     assert!(h.run_until(h.now + secs(10), back), "C did not return it");
     let returned_at = h.now;
     h.unlink(p, c);
@@ -612,13 +609,13 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
         "C did not expire at P"
     );
     h.link(p, c);
-    let offered_again = |h: &Harness<Node>| forwards(h, p, id).len() == 2;
+    let offered_again = |h: &Harness<Relay>| forwards(h, p, id).len() == 2;
     assert!(
         h.run_until(h.now + secs(300), offered_again),
         "P did not offer C again"
     );
     assert!(h.now > returned_at + expiry);
-    let queued = |h: &Harness<Node>| {
+    let queued = |h: &Harness<Relay>| {
         h.nodes[q]
             .traces
             .iter()
@@ -837,7 +834,7 @@ fn a_split_met_again_merges() {
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(x, y), (x, z), (y, p)]);
     let (pp, l) = (position(&h, p), NodeId([7; 4]));
-    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+    let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
@@ -858,8 +855,8 @@ fn a_split_met_again_merges() {
         ack_names(bytes) == Some((ny, nx)) && !x_moved
     }));
     let id = to_l(&mut h, x, b"merged");
-    let name = |h: &Harness<Node>, i| core(h, i).id();
-    let again = |h: &Harness<Node>| forwards(h, x, id).len() == 2;
+    let name = |h: &Harness<Relay>, i| core(h, i).id();
+    let again = |h: &Harness<Relay>| forwards(h, x, id).len() == 2;
     assert!(
         h.run_until(h.now + secs(10), again),
         "X {:?} Y {:?}",
@@ -879,7 +876,7 @@ fn a_split_met_again_merges() {
         .any(|t| matches!(t, Trace::TurnedAway { msg_id, .. } if *msg_id == id)));
     assert!(core(&h, x).holding().next().is_none());
     assert_eq!(core(&h, y).holding().filter(|m| *m == id).count(), 1);
-    let queued = |h: &Harness<Node>| {
+    let queued = |h: &Harness<Relay>| {
         h.nodes[p]
             .traces
             .iter()
@@ -946,7 +943,7 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
         ack
     }));
     let id = send(&mut h, a, d, b"once");
-    let sent = |h: &Harness<Node>| {
+    let sent = |h: &Harness<Relay>| {
         traces(h, a)
             .iter()
             .any(|t| matches!(t, Trace::Forwarded { msg_id, .. } if *msg_id == id))
@@ -1002,7 +999,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
         losing.get() && (from, to) == (o, m) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
     let id = send(&mut h, o, d, b"through anyway");
-    let demoted = |h: &Harness<Node>| {
+    let demoted = |h: &Harness<Relay>| {
         traces(h, o)
             .iter()
             .any(|t| matches!(t, Trace::Demoted { .. }))
@@ -1024,7 +1021,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
 const FAINT_DBM: i16 = -119;
 
 /// The DATA frames relay `from` sent to relay `to`.
-fn data_sent(h: &Harness<Node>, from: usize, to: usize) -> usize {
+fn data_sent(h: &Harness<Relay>, from: usize, to: usize) -> usize {
     let (a, b) = (core(h, from).id(), core(h, to).id());
     h.nodes[from]
         .sent
@@ -1087,13 +1084,13 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
     h.set_rssi(o, f, FAINT_DBM);
     discover(&mut h, &links);
     let target = position(&h, f);
-    let margin = |h: &Harness<Node>| {
+    let margin = |h: &Harness<Relay>| {
         let r = core(h, o);
         let n = r.neighbours().find(|n| n.position == target).unwrap();
         Neighbours::has_margin(n, r.busy().noise_floor_dbm())
     };
     assert!(!margin(&h));
-    let heartbeats = |h: &Harness<Node>| {
+    let heartbeats = |h: &Harness<Relay>| {
         h.nodes[o]
             .received
             .iter()
@@ -1148,14 +1145,14 @@ fn a_ban_excludes_the_neighbour_and_expires() {
         losing.get() && from == f1 && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
     fill(&mut h, x, f1, d);
-    let name = |h: &Harness<Node>, i| core(h, i).id();
+    let name = |h: &Harness<Relay>, i| core(h, i).id();
     let (n1, n2) = (name(&h, f1), name(&h, f2));
-    let to_f1 = |h: &Harness<Node>, id: MsgId| {
+    let to_f1 = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].sent.iter().any(|(_, fr)| {
             matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == id)
         })
     };
-    let forwarded = |h: &Harness<Node>, id: MsgId| {
+    let forwarded = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
             Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some((*t, *to)),
             _ => None,
@@ -1221,7 +1218,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
         &[(p, o), (o, f)],
     );
     let (pf, l) = (position(&h, f), NodeId([7; 4]));
-    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+    let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
@@ -1236,7 +1233,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
         to_l(&mut h, f, &[b'f', k]);
     }
     let nf = core(&h, f).id();
-    let offers_to_f = |h: &Harness<Node>, id: MsgId| {
+    let offers_to_f = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o]
             .sent
             .iter()
@@ -1246,7 +1243,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
             .map(|(t, _)| *t)
             .collect::<Vec<_>>()
     };
-    let ended = |h: &Harness<Node>, id: MsgId| {
+    let ended = |h: &Harness<Relay>, id: MsgId| {
         h.nodes.iter().any(|n| {
             n.traces.iter().any(|(_, tr)| {
                 matches!(tr, Trace::Dropped { msg_id, .. } | Trace::ReturnedToParent { msg_id, .. } if *msg_id == id)
@@ -1255,7 +1252,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
     };
 
     let first = to_l(&mut h, p, b"first");
-    let refusals = |h: &Harness<Node>| {
+    let refusals = |h: &Harness<Relay>| {
         h.nodes[o]
             .traces
             .iter()
@@ -1288,7 +1285,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
     assert!(!ended(&h, first), "returned or dropped for a ban");
 
     // Once F's own messages expire, it takes the message.
-    let queued = |h: &Harness<Node>| {
+    let queued = |h: &Harness<Relay>| {
         h.nodes[f]
             .traces
             .iter()
@@ -1320,7 +1317,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         &[(o, f)],
     );
     let (pf, l) = (position(&h, f), NodeId([7; 4]));
-    let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
+    let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
@@ -1332,13 +1329,13 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         MsgId::of(pf, l, text)
     };
     // Payloads are unique (spec "Phone link"): F remembers the messages of each fill.
-    let fill = |h: &mut Harness<Node>, round: u8, n: usize| {
+    let fill = |h: &mut Harness<Relay>, round: u8, n: usize| {
         for k in 0..n as u8 {
             to_l(h, f, &[b'f', round, k]);
         }
     };
     let nf = core(&h, f).id();
-    let refusals = |h: &Harness<Node>, id: MsgId| {
+    let refusals = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o]
             .traces
             .iter()
@@ -1348,7 +1345,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
             })
             .collect::<Vec<_>>()
     };
-    let offers = |h: &Harness<Node>, id: MsgId| {
+    let offers = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o]
             .sent
             .iter()
@@ -1357,7 +1354,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
             .collect::<Vec<_>>()
     };
     // The wait from each refusal to the offer after it.
-    let waits = |h: &Harness<Node>, id: MsgId| {
+    let waits = |h: &Harness<Relay>, id: MsgId| {
         let sent = offers(h, id);
         refusals(h, id)
             .into_iter()
@@ -1383,7 +1380,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
             j + 1
         );
     }
-    let queued = |h: &Harness<Node>, id: MsgId| {
+    let queued = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[f]
             .traces
             .iter()
@@ -1435,7 +1432,7 @@ fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
         reason: DropReason::NoRoute,
     };
     let expiry = NeighbourParams::from_config(&config).expire_after;
-    let offers = |h: &Harness<Node>| {
+    let offers = |h: &Harness<Relay>| {
         h.nodes[o]
             .sent
             .iter()
@@ -1482,7 +1479,7 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     h.kill(c);
     let killed = h.now;
     let id = send(&mut h, p, d, b"no way on");
-    let gone = |h: &Harness<Node>| {
+    let gone = |h: &Harness<Relay>| {
         traces(h, p)
             .iter()
             .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
@@ -1538,7 +1535,7 @@ fn the_time_left_travels_with_the_message_and_its_return() {
         h.kill(c);
         h
     };
-    let datas = |h: &Harness<Node>, i: usize, id: MsgId| {
+    let datas = |h: &Harness<Relay>, i: usize, id: MsgId| {
         h.nodes[i]
             .sent
             .iter()
@@ -1552,7 +1549,7 @@ fn the_time_left_travels_with_the_message_and_its_return() {
     let mut h = line(ttl);
     let start = h.now;
     let id = send(&mut h, p, d, b"timed");
-    let returned = |h: &Harness<Node>| {
+    let returned = |h: &Harness<Relay>| {
         traces(h, r)
             .iter()
             .any(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
@@ -1579,7 +1576,7 @@ fn the_time_left_travels_with_the_message_and_its_return() {
     let mut h = line(short);
     let start = h.now;
     let id = send(&mut h, p, d, b"timed");
-    let ended = |h: &Harness<Node>| {
+    let ended = |h: &Harness<Relay>| {
         traces(h, r).contains(&Trace::Dropped {
             msg_id: id,
             reason: DropReason::Expired,
@@ -1620,7 +1617,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     let dwell = secs(20);
     let topology = |c_home: u8| {
         let fixed = |east: f64, north: f64, home: u8, seed: u64| {
-            Node::Relay(Relay::new(
+            Relay::new(
                 Config {
                     position: pos(east, north),
                     boot_listen: secs(5),
@@ -1628,10 +1625,10 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     ..Config::default()
                 },
                 seed,
-            ))
+            )
         };
         let mut nodes = vec![
-            Node::Relay(Relay::new(
+            Relay::new(
                 Config {
                     position: pos(0.0, 0.0),
                     boot_listen: secs(5),
@@ -1640,7 +1637,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     ..Config::default()
                 },
                 141,
-            )),
+            ),
             fixed(400.0, 100.0, c_home, 142),
             fixed(300.0, -300.0, 5, 143),
             fixed(1000.0, 0.0, 7, 144),
@@ -1671,7 +1668,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     // reading of the last channel (`relay.rs`); P moves `dwell` after the
     // first round that ends with its home too busy.
     let last = Action::Rssi(Channel::new(CHANNELS - 1).unwrap());
-    let round_ends_busy = |h: &Harness<Node>| {
+    let round_ends_busy = |h: &Harness<Relay>| {
         let b = core(h, p).busy();
         let min = Channel::all().map(|c| b.fraction(c)).min().unwrap();
         let busy = b.fraction(old).saturating_sub(min) > percent(5);
@@ -1745,7 +1742,7 @@ fn replies_stay_within_the_reserve() {
     let (f, d) = (0, 1);
     let senders: Vec<usize> = (2..28).collect();
     let fixed = |east: f64, north: f64, home: u8, seed: u64| {
-        Node::Relay(Relay::new(
+        Relay::new(
             Config {
                 position: pos(east, north),
                 boot_listen: secs(5),
@@ -1753,7 +1750,7 @@ fn replies_stay_within_the_reserve() {
                 ..Config::default()
             },
             seed,
-        ))
+        )
     };
     let mut nodes = vec![fixed(0.0, 0.0, 0, 81), fixed(400.0, 0.0, 1, 82)];
     // West of F on a half circle, their homes spread over the channels
@@ -1922,7 +1919,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     const LOST: u32 = 2;
     let (o, f, d) = (0, 1, 2);
     let fixed = |east: f64, home: u8, hop_attempts: u8, seed: u64| {
-        Node::Relay(Relay::new(
+        Relay::new(
             Config {
                 position: pos(east, 0.0),
                 boot_listen: secs(5),
@@ -1931,7 +1928,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
                 ..Config::default()
             },
             seed,
-        ))
+        )
     };
     let mut h = build(
         vec![
@@ -2158,7 +2155,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
 // --- Silence is pushback (spec "Silence is pushback", roadmap D42) ---
 
 /// When relay `from` sent a DATA of `id` to relay `to`.
-fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
+fn data_times(h: &Harness<Relay>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
     let to = core(h, to).id();
     h.nodes[from]
         .sent
@@ -2183,7 +2180,7 @@ fn handovers(times: &[Instant]) -> Vec<Vec<Instant>> {
     out
 }
 
-fn entry(h: &Harness<Node>, at: usize, of: usize) -> Neighbour {
+fn entry(h: &Harness<Relay>, at: usize, of: usize) -> Neighbour {
     let p = position(h, of);
     *core(h, at).neighbours().find(|n| n.position == p).unwrap()
 }
@@ -2219,9 +2216,9 @@ fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     h.lose = Some(Box::new(move |_, from, to, bytes| {
         (from, to) == (o, f1) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    let name = |h: &Harness<Node>, i| core(h, i).id();
+    let name = |h: &Harness<Relay>, i| core(h, i).id();
     let first = send(&mut h, o, d, b"first");
-    let failed = |h: &Harness<Node>| {
+    let failed = |h: &Harness<Relay>| {
         data_times(h, o, f1, first).len() == 3 && entry(h, o, f1).fail_count == 1
     };
     assert!(h.run_until(h.now + secs(5), failed));

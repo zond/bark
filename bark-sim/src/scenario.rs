@@ -116,7 +116,7 @@ pub struct ProtocolOverrides {
     pub hop_attempts: Option<u8>,
     pub demote_after_failures: Option<u8>,
     pub neighbour_expiry_rotations: Option<u8>,
-    pub leaf_retry_ms: Option<u64>,
+    pub fade_retry_ms: Option<u64>,
     pub delivery_ttl_ms: Option<u64>,
     pub busy_ema_inverse: Option<u16>,
     pub sweep_interval_ms: Option<u64>,
@@ -128,6 +128,8 @@ pub struct ProtocolOverrides {
     pub lbt_backoff_max_ms: Option<u64>,
     pub hop_backoff_max_ms: Option<u64>,
     pub retry_backoff_ms: Option<u64>,
+    pub boot_listen_ms: Option<u64>,
+    pub sleepy_listens: Option<bool>,
 }
 
 impl ProtocolOverrides {
@@ -160,7 +162,7 @@ impl ProtocolOverrides {
         set!(hop_attempts);
         set!(demote_after_failures);
         set!(neighbour_expiry_rotations);
-        set!(leaf_retry, leaf_retry_ms, ms);
+        set!(fade_retry, fade_retry_ms, ms);
         set!(delivery_ttl, delivery_ttl_ms, ms);
         set!(busy_ema_inverse);
         set!(sweep_interval, sweep_interval_ms, ms);
@@ -172,6 +174,8 @@ impl ProtocolOverrides {
         set!(move_wait_max, move_wait_max_ms, ms);
         set!(lbt_attempts);
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
+        set!(boot_listen, boot_listen_ms, ms);
+        set!(sleepy_listens);
         c
     }
 }

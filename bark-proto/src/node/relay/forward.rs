@@ -1,5 +1,13 @@
-//! Forwarding (spec "Forwarding"): the relay's part of the depth-first search, the
+//! Forwarding (spec "Forwarding"): the node's part of the depth-first search, the
 //! owner rule, and the per-hop transfer of its send queue.
+//!
+//! In the one-node-type prototype a node owns a message addressed to its
+//! own ID wherever it is, and a sleepy neighbour is a next hop only after
+//! every neighbour that is not sleepy (`docs/one-node-type-2026-10-16.md`).
+//! A message that reaches the owner of its position and is for another
+//! node waits in the delivery queue until that node, a sleepy one this
+//! node hears, listens (`relay/delivery.rs`); it goes to it as DATA in the
+//! send queue, a hand-over like any other.
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
@@ -10,9 +18,10 @@
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
 //! higher than the packet's count (roadmap D31); else it is refused with
-//! an ACK that says so. A leaf's packet is refused too while every
-//! neighbour is banned (roadmap D34); one already in the network is not,
-//! since the hop places keep relays from locking up only if it moves on.
+//! an ACK that says so. A sleepy node's own message, count 0, is refused
+//! too while every neighbour is banned (roadmap D34); one already in the
+//! network is not, since the hop places keep nodes from locking up only
+//! if it moves on.
 //! A new message also needs a place for its record,
 //! which the size of the table guarantees (`tables/records.rs`). A
 //! delivery is refused when
@@ -52,8 +61,7 @@
 //! Where a frame goes is read at the moment of sending (roadmap D29 rule
 //! 7): before each attempt its channel is the receiver's home as the
 //! neighbour table has it, from the latest heartbeat or packet of that
-//! neighbour, and a DELIVER's is this relay's home, with the preamble of
-//! the leaf's receive mode as the leaf table has it. A neighbour that
+//! neighbour, or the heard table for a sleepy node it delivers to. A neighbour that
 //! moves home (spec "Channel moves") between attempts, or while a message waits to come
 //! back to it, is followed.
 //!
@@ -65,7 +73,7 @@
 //! again, but it stays a candidate for later choices. An unanswered frame
 //! is more often lost than its ACK, so the neighbour most likely lacks the
 //! message; marked tried, it would end its own search if it later got the
-//! message elsewhere and offered it here. A return and a DELIVER have
+//! message elsewhere and offered it here. A return and a DATA to a sleepy node have
 //! nowhere else to go; for them a give-up counts as one of the three
 //! attempts, and never as a failure against the neighbour.
 //!
@@ -93,10 +101,21 @@
 //! drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
 //! over the first entry that is due. The application's own message waits
-//! the same way, longer after refusals in a row ([`hold`]); one for an own
-//! leaf that finds the delivery queue full is set aside ([`Held`]) until
+//! the same way, longer after refusals in a row ([`hold`]); one for a node
+//! this one holds for that finds the delivery queue full is set aside ([`Held`]) until
 //! the queue has a place (spec "Return to parent"). Either way the application is given no
 //! other meanwhile.
+//!
+//! A sleepy node hands its own message over as a leaf did
+//! (spec "Attach and polls", "Packet sender"): with count 0, so that the node that takes
+//! it is the origin of its search, takes it only into its regular room and
+//! only while not every neighbour of its is banned. Overload then stops a
+//! new message where it enters (roadmap D31, D34), and the search never
+//! returns to a node that sleeps. A sleepy node chooses that first hop as
+//! any next hop (spec "Next hop"). A sleepy node's own message that finds no live
+//! neighbour at all waits for one, routed again every `fade_retry`, until
+//! its time runs out (below), as a leaf's did (spec "Attach and polls"): a carried node
+//! loses its neighbours by going dark and finds them again.
 //!
 //! # Time left (spec "Receiving DATA")
 //!
@@ -117,7 +136,7 @@ use super::{Job, Relay};
 use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::node::transfer::{Check, Missed, Step};
+use crate::node::transfer::{Check, Missed, Owed, Reply, Step};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
@@ -156,14 +175,14 @@ enum Routed {
     To(Outgoing, Ack),
     /// Dropped or delivered here; it leaves the queue.
     Done,
-    /// The application's message, for a leaf of this relay, waits set
-    /// aside for a place in the delivery queue.
+    /// The application's message, for a node this one holds for, waits
+    /// set aside for a place in the delivery queue.
     Hold,
     /// Every candidate left is banned: it waits in its place until then.
     Wait(Instant),
 }
 
-/// The application's message for a leaf of this relay, set aside while
+/// The application's message for a node this one holds for, set aside while
 /// the delivery queue is full (roadmap D29). It keeps its place and
 /// airtime in the send queue's admission.
 #[derive(Clone, Copy, Debug)]
@@ -173,6 +192,13 @@ pub(super) struct Held {
 
 fn data_airtime(payload: usize) -> Duration {
     time_on_air((DATA_HEADER_LEN + payload) as u8, MIN_PREAMBLE_SYMBOLS)
+}
+
+/// The frame of the owed reply.
+fn reply_frame(o: Owed) -> Frame {
+    match o.reply {
+        Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
+    }
 }
 
 /// `d` as a frame on `channel`.
@@ -288,8 +314,9 @@ impl Relay {
     /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
     /// live neighbour nearest `dst` that is not in the tried set, not set
     /// aside and not banned, ties broken by ID; a demoted one only
-    /// when no other with margin is left, and one without margin only when
-    /// no other at all (roadmap D25, D29, D38).
+    /// when no other with margin is left, one without margin only when
+    /// no other that is not sleepy (roadmap D25, D29, D38), and a sleepy
+    /// one only as the last resort of all, in the same order.
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
@@ -308,8 +335,9 @@ impl Relay {
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                faint(a)
-                    .cmp(&faint(b))
+                a.sleepy
+                    .cmp(&b.sleepy)
+                    .then(faint(a).cmp(&faint(b)))
                     .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.id.0.cmp(&b.id.0))
@@ -322,7 +350,9 @@ impl Relay {
     /// A DATA packet addressed to this relay.
     pub(super) fn data(&mut self, d: Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
-        let from_leaf = d.hops == 0;
+        // Count 0: a sleepy node's own message, fresh work that starts its
+        // search here (spec "Packet sender", "Hop count").
+        let fresh = d.hops == 0;
         let repeat = self
             .records
             .get(id)
@@ -331,7 +361,7 @@ impl Relay {
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
         let case = self.classify(id, repeat);
-        let owner = case != Case::AckOnly && self.owns(d.dst_pos, now);
+        let owner = case != Case::AckOnly && (d.dst_id == self.me() || self.owns(d.dst_pos, now));
         let sends = case != Case::AckOnly && !owner;
         // The time left was stamped as the frame went on air. Gone, the
         // packet is no work, and the message ends here.
@@ -351,7 +381,7 @@ impl Relay {
         } else if sends {
             let air = data_airtime(d.payload.len());
             match self.admit(air, ACK_AIRTIME, d.hops, completes, now) {
-                Ok(_) if from_leaf && self.bans_end(now).is_some() => Some(DropReason::Banned),
+                Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(k) => {
                     place = k;
                     None
@@ -395,10 +425,15 @@ impl Relay {
             self.handover_done(now, emit);
         }
         if case == Case::New {
-            let parent = (!from_leaf).then_some((d.src_hop, d.sender_home));
+            let parent = (!fresh).then_some((d.src_hop, d.sender_home));
             let mut record = Record::new(id, parent, d.hops, now);
             if owner {
                 record.set_arrived();
+            }
+            if let (true, Some(slot)) = (fresh, self.neighbours.slot_of(d.src_hop)) {
+                // The sleepy node it came from has it, and would end the
+                // search there: it is tried.
+                record.handed_to(slot);
             }
             if let Some(at) = record_at {
                 self.records.put(at, record);
@@ -414,7 +449,7 @@ impl Relay {
                 self.delivered.offered(id, now);
             }
             Case::New | Case::Search if owner => {
-                self.arrive(id, d.dst_id, d.payload, now, emit);
+                self.arrive(id, &d, now, emit);
             }
             Case::New | Case::Search if expired => {
                 self.drop_msg(id, DropReason::Expired, emit);
@@ -512,19 +547,13 @@ impl Relay {
 
     /// The message has reached its owner, this relay (spec "Owner"): deliver it
     /// to the application if it is for this node, or queue it for the
-    /// node it is for.
-    fn arrive(
-        &mut self,
-        id: MsgId,
-        leaf: NodeId,
-        payload: &[u8],
-        now: Instant,
-        emit: &mut dyn FnMut(Action),
-    ) {
+    /// node it is for, with the time it has left now.
+    fn arrive(&mut self, id: MsgId, d: &Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let (node, payload) = (d.dst_id, d.payload);
         if self.own == Some(id) {
             self.set_own(None);
         }
-        if leaf == self.me() {
+        if node == self.me() {
             self.delivered.insert(id, now);
             let mut buf = [0; MAX_FRAME];
             buf[..payload.len()].copy_from_slice(payload);
@@ -535,7 +564,7 @@ impl Relay {
             }));
             return;
         }
-        let Some(q) = Queued::new(id, leaf, payload, now) else {
+        let Some(q) = Queued::new(id, d.dst_pos, node, payload, d.time_left, now) else {
             self.drop_msg(id, DropReason::PayloadTooLong, emit);
             return;
         };
@@ -549,8 +578,8 @@ impl Relay {
             }
             Pushed::Queued => self.feed_due = true,
         }
-        emit(Action::Trace(Trace::Queued { msg_id: id, leaf }));
-        self.deliver_now(leaf, now);
+        emit(Action::Trace(Trace::Queued { msg_id: id, node }));
+        self.deliver_now(node, now);
     }
 
     // --- The relay's own application (spec "Routing") ---
@@ -601,7 +630,7 @@ impl Relay {
         }
         self.held = None;
         if let Ok(Packet::Data(d)) = Packet::decode(h.out.frame.payload()) {
-            self.arrive(d.msg_id(), d.dst_id, d.payload, now, emit);
+            self.arrive(d.msg_id(), &d, now, emit);
         }
     }
 
@@ -636,7 +665,7 @@ impl Relay {
             return;
         };
         self.set_own(Some(id));
-        // This relay is the message's first holder: its time starts now.
+        // This node is the message's first holder: its time starts now.
         let ttl = self.config.delivery_ttl;
         let expires = now + ttl;
         let d = Data {
@@ -649,7 +678,7 @@ impl Relay {
             time_left: Data::units(ttl),
             payload,
         };
-        if self.owns(dst_pos, now) {
+        if dst_id == self.me() || self.owns(dst_pos, now) {
             let mut record = Record::new(id, None, 0, now);
             record.set_arrived();
             self.records.put(at, record);
@@ -659,7 +688,7 @@ impl Relay {
                 let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
                 self.held = Some(Held { out });
             } else {
-                self.arrive(id, dst_id, payload, now, emit);
+                self.arrive(id, &d, now, emit);
             }
             return;
         }
@@ -691,8 +720,11 @@ impl Relay {
                     Ok(Packet::Data(d)) => Routed::To(out, self.expect(d.msg_id(), d.dst_hop)),
                     _ => Routed::Done,
                 },
+                // Stays in the delivery queue while its node sleeps.
                 Kind::Deliver => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Deliver(d)) => Routed::To(out, self.expect(d.msg_id, d.dst_leaf)),
+                    Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) => {
+                        Routed::To(out, self.expect(d.msg_id(), d.dst_hop))
+                    }
                     _ => Routed::Done,
                 },
             };
@@ -742,14 +774,15 @@ impl Relay {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
-        if self.owns(d.dst_pos, now) {
+        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
             if self.own == Some(id) && d.dst_id != self.me() && self.delivery.is_full() {
                 return Routed::Hold;
             }
-            self.arrive(id, d.dst_id, d.payload, now, emit);
+            let time_left = Data::units(out.expires.since(now));
+            self.arrive(id, &Data { time_left, ..d }, now, emit);
             return Routed::Done;
         }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
@@ -764,6 +797,11 @@ impl Relay {
                 return Routed::Wait(t.max(now + hold(self.own_refusals)));
             }
             return Routed::Wait(t);
+        }
+        let alone = self.neighbours.live(now).next().is_none();
+        if self.config.sleepy && self.own == Some(id) && alone {
+            // Until its time runs out (`expire`).
+            return Routed::Wait(now + self.config.fade_retry);
         }
         match record.parent() {
             Some((parent, stored)) => {
@@ -826,29 +864,23 @@ impl Relay {
     /// The home channel of neighbour `id`, as its latest heartbeat or
     /// packet gave it.
     fn home_of(&self, id: NodeId) -> Option<Channel> {
-        self.neighbours.by_id(id).map(|(_, n)| n.home)
+        self.neighbours
+            .by_id(id)
+            .map(|(_, n)| n.home)
+            .or_else(|| self.heard.get(id).map(|n| n.home))
     }
 
     /// Address the current frame as its receiver is now, before each attempt
     /// (spec "Hand-over"): a neighbour that moved home since the frame was queued, or
-    /// since the last attempt, listens elsewhere, and a leaf that changed
-    /// its receive mode needs another preamble. A receiver no longer in its
-    /// table keeps the address it had.
+    /// since the last attempt, listens elsewhere. A receiver no longer in
+    /// its table keeps the address it had.
     fn readdress(&mut self) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
-        let (channel, preamble) = match Packet::decode(out.frame.payload()) {
-            Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
-            // The leaf listens on this relay's home, wherever that is now.
-            Ok(Packet::Deliver(d)) => (
-                Some(self.home),
-                self.leaves
-                    .get(d.dst_leaf)
-                    .map(|l| l.mode.preamble_symbols()),
-            ),
-            _ => (None, None),
+        let channel = match Packet::decode(out.frame.payload()) {
+            Ok(Packet::Data(d)) => self.home_of(d.dst_hop),
+            _ => None,
         };
         out.frame.channel = channel.unwrap_or(out.frame.channel);
-        out.frame.preamble_symbols = preamble.unwrap_or(out.frame.preamble_symbols);
         if let Some(current) = self.queue.current_mut() {
             *current = out;
         }
@@ -923,7 +955,12 @@ impl Relay {
         let mut frame = out.frame;
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             let id = d.msg_id();
-            let time_left = Data::units(out.expires.since(now));
+            // A DATA to a sleepy node keeps the time it arrived with: the
+            // delivery queue's TTL, not its time left, ends it there.
+            let time_left = match out.expires {
+                Instant::MAX => d.time_left,
+                ends => Data::units(ends.since(now)),
+            };
             let (Some(hops), false) = (self.count(&d, id), gone(&out, now)) else {
                 let reason = match gone(&out, now) {
                     true => DropReason::Expired,
@@ -950,10 +987,6 @@ impl Relay {
             if let Some(r) = self.records.get_mut(id) {
                 r.sent(now);
             }
-        } else if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
-            // Whether a sleeping leaf listens is a matter of now, not of
-            // when the DELIVER was queued (spec "Leaf receive mode").
-            frame.preamble_symbols = self.deliver_preamble(d.dst_leaf, d.msg_id, now);
         }
         let airtime = mac::airtime(&frame);
         if !self.affordable(airtime, now) {
@@ -985,6 +1018,11 @@ impl Relay {
             "a held message keeps its record"
         );
         match self.records.get(id) {
+            // A sleepy node hands its own message over as fresh work: the
+            // node that takes it is its origin (module documentation).
+            Some(r) if self.config.sleepy && self.own == Some(id) && r.parent().is_none() => {
+                Some(0)
+            }
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }
@@ -1061,12 +1099,14 @@ impl Relay {
             return;
         };
         self.feed_due = true;
-        let d = match Packet::decode(out.frame.payload()) {
-            Ok(Packet::Data(d)) => d,
-            Ok(Packet::Deliver(d)) => return self.delivered_to(d, now, emit),
-            _ => return,
+        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
+            return;
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
+        if out.kind == Kind::Deliver {
+            self.neighbours.answered(to, now);
+            return self.delivered_to(id, to, now, emit);
+        }
         let slot = self.neighbours.slot_of(to);
         if slot.is_some() {
             self.neighbours.succeeded(to, now);
@@ -1094,7 +1134,6 @@ impl Relay {
             }
             Kind::Return | Kind::Deliver => Trace::ReturnedToParent { msg_id: id, to },
         };
-        debug_assert!(out.kind != Kind::Deliver, "a DELIVER is not a DATA");
         emit(Action::Trace(trace));
     }
 
@@ -1108,7 +1147,8 @@ impl Relay {
         emit: &mut dyn FnMut(Action),
     ) {
         let id = out.msg_id().unwrap_or_default();
-        if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
+        let data = Packet::decode(out.frame.payload());
+        if let (Ok(Packet::Data(d)), true) = (data, out.kind != Kind::Deliver) {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
                 if let Some(t) = self.wait_for(d.dst_hop, now) {
@@ -1135,8 +1175,9 @@ impl Relay {
             Kind::Return => Some(DropReason::ReturnFailed),
             Kind::Deliver => None,
         };
-        if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
-            self.leaves.set_missed(d.dst_leaf, true);
+        if let (Ok(Packet::Data(d)), Kind::Deliver) = (data, out.kind) {
+            // Asleep: its messages wait for its next beat.
+            self.heard.missed(d.dst_hop);
         }
         self.queue.take_current();
         self.skipped = 0;
@@ -1173,7 +1214,7 @@ impl Relay {
         let Some(o) = self.replies.due(now) else {
             return false;
         };
-        let frame = self.reply_frame(o, now);
+        let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.replies.abandon();
             return true;
@@ -1192,7 +1233,7 @@ impl Relay {
         match self.replies.checked(busy, now, &mut self.rng, backoff) {
             Some((o, false)) => self.radio.start(Job::Reply, Action::Rssi(o.channel), emit),
             Some((o, true)) => {
-                let frame = self.reply_frame(o, now);
+                let frame = reply_frame(o);
                 let airtime = mac::airtime(&frame);
                 if self.can_reply(airtime, now) {
                     self.budget.record(airtime, now);

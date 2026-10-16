@@ -1,20 +1,19 @@
-//! The delivery queue (spec "Delivery queue"): messages for attached leaves that
-//! could not be delivered yet, held for a while instead of failed at once.
+//! The delivery queue (spec "Delivery queue"): messages that have reached
+//! their owner and are for another node, a sleepy one it hears, held until
+//! that node wakes instead of failed at once.
 //!
 //! Each message lives the delivery TTL (spec "Leaves": 10 minutes); oldest first.
-//! The relay hands a leaf's messages to the send queue in arrival order
-//! with [`DeliveryQueue::pop_for`], and drains
-//! [`DeliveryQueue::pop_expired`] to fail the expired ones.
+//! The node hands a sleepy node's messages to the send queue in arrival
+//! order while that node listens, after each of its beats
+//! (`tables/heard.rs`), and drains [`DeliveryQueue::pop_expired`] to fail
+//! the expired ones.
 //!
-//! A message stays long only for a leaf that does not answer. One that
-//! listens, always or with a check of the channel every 500 ms, takes its
-//! DELIVER at the first hand-over, whose 512 ms preamble spans the check
-//! (spec "Leaf receive mode"). One that does not is a phone in a pocket, a basement or the
-//! metro, and its messages wait for the delivery retry after it is back,
-//! at most 60 s later, or its answer to a poll (spec "Attach and polls"), or for the TTL. Leaves in one train or one
+//! A message waits at most a beat period for its node, unless that node
+//! is a phone in a pocket, a basement or the metro, and then for its first
+//! beat after it is back, or for the TTL. Nodes in one train or one
 //! basement go dark together, so the queue holds what arrives in a TTL for
-//! every leaf the relay can serve, its leaf table's [`LEAVES`] (spec "Attach and polls"),
-//! at the [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
+//! every sleepy node a node can serve, its heard table's [`HEARD`], at the
+//! [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
 //! `256 × 23 × 10 min / 1 day = 40.9`, so 41.
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
@@ -24,8 +23,9 @@
 
 use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
+use crate::position::Position;
 use crate::tables::fixed::FixedVec;
-use crate::tables::leaves::LEAVES;
+use crate::tables::heard::HEARD;
 use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
@@ -40,8 +40,8 @@ pub const fn queue_for(leaves: usize, ttl: Duration) -> usize {
     (leaves as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
 }
 
-/// Queue capacity for the design's leaf table and 10-minute TTL (spec "Delivery queue").
-pub const DELIVERY_QUEUE: usize = queue_for(LEAVES, Duration::from_secs(600));
+/// Queue capacity for the heard table and the 10-minute TTL (spec "Delivery queue").
+pub const DELIVERY_QUEUE: usize = queue_for(HEARD, Duration::from_secs(600));
 
 const _: () = assert!(DELIVERY_QUEUE == 41);
 
@@ -50,8 +50,15 @@ const _: () = assert!(DELIVERY_QUEUE == 41);
 pub struct Queued {
     /// The message.
     pub msg_id: MsgId,
-    /// The leaf it is for.
-    pub leaf: NodeId,
+    /// Its destination position, which with `node` and the payload makes
+    /// its ID.
+    pub dst_pos: Position,
+    /// The node it is for.
+    pub node: NodeId,
+    /// The time it had left when it arrived, in DATA's units, which the
+    /// DATA to the node carries: here the queue's own TTL ends it, so its
+    /// time left stands still (spec "Delivery queue").
+    pub time_left: u8,
     /// When it was queued.
     pub enqueued: Instant,
     len: u8,
@@ -60,13 +67,22 @@ pub struct Queued {
 
 impl Queued {
     /// A message, or `None` if `payload` exceeds [`MAX_PAYLOAD`].
-    pub fn new(msg_id: MsgId, leaf: NodeId, payload: &[u8], now: Instant) -> Option<Queued> {
+    pub fn new(
+        msg_id: MsgId,
+        dst_pos: Position,
+        node: NodeId,
+        payload: &[u8],
+        time_left: u8,
+        now: Instant,
+    ) -> Option<Queued> {
         if payload.len() > MAX_PAYLOAD {
             return None;
         }
         let mut q = Queued {
             msg_id,
-            leaf,
+            dst_pos,
+            node,
+            time_left,
             enqueued: now,
             len: payload.len() as u8,
             payload: [0; MAX_PAYLOAD],
@@ -85,7 +101,7 @@ impl core::fmt::Debug for Queued {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Queued")
             .field("msg_id", &self.msg_id)
-            .field("leaf", &self.leaf)
+            .field("node", &self.node)
             .field("enqueued", &self.enqueued)
             .field("payload", &self.payload())
             .finish()
@@ -115,7 +131,9 @@ impl DeliveryQueue {
     pub const fn new(ttl: Duration) -> DeliveryQueue {
         let fill = Queued {
             msg_id: MsgId(0),
-            leaf: NodeId::NONE,
+            dst_pos: Position { lat: 0, lon: 0 },
+            time_left: 0,
+            node: NodeId::NONE,
             enqueued: Instant::ZERO,
             len: 0,
             payload: [0; MAX_PAYLOAD],
@@ -151,9 +169,9 @@ impl DeliveryQueue {
         self.entries.as_slice().iter()
     }
 
-    /// Number of messages queued for `leaf`.
-    pub fn count_for(&self, leaf: NodeId) -> usize {
-        self.iter().filter(|q| q.leaf == leaf).count()
+    /// Number of messages queued for `node`.
+    pub fn count_for(&self, node: NodeId) -> usize {
+        self.iter().filter(|q| q.node == node).count()
     }
 
     /// Queue a message, unless it is queued already or the queue is full.
@@ -167,9 +185,9 @@ impl DeliveryQueue {
         }
     }
 
-    /// Take the oldest message for `leaf`.
-    pub fn pop_for(&mut self, leaf: NodeId) -> Option<Queued> {
-        let i = self.iter().position(|q| q.leaf == leaf)?;
+    /// Take the oldest message for `node`.
+    pub fn pop_for(&mut self, node: NodeId) -> Option<Queued> {
+        let i = self.iter().position(|q| q.node == node)?;
         Some(self.entries.remove(i))
     }
 
@@ -208,18 +226,27 @@ mod tests {
     }
 
     fn msg(id: u32, to: u8, t: u64) -> Queued {
-        Queued::new(MsgId(id), leaf(to), &id.to_be_bytes(), at(t)).unwrap()
+        Queued::new(
+            MsgId(id),
+            Position::default(),
+            leaf(to),
+            &id.to_be_bytes(),
+            0,
+            at(t),
+        )
+        .unwrap()
     }
 
     #[test]
     fn payload_bound() {
-        assert!(Queued::new(MsgId(1), leaf(1), &[0; MAX_PAYLOAD], at(0)).is_some());
-        assert!(Queued::new(MsgId(1), leaf(1), &[0; MAX_PAYLOAD + 1], at(0)).is_none());
+        let p = Position::default();
+        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD], 0, at(0)).is_some());
+        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD + 1], 0, at(0)).is_none());
         assert_eq!(msg(7, 1, 0).payload(), &[0, 0, 0, 7]);
     }
 
     #[test]
-    fn fifo_per_leaf_and_dedup() {
+    fn fifo_per_node_and_dedup() {
         let mut q = DeliveryQueue::from_config(&Config::default());
         assert_eq!(q.push(msg(1, 1, 0)), Pushed::Queued);
         assert_eq!(q.push(msg(2, 2, 1)), Pushed::Queued);
@@ -229,7 +256,7 @@ mod tests {
         assert_eq!(q.pop_for(leaf(1)).unwrap().msg_id, MsgId(1));
         assert_eq!(q.pop_for(leaf(1)).unwrap().msg_id, MsgId(3));
         assert_eq!(q.pop_for(leaf(1)), None);
-        assert_eq!(q.remove(MsgId(2)).unwrap().leaf, leaf(2));
+        assert_eq!(q.remove(MsgId(2)).unwrap().node, leaf(2));
         assert!(q.is_empty());
     }
 
@@ -260,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn size_follows_the_leaf_table_and_ttl() {
+    fn size_follows_the_heard_table_and_ttl() {
         let c = Config::default();
-        assert_eq!(queue_for(LEAVES, c.delivery_ttl), DELIVERY_QUEUE);
+        assert_eq!(queue_for(HEARD, c.delivery_ttl), DELIVERY_QUEUE);
         // The delivered window's 64 is the same count for 400 leaves.
         assert_eq!(queue_for(400, c.delivery_ttl), 64);
     }

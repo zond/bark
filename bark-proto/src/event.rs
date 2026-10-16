@@ -22,8 +22,7 @@ pub const MAX_FRAME: usize = 255;
 pub struct Frame {
     /// Channel to transmit on.
     pub channel: Channel,
-    /// Preamble symbols; never below `radio::MIN_PREAMBLE_SYMBOLS`. Long
-    /// preambles target duty-cycled leaves (spec "Leaf receive mode").
+    /// Preamble symbols; never below `radio::MIN_PREAMBLE_SYMBOLS`.
     pub preamble_symbols: u16,
     /// Number of valid bytes in `bytes`.
     pub len: u8,
@@ -133,18 +132,15 @@ pub enum DropReason {
     Banned,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
-    /// Its leaf did not collect it within the delivery TTL (spec "Delivery queue").
+    /// The node it is for did not take it within the delivery TTL (spec
+    /// "Delivery queue").
     QueueExpired,
     /// Its time left ran out before it reached its owner (spec "Receiving DATA").
     Expired,
-    /// The delivery queue had no room for a message to one of this
-    /// relay's leaves (spec "Delivery queue").
+    /// The delivery queue had no room for it (spec "Delivery queue").
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
-    /// A leaf could not hand it to a relay within the delivery TTL: it
-    /// had none, or its relay did not answer (spec "Attach and polls").
-    NoRelay,
 }
 
 /// Events for the application side: only a message for it. What becomes
@@ -231,14 +227,14 @@ pub enum Trace {
     },
     /// The receiver of a hand-over refused it (spec "Refusal").
     TurnedAway {
-        /// The message, or for a DELIVER the delivered message.
+        /// The message.
         msg_id: MsgId,
         /// The refusing node.
         by: NodeId,
     },
     /// The duty-cycle budget held a hand-over back (spec "Duty cycle cap").
     HandOverDeferred {
-        /// The message, or for a DELIVER the delivered message.
+        /// The message.
         msg_id: MsgId,
         /// When the budget may next allow it.
         until: Instant,
@@ -267,39 +263,19 @@ pub enum Trace {
         /// The neighbour.
         neighbour: NodeId,
     },
-    /// An attached leaf acknowledged a DELIVER (spec "Delivery").
+    /// The node a message was held for took it (spec "Delivery").
     Delivered {
         /// The message.
         msg_id: MsgId,
-        /// The leaf.
-        leaf: NodeId,
+        /// The node.
+        node: NodeId,
     },
-    /// A message for a leaf entered the delivery queue (spec "Delivery queue").
+    /// A message for another node entered the delivery queue (spec
+    /// "Delivery queue").
     Queued {
         /// The message.
         msg_id: MsgId,
-        /// The leaf.
-        leaf: NodeId,
-    },
-    /// A relay could not poll a leaf within its slot's lateness, for the
-    /// channel or the bucket; it counts as a poll the leaf missed (spec "Attach and polls").
-    PollSkipped {
-        /// The leaf.
-        leaf: NodeId,
-    },
-    /// A relay dropped a leaf that left its polls unanswered (spec "Attach and polls").
-    LeafDropped {
-        /// The leaf.
-        leaf: NodeId,
-    },
-    /// A leaf began an ATTACH that attaches (spec "Attach and polls").
-    Attaching {
-        /// The relay.
-        relay: NodeId,
-    },
-    /// Every attempt of a leaf's ATTACH went unanswered (spec "Attach and polls").
-    AttachFailed {
-        /// The relay.
-        relay: NodeId,
+        /// The node.
+        node: NodeId,
     },
 }

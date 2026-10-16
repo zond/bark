@@ -1,5 +1,8 @@
-//! The protocol core on the board: a relay, or with the `leaf` feature a
-//! leaf, driven by `bark_driver::Driver` against the SX1262.
+//! The protocol core on the board, the one node type of the prototype
+//! (`docs/one-node-type-2026-10-16.md`), sleepy with the `sleepy` feature,
+//! driven by `bark_driver::Driver` against the SX1262. Its node ID is the
+//! low word of the chip's factory device ID (nRF52840 Product
+//! Specification, FICR DEVICEID), the same at every boot.
 //!
 //! The node's position comes from `BARK_LAT` and `BARK_LON` (degrees) at
 //! build time until the phone app or the GPS can set it
@@ -8,17 +11,13 @@
 
 use bark_driver::{App, Clock, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{AppEvent, Config, Core, Event, Instant, Position};
+use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position};
 use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
 
-/// The role this image runs.
-#[cfg(not(feature = "leaf"))]
+/// The node this image runs.
 pub type Role = bark_proto::Relay;
-/// The role this image runs.
-#[cfg(feature = "leaf")]
-pub type Role = bark_proto::Leaf;
 
 /// How often the driver's counters are logged; the uptime line's period.
 const REPORT_EVERY: Duration = Duration::from_secs(10);
@@ -87,15 +86,16 @@ pub fn config() -> Config {
     Config {
         position,
         surveyed: true,
+        node_id: NodeId(embassy_nrf::pac::FICR.deviceid(0).read().to_be_bytes()),
+        sleepy: cfg!(feature = "sleepy"),
         tx_power_dbm: MAX_TX_DBM,
         ..Config::default()
     }
 }
 
-/// The relay, in static memory built at compile time and set up in place:
+/// The node, in static memory built at compile time and set up in place:
 /// `Relay::new` would need 150 KiB more stack than the board has
 /// (`docs/core-interface.md` §6). Once only.
-#[cfg(not(feature = "leaf"))]
 pub fn core(config: Config, seed: u64) -> &'static mut Role {
     static CORE: static_cell::ConstStaticCell<Role> =
         static_cell::ConstStaticCell::new(Role::UNSET);
@@ -104,23 +104,16 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
     relay
 }
 
-/// The leaf, in static memory. Once only.
-#[cfg(feature = "leaf")]
-pub fn core(config: Config, seed: u64) -> &'static mut Role {
-    static CORE: static_cell::StaticCell<Role> = static_cell::StaticCell::new();
-    CORE.init(Role::new(config, seed))
-}
-
 /// Run the core forever.
 pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
     let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp, dbm);
     log::info!(
         "{} at {} {} power_dbm={}",
-        if cfg!(feature = "leaf") {
-            "leaf"
+        if cfg!(feature = "sleepy") {
+            "sleepy node"
         } else {
-            "relay"
+            "node"
         },
         config.position.lat_deg(),
         config.position.lon_deg(),

@@ -1,33 +1,57 @@
-//! The relay: medium access, forwarding and the leaves it serves.
+//! The node: medium access, forwarding and delivery to the sleepy nodes
+//! it hears. In the one-node-type prototype every node is a `Relay`;
+//! [`Config::sleepy`] changes what it does (`docs/one-node-type-2026-10-16.md`).
 //!
 //! This file holds the medium access: boot listen and home channel
 //! (spec "Home channel selection"), the busy sweep (spec "Busy estimate"), the heartbeat (spec "Heartbeat"), the neighbour
-//! table (spec "Neighbours") and the duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"). Routing and the
-//! per-hop transfer (spec "Forwarding") are in `relay/forward.rs`, the leaves this relay
-//! serves (spec "Leaves") in `relay/service.rs`.
+//! table (spec "Neighbours"), the duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"), and a sleepy
+//! node's home and beat (below). Routing and the per-hop transfer (spec "Forwarding")
+//! are in `relay/forward.rs`, delivery to sleepy nodes in
+//! `relay/delivery.rs`.
 //!
 //! # Radio discipline
 //!
 //! Each use of the radio is a job with its own small state machine: the
-//! reply (an ACK, taking or refusing, or an ATTACHED) this relay owes, the
-//! poll of a leaf, the heartbeat, the hand-over of one entry of the send
-//! queue, and the sweep. The relay keeps at most one excursion outstanding
-//! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
-//! the first job that is ready, in that order: an owed reply is worth
-//! nothing once its sender stops waiting, 100 ms after the frame (spec "The ACK"),
-//! and a poll is skipped once it is 500 ms late (spec "Attach and polls"). A job that has begun a sequence of excursions (CAD,
-//! RSSI, transmit) continues it from each completion event, so sequences
-//! never interleave; the hand-over alone lets an owed reply in before it
-//! transmits, since its frame can take 139 ms on air. While a hand-over
-//! waits for its ACK, only an owed reply uses the radio: the heartbeat and
-//! the sweep would take the relay off its home channel, where the ACK
-//! arrives (spec "Hand-over"), and a poll would make it deaf to it. After a poll, the
-//! relay listens for the leaf's answer as for an ACK: until it comes or
-//! the ACK timeout passes, only an owed reply uses the radio. Jobs that are not ready say when they will be, and the earliest
-//! of those is `next_wakeup`.
+//! reply (an ACK, taking or refusing) this node owes, the heartbeat, the
+//! hand-over of one entry of the send queue, and the sweep. The node keeps
+//! at most one excursion outstanding (`docs/core-interface.md` §3 rule 1).
+//! When the radio is free it starts the first job that is ready, in that
+//! order: an owed reply is worth nothing once its sender stops waiting,
+//! 100 ms after the frame (spec "The ACK"). A job that has begun a sequence
+//! of excursions (CAD, RSSI, transmit) continues it from each completion
+//! event, so sequences never interleave; the hand-over alone lets an owed
+//! reply in before it transmits, since its frame can take 139 ms on air.
+//! While a hand-over waits for its ACK, only an owed reply uses the radio:
+//! the heartbeat and the sweep would take the node off its home channel,
+//! where the ACK arrives (spec "Hand-over"). Jobs that are not ready say when
+//! they will be, and the earliest of those is `next_wakeup`.
+//!
+//! # A sleepy node's home and beat
+//!
+//! A sleepy node does not choose its channel by how busy channels are.
+//! A worst-case rotation after it first hears a node that is not sleepy,
+//! by when every such node in range has visited its channel, it takes the
+//! strongest of those as its anchor and listens on the anchor's home
+//! channel; its address is the anchor's position and its own ID (spec
+//! "Addresses"). It moves to another only when that one has been heard
+//! over two heartbeats and is [`SWITCH_MARGIN_DB`] stronger, and to the
+//! strongest heard once its anchor has left the neighbour table (spec
+//! "Relay choice"). It follows its anchor to a new home channel at the
+//! anchor's next heartbeat it hears. One that hears no such node keeps the
+//! quietest channel, ties to the lowest, so that the sleepy nodes of a
+//! place without one meet on one channel and route among themselves.
+//!
+//! It heartbeats on its home channel only, at a random time in the second
+//! half of each beat period (`tables::heard::beat_period`, 300 s): at most
+//! a period apart, so that two beats missed are a delivery TTL; spread, so
+//! that two nodes that met once do not meet again. After it chooses or
+//! changes its anchor it beats at once and once more within a heartbeat
+//! interval, so that one lost beat does not hide it from its new holder for
+//! a period. It sweeps the channels only while it boots, for its noise
+//! floor and the quietest channel: asleep it could not.
 
+mod delivery;
 mod forward;
-mod service;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
@@ -41,8 +65,8 @@ use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
 use crate::tables::delivered::Delivered;
 use crate::tables::delivery::DeliveryQueue;
-use crate::tables::leaves::Leaves;
-use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
+use crate::tables::heard::{beat_period, Heard};
+use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours, BEATS};
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{Duration, Instant};
@@ -55,7 +79,25 @@ enum Job {
     Heartbeat,
     HandOver,
     Reply,
-    Poll,
+}
+
+/// How much stronger, in the averaged RSSI of the neighbour table, another
+/// node must be to take a sleepy node from its anchor
+/// (spec "Relay choice"): two standard deviations of the difference of two means of
+/// two heartbeats each under the scenarios' 4 dB fading, as the leaf's.
+/// The table's average lets each new frame count half, which varies less
+/// than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more than
+/// two standard deviations here.
+pub const SWITCH_MARGIN_DB: f32 = 8.0;
+
+/// A sleepy node's anchor: the node that is not sleepy whose home channel
+/// it listens on and whose position is its address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Anchor {
+    /// Its ID.
+    pub id: NodeId,
+    /// Its position.
+    pub position: Position,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,7 +109,7 @@ enum Stage {
     Running,
 }
 
-/// Listen-before-talk progress of one heartbeat or poll.
+/// Listen-before-talk progress of one heartbeat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Check {
     Idle,
@@ -115,6 +157,9 @@ struct Beacon {
     current: Option<(Channel, bool)>,
     busy_checks: u8,
     check: Check,
+    /// A sleepy node's beats still to come at the heartbeat interval after
+    /// a change of anchor.
+    quick: u8,
 }
 
 /// The move rule's timers (spec "Channel moves").
@@ -131,10 +176,10 @@ pub struct Load {
     pub bucket: Duration,
     /// Frames in the send queue, hop places included (spec "Send queue").
     pub send_queue: usize,
-    /// Messages waiting for a leaf (spec "Delivery queue").
+    /// Messages waiting for a sleepy node (spec "Delivery queue").
     pub delivery_queue: usize,
-    /// Leaf table entries, expired ones not yet removed included (spec "Attach and polls").
-    pub leaves: usize,
+    /// Heard table entries, expired ones not yet removed included.
+    pub heard: usize,
     /// Neighbour table entries, expired ones not yet removed included (spec "Neighbour table").
     pub neighbours: usize,
 }
@@ -164,8 +209,12 @@ pub struct Relay {
     /// attempts went unanswered (spec "Hand-over"); not tried.
     skipped: u64,
     replies: Replies,
-    leaves: Leaves,
-    poller: service::Poller,
+    /// The sleepy nodes heard, for delivery.
+    heard: Heard,
+    /// A sleepy node's anchor, kept while it hears no better one.
+    anchor: Option<Anchor>,
+    /// When a sleepy node first heard a node that is not sleepy.
+    first_heard: Option<Instant>,
     delivery: DeliveryQueue,
     delivered: Delivered,
     /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
@@ -184,7 +233,7 @@ pub struct Relay {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
-    /// When the bucket will fit the DELIVER the send queue last had no
+    /// When the bucket will fit the DATA to a sleepy node the send queue last had no
     /// room for, as a hand-over the bucket cannot fit yet is deferred.
     feed_at: Option<Instant>,
 }
@@ -225,6 +274,7 @@ impl Relay {
                 current: None,
                 busy_checks: 0,
                 check: Check::Idle,
+                quick: 0,
             },
             mover: Mover {
                 excess_since: None,
@@ -235,8 +285,9 @@ impl Relay {
             handover: Transfer::new(),
             skipped: 0,
             replies: Replies::new(),
-            leaves: Leaves::from_config(&config),
-            poller: service::Poller::IDLE,
+            heard: Heard::from_config(&config),
+            anchor: None,
+            first_heard: None,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -292,8 +343,9 @@ impl Relay {
             handover,
             skipped,
             replies,
-            leaves,
-            poller,
+            heard,
+            anchor,
+            first_heard,
             delivery,
             delivered,
             delivery_retry_at,
@@ -327,6 +379,7 @@ impl Relay {
             current: None,
             busy_checks: 0,
             check: Check::Idle,
+            quick: 0,
         };
         *mover = Mover::default();
         records.clear();
@@ -334,8 +387,9 @@ impl Relay {
         *handover = Transfer::new();
         *skipped = 0;
         *replies = Replies::new();
-        *leaves = Leaves::from_config(&config);
-        *poller = service::Poller::IDLE;
+        *heard = Heard::from_config(&config);
+        *anchor = None;
+        *first_heard = None;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -362,6 +416,25 @@ impl Relay {
     /// This node's ID (spec "Addresses").
     pub fn id(&self) -> NodeId {
         self.id
+    }
+
+    /// The position in this node's address (spec "Addresses"): its own, or
+    /// for a sleepy node its anchor's while it has one.
+    pub fn address(&self) -> Position {
+        match (self.config.sleepy, self.anchor) {
+            (true, Some(a)) => a.position,
+            _ => self.config.position,
+        }
+    }
+
+    /// A sleepy node's anchor, if it has chosen one.
+    pub fn anchor(&self) -> Option<Anchor> {
+        self.anchor
+    }
+
+    /// The heard table.
+    pub fn heard_nodes(&self) -> &Heard {
+        &self.heard
     }
 
     /// Whether the boot listen (spec "Channel at boot") is still running.
@@ -429,7 +502,7 @@ impl Relay {
             bucket: self.budget.available(now),
             send_queue: self.queue.len(),
             delivery_queue: self.delivery.len(),
-            leaves: self.leaves.len(),
+            heard: self.heard.len(),
             neighbours: self.neighbours.len(),
         }
     }
@@ -441,9 +514,21 @@ impl Relay {
         emit(Action::Listen(self.home));
     }
 
-    /// End of the boot listen: choose home (spec "Channel at boot"), start heartbeats.
+    /// End of the boot listen: choose home (spec "Channel at boot"), or for
+    /// a sleepy node an anchor, and start heartbeats.
     fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
+        if self.config.sleepy {
+            if self.config.home_override.is_none() {
+                let home = self.quietest();
+                self.retune(home, emit);
+            }
+            self.beacon.next_at = now;
+            if !self.reconsider_anchor(now, emit) {
+                self.beacon.quick = 1;
+            }
+            return;
+        }
         if self.config.home_override.is_none() {
             let home = self.quietest();
             self.retune(home, emit);
@@ -466,7 +551,9 @@ impl Relay {
     }
 
     /// `argmin busy[c]`, ties within 0.01 broken at random (spec "Channel at boot"),
-    /// so relays that hear nothing do not all pick channel 0.
+    /// so relays that hear nothing do not all pick channel 0. A sleepy node
+    /// takes the lowest of the ties instead, so that sleepy nodes that hear
+    /// no other kind meet.
     fn quietest(&mut self) -> Channel {
         let min = Channel::all()
             .map(|c| self.busy.fraction(c))
@@ -475,13 +562,81 @@ impl Relay {
         let busy = &self.busy;
         let near = |c: &Channel| busy.fraction(*c) <= min.saturating_add(percent(1));
         let count = Channel::all().filter(near).count() as u64;
-        let pick = self.rng.range(0, count.saturating_sub(1)) as usize;
+        let pick = if self.config.sleepy {
+            0
+        } else {
+            self.rng.range(0, count.saturating_sub(1)) as usize
+        };
         Channel::all().filter(near).nth(pick).unwrap_or(self.home)
     }
 
     fn heartbeat_interval(&mut self) -> Duration {
+        if self.config.sleepy && self.beacon.quick == 0 {
+            let period = beat_period(self.config.delivery_ttl);
+            return self.rng.duration(period.div(2), period);
+        }
+        self.beacon.quick = self.beacon.quick.saturating_sub(1);
         self.rng
             .duration(self.config.heartbeat_min, self.config.heartbeat_max)
+    }
+
+    // --- A sleepy node's anchor (module documentation) ---
+
+    /// Choose or keep a sleepy node's anchor among the live neighbours
+    /// that are not sleepy, and follow its home channel. Returns whether
+    /// the anchor changed.
+    fn reconsider_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+        if !self.config.sleepy || self.stage != Stage::Running {
+            return false;
+        }
+        // A first choice waits a worst-case rotation from the first
+        // heartbeat heard, by which time every node in range that is not
+        // sleepy has visited this channel (spec "Relay choice").
+        let choosing = self.anchor.is_none()
+            && self
+                .first_heard
+                .is_none_or(|t| now < t + self.config.boot_listen);
+        let strongest = |except: Option<NodeId>, beats: u8| {
+            self.neighbours
+                .live(now)
+                .map(|(_, n)| n)
+                .filter(|n| !n.sleepy && Some(n.id) != except && n.beats >= beats)
+                .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
+                .copied()
+        };
+        let current = self
+            .anchor
+            .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
+            .map(|(_, n)| *n);
+        let to = match current {
+            None if choosing => None,
+            None => strongest(None, 0),
+            Some(a) => strongest(Some(a.id), BEATS).filter(|b| b.rssi >= a.rssi + SWITCH_MARGIN_DB),
+        };
+        if let (Some(a), None) = (current, to) {
+            // Kept: follow it to a new home, and to a new position.
+            self.anchor = Some(Anchor {
+                id: a.id,
+                position: a.position,
+            });
+            if a.home != self.home && self.config.home_override.is_none() {
+                self.retune(a.home, emit);
+            }
+        }
+        let Some(to) = to else {
+            return false;
+        };
+        self.anchor = Some(Anchor {
+            id: to.id,
+            position: to.position,
+        });
+        if self.config.home_override.is_none() {
+            self.retune(to.home, emit);
+        }
+        // Heard at once and again soon by the new holder.
+        self.beacon.next_at = now;
+        self.beacon.quick = 1;
+        true
     }
 
     fn timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -490,7 +645,7 @@ impl Relay {
                 self.finish_boot(now, emit);
             }
         }
-        if self.mover.move_at.is_some_and(|t| now >= t) {
+        if !self.config.sleepy && self.mover.move_at.is_some_and(|t| now >= t) {
             self.mover = Mover::default();
             // Re-check after the random wait (spec "Channel moves").
             if self.excess() {
@@ -512,13 +667,10 @@ impl Relay {
         }
         while self.radio.idle() {
             self.prepare(now, emit);
-            let answering = self.answer_wait(now).is_some();
-            let awaiting = self.handover.awaiting_ack() || answering;
-            let running = self.stage == Stage::Running;
+            let awaiting = self.handover.awaiting_ack();
             let started = self.start_reply(now, emit)
-                || (!awaiting && running && self.poll_due(now) && self.start_poll(now, emit))
                 || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
-                || (!answering && self.start_handover(now, emit))
+                || self.start_handover(now, emit)
                 || (!awaiting && self.sweep_due(now) && self.start_sweep(emit));
             if !started {
                 break;
@@ -529,7 +681,13 @@ impl Relay {
     // --- Sweep (spec "Busy estimate") ---
 
     fn sweep_due(&self, now: Instant) -> bool {
-        now >= self.sweep.next_at
+        self.sweeping() && now >= self.sweep.next_at
+    }
+
+    /// Whether the node sweeps the channels: always, or a sleepy node while
+    /// it boots (module documentation).
+    fn sweeping(&self) -> bool {
+        !self.config.sleepy || self.stage != Stage::Running
     }
 
     /// Each channel once per sweep interval, one reading at a time (spec "Busy estimate",
@@ -578,7 +736,10 @@ impl Relay {
         }
         // Once per round of the channels.
         self.neighbours.expire(now);
-        if self.stage == Stage::Running && self.config.home_override.is_none() {
+        if self.stage == Stage::Running
+            && self.config.home_override.is_none()
+            && !self.config.sleepy
+        {
             self.move_rule(now);
         }
     }
@@ -620,9 +781,14 @@ impl Relay {
     /// sent, so a move during its backoff still announces the new channel.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
+        let channel = if self.config.sleepy {
+            self.home
+        } else {
+            channel
+        };
         let hb = Heartbeat {
-            surveyed: self.config.surveyed,
-            sleepy: false,
+            surveyed: self.config.surveyed && !self.config.sleepy,
+            sleepy: self.config.sleepy,
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
@@ -704,6 +870,10 @@ impl Relay {
             self.beacon.rotation = self.beacon.rotation.next();
         }
         self.beacon.next_at = now + self.heartbeat_interval();
+        if self.config.sleepy {
+            // Its own beat stands in for the sweep's round of the tables.
+            self.neighbours.expire(now);
+        }
     }
 
     // --- Reception ---
@@ -718,7 +888,7 @@ impl Relay {
         // (`hops` 0) names no relay. Its DATA and ACKs show how well it is
         // heard (spec "Neighbour table").
         match decoded {
-            Ok(Packet::Data(d)) if d.hops > 0 => {
+            Ok(Packet::Data(d)) => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
                 self.neighbours.frame_heard(d.src_hop, rssi);
             }
@@ -726,10 +896,9 @@ impl Relay {
             _ => {}
         }
         match decoded {
-            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now),
+            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
-            Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
             _ => {}
         }
     }
@@ -741,15 +910,12 @@ impl Relay {
     /// aside.
     /// Everything else, heartbeats included, stays behind and counts.
     fn count_busy(&mut self, bytes: &[u8], now: Instant) {
-        // The driver does not report the preamble a sender used. Assuming
-        // the minimum undercounts only frames for sleeping leaves, which
-        // are rare (spec "Leaf receive mode").
+        // Every frame has the minimum preamble.
         let len = bytes.len().min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
         let me = self.me();
         let own = match Packet::decode(bytes) {
             Ok(Packet::Data(d)) => d.dst_hop == me,
-            Ok(Packet::Attach(a)) => a.relay == me,
             Ok(Packet::Ack(a)) => self.handover.answered_by(a),
             _ => false,
         };
@@ -764,7 +930,11 @@ impl Relay {
         }
     }
 
-    fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant) {
+    /// A heartbeat: it fills the neighbour table, and a sleepy node's the
+    /// heard table too; the sleepy node is awake now, and gets what is
+    /// held for it. A sleepy node's anchor follows heartbeats of nodes that
+    /// are not sleepy.
+    fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         if hb.id == self.id {
             return;
         }
@@ -773,6 +943,14 @@ impl Relay {
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
+        }
+        if hb.sleepy {
+            if self.heard.heard(hb.id, hb.home, rssi, now) {
+                self.deliver_now(hb.id, now);
+            }
+        } else {
+            self.first_heard.get_or_insert(now);
+            self.reconsider_anchor(now, emit);
         }
     }
 
@@ -817,7 +995,6 @@ impl Core for Relay {
                 Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                 Some(Job::HandOver) => self.handover_check(busy, now, emit),
                 Some(Job::Reply) => self.reply_check(busy, now, emit),
-                Some(Job::Poll) => self.poll_check(busy, now, emit),
                 Some(Job::Sweep) | None => {}
             },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
@@ -825,7 +1002,6 @@ impl Core for Relay {
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
                 Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
                 Some(Job::Reply) => self.reply_check(dbm > threshold, now, emit),
-                Some(Job::Poll) => self.poll_check(dbm > threshold, now, emit),
                 None => {}
             },
             Event::TxDone => match self.radio.complete() {
@@ -835,14 +1011,13 @@ impl Core for Relay {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
                 Some(Job::Reply) => self.replies.sent(),
-                Some(Job::Poll) => self.poll_sent(now),
                 _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),
         }
         self.timers(now, emit);
         self.forward_timers(now, emit);
-        self.service_timers(now, emit);
+        self.delivery_timers(now, emit);
         self.pump(now, emit);
         self.app_ready_at = self.send_ready_at(now);
     }
@@ -855,19 +1030,16 @@ impl Core for Relay {
             Stage::Booting(until) => at(until),
             Stage::Running => {}
         }
-        if let Some(t) = self.mover.move_at {
+        if let (Some(t), false) = (self.mover.move_at, self.config.sleepy) {
             at(t);
         }
-        // Nothing but an owed reply goes while the answer to a poll may
-        // still come.
-        let answer = self.poller.answer.map(|(_, t)| t);
         if let Some(t) = self.forward_wakeup() {
-            at(answer.map_or(t, |a| t.max(a)));
+            at(t);
         }
         if let (Some(t), true) = (self.replies.wake_at(), self.radio.idle()) {
             at(t);
         }
-        if let Some(t) = self.service_wakeup() {
+        if let Some(t) = self.delivery_wakeup() {
             at(t);
         }
         // The application waits for the bucket (core-interface §4).
@@ -885,12 +1057,11 @@ impl Core for Relay {
                 } else {
                     self.beacon.next_at
                 };
-                at(answer.map_or(due, |a| due.max(a)).max(self.beacon.ready_at));
-                if let Some(t) = self.poll_wakeup() {
-                    at(t);
-                }
+                at(due.max(self.beacon.ready_at));
             }
-            at(answer.map_or(self.sweep.next_at, |a| self.sweep.next_at.max(a)));
+            if self.sweeping() {
+                at(self.sweep.next_at);
+            }
         }
         w
     }
@@ -926,9 +1097,8 @@ mod tests {
         // access, the hand-over, one owed reply and one held message in
         // under 1 KiB.
         let relay = core::mem::size_of::<Relay>();
-        let leaf = core::mem::size_of::<crate::node::Leaf>();
         let tables = crate::tables::sizes::tables();
-        std::println!("Relay {relay} B, tables {tables} B, Leaf {leaf} B");
+        std::println!("Relay {relay} B, tables {tables} B");
         assert!(relay <= tables + 1024, "{relay}");
         // It fits the board's RAM: 255 KiB for the application
         // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
@@ -936,7 +1106,6 @@ mod tests {
         // stacks, about 16 KiB (spec "Implementation notes").
         let ram = (255 - 5 - 16) * 1024;
         assert!(relay <= ram, "{relay} of {ram}");
-        assert!(leaf < 1024, "{leaf}");
     }
 
     /// Drive `r` from its own wakeups until `until`, completing every radio
@@ -981,203 +1150,6 @@ mod tests {
         }
     }
 
-    /// A hybrid leaf, which hears only long preambles while it sleeps,
-    /// is polled with the short one at the time its last ATTACHED named,
-    /// within the poll's lateness, so that it can listen for it then. A
-    /// DELIVER to it has the long preamble, unless it is for a message the
-    /// last poll the leaf answered counted: then the leaf listens, and it
-    /// has the short one (spec "Attach and polls", "Leaf receive mode").
-    #[test]
-    fn a_hybrid_leaf_is_polled_at_its_slot_with_a_short_preamble() {
-        use crate::ids::{MsgId, NodeId};
-        use crate::tables::delivery::Queued;
-        use crate::tables::leaves::{PERIOD, POLL_AIRTIME, POLL_LATE};
-        use crate::wire::{Attach, RxMode};
-        let hour = Duration::from_secs(3600);
-        let config = Config {
-            boot_listen: Duration::from_secs(1),
-            home_override: Channel::new(3),
-            sweep_interval: hour,
-            heartbeat_min: hour,
-            heartbeat_max: hour,
-            ..Config::default()
-        };
-        let mut r = Relay::new(config, 1);
-        let mut now = Instant::ZERO;
-        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
-        now = Instant::ZERO + Duration::from_secs(10);
-        let leaf = NodeId([9; 4]);
-        let (me, home) = (r.me(), r.home);
-        let attach = |reply| {
-            let a = Attach {
-                leaf,
-                relay: me,
-                mode: RxMode::Hybrid,
-                reply,
-            };
-            let f = mac::frame(&Packet::Attach(a), home, MIN_PREAMBLE_SYMBOLS);
-            f.bytes[..f.len as usize].to_vec()
-        };
-        let receive = |r: &mut Relay, bytes: &[u8], now: Instant| {
-            let mut pending = Vec::new();
-            let event = Event::Received {
-                channel: r.home,
-                rssi_dbm: -80,
-                snr_db: 10,
-                bytes,
-            };
-            r.handle(event, now, &mut |a| pending.push(a));
-            pending
-        };
-        let pending = receive(&mut r, &attach(false), now);
-        let until = now + PERIOD + Duration::from_secs(2);
-        let sent = drive_from(&mut r, &mut now, until, pending);
-        let polls: Vec<_> = sent
-            .iter()
-            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Attached(a)) => Some((*t, *f, a)),
-                _ => None,
-            })
-            .collect();
-        assert!(polls.len() >= 2, "{polls:?}");
-        for w in polls.windows(2) {
-            let ((t0, _, a0), (t1, f1, _)) = (w[0], w[1]);
-            let slot = t0 + POLL_AIRTIME + a0.next_poll();
-            assert!(t1 + Duration::from_millis(5) >= slot && t1 <= slot + POLL_LATE);
-            assert_eq!(f1.preamble_symbols, MIN_PREAMBLE_SYMBOLS);
-        }
-        // The answer to the poll keeps the leaf; a DELIVER to it has the
-        // long preamble.
-        let pending = receive(&mut r, &attach(true), now);
-        let at = now;
-        drive_from(&mut r, &mut now, at, pending);
-        assert_eq!(r.leaves.get(leaf).unwrap().unanswered, 0);
-        r.delivery
-            .push(Queued::new(MsgId(7), leaf, b"hi", now).unwrap());
-        r.feed_due = true;
-        let mut pending = Vec::new();
-        r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
-        let until = now + Duration::from_secs(1);
-        let sent = drive_from(&mut r, &mut now, until, pending);
-        let deliver = sent
-            .iter()
-            .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
-            .expect("a DELIVER");
-        assert_eq!(
-            deliver.1.preamble_symbols,
-            RxMode::Hybrid.preamble_symbols()
-        );
-        // Unanswered, it waits for the next poll, which counts it; the
-        // DELIVER after the answer has the short preamble.
-        let until = now + PERIOD + Duration::from_secs(2);
-        let sent = drive_from(&mut r, &mut now, until, Vec::new());
-        let poll = sent
-            .iter()
-            .find_map(|(_, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Attached(a)) => Some(a),
-                _ => None,
-            })
-            .expect("a poll");
-        assert_eq!(poll.waiting, 1);
-        let pending = receive(&mut r, &attach(true), now);
-        let until = now + Duration::from_secs(1);
-        let sent = drive_from(&mut r, &mut now, until, pending);
-        let deliver = sent
-            .iter()
-            .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
-            .expect("a DELIVER");
-        assert_eq!(deliver.1.preamble_symbols, MIN_PREAMBLE_SYMBOLS);
-    }
-
-    /// After a poll the relay listens for the answer, as for an ACK: a
-    /// DELIVER queued behind the poll waits for the ACK timeout, and goes
-    /// at once when the answer comes (spec "Attach and polls").
-    #[test]
-    fn the_relay_listens_for_the_answer_to_its_poll() {
-        use crate::ids::{MsgId, NodeId};
-        use crate::tables::delivery::Queued;
-        use crate::wire::{Attach, RxMode};
-        let hour = Duration::from_secs(3600);
-        let config = Config {
-            boot_listen: Duration::from_secs(1),
-            home_override: Channel::new(3),
-            sweep_interval: hour,
-            heartbeat_min: hour,
-            heartbeat_max: hour,
-            ..Config::default()
-        };
-        let leaf = NodeId([5; 4]);
-        let frames = |reply| {
-            let a = Attach {
-                leaf,
-                relay: Relay::new(config, 1).me(),
-                mode: RxMode::Listening,
-                reply,
-            };
-            let f = mac::frame(
-                &Packet::Attach(a),
-                Channel::new(3).unwrap(),
-                MIN_PREAMBLE_SYMBOLS,
-            );
-            f.bytes[..f.len as usize].to_vec()
-        };
-        let receive = |r: &mut Relay, bytes: &[u8], now: Instant| {
-            let mut pending = Vec::new();
-            let event = Event::Received {
-                channel: r.home,
-                rssi_dbm: -80,
-                snr_db: 10,
-                bytes,
-            };
-            r.handle(event, now, &mut |a| pending.push(a));
-            pending
-        };
-        for answered in [false, true] {
-            let mut r = Relay::new(config, 1);
-            let mut now = Instant::ZERO;
-            drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
-            now = Instant::ZERO + Duration::from_secs(10);
-            let pending = receive(&mut r, &frames(false), now);
-            let until = now + Duration::from_secs(1);
-            drive_from(&mut r, &mut now, until, pending);
-            let slot = r.leaves.get(leaf).unwrap().next_poll;
-            // A message for the leaf arrives just before its slot, while
-            // the hand-over is held back by nothing but the poll.
-            let mut at = Instant::from_micros(slot.as_micros() - 1);
-            drive(&mut r, &mut now, at);
-            r.delivery
-                .push(Queued::new(MsgId(9), leaf, b"behind the poll", at).unwrap());
-            r.leaves.set_missed(leaf, true);
-            let sent = drive(&mut r, &mut at, slot + Duration::from_millis(1));
-            let (t_poll, poll) = *sent
-                .iter()
-                .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Attached(_))))
-                .expect("a poll");
-            let poll_end = t_poll + mac::airtime(&poll);
-            r.leaves.set_missed(leaf, false);
-            r.feed_due = true;
-            let mut now = poll_end + Duration::from_millis(3);
-            let pending = if answered {
-                receive(&mut r, &frames(true), now)
-            } else {
-                let mut p = Vec::new();
-                r.handle(Event::Wakeup, now, &mut |a| p.push(a));
-                p
-            };
-            let sent = drive_from(&mut r, &mut now, poll_end + Duration::from_secs(1), pending);
-            let (t_deliver, _) = *sent
-                .iter()
-                .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
-                .expect("a DELIVER");
-            let wait = poll_end + config.ack_timeout;
-            if answered {
-                assert!(t_deliver < wait, "{t_deliver:?} after the answer");
-            } else {
-                assert!(t_deliver >= wait, "{t_deliver:?} before {wait:?}");
-            }
-        }
-    }
-
     /// A relay reset in place, after it has run and holds messages, does
     /// what a new one does.
     #[test]
@@ -1214,16 +1186,17 @@ mod tests {
         assert_eq!(used.home(), fresh.home());
     }
 
-    /// A relay whose bucket is spent holds one message for a listening
-    /// leaf, and nothing else happens: it wakes when its bucket will fit
-    /// the DELIVER with the reply reserve, and sends it then, not at the
-    /// 60 s retry (spec "Hand-over", "Delivery queue").
+    /// A node whose bucket is spent holds one message for a sleepy node
+    /// that has just beaten, and nothing else happens: it wakes when its
+    /// bucket will fit the DATA with the reply reserve, within the node's
+    /// window, and sends it then. The node never answers, and its message
+    /// waits for its next beat (`relay/delivery.rs`).
     #[test]
-    fn a_deliver_waits_for_the_bucket_not_the_retry() {
-        use crate::ids::{MsgId, NodeId};
+    fn a_delivery_waits_for_the_bucket_within_the_window() {
+        use crate::ids::MsgId;
         use crate::tables::budget::REPLY_RESERVE;
         use crate::tables::delivery::Queued;
-        use crate::wire::{Deliver, RxMode};
+        use crate::wire::Data;
         let hour = Duration::from_secs(3600);
         let config = Config {
             boot_listen: Duration::from_secs(1),
@@ -1238,51 +1211,57 @@ mod tests {
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         assert!(!r.booting());
         now = Instant::ZERO + Duration::from_secs(10);
-        let leaf = NodeId([7; 4]);
-        r.leaves.attached(leaf, RxMode::Listening, 0, now).unwrap();
+        let node = NodeId([7; 4]);
+        r.heard.heard(node, r.home, -80, now);
         r.budget.record(r.budget.available(now), now);
-        let q = Queued::new(MsgId(42), leaf, b"later", now).unwrap();
+        let dst = r.config.position;
+        let id = MsgId::of(dst, node, b"later");
+        let mut record = crate::tables::records::Record::new(id, None, 0, now);
+        record.set_arrived();
+        let at = r.record_place().unwrap();
+        r.records.put(at, record);
+        let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
         r.delivery.push(q);
         r.feed_due = true;
         r.handle(Event::Wakeup, now, &mut |_| {});
         assert!(r.queue.is_empty(), "taken with a spent bucket");
-        let deliver = Deliver {
-            dst_leaf: leaf,
-            msg_id: MsgId(42),
+        let data = Data {
+            sender_home: r.home,
+            dst_hop: node,
+            src_hop: r.me(),
+            dst_pos: dst,
+            dst_id: node,
+            hops: 1,
+            time_left: u8::MAX,
             payload: b"later",
         };
-        let frame = mac::frame(&Packet::Deliver(deliver), r.home, MIN_PREAMBLE_SYMBOLS);
+        let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
         let fits = r
             .budget
             .allowed_at(mac::airtime(&frame), REPLY_RESERVE, now)
             .unwrap();
         assert_eq!(r.next_wakeup(), Some(fits));
-        let retry = r.delivery_retry_at;
-        assert!(
-            retry > fits + Duration::from_secs(10),
-            "the retry is far off"
-        );
-        let sent = drive(
-            &mut r,
-            &mut now,
-            Instant::from_micros(retry.as_micros() - 1),
-        );
-        let delivers: Vec<_> = sent
+        let window = r.heard.get(node).unwrap().awake_until;
+        assert!(fits < window, "the bucket fits it in the window");
+        let until = now + Duration::from_secs(60);
+        let sent = drive(&mut r, &mut now, until);
+        let datas: Vec<_> = sent
             .iter()
-            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Deliver(_))))
+            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.dst_hop == node))
             .collect();
         assert_eq!(
-            delivers.len(),
+            datas.len(),
             3,
-            "three attempts at a leaf that never answers"
+            "three attempts at a node that never answers"
         );
-        let first = delivers[0].0;
-        assert!(first >= fits, "sent before the bucket fit it");
+        let first = datas[0].0;
         assert!(
-            first.since(fits) < Duration::from_millis(1),
+            first >= fits && first.since(fits) < Duration::from_millis(1),
             "sent {:?} after the bucket fit it",
             first.since(fits)
         );
+        assert!(!r.heard.awake(node, now), "asleep until its next beat");
+        assert_eq!(r.delivery.len(), 1, "it waits for the next beat");
     }
 
     /// Two packets arrive within one reply time. The second finds the one
@@ -2055,7 +2034,7 @@ mod tests {
         let d = Data {
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
-            src_hop: name(if hops == 0 { 0 } else { 1 }),
+            src_hop: name(1),
             dst_pos: dst,
             dst_id: NOBODY,
             hops,
@@ -2146,22 +2125,6 @@ mod tests {
         drive(&mut r, &mut now, until);
         assert!(r.holding().next().is_none());
         assert_eq!(r.lowest_free_hop_place(), Some(1));
-    }
-
-    /// A leaf's message is refused while every neighbour that could take it
-    /// on is banned, and taken once a ban has ended (roadmap D34): it waits
-    /// at the leaf, not here.
-    #[test]
-    fn a_leaf_s_message_waits_for_a_way_on() {
-        use crate::event::DropReason;
-        let (mut r, start, far) = with_every_neighbour_banned();
-        let mut now = start;
-        assert_eq!(
-            offer_data(&mut r, &mut now, far, 1, 0),
-            (None, Some(DropReason::Banned))
-        );
-        now = start + BAN;
-        assert_eq!(offer_data(&mut r, &mut now, far, 1, 0), (Some(0), None));
     }
 
     /// A packet already in the network is taken under the same bans, into

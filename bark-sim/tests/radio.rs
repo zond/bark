@@ -1,6 +1,8 @@
 //! Radio-model tests, driven by scripted driver-level actions so they hold
-//! whatever the protocol cores do. Leaves are used throughout: with no
-//! relay to hear, a leaf never transmits.
+//! whatever the protocol cores do. Sleepy nodes (placed as leaves) are
+//! used throughout, kept in a boot listen of a day: there a sleepy node
+//! never transmits, and with the sweep slowed to one reading a day it does
+//! not leave its channel either.
 
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::Instant;
@@ -22,14 +24,21 @@ fn trio(t1_dbm: f64, t2_dbm: f64) -> Scenario {
 
 /// [`trio`] with the error curve.
 fn curve_trio(t1_dbm: f64, t2_dbm: f64) -> Scenario {
-    Scenario::new("trio", 1, 2.0)
+    let mut sc = Scenario::new("trio", 1, 2.0)
         .point("T1", Leaf, 0.0, 0.0)
         .point("T2", Leaf, 10.0, 0.0)
         .point("R", Leaf, 5.0, 0.0)
         .link("T1", "R", t1_dbm)
         .link("T2", "R", t2_dbm)
-        .script(0.0, "R", ScriptAction::Listen, Some(3))
+        .script(0.0, "R", ScriptAction::Listen, Some(3));
+    sc.protocol.sweep_interval_ms = Some(13 * DAY_MS);
+    sc.protocol.boot_listen_ms = Some(DAY_MS);
+    sc
 }
+
+/// Longer than any test here: the sweep takes one reading at start and the
+/// next a day later, and the boot listen ends then.
+const DAY_MS: u64 = 86_400_000;
 
 fn run(sc: &Scenario) -> Sim {
     let mut sim = Sim::new(sc).expect("scenario builds");

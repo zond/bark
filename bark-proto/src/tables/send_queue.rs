@@ -15,7 +15,7 @@
 //! hop count. A packet received with count `h` that the regular room
 //! refuses takes the highest free place numbered `h` or lower, whatever
 //! the bucket holds; the bucket still decides when it is sent. A packet
-//! from a leaf or the relay's own application, count 0, has none, so
+//! from the node's own application, count 0, has none, so
 //! overload pushes back where messages enter (roadmap D31). The places
 //! keep the network from locking up while nothing is dropped for want of
 //! room: take the highest-numbered place held anywhere, `k`. Its message
@@ -69,7 +69,7 @@ pub enum Kind {
     Forward,
     /// A DATA back to the parent (spec "Return to parent"); dropped if it fails.
     Return,
-    /// A DELIVER to an attached leaf (spec "Delivery"); left in the delivery queue
+    /// A DATA to a sleepy node this node holds a message for (spec "Delivery"); left in the delivery queue
     /// if it fails.
     Deliver,
 }
@@ -84,13 +84,14 @@ pub struct Outgoing {
     pub kind: Kind,
     /// Not handed over before this: it waits for a ban to end.
     pub not_before: Instant,
-    /// Transmissions of a return or DELIVER that went unanswered, kept
+    /// Transmissions of a return or a DATA to a sleepy node that went unanswered, kept
     /// while it waits; a refusal does not count.
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
     /// When a DATA's time left reaches zero (spec "Receiving DATA");
-    /// [`Instant::MAX`] for a DELIVER, which the delivery queue's TTL ends.
+    /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
+    /// queue's TTL ends.
     pub expires: Instant,
 }
 
@@ -107,7 +108,7 @@ impl Outgoing {
         }
     }
 
-    /// The hop count the frame carries; a DELIVER's is 0.
+    /// The hop count the frame carries.
     pub fn hops(&self) -> u8 {
         match Packet::decode(self.frame.payload()) {
             Ok(Packet::Data(d)) => d.hops,
@@ -120,12 +121,10 @@ impl Outgoing {
         self.not_before > Instant::ZERO
     }
 
-    /// The message the frame carries: a DATA's computed ID (roadmap D15)
-    /// or a DELIVER's.
+    /// The message the frame carries: a DATA's computed ID (roadmap D15).
     pub fn msg_id(&self) -> Option<MsgId> {
         match Packet::decode(self.frame.payload()) {
             Ok(Packet::Data(d)) => Some(d.msg_id()),
-            Ok(Packet::Deliver(d)) => Some(d.msg_id),
             _ => None,
         }
     }

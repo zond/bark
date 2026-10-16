@@ -1,9 +1,11 @@
-//! The protocol core: configuration, roles, and the `Core` trait that the
-//! driver programs against.
+//! The protocol core: configuration, the node, and the `Core` trait that
+//! the driver programs against.
 //!
-//! The relay is in `node/relay.rs` and `node/relay/`, the leaf in
-//! `node/leaf.rs`. Both use the radio discipline of `node/mac.rs` and the
-//! per-hop transfer of `node/transfer.rs`.
+//! In the one-node-type prototype (`docs/one-node-type-2026-10-16.md`)
+//! there is one node, [`Relay`], in `node/relay.rs` and `node/relay/`, and
+//! one setting that changes what it does: [`Config::sleepy`]. It uses the
+//! radio discipline of `node/mac.rs` and the per-hop transfer of
+//! `node/transfer.rs`.
 
 use crate::event::{Action, Event};
 use crate::ids::NodeId;
@@ -11,22 +13,11 @@ use crate::position::Position;
 use crate::radio::{Channel, CHANNELS};
 use crate::time::{Duration, Instant};
 
-mod leaf;
 mod mac;
 mod relay;
 mod transfer;
 
-pub use leaf::Leaf;
 pub use relay::{Load, Relay};
-
-/// Which half of the protocol a node runs (spec "Summary").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Role {
-    /// Forwards traffic, sends heartbeats, serves leaves.
-    Relay,
-    /// Attaches to one relay; originates and receives application messages.
-    Leaf,
-}
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).
@@ -40,6 +31,21 @@ pub struct Config {
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
     /// its seed.
     pub node_id: NodeId,
+    /// The node sleeps between heartbeats, as a carried node on battery
+    /// does. It heartbeats only on its home channel, at most every beat
+    /// period (`tables::heard::beat_period`, 300 s); its home is the
+    /// channel of the strongest node that is not sleepy it hears, and its
+    /// address that node's position; it is a next hop only as a last
+    /// resort; and a node holding a message for it sends it while it
+    /// listens after a beat. It does not choose its channel by how busy
+    /// channels are, and sweeps them only while it boots.
+    pub sleepy: bool,
+    /// Research switch: holders send to a sleepy node whenever they hold a
+    /// message for it, as if it listened all the time, instead of only
+    /// while it listens after a beat. The simulator's sleepy nodes listen
+    /// all the time; this separates what sending on the beat costs from
+    /// the rest. Off in the design.
+    pub sleepy_listens: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds, uniform random in between (spec "Heartbeat": 5–15 s).
@@ -63,13 +69,15 @@ pub struct Config {
     pub neighbour_expiry_rotations: u8,
     /// Rotations a demotion lasts without an ACK (spec "Neighbour table": 3, 390 s).
     pub demotion_rotations: u8,
-    /// How long a leaf waits before it tries its relay again after a
-    /// hand-over to it failed (spec "Attach and polls": 60 s, the length of a fade).
-    pub leaf_retry: Duration,
+    /// How long a sleepy node's own message waits before it is routed
+    /// again while the node has no live neighbour (the leaf's retry of spec
+    /// "Attach and polls": 60 s, the length of a fade).
+    pub fade_retry: Duration,
     /// Delivery-queue entry lifetime, the delivery TTL (spec "Leaves": 10 min).
     pub delivery_ttl: Duration,
-    /// Interval of the delivery retry for queued messages, besides the
-    /// retry on each answer to a poll (spec "Delivery queue": 60 s).
+    /// Interval of the delivery retry for queued messages to a sleepy node
+    /// that listens all the time (`sleepy_listens`), besides the retry on
+    /// each of its beats (spec "Delivery queue": 60 s).
     pub delivery_retry: Duration,
     /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/600).
     pub busy_ema_inverse: u16,
@@ -112,6 +120,8 @@ impl Config {
         position: Position { lat: 0, lon: 0 },
         surveyed: true,
         node_id: NodeId::NONE,
+        sleepy: false,
+        sleepy_listens: false,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,
@@ -122,7 +132,7 @@ impl Config {
         demote_after_failures: 2,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
-        leaf_retry: Duration::from_secs(60),
+        fade_retry: Duration::from_secs(60),
         delivery_ttl: Duration::from_secs(600),
         delivery_retry: Duration::from_secs(60),
         busy_ema_inverse: 600,
@@ -138,8 +148,8 @@ impl Config {
     };
 }
 
-/// A protocol state machine. Both roles implement it; drivers program
-/// against it and never against a role directly.
+/// A protocol state machine. The node implements it; drivers program
+/// against it.
 pub trait Core {
     /// Deliver one event at time `now`. The core calls `emit` zero or more
     /// times, in the order the actions must be performed, and returns.
@@ -160,56 +170,6 @@ pub trait Core {
     /// `Send` offered while this is false is a driver bug, and the core
     /// ignores it (`docs/core-interface.md` §4).
     fn accepts_send(&self, now: Instant) -> bool;
-}
-
-/// Either role, for a driver that switches role at run time (the firmware).
-#[allow(clippy::large_enum_variant)]
-pub enum Node {
-    /// Running as a relay.
-    Relay(Relay),
-    /// Running as a leaf.
-    Leaf(Leaf),
-}
-
-impl Node {
-    /// Create a node in the given role.
-    pub fn new(role: Role, config: Config, seed: u64) -> Node {
-        match role {
-            Role::Relay => Node::Relay(Relay::new(config, seed)),
-            Role::Leaf => Node::Leaf(Leaf::new(config, seed)),
-        }
-    }
-
-    /// Current role.
-    pub fn role(&self) -> Role {
-        match self {
-            Node::Relay(_) => Role::Relay,
-            Node::Leaf(_) => Role::Leaf,
-        }
-    }
-}
-
-impl Core for Node {
-    fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        match self {
-            Node::Relay(r) => r.handle(event, now, emit),
-            Node::Leaf(l) => l.handle(event, now, emit),
-        }
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        match self {
-            Node::Relay(r) => r.next_wakeup(),
-            Node::Leaf(l) => l.next_wakeup(),
-        }
-    }
-
-    fn accepts_send(&self, now: Instant) -> bool {
-        match self {
-            Node::Relay(r) => r.accepts_send(now),
-            Node::Leaf(l) => l.accepts_send(now),
-        }
-    }
 }
 
 /// SplitMix64: 64 bits of state, full-period, every bit of output usable.

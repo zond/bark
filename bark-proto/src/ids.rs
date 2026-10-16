@@ -17,7 +17,7 @@ impl NodeId {
 }
 
 /// A message's identity (spec "Packet formats", roadmap D15). No packet carries it
-/// except the ACK and DELIVER that answer for a message: every node that
+/// except the ACK that answers for a message: every node that
 /// handles the message computes it with [`MsgId::of`], and gets the same
 /// value on every hop because none of the hashed fields changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]

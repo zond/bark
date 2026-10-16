@@ -73,7 +73,11 @@ impl Tracer {
     fn packet(&self, bytes: &[u8], tags: &HashMap<u32, u32>) -> String {
         let n = &self.names;
         match Packet::decode(bytes) {
-            Ok(Packet::Heartbeat(h)) => format!("HEARTBEAT home {}", h.home.index()),
+            Ok(Packet::Heartbeat(h)) => format!(
+                "HEARTBEAT{} home {}",
+                if h.sleepy { " (sleepy)" } else { "" },
+                h.home.index()
+            ),
             Ok(Packet::Ack(a)) => {
                 format!(
                     "ACK {} from {} to {}{}",
@@ -83,23 +87,8 @@ impl Tracer {
                     if a.refused { ", refused" } else { "" }
                 )
             }
-            Ok(Packet::Attach(a)) => format!(
-                "ATTACH {} to {}{}",
-                n.node(a.leaf),
-                n.node(a.relay),
-                if a.reply { ", answering a poll" } else { "" }
-            ),
-            Ok(Packet::Attached(a)) => format!(
-                "ATTACHED {}, next poll in {} ms",
-                n.node(a.leaf),
-                a.next_poll().as_millis()
-            ),
             Ok(Packet::Data(d)) => {
-                let src = if d.hops == 0 {
-                    "a leaf".into()
-                } else {
-                    n.node(d.src_hop)
-                };
+                let src = n.node(d.src_hop);
                 format!(
                     "DATA {} to {} from {src} (home {}), hops {}, for {}",
                     payload_tag(d.payload),
@@ -109,11 +98,6 @@ impl Tracer {
                     n.node(d.dst_id),
                 )
             }
-            Ok(Packet::Deliver(d)) => format!(
-                "DELIVER {} to {}",
-                payload_tag(d.payload),
-                n.node(d.dst_leaf)
-            ),
             Err(e) => format!("undecodable {e:?}"),
         }
     }
@@ -206,18 +190,18 @@ impl Tracer {
                         n.node(to)
                     ),
                     Trace::Demoted { neighbour } => write!(what, "demoted {}", n.node(neighbour)),
-                    Trace::Delivered { msg_id, leaf } => write!(
+                    Trace::Delivered { msg_id, node } => write!(
                         what,
                         "delivered {} to {}",
                         self.msg(msg_id, tags),
-                        n.node(leaf)
+                        n.node(node)
                     ),
-                    Trace::Queued { msg_id, leaf } => {
+                    Trace::Queued { msg_id, node } => {
                         write!(
                             what,
                             "queued {} for {}",
                             self.msg(msg_id, tags),
-                            n.node(leaf)
+                            n.node(node)
                         )
                     }
                     other => write!(what, "{other:?}"),

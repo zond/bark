@@ -13,7 +13,7 @@ does one of three things, chosen when it is built:
 | Build | Runs |
 |---|---|
 | `cargo build --release` | the protocol core as a relay |
-| `cargo build --release --features leaf` | the protocol core as a leaf |
+| `cargo build --release --features sleepy` | the protocol core as a sleepy node |
 | `cargo build --release --features console` | the measurement console (below) |
 
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
@@ -129,7 +129,7 @@ below. `memory.x` has the full map.
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
    appears on the host, and once it is opened the log shows
-   `radio up in N us`, then `relay at ...` (or `leaf at ...`), or
+   `radio up in N us`, then `node at ...` (or `sleepy node at ...`), or
    `console ready` from a console build.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact

@@ -16,8 +16,8 @@ exclude = ["vendor"]
 
 [features]
 default = []
-# Run the core as a leaf instead of a relay.
-leaf = []
+# Run the node sleepy (Config::sleepy), as a carried node on battery.
+sleepy = []
 # Run the bring-up measurement console (README, Console) instead of the core.
 console = []
 
@@ -32,7 +32,8 @@ static_cell = "=2.1.1"
 # With it, init only ever writes all-ones, a no-op on any UICR state, so this
 # firmware never alters the reset-pin setting the bootloader left.
 # `time-driver-rtc1`: nrf-sdc will take RTC0 (research doc spec "Summary").
-embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "reset-pin-as-gpio"] }
+# `unstable-pac`: the node ID is read from FICR (src/node.rs).
+embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "reset-pin-as-gpio", "unstable-pac"] }
 embassy-executor = { version = "=0.10.0", features = ["platform-cortex-m", "executor-thread"] }
 embassy-time = "=0.5.1"
 embassy-usb = "=0.6.0"

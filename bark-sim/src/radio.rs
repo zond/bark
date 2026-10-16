@@ -118,7 +118,6 @@ impl Sim {
         let decoded = WirePacket::decode(frame.payload()).ok();
         let msg = match decoded {
             Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops)),
-            Some(WirePacket::Deliver(d)) => Some((d.msg_id, 0)),
             Some(WirePacket::Ack(a)) => Some((a.msg_id, 0)),
             _ => None,
         };
@@ -127,6 +126,10 @@ impl Sim {
                 Some((key(d.dst_hop), if src < self.relays() { 0 } else { 2 }))
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => Some((key(a.to), 1)),
+            _ => None,
+        };
+        let beat = match decoded {
+            Some(WirePacket::Heartbeat(h)) => Some(h.sleepy),
             _ => None,
         };
         let m = &mut self.metrics;
@@ -191,6 +194,11 @@ impl Sim {
                 end,
                 lora: true,
             };
+            if let Some(sleepy) = beat {
+                self.nodes[l.rx as usize]
+                    .beats
+                    .push(start, end, ch.index(), sleepy);
+            }
             self.arrive(l.rx, a, Some(packet));
         }
     }
@@ -243,6 +251,14 @@ impl Sim {
                 }
             }
             self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
+            let beats = &self.nodes[d as usize].beats;
+            let (k, f, c) = (kind as usize, fate as usize, ch.index());
+            if beats.during(tx.start, tx.end, c, true) {
+                self.metrics.addressed.with_beat[k][f] += 1;
+            }
+            if beats.during(tx.start, tx.end, c, false) {
+                self.metrics.addressed.with_heartbeat[k][f] += 1;
+            }
         }
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;

@@ -171,8 +171,8 @@ pub struct NodeMetrics {
     pub rssi: u64,
     /// Resting-channel changes after the first `Listen`.
     pub home_moves: u64,
-    /// For a leaf: times it attached to a relay other than the one it was
-    /// last attached to (spec "Relay choice").
+    /// For a sleepy node: times it took an anchor other than the one it
+    /// last had (spec "Relay choice").
     pub relay_changes: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
@@ -182,8 +182,8 @@ pub struct NodeMetrics {
     pub drops: DropCounts,
     /// What the core reported in its traces.
     pub core: CoreCounts,
-    /// A relay's tables and bucket, sampled; `None` for a leaf or when
-    /// not sampled.
+    /// A node's tables and bucket, sampled; `None` for a sleepy node or
+    /// when not sampled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load: Option<LoadStats>,
 }
@@ -206,14 +206,8 @@ pub struct CoreCounts {
     pub handovers_deferred: u64,
     /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
-    /// Polls of a leaf that could not go out in their slot (spec "Attach and polls").
-    pub polls_skipped: u64,
-    /// Leaves dropped for leaving their polls unanswered (spec "Attach and polls").
-    pub leaves_dropped: u64,
-    /// ATTACHes that attach a leaf began (spec "Attach and polls").
-    pub attaches_sent: u64,
-    /// Of those, unanswered at every attempt.
-    pub attaches_failed: u64,
+    /// Messages a sleepy node took from this node as their holder.
+    pub delivered: u64,
     /// Messages a neighbour took: sent on (spec "Next hop") or returned to the
     /// parent (spec "Return to parent").
     pub handed_over: u64,
@@ -227,16 +221,23 @@ pub struct CoreCounts {
     pub rejections: u64,
 }
 
-/// What became of frames addressed to one relay, by what that relay was
-/// doing when the frame started: `[kind][fate]`. Kinds: a relay's DATA to a
-/// relay, a relay's ACK to a relay, a leaf's DATA to its relay. Fates:
-/// received; lost although the receiver was listening and free; lost while
-/// it was receiving another frame; lost while it was deaf on the channel
-/// (checking, transmitting, retuning); lost while it was on another channel.
+/// What became of frames addressed to one node that is not sleepy, by
+/// what that node was doing when the frame started: `[kind][fate]`. Kinds:
+/// DATA from a node that is not sleepy, an ACK from one, DATA from a
+/// sleepy node. Fates: received; lost although the receiver was listening
+/// and free; lost while it was receiving another frame; lost while it was
+/// deaf on the channel (checking, transmitting, retuning); lost while it
+/// was on another channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Addressed {
     /// Counts.
     pub counts: [[u64; 5]; 3],
+    /// Of `counts`, the frames during which a sleepy node's heartbeat was
+    /// on the air at the receiver: the hidden-terminal question of a
+    /// presence frame sent at a time the sender chose (roadmap D41).
+    pub with_beat: [[u64; 5]; 3],
+    /// The same for the heartbeat of a node that is not sleepy.
+    pub with_heartbeat: [[u64; 5]; 3],
     /// Of the DATA frames received, `[relay's, leaf's][answer]`: an ACK that
     /// takes it, one that refuses it, either started later than the ACK
     /// timeout after the frame's end, or none.
@@ -262,25 +263,23 @@ pub struct HopPlaceRefusals {
     pub wait_with_place_us: u64,
 }
 
-/// The leaves' counters summed, for the series (`Sim::series_on`).
+/// The sleepy nodes' counters summed, for the series (`Sim::series_on`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct LeafSums {
-    /// Leaves in reach (not dark).
+    /// Sleepy nodes in reach (not dark).
     pub present: u64,
-    /// Leaves attached to a relay.
+    /// Sleepy nodes with an anchor.
     pub attached: u64,
-    /// Leaves holding a message for their relay.
+    /// Sleepy nodes holding a message.
     pub holding: u64,
-    /// Leaves whose application waits to hand one over.
+    /// Sleepy nodes whose application waits to hand one over.
     pub waiting: u64,
     /// Frames sent.
     pub tx_frames: u64,
     /// Airtime by type, µs.
     pub airtime_by_type: TypeAirtime,
-    /// Relay changes.
+    /// Anchor changes.
     pub relay_changes: u64,
-    /// Messages dropped: no relay took them within the TTL.
-    pub no_relay: u64,
     /// Messages received.
     pub messages_in: u64,
 }
@@ -302,15 +301,11 @@ impl LeafSums {
         self.tx_frames += m.tx_frames;
         let (a, b) = (&mut self.airtime_by_type, &m.airtime_by_type);
         a.heartbeat_us += b.heartbeat_us;
+        a.beat_us += b.beat_us;
         a.ack_us += b.ack_us;
-        a.attach_ack_us += b.attach_ack_us;
-        a.attach_us += b.attach_us;
         a.data_us += b.data_us;
-        a.deliver_us += b.deliver_us;
-        a.attached_us += b.attached_us;
         a.other_us += b.other_us;
         self.relay_changes += m.relay_changes;
-        self.no_relay += m.drops.no_relay;
         self.messages_in += m.messages_in;
     }
 }
@@ -351,9 +346,9 @@ pub struct LoadStats {
     pub neighbours_sum: u64,
     /// Samples with the neighbour table full.
     pub neighbours_full: u64,
-    /// Largest leaf table.
+    /// Largest heard table.
     pub leaves_max: u64,
-    /// Leaf table summed over samples.
+    /// Heard table summed over samples.
     pub leaves_sum: u64,
 }
 
@@ -384,7 +379,7 @@ impl LoadStats {
             l.send_queue as u64,
             l.delivery_queue as u64,
             l.neighbours as u64,
-            l.leaves as u64,
+            l.heard as u64,
         );
         self.send_queue_max = self.send_queue_max.max(sq);
         self.send_queue_sum += sq;
@@ -428,8 +423,6 @@ pub struct DropCounts {
     pub delivery_full: u64,
     /// The payload was too long (spec "Packet formats").
     pub payload_too_long: u64,
-    /// A leaf found no relay to take it within the delivery TTL (spec "Attach and polls").
-    pub no_relay: u64,
 }
 
 impl DropCounts {
@@ -447,7 +440,6 @@ impl DropCounts {
             DropReason::Expired => &mut self.expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
-            DropReason::NoRelay => &mut self.no_relay,
         };
         *c += 1;
     }
@@ -465,7 +457,6 @@ impl DropCounts {
             + self.expired
             + self.delivery_full
             + self.payload_too_long
-            + self.no_relay
     }
 }
 
@@ -485,21 +476,14 @@ pub struct ChannelMetrics {
 /// Time on air by packet type (spec "Packet formats"), µs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TypeAirtime {
-    /// HEARTBEAT.
+    /// HEARTBEAT of a node that is not sleepy.
     pub heartbeat_us: u64,
-    /// ACK, of anything but an ATTACH.
+    /// HEARTBEAT of a sleepy node.
+    pub beat_us: u64,
+    /// ACK.
     pub ack_us: u64,
-    /// ACK of an ATTACH: its message ID is the leaf's ID, and so is `to`
-    /// (spec "Packet formats").
-    pub attach_ack_us: u64,
-    /// ATTACH.
-    pub attach_us: u64,
     /// DATA.
     pub data_us: u64,
-    /// DELIVER.
-    pub deliver_us: u64,
-    /// ATTACHED.
-    pub attached_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
 }
@@ -509,13 +493,10 @@ impl TypeAirtime {
     pub fn add(&mut self, p: Option<&bark_proto::wire::Packet<'_>>, us: u64) {
         use bark_proto::wire::Packet;
         let c = match p {
+            Some(Packet::Heartbeat(h)) if h.sleepy => &mut self.beat_us,
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
-            Some(Packet::Ack(a)) if a.msg_id.0.to_be_bytes() == a.to.0 => &mut self.attach_ack_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
-            Some(Packet::Attach(_)) => &mut self.attach_us,
             Some(Packet::Data(_)) => &mut self.data_us,
-            Some(Packet::Deliver(_)) => &mut self.deliver_us,
-            Some(Packet::Attached(_)) => &mut self.attached_us,
             None => &mut self.other_us,
         };
         *c += us;
@@ -555,9 +536,9 @@ pub struct AppMetrics {
     pub latencies_us: Vec<u64>,
 }
 
-/// How soon the network learns that a dark leaf is back (spec "Delivery queue"):
-/// from the moment it is in reach again to the first ATTACH from it that
-/// its relay, or any relay it names, receives.
+/// How soon the network learns that a dark sleepy node is back (spec
+/// "Delivery queue"): from the moment it is in reach again to the first
+/// beat of it its anchor, or any node if it has none, receives.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct LeafReturns {
     /// Leaves that came back into reach.
@@ -806,7 +787,7 @@ mod tests {
                 bucket: ms(bucket),
                 send_queue: 2,
                 delivery_queue: 1,
-                leaves: 70,
+                heard: 70,
                 neighbours: 64,
             };
             l.add(&load, ms(380), ms(242), 64);

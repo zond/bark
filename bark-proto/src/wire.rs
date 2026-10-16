@@ -1,23 +1,22 @@
-//! Encoding and decoding of every packet in spec "Packet formats".
+//! Encoding and decoding of every packet in spec "Packet formats", as the
+//! one-node-type prototype has them (`docs/one-node-type-2026-10-16.md`):
+//! ATTACH, ATTACHED and DELIVER are gone, and their type codes 0x4, 0x6 and
+//! 0x7 are unused.
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
-//! 4-byte [`NodeId`], and fields that only name a node (ATTACH `relay`,
-//! DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
-//! `dst_pos` locates a place and is the 7-byte form of
-//! [`Position::encode`]; the heartbeat carries the sender's position in the
-//! 4-byte short form of [`ShortName`], which the receiver rebuilds from its
-//! own (roadmap D14). DATA carries no message ID: every node computes
-//! [`Data::msg_id`] (D15). Search state lives in the relays, not the
-//! packet (D16). Lengths, in bytes:
+//! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
+//! `src_hop`, ACK `from` and `to`) carry it. DATA `dst_pos` locates a place
+//! and is the 7-byte form of [`Position::encode`]; the heartbeat carries
+//! the sender's position in the 4-byte short form of [`ShortName`], which
+//! the receiver rebuilds from its own (roadmap D14). DATA carries no
+//! message ID: every node computes [`Data::msg_id`] (D15). Search state
+//! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
 //! HEARTBEAT 0x1/0x2/0x8 first id pos                                = 9
 //! ACK       0x3      first msg from to                              = 13
-//! ATTACH    0x4      first leaf_id relay                            = 9
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
-//! DELIVER   0x6      first dst_leaf msg payload                     = 9 + payload
-//! ATTACHED  0x7      first leaf_id next_poll                        = 7
 //! ```
 //!
 //! A 9-byte heartbeat is as long on air as an 8-byte one, 20 payload
@@ -37,20 +36,12 @@
 //! - Short positions and message IDs are big-endian; a node ID is four
 //!   opaque bytes in order.
 //! - The payload is at most [`MAX_PAYLOAD`] = 233 bytes, what a frame holds
-//!   after the DATA header. DELIVER only carries a DATA payload onward, so
-//!   it has the same cap although its header is shorter.
-//! - ACK `to` names the sender of what is answered: a DATA's `src_hop`,
-//!   zero from a leaf, whose DATA names no sender; for a DELIVER, the
-//!   relay the leaf is attached to. An ATTACH is answered by ATTACHED, not
-//!   by an ACK (roadmap D39).
+//!   after the DATA header.
+//! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
-//!   bits of an ACK, and all of a DELIVER's, are sent as zero and ignored
-//!   on receipt, as are the spare position bits.
-//! - ATTACH `aux` is the [`RxMode`] code in its low three bits, and
-//!   [`ATTACH_REPLY`] when the ATTACH answers a poll.
-//! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s: the delay from
-//!   the end of the frame to the leaf's next slot. Its `aux` is the count
-//!   of messages waiting for the leaf, saturating at [`WAITING_MAX`].
+//!   bits of an ACK are sent as zero and ignored on receipt.
+//! - A heartbeat's type says whether the sender is sleepy (0x8), and if it
+//!   is not, whether its position is surveyed (0x1) or GPS-derived (0x2).
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
@@ -58,7 +49,7 @@
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
-use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::time::Duration;
 
 // Field widths.
@@ -79,10 +70,7 @@ const AUX_MASK: u8 = 0x0f;
 const T_HEARTBEAT_SURVEYED: u8 = 0x1;
 const T_HEARTBEAT_GPS: u8 = 0x2;
 const T_ACK: u8 = 0x3;
-const T_ATTACH: u8 = 0x4;
 const T_DATA: u8 = 0x5;
-const T_DELIVER: u8 = 0x6;
-const T_ATTACHED: u8 = 0x7;
 const T_HEARTBEAT_SLEEPY: u8 = 0x8;
 
 // HEARTBEAT.
@@ -100,23 +88,6 @@ pub const ACK_LEN: usize = ACK_TO + ID_LEN;
 /// The `aux` bit of an ACK that refuses.
 const ACK_REFUSED: u8 = 0x1;
 
-// ATTACH.
-const ATTACH_LEAF: usize = FIRST + FIRST_LEN;
-const ATTACH_RELAY: usize = ATTACH_LEAF + ID_LEN;
-/// ATTACH length (spec "Packet formats": 9).
-pub const ATTACH_LEN: usize = ATTACH_RELAY + ID_LEN;
-/// The `aux` bit of an ATTACH that answers a poll (spec "Attach and polls").
-const ATTACH_REPLY: u8 = 0x8;
-/// The `aux` bits of an ATTACH that hold the receive mode.
-const ATTACH_MODE: u8 = 0x7;
-
-// ATTACHED.
-const ATTACHED_LEAF: usize = FIRST + FIRST_LEN;
-const ATTACHED_NEXT: usize = ATTACHED_LEAF + ID_LEN;
-const NEXT_POLL_LEN: usize = 2;
-/// ATTACHED length (spec "Packet formats": 7).
-pub const ATTACHED_LEN: usize = ATTACHED_NEXT + NEXT_POLL_LEN;
-
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
 const DATA_SRC_HOP: usize = DATA_DST_HOP + ID_LEN;
@@ -127,69 +98,18 @@ const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
 /// DATA header length (spec "Packet formats": 22).
 pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 
-// DELIVER.
-const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
-const DELIVER_ID: usize = DELIVER_LEAF + ID_LEN;
-/// DELIVER header length before the payload (spec "Packet formats": 9).
-pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
-
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
-/// 255 − 22 = 233 bytes. DATA and DELIVER carry at most this.
+/// 255 − 22 = 233 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13 && ATTACH_LEN == 9);
+const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13);
 const _: () = assert!(
     time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         == time_on_air(8, MIN_PREAMBLE_SYMBOLS).as_micros(),
     "the node ID costs the heartbeat no airtime"
 );
-const _: () = assert!(ATTACHED_LEN == 7);
-const _: () = assert!(DATA_HEADER_LEN == 22 && DELIVER_HEADER_LEN == 9);
+const _: () = assert!(DATA_HEADER_LEN == 22);
 const _: () = assert!(MAX_PAYLOAD == 233);
-
-/// A leaf's receive mode, carried in ATTACH `aux` (spec "Leaf receive mode"). Sets the
-/// preamble of packets the relay sends to the leaf.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum RxMode {
-    /// Always listening; normal preamble.
-    Listening = 0,
-    /// Sleeps and wakes for CAD every 500 ms; needs a long preamble.
-    DutyCycled = 1,
-    /// Listens one rotation every ten minutes, CAD in between; long preamble.
-    Hybrid = 2,
-}
-
-impl RxMode {
-    /// From the wire code, or `None` if unknown.
-    pub const fn from_code(code: u8) -> Option<RxMode> {
-        match code {
-            0 => Some(RxMode::Listening),
-            1 => Some(RxMode::DutyCycled),
-            2 => Some(RxMode::Hybrid),
-            _ => None,
-        }
-    }
-
-    /// Preamble of packets to a leaf in this mode (spec "Leaf receive mode"): the
-    /// minimum for a leaf that listens, and at least 512 ms, 2000 symbols,
-    /// for one that wakes for a CAD every 500 ms, so that every wake finds
-    /// a preamble on the air.
-    pub const fn preamble_symbols(self) -> u16 {
-        match self {
-            RxMode::Listening => MIN_PREAMBLE_SYMBOLS,
-            RxMode::DutyCycled | RxMode::Hybrid => SLEEPING_PREAMBLE
-                .as_micros()
-                .div_ceil(SYMBOL_TIME.as_micros())
-                as u16,
-        }
-    }
-}
-
-/// Shortest preamble for a leaf that sleeps between CADs (spec "Leaf receive mode").
-pub const SLEEPING_PREAMBLE: Duration = Duration::from_millis(512);
-
-const _: () = assert!(RxMode::Hybrid.preamble_symbols() == 2000);
 
 /// HEARTBEAT, types 0x1 and 0x2 from a node that is not sleepy, 0x8
 /// from a sleepy one (spec "Heartbeat").
@@ -239,77 +159,6 @@ impl Ack {
     }
 }
 
-/// ATTACH, type 0x4 (spec "Attach and polls").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Attach {
-    /// The attaching leaf.
-    pub leaf: NodeId,
-    /// The relay attached to.
-    pub relay: NodeId,
-    /// The leaf's receive mode.
-    pub mode: RxMode,
-    /// It answers the relay's poll; otherwise it asks to attach.
-    pub reply: bool,
-}
-
-impl Attach {
-    /// The ATTACH that answers a poll, rather than one that attaches.
-    pub const fn reply(self) -> Attach {
-        Attach {
-            reply: true,
-            ..self
-        }
-    }
-}
-
-/// The most messages waiting an ATTACHED can count: all four bits of its
-/// `aux` (spec "Leaf receive mode"). The byte a count up to 255 would take makes the
-/// frame 46.25 symbols instead of 41.25, 11.84 ms instead of 10.56, and
-/// that 12 % more poll airtime alone tipped the capacity domain at twice
-/// the spec "Capacity and sizing" rate into collapse (roadmap D41).
-pub const WAITING_MAX: u8 = AUX_MASK;
-
-/// Unit of ATTACHED's time to the next poll (spec "Attach and polls"). Sixteen bits
-/// of it reach 655 s, past the delivery TTL of 600 s, which bounds the
-/// poll period (spec "Attach and polls"); it is a third of the clock
-/// drift over the default period, so a poll time rounded to it costs a
-/// sleeping leaf's window little.
-pub const POLL_UNIT: Duration = Duration::from_millis(10);
-
-/// ATTACHED, type 0x7 (spec "Attach and polls"): the relay to one of its leaves, on
-/// the relay's home channel. It answers an ATTACH that attaches, and on
-/// its own it is a poll, which the leaf answers with an ATTACH.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Attached {
-    /// The leaf.
-    pub leaf: NodeId,
-    /// From the end of this frame to the start of the leaf's next slot, in
-    /// [`POLL_UNIT`]s. Not a period: each ATTACHED names the next slot
-    /// afresh.
-    pub next_poll: u16,
-    /// Messages the relay holds for the leaf (spec "Delivery queue"), up to
-    /// [`WAITING_MAX`].
-    pub waiting: u8,
-}
-
-impl Attached {
-    /// The time to the next poll.
-    pub const fn next_poll(&self) -> Duration {
-        POLL_UNIT.mul(self.next_poll as u64)
-    }
-
-    /// `d` in whole [`POLL_UNIT`]s, rounded to the nearest and capped at
-    /// what the field holds.
-    pub const fn units(d: Duration) -> u16 {
-        let u = (d.as_micros() + POLL_UNIT.as_micros() / 2) / POLL_UNIT.as_micros();
-        if u > u16::MAX as u64 {
-            u16::MAX
-        } else {
-            u as u16
-        }
-    }
-}
-
 /// DATA, type 0x5 (spec "Forwarding", "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
@@ -318,7 +167,7 @@ pub struct Data<'a> {
     pub sender_home: Channel,
     /// The node this transmission is addressed to.
     pub dst_hop: NodeId,
-    /// The node that sent this transmission; [`NodeId::NONE`] from a leaf.
+    /// The node that sent this transmission.
     pub src_hop: NodeId,
     /// The destination position (spec "Addresses").
     pub dst_pos: Position,
@@ -361,17 +210,6 @@ impl Data<'_> {
     }
 }
 
-/// DELIVER, type 0x6: relay to leaf on the relay's home channel (spec "Delivery").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Deliver<'a> {
-    /// The receiving leaf.
-    pub dst_leaf: NodeId,
-    /// The message, so the leaf can ACK it without hashing.
-    pub msg_id: MsgId,
-    /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
-    pub payload: &'a [u8],
-}
-
 /// Any packet. Payloads borrow from the received frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packet<'a> {
@@ -379,14 +217,8 @@ pub enum Packet<'a> {
     Heartbeat(Heartbeat),
     /// ACK.
     Ack(Ack),
-    /// ATTACH.
-    Attach(Attach),
     /// DATA.
     Data(Data<'a>),
-    /// DELIVER.
-    Deliver(Deliver<'a>),
-    /// ATTACHED.
-    Attached(Attached),
 }
 
 /// Why a frame did not decode.
@@ -402,8 +234,6 @@ pub enum DecodeError {
     ChannelOutOfRange(u8),
     /// A payload longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
-    /// An unknown ATTACH receive mode.
-    BadRxMode(u8),
 }
 
 /// Why a packet did not encode.
@@ -487,13 +317,6 @@ impl Packet<'_> {
                 put(buf, ACK_TO, &a.to.0);
                 Ok(ACK_LEN)
             }
-            Packet::Attach(a) => {
-                let reply = if a.reply { ATTACH_REPLY } else { 0 };
-                buf[FIRST] = first(T_ATTACH, a.mode as u8 | reply);
-                put(buf, ATTACH_LEAF, &a.leaf.0);
-                put(buf, ATTACH_RELAY, &a.relay.0);
-                Ok(ATTACH_LEN)
-            }
             Packet::Data(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
@@ -507,22 +330,6 @@ impl Packet<'_> {
                 buf[DATA_TIME_LEFT] = d.time_left;
                 put(buf, DATA_HEADER_LEN, d.payload);
                 Ok(DATA_HEADER_LEN + d.payload.len())
-            }
-            Packet::Deliver(d) => {
-                if d.payload.len() > MAX_PAYLOAD {
-                    return Err(EncodeError::PayloadTooLong);
-                }
-                buf[FIRST] = first(T_DELIVER, 0);
-                put(buf, DELIVER_LEAF, &d.dst_leaf.0);
-                put(buf, DELIVER_ID, &d.msg_id.0.to_be_bytes());
-                put(buf, DELIVER_HEADER_LEN, d.payload);
-                Ok(DELIVER_HEADER_LEN + d.payload.len())
-            }
-            Packet::Attached(a) => {
-                buf[FIRST] = first(T_ATTACHED, a.waiting.min(WAITING_MAX));
-                put(buf, ATTACHED_LEAF, &a.leaf.0);
-                put(buf, ATTACHED_NEXT, &a.next_poll.to_be_bytes());
-                Ok(ATTACHED_LEN)
             }
         }
     }
@@ -557,24 +364,6 @@ impl<'a> Packet<'a> {
                     refused: aux & ACK_REFUSED != 0,
                 }))
             }
-            T_ATTACH => {
-                exact(b, ATTACH_LEN)?;
-                Ok(Packet::Attach(Attach {
-                    leaf: NodeId(get4(b, ATTACH_LEAF)),
-                    relay: NodeId(get4(b, ATTACH_RELAY)),
-                    mode: RxMode::from_code(aux & ATTACH_MODE)
-                        .ok_or(DecodeError::BadRxMode(aux & ATTACH_MODE))?,
-                    reply: aux & ATTACH_REPLY != 0,
-                }))
-            }
-            T_ATTACHED => {
-                exact(b, ATTACHED_LEN)?;
-                Ok(Packet::Attached(Attached {
-                    leaf: NodeId(get4(b, ATTACHED_LEAF)),
-                    next_poll: u16::from_be_bytes([b[ATTACHED_NEXT], b[ATTACHED_NEXT + 1]]),
-                    waiting: aux,
-                }))
-            }
             T_DATA => {
                 let payload = payload(b, DATA_HEADER_LEN)?;
                 Ok(Packet::Data(Data {
@@ -588,14 +377,6 @@ impl<'a> Packet<'a> {
                     payload,
                 }))
             }
-            T_DELIVER => {
-                let payload = payload(b, DELIVER_HEADER_LEN)?;
-                Ok(Packet::Deliver(Deliver {
-                    dst_leaf: NodeId(get4(b, DELIVER_LEAF)),
-                    msg_id: get_msg_id(b, DELIVER_ID),
-                    payload,
-                }))
-            }
             other => Err(DecodeError::BadType(other)),
         }
     }
@@ -605,6 +386,7 @@ impl<'a> Packet<'a> {
 mod tests {
     use super::*;
     use crate::radio::CHANNELS;
+    use crate::time::Duration;
     use proptest::prelude::*;
 
     fn position() -> impl Strategy<Value = Position> {
@@ -624,32 +406,20 @@ mod tests {
         any::<u32>().prop_map(MsgId)
     }
 
-    fn rx_mode() -> impl Strategy<Value = RxMode> {
-        prop_oneof![
-            Just(RxMode::Listening),
-            Just(RxMode::DutyCycled),
-            Just(RxMode::Hybrid)
-        ]
-    }
-
     fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
         proptest::collection::vec(any::<u8>(), 0..=MAX_PAYLOAD)
     }
 
     extern crate std;
 
-    /// Encode, check the length against the table of spec "Packet formats", decode,
-    /// compare.
+    /// Encode, check the length against the table above, decode, compare.
     fn round_trip(p: &Packet<'_>) {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
             Packet::Heartbeat(_) => 9,
             Packet::Ack(_) => 13,
-            Packet::Attach(_) => 9,
             Packet::Data(d) => 22 + d.payload.len(),
-            Packet::Deliver(d) => 9 + d.payload.len(),
-            Packet::Attached(_) => 7,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -681,18 +451,6 @@ mod tests {
         }
 
         #[test]
-        fn attach_round_trips(leaf in id(), relay in id(), mode in rx_mode(), reply: bool) {
-            round_trip(&Packet::Attach(Attach { leaf, relay, mode, reply }));
-        }
-
-        #[test]
-        fn attached_round_trips(leaf in id(), next_poll: u16, waiting in 0..=WAITING_MAX) {
-            let a = Attached { leaf, next_poll, waiting };
-            round_trip(&Packet::Attached(a));
-            prop_assert_eq!(Attached::units(a.next_poll()), next_poll);
-        }
-
-        #[test]
         fn data_round_trips(
             sender_home in chan(),
             dst_hop in id(),
@@ -713,15 +471,10 @@ mod tests {
         }
 
         #[test]
-        fn deliver_round_trips(dst_leaf in id(), msg_id in msg(), payload in payload()) {
-            round_trip(&Packet::Deliver(Deliver { dst_leaf, msg_id, payload: &payload }));
-        }
-
-        #[test]
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
             // the same, apart from bits the decoder ignores (unused aux bits
-            // of ACK and DELIVER, spare position bits).
+            // of an ACK, spare position bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -767,15 +520,6 @@ mod tests {
             .encode(&mut buf),
             Err(EncodeError::PayloadTooLong)
         );
-        let deliver = Deliver {
-            dst_leaf: NodeId::NONE,
-            msg_id: MsgId(1),
-            payload: &long,
-        };
-        assert_eq!(
-            Packet::Deliver(deliver).encode(&mut buf),
-            Err(EncodeError::PayloadTooLong)
-        );
     }
 
     #[test]
@@ -783,8 +527,13 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        assert_eq!(Packet::decode(&[0x70; 7 - 1]), Err(Short));
-        assert_eq!(Packet::decode(&[0x70; 7 + 1]), Err(BadLength));
+        for gone in [0x40, 0x60, 0x70] {
+            assert_eq!(
+                Packet::decode(&[gone; 9]),
+                Err(BadType(gone >> 4)),
+                "ATTACH, DELIVER and ATTACHED are gone"
+            );
+        }
         assert_eq!(Packet::decode(&[0x90; 7]), Err(BadType(9)));
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
@@ -798,17 +547,6 @@ mod tests {
         );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
-        assert_eq!(
-            Packet::decode(&[0x43, 0, 0, 0, 0, 0, 0, 0, 0]),
-            Err(BadRxMode(3))
-        );
-        assert_eq!(
-            Packet::decode(&[0x4b, 0, 0, 0, 0, 0, 0, 0, 0]),
-            Err(BadRxMode(3)),
-            "the reply bit is not part of the mode"
-        );
-        assert_eq!(Packet::decode(&[0x40; ATTACH_LEN + 1]), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x60, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
 
         let mut data = [0u8; DATA_HEADER_LEN];
@@ -820,17 +558,11 @@ mod tests {
             "an empty payload is a payload"
         );
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
-
-        // MAX_PAYLOAD + 1 fits a DELIVER frame but is still rejected.
-        let mut deliver = [0u8; DELIVER_HEADER_LEN + MAX_PAYLOAD + 1];
-        deliver[FIRST] = first(T_DELIVER, 0);
-        assert_eq!(Packet::decode(&deliver), Err(PayloadTooLong));
-        assert!(Packet::decode(&deliver[..DELIVER_HEADER_LEN + MAX_PAYLOAD]).is_ok());
     }
 
     #[test]
     fn exact_bytes() {
-        // Pin the layouts: field order, big-endian names and IDs.
+        // Pin the layouts: field order, big-endian positions and IDs.
         let mut buf = [0; MAX_FRAME];
         let position = Position::from_degrees(50.45, 30.52);
         let hb = Heartbeat {
@@ -846,7 +578,7 @@ mod tests {
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x8c);
         assert_eq!(
-            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),
             "46.25 symbols at SF5, as for 8 bytes"
         );
@@ -866,49 +598,10 @@ mod tests {
         let len = Packet::Ack(refused).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x31, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         assert_eq!(
-            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(14_400),
             "51.25 symbols at SF5"
         );
-
-        let attach = Attach {
-            leaf: NodeId([1, 2, 3, 4]),
-            relay: NodeId([5, 6, 7, 8]),
-            mode: RxMode::Hybrid,
-            reply: false,
-        };
-        let len = Packet::Attach(attach).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x42, 1, 2, 3, 4, 5, 6, 7, 8]);
-        let len = Packet::Attach(attach.reply()).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x4a, 1, 2, 3, 4, 5, 6, 7, 8]);
-
-        let attached = Attached {
-            leaf: NodeId([1, 2, 3, 4]),
-            next_poll: 0x0506,
-            waiting: 7,
-        };
-        let len = Packet::Attached(attached).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x77, 1, 2, 3, 4, 5, 6]);
-        let many = Attached {
-            waiting: 200,
-            ..attached
-        };
-        let len = Packet::Attached(many).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x7f, "saturates at 15");
-        assert_eq!(
-            Packet::decode(&buf[..len]),
-            Ok(Packet::Attached(Attached {
-                waiting: WAITING_MAX,
-                ..attached
-            }))
-        );
-        assert_eq!(
-            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(10_560),
-            "41.25 symbols at SF5, as for 5 or 6 bytes"
-        );
-        assert_eq!(Attached::units(Duration::from_millis(300_004)), 30_000);
-        assert_eq!(Attached::units(Duration::from_secs(1000)), u16::MAX);
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),
@@ -936,13 +629,5 @@ mod tests {
         assert_eq!(Data::units(Duration::from_millis(600_000)), 240);
         assert_eq!(Data::units(Duration::from_millis(2_499)), 0, "rounded down");
         assert_eq!(Data::units(Duration::from_secs(1000)), u8::MAX);
-
-        let deliver = Deliver {
-            dst_leaf: NodeId([1, 2, 3, 4]),
-            msg_id: MsgId(0x0506_0708),
-            payload: &[9],
-        };
-        let len = Packet::Deliver(deliver).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 }

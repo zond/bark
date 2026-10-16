@@ -1,10 +1,9 @@
-//! Per-hop transfer (spec "Hand-over"), shared by both roles: one frame handed
-//! to one receiver until it answers or the sender gives up ([`Transfer`]),
-//! and the one reply this node can owe the sender of what it received
-//! ([`Replies`]): an ACK, taking or refusing, or between a relay and its
-//! leaf an ATTACHED or an ATTACH (spec "Attach and polls").
+//! Per-hop transfer (spec "Hand-over"): one frame handed to one receiver
+//! until it answers or the sender gives up ([`Transfer`]), and the one
+//! reply this node can owe the sender of what it received ([`Replies`]):
+//! an ACK, taking or refusing.
 //!
-//! Both only keep the state; the role owns the radio (`mac.rs`), the frame
+//! Both only keep the state; the node owns the radio (`mac.rs`), the frame
 //! and the duty-cycle budget, starts each excursion and reports its
 //! completion here.
 //!
@@ -35,7 +34,7 @@ use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Attach};
+use crate::wire::Ack;
 
 /// Where a hand-over is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,8 +93,8 @@ impl Transfer {
             lbt_since: None,
             expect: Ack {
                 msg_id: crate::ids::MsgId(0),
-                from: NodeId([0; 4]),
-                to: NodeId([0; 4]),
+                from: NodeId::NONE,
+                to: NodeId::NONE,
                 refused: false,
             },
         }
@@ -286,11 +285,6 @@ impl Transfer {
 pub(crate) enum Reply {
     /// An ACK, taking or refusing (spec "The ACK").
     Ack(Ack),
-    /// A relay's ATTACHED to this leaf's ATTACH that attaches (spec "Attach and polls"). The
-    /// relay builds it as it transmits, from the leaf's slot.
-    Attached(NodeId),
-    /// A leaf's ATTACH that answers its relay's poll (spec "Attach and polls").
-    Attach(Attach),
 }
 
 impl From<Ack> for Reply {
@@ -328,9 +322,8 @@ enum ReplyStep {
 /// transmission promised: a second packet it took or refused meanwhile
 /// would be answered only after the first reply, and its sender may have
 /// stopped waiting by then. A relay takes or refuses a packet only when
-/// [`Replies::can_owe`] its reply, and a leaf takes a DELIVER only then;
-/// otherwise the node stays silent and the sender's retry brings the
-/// packet again.
+/// [`Replies::can_owe`] its reply; otherwise the node stays silent and the
+/// sender's retry brings the packet again.
 #[derive(Clone)]
 pub(crate) struct Replies {
     owed: Option<Owed>,

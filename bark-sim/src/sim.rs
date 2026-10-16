@@ -25,8 +25,8 @@ use crate::scenario::{
 use crate::trace::{Names, Tracer};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::{
-    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, Leaf,
-    MsgId, NodeId, Position, Relay, Trace, MAX_FRAME,
+    Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, MsgId,
+    NodeId, Position, Relay, Trace, MAX_FRAME,
 };
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -207,6 +207,34 @@ pub(crate) struct NodeState {
     pub held_gen: u32,
     /// Times the node was restarted (`ScriptAction::Restart`).
     pub restarts: u32,
+    /// The last heartbeats to reach this node, for [`crate::metrics::Addressed`].
+    pub beats: BeatRing,
+}
+
+/// The last few heartbeats to reach a node: when each was on the air, its
+/// channel, and whether a sleepy node sent it. A frame lasts at most a full
+/// frame's 139 ms and a heartbeat 11.84 ms, so eight cover what a frame can
+/// overlap at any heartbeat rate a node hears.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct BeatRing {
+    beats: [(Instant, Instant, u8, bool); 8],
+    next: usize,
+}
+
+impl BeatRing {
+    /// A heartbeat reached the node.
+    pub(crate) fn push(&mut self, start: Instant, end: Instant, channel: u8, sleepy: bool) {
+        self.beats[self.next] = (start, end, channel, sleepy);
+        self.next = (self.next + 1) % self.beats.len();
+    }
+
+    /// Whether a heartbeat, a sleepy node's or another's, was on the air
+    /// on `channel` during `[start, end)`.
+    pub(crate) fn during(&self, start: Instant, end: Instant, channel: u8, sleepy: bool) -> bool {
+        self.beats
+            .iter()
+            .any(|&(s, e, c, z)| c == channel && z == sleepy && s < end && e > start)
+    }
 }
 
 /// A transmission, from excursion start until it leaves the air.
@@ -283,7 +311,7 @@ struct OriginRecord {
     taken_at: Option<Instant>,
     /// When a node dropped it.
     dropped_at: Option<Instant>,
-    /// Frames that carried it or answered it (DATA, DELIVER, their ACKs),
+    /// Frames that carried it or answered it (DATA and their ACKs),
     /// and their time on air, µs.
     frames: u32,
     airtime_us: u64,
@@ -406,9 +434,10 @@ pub struct Sim {
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
     positions: Vec<Position>,
+    /// Nodes `0..n_relays` are not sleepy; the rest, placed as leaves, are.
     n_relays: u32,
+    /// Every node's core.
     relays: Vec<Relay>,
-    leaves: Vec<Leaf>,
     pub(crate) nodes: Vec<NodeState>,
     pub(crate) now: Instant,
     heap: BinaryHeap<Entry>,
@@ -529,14 +558,12 @@ impl Sim {
         let config_for = |i: usize| Config {
             position: positions[i],
             node_id: ids[i],
+            sleepy: i >= n_relays as usize,
             ..base
         };
         let core_seed = |i: usize| stream_seed(sc.seed, Purpose::CoreSeed, i as u64);
-        let relays: Vec<Relay> = (0..n_relays as usize)
+        let relays: Vec<Relay> = (0..n)
             .map(|i| Relay::new(config_for(i), core_seed(i)))
-            .collect();
-        let leaves: Vec<Leaf> = (n_relays as usize..n)
-            .map(|i| Leaf::new(config_for(i), core_seed(i)))
             .collect();
 
         let nodes: Vec<NodeState> = (0..n)
@@ -557,6 +584,7 @@ impl Sim {
                 held: None,
                 held_gen: 0,
                 restarts: 0,
+                beats: BeatRing::default(),
             })
             .collect();
 
@@ -588,7 +616,6 @@ impl Sim {
             was_booting: false,
             n_relays,
             relays,
-            leaves,
             nodes,
             now: Instant::ZERO,
             heap: BinaryHeap::new(),
@@ -872,7 +899,7 @@ impl Sim {
         self.nodes[node as usize].resting
     }
 
-    /// A relay core.
+    /// A node's core.
     pub fn relay(&self, i: u32) -> &Relay {
         &self.relays[i as usize]
     }
@@ -1002,7 +1029,7 @@ impl Sim {
             return;
         };
         let t = self.now.as_micros() / 1_000_000;
-        for (i, r) in self.relays.iter().enumerate() {
+        for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
             let l = r.load(self.now);
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
@@ -1013,7 +1040,7 @@ impl Sim {
                 l.bucket.as_micros(),
                 l.send_queue,
                 l.delivery_queue,
-                l.leaves,
+                l.heard,
                 l.neighbours
             ));
         }
@@ -1028,12 +1055,12 @@ impl Sim {
             !gone
         });
         let mut a = crate::metrics::LeafSums::default();
-        for (k, leaf) in self.leaves.iter().enumerate() {
+        for (k, leaf) in self.relays[self.n_relays as usize..].iter().enumerate() {
             let n = self.n_relays as usize + k;
             a.add(
                 &self.metrics.nodes[n],
-                leaf.relay().is_some(),
-                leaf.holding().is_some(),
+                leaf.anchor().is_some(),
+                leaf.holding().next().is_some(),
                 self.offers[n].is_some(),
                 self.nodes[n].present,
             );
@@ -1055,7 +1082,7 @@ impl Sim {
         use bark_proto::tables::budget::REPLY_RESERVE;
         use bark_proto::tables::neighbours::NEIGHBOURS;
         let full_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
-        for (i, r) in self.relays.iter().enumerate() {
+        for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
             if !self.nodes[i].alive || r.booting() {
                 continue;
             }
@@ -1083,8 +1110,8 @@ impl Sim {
         if let Some(t) = &mut self.tracer {
             t.event(now, node, &ev, &self.msg_tags);
         }
+        self.note_beat(node, &ev);
         if node < self.n_relays {
-            self.note_attach(node, &ev);
             self.rx_data = match ev {
                 Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
                     Ok(bark_proto::wire::Packet::Data(d)) if d.hops > 0 => {
@@ -1095,19 +1122,14 @@ impl Sim {
                 _ => None,
             };
         }
-        let wake = if node < self.n_relays {
-            let c = &mut self.relays[node as usize];
-            self.was_booting = c.booting();
-            c.handle(ev, now, &mut |a| buf.push(a));
-            c.next_wakeup()
-        } else {
-            let c = &mut self.leaves[(node - self.n_relays) as usize];
-            c.handle(ev, now, &mut |a| buf.push(a));
-            let attached = c.relay();
-            let wake = c.next_wakeup();
-            self.attached(node, attached);
-            wake
-        };
+        let c = &mut self.relays[node as usize];
+        self.was_booting = c.booting();
+        c.handle(ev, now, &mut |a| buf.push(a));
+        let wake = c.next_wakeup();
+        if node >= self.n_relays {
+            let anchor = c.anchor().map(|a| a.position);
+            self.attached(node, anchor);
+        }
         for a in buf.drain(..) {
             self.apply(node, a, false);
         }
@@ -1128,25 +1150,27 @@ impl Sim {
         }
     }
 
-    /// A relay receives an ATTACH addressed to it from a leaf that came
-    /// back into reach: the network knows the leaf is back.
-    fn note_attach(&mut self, relay: u32, ev: &Event<'_>) {
+    /// A node hears the beat of a sleepy node that came back into reach,
+    /// and is its anchor, or any node if it has none: the network knows the
+    /// sleepy node is back.
+    fn note_beat(&mut self, receiver: u32, ev: &Event<'_>) {
         if self.leaf_nodes.is_empty() {
             return;
         }
         let Event::Received { bytes, .. } = ev else {
             return;
         };
-        let Ok(bark_proto::wire::Packet::Attach(a)) = bark_proto::wire::Packet::decode(bytes)
+        let Ok(bark_proto::wire::Packet::Heartbeat(hb)) = bark_proto::wire::Packet::decode(bytes)
         else {
             return;
         };
-        if a.relay != self.relays[relay as usize].id() {
-            return;
-        }
-        let Some(&leaf) = self.leaf_nodes.get(&a.leaf.0) else {
+        let Some(&leaf) = self.leaf_nodes.get(&hb.id.0) else {
             return;
         };
+        let anchor = self.relays[leaf as usize].anchor().map(|a| a.id);
+        if anchor.is_some_and(|a| a != self.relays[receiver as usize].id()) {
+            return;
+        }
         let li = (leaf - self.n_relays) as usize;
         if let Some(t) = self.back_at[li].take() {
             let r = &mut self.metrics.returns;
@@ -1184,10 +1208,6 @@ impl Sim {
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
-                    Trace::PollSkipped { .. } => c.polls_skipped += 1,
-                    Trace::LeafDropped { .. } => c.leaves_dropped += 1,
-                    Trace::Attaching { .. } => c.attaches_sent += 1,
-                    Trace::AttachFailed { .. } => c.attaches_failed += 1,
                     Trace::Forwarded { .. } => c.handed_over += 1,
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
@@ -1660,10 +1680,10 @@ impl Sim {
         self.sites[node as usize]
     }
 
-    /// The relay a leaf is attached to now, as a node index.
+    /// A sleepy node's anchor now, as a node index.
     pub fn attached_relay(&self, leaf: u32) -> Option<u32> {
-        let p = self.leaves[(leaf - self.n_relays) as usize].relay()?;
-        (0..self.n_relays).find(|&r| self.positions[r as usize] == p)
+        let a = self.relays[leaf as usize].anchor()?;
+        self.relay_index.get(&key(a.id)).copied()
     }
 
     /// Traffic tags of the messages some live core still holds, or its
@@ -1676,12 +1696,6 @@ impl Sim {
             .enumerate()
             .filter(|(i, _)| alive(*i))
             .flat_map(|(_, r)| r.holding());
-        let leaves = self
-            .leaves
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| alive(self.n_relays as usize + i))
-            .filter_map(|(_, l)| l.holding());
         let waiting = self
             .offers
             .iter()
@@ -1689,7 +1703,6 @@ impl Sim {
             .filter(|(i, _)| alive(*i))
             .filter_map(|(_, o)| o.as_ref().map(|o| o.tag));
         relays
-            .chain(leaves)
             .filter_map(|id| self.msg_tags.get(&id.0).copied())
             .chain(waiting)
             .collect()
@@ -1743,9 +1756,7 @@ impl Sim {
         let from = if src < self.n_relays {
             Some(src)
         } else {
-            self.leaves[(src - self.n_relays) as usize]
-                .relay()
-                .and_then(relay_at)
+            relay_at(self.relays[src as usize].address())
         };
         match (from, relay_at(dst)) {
             (Some(a), Some(b)) => self.component[a as usize] == self.component[b as usize],
@@ -1775,9 +1786,13 @@ impl Sim {
         if node < self.n_relays {
             return Some(self.positions[node as usize]);
         }
-        let leaf = &self.leaves[(node - self.n_relays) as usize];
-        if let Some(p) = leaf.relay() {
-            self.address[node as usize] = Some(p);
+        let leaf = &self.relays[node as usize];
+        if self.n_relays == 0 {
+            // No node that is not sleepy: a sleepy node's own position.
+            return Some(leaf.address());
+        }
+        if let Some(a) = leaf.anchor() {
+            self.address[node as usize] = Some(a.position);
         }
         self.address[node as usize]
     }
@@ -1794,7 +1809,7 @@ impl Sim {
     /// shows as latency.
     fn originate(&mut self, src: u32, dst: u32, len: u8) {
         let st = &self.nodes[src as usize];
-        if !st.alive || !st.present || self.n_relays == 0 {
+        if !st.alive || !st.present {
             return;
         }
         if self.offers[src as usize].is_some() {
@@ -1843,12 +1858,7 @@ impl Sim {
     /// Hand `src`'s waiting message to its core, if the core takes one now.
     fn offer(&mut self, src: u32) {
         let now = self.now;
-        let ready = self.nodes[src as usize].alive
-            && if src < self.n_relays {
-                self.relays[src as usize].accepts_send(now)
-            } else {
-                self.leaves[(src - self.n_relays) as usize].accepts_send(now)
-            };
+        let ready = self.nodes[src as usize].alive && self.relays[src as usize].accepts_send(now);
         if !ready {
             return;
         }
@@ -1958,13 +1968,8 @@ impl Sim {
         st.restarts += 1;
         let index = (st.restarts as u64) << 32 | node as u64;
         let seed = stream_seed(self.seed, Purpose::CoreSeed, index);
-        if node < self.n_relays {
-            let r = &mut self.relays[node as usize];
-            *r = Relay::new(*r.config(), seed);
-        } else {
-            let l = &mut self.leaves[(node - self.n_relays) as usize];
-            *l = Leaf::new(*l.config(), seed);
-        }
+        let r = &mut self.relays[node as usize];
+        *r = Relay::new(*r.config(), seed);
         // Power-on is delivered as a wakeup (docs/core-interface.md §2).
         self.deliver(node, Event::Wakeup);
     }

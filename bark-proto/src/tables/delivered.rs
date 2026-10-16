@@ -6,7 +6,7 @@
 //! place of the least recently active, the one delivered or last offered
 //! again longest ago, as message records do (`records.rs`, roadmap D31).
 //! The size is the delivery queue's, [`DELIVERY_QUEUE`]: what a relay
-//! delivers in one delivery TTL for a full leaf table, 256 leaves (spec "Attach and polls")
+//! delivers in one delivery TTL for a full heard table, 256 sleepy nodes (`heard.rs`)
 //! at ≈23 texts a day each (spec "Capacity and sizing", the network at capacity), 41. Above that
 //! a late copy of one forgotten is delivered twice, which the app, whose
 //! payloads are unique (spec "Phone link"), can recognise.
