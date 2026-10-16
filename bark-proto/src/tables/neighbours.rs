@@ -81,8 +81,6 @@ use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::tables::budget::hold;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
-#[cfg(test)]
-use crate::wire::HeartbeatPower;
 
 /// Table capacity (design §8.2).
 pub const NEIGHBOURS: usize = 64;
@@ -103,17 +101,12 @@ pub struct Neighbour {
     /// Until when it is banned: it refused a hand-over, or its last ones
     /// failed.
     pub banned_until: Instant,
-    /// Averaged packet RSSI of the frames heard from it, dBm, as if each
-    /// had been sent at the ERP limit: a heartbeat states its power, and
-    /// only one below the limit is corrected. The limit less this is the
-    /// path loss (`relay/power.rs`).
+    /// Averaged packet RSSI of the frames heard from it, dBm.
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
     /// Whether its position is surveyed (heartbeat 0x1) rather than GPS (0x2).
     pub surveyed: bool,
-    /// The operating power its last heartbeat stated, dBm.
-    pub power_dbm: i8,
 }
 
 /// Timing parameters of the table, derived from [`Config`].
@@ -282,7 +275,6 @@ impl Neighbours {
                 n.surveyed = hb.surveyed;
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
-                n.power_dbm = hb.power.operating_dbm;
             }
             return Heard::Refreshed(i);
         }
@@ -296,7 +288,6 @@ impl Neighbours {
             rssi: rssi as f32,
             fail_count: 0,
             surveyed: hb.surveyed,
-            power_dbm: hb.power.operating_dbm,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -445,7 +436,6 @@ mod tests {
             surveyed: true,
             home: Channel::new(home).unwrap(),
             position: pos(i),
-            power: HeartbeatPower::LIMIT,
         }
     }
 

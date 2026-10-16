@@ -27,7 +27,6 @@
 //! of those is `next_wakeup`.
 
 mod forward;
-mod power;
 mod service;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
@@ -47,8 +46,6 @@ use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{Duration, Instant};
-#[cfg(test)]
-use crate::wire::HeartbeatPower;
 use crate::wire::{Heartbeat, Packet};
 
 /// Who started the outstanding excursion.
@@ -188,14 +185,6 @@ pub struct Relay {
     /// When the bucket will fit the DELIVER the send queue last had no
     /// room for, as a hand-over the bucket cannot fit yet is deferred.
     feed_at: Option<Instant>,
-    /// Operating power under the rules that lower it (`power.rs`), dBm.
-    power_dbm: i8,
-    /// RSSI of the frame being handled, dBm.
-    rx_rssi: i16,
-    /// Power of the reply owed (`power.rs`), dBm.
-    reply_power: i8,
-    /// Heartbeats sent, for the discovery rotation.
-    beats: u32,
 }
 
 impl Relay {
@@ -254,10 +243,6 @@ impl Relay {
             held: None,
             feed_due: false,
             feed_at: None,
-            power_dbm: config.tx_power_dbm,
-            rx_rssi: 0,
-            reply_power: config.tx_power_dbm,
-            beats: 0,
             config,
             rng: Rng::new(0),
         }
@@ -310,10 +295,6 @@ impl Relay {
             held,
             feed_due,
             feed_at,
-            power_dbm,
-            rx_rssi,
-            reply_power,
-            beats,
         } = self;
         *plane = LocalPlane::new(config.position);
         *h = home;
@@ -355,10 +336,6 @@ impl Relay {
         *held = None;
         *feed_due = false;
         *feed_at = None;
-        *power_dbm = config.tx_power_dbm;
-        *rx_rssi = 0;
-        *reply_power = config.tx_power_dbm;
-        *beats = 0;
         *c = config;
         *r = rng;
     }
@@ -423,12 +400,6 @@ impl Relay {
             .filter(|r| !r.handed(slot) && r.parent().map(|(p, _)| p) != Some(to))
             .map(|r| r.highest_hops().saturating_add(1))
             .max()
-    }
-
-    /// Operating power, dBm: what heartbeats state (research prototype,
-    /// `relay/power.rs`).
-    pub fn operating_power(&self) -> i8 {
-        self.heartbeat_power().0.operating_dbm
     }
 
     /// Whether a hand-over is under way: begun and not yet answered or
@@ -636,16 +607,12 @@ impl Relay {
     /// sent, so a move during its backoff still announces the new channel.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
-        let (power, tx) = self.heartbeat_power();
         let hb = Heartbeat {
             surveyed: self.config.surveyed,
             home: self.home,
             position: self.config.position,
-            power,
         };
-        let mut f = mac::frame(&Packet::Heartbeat(hb), channel, MIN_PREAMBLE_SYMBOLS);
-        f.power_dbm = tx;
-        f
+        mac::frame(&Packet::Heartbeat(hb), channel, MIN_PREAMBLE_SYMBOLS)
     }
 
     /// Check the budget before the channel: there is no point listening for
@@ -720,9 +687,7 @@ impl Relay {
         }
         if sent {
             self.beacon.rotation = self.beacon.rotation.next();
-            self.beats = self.beats.wrapping_add(1);
         }
-        self.adjust_power(now);
         self.beacon.next_at = now + self.heartbeat_interval();
     }
 
@@ -737,17 +702,12 @@ impl Relay {
         // A relay's DATA says where it listens now (§9.2.1); a leaf's
         // (`hops` 0) names no relay. Its DATA and ACKs show how well it is
         // heard (§8.2).
-        // Their power is stated only with power control off, when every
-        // frame goes at the limit.
-        let at_limit = self.frames_at_limit();
         match decoded {
             Ok(Packet::Data(d)) if d.hops > 0 => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
-                if at_limit {
-                    self.neighbours.frame_heard(d.src_hop, rssi);
-                }
+                self.neighbours.frame_heard(d.src_hop, rssi);
             }
-            Ok(Packet::Ack(a)) if at_limit => {
+            Ok(Packet::Ack(a)) => {
                 let from = ShortName(u32::from_be_bytes(a.from.0));
                 self.neighbours.frame_heard(from, rssi);
             }
@@ -794,10 +754,6 @@ impl Relay {
 
     fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         if hb.position != self.config.position {
-            if self.neighbours.get(hb.position).is_none() && !self.admits(&hb) {
-                return;
-            }
-            let rssi = self.at_limit(&hb, rssi);
             let heard = self.neighbours.heard(&hb, rssi, &self.plane, now);
             if let Some(slot) = heard.new_occupant() {
                 self.records.slot_reoccupied(slot);
@@ -854,10 +810,7 @@ impl Core for Relay {
             Event::Wakeup => {}
             Event::Received {
                 bytes, rssi_dbm, ..
-            } => {
-                self.rx_rssi = rssi_dbm;
-                self.received(bytes, rssi_dbm, now, emit)
-            }
+            } => self.received(bytes, rssi_dbm, now, emit),
             Event::CadDone { busy, .. } => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                 Some(Job::HandOver) => self.handover_check(busy, now, emit),
@@ -1704,7 +1657,6 @@ mod tests {
             surveyed: true,
             home: b_home,
             position: b,
-            power: HeartbeatPower::LIMIT,
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         // Four forwards for B, queued in this order.
@@ -1836,7 +1788,6 @@ mod tests {
             surveyed: true,
             home: Channel::new(5).unwrap(),
             position: d_pos,
-            power: HeartbeatPower::LIMIT,
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         let data = Data {
@@ -1962,7 +1913,6 @@ mod tests {
                 surveyed: true,
                 home: Channel::new(5).unwrap(),
                 position: d_pos,
-                power: HeartbeatPower::LIMIT,
             }),
         );
         let expiry = r.neighbours.params().expire_after;
@@ -2041,7 +1991,6 @@ mod tests {
                     lat: me.lat + 5_000 * k,
                     ..me
                 },
-                power: HeartbeatPower::LIMIT,
             };
             r.neighbours.heard(&hb, -80, &r.plane, now);
             r.neighbours.refused(hb.position, now + BAN);

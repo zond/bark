@@ -173,8 +173,8 @@ pub struct Driver<C, R, K, A> {
 }
 
 impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
-    /// A driver for `core`, transmitting each frame at its own power
-    /// and never above `tx_dbm` conducted (`Config::tx_power_dbm`).
+    /// A driver for `core`, transmitting at `tx_dbm` conducted
+    /// (`Config::tx_power_dbm`).
     pub fn new(core: C, radio: R, clock: K, app: A, tx_dbm: i8) -> Self {
         Driver {
             core,
@@ -432,8 +432,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 );
                 self.listening = None;
                 self.receiving = false;
-                let dbm = frame.power_dbm.min(self.tx_dbm);
-                if let Err(e) = self.radio.transmit(&frame, dbm).await {
+                if let Err(e) = self.radio.transmit(&frame, self.tx_dbm).await {
                     self.failed(e);
                 }
                 Event::TxDone

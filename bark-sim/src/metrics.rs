@@ -186,46 +186,6 @@ pub struct NodeMetrics {
     /// not sampled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load: Option<LoadStats>,
-    /// Transmit power, when power control is on.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tx_power: Option<PowerStats>,
-}
-
-/// Transmit power over a node's frames.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-pub struct PowerStats {
-    /// Sum of power in dBm times airtime in µs.
-    pub dbm_us: f64,
-    /// Sum of power in mW times airtime in µs.
-    pub mw_us: f64,
-    /// Frames sent below the configured power.
-    pub below_limit: u64,
-    /// Operating power samples, one per load sample.
-    pub samples: u64,
-    /// Operating power summed over samples, dBm.
-    pub operating_sum: i64,
-    /// Lowest operating power sampled, dBm.
-    pub operating_min: i8,
-    /// Samples whose operating power differed from the one before.
-    pub changes: u64,
-    /// The last sample.
-    #[serde(skip)]
-    pub last: Option<i8>,
-}
-
-impl PowerStats {
-    /// Add one sample of the operating power.
-    pub fn sample(&mut self, dbm: i8) {
-        if self.samples == 0 || dbm < self.operating_min {
-            self.operating_min = dbm;
-        }
-        self.samples += 1;
-        self.operating_sum += dbm as i64;
-        if self.last.is_some_and(|l| l != dbm) {
-            self.changes += 1;
-        }
-        self.last = Some(dbm);
-    }
 }
 
 /// Counts of what a core reported in its traces (`bark_proto::Trace`), and

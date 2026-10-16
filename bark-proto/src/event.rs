@@ -16,9 +16,8 @@ use crate::time::Instant;
 /// core will ever emit or accept.
 pub const MAX_FRAME: usize = 255;
 
-/// A frame to transmit: the LoRa payload bytes, their count, the channel,
-/// the preamble length and the transmit power. Fixed-size so that no action
-/// allocates.
+/// A frame to transmit: the LoRa payload bytes, their count, the channel and
+/// the preamble length. Fixed-size so that no action allocates.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Frame {
     /// Channel to transmit on.
@@ -26,10 +25,6 @@ pub struct Frame {
     /// Preamble symbols; never below `radio::MIN_PREAMBLE_SYMBOLS`. Long
     /// preambles target duty-cycled leaves (design §10.5).
     pub preamble_symbols: u16,
-    /// Transmit power in dBm at the radio's output, never above
-    /// `Config::tx_power_dbm`. The core sets it per frame; with power
-    /// control off it is always `Config::tx_power_dbm`.
-    pub power_dbm: i8,
     /// Number of valid bytes in `bytes`.
     pub len: u8,
     /// Payload bytes; only `..len` are meaningful.
@@ -48,7 +43,6 @@ impl core::fmt::Debug for Frame {
         f.debug_struct("Frame")
             .field("channel", &self.channel)
             .field("preamble_symbols", &self.preamble_symbols)
-            .field("power_dbm", &self.power_dbm)
             .field("bytes", &self.payload())
             .finish()
     }

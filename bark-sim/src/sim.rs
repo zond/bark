@@ -386,12 +386,6 @@ struct ScriptEntry {
 /// The simulator.
 pub struct Sim {
     pub(crate) radio: RadioParams,
-    /// The transmit power the link table is built for, dBm: every node's
-    /// `Config::tx_power_dbm`. A frame at `p` arrives `p` less this above
-    /// the table's power.
-    pub(crate) tx_cfg_dbm: i8,
-    /// Whether power control is on, so that transmit power is recorded.
-    pub(crate) power_on: bool,
     pub(crate) curve: ErrorCurve,
     pub(crate) sens_dbm: f64,
     pub(crate) noise_mw: f64,
@@ -564,8 +558,6 @@ impl Sim {
         let busy_signal_mw = phy::mw(noise_dbm) * (phy::mw(base.busy_threshold_db as f64) - 1.0);
 
         let mut sim = Sim {
-            tx_cfg_dbm: base.tx_power_dbm,
-            power_on: base.power.rule != bark_proto::PowerRule::Fixed,
             curve: ErrorCurve::new(&radio),
             radio,
             sens_dbm,
@@ -1067,12 +1059,6 @@ impl Sim {
                 if let Some(load) = &mut self.metrics.nodes[i].load {
                     load.handing_over += 1;
                 }
-            }
-            if self.power_on {
-                self.metrics.nodes[i]
-                    .tx_power
-                    .get_or_insert_with(Default::default)
-                    .sample(r.operating_power());
             }
         }
     }
@@ -1950,7 +1936,6 @@ impl Sim {
                 let f = Frame {
                     channel: channel.expect("validated"),
                     preamble_symbols: preamble,
-                    power_dbm: self.tx_cfg_dbm,
                     len,
                     bytes,
                 };

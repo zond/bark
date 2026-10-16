@@ -139,9 +139,6 @@ pub struct LeafEntry {
     pub done: bool,
     /// Polls sent or skipped since it last answered.
     pub unanswered: u8,
-    /// Path loss to it in whole dB, rounded up, from its last ATTACH,
-    /// sent at the ERP limit as every leaf sends.
-    pub loss_db: u8,
     /// Messages the last ATTACHED to it said wait.
     pub waiting: u8,
 }
@@ -171,7 +168,6 @@ impl Leaves {
             missed: false,
             done: false,
             unanswered: 0,
-            loss_db: 0,
             waiting: 0,
         };
         Leaves {
@@ -245,7 +241,6 @@ impl Leaves {
                 missed: false,
                 done: true,
                 unanswered: 0,
-                loss_db: 0,
                 waiting,
             };
             let _ = self.entries.push(entry);
@@ -295,13 +290,6 @@ impl Leaves {
             }
         }
         at
-    }
-
-    /// An ATTACH from `leaf` arrived over a path loss of `loss_q`.
-    pub fn measured(&mut self, leaf: LeafId, loss_q: i16) {
-        if let Some(e) = self.get_mut(leaf) {
-            e.loss_db = ((loss_q as i32 + 3) / 4).clamp(0, u8::MAX as i32) as u8;
-        }
     }
 
     /// `leaf` answered a poll at `now`, so it is listening. Returns whether

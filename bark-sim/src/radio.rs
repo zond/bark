@@ -108,13 +108,6 @@ impl Sim {
         let (src, key, end, start) = (tx.src, tx.key, tx.end, tx.start);
         let ch = tx.frame.channel;
         let preamble = tx.frame.preamble_symbols;
-        let power = tx.frame.power_dbm;
-        assert!(
-            power <= self.tx_cfg_dbm,
-            "frame at {power} dBm, above the {} dBm the links are built for",
-            self.tx_cfg_dbm
-        );
-        let offset = (power - self.tx_cfg_dbm) as f64;
         let packet = Packet {
             preamble_end: start + SYMBOL_TIME.mul(preamble as u64),
             header_end: start + header_end(preamble),
@@ -144,14 +137,6 @@ impl Sim {
         m.nodes[src as usize]
             .airtime_by_type
             .add(decoded.as_ref(), air);
-        if self.power_on {
-            let p = m.nodes[src as usize]
-                .tx_power
-                .get_or_insert_with(Default::default);
-            p.dbm_us += power as f64 * air as f64;
-            p.mw_us += phy::mw(power as f64) * air as f64;
-            p.below_limit += (offset < 0.0) as u64;
-        }
         let chm = &mut m.channels[ch.index() as usize];
         chm.tx_frames += 1;
         chm.airtime_us += air;
@@ -201,10 +186,7 @@ impl Sim {
         }
         for i in 0..self.links.row(src).len() {
             let l = self.links.row(src)[i];
-            let mut dbm = self.links.rx_dbm(&l, ch);
-            if offset != 0.0 {
-                dbm += offset;
-            }
+            let dbm = self.links.rx_dbm(&l, ch);
             let a = Arrival {
                 key,
                 channel: ch.index(),

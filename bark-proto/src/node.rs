@@ -95,65 +95,6 @@ pub struct Config {
     /// Fixed home channel for bench work instead of the measured choice
     /// (design §6.2). The move rule is off while it is set.
     pub home_override: Option<Channel>,
-    /// Transmit power control: a research prototype, off by default
-    /// (`docs/power-research-2026-10-15.md`).
-    pub power: PowerControl,
-}
-
-/// Which frames a relay sends below `Config::tx_power_dbm`, and how low.
-/// Leaves always send at `Config::tx_power_dbm`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PowerRule {
-    /// Everything at `Config::tx_power_dbm`.
-    Fixed,
-    /// Everything, heartbeats included, at one operating power: the
-    /// lowest at which [`PowerControl::degree`] neighbours, and one in
-    /// each occupied sector, would hear a full frame. A neighbour is a
-    /// next hop only if each end reaches the other at its operating power.
-    Degree,
-    /// Heartbeats at `Config::tx_power_dbm`; every other frame at the
-    /// power its receiver's measured loss needs.
-    PerLink,
-    /// Heartbeats at the operating power of [`PowerRule::Degree`]; every
-    /// other frame at the power its receiver's measured loss needs.
-    Both,
-}
-
-/// Transmit power control parameters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PowerControl {
-    /// The rule.
-    pub rule: PowerRule,
-    /// Neighbours that must hear a full frame at the operating power.
-    pub degree: u8,
-    /// Equal sectors around the relay; each in which a relay is heard
-    /// must keep one that hears a full frame. 0: no sector condition.
-    pub sectors: u8,
-    /// Margin over sensitivity a frame is sent with, dB.
-    pub margin_db: u8,
-    /// Receiver sensitivity the margin is over, dBm.
-    pub sensitivity_dbm: i8,
-    /// Only neighbours that a full frame at `Config::tx_power_dbm` reaches
-    /// with the margin are next hops.
-    pub reach_filter: bool,
-    /// Under the rules that lower heartbeats, one rotation of heartbeats in
-    /// this many goes at `Config::tx_power_dbm`; 0 for none. At most
-    /// `neighbour_expiry_rotations`, or a relay heard only then expires
-    /// between them.
-    pub discovery_every: u8,
-}
-
-impl PowerControl {
-    /// Off.
-    pub const OFF: PowerControl = PowerControl {
-        rule: PowerRule::Fixed,
-        degree: 8,
-        sectors: 0,
-        margin_db: 8,
-        sensitivity_dbm: -119,
-        reach_filter: false,
-        discovery_every: 3,
-    };
 }
 
 impl Default for Config {
@@ -191,7 +132,6 @@ impl Config {
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: Duration::from_secs(150),
         home_override: None,
-        power: PowerControl::OFF,
     };
 }
 
