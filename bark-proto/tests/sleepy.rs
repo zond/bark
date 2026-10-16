@@ -1,6 +1,6 @@
 //! Sleepy nodes, in the one-node-type prototype
 //! (`docs/one-node-type-2026-10-16.md`): their home and beat, delivery to
-//! them on the beat, their place as a last resort in routing, and sleepy
+//! them on the beat, their place in routing where nothing else is, and sleepy
 //! nodes on their own.
 
 mod common;
@@ -197,9 +197,9 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
     }
 }
 
-/// A sleepy neighbour is a next hop only after every node that is not
-/// sleepy: O hands a message for D to A although S is nearer D, and to S
-/// once A is gone (spec "Next hop", extended). All share one channel: a
+/// A sleepy neighbour is a next hop only where no node that is not sleepy
+/// is live: O hands a message for D to A although S is nearer D, and to S
+/// once A has gone from its table (spec "Next hop", extended). All share one channel: a
 /// sleepy node beats only on its home, and only nodes there hear it.
 ///
 /// ```text

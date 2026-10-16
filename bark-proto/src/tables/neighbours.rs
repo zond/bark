@@ -79,8 +79,8 @@
 //! A sleepy node's heartbeat says so. It beats only on its home channel,
 //! at most every [`beat_period`] (300 s), so its entry expires after two
 //! periods without a beat, not three rotations, and is stale after one.
-//! It is a next hop only after every node that is not sleepy (the order
-//! of spec "Next hop", extended), so it may hold a slot only while no such node
+//! It is a next hop only where no node that is not sleepy is live
+//! (`relay/forward.rs`), so it may hold a slot only while no such node
 //! wants one: a newcomer that is not sleepy takes the place of the least
 //! recently heard sleepy entry before any other, and a sleepy newcomer
 //! takes only a free slot or, by the rule above, a demoted or stale
@@ -125,7 +125,8 @@ pub struct Neighbour {
     pub fail_count: u8,
     /// Whether its position is surveyed (heartbeat 0x1) rather than GPS (0x2).
     pub surveyed: bool,
-    /// Whether it is a sleepy node: a next hop only as a last resort.
+    /// Whether it is a sleepy node: a next hop only where no other kind is
+    /// live.
     pub sleepy: bool,
     /// Heartbeats heard from it, up to [`BEATS`].
     pub beats: u8,

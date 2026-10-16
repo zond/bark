@@ -314,9 +314,10 @@ impl Relay {
     /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
     /// live neighbour nearest `dst` that is not in the tried set, not set
     /// aside and not banned, ties broken by ID; a demoted one only
-    /// when no other with margin is left, one without margin only when
-    /// no other that is not sleepy (roadmap D25, D29, D38), and a sleepy
-    /// one only as the last resort of all, in the same order.
+    /// when no other with margin is left, and one without margin only when
+    /// no other at all (roadmap D25, D29, D38). A sleepy neighbour is a
+    /// candidate only where no neighbour that is not sleepy is live
+    /// ([`Self::sleepy_route`]).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
@@ -325,24 +326,35 @@ impl Relay {
         let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
+        let sleepy_route = self.sleepy_route(now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
-                !record.handed(*slot)
+                n.sleepy == sleepy_route
+                    && !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
                     && !self.neighbours.is_banned(n, now)
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                a.sleepy
-                    .cmp(&b.sleepy)
-                    .then(faint(a).cmp(&faint(b)))
+                faint(a)
+                    .cmp(&faint(b))
                     .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.id.0.cmp(&b.id.0))
             })
             .map(|(slot, n)| (slot, *n))
+    }
+
+    /// Whether this node routes through sleepy neighbours: only where no
+    /// neighbour that is not sleepy is live. Measured as the last resort
+    /// after every other, the search of a message that found no way on
+    /// among the nodes that are not sleepy went on through the sleepy ones,
+    /// thousands of them in a city, and the capacity domain collapsed at
+    /// twice the spec "Capacity and sizing" rate (`docs/one-node-type-2026-10-16.md`).
+    fn sleepy_route(&self, now: Instant) -> bool {
+        !self.neighbours.live(now).any(|(_, n)| !n.sleepy)
     }
 
     // --- Receiving (spec "Receiving DATA") ---
@@ -785,13 +797,7 @@ impl Relay {
             self.arrive(id, &Data { time_left, ..d }, now, emit);
             return Routed::Done;
         }
-        // A sleepy neighbour comes after every other, banned ones too: the
-        // message waits for a ban to end rather than go to a node that, in
-        // a place that has others, is most likely a dead end.
-        let next = self
-            .next_hop(&record, d.dst_pos, now)
-            .filter(|(_, n)| !n.sleepy || self.awake_ban_ends(&record, now).is_none());
-        if let Some((_, n)) = next {
+        if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home);
             return Routed::To(Outgoing { frame, ..out }, self.expect(id, to));
@@ -843,14 +849,14 @@ impl Relay {
     /// at its origin meanwhile, where its application sees it, rather than
     /// here for a ban, to be refused again (roadmap D34). With no live
     /// neighbour at all it is no ban: the search ends as before. Sleepy
-    /// neighbours count only where there are no others, as in [`Self::route`].
+    /// neighbours count only where there are no others ([`Self::next_hop`]).
     fn bans_end(&self, now: Instant) -> Option<Instant> {
         let mut until: Option<Instant> = None;
-        let awake = self.neighbours.live(now).any(|(_, n)| !n.sleepy);
+        let sleepy_route = self.sleepy_route(now);
         for (_, n) in self
             .neighbours
             .live(now)
-            .filter(|(_, n)| !awake || !n.sleepy)
+            .filter(|(_, n)| n.sleepy == sleepy_route)
         {
             if !self.neighbours.is_banned(n, now) {
                 return None;
@@ -869,17 +875,6 @@ impl Relay {
         self.neighbours
             .live(now)
             .filter(|(slot, n)| !record.handed(*slot) && self.neighbours.is_banned(n, now))
-            .map(|(_, n)| n.banned_until)
-            .min()
-    }
-
-    /// [`Self::ban_ends`] among the neighbours that are not sleepy.
-    fn awake_ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
-        self.neighbours
-            .live(now)
-            .filter(|(slot, n)| {
-                !n.sleepy && !record.handed(*slot) && self.neighbours.is_banned(n, now)
-            })
             .map(|(_, n)| n.banned_until)
             .min()
     }

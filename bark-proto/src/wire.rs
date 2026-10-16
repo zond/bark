@@ -119,7 +119,7 @@ pub struct Heartbeat {
     /// heartbeat does not say, and reads as not surveyed.
     pub surveyed: bool,
     /// From a sleepy node (0x8): one that beats only on its home channel,
-    /// slowly, and is a next hop only as a last resort.
+    /// slowly, and is a next hop only where no other kind is in reach.
     pub sleepy: bool,
     /// The sender's home channel.
     pub home: Channel,
