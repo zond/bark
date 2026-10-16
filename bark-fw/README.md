@@ -43,11 +43,11 @@ Verified on the host:
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the three builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The relay image is 284 KiB of
-  flash, 150 KiB of it the relay's empty tables, which start in flash and
-  are copied to RAM at boot; it uses 157 KiB of RAM before the stack,
-  which leaves 97 KiB for the stack, and its deepest single stack frame is
-  18 KiB (2026-10-15).
+  initial stack pointer is `0x20040000`. The relay image is 309 KiB of
+  flash, 164 KiB of it the relay's empty tables, which start in flash and
+  are copied to RAM at boot; it uses 173 KiB of RAM before the stack,
+  which leaves 83 KiB for the stack, and its deepest single stack frame is
+  18 KiB (2026-10-16, after the record table grew to 1855 entries).
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
   the host workspace).
 - `scripts/uf2.py` produces a UF2 that its own `--check` accepts: correct
