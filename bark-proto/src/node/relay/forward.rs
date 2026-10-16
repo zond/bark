@@ -327,10 +327,12 @@ impl Relay {
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let sleepy_route = self.sleepy_route(now);
+        let first = self.first_hop(now).filter(|_| record.parent().is_none());
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
                 n.sleepy == sleepy_route
+                    && first.is_none_or(|a| n.id == a)
                     && !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
@@ -355,6 +357,20 @@ impl Relay {
     /// twice the spec "Capacity and sizing" rate (`docs/one-node-type-2026-10-16.md`).
     fn sleepy_route(&self, now: Instant) -> bool {
         !self.neighbours.live(now).any(|(_, n)| !n.sleepy)
+    }
+
+    /// Where a sleepy node hands its own message: its anchor while that is
+    /// live, as a leaf handed its to its relay (spec "Attach and polls"). Sent to
+    /// the neighbour nearest the destination instead, the first hop was
+    /// often a faint, far one: at twice the spec "Capacity and sizing" rate in S4 sleepy nodes
+    /// sent ten times the frames of main's leaves, most of them lost at a
+    /// receiver that was listening (`docs/one-node-type-2026-10-16.md`).
+    fn first_hop(&self, now: Instant) -> Option<NodeId> {
+        let a = self.anchor.filter(|_| self.config.sleepy)?;
+        self.neighbours
+            .live(now)
+            .any(|(_, n)| n.id == a.id)
+            .then_some(a.id)
     }
 
     // --- Receiving (spec "Receiving DATA") ---
@@ -851,6 +867,9 @@ impl Relay {
     /// neighbour at all it is no ban: the search ends as before. Sleepy
     /// neighbours count only where there are no others ([`Self::next_hop`]).
     fn bans_end(&self, now: Instant) -> Option<Instant> {
+        if let Some((_, a)) = self.first_hop(now).and_then(|a| self.neighbours.by_id(a)) {
+            return self.neighbours.is_banned(a, now).then_some(a.banned_until);
+        }
         let mut until: Option<Instant> = None;
         let sleepy_route = self.sleepy_route(now);
         for (_, n) in self
@@ -1169,6 +1188,19 @@ impl Relay {
         if let (Ok(Packet::Data(d)), true) = (data, out.kind != Kind::Deliver) {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
+                if self.config.sleepy && d.hops == 0 {
+                    // A sleepy node's own message tries its anchor again a
+                    // fade later, as a leaf tried its relay (spec "Attach and polls"):
+                    // the ban's ladder would offer it every few seconds to
+                    // a node whose channel is full.
+                    let ban = self.wait_for(d.dst_hop, now).unwrap_or(now);
+                    self.skipped = 0;
+                    if let Some(current) = self.queue.current_mut() {
+                        current.not_before = ban.max(now + self.config.fade_retry);
+                        current.tries = 0;
+                    }
+                    return;
+                }
                 if let Some(t) = self.wait_for(d.dst_hop, now) {
                     // The same neighbour again once its ban ends, with
                     // fresh attempts (roadmap D42, W).

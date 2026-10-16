@@ -423,7 +423,7 @@ fn trace_follows_a_message_and_changes_nothing() {
     let lines: Vec<_> = trace.lines().filter(|l| l.contains("#20")).collect();
     for step in [
         "leaf 3 (LA): app send #20",
-        "leaf 3 (LA): forwarded #20 to relay 1 (B)",
+        "relay 0 (A): forwarded #20 to relay 1 (B)",
         "relay 2 (C): queued #20 for leaf 4 (LC)",
         "leaf 4 (LC): app message #20",
     ] {
