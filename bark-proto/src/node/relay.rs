@@ -34,9 +34,10 @@
 //! strongest of those as its anchor and listens on the anchor's home
 //! channel; its address is the anchor's position and its own ID (spec
 //! "Addresses"). It moves to another only when that one has been heard
-//! over two heartbeats and is [`SWITCH_MARGIN_DB`] stronger, and to the
-//! strongest heard once its anchor has left the neighbour table (spec
-//! "Relay choice"). It follows its anchor to a new home channel at the
+//! over two heartbeats and is [`SWITCH_MARGIN_DB`] stronger, and once its
+//! anchor has left the neighbour table, to the strongest heard a rotation
+//! after it first hears any again, unless its anchor is heard meanwhile
+//! (spec "Relay choice"): back from the dark, it keeps its anchor. It follows its anchor to a new home channel at the
 //! anchor's next heartbeat it hears. One that hears no such node keeps the
 //! quietest channel, ties to the lowest, so that the sleepy nodes of a
 //! place without one meet on one channel and route among themselves.
@@ -213,7 +214,8 @@ pub struct Relay {
     heard: Heard,
     /// A sleepy node's anchor, kept while it hears no better one.
     anchor: Option<Anchor>,
-    /// When a sleepy node first heard a node that is not sleepy.
+    /// When a sleepy node without a live anchor first heard a node that is
+    /// not sleepy.
     first_heard: Option<Instant>,
     delivery: DeliveryQueue,
     delivered: Delivered,
@@ -589,10 +591,19 @@ impl Relay {
         if !self.config.sleepy || self.stage != Stage::Running {
             return false;
         }
-        // A first choice waits a worst-case rotation from the first
-        // heartbeat heard, by which time every node in range that is not
-        // sleepy has visited this channel (spec "Relay choice").
-        let choosing = self.anchor.is_none()
+        let current = self
+            .anchor
+            .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
+            .map(|(_, n)| *n);
+        if current.is_some() {
+            self.first_heard = None;
+        }
+        // Without a live anchor, a choice waits a worst-case rotation from
+        // the first heartbeat heard since, by which time every node in range
+        // that is not sleepy has visited this channel (spec "Relay choice"):
+        // the anchor of a node back from the dark is heard again in it, and
+        // one that has gone is not (spec "Attach and polls").
+        let choosing = current.is_none()
             && self
                 .first_heard
                 .is_none_or(|t| now < t + self.config.boot_listen);
@@ -604,10 +615,6 @@ impl Relay {
                 .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
                 .copied()
         };
-        let current = self
-            .anchor
-            .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
-            .map(|(_, n)| *n);
         let to = match current {
             None if choosing => None,
             None => strongest(None, 0),
