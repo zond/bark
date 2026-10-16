@@ -724,7 +724,11 @@ impl Leaf {
             Reply::Ack(a) => Packet::Ack(a),
             Reply::Attach(a) => Packet::Attach(a),
             // A relay's reply.
-            Reply::Attached(leaf) => Packet::Attached(Attached { leaf, next_poll: 0 }),
+            Reply::Attached(leaf) => Packet::Attached(Attached {
+                leaf,
+                next_poll: 0,
+                waiting: 0,
+            }),
         };
         mac::frame(&packet, o.channel, MIN_PREAMBLE_SYMBOLS)
     }

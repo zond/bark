@@ -182,7 +182,8 @@ action at a time, and the core never allocates.
     opaque bytes in order. ACK `from` and `to` are each a short name or a leaf ID, four
     bytes either way, compared whole.
   - An ATTACH is answered by ATTACHED, not by an ACK (roadmap D39). ATTACHED `next_poll`
-    is big-endian in 10 ms units; its `aux` is sent as zero and ignored.
+    is big-endian in 10 ms units, the delay to the leaf's next slot; its `aux` is the count
+    of messages waiting for the leaf, 15 for 15 or more.
   - ACK `to` of a DATA is its `src_hop`, zero from a leaf: DATA does not carry the
     leaf's ID. A leaf's ACK of a DELIVER has the short name of the relay it is attached
     to as `to`: DELIVER does not name its sender.

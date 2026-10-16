@@ -46,8 +46,9 @@
 //!   every relay sends with power control off.
 //! - ATTACH `aux` is the [`RxMode`] code in its low three bits, and
 //!   [`ATTACH_REPLY`] when the ATTACH answers a poll.
-//! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s; its `aux` is
-//!   sent as zero and ignored.
+//! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s: the delay from
+//!   the end of the frame to the leaf's next slot. Its `aux` is the count
+//!   of messages waiting for the leaf, saturating at [`WAITING_MAX`].
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
@@ -313,6 +314,13 @@ impl Attach {
     }
 }
 
+/// The most messages waiting an ATTACHED can count: all four bits of its
+/// `aux` (design §10.5). The byte a count up to 255 would take makes the
+/// frame 46.25 symbols instead of 41.25, 11.84 ms instead of 10.56, and
+/// that 12 % more poll airtime alone tipped the capacity domain at twice
+/// the §13 rate into collapse (roadmap D41).
+pub const WAITING_MAX: u8 = AUX_MASK;
+
 /// Unit of ATTACHED's time to the next poll (design §10.2). Sixteen bits
 /// of it reach 655 s, past the delivery TTL of 600 s, which bounds the
 /// poll period (design §10.2); it is a third of the clock
@@ -327,9 +335,13 @@ pub const POLL_UNIT: Duration = Duration::from_millis(10);
 pub struct Attached {
     /// The leaf.
     pub leaf: LeafId,
-    /// From the end of this frame to the start of the next poll of this
-    /// leaf, in [`POLL_UNIT`]s.
+    /// From the end of this frame to the start of the leaf's next slot, in
+    /// [`POLL_UNIT`]s. Not a period: each ATTACHED names the next slot
+    /// afresh.
     pub next_poll: u16,
+    /// Messages the relay holds for the leaf (§10.4), up to
+    /// [`WAITING_MAX`].
+    pub waiting: u8,
 }
 
 impl Attached {
@@ -534,7 +546,7 @@ impl Packet<'_> {
                 Ok(DELIVER_HEADER_LEN + d.payload.len())
             }
             Packet::Attached(a) => {
-                buf[FIRST] = first(T_ATTACHED, 0);
+                buf[FIRST] = first(T_ATTACHED, a.waiting.min(WAITING_MAX));
                 put(buf, ATTACHED_LEAF, &a.leaf.0);
                 put(buf, ATTACHED_NEXT, &a.next_poll.to_be_bytes());
                 Ok(ATTACHED_LEN)
@@ -586,6 +598,7 @@ impl<'a> Packet<'a> {
                 Ok(Packet::Attached(Attached {
                     leaf: LeafId(get4(b, ATTACHED_LEAF)),
                     next_poll: u16::from_be_bytes([b[ATTACHED_NEXT], b[ATTACHED_NEXT + 1]]),
+                    waiting: aux,
                 }))
             }
             T_DATA => {
@@ -700,8 +713,8 @@ mod tests {
         }
 
         #[test]
-        fn attached_round_trips(leaf in leaf(), next_poll: u16) {
-            let a = Attached { leaf, next_poll };
+        fn attached_round_trips(leaf in leaf(), next_poll: u16, waiting in 0..=WAITING_MAX) {
+            let a = Attached { leaf, next_poll, waiting };
             round_trip(&Packet::Attached(a));
             prop_assert_eq!(Attached::units(a.next_poll()), next_poll);
         }
@@ -734,7 +747,7 @@ mod tests {
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
             // the same, apart from bits the decoder ignores (unused aux bits
-            // of ACK, DELIVER and ATTACHED, spare position bits).
+            // of ACK and DELIVER, spare position bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -913,9 +926,23 @@ mod tests {
         let attached = Attached {
             leaf: LeafId([1, 2, 3, 4]),
             next_poll: 0x0506,
+            waiting: 7,
         };
         let len = Packet::Attached(attached).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x70, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(&buf[..len], &[0x77, 1, 2, 3, 4, 5, 6]);
+        let many = Attached {
+            waiting: 200,
+            ..attached
+        };
+        let len = Packet::Attached(many).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x7f, "saturates at 15");
+        assert_eq!(
+            Packet::decode(&buf[..len]),
+            Ok(Packet::Attached(Attached {
+                waiting: WAITING_MAX,
+                ..attached
+            }))
+        );
         assert_eq!(
             crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(10_560),

@@ -1363,9 +1363,12 @@ DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 
           to = the short name of the relay it is attached to
 ATTACHED  0x7: first(1) leaf_id(4) next_poll(2)                             = 7
           relay → leaf on the relay's own channel: the answer to an ATTACH
-          that attaches, or a poll (§10.2); next_poll = time from the end of
-          this frame to the leaf's next slot, big-endian, in 10 ms; 16 bits
-          reach 655 s, more than the 600 s TTL that bounds the period
+          that attaches, or a poll (§10.2); next_poll = the delay from the
+          end of this frame to the leaf's next slot, big-endian, in 10 ms,
+          not a period: each ATTACHED names the next slot afresh; 16 bits
+          reach 655 s, more than the 600 s TTL that bounds the period;
+          aux = messages the relay holds for the leaf (§10.4, §10.5), 15
+          for 15 or more
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.

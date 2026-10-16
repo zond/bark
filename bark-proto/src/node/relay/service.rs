@@ -46,7 +46,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::leaves::{POLL_AIRTIME, POLL_LATE};
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
-use crate::wire::{Attach, Attached, Deliver, Packet};
+use crate::wire::{Attach, Attached, Deliver, Packet, WAITING_MAX};
 
 /// The poll in progress (design §10.2).
 pub(super) struct Poller {
@@ -99,9 +99,11 @@ impl Relay {
             .leaves
             .get(leaf)
             .map_or(Duration::ZERO, |e| e.next_poll.since(now + POLL_AIRTIME));
+        let waiting = self.delivery.count_for(leaf).min(WAITING_MAX as usize) as u8;
         let a = Attached {
             leaf,
             next_poll: Attached::units(next),
+            waiting,
         };
         mac::frame(&Packet::Attached(a), self.home, MIN_PREAMBLE_SYMBOLS)
     }
