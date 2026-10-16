@@ -219,6 +219,9 @@ pub struct Summary {
     /// Refusals for room, and the hop places free at them.
     #[serde(skip_serializing_if = "hop_places_none")]
     pub hop_places: HopPlaceRefusals,
+    /// Frames addressed to a node that is not sleepy, by fate
+    /// (`metrics::Addressed`).
+    pub addressed: crate::metrics::Addressed,
     /// Per channel.
     pub channels: Vec<ChannelSummary>,
     /// Per observer.
@@ -364,6 +367,7 @@ impl Sim {
                 }
             }),
             hop_places: m.hop_places,
+            addressed: m.addressed,
             channels,
             observers,
             nodes,
