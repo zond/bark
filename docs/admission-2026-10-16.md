@@ -313,6 +313,6 @@ Not adopted (roadmap D45, 2026-10-16). G1 was measured on a research
 branch and not merged; the commit hashes above are not in the
 repository. Its gain in the loaded rings does not pay for closing a
 relay to every destination behind one stuck message, and in S4 it does
-nothing. The TTL of D44 was not adopted either. What remains open is a
+nothing. The TTL of D44 was adopted; it does what no gate did. What remains open is a
 signal carried back from the centre that cannot keep itself up around a
 loop.
