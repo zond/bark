@@ -406,33 +406,36 @@ Leaves are not in the neighbour table; they are in the leaf table
 A destination address is `(x, y, leaf_id)`: the position of the relay the
 recipient is attached to, plus the recipient's 4-byte ID. Relays have
 `leaf_id = 0`, meaning the relay itself, so a relay's address is its
-identity ([relay identity](#relay-identity)). A sender learns an address from a previous message (the
-sender's address is carried in the encrypted payload), from a QR code, or
-from a directory; the network provides no lookup. Sending to an area is
-open item O7.
+identity ([relay identity](#relay-identity)). A sender learns an address from a previous
+message (the sender's address is carried in the encrypted payload), from
+a QR code, or from a directory; the network provides no lookup. Sending
+to an area is open item O7.
 
 The network carries no sender address and sends no failure notices. The
-only acknowledgement in the protocol is the per-hop ACK ([hand-over](#hand-over)); whether a
-message arrived, and what to do if it did not, is the app's business, with
-whatever acknowledgement it puts inside the encrypted payload.
+only acknowledgement in the protocol is the per-hop ACK
+([hand-over](#hand-over)); whether a message arrived, and what to do if it did not,
+is the app's business, with whatever acknowledgement it puts inside the
+encrypted payload.
 
 The app hands a node a message only when the node says it will take one,
 and hears nothing about it afterwards: not the first hop's ACK, which a
 user could take for delivery, and not a drop. From then on the node is
 either sending the message or waiting to. Each node holds one message
 of its app's at a time, until its first hop takes it. A relay takes one
-while it is running, holds none, and its send queue and bucket have room
-for a full frame on top of what they hold ([hand-over](#hand-over)); a leaf takes one while
-it holds none ([attach and polls](#attach-and-polls)). A node whose neighbours are busy keeps the
-message and offers it again ([return to parent](#return-to-parent), [attach and polls](#attach-and-polls)), so a busy network makes its
+while it is running, holds none, its send queue and bucket have room
+for a full frame on top of what they hold ([hand-over](#hand-over)), and not every
+neighbour is banned ([receiving DATA](#receiving-data)); a leaf takes one while it holds none
+([attach and polls](#attach-and-polls)). A node whose neighbours are busy keeps the message and
+offers it again ([hand-over](#hand-over), [attach and polls](#attach-and-polls)), so a busy network makes its
 users wait rather than lose their messages at the first step (roadmap
 D29).
 
 ### Duty cycle cap
 
 At SF5, 10% of airtime is ≈180 B/s per relay, so a busy relay runs out of
-budget before its channel fills. Greedy forwarding does not spread load;
-central rooftop relays will hit the cap first.
+budget before its channel fills. Forwarding to the neighbour nearest the
+destination does not spread load; central rooftop relays will hit the cap
+first.
 
 **Token bucket.** Each node keeps its airtime in a bucket that holds at
 most 6 s, one minute at 10%, and fills at (360 s − 6 s) per hour, 9.83%
@@ -447,119 +450,210 @@ is empty, a full frame waits 1.4 s for it, and nothing waits longer
 than 6 s / 9.83% = 61 s (roadmap D26).
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
-it is not dropped. Two reserves stay in the bucket. Replies, ACKs that
-take or refuse, and ATTACHED, polls included ([attach and polls](#attach-and-polls)), leave one
-heartbeat's airtime, 11.8 ms, which the
-bucket refills in 120 ms, far less than the 5 s between heartbeats
-([heartbeat](#heartbeat)), so heartbeats always go. Forwarding, and the ACK that takes on a
-packet, leave the **reply reserve**: the refusals the bucket refills
-while a sender retries an unanswered hand-over, and the heartbeat. The
-retrying takes the two retry waits, 306 + 612 ms, and two more attempts
-of 500 ms listen-before-talk give-up, a 138.6 ms full frame and the
-100 ms ACK timeout ([hand-over](#hand-over)), 2.39 s in all; the bucket refills 9.83 % ×
-2.39 s = 235.5 ms of it, ⌊235.5 / 14.4⌋ = 16 refusals, and with the
-heartbeat the reserve is 242 ms. A relay takes new work into its
-regular room only if its bucket holds the reply reserve on top of the
-work's ACK and of everything it has queued to send ([receiving DATA](#receiving-data)); otherwise
-it takes it into a hop place or refuses it. A hand-over therefore waits for the bucket
-only when retries or replies have spent it since its packet was taken,
-or when its packet holds a hop place. A relay below the reserve sends nothing but heartbeats
-and replies until its bucket refills. Each sender it refuses bans it
-for 1.56 s ([hand-over](#hand-over)), so a sender costs it at most one reply per ban.
-Without budget even for a reply it stays silent, its neighbours'
-hand-overs to it fail, and they ban it, longer each time, and route
-around it (roadmap D27, D29, D42).
+it is not dropped. Two reserves stay in the bucket. Replies (ACKs that
+take or refuse, and ATTACHED, polls included, [attach and polls](#attach-and-polls)) leave one
+heartbeat's airtime, 11.8 ms, which the bucket refills in 120 ms, far
+less than the 5 s between heartbeats ([heartbeat](#heartbeat)), so heartbeats always
+go. Forwarding, and the ACK that takes on a packet, leave the **reply
+reserve**: the refusals the bucket refills while a sender retries an
+unanswered hand-over, and the heartbeat. The retrying takes the two
+retry waits, 306 + 612 ms, and two more attempts, each up to 500 ms of
+listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
+([hand-over](#hand-over)), 2.39 s in all; the bucket refills 9.83 % × 2.39 s = 235.5 ms
+of it, ⌊235.5 / 14.4⌋ = 16 refusals, and with the heartbeat the reserve
+is 242 ms. A relay takes new work into the regular room of its send
+queue only with the reply reserve to spare ([receiving DATA](#receiving-data)), so a hand-over
+waits for the bucket only when retries or replies have spent it since
+its packet was taken, or when its packet holds a hop place. A relay
+below the reserve sends nothing but heartbeats and replies until its
+bucket refills. Each sender it refuses bans it for 1.56 s ([hand-over](#hand-over)), so
+a sender costs it at most one reply per ban. Without budget even for a
+reply it stays silent, its neighbours' hand-overs to it fail, and they
+ban it, longer each time, and route around it (roadmap D27, D29, D42).
 
 ### Hand-over
 
 A **hand-over** sends one DATA packet to one neighbour until that
 neighbour answers it or the relay gives up. A relay runs one hand-over
-at a time. The answer is an ACK, which says whether the neighbour takes
-the packet or refuses it. It carries the message ID, the name of the
-relay or leaf that answers and the name of the one it answers, and
-answers the outstanding hand-over only if all three agree. Packets
-waiting their turn are held in the relay's send queue.
+at a time; packets waiting their turn are held in its send queue
+(below). The answer is an ACK, which takes or refuses the packet and
+names the message and both nodes (below).
 
 1. Retune to the next hop's home channel. Addresses and channels are
    read at the moment of sending, before each attempt, from the latest
-   heartbeats (and DATA `aux`, [neighbour table](#neighbour-table)): a retry goes to a neighbour's new
-   home if it has moved since the last attempt, and a DELIVER takes the
-   leaf's receive mode as the leaf table has it then ([leaf receive mode](#leaf-receive-mode)).
+   heartbeats (and DATA `aux`, [neighbour table](#neighbour-table)): a retry goes to a
+   neighbour's new home if it has moved since the last attempt, and a
+   DELIVER takes the leaf's receive mode as the leaf table has it then
+   ([leaf receive mode](#leaf-receive-mode)).
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
-   retry; give up after 500 ms and choose the next hop again ([next hop](#next-hop)),
-   without counting a failure against the neighbour. The neighbour is set
-   aside for this hand-over only, so the next choice is a different one.
-   For a return to the parent or a DELIVER, which have no other
-   candidate, a give-up counts as one attempt.
-3. Transmit. The packet carries the sender's home channel in `aux` ([packet formats](#packet-formats)).
+   retry; give up after 500 ms and choose the next hop again
+   ([next hop](#next-hop)), without counting a failure against the neighbour. The
+   neighbour is set aside for this hand-over only, so the next choice is
+   a different one. For a return to the parent or a DELIVER, which have
+   no other candidate, a give-up counts as one attempt.
+3. Transmit. The packet carries the sender's home channel in `aux`
+   ([packet formats](#packet-formats)).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
    14.4 ms plus the receiver's retune and listen-before-talk).
-6. On timeout: wait a random time, retry, up to 3 attempts. Then the
-   hand-over has failed: count a failure against the neighbour ([neighbour table](#neighbour-table):
-   demoted after 2 consecutive failures) and **ban** it as a refusal
-   does, for every message. The ban after the k-th failure in a row is
-   one refusal's ban doubled k − 1 times: 1.56 s, 3.11 s, 6.2 s and so
-   on, up to the bucket's refill, 61 s, the ladder the relay's own
-   message waits on below; an ACK from the neighbour resets its failure
-   count and so starts the ladder again (roadmap D42). The message waits
-   in its place for that ban and is offered to the same neighbour again,
-   with three fresh attempts. Once a failure has demoted the neighbour,
-   the message instead chooses the next hop at once ([next hop](#next-hop)): the
-   neighbour is set aside for this hand-over, as in step 2, but not
-   counted as tried. In the simulated loaded corridor an attempt was
-   lost to a collision at the receiver about four times as often as by
-   its ACK going astray (roadmap D34), so the neighbour most likely does
-   not have the message. It stays a candidate when the message is next
-   routed here, once its ban has ended. If it did take it, the next offer
-   costs one round trip: it holds the message and only ACKs, or has
-   finished with it and returns it ([receiving DATA](#receiving-data)) (roadmap D36). A return
-   waits for its parent the same way and is dropped when a failure
-   demotes the parent ([return to parent](#return-to-parent)). A DELIVER is not affected: its leaf is
-   not a neighbour, and the delivery queue keeps it ([delivery queue](#delivery-queue)).
+6. On timeout: wait (retry wait, below) and retry, up to 3 attempts. Then
+   the hand-over has failed: count a failure against the neighbour
+   ([neighbour table](#neighbour-table): demoted after 2 consecutive failures) and **ban** it as a
+   refusal does (below), for every message. The ban after the k-th
+   failure in a row is one refusal's ban doubled k − 1 times: 1.56 s,
+   3.11 s, 6.2 s and so on, up to the bucket's refill, 61 s; an ACK from
+   the neighbour resets its failure count and so starts the ladder again
+   (roadmap D42). The message waits in its place for that ban and is
+   offered to the same neighbour again, with three fresh attempts. Once a
+   failure has demoted the neighbour, the message instead chooses the
+   next hop at once ([next hop](#next-hop)): the neighbour is set aside for this
+   hand-over, as in step 2, but not counted as tried. In the simulated
+   loaded corridor an attempt was lost to a collision at the receiver
+   about four times as often as by its ACK going astray (roadmap D34), so
+   the neighbour most likely does not have the message. It stays a
+   candidate when the message is next routed here, once its ban has
+   ended. If it did take it, the next offer costs one round trip: it
+   holds the message and only ACKs, or has finished with it and returns
+   it ([receiving DATA](#receiving-data)) (roadmap D36). A return waits for its parent the
+   same way and is dropped when a failure demotes the parent
+   ([return to parent](#return-to-parent)). A DELIVER is not affected: its leaf is not a
+   neighbour, and the delivery queue keeps it ([delivery queue](#delivery-queue)).
+
+**Retry wait.** The wait before the retry after the k-th unanswered
+transmission is uniform in [0, 2^k × 153.0 ms]: 0–306 ms, then 0–612 ms.
+153.0 ms is how long one hand-over holds its receiver, a full frame
+(138.6 ms) and its ACK (14.4 ms). The usual cause of a missing ACK, other
+than a weak link, is a sender the first one cannot hear that transmitted
+to the same receiver at the same time (a hidden terminal): both miss the
+ACK and both retry. Their retries miss each other only if they start
+more than one hand-over apart, which for full frames and a window of W
+units happens with probability (1 − 1/W)²: never with one unit, 1/4 with
+two, 9/16 with four. Doubling per attempt also spreads more than two such
+senders. The listen-before-talk backoff of step 2 stays short: it waits
+for a channel the sender can hear to clear, and checks again (roadmap
+D22).
+
+An ACK resets the neighbour's failure count and refreshes its last-heard
+time ([neighbour table](#neighbour-table)): a neighbour that answers is alive whether or not
+its heartbeats are heard.
+
+**The ACK.** The receiver retunes to the sender's channel, listens
+before talking, sends the ACK, and retunes home. The ACK is the first
+byte, whose `aux` says whether the packet is refused, the message ID,
+and the names of the answering and the answered node, each a relay's
+short name or a leaf's ID (13 bytes, 14.4 ms, [packet formats](#packet-formats)). The sender
+matches the ID and both names against its outstanding hand-over.
+
+The answering node's name is needed because relays share home channels:
+without it, an ACK for the same message from a different relay on the
+same channel, which the depth-first search can produce, would end the
+wrong hand-over and strand the message. The answered node's name is
+needed because two senders can offer the same message to the same relay
+at once: one retrying a hand-over whose ACK was lost while another
+returns the message there, or the two copies of a split message
+([why the search finds a path](#why-the-search-finds-a-path)). If the ACK named only the message and the relay,
+each sender would take the answer to the other as its own. A taken one
+would end a hand-over the relay never took, and the message would be
+lost; a refused one would send a sender on from a relay that took its
+packet, and the message would have a second copy (roadmap D32). A leaf's
+DATA names no sender (`src_hop` 0, [packet formats](#packet-formats)), so an ACK to a leaf
+names none either; two leaves do not offer the same message, whose ID
+covers the payload.
+
+A relay ACKs a packet as soon as it has received it, even while waiting
+for an ACK of its own; if that makes it miss its own ACK, its next
+attempt covers it.
+
+A relay owes at most one reply at a time, an ACK or an ATTACHED
+([attach and polls](#attach-and-polls)). A packet, DATA or ATTACH, that arrives while its reply
+to another packet is still waiting for the channel is neither taken nor
+refused: the relay says nothing and changes nothing, and the sender
+retries as for a lost ACK. A second reply would go out only after the
+first, which may wait for its channel until its own sender gives up,
+100 ms; taking a packet it may not be able to answer in time would let
+its sender hand the message to someone else as well. A copy of the
+packet the owed reply answers, sent again because that reply is late,
+is answered by it (roadmap D29).
+
+So: **a node receives everything, ACKs included, on its home channel, and
+leaves it only to transmit.** A leaf's home channel is its relay's, so
+leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
+≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
+That is the cost of having one radio.
+
+**Refusal.** An ACK that answers the outstanding hand-over and says
+refused means the receiver does not take the packet ([receiving DATA](#receiving-data)). The
+sender treats it as a listen-before-talk give-up (step 2): the neighbour
+is set aside for this hand-over, not counted as tried, no failure is
+counted, and the next hop is chosen at once. A return to the parent has
+no other candidate: it waits in the send queue until the ban ends and is
+sent again, and the refused transmission does not count as one of its
+attempts. The neighbour is also **banned** for 1.56 s. A relay refuses a
+packet to send on when the frame and the ACK that takes it, at most
+138.6 + 14.4 = 153.0 ms, do not fit in its bucket on top of what it holds
+and no hop place takes it ([receiving DATA](#receiving-data)), and its bucket refills that
+much in 153.0 ms / 9.83 % = 1.56 s ([duty cycle cap](#duty-cycle-cap)). Until then it is no
+candidate for any message ([next hop](#next-hop)): trying it again before its bucket
+has refilled would only cost it another reply (roadmap D29). A leaf
+refused by its relay keeps the relay and the message and offers the
+message again later ([attach and polls](#attach-and-polls)).
 
 **Silence is pushback.** A refusal measures one thing, what one
 hand-over takes from the receiver's bucket, and the bucket refills that
 in one ban. Silence says only that the channel or the receiver is full,
 or that the link is gone, and not how full; so its ban doubles with
-each silence in a row, as the hold of a refused message does, and ends
-at the longest anything waits for a bucket. Without the ban a neighbour
-that stops answering under load is offered every other message at once,
-each offer up to three more frames where frames are already being
-lost; in the simulated capacity domain at three times the [capacity and sizing](#capacity-and-sizing) texting
-rate that loop is what breaks first. The message whose hand-over failed
-waits for the same neighbour rather than going to the next one: the
-next one is usually a longer way round, which costs more frames on the
-same full channels, and measured, going there at once undoes what the
-ban gains (roadmap D42). Silence twice in a row demotes the neighbour,
-and a link that is really gone then costs one ban and one more
-hand-over before the message moves on. Messages whose every way on is silent wait, as
-for refusals, and a neighbour that is gone is tried again after each
-ban until its entry expires ([neighbour table](#neighbour-table)).
+each silence in a row (step 6), as the wait of a refused message does
+(below), and ends at the longest anything waits for a bucket. Without
+the ban a neighbour that stops answering under load is offered every
+other message at once, each offer up to three more frames where frames
+are already being lost; in the simulated capacity domain at three times
+the texting rate of [capacity and sizing](#capacity-and-sizing) that loop is what breaks first. The
+message whose hand-over failed waits for the same neighbour rather than
+going to the next one: the next one is usually a longer way round, which
+costs more frames on the same full channels, and measured, going there
+at once undoes what the ban gains (roadmap D42). Silence twice in a row
+demotes the neighbour, and a link that is really gone then costs one ban
+and one more hand-over before the message moves on; a neighbour that is
+gone is tried again after each ban until its entry expires
+([neighbour table](#neighbour-table)).
 
-**Refusal.** An ACK that answers the outstanding hand-over and says
-refused means the receiver does not take the packet ([receiving DATA](#receiving-data)). The
-sender treats it as a listen-before-talk give-up (step 2): the
-neighbour is set aside for this hand-over, not counted as tried, no
-failure is counted, and the next hop is chosen at once. A return to the
-parent has no other candidate: it waits
-in the send queue until the ban ends and is sent again, and the refused
-transmission does not count as one of its attempts. The neighbour is
-also **banned** for 1.56 s. A relay refuses a packet to send on when the
-frame and the ACK that takes it, at most 138.6 + 14.4 = 153.0 ms, do not
-fit in its bucket on top of what it holds and no hop place takes it
-([receiving DATA](#receiving-data)), and its bucket refills that much in 153.0 ms / 9.83 % = 1.56 s
-([duty cycle cap](#duty-cycle-cap)). Until then it is no candidate for any message ([next hop](#next-hop)). A leaf
-refused by its relay keeps the relay and the message, and offers the
-message again 1.56 s later ([attach and polls](#attach-and-polls)).
+**The relay's own message.** The relay's own application's message,
+offered once a ban, would be a full frame every 1.56 s on the refuser's
+channel, 9 %, hiding its ACKs, and would spend the holder's bucket as
+fast as it refills; so after the k-th refusal in a row it waits on the
+ladder of step 6, one ban times 2^(k−1), up to the bucket's whole refill,
+61 s, the longest anything waits for a bucket ([duty cycle cap](#duty-cycle-cap)), and the
+wait starts again from one ban once the message is taken or dropped.
+
+**Send queue.** A regular room of 40 places, and one hop place for each
+count from 1 to 254; the packet being handed over keeps its place. A
+packet enters the regular room only if it fits in the bucket with
+everything queued ([receiving DATA](#receiving-data)), so it waits for the hand-overs ahead
+of it, not for the bucket to refill. The number of places follows: the
+bucket holds at most 6 s ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK
+that took it on cost 138.6 + 14.4 = 153.0 ms, so ⌈6 s / 153.0 ms⌉ = 40.
+With the reply reserve left in, a full bucket takes at most 37 full
+frames, so for full frames the bucket is the limit; shorter frames fill
+the 40 places first, and forty hand-overs of them go out within a few
+seconds.
+
+A packet received with count h that the regular room refuses takes the
+highest free hop place numbered h or lower, and keeps it until it leaves
+the queue. A hop place holds its packet whatever the bucket holds; the
+bucket still decides when it is sent. A packet from a leaf or from the
+relay's own application has count 0 and no hop place, so overload stops
+new messages where they enter, at the application ([addresses](#addresses)). A
+packet received at 255 ends at the cap ([hop count](#hop-count)), so 254 hop places
+are enough. Packets are handed over in the order they arrived, except
+that, when bans end, the packets that waited for them go first (below).
 
 **Overload makes a message wait, never ends it.** A message whose every
 remaining candidate is banned, by refusals or by silence, waits in its
-place in the send queue, with its airtime still counted ([receiving DATA](#receiving-data)), until
-the earliest ban ends, and is routed again then, at the origin or
-anywhere else. A message ends only when it is delivered, when its
-search runs out of neighbours ([return to parent](#return-to-parent)), when a return goes unanswered twice
-in a row (step 6), when its leaf never wakes ([delivery queue](#delivery-queue)), at the hop cap
+place in the send queue, with its airtime still counted, until the
+earliest ban ends, and is routed again then, at the origin or anywhere
+else. A message ends only when it is delivered, when its search runs out
+of neighbours ([return to parent](#return-to-parent)), when a return goes unanswered twice in a
+row (step 6), when its leaf never wakes ([delivery queue](#delivery-queue)), at the hop cap
 ([hop count](#hop-count)), or when a node holding it dies (roadmap D31).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
@@ -577,113 +671,18 @@ messages that waited for them go first, the most travelled first; the
 rest of the queue keeps its order, as ordering it all by count would
 starve messages that have just entered.
 
-The relay's own application's message, offered once a ban, would be a
-full frame every 1.56 s on the refuser's channel, 9 %, hiding its ACKs,
-and would spend the holder's bucket as fast as it refills; so after the
-k-th refusal in a row it waits one ban times 2^(k−1), 1.56 s, 3.11 s,
-6.2 s and so on, up to the bucket's whole refill, 61 s, the longest
-anything waits for a bucket ([duty cycle cap](#duty-cycle-cap)), and the wait starts again from one
-ban once the message is taken or dropped.
-
-An ACK names the node it answers because two senders can offer the same
-message to the same relay at once: one retrying a hand-over whose ACK
-was lost while another returns the message there, or the two copies of
-a split message ([why the search finds a path](#why-the-search-finds-a-path)). If the ACK named only the message and the
-relay, each sender would take the answer to the other as its own. A
-taken one would end a hand-over the relay never took, and the message
-would be lost; a refused one would send a sender on from a relay that
-took its packet, and the message would have a second copy (roadmap
-D32). A leaf's DATA names no sender (`src_hop` 0, [packet formats](#packet-formats)), so an ACK to a
-leaf names none either; two leaves do not offer the same message, whose
-ID covers the payload.
-
-**Retry wait.** The wait before the retry after the k-th unanswered
-transmission is uniform in [0, 2^k × 153.0 ms]: 0–306 ms, then 0–612 ms.
-153.0 ms is how long one hand-over holds its receiver, a full frame
-(138.6 ms) and its ACK (14.4 ms). The usual cause of a missing ACK, other
-than a weak link, is a sender the first one cannot hear that transmitted
-to the same receiver at the same time (a hidden terminal): both miss the
-ACK and both retry. Their retries miss each other only if they start
-more than one hand-over apart, which for full frames and a window of W
-units happens with probability (1 − 1/W)²: never with one unit, 1/4 with
-two, 9/16 with four. Doubling per attempt also spreads more than two such
-senders. The listen-before-talk backoff of step 2 stays short: it waits
-for a channel the sender can hear to clear, and checks again (roadmap
-D22).
-
-An ACK resets the neighbour's failure count and refreshes its last-heard
-time ([neighbour table](#neighbour-table)): a neighbour that answers is alive whether or not its
-heartbeats are heard. A failed hand-over
-that was itself a return to the parent is not retried elsewhere: it
-waits for the parent's ban and goes once more, and after a second
-failure the message is dropped.
-
-The receiver retunes to the sender's channel, listens before talking,
-sends the ACK, and retunes home. The ACK is the first byte, whose `aux`
-says whether the packet is refused, the message ID, and the names of the
-answering and the answered node, each a relay's short name or a leaf's
-ID (13 bytes, 14.4 ms, [packet formats](#packet-formats)). The sender matches the ID and both names
-against its outstanding hand-over. The answering node's name is needed
-because relays share home channels: without it, an ACK for the same
-message from a different relay on the same channel, which the
-depth-first search can produce, would end the wrong hand-over and
-strand the message; the answered node's name, for the reason above. A relay
-ACKs a packet as soon as it has received it, even while waiting for an
-ACK of its own; if that makes it miss its own ACK, its next attempt
-covers it.
-
-A relay owes at most one reply at a time, an ACK or an ATTACHED
-([attach and polls](#attach-and-polls)). A packet, DATA or ATTACH, that arrives while its reply to
-another packet is still waiting for the channel is neither taken nor
-refused: the relay says nothing and changes
-nothing, and the sender retries as for a lost ACK. A second reply would
-go out only after the first, which may wait for its channel until its
-own sender gives up, 100 ms; taking a packet it may not be able to
-answer in time would let its sender hand the message to someone else
-as well. A copy of the packet the owed reply answers, sent again because
-that reply is late, is answered by it (roadmap D29).
-
-So: **a node receives everything, ACKs included, on its home channel, and
-leaves it only to transmit.** A leaf's home channel is its relay's, so
-leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
-≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
-That is the cost of having one radio.
-
-**Send queue.** A regular room of 40 places, and one hop place for each
-count from 1 to 254; the packet being handed over keeps its place. A
-relay queues a packet in the regular room only if everything queued,
-that packet included, fits in its bucket as it stands ([receiving DATA](#receiving-data)), so a
-packet there waits for the hand-overs ahead of it, not for the bucket
-to refill. The number of places follows: the bucket holds at most 6 s
-([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that took it on cost 138.6 +
-14.4 = 153.0 ms, so ⌈6 s / 153.0 ms⌉ = 40. With the reply reserve left
-in, a full bucket takes at most 37 full frames, so for full frames the
-bucket is the limit; shorter frames fill the 40 places first, and forty
-hand-overs of them go out within a few seconds.
-
-A packet received with count h that the regular room refuses takes the
-highest free hop place numbered h or lower, and keeps it until it leaves
-the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A packet from a leaf or from the
-relay's own application has count 0 and no hop place, and is not taken
-while every neighbour is banned ([receiving DATA](#receiving-data)), so overload stops new messages
-where they enter, at the application ([addresses](#addresses)). A packet
-received at 255 ends at the cap ([hop count](#hop-count)), so 254 hop places are enough.
-Packets are handed over in the order they arrived, except that, when
-bans end, the packets that waited for them go first, as above.
-
 ### Routing
 
-A message travels as a DATA packet ([packet formats](#packet-formats)) handed from relay to relay, each
-hand-over acknowledged ([hand-over](#hand-over)). A relay hands the message to its neighbour
-closest to the destination position. Where that leads into a gap, a relay
-from which no neighbour leads on, the relays route around it by
-depth-first search (DFS): a relay with no neighbour left to try returns
-the message to the relay it first got it from, which tries its next
-neighbour. The search is shared out among the relays: each keeps a small
-record per message ([message records](#message-records)), and the packet carries nothing for it but
-the name of the relay that sent it and a hop count. DFS only routes
-around gaps; it never searches for an ID.
+A message travels as a DATA packet ([packet formats](#packet-formats)) handed from relay to
+relay, each hand-over acknowledged ([hand-over](#hand-over)). A relay hands the
+message to its neighbour closest to the destination position. Where that
+leads into a gap, a relay from which no neighbour leads on, the relays
+route around it by depth-first search (DFS): a relay with no neighbour
+left to try returns the message to the relay it first got it from, which
+tries its next neighbour. The search is shared out among the relays: each
+keeps a small record per message ([message records](#message-records)), and the packet carries
+nothing for it but the name of the relay that sent it and a hop count.
+DFS only routes around gaps; it never searches for an ID.
 
 The **origin** of a message is the relay that first sends it into the
 network: the relay a leaf handed it to, or a relay sending for its own
@@ -694,15 +693,15 @@ The rules below are roadmap D11, D16 and D17.
 #### Packet sender
 
 A relay acts on a DATA packet whose `dst_hop` is its own short name
-([relay identity](#relay-identity)) and ignores the rest. The packet names its sender by `src_hop`,
-the sender's short name, and gives the sender's home channel in `aux`
-([packet formats](#packet-formats)). Those two are all a relay needs to send something back: `dst_hop`
-set to `src_hop`, on the channel in `aux`. It needs no neighbour-table
-entry for the sender; if it has one, `aux` becomes its channel there,
-as a heartbeat's would ([neighbour table](#neighbour-table)).
+([relay identity](#relay-identity)) and ignores the rest. The packet names its sender by
+`src_hop`, the sender's short name, and gives the sender's home channel
+in `aux` ([packet formats](#packet-formats)). Those two are all a relay needs to send something
+back: `dst_hop` set to `src_hop`, on the channel in `aux`. It needs no
+neighbour-table entry for the sender; if it has one, `aux` becomes its
+channel there, as a heartbeat's would ([neighbour table](#neighbour-table)).
 
-A packet with `hops = 0` comes from a leaf ([hop count](#hop-count)): the receiving relay
-is the origin, and the message has no parent.
+A packet with `hops = 0` comes from a leaf ([hop count](#hop-count)): the receiving
+relay is the origin, and the message has no parent.
 
 Where a relay needs the sender's full position, to place it in the order
 of [next hop](#next-hop), it rebuilds it from the short name and its own position
@@ -727,9 +726,9 @@ The relay's **tried set** for the message is the parent and the
 neighbours in `handed`: those known to have the message. A neighbour that
 has not ACKed it is not tried, whether it was passed over, because it was
 demoted, expired or not in the table at the time, or was offered the
-message and refused it or never answered ([hand-over](#hand-over)): it stays a candidate.
-When a neighbour-table slot changes hands, its bit is cleared in every
-record.
+message and refused it or never answered ([hand-over](#hand-over)): it stays a
+candidate. When a neighbour-table slot changes hands, its bit is cleared
+in every record.
 
 The record is also how a relay recognises a repeat of a message it has
 handled ([receiving DATA](#receiving-data)); there is no separate window of recent IDs.
@@ -738,27 +737,28 @@ handled ([receiving DATA](#receiving-data)); there is no separate window of rece
 needs its place; a new record then takes the place of the least recently
 active one among those whose message the relay does not hold. A relay
 holds a message while it is in its send queue ([hand-over](#hand-over)), the hand-over
-included, or set aside for a full delivery queue ([return to parent](#return-to-parent)). Without its
-record the message could not be routed when its turn comes, so a message
-is never lost for want of room (roadmap D31).
+included, or set aside for a full delivery queue ([return to parent](#return-to-parent)). Without
+its record the message could not be routed when its turn comes, so a
+message is never lost for want of room (roadmap D31). The table holds
+1695 records ([bounds](#bounds)).
 
 #### Next hop
 
-One function chooses the next hop for a first send, for the next try after
-the message comes back, and after a failed hand-over ([hand-over](#hand-over)). The
-**candidates** are the neighbour-table entries that are live ([neighbour table](#neighbour-table)),
-except those in the tried set ([message records](#message-records)), those banned ([hand-over](#hand-over)), and those
-set aside for the current hand-over because they did not take it ([hand-over](#hand-over)
-steps 2 and 6, refusal).
+One function chooses the next hop for a first send, for the next try
+after the message comes back, and after a failed hand-over
+([hand-over](#hand-over)). The **candidates** are the neighbour-table entries that are
+live ([neighbour table](#neighbour-table)), except those in the tried set ([message records](#message-records)), those
+banned ([hand-over](#hand-over)), and those set aside for the current hand-over because
+they did not take it ([hand-over](#hand-over) steps 2 and 6, refusal).
 
-The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those without;
-within each, neighbours that are not demoted before demoted ones; within
-each, distance to the destination position in the local plane ([position and time](#position-and-time)),
-nearest first; equal distances are ordered by short name. The
-relay sends to the first candidate. If there is none but neighbours that
-are only banned, the message waits until the earliest ban ends and is
-routed again then ([hand-over](#hand-over)). If there is none at all, the relay returns the
-message to its parent ([return to parent](#return-to-parent)).
+The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
+without; within each, neighbours that are not demoted before demoted
+ones; within each, distance to the destination position in the local
+plane ([position and time](#position-and-time)), nearest first; equal distances are ordered by
+short name. The relay sends to the first candidate. If there is none but
+neighbours that are only banned, the message waits until the earliest
+ban ends and is routed again then ([hand-over](#hand-over)). If there is none at all,
+the relay returns the message to its parent ([return to parent](#return-to-parent)).
 
 A neighbour without margin is tried only after every neighbour with
 margin, demoted ones included. Fading lets a relay hear the 8-byte
@@ -771,20 +771,16 @@ a weak link still carries some frames. When it does take one, its ACK
 is heard and counts toward its margin (roadmap D38).
 
 Among neighbours with margin, a demoted one is thus a last resort: tried
-only when every other has been, its failures counted as usual. Demotion keeps a failing link
-from costing every message its attempts while another route exists; it
-should not drop a message whose only route is that link. Two hand-overs
-lost to collisions demote a neighbour that works, and on a line it is
-the only route, so without the last resort every message is dropped
-until the demotion lapses, six and a half minutes. A neighbour that is
-really gone costs a message three attempts each time the message is
-routed past it, until its entry expires ([neighbour table](#neighbour-table): 390 s after its last
-heartbeat) (roadmap D25, D36). A
-banned neighbour is not tried at all: it has just said it cannot take
-the message, and trying it again before its bucket has refilled would
-only cost it another reply (roadmap D29); or it has left a hand-over
-unanswered, and trying it again at once would only add frames where
-frames are already being lost (roadmap D42).
+only when every other has been, its failures counted as usual. Demotion
+keeps a failing link from costing every message its attempts while
+another route exists; it should not drop a message whose only route is
+that link. Two hand-overs lost to collisions demote a neighbour that
+works, and on a line it is the only route, so without the last resort
+every message is dropped until the demotion lapses, six and a half
+minutes. A neighbour that is really gone costs a message three attempts
+each time the message is routed past it, until its entry expires
+([neighbour table](#neighbour-table): 390 s after its last heartbeat) (roadmap D25, D36). A
+banned neighbour is not tried at all ([hand-over](#hand-over): refusal, silence).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -794,49 +790,55 @@ toward the destination is the normal case.
 
 A candidate may already have the message, having got it by another path.
 The relay cannot know this: its neighbours listen on other channels and
-it does not overhear them. The candidate takes it all the same ([receiving DATA](#receiving-data)).
-If the message has arrived there, or the candidate holds another copy,
-it goes no further; otherwise the candidate goes on with its own search,
-and in time offers the message back or returns it, and the relay takes
-that as its return.
+it does not overhear them. The candidate takes it all the same
+([receiving DATA](#receiving-data)). If the message has arrived there, or the candidate holds
+another copy, it goes no further; otherwise the candidate goes on with
+its own search, and in time offers the message back or returns it, and
+the relay takes that as its return.
 
 #### Receiving DATA
 
-A relay answers a DATA packet addressed to it ([packet sender](#packet-sender), [hand-over](#hand-over)) before
-acting on it, with an ACK that says whether it takes the packet or
-refuses it ([packet formats](#packet-formats)). It answers only when it owes no other reply ([hand-over](#hand-over)).
-It takes a packet that would give it something to send on into the
-regular room of its send queue only if the room has a place for it and
-its airtime bucket ([duty cycle cap](#duty-cycle-cap)) holds, as it stands, the ACK, the airtime of
-every frame in the send queue and of the new one, and the reply reserve.
-Failing that, it takes the packet into a free hop place numbered no
-higher than the packet's `hops`, whatever the bucket holds ([hand-over](#hand-over)). A
-packet from a leaf, and its own application's message, also need a
-neighbour the relay could hand it to now: a live one that is not
-banned ([next hop](#next-hop), [hand-over](#hand-over)), demoted or not, since a message entering here has
-tried none. A relay whose neighbours are all banned would only hold the
-message until a ban ends, and its offer could be refused again; refused
-here, the message waits at its origin, where the application sees it. A relay with no live neighbour at all
-takes it, and the search ends as in [return to parent](#return-to-parent). So a relay takes from its
-leaves and its own application no more than it can start sending now,
-and refuses a message already in the network only when the hop places
-it may use are taken too, whatever its bans: [hand-over](#hand-over) needs every such
-message to move on (roadmap D34). It takes a packet to deliver only
-if its bucket holds the reply reserve and an ACK and, for one of its
-leaves, its delivery queue has room ([delivery queue](#delivery-queue)). Otherwise it refuses: it
-sends an ACK that says refused, on the channel in `aux` after listening
-before talking, changes nothing, and the sender tries elsewhere at once
-or waits ([hand-over](#hand-over)). A packet that gives it no work, cases 1, 3 and 4 below,
-is taken even then: a refusal would send its sender on with a second
-copy. A relay
-that cannot afford even the reply stays silent, and its sender retries
-as for a lost ACK (roadmap D27, D29).
+A relay answers a DATA packet addressed to it ([packet sender](#packet-sender)) before
+acting on it, with an ACK that takes or refuses the packet
+([hand-over](#hand-over)). It answers only when it owes no other reply ([hand-over](#hand-over)).
+Whether it takes the packet depends on what the packet gives it to do:
+
+- **Something to send on.** It takes the packet into the regular room of
+  its send queue only if the room has a place for it and its airtime
+  bucket ([duty cycle cap](#duty-cycle-cap)) holds, as it stands, the ACK, the airtime of every
+  frame in the send queue and of the new one, and the reply reserve.
+  Failing that, it takes the packet into a hop place ([hand-over](#hand-over), send
+  queue), whatever the bucket holds. So it refuses a message already in
+  the network only when the hop places it may use are taken too, whatever
+  its bans: [hand-over](#hand-over) needs every such message to move on (roadmap D34).
+- **A message entering the network here**, a packet from a leaf or the
+  relay's own application's message, also needs a neighbour the relay
+  could hand it to now: a live one that is not banned ([next hop](#next-hop)), demoted
+  or not, since the message has tried none. A relay whose neighbours are
+  all banned would only hold the message until a ban ends, and its offer
+  could be refused again; refused here, the message waits at its origin,
+  where the application sees it. A relay with no live neighbour at all
+  takes it, and the search ends as in [return to parent](#return-to-parent). So a relay takes
+  from its leaves and its own application no more than it can start
+  sending now (roadmap D34).
+- **Something to deliver.** It takes the packet only if its bucket holds
+  the reply reserve and an ACK and, for one of its leaves, its delivery
+  queue has room ([delivery queue](#delivery-queue)).
+- **No work**, cases 1, 3 and 4 below. It takes the packet even when it
+  would refuse work: a refusal would send its sender on with a second
+  copy.
+
+Otherwise it refuses: it sends an ACK that says refused, on the channel
+in `aux` after listening before talking, changes nothing, and the sender
+tries elsewhere at once or waits ([hand-over](#hand-over)). A relay that cannot afford
+even the reply stays silent, and its sender retries as for a lost ACK
+(roadmap D27, D29).
 
 The packet is one of the following, tested in this order:
 
 1. **Arrived:** the relay has delivered the message or holds it for a
-   leaf ([delivery queue](#delivery-queue)), or its record says the message has arrived ([message records](#message-records)).
-   ACK only.
+   leaf ([delivery queue](#delivery-queue)), or its record says the message has arrived
+   ([message records](#message-records)). ACK only.
 2. **New:** the relay has no record for the message. It creates one, with
    the sender as parent (none if `hops = 0`). If it owns the destination
    ([owner](#owner)), it delivers; otherwise it chooses a next hop ([next hop](#next-hop)) and
@@ -845,18 +847,18 @@ The packet is one of the following, tested in this order:
    packet of the message the relay received. The sender's ACK was lost
    and it sent the same packet again. ACK only.
 4. **A copy while the relay holds one:** the message waits in its send
-   queue or is set aside ([return to parent](#return-to-parent)). ACK only: the two copies merge, and the
-   relay's goes on. A hand-over under way whose frame has gone out does
-   not count: its receiver may have taken it with only the ACK lost, and
-   this packet may be that copy come back.
+   queue or is set aside ([return to parent](#return-to-parent)). ACK only: the two copies merge,
+   and the relay's goes on. A hand-over under way whose frame has gone
+   out does not count: its receiver may have taken it with only the ACK
+   lost, and this packet may be that copy come back.
 5. **A copy, and the relay holds none:** the relay takes it and goes on
    with its own search from its record. It checks ownership again (a
    closer neighbour may have been demoted since), then sends to its next
-   candidate ([next hop](#next-hop)), or returns the message to its parent ([return to parent](#return-to-parent)), or,
-   at the origin, drops it. From a neighbour it handed the message to,
-   this is that neighbour's return. From the neighbour it is still
-   handing the message to, it also ends that hand-over: the neighbour has
-   the message.
+   candidate ([next hop](#next-hop)), or returns the message to its parent
+   ([return to parent](#return-to-parent)), or, at the origin, drops it. From a neighbour it
+   handed the message to, this is that neighbour's return. From the
+   neighbour it is still handing the message to, it also ends that
+   hand-over: the neighbour has the message.
 
 In every case the relay records the packet's sender and count as the
 last packet, raises its highest count if the packet's is higher, and
@@ -875,63 +877,64 @@ it (roadmap D35).
 
 #### Return to parent
 
-When [next hop](#next-hop) finds no candidate, because every neighbour has been tried
-or set aside, the relay sends the message back to its parent: a
+When [next hop](#next-hop) finds no candidate, because every neighbour has been
+tried or set aside, the relay sends the message back to its parent: a
 DATA packet with `dst_hop` the parent's short name, from the record, on
 the parent's home channel as the neighbour table has it at the moment of
-sending, so a return follows a parent that has moved home ([channel moves](#channel-moves)) since
-it handed the message over. Only a parent no longer in the table is sent
-to on the channel in the record. The parent takes it as a return
-([receiving DATA](#receiving-data), case 5) and continues with its next neighbour.
+sending, so a return follows a parent that has moved home
+([channel moves](#channel-moves)) since it handed the message over. Only a parent no longer
+in the table is sent to on the channel in the record. The parent takes
+it as a return ([receiving DATA](#receiving-data), case 5) and continues with its next
+neighbour.
 
 The origin has no parent. With no candidate left it drops the message:
 no relay that can be reached from it through neighbours that answer
-owns the destination. Nobody is told ([addresses](#addresses), roadmap D10), the origin's
-own application included: that is the cost of having no end-to-end
-acknowledgement.
+owns the destination. Nobody is told ([addresses](#addresses), roadmap D10), the
+origin's own application included: that is the cost of having no
+end-to-end acknowledgement.
 
 A message whose neighbours left are only banned is neither returned nor
-dropped: it waits ([hand-over](#hand-over)), at the origin or anywhere else. The relay's
-own application's message waits the same way, longer after refusals in
-a row ([hand-over](#hand-over)), as a leaf's does ([attach and polls](#attach-and-polls)), and one for one of the relay's
-own leaves that finds the delivery queue full is kept aside until the
-queue has a place. Until a first hop takes it, the application is given
-no other message ([addresses](#addresses)), nor one while every neighbour is banned
-([receiving DATA](#receiving-data)).
+dropped: it waits ([hand-over](#hand-over)), at the origin or anywhere else; the
+relay's own application's message waits as in [hand-over](#hand-over), as a leaf's
+does ([attach and polls](#attach-and-polls)). An application's message for one of the relay's own
+leaves that finds the delivery queue full is kept aside until the queue
+has a place.
 
 If the hand-over to the parent fails twice in a row, the second time
-after waiting for the parent's ban ([hand-over](#hand-over) step 6), the relay drops the
-message and the search ends early. A parent that refuses the return has not
-failed: the return waits for the ban and goes again ([hand-over](#hand-over)).
+after waiting for the parent's ban ([hand-over](#hand-over) step 6), the relay drops
+the message and the search ends early. A parent that refuses the return
+has not failed: the return waits for the ban and goes again
+([hand-over](#hand-over)).
 
 #### Hop count
 
 `hops` in the DATA header counts hand-overs. A leaf sends 0; a relay
 sending for its own application sends 1, as if it had received the
-message at 0, since 0 means "from a leaf" ([packet sender](#packet-sender)). A relay sends its
-record's highest count plus one ([message records](#message-records)), whether it is forwarding,
-or returning to its parent. The count is set when a hand-over's first
-frame goes out, and its retries repeat it ([hand-over](#hand-over)). The highest count is
-the largest the relay has received for the message or sent in a
-hand-over that succeeded. So along the path of a message the count only
-grows, and a relay sends a count for a message once, but in retries: to
-send another packet of it, it must have received one since its last
-hand-over that succeeded, or that hand-over failed and the packet goes
-elsewhere. After a wait for a ban it may also go again to the neighbour
-that did not answer; if that neighbour took the first, the second is in
-fact a retransmission to it. A receiver therefore tells a retransmission
-by the sender and the count ([receiving DATA](#receiving-data), case 3). A frame that waited in the send queue, or
-goes to another neighbour after a failed hand-over, carries the count as
-it stands when it goes. The count also numbers the hop places of the
-send queue ([hand-over](#hand-over)).
+message at 0, since 0 means "from a leaf" ([packet sender](#packet-sender)). A relay
+sends its record's highest count plus one ([message records](#message-records)), whether it
+is forwarding or returning to its parent. The count is set when a
+hand-over's first frame goes out, and its retries repeat it
+([hand-over](#hand-over)). The highest count is the largest the relay has received for
+the message or sent in a hand-over that succeeded. So along the path of
+a message the count only grows, and a relay sends a count for a message
+once, but in retries: to send another packet of it, it must have
+received one since its last hand-over that succeeded, or that hand-over
+failed and the packet goes elsewhere. After a wait for a ban it may also
+go again to the neighbour that did not answer; if that neighbour took
+the first, the second is in fact a retransmission to it. A receiver
+therefore tells a retransmission by the sender and the count
+([receiving DATA](#receiving-data), case 3). A frame that waited in the send queue, or goes
+to another neighbour after a failed hand-over, carries the count as it
+stands when it goes. The count also numbers the hop places of the send
+queue ([hand-over](#hand-over)).
 
 A relay that would have to send a count above 255, the largest the
 one-byte field holds, drops the message. A search that keeps its records
-ends on its own ([why the search finds a path](#why-the-search-finds-a-path)); the cap ends one that has lost its way because a
-record was replaced, or because the message split in two, and it ends
-the chain of hop places ([hand-over](#hand-over)).
-255 is generous: the longest straight route across the city of [capacity and sizing](#capacity-and-sizing)
-(≈30 km at the ≈750 m street range of [physical layer](#physical-layer)) is about 40 hand-overs, leaving
+ends on its own ([why the search finds a path](#why-the-search-finds-a-path)); the cap ends one that has lost
+its way because a record was replaced, or because the message split in
+two, and it ends the chain of hop places ([hand-over](#hand-over)). 255 is generous:
+the longest straight route across the city of [capacity and sizing](#capacity-and-sizing) (≈30 km at
+the ≈750 m street range of [physical layer](#physical-layer)) is about 40 hand-overs, leaving
 about 200 for routing around gaps.
 
 #### Owner
@@ -942,9 +945,9 @@ A relay **owns** the destination `(x, y)` when:
   relay; or
 - it is within 50 m of `(x, y)` and no live, non-demoted neighbour is
   closer to `(x, y)` than itself. The addressed relay has then probably
-  died or moved; 50 m is the distance [position and time](#position-and-time) allows between two GPS fixes of
-  a relay that has not moved, so a relay this close is, for the radio, in
-  the same place.
+  died or moved; 50 m is the distance [position and time](#position-and-time) allows between
+  two GPS fixes of a relay that has not moved, so a relay this close is,
+  for the radio, in the same place.
 
 A relay farther than 50 m with no closer neighbour is at a gap, not the
 owner, and the search goes on ([next hop](#next-hop)).
@@ -954,23 +957,21 @@ delivered there without entering the search. The destination position
 alone decides who delivers: a relay that has the leaf in its leaf table
 but does not own the position routes the message on like any other. A
 leaf that has just moved to another relay stays in the old relay's table
-until it times out (180 s, [attach and polls](#attach-and-polls)), so the table disagrees with the
-address exactly when the address is new; delivering from the table would
-queue the message for a leaf that has gone (roadmap D21).
+until it times out (180 s, [attach and polls](#attach-and-polls)), so the table disagrees with
+the address exactly when the address is new; delivering from the table
+would queue the message for a leaf that has gone (roadmap D21).
 
-The owner looks `leaf_id` up in its leaf table and delivers ([delivery](#delivery)), or
-queues ([delivery queue](#delivery-queue)). If `leaf_id = 0` the message is for the relay itself: the
-addressed relay delivers it to its own application; an owner within 50 m
-drops it, since the relay it was for is gone.
+The owner looks `leaf_id` up in its leaf table and delivers
+([delivery](#delivery)), or queues ([delivery queue](#delivery-queue)); a later copy of a message it has
+delivered is only ACKed ([receiving DATA](#receiving-data), case 1). If `leaf_id = 0` the
+message is for the relay itself: the addressed relay delivers it to its
+own application; an owner within 50 m drops it, since the relay it was
+for is gone.
 
 An owner that is not the addressed relay and does not know `leaf_id` may
 ask its direct neighbours once whether they hold it (one hop, one round;
 the packet is open item O13); if none does, it queues. Nothing wider: a
 wider search is a flood.
-
-The owner remembers the message IDs it has delivered ([delivery queue](#delivery-queue)), and a
-later copy of the message, from any neighbour, is ACKed and not
-delivered again.
 
 ### Why the search finds a path
 
@@ -979,8 +980,8 @@ every hand-over to a neighbour that answers succeeds within its attempts,
 and no record is replaced. Then:
 
 - The message moves as a single packet: a relay sends only what it has
-  just received or originated, and every ACK-only case of [receiving DATA](#receiving-data) sends
-  nothing.
+  just received or originated, and every ACK-only case of
+  [receiving DATA](#receiving-data) sends nothing.
 - A relay holding the message either owns the destination, sends to its
   next candidate, or returns it to its parent. A neighbour that takes the
   message is tried and never offered it again from that record, so each
@@ -992,36 +993,37 @@ and no record is replaced. Then:
   three attempts each time the message is routed past it, and the hop
   cap bounds the stays ([hop count](#hop-count)).
 - A send to a relay that already has the message hands it the search
-  ([receiving DATA](#receiving-data), case 5): it goes on with its own candidates. The sender is
-  one of them unless the relay has tried it, so the search comes back
+  ([receiving DATA](#receiving-data), case 5): it goes on with its own candidates. The sender
+  is one of them unless the relay has tried it, so the search comes back
   to the sender as a return, and the sender goes on with its own. A
   relay whose search is unfinished gets the message back that way or
   through the parents, so none is left with neighbours untried.
 
-So the message makes a depth-first traversal of the relays reachable from
-the origin through neighbours that answer, nearest to the destination
-first; a relay met again is searched on from where it stood, not
-skipped. A depth-first traversal visits every relay it can reach; it stops
-at the first owner, or returns to the origin when there is none. If a path
-to an owner exists, the message finds it, provided the traversal fits in
-the 255 hand-overs of [hop count](#hop-count).
+So the message makes a depth-first traversal of the relays reachable
+from the origin through neighbours that answer, nearest to the
+destination first; a relay met again is searched on from where it
+stood, not skipped. A depth-first traversal visits every relay it can
+reach; it stops at the first owner, or returns to the origin when there
+is none. If a path to an owner exists, the message finds it, provided
+the traversal fits in the 255 hand-overs of [hop count](#hop-count).
 
 What breaks it:
 
 - **A lost record.** A message returning to a relay whose record has
-  been replaced is new there; the relay searches again from
-  itself, and the relays above it never get the message back. The search
-  ends early, or wanders until the hop cap ends it.
+  been replaced is new there; the relay searches again from itself, and
+  the relays above it never get the message back. The search ends early,
+  or wanders until the hop cap ends it.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
   sender moves on while the receiver also carries the message: two copies
   search at once. They share the relays' records, so each goes on from
   where the other left a relay. The sender has not marked the receiver
   tried, so a copy that comes back to it is offered there again. A copy
-  ends where it meets the other held at a relay ([receiving DATA](#receiving-data), case 4), where
-  the message has arrived (case 1), at the origin with the search, or at
-  the hop cap. A copy is never ended where it is the last one.
+  ends where it meets the other held at a relay ([receiving DATA](#receiving-data), case 4),
+  where the message has arrived (case 1), at the origin with the search,
+  or at the hop cap. A copy is never ended where it is the last one.
 - **Links that change** during the search, including a parent that moves
-  to another home channel ([return to parent](#return-to-parent)): parts of the graph go unsearched.
+  to another home channel ([return to parent](#return-to-parent)): parts of the graph go
+  unsearched.
 
 ### Bounds
 
@@ -1030,36 +1032,36 @@ What breaks it:
   neighbour at most once per record, in at most 3 attempts. A neighbour
   that does not answer costs 3 attempts each time it is offered a
   message, and each failure bans it for every message, the ban doubling
-  up to 61 s ([hand-over](#hand-over)). So a dead neighbour costs a relay at most 11 failed
-  hand-overs, 33 frames, whatever the messages, before it leaves the
-  table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2, 12.5,
-  24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest. After two
-  failures it is a last resort ([neighbour table](#neighbour-table)).
+  up to 61 s ([hand-over](#hand-over)). So a dead neighbour costs a relay at most 11
+  failed hand-overs, 33 frames, whatever the messages, before it leaves
+  the table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2,
+  12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
+  After two failures it is a last resort ([neighbour table](#neighbour-table)).
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
   whose ACKs were lost. A link that does not answer costs three attempts
   each time the message is routed past it, so a search that comes back
   through a relay often, as one with no owner does, pays for it at every
-  stay (roadmap D36). Within the hop cap a search can
-  explore about 64 to 128 links beyond the route that led into the gap.
-- **Bound.** A relay holds at most 1695 records. A message sent on can come
-  back, returned by a child or offered by a split copy, and its record must
-  still be here then. On its way it may wait at each relay as long as a
-  full send queue takes to drain, each of the 294 places waiting out one
-  ban of 1.56 s ([hand-over](#hand-over)): 457.3 s. A ban after silence lasts up to 61 s
-  ([hand-over](#hand-over) step 6), so where every way on is silent a message can wait
-  longer; its own record is kept while it is held, and this bound covers
-  the wait behind refusals only (roadmap D42). Every message a relay handles costs at
-  least an ACK (13 bytes, 14.4 ms) and one DATA packet with no payload (21
-  bytes, 18.2 ms), together 32.6 ms; 10% of 457.3 s is 45.7 s of airtime,
-  so a relay handles at most 1401 messages in that time ([regulatory limits](#regulatory-limits)). The records
-  of held messages are never evicted and may be older, so the table has
-  room for the 294 a send queue holds on top: 1695. A record is 32 bytes,
-  so 54 KB.
-- **State per relay:** at most 1695 records of 32 bytes, 54 KB
-  ([message records](#message-records)); a send queue of 294 packets of up to 255 bytes, 75 KB ([hand-over](#hand-over));
-  the owner's delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
+  stay (roadmap D36). Within the hop cap a search can explore about 64 to
+  128 links beyond the route that led into the gap.
+- **Message records:** at most 1695 per relay ([message records](#message-records)). A message
+  sent on can come back, returned by a child or offered by a split copy,
+  and its record must still be here then. On its way it may wait at each
+  relay as long as a full send queue takes to drain, each of the 294
+  places waiting out one ban of 1.56 s ([hand-over](#hand-over)): 457.3 s. A ban after
+  silence lasts up to 61 s ([hand-over](#hand-over) step 6), so where every way on is
+  silent a message can wait longer; its own record is kept while it is
+  held, and this bound covers the wait behind refusals only (roadmap
+  D42). Every message a relay handles costs at least an ACK (13 bytes,
+  14.4 ms) and one DATA packet with no payload (21 bytes, 18.2 ms),
+  together 32.6 ms; 10% of 457.3 s is 45.7 s of airtime, so a relay
+  handles at most 1401 messages in that time ([regulatory limits](#regulatory-limits)). The
+  records of held messages are never evicted and may be older, so the
+  table has room for the 294 a send queue holds on top: 1695.
+- **State per relay:** the records at 32 bytes each, 54 KB; a send queue
+  of 294 packets of up to 255 bytes, 75 KB ([hand-over](#hand-over)); the owner's
+  delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
 
 ---
 
