@@ -406,11 +406,6 @@ impl Relay {
         self.heartbeat_power().0.operating_dbm
     }
 
-    /// The poll period now (§10.2). For a driver to sample.
-    pub fn poll_period(&self) -> Duration {
-        self.leaves.period()
-    }
-
     /// Whether a hand-over is under way: begun and not yet answered or
     /// given up, waits for a backoff, a retry or the bucket included. For
     /// a driver to sample; reading it changes nothing.
@@ -546,13 +541,7 @@ impl Relay {
     /// A reading of the home channel is held for one sweep interval, longer
     /// than any packet it can fall in, and then counts only energy that
     /// would stay on the channel if this relay left it (§6.1).
-    fn sweep_sample(
-        &mut self,
-        channel: Channel,
-        dbm: i16,
-        now: Instant,
-        emit: &mut dyn FnMut(Action),
-    ) {
+    fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
             if let Some(p) = self.sweep.pending.take() {
                 let interval = now.since(self.sweep.last_home);
@@ -580,10 +569,6 @@ impl Relay {
         }
         // Once per round of the channels.
         self.neighbours.expire(now);
-        if self.leaves.busy(self.busy.fraction(self.home)) {
-            let quiet = self.leaves.quiet();
-            emit(Action::Trace(Trace::PollPeriod { quiet }));
-        }
         if self.stage == Stage::Running && self.config.home_override.is_none() {
             self.move_rule(now);
         }
@@ -856,7 +841,7 @@ impl Core for Relay {
                 Some(Job::Sweep) | None => {}
             },
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
-                Some(Job::Sweep) => self.sweep_sample(channel, dbm, now, emit),
+                Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
                 Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
                 Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
                 Some(Job::Reply) => self.reply_check(dbm > threshold, now, emit),
@@ -1013,7 +998,7 @@ mod tests {
     fn a_hybrid_leaf_is_polled_at_its_slot_with_a_short_preamble() {
         use crate::ids::{LeafId, MsgId};
         use crate::tables::delivery::Queued;
-        use crate::tables::leaves::{PERIOD_MAX, POLL_AIRTIME, POLL_LATE};
+        use crate::tables::leaves::{PERIOD, POLL_AIRTIME, POLL_LATE};
         use crate::wire::{Attach, RxMode};
         let hour = Duration::from_secs(3600);
         let config = Config {
@@ -1052,8 +1037,7 @@ mod tests {
             pending
         };
         let pending = receive(&mut r, &attach(false), now);
-        // No sweep, so no busy estimate says the channel is quiet.
-        let until = now + PERIOD_MAX + Duration::from_secs(2);
+        let until = now + PERIOD + Duration::from_secs(2);
         let sent = drive_from(&mut r, &mut now, until, pending);
         let polls: Vec<_> = sent
             .iter()
@@ -1092,7 +1076,7 @@ mod tests {
         );
         // Unanswered, it waits for the next poll, which counts it; the
         // DELIVER after the answer has the short preamble.
-        let until = now + PERIOD_MAX + Duration::from_secs(2);
+        let until = now + PERIOD + Duration::from_secs(2);
         let sent = drive_from(&mut r, &mut now, until, Vec::new());
         let poll = sent
             .iter()
@@ -1254,8 +1238,6 @@ mod tests {
             sweep_interval: hour,
             heartbeat_min: hour,
             heartbeat_max: hour,
-            // No poll within the test.
-            poll_interval: hour,
             ..Config::default()
         };
         let mut r = Relay::new(config, 1);

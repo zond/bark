@@ -1060,71 +1060,42 @@ it cannot hear (roadmap D41); it does so only to attach. `next_poll` in
 every ATTACHED is the delay from the end of that frame to the start of
 the leaf's next slot. It is not a period: the leaf knows only when its
 next poll comes, and each ATTACHED names the next one afresh, so the
-relay may change its period without telling anyone.
+relay may move a slot without telling anyone.
 
-**The period.** With L leaves in its table, each is polled once a period
-
-P = L × N, but at least 10 s and at most 300 s, with **N = 4 s**,
-
-while the relay's home channel is quiet, and P = 300 s while it is not.
-No two slots are closer than the spacing S = P / L, which is N unless a
-bound holds the period. Each poll, sent or skipped, gives the leaf the
-first time at least one period after its slot that lies S from every
-other leaf's next slot; a new leaf gets the first such time a period
-after it attached. So the relay never polls two leaves closer than S,
-and with the table steady the round settles to one poll every S, each
-leaf every P: every slot of the round is used, so the polls are spread
-evenly over it however the leaves attached, together after a mass start
-or a restart or one by one. When L or the rule changes, the slots
-already named hold, and each leaf's next slot follows the new period;
-the round settles within a period.
+**The period.** Each leaf is polled once a period, **P = 300 s**, and
+with L leaves no two slots are closer than the spacing S = P / L, never
+under P / 256 = 1.17 s, a full table's. Each poll, sent or skipped,
+gives the leaf the first time at least one period after its slot that
+lies S from every other leaf's next slot; a new leaf gets the first
+such time a period after it attached. So the relay never polls two
+leaves closer than S, and with the table steady the round settles to
+one poll every S, each leaf every P: every slot of the round is used,
+so the polls are spread evenly over it however the leaves attached,
+together after a mass start or a restart or one by one. When L
+changes, the slots already named hold, and each leaf's next slot keeps
+the new spacing; the round settles within a few periods.
 
 | | Value | From |
 |---|---|---|
 | ATTACHED, ATTACH | 7 and 9 bytes, 10.56 and 11.84 ms | §14 |
-| Relay airtime, quiet, 3 to 75 leaves | 10.56 ms / N = 0.26 %, 2.7 % of the duty budget | the bucket fills at 9.83 % (§9.4) |
-| The same, full table of 256 | 10.56 ms / (300 s / 256) = 0.90 %, 9.2 % of the budget | |
-| The same at 80 leaves, quiet or not | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
+| Relay airtime for polls, full table of 256 | 10.56 ms / 1.17 s = 0.90 %, 9.2 % of the duty budget | the bucket fills at 9.83 % (§9.4) |
+| The same at 80 leaves | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
 | Channel time at 80 leaves, polls and answers | 80 × 22.40 ms / 300 s = 0.60 % | |
-| Channel time at 10 leaves | quiet, 22.40 ms / 4 s = 0.56 %; busy, 0.075 % | |
-| Shortest period, one or two leaves | 10 s | |
 
-Three bounds set the period. While L × N lies between 10 s and 300 s, N
-bounds the share of the relay's budget polls take: each costs the relay
-one ATTACHED, 10.56 ms, so at one every N the relay spends 10.56 ms / N
-whatever its table holds. Polls may take 3 % of the budget, what those
-of roadmap D39 took at the ≈70 leaves of a relay in the capacity domain,
-where the domain worked at twice the §13 rate; so N ≥ 10.56 ms / (3 % ×
-9.83 %) = 3.6 s, and N = 4 s, 2.7 %; N = 300 s / 256 = 1.17 s would take
-a tenth of the budget at every table of more than 8 leaves, and the
-domain collapsed at a lower rate with it (roadmap D41). At more than 300
-s / N = 75 leaves the 300 s cap wins: it is half the delivery TTL, so a
-gone leaf is kept at most a period past the life of its messages
-(below), and the slots are 300 s / L apart, never closer than 300 s /
-256 = 1.17 s, so that a full table costs 0.90 % of the relay's time, 9.2
-% of its budget. The 10 s floor serves small cells: a phone back from
-the dark there is heard within 10 s, for 0.12 % of each leaf's time on
-air.
-
-**Only on a quiet channel.** Every shortened period is extra frames on
-the relay's channel, and extra frames on a loaded channel are what tip
-the capacity domain into collapse (`collapse-research-2026-10-16.md`).
-So the relay shortens its period below 300 s only while its own
-measure of its home channel, the `busy` of §6.1 that the move rule
-reads, says the channel is quiet: it becomes quiet below 3.5 % and
-stays so until 4.5 %. The domain works at the §13 rate and at twice
-it, where relays read a median of 3.2 to 3.4 % and 5.3 to 5.8 %
-(roadmap D41); 4.5 % lies halfway between them in load, and a relay
-below it that polls one leaf every N adds at most 0.56 % of the channel
-in polls and answers, which keeps it under the median of twice the
-rate. The band between 3.5 and 4.5 % is the hysteresis. It is 2.4 times
-the median standard deviation of a relay's reading over time at a steady
-load, 0.41 %, and more than the 0.56 % a co-channel neighbour's
-shortened polls can add to the reading; a relay's own polls and the
-answers to them do not count in its own reading (§6.1), so shortening
-cannot by itself end the quiet. The busy estimate moves slowly, over 10
-minutes (§6.1), so the rule changes the period a few times an hour at
-most.
+The period and the spacing follow from the duty budget and the
+delivery TTL (§10.4: 10 minutes). Polls cost the relay 10.56 ms per S.
+A full table must leave forwarding at least nine tenths of the budget,
+so S ≥ 10.56 ms / (10 % × 9.83 %) = 1.07 s, P ≥ 275 s. The period is
+half the TTL, the next period up that divides it, so that the relay
+keeps a leaf through any dark spell shorter than a TTL (below) and
+keeps a gone leaf at most one period past the life of the messages it
+held for it. A shorter period for a small cell, where a relay has few
+leaves and its channel is quiet, would make a returning phone known
+sooner; it was built and measured and gained nothing that the leaf's
+own return (below) does not already give, while tripling a small
+cell's airtime (roadmap D41). It waits for sleeping leaves, whose
+messages wait for their poll, and a measurement of what latency they
+need.
 
 **Lateness and the window.** A poll goes before the heartbeat and the
 hand-over, after an owed reply, and not while the relay waits for an ACK.
@@ -1217,8 +1188,7 @@ What this costs and gains:
   by the spacing like any others.
 - A leaf whose relay has died and that hears another moves at its next
   window, a heartbeat from the other relay and up to 60 s: at most
-  P + 0.6 s + 195 s + 60 s after its last poll, 556 s at 300 s, 266 s at
-  10 s.
+  P + 0.6 s + 195 s + 60 s after its last poll, 556 s.
 - A leaf that hears no other relay keeps trying its own once a rotation
   for ever.
 
@@ -1429,17 +1399,14 @@ uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
 cap (§9.4) binds there first.
 
 The relays' polls of their leaves (§10.2) cost a relay one ATTACHED,
-10.56 ms, per poll, and its channel the poll and the 11.84 ms answer. At
-the ≈70 leaves of a relay in the capacity domain the period is 280 s on
-a quiet channel and 300 s on a busy one, so polls take 0.26 % of the
-relay's time, 2.7 % of its budget, and 0.56 % of its channel; at 80
-leaves the 300 s cap holds and it is 0.28 %, 2.9 % and 0.60 %. A full
+10.56 ms, per poll, and its channel the poll and the 11.84 ms answer,
+each leaf every 300 s. At the ≈70 leaves of a relay in the capacity
+domain polls take 0.25 % of the relay's time, 2.5 % of its budget, and
+0.52 % of its channel; at 80 leaves 0.28 %, 2.9 % and 0.60 %. A full
 table of 256 takes 0.90 % of the relay's time, 9.2 % of its budget.
-Summed over the domain, the 20 000 leaves are polled 67 times a second
-whatever the rule, 1.49 s of airtime a second, 11.5 % of one channel's
-time over the 13, where every relay hears every other. A relay with few
-leaves polls them more often only while its channel is quiet: at 10
-leaves every 40 s, 0.56 % of its channel, against 0.075 % at 300 s.
+Summed over the domain, the 20 000 leaves are polled 67 times a second,
+1.49 s of airtime a second, 11.5 % of one channel's time over the 13,
+where every relay hears every other.
 
 Common proposals that do not fit:
 

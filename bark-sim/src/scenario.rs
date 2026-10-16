@@ -117,8 +117,6 @@ pub struct ProtocolOverrides {
     pub demote_after_failures: Option<u8>,
     pub neighbour_expiry_rotations: Option<u8>,
     pub leaf_retry_ms: Option<u64>,
-    /// Override of `poll_interval` (design §10.2: 1171.875 ms), µs.
-    pub poll_interval_us: Option<u64>,
     pub delivery_ttl_ms: Option<u64>,
     pub busy_ema_inverse: Option<u16>,
     pub sweep_interval_ms: Option<u64>,
@@ -176,7 +174,6 @@ impl ProtocolOverrides {
         set!(demote_after_failures);
         set!(neighbour_expiry_rotations);
         set!(leaf_retry, leaf_retry_ms, ms);
-        set!(poll_interval, poll_interval_us, us);
         set!(delivery_ttl, delivery_ttl_ms, ms);
         set!(busy_ema_inverse);
         set!(sweep_interval, sweep_interval_ms, ms);

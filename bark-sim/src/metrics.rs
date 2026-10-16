@@ -250,9 +250,6 @@ pub struct CoreCounts {
     pub polls_skipped: u64,
     /// Leaves dropped for leaving their polls unanswered (§10.2).
     pub leaves_dropped: u64,
-    /// Times the relay's poll period changed between the quiet and the
-    /// busy rule (§10.2).
-    pub period_changes: u64,
     /// ATTACHes that attach a leaf began (§10.2).
     pub attaches_sent: u64,
     /// Of those, unanswered at every attempt.

@@ -3,45 +3,109 @@
 **Date:** 2026-10-16. Roadmap D41. Spec references are to `protocol.md`.
 Main is `b86c3f5` with the busy estimate added to the simulator's series
 (`958a437`, no result changes): the relay polls each leaf every 300 s on
-a fixed grid of 256 slots (D39). D41 is `7227a62`: the relay still polls
-and the leaf still answers right behind the poll, but the period follows
-the table on a quiet channel, the slots keep a spacing, ATTACHED counts
-the messages waiting, a leaf keeps its relay while it is dark, and the
-relay listens for the answer to each poll (§10.2). "No shortening" is
-D41 with the period held at 300 s. Every scenario as in
-`leaf-polls-2026-10-15.md`; S4 delivery is the reachable texts sent from
-900 to 3900 s.
+a fixed grid of 256 slots (D39). D41 keeps the relay polling and the
+leaf answering right behind the poll, and the 300 s period; the slots
+keep a spacing, ATTACHED counts the messages waiting, a leaf keeps its
+relay while it is dark, and the relay listens for the answer to each
+poll (§10.2). It was first built (`7227a62`) with a period that
+followed the table, L × 4 s within 10 s and 300 s while the relay's
+channel read quiet; that version is "D41 with shortening" below, and
+D41 without it is the decided design, run as that commit with the
+quiet threshold at zero, which its successor reproduces frame for
+frame. Every scenario as in `leaf-polls-2026-10-15.md`; S4 delivery is
+the reachable texts sent from 900 to 3900 s.
 
 ## Summary
 
-- **At the §13 rate D41 delivers 1.6 points more:** 95.1 → 96.6 % and
-  94.7 → 96.4 % (seeds 1, 2). A phone back from the dark is heard after
-  54 s at the median instead of 175 s, and half as many leaves end the
-  run without a relay.
+- **At the §13 rate D41 delivers 2 points more:** 95.1 → 97.0 % and
+  94.7 → 96.9 % (seeds 1, 2), for 4 % more airtime. A phone back from
+  the dark is heard after about 55 s at the median instead of 175 s, and
+  half as many leaves end the run without a relay.
 - **The poll bursts of D39 are gone.** On main the busiest minute of
   every five holds a median 53 to 55 % of a relay's polls, and the domain
   sends 940 to 12 600 polls a minute; with D41 it holds 22 % (even is
-  20 %) and the domain sends 4 250 to 4 480 a minute. After a mass start
+  20 %) and the domain sends about 4 300 a minute. After a mass start
   and after 27 relays restart, no hash of the leaf's ID is needed.
 - **Twice the §13 rate is the cliff, for main too.** With four seeds
   instead of two, main delivers 94.4, 94.0, 91.9 and 49.5 %: seed 4
-  collapses from 1200 s. D41 delivers 83.6, 95.2, 73.7 and 42.9 %, −8.6 ±
-  4.0 points paired. It keeps 74 leaves a relay attached instead of 70,
+  collapses from 1200 s. D41 delivers 92.9, 78.8, 84.3 and 46.2 %, −6.9 ±
+  3.1 points paired. It keeps 74 leaves a relay attached instead of 70,
   so more polls and more deliveries go out, and at the edge of the cliff
   that is enough to tip more seeds. At three times the rate both
   collapse in the same 600 s bin.
-- **Shortening the period buys nothing measured and costs airtime.**
-  Without it D41 delivers as well or better everywhere (S4 ×1 seed 1
-  97.0 %, S2 +1.8 points against +0.5 with it), while with it S2's
-  airtime triples (74 → 219 s a run), the meshes' nearly double, and the
-  ring at its cap carries 2.5 % fewer texts. The channel-quiet rule
-  keeps it off where the channel is loaded, which in S4 leaves 28 % of
-  relay-minutes shortened at the §13 rate and 11 % at twice it; in a
-  small cell the channel is always quiet, so it does nothing there.
+- **Shortening the period was built, measured and removed:** it tripled
+  S2's airtime (74 → 219 s a run), cost the rings at their cap 2.5 % of
+  their carried texts and corridor seed 3 0.99 → 0.89, and gained nothing
+  at the §13 rate; shorter periods for small cells wait for sleeping
+  leaves and a measurement of the latency they need.
 - **Three departures from the design as decided,** each measured:
   ATTACHED keeps 7 bytes and carries the count of waiting messages in
   its four spare bits, up to 15; the room bit is left out; and the relay
   listens for the answer to its poll, which D39 did not.
+
+## D41 as decided, against main and with shortening
+
+S4, delivered, texts carried a second, total airtime a run and leaves
+without a relay at the end:
+
+| | main | D41 | D41 with shortening |
+|---|---|---|---|
+| ×1, seed 1 | 95.1 %, 4.58, 22 850 s, 404 | 97.0 %, 4.68, 23 793 s, 202 | 96.6 %, 4.66, 24 935 s, 219 |
+| ×1, seed 2 | 94.7 %, 4.60, 23 516 s, 405 | 96.9 %, 4.71, 24 503 s, 198 | 96.4 %, 4.69, 25 865 s, 207 |
+| ×2, seed 1 | 94.4 %, 9.15, 47 462 s, 474 | 92.9 %, 9.02, 62 285 s, 376 | 83.6 %, 8.11, 77 753 s, 521 |
+| ×2, seed 2 | 94.0 %, 9.05, 52 224 s, 466 | 78.8 %, 7.58, 84 428 s, 420 | 95.2 %, 9.18, 64 808 s, 220 |
+| ×2, seed 3 | 91.9 %, 8.93, 67 196 s, 616 | 84.3 %, 8.20, 83 505 s, 446 | 73.7 %, 7.15, 90 612 s, 491 |
+| ×2, seed 4 | 49.5 %, 4.73, 106 483 s, 1010 | 46.2 %, 4.42, 114 407 s, 605 | 42.9 %, 4.10, 117 456 s, 607 |
+
+Paired, D41 − main +2.05 ± 0.15 points at ×1 and −6.9 ± 3.1 at ×2;
+D41 − D41 with shortening +0.45 ± 0.05 and +1.7 ± 6.2.
+
+The suites, settled-phase delivery, D41 − main and D41 − D41 with
+shortening paired by seed, and airtime a run for main, D41 and D41 with
+shortening; no leaf ended without a relay except in S2 (2.6, 1.2 and
+2.7 a run) and one ring at 1 s on main:
+
+| Scenario | Seeds | main | D41 | − main | − with shortening | Airtime, s |
+|---|---|---|---|---|---|---|
+| S1 | 10 | 100 % | 100 % | 0 | 0 | 13.4, 13.4, 19.5 |
+| S1b | 60 | 96.0 % | 96.2 % | +0.2 ± 0.3 | −0.1 ± 0.4 | 29.5, 29.5, 35.5 |
+| S2 | 60 | 94.1 % | 95.9 % | +1.8 ± 0.6 | +1.3 ± 0.5 | 74.3, 74.9, 219.1 |
+| Corridor | 60 | 96.0 % | 95.9 % | −0.2 ± 0.3 | −0.3 ± 0.4 | 43.1, 43.0, 49.0 |
+| Mesh, burst | 10 | 100.0 % | 99.9 % | −0.1 ± 0.1 | 0.0 ± 0.2 | 145, 144, 270 |
+| Mesh, spread | 10 | 98.7 % | 98.8 % | +0.1 ± 0.2 | −0.1 ± 0.1 | 153, 149, 275 |
+| Ring | 10 | 99.65 % | 99.67 % | +0.0 ± 0.1 | +0.0 ± 0.1 | 1426, 1430, 1442 |
+| Ring at 1 s | 30 | 98.2 % | 98.9 % | +0.7 ± 0.5 | −0.1 ± 0.1 | 1463, 1470, 1479 |
+| Ring at 2 s | 30 | 99.67 % | 99.68 % | +0.01 ± 0.03 | +0.04 ± 0.03 | 1435, 1435, 1448 |
+
+Texts carried are the same as main's everywhere; the rings carry 0.02 to
+0.08 texts a second more than with shortening. Corridor seed 3 delivers
+0.989 (main 0.978, with shortening 0.890). The rest of this note, from
+three times the rate on and the bursts, was measured with shortening;
+it ran short in 3.9 % of relay-minutes at three times the rate and
+6.5 % on roofs at a tenth of it, and the restart run delivered 96.5 %
+without it against 96.3 % with it.
+
+**A restart, with and without shortening.** A shorter period's one
+operational gain would be that leaves notice a dead or restarted relay
+sooner: their next window, the sign, comes within a period. In S4 at
+the §13 rate with every tenth relay (27) restarting at 1800 s, seed 1:
+
+| | main | D41 | D41 with shortening |
+|---|---|---|---|
+| Delivered | 93.8 % | 96.5 % | 96.3 % |
+| Restarted relays' tables back to half what they held, median and p90 | 1020 s, 1140 s | 360 s, 480 s | 360 s, 540 s |
+| The same to 90 % | 2700 s, 2700 s | 1800 s, 2700 s | 1440 s, 2700 s |
+| Leaves without a relay, 1740 s and the worst minute after | 481, 647 | 209, 284 | 224, 335 |
+| Lost without a trace | 23 | 11 | 16 |
+
+The times are those of the restarted relays' tables refilling, from the
+per-minute series, not of each former leaf, which the simulator does
+not record; 2700 s is the end of the run, where a table never got back
+to 90 %, its leaves having moved to other relays. Half the leaves are
+back after six minutes either way; shortening brings the median relay
+to 90 % six minutes sooner, and delivery does not show it. The messages
+lost without a trace are those the restarted relays held, lost with
+their tables, as on main.
 
 ## The brief, and what did not hold
 
@@ -78,7 +142,7 @@ points. The relay now waits for the answer as for an ACK, up to the ACK
 timeout, sending only an owed reply meanwhile; the ring delivers what
 main does.
 
-## S4
+## S4, with shortening
 
 | | main ×1 s1 | D41 ×1 s1 | main ×1 s2 | D41 ×1 s2 | main ×2 s1 | D41 ×2 s1 | main ×2 s2 | D41 ×2 s2 |
 |---|---|---|---|---|---|---|---|---|
@@ -164,10 +228,10 @@ while its leaves found their relays again. In both, messages held by a
 relay when it restarted are lost without a trace (main 23, D41 16), as a
 restart loses its tables; no other run lost any.
 
-## The quiet rule
+## The quiet rule, built and removed
 
-The relay shortens its period only while its own home busy estimate
-(§6.1) is below 3.5 %, until it reaches 4.5 % (§10.2). On main the
+The relay shortened its period only while its own home busy estimate
+(§6.1) was below 3.5 %, until it reached 4.5 %. On main the
 relays read a median of 3.2 and 3.4 % at the §13 rate (90th percentile
 5.7 %) and 5.3 and 5.8 % at twice it (90th percentile 12 %); rooftop
 relays at a tenth of the rate read 4.7 %. Without the band,

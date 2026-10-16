@@ -1,15 +1,13 @@
 //! The leaf table (design §10.2): leaves attached to this relay, keyed by
 //! [`LeafId`], each with its place in the relay's poll schedule.
 //!
-//! The relay polls one leaf at a time. With L leaves the period is
-//! P = clamp(L N, [`PERIOD_MIN`], [`PERIOD_MAX`]) while the relay's home
-//! channel is quiet ([`QUIET_ENTER`], [`QUIET_LEAVE`]) and [`PERIOD_MAX`]
-//! otherwise, and the leaves' slots are at least the spacing S = P / L
-//! apart: each leaf's next slot is the first time at least a period after
-//! its last one that is S from every other leaf's. So the table settles
-//! into a round of L polls S apart, which is N while L N lies between the
-//! bounds, and a leaf that comes or goes moves only its own slot. A leaf
-//! that has left its polls unanswered for a delivery TTL is dropped.
+//! The relay polls one leaf at a time, each every [`PERIOD`], and with L
+//! leaves the slots are at least the spacing S = P / L apart: each leaf's
+//! next slot is the first time at least a period after its last one that
+//! is S from every other leaf's. So the table settles into a round of L
+//! polls S apart, and a leaf that comes or goes moves only its own slot.
+//! A leaf that has left its polls unanswered for a delivery TTL is
+//! dropped.
 //!
 //! When the table is full, an ATTACH from an unknown leaf is not answered,
 //! so the leaf attaches elsewhere. At 256 entries against ≈80 expected
@@ -22,7 +20,6 @@ use crate::event::MAX_FRAME;
 use crate::ids::LeafId;
 use crate::node::Config;
 use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::busy::ONE;
 use crate::tables::fixed::FixedVec;
 use crate::tables::send_queue::SEND_QUEUE;
 use crate::tables::{attempt_span, retry_waits, LBT_GIVE_UP};
@@ -35,50 +32,18 @@ pub const LEAVES: usize = 256;
 /// Airtime of a poll: one ATTACHED, 10.56 ms (§14).
 pub const POLL_AIRTIME: Duration = time_on_air(ATTACHED_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// N, the spacing of polls while the period is between its bounds
-/// (design §10.2).
-///
-/// A poll every N costs the relay 10.56 ms / N of its time however many
-/// leaves it has: at 4 s that is 0.26 %, 2.7 % of the duty budget's 9.83 %
-/// (§9.4); N = 10.56 ms / (3 % × 9.83 %) = 3.6 s, rounded up to whole
-/// seconds. Three per cent is what
-/// the polls of roadmap D39 took at the ≈70 leaves of a relay in the
-/// capacity domain, where they left the domain working at twice the §13
-/// rate. A spacing of 300 s / 256 = 1.17 s, the other value measured,
-/// took 8.5 % of the budget and collapsed the domain at a lower rate
-/// (roadmap D41).
-pub const POLL_INTERVAL: Duration = Duration::from_secs(4);
+/// P, how often each leaf is polled (design §10.2): half the delivery
+/// TTL, so that with the drop after a TTL of unanswered polls a gone leaf
+/// is kept at most a period past the life of its messages.
+pub const PERIOD: Duration = Duration::from_secs(300);
 
-/// The shortest period (design §10.2): a small cell's leaves are polled at
-/// most every 10 s, so that a phone back from the dark is known within
-/// 10 s there.
-pub const PERIOD_MIN: Duration = Duration::from_secs(10);
-
-/// The longest period (design §10.2): half the delivery TTL, as under
-/// roadmap D39, so that a full table's spacing is 300 s / 256 = 1.17 s and
-/// a gone leaf is kept at most a period past the life of its messages.
-pub const PERIOD_MAX: Duration = Duration::from_secs(300);
-
-/// The relay's home busy estimate (§6.1) below which the period may
-/// shorten, once it has been at [`PERIOD_MAX`]: 3.5 %.
-pub const QUIET_ENTER: u32 = (ONE as u64 * 35 / 1000) as u32;
-
-/// The estimate at or above which the period is [`PERIOD_MAX`]: 4.5 %.
-///
-/// Shortened polls add frames to the channel, and extra frames on a loaded
-/// channel are what start the collapse of the capacity domain
-/// (`collapse-research-2026-10-16.md`). The domain works at the §13 rate
-/// and at twice it, where relays read a median of 3.2 to 3.4 % and 5.3 to
-/// 5.8 % (roadmap D41). 4.5 % is the reading halfway between them in load;
-/// a relay below it that shortens its period to one poll every N adds at
-/// most a poll and its answer per N, (10.56 + 11.84) ms / 4 s = 0.56 % of
-/// the channel, and stays under the median of twice the rate. The 1 point
-/// between [`QUIET_ENTER`] and this is the hysteresis: 2.4 times the
-/// median standard deviation of a relay's reading over time at a steady
-/// load, 0.41 %, and more than the 0.56 % one co-channel neighbour's
-/// shortened polls can add to it (a relay's own polls and answers do not
-/// count in its own reading, §6.1).
-pub const QUIET_LEAVE: u32 = (ONE as u64 * 45 / 1000) as u32;
+/// The closest two slots come: the spacing of a full table, P / 256 =
+/// 1.17 s (design §10.2, roadmap D39). A poll costs the relay 10.56 ms,
+/// so a full table's polls take 0.90 % of its time, 9.2 % of the duty
+/// budget's 9.83 % (§9.4); a full table must leave forwarding nine tenths
+/// of the budget, which needs at least 10.56 ms / (10 % × 9.83 %) =
+/// 1.07 s.
+pub const SPACING_MIN: Duration = PERIOD.div(LEAVES as u64);
 
 /// How late after its slot a poll may start; one that cannot is skipped
 /// and counts as unanswered (design §10.2). It is listen-before-talk's
@@ -90,8 +55,6 @@ pub const POLL_LATE: Duration = LBT_GIVE_UP;
 /// The poll schedule's parameters, from a configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Polls {
-    /// N.
-    pub interval: Duration,
     /// The delivery TTL (§10.4): a leaf that leaves its polls unanswered
     /// for this long is dropped, so that one dark for less keeps its
     /// relay.
@@ -118,7 +81,6 @@ impl Polls {
         let full = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
             + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
         Polls {
-            interval: config.poll_interval,
             ttl: config.delivery_ttl,
             reply_wait: Duration::from_micros(
                 POLL_LATE.as_micros() + POLL_AIRTIME.as_micros() + config.ack_timeout.as_micros(),
@@ -128,27 +90,16 @@ impl Polls {
         }
     }
 
-    /// P for a table of `leaves`: L N within [`PERIOD_MIN`] and
-    /// [`PERIOD_MAX`] while `quiet`, else [`PERIOD_MAX`].
-    pub const fn period(&self, leaves: usize, quiet: bool) -> Duration {
-        if !quiet {
-            return PERIOD_MAX;
-        }
-        let p = self.interval.as_micros().saturating_mul(leaves as u64);
-        let p = if p < PERIOD_MIN.as_micros() {
-            PERIOD_MIN.as_micros()
-        } else if p > PERIOD_MAX.as_micros() {
-            PERIOD_MAX.as_micros()
-        } else {
-            p
-        };
-        Duration::from_micros(p)
-    }
-
-    /// S for a table of `leaves`: P / L, the least time between two slots.
-    pub const fn spacing(&self, leaves: usize, quiet: bool) -> Duration {
+    /// S for a table of `leaves`: P / L, the least time between two slots,
+    /// never under [`SPACING_MIN`].
+    pub const fn spacing(&self, leaves: usize) -> Duration {
         let l = if leaves == 0 { 1 } else { leaves as u64 };
-        self.period(leaves, quiet).div(l)
+        let s = PERIOD.div(l);
+        if s.as_micros() < SPACING_MIN.as_micros() {
+            SPACING_MIN
+        } else {
+            s
+        }
     }
 
     /// How long a sleeping leaf listens after the answer to a poll that
@@ -204,11 +155,10 @@ pub struct Full;
 pub struct Leaves {
     entries: FixedVec<LeafEntry, LEAVES>,
     polls: Polls,
-    quiet: bool,
 }
 
 impl Leaves {
-    /// An empty table on the schedule of `config`, at the longest period.
+    /// An empty table on the schedule of `config`.
     pub const fn from_config(config: &Config) -> Leaves {
         let fill = LeafEntry {
             leaf: LeafId::RELAY,
@@ -227,7 +177,6 @@ impl Leaves {
         Leaves {
             entries: FixedVec::new(fill),
             polls: Polls::from_config(config),
-            quiet: false,
         }
     }
 
@@ -236,34 +185,9 @@ impl Leaves {
         &self.polls
     }
 
-    /// Whether the home channel counts as quiet, so that the period may
-    /// shorten.
-    pub fn quiet(&self) -> bool {
-        self.quiet
-    }
-
-    /// Update from the home busy estimate `busy` (§6.1, fixed point):
-    /// quiet below [`QUIET_ENTER`], until [`QUIET_LEAVE`]. Returns whether
-    /// it changed.
-    pub fn busy(&mut self, busy: u32) -> bool {
-        let quiet = if self.quiet {
-            busy < QUIET_LEAVE
-        } else {
-            busy < QUIET_ENTER
-        };
-        let changed = quiet != self.quiet;
-        self.quiet = quiet;
-        changed
-    }
-
-    /// P now.
-    pub fn period(&self) -> Duration {
-        self.polls.period(self.len(), self.quiet)
-    }
-
     /// S now.
     pub fn spacing(&self) -> Duration {
-        self.polls.spacing(self.len(), self.quiet)
+        self.polls.spacing(self.len())
     }
 
     /// Number of entries.
@@ -328,7 +252,7 @@ impl Leaves {
         }
         let next = match known {
             Some(e) if !e.done => e.next_poll,
-            _ => self.free(leaf, now + self.period()),
+            _ => self.free(leaf, now + PERIOD),
         };
         let e = self.get_mut(leaf).expect("present");
         *e = LeafEntry {
@@ -412,7 +336,7 @@ impl Leaves {
             return;
         };
         let slot = e.next_poll;
-        let next = self.free(leaf, slot + self.period());
+        let next = self.free(leaf, slot + PERIOD);
         let ttl = self.polls.ttl;
         let e = self.get_mut(leaf).expect("found");
         if e.unanswered == 0 {
@@ -509,72 +433,45 @@ mod tests {
         LeafId(i.to_be_bytes())
     }
 
-    fn quiet_table() -> Leaves {
-        let mut t = Leaves::from_config(&Config::default());
-        assert!(t.busy(0));
-        t
-    }
-
     #[test]
     fn the_design_schedule() {
         let p = Polls::from_config(&Config::default());
-        assert_eq!(p.interval, POLL_INTERVAL);
         assert_eq!(POLL_AIRTIME, Duration::from_micros(10_560));
         assert_eq!(p.span, Duration::from_micros(3_133_440));
         assert_eq!(p.queue_wait, Duration::from_micros(6_118_400));
         assert_eq!(p.listen(0), Duration::ZERO);
         assert_eq!(p.listen(1), Duration::from_micros(9_251_840));
-        // A poll every N against the budget's 9.83 % (§9.4): under 3 %.
+        assert_eq!(p.spacing(1), PERIOD);
+        assert_eq!(p.spacing(10), Duration::from_secs(30));
+        assert_eq!(p.spacing(LEAVES), Duration::from_micros(1_171_875));
+        assert_eq!(p.spacing(1000), SPACING_MIN);
+        // A full table's polls against the budget's 9.83 % (§9.4).
         let budget = 59.0 / 600.0;
-        let share = POLL_AIRTIME.as_micros() as f64 / p.interval.as_micros() as f64;
-        assert!((share / budget - 0.0269).abs() < 0.0005, "{share}");
-        // The period follows the table between its bounds while quiet.
-        assert_eq!(p.period(1, true), PERIOD_MIN);
-        assert_eq!(p.period(2, true), PERIOD_MIN);
-        assert_eq!(p.spacing(2, true), Duration::from_secs(5));
-        assert_eq!(p.period(10, true), Duration::from_secs(40));
-        assert_eq!(p.spacing(10, true), POLL_INTERVAL);
-        assert_eq!(p.period(75, true), PERIOD_MAX);
-        assert_eq!(p.period(256, true), PERIOD_MAX);
-        assert_eq!(p.spacing(256, true), Duration::from_micros(1_171_875));
-        // Busy, it is the longest whatever the table.
-        assert_eq!(p.period(10, false), PERIOD_MAX);
-        assert_eq!(p.spacing(10, false), Duration::from_secs(30));
-    }
-
-    #[test]
-    fn the_quiet_rule_has_hysteresis() {
-        let mut t = Leaves::from_config(&Config::default());
-        assert!(!t.quiet(), "starts at the longest period");
-        let pct = |tenths: u64| (ONE as u64 * tenths / 1000) as u32;
-        assert!(!t.busy(pct(40)), "4.0 % does not make it quiet");
-        assert!(t.busy(pct(34)));
-        assert!(t.quiet());
-        assert!(!t.busy(pct(44)), "nor does 4.4 % end it");
-        assert!(t.busy(pct(45)));
-        assert!(!t.quiet());
+        let share = POLL_AIRTIME.as_micros() as f64 / SPACING_MIN.as_micros() as f64;
+        assert!((share / budget - 0.0917).abs() < 0.0005, "{share}");
     }
 
     #[test]
     fn slots_keep_the_spacing_and_each_leaf_is_polled_every_period() {
-        let mut t = quiet_table();
+        let mut t = Leaves::from_config(&Config::default());
         // Ten leaves attach in the same second.
         for i in 0..10 {
             t.attached(id(i), RxMode::Listening, 0, at(10)).unwrap();
         }
-        assert_eq!(t.period(), Duration::from_secs(40));
+        let s = t.spacing();
+        assert_eq!(s, Duration::from_secs(30));
         let mut slots: Vec<Instant> = t.iter().map(|e| e.next_poll).collect();
         slots.sort_unstable();
         for w in slots.windows(2) {
-            assert!(w[1].since(w[0]) >= Duration::from_secs(4), "{slots:?}");
+            assert!(w[1].since(w[0]) >= s, "{slots:?}");
         }
-        // Run five periods of polls; once the round has settled, after the
-        // first two, every leaf once per period, N apart.
+        // Run eight periods of polls; once the round has settled, after the
+        // first five, every leaf once per period, S apart.
         let mut sent = Vec::new();
         let mut now = at(10);
-        while now < at(210) {
+        while now < at(10) + PERIOD.mul(8) {
             if let Some((leaf, slot)) = t.poll_due(now) {
-                if slot >= at(90) {
+                if slot >= at(10) + PERIOD.mul(5) {
                     sent.push((slot, leaf));
                 }
                 t.polled(leaf);
@@ -584,13 +481,13 @@ mod tests {
             }
         }
         for w in sent.windows(2) {
-            assert!(w[1].0.since(w[0].0) >= Duration::from_secs(4));
+            assert!(w[1].0.since(w[0].0) >= s);
         }
         for i in 0..10 {
             let mine: Vec<_> = sent.iter().filter(|s| s.1 == id(i)).collect();
-            assert!(mine.len() >= 3);
+            assert!(mine.len() >= 2);
             for w in mine.windows(2) {
-                assert_eq!(w[1].0.since(w[0].0), Duration::from_secs(40));
+                assert_eq!(w[1].0.since(w[0].0), PERIOD);
             }
         }
         // A known leaf keeps its slot, and its mode is updated.
@@ -601,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_leaf_that_misses_its_polls_for_a_ttl_is_dropped_after_the_answer_wait() {
-        // Busy: P = 300 s, so the third poll is the TTL after the first.
+        // P = 300 s, so the third poll is the TTL after the first.
         let config = Config::default();
         let p = Polls::from_config(&config);
         let mut t = Leaves::from_config(&config);
@@ -614,7 +511,7 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(t.poll_due(slot).map(|(l, _)| l), Some(id(1)));
             t.polled(id(1));
-            slot += PERIOD_MAX;
+            slot += PERIOD;
         }
         assert_eq!(t.poll_due(slot), None, "no fourth poll");
         let drop_at = first + Duration::from_secs(600) + p.reply_wait;
@@ -639,21 +536,8 @@ mod tests {
     }
 
     #[test]
-    fn with_a_short_period_the_drop_still_waits_a_ttl() {
-        let mut t = quiet_table();
-        t.attached(id(1), RxMode::Listening, 0, at(0)).unwrap();
-        assert_eq!(t.period(), PERIOD_MIN);
-        let mut polls = 0;
-        while let Some((leaf, _)) = t.next_poll().and_then(|s| t.poll_due(s)) {
-            t.polled(leaf);
-            polls += 1;
-        }
-        assert_eq!(polls, 61, "a poll every 10 s for 600 s");
-    }
-
-    #[test]
     fn a_full_table_answers_no_new_leaf_and_polls_every_1_17_s() {
-        let mut t = quiet_table();
+        let mut t = Leaves::from_config(&Config::default());
         for i in 0..LEAVES as u32 {
             t.attached(id(i), RxMode::Listening, 0, at(0)).unwrap();
         }
@@ -661,7 +545,7 @@ mod tests {
         let mut slots: Vec<Instant> = t.iter().map(|e| e.next_poll).collect();
         slots.sort_unstable();
         for w in slots.windows(2) {
-            assert!(w[1].since(w[0]) >= Duration::from_micros(1_171_875));
+            assert!(w[1].since(w[0]) >= SPACING_MIN);
         }
         t.remove(id(7));
         assert!(t.attached(id(1000), RxMode::Listening, 0, at(0)).is_ok());

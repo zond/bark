@@ -421,10 +421,8 @@ fn trace_follows_a_message_and_changes_nothing() {
 
 /// The corridor (`scenarios/corridor.toml`): two flows meet head on at
 /// every relay of a line of five. Seeds 1 to 3 deliver at least 0.93 of
-/// the settled phase on `main` as of roadmap D28; with the 10 s polls of
-/// roadmap D41, whose answers the next relay along cannot hear, seed 3
-/// delivers 0.89, while over 60 seeds the mean is unchanged (0.961 against
-/// 0.960). The bound leaves room for the spread between seeds.
+/// the settled phase on `main` as of roadmap D28; the bound leaves room
+/// for the spread between seeds.
 #[test]
 fn corridor_carries_crossing_flows() {
     let sc = scenario("corridor.toml");
@@ -437,7 +435,7 @@ fn corridor_carries_crossing_flows() {
         let settled = &s.app.phases[1];
         assert_eq!(settled.phase, "settled");
         assert_eq!(settled.unreachable, 0, "the corridor is connected");
-        assert!(settled.delivery_ratio >= 0.85, "seed {seed}: {}", s.table());
+        assert!(settled.delivery_ratio >= 0.9, "seed {seed}: {}", s.table());
         assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
         accounted(&sim, &format!("corridor seed {seed}"));
     }

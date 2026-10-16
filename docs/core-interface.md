@@ -144,7 +144,7 @@ for each hop count a message can be sent on with, keep overload from dropping me
 holds, whose records are never given up (§9.2.2). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full leaf table (§10.4). A leaf entry is 56 B: its slots
 and the times it was told and heard, which the sleeping leaf's listening window needs (§10.2,
-§10.5). The whole `Relay` is 164 072 B (160.2 KiB, measured 2026-10-16 with roadmap D41):
+§10.5). The whole `Relay` is 164 048 B (160.2 KiB, measured 2026-10-16 with roadmap D41):
 the tables and, in under 1 KiB around them, the medium access, the hand-over, the poll in
 progress, its one owed reply and its application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
@@ -161,7 +161,7 @@ can keep in a static, built at compile time, and `Relay::reset(config, seed)` se
 place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
 `Relay::new`.
 
-`Leaf` is 784 B, under the 1 KiB target, because the capacity scenario holds twenty
+`Leaf` is 776 B, under the 1 KiB target, because the capacity scenario holds twenty
 thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.

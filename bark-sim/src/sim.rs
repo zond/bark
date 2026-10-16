@@ -994,11 +994,10 @@ impl Sim {
             let l = r.load(self.now);
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
-                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"period_s\":{:.2},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"m\":{m}}}\n",
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"m\":{m}}}\n",
                 self.nodes[i].alive,
                 r.booting(),
                 r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64,
-                r.poll_period().as_micros() as f64 / 1e6,
                 l.bucket.as_micros(),
                 l.send_queue,
                 l.delivery_queue,
@@ -1168,7 +1167,6 @@ impl Sim {
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::PollSkipped { .. } => c.polls_skipped += 1,
                     Trace::LeafDropped { .. } => c.leaves_dropped += 1,
-                    Trace::PollPeriod { .. } => c.period_changes += 1,
                     Trace::Attaching { .. } => c.attaches_sent += 1,
                     Trace::AttachFailed { .. } => c.attaches_failed += 1,
                     Trace::Forwarded { .. } => c.handed_over += 1,

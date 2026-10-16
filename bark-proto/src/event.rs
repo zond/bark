@@ -305,12 +305,6 @@ pub enum Trace {
         /// The leaf.
         leaf: LeafId,
     },
-    /// A relay's home channel became quiet, so that its poll period may
-    /// shorten, or stopped being so (§10.2).
-    PollPeriod {
-        /// Whether it is quiet now.
-        quiet: bool,
-    },
     /// A leaf began an ATTACH that attaches (§10.2).
     Attaching {
         /// The relay.
