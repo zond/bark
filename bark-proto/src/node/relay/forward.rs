@@ -785,7 +785,13 @@ impl Relay {
             self.arrive(id, &Data { time_left, ..d }, now, emit);
             return Routed::Done;
         }
-        if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
+        // A sleepy neighbour comes after every other, banned ones too: the
+        // message waits for a ban to end rather than go to a node that, in
+        // a place that has others, is most likely a dead end.
+        let next = self
+            .next_hop(&record, d.dst_pos, now)
+            .filter(|(_, n)| !n.sleepy || self.awake_ban_ends(&record, now).is_none());
+        if let Some((_, n)) = next {
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home);
             return Routed::To(Outgoing { frame, ..out }, self.expect(id, to));
@@ -836,10 +842,16 @@ impl Relay {
     /// resort. Fresh work waits
     /// at its origin meanwhile, where its application sees it, rather than
     /// here for a ban, to be refused again (roadmap D34). With no live
-    /// neighbour at all it is no ban: the search ends as before.
+    /// neighbour at all it is no ban: the search ends as before. Sleepy
+    /// neighbours count only where there are no others, as in [`Self::route`].
     fn bans_end(&self, now: Instant) -> Option<Instant> {
         let mut until: Option<Instant> = None;
-        for (_, n) in self.neighbours.live(now) {
+        let awake = self.neighbours.live(now).any(|(_, n)| !n.sleepy);
+        for (_, n) in self
+            .neighbours
+            .live(now)
+            .filter(|(_, n)| !awake || !n.sleepy)
+        {
             if !self.neighbours.is_banned(n, now) {
                 return None;
             }
@@ -857,6 +869,17 @@ impl Relay {
         self.neighbours
             .live(now)
             .filter(|(slot, n)| !record.handed(*slot) && self.neighbours.is_banned(n, now))
+            .map(|(_, n)| n.banned_until)
+            .min()
+    }
+
+    /// [`Self::ban_ends`] among the neighbours that are not sleepy.
+    fn awake_ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
+        self.neighbours
+            .live(now)
+            .filter(|(slot, n)| {
+                !n.sleepy && !record.handed(*slot) && self.neighbours.is_banned(n, now)
+            })
             .map(|(_, n)| n.banned_until)
             .min()
     }
