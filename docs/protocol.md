@@ -1074,7 +1074,7 @@ channel) and never forwards.
 ### Relay choice
 
 Listening on any one channel, a leaf hears every relay in range once per
-rotation (≈130 s, at most 13 × 15 s = 195 s). It keeps, for its relay and
+rotation (≈130 s, at most 13 × 15 s = 195 s; [heartbeat](#heartbeat)). It keeps, for its relay and
 the four strongest others it hears, the mean RSSI of the last two
 heartbeats. Four covers the relays an indoor leaf reaches at the design
 density: π × (300 m)² × 9.6 relays/km² ≈ 2.7 ([physical layer](#physical-layer), [capacity and sizing](#capacity-and-sizing)).
@@ -1163,9 +1163,9 @@ held for it. A shorter period for a small cell, where a relay has few
 leaves and its channel is quiet, would make a returning phone known
 sooner; it was built and measured and gained nothing that the leaf's
 own return (below) does not already give, while tripling a small
-cell's airtime (roadmap D41). It waits for sleeping leaves, whose
-messages wait for their poll, and a measurement of what latency they
-need.
+cell's airtime (roadmap D41). Such a period waits for sleeping leaves,
+whose messages wait for their poll, and for a measurement of the latency
+they need.
 
 **Lateness and the window.** A poll goes before the heartbeat and the
 hand-over, after an owed reply, and not while the relay waits for an ACK.
@@ -1288,15 +1288,14 @@ to the old address waits there as for a dark leaf ([delivery queue](#delivery-qu
 because it has no relay or its relay does not answer, is held and tried
 again as above, for up to the delivery TTL (10 minutes, [delivery queue](#delivery-queue)), the time
 the network itself would keep it. Only then is it dropped, and the app
-is not told ([addresses](#addresses)). The leaf holds one message at a time (roadmap D23)
-and takes the next from its app once this one is handed over or
-dropped. A relay that refuses the message, because it has no room or
-every way on from it is banned ([receiving DATA](#receiving-data)), is busy, not failing: the
-leaf keeps it, counts no failed period, and offers the message again
-one ban, 1.56 s, after the first refusal, then twice as long after each
-further one in a row, up to the bucket's refill of 61 s, as a relay
-with its own message does ([hand-over](#hand-over)): a leaf on an overloaded relay would
-otherwise probe it with a full frame every 1.56 s (roadmap D27, D29).
+is not told ([addresses](#addresses)). The leaf holds one message at a time
+([addresses](#addresses), roadmap D23). A relay that refuses the message, because it
+has no room or every way on from it is banned ([receiving DATA](#receiving-data)), is busy,
+not failing: the leaf keeps it, counts no failed period, and offers it
+again after the waits a relay's own message takes ([hand-over](#hand-over)), one ban,
+1.56 s, after the first refusal, doubling with each further one in a row
+up to the bucket's refill of 61 s, so that it does not probe an
+overloaded relay with a full frame every 1.56 s (roadmap D27, D29).
 
 ### Delivery
 
@@ -1363,21 +1362,19 @@ time the last one named ([attach and polls](#attach-and-polls)).
 
 Each ATTACHED also says how many messages the relay holds for the leaf,
 `waiting`, up to 15. A sleeping leaf that answers a poll counting n of
-them stays
-listening with the ordinary receiver, unless it has them all sooner, for
-as long as the relay can take to bring them: the DELIVERs that may be
+them stays listening with the ordinary receiver, unless it has them all
+sooner, for as long as the relay can take to bring them: the DELIVERs that may be
 ahead of them, a full send queue of full frames and their ACKs,
 40 × 152.96 ms = 6.12 s ([hand-over](#hand-over)), and each of the n with all its attempts,
-3.13 s ([attach and polls](#attach-and-polls)), so 6.12 s + n × 3.13 s, at most 53 s. While that lasts
-the relay sends
-those n with the 12-symbol preamble; a message that arrived after the
+3.13 s ([attach and polls](#attach-and-polls)), so 6.12 s + n × 3.13 s, at most 53 s. While that
+lasts the relay sends those n with the 12-symbol preamble; a message that arrived after the
 poll, or one still queued after the wait, gets the long one. So the
 messages of a sleeping leaf that is in reach reach it at its next poll
 at the latest, at the short preamble's airtime, and the long preamble
 is kept for messages between polls. The leaf core runs only the
 always-listening mode today; the relay side of this is built and
-tested. Default: always
-listening while on USB or charging, hybrid on battery. GPS off after a
+tested. Default: always listening while on USB or charging, hybrid on
+battery. GPS off after a
 fix, and off after 10 minutes without a fix (searching under jamming draws
 ≈27 mA, ≈1.3 days).
 
