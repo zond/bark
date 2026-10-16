@@ -467,6 +467,12 @@ pub struct Sim {
     /// Frames on air addressed to a relay: key to (relay, kind, state at
     /// the start), for [`crate::metrics::Addressed`].
     pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
+    /// DATA on air addressed to a relay: key to the ACK that would answer
+    /// it, message ID and `to`.
+    pub(crate) answer_of: HashMap<u64, (u32, u32)>,
+    /// DATA a relay received and has not answered yet: (relay, message,
+    /// `to`) to the answer's deadline and whether a leaf sent it.
+    pub(crate) awaiting: HashMap<(u32, u32, u32), (Instant, bool)>,
 }
 
 /// The interval of the series, µs.
@@ -612,6 +618,8 @@ impl Sim {
             component: Vec::new(),
             series: None,
             addressed: HashMap::new(),
+            answer_of: HashMap::new(),
+            awaiting: HashMap::new(),
         };
         sim.component = sim.components();
         sim.setup(sc, &placed)?;
@@ -996,6 +1004,16 @@ impl Sim {
                 l.neighbours
             ));
         }
+        let now = self.now;
+        let replies = &mut self.metrics.addressed.replies;
+        self.awaiting.retain(|_, (deadline, leaf)| {
+            // An ACK may still come late; give it a second.
+            let gone = now > *deadline + Duration::from_secs(1);
+            if gone {
+                replies[*leaf as usize][3] += 1;
+            }
+            !gone
+        });
         let mut a = crate::metrics::LeafSums::default();
         for (k, leaf) in self.leaves.iter().enumerate() {
             let n = self.n_relays as usize + k;

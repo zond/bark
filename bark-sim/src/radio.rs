@@ -34,7 +34,7 @@ use crate::metrics::Outcome;
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{Arrival, ExKind, Lock, Rx, Sim};
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::Packet as WirePacket;
+use bark_proto::wire::{AckName, Packet as WirePacket};
 use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 
 /// Tolerance for threshold comparisons in dB, so that an exact 5.0 dB
@@ -159,6 +159,28 @@ impl Sim {
         if let Some((id, hops)) = msg {
             self.message_frame(id, hops, air);
         }
+        match decoded {
+            Some(WirePacket::Data(d)) => {
+                self.answer_of.insert(
+                    key,
+                    (d.msg_id().0, u32::from_be_bytes(AckName::from(d.src_hop).0)),
+                );
+            }
+            Some(WirePacket::Ack(a)) if src < self.relays() => {
+                let k = (src, a.msg_id.0, u32::from_be_bytes(a.to.0));
+                if let Some((deadline, leaf)) = self.awaiting.remove(&k) {
+                    let answer = if self.now > deadline {
+                        2
+                    } else if a.refused {
+                        1
+                    } else {
+                        0
+                    };
+                    self.metrics.addressed.replies[leaf as usize][answer] += 1;
+                }
+            }
+            _ => {}
+        }
         if let Some(d) = to.and_then(|(name, kind)| self.relay_index.get(&name).map(|&d| (d, kind)))
         {
             let st = &self.nodes[d.0 as usize];
@@ -229,12 +251,19 @@ impl Sim {
                 }
             }
         }
+        let answer = self.answer_of.remove(&tx.key);
         if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
             let fate = if got.iter().any(|g| g.0 == d) {
                 0
             } else {
                 state
             };
+            if let (0, Some((msg, to))) = (fate, answer) {
+                if kind != 1 {
+                    let deadline = self.now + self.relay(d).config().ack_timeout;
+                    self.awaiting.insert((d, msg, to), (deadline, kind == 2));
+                }
+            }
             self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
         }
         let mut bytes = [0u8; MAX_FRAME];

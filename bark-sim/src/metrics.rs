@@ -273,6 +273,10 @@ pub struct CoreCounts {
 pub struct Addressed {
     /// Counts.
     pub counts: [[u64; 5]; 3],
+    /// Of the DATA frames received, `[relay's, leaf's][answer]`: an ACK that
+    /// takes it, one that refuses it, either started later than the ACK
+    /// timeout after the frame's end, or none.
+    pub replies: [[u64; 4]; 2],
 }
 
 /// The leaves' counters summed, for the series (`Sim::series_on`).
