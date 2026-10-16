@@ -424,6 +424,8 @@ pub struct DropCounts {
     pub relay_gone: u64,
     /// The delivery TTL ran out (spec "Delivery queue").
     pub queue_expired: u64,
+    /// Its time left ran out on the way (spec "Receiving DATA").
+    pub expired: u64,
     /// The delivery queue was full (spec "Delivery queue").
     pub delivery_full: u64,
     /// The payload was too long (spec "Packet formats").
@@ -445,6 +447,7 @@ impl DropCounts {
             DropReason::ReturnFailed => &mut self.return_failed,
             DropReason::RelayGone => &mut self.relay_gone,
             DropReason::QueueExpired => &mut self.queue_expired,
+            DropReason::Expired => &mut self.expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::NoRelay => &mut self.no_relay,
@@ -463,6 +466,7 @@ impl DropCounts {
             + self.return_failed
             + self.relay_gone
             + self.queue_expired
+            + self.expired
             + self.delivery_full
             + self.payload_too_long
             + self.no_relay

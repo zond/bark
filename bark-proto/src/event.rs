@@ -138,6 +138,8 @@ pub enum DropReason {
     RelayGone,
     /// Its leaf did not collect it within the delivery TTL (spec "Delivery queue").
     QueueExpired,
+    /// Its time left ran out before it reached its owner (spec "Receiving DATA").
+    Expired,
     /// The delivery queue had no room for a message to one of this
     /// relay's leaves (spec "Delivery queue").
     DeliveryFull,
