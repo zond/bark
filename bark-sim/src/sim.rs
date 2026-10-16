@@ -473,6 +473,14 @@ pub struct Sim {
     /// DATA a relay received and has not answered yet: (relay, message,
     /// `to`) to the answer's deadline and whether a leaf sent it.
     pub(crate) awaiting: HashMap<(u32, u32, u32), (Instant, bool)>,
+    /// The relay DATA a relay is being handed now: (relay, message,
+    /// sender's short name, count), for [`crate::metrics::HopPlaceRefusals`].
+    rx_data: Option<(u32, u32, u32, u8)>,
+    /// Relays by short name, filled as refusals name them.
+    by_short: HashMap<u32, u32>,
+    /// Refused messages not yet sent again: (sender, message) to the
+    /// refusal's time and whether a hop place was free for another.
+    refused_at: HashMap<(u32, u32), (Instant, bool)>,
 }
 
 /// The interval of the series, µs.
@@ -620,6 +628,9 @@ impl Sim {
             addressed: HashMap::new(),
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
+            rx_data: None,
+            by_short: HashMap::new(),
+            refused_at: HashMap::new(),
         };
         sim.component = sim.components();
         sim.setup(sc, &placed)?;
@@ -1079,6 +1090,15 @@ impl Sim {
         }
         if node < self.n_relays {
             self.note_attach(node, &ev);
+            self.rx_data = match ev {
+                Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
+                    Ok(bark_proto::wire::Packet::Data(d)) if d.hops > 0 => {
+                        Some((node, d.msg_id().0, d.src_hop.0, d.hops))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
         }
         let wake = if node < self.n_relays {
             let c = &mut self.relays[node as usize];
@@ -1149,6 +1169,7 @@ impl Sim {
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
+                self.note_sent_again(node, &f);
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
@@ -1161,7 +1182,10 @@ impl Sim {
                     Trace::HomeChannelMoved { .. } if !self.was_booting => c.home_moves += 1,
                     Trace::HeartbeatSkipped { .. } => c.heartbeats_skipped += 1,
                     Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
-                    Trace::Refused { reason, .. } => c.refused.add(reason),
+                    Trace::Refused { msg_id, reason } => {
+                        c.refused.add(reason);
+                        self.note_refusal(node, msg_id, reason);
+                    }
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
@@ -1180,6 +1204,63 @@ impl Sim {
         }
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
+        }
+    }
+
+    /// A relay refused the relay DATA it is being handed, if it is that:
+    /// see [`crate::metrics::HopPlaceRefusals`].
+    fn note_refusal(&mut self, node: u32, msg_id: MsgId, reason: bark_proto::DropReason) {
+        use bark_proto::DropReason as R;
+        if !matches!(reason, R::Budget | R::SendQueueFull) {
+            return;
+        }
+        let Some((at, id, from, _)) = self.rx_data else {
+            return;
+        };
+        if at != node || id != msg_id.0 {
+            return;
+        }
+        let Some(sender) = self.relay_named(from) else {
+            return;
+        };
+        let me = self.relays[node as usize].config().position.short();
+        let lowest = self.relays[node as usize].lowest_free_hop_place();
+        let held = self.relays[sender as usize].highest_count_for(me, self.now);
+        let with = matches!((lowest, held), (Some(k), Some(h)) if h >= k);
+        let h = &mut self.metrics.hop_places;
+        h.refusals += 1;
+        h.with_place += u64::from(with);
+        self.refused_at.insert((sender, id), (self.now, with));
+    }
+
+    /// The relay named `short`, if any.
+    fn relay_named(&mut self, short: u32) -> Option<u32> {
+        if let Some(&i) = self.by_short.get(&short) {
+            return Some(i);
+        }
+        let i = (0..self.n_relays)
+            .find(|&i| self.relays[i as usize].config().position.short().0 == short)?;
+        self.by_short.insert(short, i);
+        Some(i)
+    }
+
+    /// `node` sends `f`: if it is a DATA of a message refused to it, the
+    /// wait since ends.
+    fn note_sent_again(&mut self, node: u32, f: &Frame) {
+        if node >= self.n_relays || self.refused_at.is_empty() {
+            return;
+        }
+        let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(f.payload())
+        else {
+            return;
+        };
+        if let Some((t, with)) = self.refused_at.remove(&(node, d.msg_id().0)) {
+            let w = self.now.since(t).as_micros();
+            let h = &mut self.metrics.hop_places;
+            h.wait_us += w;
+            if with {
+                h.wait_with_place_us += w;
+            }
         }
     }
 

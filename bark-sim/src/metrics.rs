@@ -283,6 +283,25 @@ pub struct Addressed {
     pub replies: [[u64; 4]; 2],
 }
 
+/// Refusals of a relay's DATA for want of room (§9.2.4), and whether the
+/// refusing relay then had a free hop place at a count the refused sender
+/// would have sent another of its queued messages to it with: whether a
+/// refusal that named the lowest count it would take could have let the
+/// sender offer that message instead. Waiting is from each refusal to the
+/// refused message's next DATA from that sender.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HopPlaceRefusals {
+    /// Refusals of a relay's DATA for its bucket or a full room.
+    pub refusals: u64,
+    /// Of those, with a hop place free for another message the sender held
+    /// for the refuser.
+    pub with_place: u64,
+    /// Waiting after the refusals, µs.
+    pub wait_us: u64,
+    /// Of that, after those with a hop place free.
+    pub wait_with_place_us: u64,
+}
+
 /// The leaves' counters summed, for the series (`Sim::series_on`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct LeafSums {
@@ -665,6 +684,8 @@ pub struct Metrics {
     pub returns: LeafReturns,
     /// Frames addressed to a relay, by fate.
     pub addressed: Addressed,
+    /// Refusals for room, and the hop places free at them.
+    pub hop_places: HopPlaceRefusals,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.

@@ -194,6 +194,16 @@ impl SendQueue {
         (1..=top).rev().find(|&k| !taken[k]).map(|k| k as u8)
     }
 
+    /// The lowest free hop place: a packet received with this count or
+    /// higher finds one.
+    pub fn lowest_free_place(&self) -> Option<u8> {
+        let mut taken = [false; HOP_PLACES + 1];
+        for o in self.iter() {
+            taken[o.place as usize] = true;
+        }
+        (1..=HOP_PLACES).find(|&k| !taken[k]).map(|k| k as u8)
+    }
+
     /// The airtime of every queued frame, sent once each.
     pub fn airtime(&self) -> Duration {
         self.iter()

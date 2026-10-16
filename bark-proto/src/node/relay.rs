@@ -45,7 +45,7 @@ use crate::tables::delivery::DeliveryQueue;
 use crate::tables::leaves::Leaves;
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use crate::tables::records::Records;
-use crate::tables::send_queue::SendQueue;
+use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{Duration, Instant};
 #[cfg(test)]
 use crate::wire::HeartbeatPower;
@@ -398,6 +398,31 @@ impl Relay {
             .filter_map(|o| o.msg_id())
             .chain(self.delivery.iter().map(|q| q.msg_id))
             .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
+    }
+
+    /// The lowest count a packet from a relay may carry to be taken into
+    /// a hop place now, if any is free (§9.3). For a driver to sample;
+    /// reading it changes nothing.
+    pub fn lowest_free_hop_place(&self) -> Option<u8> {
+        self.queue.lowest_free_place()
+    }
+
+    /// The highest count this relay would send, of the forwards in its
+    /// send queue that could go to the neighbour named `to`: live, not
+    /// handed the message, not its parent (§9.2.3, §9.2.6). For a driver
+    /// to sample; reading it changes nothing.
+    pub fn highest_count_for(&self, to: ShortName, now: Instant) -> Option<u8> {
+        let (slot, n) = self.neighbours.by_short(to)?;
+        if self.neighbours.is_expired(n, now) {
+            return None;
+        }
+        self.queue
+            .iter()
+            .filter(|o| o.kind == Kind::Forward)
+            .filter_map(|o| self.records.get(o.msg_id()?))
+            .filter(|r| !r.handed(slot) && r.parent().map(|(p, _)| p) != Some(to))
+            .map(|r| r.highest_hops().saturating_add(1))
+            .max()
     }
 
     /// Operating power, dBm: what heartbeats state (research prototype,

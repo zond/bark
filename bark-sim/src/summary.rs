@@ -4,7 +4,9 @@
 //! runs of one scenario produce byte-identical JSON.
 
 use crate::links::{BuildStats, Site};
-use crate::metrics::{percentile, DropCounts, NodeMetrics, RxCounts, TypeAirtime};
+use crate::metrics::{
+    percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, TypeAirtime,
+};
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
 use bark_proto::Instant;
@@ -214,6 +216,9 @@ pub struct Summary {
     /// Dark leaves coming back, if any went dark.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub returns: Option<ReturnsSummary>,
+    /// Refusals for room, and the hop places free at them.
+    #[serde(skip_serializing_if = "hop_places_none")]
+    pub hop_places: HopPlaceRefusals,
     /// Per channel.
     pub channels: Vec<ChannelSummary>,
     /// Per observer.
@@ -358,6 +363,7 @@ impl Sim {
                     max_s: s(100.0),
                 }
             }),
+            hop_places: m.hop_places,
             channels,
             observers,
             nodes,
@@ -534,6 +540,17 @@ impl Summary {
             self.home_moves,
             self.relay_changes
         );
+        let h = &self.hop_places;
+        if h.refusals > 0 {
+            let _ = writeln!(
+                s,
+                "refused for room: {}, {} with a hop place free for another message the sender held for it; waiting after them {:.1} s, {:.1} s after those",
+                h.refusals,
+                h.with_place,
+                h.wait_us as f64 / 1e6,
+                h.wait_with_place_us as f64 / 1e6
+            );
+        }
         if let Some(r) = &self.returns {
             let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.1}"));
             let _ = writeln!(
@@ -602,4 +619,8 @@ impl Summary {
         );
         s
     }
+}
+
+fn hop_places_none(h: &HopPlaceRefusals) -> bool {
+    h.refusals == 0
 }
