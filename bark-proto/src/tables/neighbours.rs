@@ -73,6 +73,20 @@
 //! entries that are failing or not being heard. Whether a set spread
 //! around the relay routes better is open item O4; [`victim`] is the one
 //! function to replace if so.
+//!
+//! # Sleepy neighbours
+//!
+//! A sleepy node's heartbeat says so. It beats only on its home channel,
+//! at most every [`beat_period`] (300 s), so its entry expires after two
+//! periods without a beat, not three rotations, and is stale after one.
+//! It is a next hop only after every node that is not sleepy (the order
+//! of spec "Next hop", extended), so it may hold a slot only while no such node
+//! wants one: a newcomer that is not sleepy takes the place of the least
+//! recently heard sleepy entry before any other, and a sleepy newcomer
+//! takes only a free slot or, by the rule above, a demoted or stale
+//! sleepy entry's.
+//!
+//! [`beat_period`]: crate::tables::heard::beat_period
 
 use crate::geo::{LocalPlane, Point};
 use crate::ids::NodeId;
@@ -80,6 +94,7 @@ use crate::node::Config;
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::tables::budget::hold;
+use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
 
@@ -110,7 +125,16 @@ pub struct Neighbour {
     pub fail_count: u8,
     /// Whether its position is surveyed (heartbeat 0x1) rather than GPS (0x2).
     pub surveyed: bool,
+    /// Whether it is a sleepy node: a next hop only as a last resort.
+    pub sleepy: bool,
+    /// Heartbeats heard from it, up to [`BEATS`].
+    pub beats: u8,
 }
+
+/// The heartbeats counted per neighbour: a sleepy node switches to a
+/// stronger node only once it has heard two of its heartbeats
+/// (spec "Relay choice").
+pub const BEATS: u8 = 2;
 
 /// Timing parameters of the table, derived from [`Config`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +147,11 @@ pub struct NeighbourParams {
     pub expire_after: Duration,
     /// Age at which an entry may be evicted for a newcomer.
     pub stale_after: Duration,
+    /// Age at which a sleepy entry expires: two beat periods.
+    pub sleepy_expire_after: Duration,
+    /// Age at which a sleepy entry may be evicted for a sleepy newcomer:
+    /// one beat period, so it has certainly missed a beat.
+    pub sleepy_stale_after: Duration,
 }
 
 impl NeighbourParams {
@@ -136,6 +165,8 @@ impl NeighbourParams {
             demotion: mean_rotation.mul(c.demotion_rotations as u64),
             expire_after: mean_rotation.mul(c.neighbour_expiry_rotations as u64),
             stale_after: c.heartbeat_max.mul(CHANNELS as u64),
+            sleepy_expire_after: beat_period(c.delivery_ttl).mul(2),
+            sleepy_stale_after: beat_period(c.delivery_ttl),
         }
     }
 }
@@ -251,7 +282,15 @@ impl Neighbours {
 
     /// Whether `n` has expired at `now`.
     pub fn is_expired(&self, n: &Neighbour, now: Instant) -> bool {
-        now.since(n.last_heard) >= self.params.expire_after
+        now.since(n.last_heard) >= self.expire_after(n)
+    }
+
+    fn expire_after(&self, n: &Neighbour) -> Duration {
+        if n.sleepy {
+            self.params.sleepy_expire_after
+        } else {
+            self.params.expire_after
+        }
     }
 
     /// Neighbours that work at `now`, with their slots: live and not
@@ -285,6 +324,8 @@ impl Neighbours {
                 }
                 n.home = hb.home;
                 n.surveyed = hb.surveyed;
+                n.sleepy = hb.sleepy;
+                n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
             }
@@ -301,12 +342,14 @@ impl Neighbours {
             rssi: rssi as f32,
             fail_count: 0,
             surveyed: hb.surveyed,
+            sleepy: hb.sleepy,
+            beats: 1,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
             return Heard::Added(i);
         }
-        match victim(self, now) {
+        match victim(self, hb.sleepy, now) {
             Some(i) => match self.slots[i].replace(new) {
                 Some(old) => Heard::Replaced(i, old),
                 None => Heard::Added(i),
@@ -376,10 +419,9 @@ impl Neighbours {
 
     /// Remove every entry expired at `now`.
     pub fn expire(&mut self, now: Instant) {
-        let expire_after = self.params.expire_after;
-        for s in &mut self.slots {
-            if s.is_some_and(|n| now.since(n.last_heard) >= expire_after) {
-                *s = None;
+        for i in 0..NEIGHBOURS {
+            if self.slots[i].is_some_and(|n| self.is_expired(&n, now)) {
+                self.slots[i] = None;
             }
         }
     }
@@ -387,7 +429,7 @@ impl Neighbours {
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()
-            .map(|n| n.last_heard + self.params.expire_after)
+            .map(|n| n.last_heard + self.expire_after(n))
             .min()
     }
 
@@ -409,21 +451,33 @@ fn average(avg: f32, dbm: i16) -> f32 {
 }
 
 /// The eviction policy (roadmap D12): which slot of a full table a
-/// newcomer takes at `now`, if any. See the module documentation.
-pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
-    let oldest = |demoted: bool| {
+/// newcomer, `sleepy` or not, takes at `now`, if any. See the module
+/// documentation.
+pub fn victim(table: &Neighbours, sleepy: bool, now: Instant) -> Option<usize> {
+    let oldest = |sleepy: bool, demoted: Option<bool>| {
         table
             .slots()
-            .filter(|(_, n)| table.is_demoted(n, now) == demoted)
+            .filter(|(_, n)| n.sleepy == sleepy)
+            .filter(|(_, n)| demoted.is_none_or(|d| table.is_demoted(n, now) == d))
             .min_by_key(|(_, n)| n.last_heard)
             .map(|(i, _)| i)
+    };
+    if !sleepy {
+        if let Some(i) = oldest(true, None) {
+            return Some(i);
+        }
+    }
+    let stale_after = if sleepy {
+        table.params.sleepy_stale_after
+    } else {
+        table.params.stale_after
     };
     let stale = |i: &usize| {
         table
             .slot(*i)
-            .is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after)
+            .is_some_and(|n| now.since(n.last_heard) >= stale_after)
     };
-    oldest(true).or_else(|| oldest(false).filter(stale))
+    oldest(sleepy, Some(true)).or_else(|| oldest(sleepy, Some(false)).filter(stale))
 }
 
 #[cfg(test)]
@@ -438,11 +492,23 @@ mod tests {
     fn hb(i: i32, home: u8) -> (Heartbeat, Position) {
         let hb = Heartbeat {
             surveyed: true,
+            sleepy: false,
             home: Channel::new(home).unwrap(),
             id: id(i),
             short: pos(i).short(),
         };
         (hb, pos(i))
+    }
+
+    /// Hear sleepy node `i`'s heartbeat.
+    fn hear_sleepy(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
+        let (hb, p) = hb(i, 0);
+        let hb = Heartbeat {
+            sleepy: true,
+            surveyed: false,
+            ..hb
+        };
+        t.heard(&hb, p, rssi, &plane(), now)
     }
 
     fn id(i: i32) -> NodeId {
@@ -482,6 +548,54 @@ mod tests {
             "3 × 13 × 10 s ≈ the design's 400 s"
         );
         assert_eq!(p.stale_after, Duration::from_secs(195));
+        assert_eq!(p.sleepy_expire_after, Duration::from_secs(600));
+        assert_eq!(p.sleepy_stale_after, Duration::from_secs(300));
+    }
+
+    /// A sleepy entry lives two beat periods; it holds a slot only while
+    /// no node that is not sleepy wants one, and takes only a free or a
+    /// stale sleepy entry's slot.
+    #[test]
+    fn sleepy_entries_are_kept_longer_and_give_way() {
+        let mut t = Neighbours::new(params());
+        assert_eq!(hear_sleepy(&mut t, 0, -80, at(0)), Heard::Added(0));
+        assert!(t.get(id(0)).unwrap().sleepy);
+        assert_eq!(t.live(at(599)).count(), 1);
+        assert_eq!(t.live(at(600)).count(), 0);
+        assert_eq!(t.next_expiry(), Some(at(600)));
+        for i in 1..NEIGHBOURS as i32 {
+            hear(&mut t, i, 0, -80, at(10));
+        }
+        assert_eq!(
+            hear_sleepy(&mut t, 100, -80, at(20)),
+            Heard::Rejected,
+            "not in place of a node that is not sleepy"
+        );
+        match hear(&mut t, 101, 0, -80, at(20)) {
+            Heard::Replaced(0, old) => assert!(old.sleepy),
+            other => panic!("{other:?}"),
+        }
+        // Sleepy entries make way for each other only once stale.
+        let mut t = Neighbours::new(params());
+        for i in 0..NEIGHBOURS as i32 {
+            hear_sleepy(&mut t, i, -80, at(i as u64));
+        }
+        assert_eq!(hear_sleepy(&mut t, 100, -80, at(299)), Heard::Rejected);
+        let first = *t.get(id(0)).unwrap();
+        assert_eq!(
+            hear_sleepy(&mut t, 100, -80, at(300)),
+            Heard::Replaced(0, first)
+        );
+    }
+
+    #[test]
+    fn heartbeats_are_counted_up_to_two() {
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 0, -80, at(0));
+        assert_eq!(t.get(id(1)).unwrap().beats, 1);
+        hear(&mut t, 1, 0, -80, at(130));
+        hear(&mut t, 1, 0, -80, at(260));
+        assert_eq!(t.get(id(1)).unwrap().beats, BEATS);
     }
 
     #[test]

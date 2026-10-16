@@ -99,6 +99,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
             let packet = match beat {
                 true => Packet::Heartbeat(Heartbeat {
                     surveyed: true,
+                    sleepy: false,
                     home: nhome,
                     id: NodeId(pos.short().0.to_be_bytes()),
                     short: pos.short(),

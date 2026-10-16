@@ -11,7 +11,7 @@
 //! packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x1/0x2  first id pos                                   = 9
+//! HEARTBEAT 0x1/0x2/0x8 first id pos                                = 9
 //! ACK       0x3      first msg from to                              = 13
 //! ATTACH    0x4      first leaf_id relay                            = 9
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
@@ -83,6 +83,7 @@ const T_ATTACH: u8 = 0x4;
 const T_DATA: u8 = 0x5;
 const T_DELIVER: u8 = 0x6;
 const T_ATTACHED: u8 = 0x7;
+const T_HEARTBEAT_SLEEPY: u8 = 0x8;
 
 // HEARTBEAT.
 const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
@@ -190,11 +191,16 @@ pub const SLEEPING_PREAMBLE: Duration = Duration::from_millis(512);
 
 const _: () = assert!(RxMode::Hybrid.preamble_symbols() == 2000);
 
-/// HEARTBEAT, types 0x1 and 0x2 (spec "Heartbeat").
+/// HEARTBEAT, types 0x1 and 0x2 from a node that is not sleepy, 0x8
+/// from a sleepy one (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// Surveyed (0x1) or GPS-derived (0x2) position.
+    /// Surveyed (0x1) or GPS-derived (0x2) position; a sleepy node's
+    /// heartbeat does not say, and reads as not surveyed.
     pub surveyed: bool,
+    /// From a sleepy node (0x8): one that beats only on its home channel,
+    /// slowly, and is a next hop only as a last resort.
+    pub sleepy: bool,
     /// The sender's home channel.
     pub home: Channel,
     /// The sender.
@@ -463,10 +469,10 @@ impl Packet<'_> {
     pub fn encode(&self, buf: &mut [u8; MAX_FRAME]) -> Result<usize, EncodeError> {
         match self {
             Packet::Heartbeat(h) => {
-                let kind = if h.surveyed {
-                    T_HEARTBEAT_SURVEYED
-                } else {
-                    T_HEARTBEAT_GPS
+                let kind = match (h.sleepy, h.surveyed) {
+                    (true, _) => T_HEARTBEAT_SLEEPY,
+                    (false, true) => T_HEARTBEAT_SURVEYED,
+                    (false, false) => T_HEARTBEAT_GPS,
                 };
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
@@ -532,10 +538,11 @@ impl<'a> Packet<'a> {
         let kind = first >> TYPE_SHIFT;
         let aux = first & AUX_MASK;
         match kind {
-            T_HEARTBEAT_SURVEYED | T_HEARTBEAT_GPS => {
+            T_HEARTBEAT_SURVEYED | T_HEARTBEAT_GPS | T_HEARTBEAT_SLEEPY => {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
                     surveyed: kind == T_HEARTBEAT_SURVEYED,
+                    sleepy: kind == T_HEARTBEAT_SLEEPY,
                     home: channel(aux)?,
                     id: NodeId(get4(b, HEARTBEAT_ID)),
                     short: get_short(b, HEARTBEAT_POS),
@@ -650,8 +657,15 @@ mod tests {
 
     proptest! {
         #[test]
-        fn heartbeat_round_trips(surveyed: bool, home in chan(), id in id(), position in position()) {
-            let hb = Heartbeat { surveyed, home, id, short: position.short() };
+        fn heartbeat_round_trips(
+            surveyed: bool,
+            sleepy: bool,
+            home in chan(),
+            id in id(),
+            position in position(),
+        ) {
+            let surveyed = surveyed && !sleepy;
+            let hb = Heartbeat { surveyed, sleepy, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -771,8 +785,8 @@ mod tests {
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
         assert_eq!(Packet::decode(&[0x70; 7 - 1]), Err(Short));
         assert_eq!(Packet::decode(&[0x70; 7 + 1]), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x80; 7]), Err(BadType(8)));
-        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
+        assert_eq!(Packet::decode(&[0x90; 7]), Err(BadType(9)));
+        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
             Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(ChannelOutOfRange(13))
@@ -821,12 +835,16 @@ mod tests {
         let position = Position::from_degrees(50.45, 30.52);
         let hb = Heartbeat {
             surveyed: false,
+            sleepy: false,
             home: Channel::new(12).unwrap(),
             id: NodeId([1, 2, 3, 4]),
             short: ShortName(0x0506_0708),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x2c, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let sleepy = Heartbeat { sleepy: true, ..hb };
+        Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x8c);
         assert_eq!(
             crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),

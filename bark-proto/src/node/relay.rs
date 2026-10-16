@@ -622,6 +622,7 @@ impl Relay {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
         let hb = Heartbeat {
             surveyed: self.config.surveyed,
+            sleepy: false,
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
@@ -1666,6 +1667,7 @@ mod tests {
         };
         let hb = Heartbeat {
             surveyed: true,
+            sleepy: false,
             home: b_home,
             id: id_of(b),
             short: b.short(),
@@ -1797,6 +1799,7 @@ mod tests {
         };
         let hb = Heartbeat {
             surveyed: true,
+            sleepy: false,
             home: Channel::new(5).unwrap(),
             id: id_of(d_pos),
             short: d_pos.short(),
@@ -1922,6 +1925,7 @@ mod tests {
             now,
             &Packet::Heartbeat(Heartbeat {
                 surveyed: true,
+                sleepy: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(d_pos),
                 short: d_pos.short(),
@@ -2003,6 +2007,7 @@ mod tests {
             };
             let hb = Heartbeat {
                 surveyed: true,
+                sleepy: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(at),
                 short: at.short(),
