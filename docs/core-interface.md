@@ -82,7 +82,7 @@ Leaf and relay have the same application interface: the readiness query
 one event `AppEvent::Message`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_leaf)` with an opaque payload of
-at most 234 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message, not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -132,10 +132,10 @@ test in `tables/mod.rs`:
 | Leaves (spec "Attach and polls") | 256 × 56 B | 14.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 256 B | 10.3 KiB |
 | Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
-| Send queue (spec "Send queue") | (40 + 254) × 272 B | 78.1 KiB |
+| Send queue (spec "Send queue") | (40 + 254) × 280 B | 80.4 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **164.4 KiB** |
+| **All** | | **166.7 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -144,13 +144,13 @@ for each hop count a message can be sent on with, keep overload from dropping me
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full leaf table (spec "Delivery queue"). A leaf entry is 56 B: its slots
 and the times it was told and heard, which the sleeping leaf's listening window needs (spec "Attach and polls",
-"Leaf receive mode"). The whole `Relay` is 169 160 B (165.2 KiB, measured 2026-10-16):
+"Leaf receive mode"). The whole `Relay` is 171 520 B (167.5 KiB, measured 2026-10-16 with roadmap D44):
 the tables and, in under 1 KiB around them, the medium access, the hand-over, the poll in
 progress, its one owed reply and its application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 69 KiB more than the relay needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 66 KiB more than the relay needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -193,10 +193,12 @@ action at a time, and the core never allocates.
     application at 0: a receiver takes `hops` 0 for a leaf's packet (spec "Packet sender").
   - A DELIVER to a duty-cycled or hybrid leaf has a 2000-symbol preamble, the 512 ms
     of spec "Leaf receive mode" (`RxMode::preamble_symbols`).
-  - Application payload at most 234 bytes, what remains of 255 after the 21-byte DATA
+  - Application payload at most 233 bytes, what remains of 255 after the 22-byte DATA
     header; the decoder rejects anything longer.
-  - DELIVER carries at most the same 234-byte payload: it only ever carries a DATA
+  - DELIVER carries at most the same 233-byte payload: it only ever carries a DATA
     payload onward.
+  - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
+    transmission (spec "Receiving DATA").
   - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (spec "Leaf receive mode"), in
     bits 0 to 2; bit 3 set when the ATTACH answers a poll (spec "Attach and polls").
   - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK,

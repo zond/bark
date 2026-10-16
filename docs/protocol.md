@@ -452,7 +452,7 @@ is empty, a full frame waits 1.4 s for it, and nothing waits longer
 than 6 s / 9.83% = 61 s (roadmap D26).
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
-it is not dropped. Two reserves stay in the bucket. Replies (ACKs that
+it is not dropped for that. Two reserves stay in the bucket. Replies (ACKs that
 take or refuse, and ATTACHED, polls included, [attach and polls](#attach-and-polls)) leave one
 heartbeat's airtime, 11.8 ms, which the bucket refills in 120 ms, far
 less than the 5 s between heartbeats ([heartbeat](#heartbeat)), so heartbeats always
@@ -665,14 +665,15 @@ that, when bans end, the packets that waited for them go first ([overload waits]
 
 #### Overload waits
 
-Overload makes a message wait and never ends it. A message whose every
-remaining candidate is banned, by refusals or by silence, waits in its
-place in the send queue, with its airtime still counted, until the
-earliest ban ends, and is routed again then, at the origin or anywhere
-else. A message ends only when it is delivered, when its search runs out
-of neighbours ([return to parent](#return-to-parent)), when a return goes unanswered twice in a
-row (step 6), when its leaf never wakes ([delivery queue](#delivery-queue)), at the hop cap
-([hop count](#hop-count)), or when a node holding it dies (roadmap D31).
+Overload makes a message wait and never ends it; only its time does. A
+message whose every remaining candidate is banned, by refusals or by
+silence, waits in its place in the send queue, with its airtime still
+counted, until the earliest ban ends, and is routed again then, at the
+origin or anywhere else. A message ends only when it is delivered, when
+its search runs out of neighbours ([return to parent](#return-to-parent)), when a return goes
+unanswered twice in a row (step 6), when its time runs out on the way
+([receiving DATA](#receiving-data)), when its leaf never wakes ([delivery queue](#delivery-queue)), at the hop cap
+([hop count](#hop-count)), or when a node holding it dies (roadmap D31, D44).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
 of messages for each other would refuse each other forever, since what
@@ -885,13 +886,51 @@ updates its last-active time.
 Only cases 1, 3 and 4 end a packet without acting on it, and in each the
 message lives on: it has arrived, the packet was acted on when it first
 came, or another copy goes on. So no case ends the last copy of a
-message. Nothing is sent straight back: a relay that has had the message
-goes on from where its own search stands, and its sender, if the relay
+message; only its time can (below). Nothing is sent straight back: a
+relay that has had the message goes on from where its own search stands, and its sender, if the relay
 has not tried it, stays a candidate and gets the message back in turn.
 A return goes from a relay to its parent, and the parents, each set when
 its record was made, lead back to the origin without a loop, so a
 message cannot go back and forth between two relays that hold none of
 it (roadmap D35).
+
+**Time left.** A message lives in the network for at most the delivery
+TTL, 600 s ([leaves](#leaves)), from when its leaf, or the relay sending for
+its own application, took it from the application. Every DATA carries the time the message has left,
+`time_left`, in whole units of 2.5 s, rounded down ([packet formats](#packet-formats)). A leaf
+sends the TTL less the time it has held the message; a relay sending
+for its own application starts it at the TTL. A relay that takes a
+packet to send on counts the message's time from the packet: what it
+carries less the frame's time on air, since the sender stamps the time
+as the frame goes out. Each transmission, retries included, carries
+what is left at that moment, rounded down, so no node claims more than
+the message has. With one unit or less left a message can no longer be
+sent with any, and its time is gone: the relay drops it wherever it
+waits in the send queue, for its turn, for the bucket, for a ban, in a
+hop place or as a return, and one whose frame is on air at its next
+attempt. A packet that arrives with its time gone is no work: the relay
+takes it, as in cases 1, 3 and 4, and the message ends there. A message
+to deliver is not affected: at its owner the delivery queue keeps it for
+its own TTL, whatever was left. A return or a copy carries the time like
+any DATA, so the parent's copy (case 5) ends by the same clock.
+
+Without an end by time, a message the network has taken lives as long
+as hand-overs to someone succeed. In the simulated capacity domain at
+three times the texting rate of [capacity and sizing](#capacity-and-sizing), past the point where
+it collapses, messages lived up to an hour and cost about 1500 frames
+each, long after their leaf and their destination's queue would have
+given them up, and they kept the relays at their duty cap (roadmap D42,
+D44). The TTL is the one the leaf and the delivery queue already keep:
+the time the network keeps a message ([attach and polls](#attach-and-polls)).
+
+Rounding down loses up to a unit at each hand-over, a whole one at a
+hand-over that follows at once. 2.5 s is the finest unit at which one
+byte holds the TTL, as 240, so a message whose hand-overs follow each
+other at once has time for 239 of them, near the 255 of the hop cap
+([hop count](#hop-count)); at 10 s it would have time for 59, fewer than some searches
+under load take to reach their owner (roadmap D44). Rounded to the
+nearest instead, a message that stays just under half a unit at each
+relay would lose no time at all.
 
 #### Return to parent
 
@@ -912,7 +951,8 @@ origin's own application included: that is the cost of having no
 end-to-end acknowledgement.
 
 A message whose neighbours left are only banned is neither returned nor
-dropped: it waits ([overload waits](#overload-waits)), at the origin or anywhere else; the
+dropped: it waits ([overload waits](#overload-waits)), at the origin or anywhere else,
+until its time is gone ([receiving DATA](#receiving-data)); the
 relay's own application's message waits as in [the relay's own message](#the-relays-own-message), as a leaf's
 does ([attach and polls](#attach-and-polls)). An application's message for one of the relay's own
 leaves that finds the delivery queue full is kept aside until the queue
@@ -1055,6 +1095,12 @@ What breaks it:
   the table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2,
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
+- **Life:** at most the delivery TTL, 600 s, from its leaf or its origin
+  taking it from the application to its owner ([receiving DATA](#receiving-data)), whatever
+  its search and however long it waits; then up to a TTL more in the
+  owner's delivery queue. So a message costs the network at most 600 s
+  of waiting and handing over, and holds a place in a send queue no
+  longer than that.
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
@@ -1072,15 +1118,16 @@ What breaks it:
   silent a message can wait longer; its own record is kept while it is
   held, and this bound covers the wait behind refusals only (roadmap
   D42). Every message a relay handles costs at least an ACK (13 bytes,
-  14.4 ms) and one DATA packet with no payload (21 bytes, 18.2 ms),
-  together 32.6 ms. Any 457.3 s carries at most a full bucket and its
+  14.4 ms) and one DATA packet with no payload (22 bytes, 18.2 ms: at
+  SF5 and coding rate 4/5 the 22nd byte fits in the 21st's block of
+  symbols, [physical layer](#physical-layer)), together 32.6 ms. Any 457.3 s carries at most a full bucket and its
   refill, 6 s + 9.83% × 457.3 s = 51.0 s of airtime ([duty cycle cap](#duty-cycle-cap)), so a
   relay handles at most 1561 messages in that time. The
   records of held messages are never evicted and may be older, so the
   table has room for the 294 a send queue holds on top: 1855.
 - **State per relay:** the records at 32 bytes each, 58.0 KiB; a send queue
-  of 294 places of 272 bytes, each a frame of up to 255 bytes and its
-  bookkeeping, 78.1 KiB ([send queue](#send-queue)); the owner's
+  of 294 places of 280 bytes, each a frame of up to 255 bytes and its
+  bookkeeping, 80.4 KiB ([send queue](#send-queue)); the owner's
   delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
 
 ---
@@ -1095,7 +1142,8 @@ A leaf can go **dark** for a few minutes: a phone in a pocket, a
 basement or the metro. What the network keeps for a leaf that does not
 answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
 messages waiting for it at its relay ([delivery queue](#delivery-queue)), the leaf in its relay's
-table ([attach and polls](#attach-and-polls)), and a message the leaf cannot hand over.
+table ([attach and polls](#attach-and-polls)), and a message the leaf cannot hand over. The
+network keeps a message on its way for the same time ([receiving DATA](#receiving-data)).
 
 ### Relay choice
 
@@ -1313,8 +1361,9 @@ to the old address waits there as for a dark leaf ([delivery queue](#delivery-qu
 **A message without a relay.** A message the leaf cannot hand over,
 because it has no relay or its relay does not answer, is held and tried
 again as above, for up to the delivery TTL ([leaves](#leaves)), the time
-the network itself would keep it. Only then is it dropped, and the app
-is not told ([addresses](#addresses)). The leaf holds one message at a time
+the network itself would keep it, and each DATA of it carries what is
+left of that time ([receiving DATA](#receiving-data)). Once no more than one unit of 2.5 s is
+left it is dropped, and the app is not told ([addresses](#addresses)). The leaf holds one message at a time
 ([addresses](#addresses), roadmap D23). A relay that refuses the message, because it
 has no room or every way on from it is banned ([receiving DATA](#receiving-data)), is busy,
 not failing: the leaf keeps it, counts no failure, and offers it
@@ -1335,7 +1384,10 @@ and the relay's retry brings it again ([the ACK](#the-ack), roadmap D29).
 ### Delivery queue
 
 Bounded, not a mailbox: up to 41 messages per relay, kept for the
-delivery TTL ([leaves](#leaves)). On expiry the message is dropped. When the queue is
+delivery TTL ([leaves](#leaves)). On expiry the message is dropped. The same TTL
+bounds a message's way through the network ([receiving DATA](#receiving-data)); the queue's
+starts afresh when the message arrives, since it is the wait for a dark
+leaf. When the queue is
 full, a message for one of the relay's leaves is refused ([receiving DATA](#receiving-data)): what
 is queued stays, and the sender learns at once.
 
@@ -1460,7 +1512,7 @@ the built-up city.
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.67 s of channel time: per hop a 121-byte DATA packet (69.4 ms)
+takes ≈0.67 s of channel time: per hop a 122-byte DATA packet (69.4 ms)
 and its ACK (14.4 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
@@ -1534,9 +1586,11 @@ ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
           receive mode ([leaf receive mode](#leaf-receive-mode)), aux bit 3 = answers a poll; one that attaches
           is answered with ATTACHED, one that answers a poll is not answered
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
-               payload                                                      = 21 + payload
+               time_left(1) payload                                         = 22 + payload
           dst_hop, src_hop = short names of the receiving and the sending relay;
-          aux = sender's home channel, so the receiver knows where to ACK
+          aux = sender's home channel, so the receiver knows where to ACK;
+          time_left = the time the message has left, in 2.5 s, rounded down,
+          stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
 DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
           relay → leaf on the relay's own channel; leaf ACKs on the same channel,
           to = the short name of the relay it is attached to
@@ -1565,7 +1619,7 @@ after 5 bytes. `src_hop` names the relay that sent the packet, and `aux`
 its home channel, which is where the ACK goes; routing uses them to know
 where a message came from ([routing](#routing)). A leaf sending its own message sets
 `src_hop` to 0 and `hops` to 0. The payload is at most
-255 − 21 = 234 bytes; the sender's address is inside it, encrypted
+255 − 22 = 233 bytes; the sender's address is inside it, encrypted
 ([phone link](#phone-link)).
 
 ---
@@ -1580,9 +1634,9 @@ Crate layout is D7.
 
 **RAM budget (256 KiB):** neighbour table 64 × 48 B = 3.0 KiB; leaf table
 256 × 56 B = 14.0 KiB; delivery queue 41 × 256 B = 10.3 KiB; message records
-([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 272 B = 78.1 KiB;
+([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 280 B = 80.4 KiB;
 delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
-1 KiB; 164.4 KiB in all, measured. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
+1 KiB; 166.7 KiB in all, measured. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
 application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 
