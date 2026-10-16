@@ -23,7 +23,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Medium access | Always listening on the home channel, leaving it only to transmit; acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
 | Heartbeat | A relay's periodic 8-byte broadcast of its home channel and position, every 5–15 s at random, on a channel that steps through all 13 in order |
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
-| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; stop using a neighbour that fails to ACK |
+| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort |
 | Addressing | A relay position plus a 4-byte leaf ID; a relay's position is its only identity; no registration, no network-wide tables |
 | Roles | **Relay**: a fixed node on mains, USB or solar that sends heartbeats, forwards, and holds messages for its leaves. **Leaf**: a carried node on battery that attaches to one relay, answers its polls, and otherwise stays silent |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
@@ -207,8 +207,9 @@ two neighbours that hear each other share a channel cleanly.
 
 Listen on a random channel for a worst-case rotation, 195 s
 ([heartbeat](#heartbeat)), so that every relay in range has certainly been heard once, collecting
-sweeps and heartbeats. Then set home to `argmin busy[c]`, breaking ties
-randomly (±0.01), so that nodes that hear nothing do not all pick
+sweeps and heartbeats. Then set home to `argmin busy[c]`. Channels whose
+busy value is within 0.01 of the lowest count as tied, and the choice
+among them is random, so that nodes that hear nothing do not all pick
 channel 0. A config override exists for bench work.
 
 ### Channel moves
@@ -267,7 +268,7 @@ Every relay sends a heartbeat. Leaves do not ([leaves](#leaves)).
 The position is global: one firmware and one app everywhere, no
 per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
 49 bits, so 51 bits in 7 bytes is within 2 bits of the minimum;
-decimetre precision would need 58 bits. Plain fixed-point latitude and
+decimetre precision would need 56 bits. Plain fixed-point latitude and
 longitude keeps distance math trivial ([position and time](#position-and-time)).
 
 - **Timing:** interval uniformly random in [5, 15] s, mean 10 s.
@@ -621,9 +622,9 @@ gone is tried again after each ban until its entry expires
 ([neighbour table](#neighbour-table)).
 
 **The relay's own message.** The relay's own application's message,
-offered once a ban, would be a full frame every 1.56 s on the refuser's
-channel, 9 %, hiding its ACKs, and would spend the holder's bucket as
-fast as it refills; so after the k-th refusal in a row it waits on the
+offered once a ban, would be a full frame every 1.56 s on the channel of
+the neighbour that refused it, 9 %, hiding its ACKs, and would spend the
+holder's bucket as fast as it refills; so after the k-th refusal in a row it waits on the
 ladder of step 6, one ban times 2^(k−1), up to the bucket's whole refill,
 61 s, the longest anything waits for a bucket ([duty cycle cap](#duty-cycle-cap)), and the
 wait starts again from one ban once the message is taken or dropped.
@@ -1063,8 +1064,9 @@ What breaks it:
   relay handles at most 1561 messages in that time. The
   records of held messages are never evicted and may be older, so the
   table has room for the 294 a send queue holds on top: 1855.
-- **State per relay:** the records at 32 bytes each, 59 KB; a send queue
-  of 294 packets of up to 255 bytes, 75 KB ([hand-over](#hand-over)); the owner's
+- **State per relay:** the records at 32 bytes each, 58.0 KiB; a send queue
+  of 294 places of 272 bytes, each a frame of up to 255 bytes and its
+  bookkeeping, 78.1 KiB ([hand-over](#hand-over)); the owner's
   delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
 
 ---
@@ -1336,7 +1338,7 @@ poll ([attach and polls](#attach-and-polls)), or until the TTL. Leaves in one tr
 dark together, so the queue holds what arrives in a TTL for every leaf a
 relay can serve, its leaf table's 256 ([attach and polls](#attach-and-polls)), at the 23 texts a day
 each that the network carries ([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute TTLs in a
-day = 40.9, so 41 messages, 10.3 KB.
+day = 40.9, so 41 messages, 10.3 KiB.
 
 The owner remembers 41 delivered message IDs ([packet formats](#packet-formats)) and ACKs a repeat
 without delivering it twice. When it needs the place, it forgets the one
@@ -1396,8 +1398,8 @@ Encryption scheme: open item O1.
 A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). Two messages to the same destination with
 identical payloads are therefore one message to every relay that still
-remembers the first (up to the 10-minute delivery TTL, [delivery queue](#delivery-queue)), and the
-second is not delivered. The app must make every payload unique;
+remembers the first, which a relay does until newer records evict its
+record ([message records](#message-records), [bounds](#bounds)), and the second is not delivered. The app must make every payload unique;
 end-to-end encryption with a fresh nonce per message does that.
 
 **What the network does not defend against.** Nothing on the air is
@@ -1556,12 +1558,12 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
-256 × 56 B = 14 KB; delivery queue 41 × 256 B = 10.3 KB; message records
-([message records](#message-records)) 1855 × 32 B = 59 KB; send queue (40 + 254) × 272 B = 80 KB;
-delivered window 41 × 16 B = 0.7 KB; busy estimates and duty budget under
-1 KB; 168 KB in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
-application has 255 KB; 1 KB at the bottom is kept for the boot record and
+**RAM budget (256 KiB):** neighbour table 64 × 48 B = 3.0 KiB; leaf table
+256 × 56 B = 14.0 KiB; delivery queue 41 × 256 B = 10.3 KiB; message records
+([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 272 B = 78.1 KiB;
+delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
+1 KiB; 164.4 KiB in all, measured. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
+application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 
 **Bring-up order** (each step is a milestone on real boards):

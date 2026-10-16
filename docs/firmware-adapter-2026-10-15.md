@@ -26,7 +26,7 @@ Details that follow from the contract (`core-interface.md`):
 
 - **Never early.** The board's clock counts 32 768 Hz ticks; a deadline is rounded up to the
   next tick, and the loop checks `now >= next_wakeup()` before it delivers a wakeup.
-- **A check waits for a packet in progress** (§3 rule 8; spec "Busy estimate"). The radio reports a
+- **A check waits for a packet in progress** (`core-interface.md` "Radio" rule 8; spec "Busy estimate"). The radio reports a
   packet when it detects its preamble or header. A CAD, or an RSSI reading on another channel,
   asked for while one is arriving waits until it ends, at most one longest frame (138.6 ms).
   The frame reaches the core meanwhile, as in the simulator. A transmission never waits.
@@ -46,7 +46,7 @@ of its own. A phone link (roadmap D5) will be another implementation of the same
 caller as much again to copy the result into a static; the board has 97 KiB of stack beside a
 relay in static memory. The first build of this firmware would have overflowed its stack at
 boot. The core now has `Relay::UNSET`, a relay with empty tables as a constant, and
-`Relay::reset`, which sets one up in place (`core-interface.md` §6). The firmware keeps
+`Relay::reset`, which sets one up in place (`core-interface.md` "Memory"). The firmware keeps
 `UNSET` in a static; the deepest stack frame left is 18 KiB, where `reset` replaces the small
 tables.
 
@@ -93,7 +93,7 @@ second one's payload arrives, after the second's preamble, sync and header. Both
 datasheet's account; neither has been seen on a board.
 
 While the radio transmits, checks a channel or retunes, it receives nothing. The contract
-says so (§3 rule 3), the simulator counts those losses, and the sender's retry is what
+says so (`core-interface.md` "Radio" rule 3), the simulator counts those losses, and the sender's retry is what
 recovers them.
 
 ### 2.2 How close two frames can be
