@@ -2,16 +2,16 @@
 # ten relays on windowsills, eighty phones indoors with their leaves, ten
 # texts per leaf per day to any other leaf in the block, for one hour.
 #
-# Checks attach and polls (protocol §10.2: 0.6 % of a channel at 80
-# leaves per relay, here 8), delivery and the delivery queue (§10.3,
-# §10.4), and phones that go dark for minutes. Bench twin: protocol §15
+# Checks attach and polls (spec "Attach and polls": 0.6 % of a channel at 80
+# leaves per relay, here 8), delivery and the delivery queue (spec "Delivery",
+# "Delivery queue"), and phones that go dark for minutes. Bench twin: spec "Implementation notes"
 # step 5, then the windowsill field test of step 7.
 
 name = "s2-block"
 seed = 1
 duration_s = 3600.0
 # As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+# heartbeats at 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
 # Leaves attach to the first relay they hear within that rotation.
 settle_s = 345.0
 
@@ -21,7 +21,7 @@ lon = 30.52
 
 [links]
 model = "log_distance"
-# Fitted to the ranges of protocol §4 at SF5 with 10 dBm and the default
+# Fitted to the ranges of spec "Physical layer" at SF5 with 10 dBm and the default
 # -119 dBm sensitivity (129 dB of budget) and free-space loss at 1 m
 # (25.2 dB at 433.92 MHz): 750 m to a handheld in the street gives
 # n = (129 - 25.2) / (10 log10 750) = 3.6, and 300 m to one indoors then
@@ -53,7 +53,7 @@ per_km2 = 80.0
 indoor = true
 
 # Ten texts per leaf per day (simulator-design §6), 100 bytes each, the
-# text of protocol §13, to any other leaf in the block.
+# text of spec "Capacity and sizing", to any other leaf in the block.
 [[traffic]]
 kind = "poisson"
 per_leaf_per_hour = 0.4166667
@@ -62,7 +62,7 @@ payload_max = 100
 destination = { kind = "uniform" }
 
 # A phone in a pocket, a basement or the metro for a few minutes
-# (protocol §10.4): dark five minutes in an hour on average.
+# (spec "Delivery queue"): dark five minutes in an hour on average.
 [availability]
 mean_available_s = 3300.0
 mean_dark_s = 300.0

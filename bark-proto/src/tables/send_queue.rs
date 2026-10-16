@@ -1,9 +1,9 @@
-//! The send queue (design §9.3): packets waiting for their hand-over, the
+//! The send queue (spec "Hand-over"): packets waiting for their hand-over, the
 //! one being handed over included, in the order they arrived.
 //!
 //! **Regular room.** A relay takes a packet into it only if the airtime of
 //! everything queued, that packet included, fits in its duty bucket as it
-//! stands (§9.2.4, roadmap D29). Its length follows: the bucket's depth,
+//! stands (spec "Receiving DATA", roadmap D29). Its length follows: the bucket's depth,
 //! 6 s, over the time of one full frame and its ACK, `138.56 + 14.40 =
 //! 152.96 ms`: ⌈39.2⌉ = 40. Each packet taken also costs the ACK that
 //! takes it, so from a full bucket with the reply reserve left in at most
@@ -21,12 +21,12 @@
 //! room: take the highest-numbered place held anywhere, `k`. Its message
 //! has made at least `k` hops and sends `k + 1` or more, and place `k + 1`
 //! is free everywhere, so its next hop can take it, unless the count is at
-//! the cap, where the message ends (§9.2.6). By induction downwards, every
+//! the cap, where the message ends (spec "Hop count"). By induction downwards, every
 //! message held moves.
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
-//! what happens when the hand-over fails (§9.3). An entry whose receivers
-//! are all banned waits in its place until a ban ends (§9.3). The next
+//! what happens when the hand-over fails (spec "Hand-over"). An entry whose receivers
+//! are all banned waits in its place until a ban ends (spec "Hand-over"). The next
 //! hand-over goes to the first entry that is due, except that one that has
 //! waited goes first, the most travelled first: the place one higher is
 //! free only for the message that has come farthest, and a lower one
@@ -52,7 +52,7 @@ pub const fn queue_for(depth: Duration) -> usize {
     depth.as_micros().div_ceil(per_frame) as usize
 }
 
-/// Queue length for the design's bucket (§9.4).
+/// Queue length for the design's bucket (spec "Duty cycle cap").
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 40);
@@ -64,12 +64,12 @@ pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A DATA to the next hop toward the destination (§9.2.3). Its next
+    /// A DATA to the next hop toward the destination (spec "Next hop"). Its next
     /// hop is chosen when its hand-over starts, and again after a failure.
     Forward,
-    /// A DATA back to the parent (§9.2.5); dropped if it fails.
+    /// A DATA back to the parent (spec "Return to parent"); dropped if it fails.
     Return,
-    /// A DELIVER to an attached leaf (§10.3); left in the delivery queue
+    /// A DELIVER to an attached leaf (spec "Delivery"); left in the delivery queue
     /// if it fails.
     Deliver,
 }
@@ -210,7 +210,7 @@ impl SendQueue {
             .fold(Duration::ZERO, |a, b| a + b)
     }
 
-    /// Queue `out` last. Admission (§9.2.4) keeps the regular room and the
+    /// Queue `out` last. Admission (spec "Receiving DATA") keeps the regular room and the
     /// hop places within bounds, so only a caller that skipped it finds the
     /// queue full.
     pub fn push(&mut self, out: Outgoing) -> Result<(), Full> {

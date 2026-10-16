@@ -11,7 +11,7 @@ Answer, before and after hardware exists:
 2. What is the capacity in a realistic city deployment, and where does it bind first: channel busy fraction, per-relay 10% duty cycle, delivery queue, neighbour table?
 3. Which values for the open thresholds (O3, O4) and which unknown radio parameters (adjacent-channel rejection, hearing radius, SF5 sensitivity) change the answer?
 
-Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. Leaf power modes (§10.5) are modelled only as receive-window behaviour and preamble length.
+Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. Leaf power modes (spec "Leaf receive mode") are modelled only as receive-window behaviour and preamble length.
 
 ## 2. What the user supplies
 
@@ -19,7 +19,7 @@ A **scenario**:
 
 - **Nodes.** Each has a position (metres on a local grid; the simulator converts to the 51-bit WGS-84 wire form around a chosen origin so the real codec runs), a role (relay or leaf), and for relays whether it is rooftop or windowsill (affects nothing in the protocol, only the link generator). Nodes can be placed one by one, on a lattice with jitter, or by density per km².
 - **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured transmit power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below sensitivity minus an interference margin (a parameter; a signal too weak to decode still adds to the noise) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k leaves would otherwise mean 4×10⁸ entries). A table can also be loaded from a file so field measurements replace the model later; absent pairs are out of range.
-- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (§6.3), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
+- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (spec "Channel moves"), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
 - **Interferers.** Per channel, foreign busy sources (key fobs, LPD433 handhelds): a position, a power, and an on/off process. Signal strength readings (RSSI) always see them; channel activity detection (CAD) sees them only if they are LoRa (a flag).
 - **Traffic.** Message arrival as a Poisson process per leaf with a rate, a payload-length distribution, and a destination distribution (uniform, or distance-biased so most texts are local). Leaves may be static, random-walk, or follow a trace. Leaves also have an availability process: periods where the phone is dark (pocket, metro) and the leaf does not ACK deliveries.
 - **Radio parameters.** Everything the firmware will measure in Phase 2, with the datasheet value as default: SF5 sensitivity, noise floor, co-channel capture threshold, adjacent-channel rejection at ±1 and ±2 channels, CAD duration and miss probability, retune time, transmit/receive turnaround, sweep schedule.
@@ -34,7 +34,7 @@ Discrete-event, microsecond resolution, single-threaded, deterministic for a giv
 
 ### 3.2 Radio state per node
 
-`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (§6.1), heartbeat deafness (§7) and the per-hop retune cost (§9.3) are measured rather than assumed.
+`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (spec "Busy estimate"), heartbeat deafness (§7) and the per-hop retune cost (spec "Hand-over") are measured rather than assumed.
 
 ### 3.3 Reception
 
@@ -54,7 +54,7 @@ CAD: returns busy if any LoRa transmission on the channel at the node exceeds se
 
 ### 3.5 Busy estimate and sweep
 
-The once-per-second 13-channel sweep (§6.1) is modelled explicitly: 13 retunes, 13 RSSI samples, deaf for the total. The protocol core keeps `busy[c]` itself, so the move rule (§6.3) is the real code.
+The once-per-second 13-channel sweep (spec "Busy estimate") is modelled explicitly: 13 retunes, 13 RSSI samples, deaf for the total. The protocol core keeps `busy[c]` itself, so the move rule (spec "Channel moves") is the real code.
 
 ### 3.6 Airtime and duty cycle
 
@@ -62,7 +62,7 @@ Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead,
 
 ### 3.7 Leaves and phones
 
-A leaf is a node whose protocol core is in leaf role: camps on its relay's channel, attaches, keeps alive, receives deliveries. Its receive mode (§10.5) sets whether it hears heartbeats continuously or only during awake rotations, and sets the preamble length on packets to it. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
+A leaf is a node whose protocol core is in leaf role: camps on its relay's channel, attaches, keeps alive, receives deliveries. Its receive mode (spec "Leaf receive mode") sets whether it hears heartbeats continuously or only during awake rotations, and sets the preamble length on packets to it. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
 
 ## 4. Metrics
 
@@ -73,16 +73,16 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 - Per-channel busy fraction over time, at a chosen set of observer nodes.
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
-- Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the §13 argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
+- Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the spec "Capacity and sizing" argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
 - DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap and at the origin.
-- Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the §6.1 and §9.3 cost arguments can be checked against numbers.
+- Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the spec "Busy estimate" and "Hand-over" cost arguments can be checked against numbers.
 
 ## 5. Architecture
 
 ```
 bark-proto (no_std, no allocation: D8)
   node::Node            state machine: handle(Event, Instant) -> Actions
-  wire::*               §14 codecs, position codec
+  wire::*               spec "Packet formats" codecs, position codec
   tables::*             neighbour, leaf, delivery queue, message records
   mac::*                busy estimator, channel selection, heartbeat schedule,
                         per-hop transfer, duty-cycle budget
@@ -104,12 +104,12 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (§14) | 1695 records, least recently active given up, never one of a message held (§9.2.2) | DFS parent and tried set; recognises repeats |
+| message records | message ID (spec "Packet formats") | 1695 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
 | `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves, their poll slots and unanswered polls |
 | `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |
 
-`routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec §9.2.3, and applies the owner rule of §9.2.7. Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
+`routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec "Next hop", and applies the owner rule of spec "Owner". Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
 
 ## 6. Scenario catalogue
 
@@ -118,9 +118,9 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, drop after B dies | design step 4 |
 | S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | attach, polls, delivery, queue, dark phones | step 5 |
 | S3 | S2 plus an interferer on channel 6 and three rooftop relays that all hear each other | avoidance, move hysteresis, no joint jumps | step 3 |
-| S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, §13 rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
+| S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, spec "Capacity and sizing" rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
 | S5 | S4 with the central relay removed / with a 2× hearing radius / with ACR_1 from 20 to 60 dB | sensitivity of S4 to the unknowns | C1 |
-| S6 | Cold start: all S4 nodes boot within 10 minutes | boot listen (§6.2), identity collision offset, convergence time | |
+| S6 | Cold start: all S4 nodes boot within 10 minutes | boot listen (spec "Channel at boot"), identity collision offset, convergence time | |
 
 ### Scenarios in the repository
 
@@ -146,7 +146,7 @@ a relay that no other reaches.
 node keeps its identity, a relay its position and a leaf its ID, and
 loses everything else, as a solar relay does after a night. Its core is
 built afresh with a new random seed and boots: a relay listens before
-choosing a home channel (protocol §6.2) and takes no traffic until then,
+choosing a home channel (spec "Channel at boot") and takes no traffic until then,
 while its neighbours still list it.
 
 **Pushback.** Each origin's application holds at most one message. The
@@ -182,7 +182,7 @@ over the reachable ones too.
 
 The scenario tests require that no message to a reachable destination is
 unaccounted. A message to an unreachable destination can end untraced
-when it has split in two (protocol §9.5): both copies search the same
+when it has split in two (spec "Why the search finds a path"): both copies search the same
 relays, and a relay whose search for one copy has ended absorbs the
 other.
 

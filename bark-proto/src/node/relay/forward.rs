@@ -1,14 +1,14 @@
-//! Forwarding (design §9): the relay's part of the depth-first search, the
+//! Forwarding (spec "Forwarding"): the relay's part of the depth-first search, the
 //! owner rule, and the per-hop transfer of its send queue.
 //!
-//! # Receiving a DATA packet (§9.2.4)
+//! # Receiving a DATA packet (spec "Receiving DATA")
 //!
-//! [`Relay::data`] classifies the packet by the five cases of §9.2.4 in
+//! [`Relay::data`] classifies the packet by the five cases of spec "Receiving DATA" in
 //! order and decides whether acting on it is work: sending it on, which
 //! may be a forward or a return, or a delivery. Work to send on goes into the
 //! send queue's regular room if it has a place and the bucket holds the
 //! ACK, the airtime of everything queued with the new frame, and the reply
-//! reserve (§9.2.4, roadmap D29); else into a free hop place numbered no
+//! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
 //! higher than the packet's count (roadmap D31); else it is refused with
 //! an ACK that says so. A leaf's packet is refused too while every
 //! neighbour is banned (roadmap D34); one already in the network is not,
@@ -37,29 +37,29 @@
 //! message delivered here, or waiting in the delivery queue, is only
 //! ACKed whatever its record says: the delivered window and the delivery
 //! queue remember it, and its record may have made way for newer ones
-//! (§9.2.7).
+//! (spec "Owner").
 //!
-//! # The send queue (§9.3)
+//! # The send queue (spec "Hand-over")
 //!
 //! Every packet this relay sends for a message goes through the send
 //! queue, one hand-over at a time ([`Transfer`]). A forward is addressed
-//! when its hand-over starts, by the one next-hop function of §9.2.3, and
+//! when its hand-over starts, by the one next-hop function of spec "Next hop", and
 //! readdressed by it after a failure; with no candidate left it becomes a
 //! return to the parent, or at the origin a drop. The hop count a packet
 //! carries is stamped at each hand-over's first transmission, the record's
-//! highest count plus one, and repeated by its retries (§9.2.6).
+//! highest count plus one, and repeated by its retries (spec "Hop count").
 //!
 //! Where a frame goes is read at the moment of sending (roadmap D29 rule
 //! 7): before each attempt its channel is the receiver's home as the
 //! neighbour table has it, from the latest heartbeat or packet of that
 //! neighbour, and a DELIVER's is this relay's home, with the preamble of
 //! the leaf's receive mode as the leaf table has it. A neighbour that
-//! moves home (§6.3) between attempts, or while a message waits to come
+//! moves home (spec "Channel moves") between attempts, or while a message waits to come
 //! back to it, is followed.
 //!
 //! A neighbour is tried, marked in the record, only once it has ACKed
 //! the message (roadmap D36). When listen-before-talk gives up on a
-//! forward's neighbour (§9.3 step 2), the neighbour refuses it, or its
+//! forward's neighbour (spec "Hand-over" step 2), the neighbour refuses it, or its
 //! three attempts go unanswered (step 6), it is set aside for this
 //! hand-over only (`skipped`): choosing again at once must not pick it
 //! again, but it stays a candidate for later choices. An unanswered frame
@@ -70,7 +70,7 @@
 //! attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
-//! [`BAN`], so no message takes it until then (§9.3, roadmap D27, D29,
+//! [`BAN`], so no message takes it until then (spec "Hand-over", roadmap D27, D29,
 //! D32). A forward treats it as that give-up. A return has nowhere else
 //! to go: it waits in its place for the ban to end, and the refused
 //! transmission does not count as one of its attempts.
@@ -94,7 +94,7 @@
 //! over the first entry that is due. The application's own message waits
 //! the same way, longer after refusals in a row ([`hold`]); one for an own
 //! leaf that finds the delivery queue full is set aside ([`Held`]) until
-//! the queue has a place (§9.2.5). Either way the application is given no
+//! the queue has a place (spec "Return to parent"). Either way the application is given no
 //! other meanwhile.
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
@@ -115,13 +115,13 @@ use crate::time::{Duration, Instant};
 use crate::wire::{Ack, AckName, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
 /// A relay within this distance of a destination that is not its own
-/// position, with no live, undemoted neighbour closer, owns it (design
-/// §9.2.7): 50 m is what §11 allows between two GPS fixes of a relay that
+/// position, with no live, undemoted neighbour closer, owns it
+/// (spec "Owner"): 50 m is what spec "Position, time, phone link" allows between two GPS fixes of a relay that
 /// has not moved, so the addressed relay and this one are, for the radio,
 /// in the same place.
 pub const OWNER_RADIUS_M: f32 = 50.0;
 
-/// What a received DATA packet is (§9.2.4).
+/// What a received DATA packet is (spec "Receiving DATA").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Case {
     /// Case 2: no record.
@@ -167,7 +167,7 @@ fn data_frame(d: &Data<'_>, channel: Channel) -> Frame {
 }
 
 impl Relay {
-    /// This relay's short name (design §8.1).
+    /// This relay's short name (spec "Relay identity").
     pub(super) fn me(&self) -> ShortName {
         self.config.position.short()
     }
@@ -183,7 +183,7 @@ impl Relay {
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
-    /// `airtime` now: it must leave the reply reserve (§9.4).
+    /// `airtime` now: it must leave the reply reserve (spec "Duty cycle cap").
     pub(super) fn affordable(&self, airtime: Duration, now: Instant) -> bool {
         self.budget.would_allow_keeping(airtime, REPLY_RESERVE, now)
     }
@@ -192,7 +192,7 @@ impl Relay {
     /// `hops`, after this relay spends `spend` (the ACK that takes the
     /// packet); 0 is the regular room. The regular room needs a place, and
     /// everything queued, the frame included, must fit in the bucket now
-    /// with the reply reserve left (§9.2.4, §9.3). Failing that, the
+    /// with the reply reserve left (spec "Receiving DATA", "Hand-over"). Failing that, the
     /// highest free hop place not above `hops` takes it, whatever the
     /// bucket holds (roadmap D31). `freed`: the current hand-over ends
     /// first, giving up its place.
@@ -242,7 +242,7 @@ impl Relay {
     }
 
     /// Whether a reply may spend `airtime` now: it must leave the
-    /// heartbeat reserve (§9.4).
+    /// heartbeat reserve (spec "Duty cycle cap").
     pub(super) fn can_reply(&self, airtime: Duration, now: Instant) -> bool {
         self.budget
             .would_allow_keeping(airtime, HEARTBEAT_RESERVE, now)
@@ -255,9 +255,9 @@ impl Relay {
         emit(Action::Trace(Trace::Dropped { msg_id, reason }));
     }
 
-    // --- Owner and next hop (§9.2.3, §9.2.7) ---
+    // --- Owner and next hop (spec "Next hop", "Owner") ---
 
-    /// Whether this relay owns the destination `dst` (§9.2.7).
+    /// Whether this relay owns the destination `dst` (spec "Owner").
     fn owns(&self, dst: Position, now: Instant) -> bool {
         if dst == self.config.position {
             return true;
@@ -271,7 +271,7 @@ impl Relay {
                 .any(|(_, n)| n.local.distance2(target) < mine)
     }
 
-    /// The next hop for the message of `record` to `dst` (§9.2.3): the
+    /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
     /// live neighbour nearest `dst` that is not in the tried set, not set
     /// aside and not banned, ties broken by short name; a demoted one only
     /// when no other with margin is left, and one without margin only when
@@ -303,7 +303,7 @@ impl Relay {
             .map(|(slot, n)| (slot, *n))
     }
 
-    // --- Receiving (§9.2.4) ---
+    // --- Receiving (spec "Receiving DATA") ---
 
     /// A DATA packet addressed to this relay.
     pub(super) fn data(&mut self, d: Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -355,7 +355,7 @@ impl Relay {
         };
         if !self.replies.can_owe(reply, d.sender_home, now) {
             // The packet could not be answered; its sender's retry
-            // brings it again (§9.3, roadmap D29).
+            // brings it again (spec "Hand-over", roadmap D29).
             return;
         }
         if let Some(reason) = refusal {
@@ -402,7 +402,7 @@ impl Relay {
         }
     }
 
-    /// The case of §9.2.4 for a DATA packet of message `id`; `repeat`:
+    /// The case of spec "Receiving DATA" for a DATA packet of message `id`; `repeat`:
     /// from the sender and with the count of the last one received.
     fn classify(&self, id: MsgId, repeat: bool) -> Case {
         if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
@@ -465,7 +465,7 @@ impl Relay {
     /// Queue `d` onward into `place`, a forward addressed when its
     /// hand-over starts. Carries the received count plus one, which places
     /// it among waiting entries, until its hand-over stamps the count it is
-    /// sent with (§9.2.6).
+    /// sent with (spec "Hop count").
     fn send_on(&mut self, d: &Data<'_>, place: u8, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
@@ -488,7 +488,7 @@ impl Relay {
         }
     }
 
-    /// The message has reached its owner, this relay (§9.2.7): deliver it
+    /// The message has reached its owner, this relay (spec "Owner"): deliver it
     /// to the application or queue it for the leaf.
     fn arrive(
         &mut self,
@@ -525,7 +525,7 @@ impl Relay {
             Pushed::Duplicate => return,
             Pushed::Full => {
                 // Only when ownership is found at the hand-over, too late
-                // to refuse (§9.2.4 case 5).
+                // to refuse (spec "Receiving DATA" case 5).
                 self.drop_msg(id, DropReason::DeliveryFull, emit);
                 return;
             }
@@ -535,7 +535,7 @@ impl Relay {
         self.deliver_now(leaf, now);
     }
 
-    // --- The relay's own application (§9.2) ---
+    // --- The relay's own application (spec "Routing") ---
 
     /// Whether the application may send now (roadmap D29 rule 6, D34): the
     /// relay is running, holds no message of the application's, its send
@@ -592,12 +592,12 @@ impl Relay {
     /// ignored. The message is the application's until its first hop
     /// takes it (`own`).
     ///
-    /// The application is the first sender and sends count 0 (§9.2.6), as
+    /// The application is the first sender and sends count 0 (spec "Hop count"), as
     /// a leaf does; this relay then sends 1, what it received plus one. It
     /// cannot put 0 on the air itself: a relay receiving count 0 takes the
-    /// sender for a leaf and itself for the origin (§9.2.1). A message the
+    /// sender for a leaf and itself for the origin (spec "Packet sender"). A message the
     /// relay already has a record of is in the network already, as is one
-    /// delivered or queued here (§9.2.7).
+    /// delivered or queued here (spec "Owner").
     pub(super) fn originate(
         &mut self,
         dst_pos: Position,
@@ -643,7 +643,7 @@ impl Relay {
         self.send_on(&d, 0, emit);
     }
 
-    // --- The hand-over (§9.3) ---
+    // --- The hand-over (spec "Hand-over") ---
 
     /// Make sure the send queue's next due entry has a hand-over: address
     /// a forward, or drop what cannot be sent. The entry stays where it is
@@ -705,10 +705,10 @@ impl Relay {
         }
     }
 
-    /// Address the forward `out` (§9.2.3), or let it wait for a ban to
-    /// end, or return it to the parent (§9.2.5), or drop it at the origin.
+    /// Address the forward `out` (spec "Next hop"), or let it wait for a ban to
+    /// end, or return it to the parent (spec "Return to parent"), or drop it at the origin.
     /// Ownership is checked again first: a closer neighbour may have been
-    /// demoted since (§9.2.4 case 5).
+    /// demoted since (spec "Receiving DATA" case 5).
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return Routed::Done;
@@ -773,7 +773,7 @@ impl Relay {
 
     /// When fresh work could next start moving, if every live neighbour is
     /// banned now: the earliest end of those bans. A message entering here
-    /// has no tried set, so these are all the candidates §9.2.3 would have
+    /// has no tried set, so these are all the candidates spec "Next hop" would have
     /// for it, demoted ones and those without margin included as its last
     /// resort. Fresh work waits
     /// at its origin meanwhile, where its application sees it, rather than
@@ -810,7 +810,7 @@ impl Relay {
     }
 
     /// Address the current frame as its receiver is now, before each attempt
-    /// (§9.3): a neighbour that moved home since the frame was queued, or
+    /// (spec "Hand-over"): a neighbour that moved home since the frame was queued, or
     /// since the last attempt, listens elsewhere, and a leaf that changed
     /// its receive mode needs another preamble. A receiver no longer in its
     /// table keeps the address it had.
@@ -836,7 +836,7 @@ impl Relay {
     }
 
     /// Start listen-before-talk for the current hand-over if it is due and
-    /// the budget lets it (§9.4: deferred, never dropped).
+    /// the budget lets it (spec "Duty cycle cap": deferred, never dropped).
     pub(super) fn start_handover(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if !self.handover.due(now) {
             return false;
@@ -873,7 +873,7 @@ impl Relay {
         emit: &mut dyn FnMut(Action),
     ) {
         let step = self.handover.step();
-        // The hand-over may have ended meanwhile (§9.2.4 case 5).
+        // The hand-over may have ended meanwhile (spec "Receiving DATA" case 5).
         if !matches!(step, Step::Cad | Step::Rssi) {
             return;
         }
@@ -893,7 +893,7 @@ impl Relay {
     }
 
     /// Listen-before-talk is clear: transmit the current frame, with this
-    /// relay's home channel as it is now (§14 `aux`). An owed ACK goes
+    /// relay's home channel as it is now (spec "Packet formats" `aux`). An owed ACK goes
     /// first, and the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.replies.wake_at().is_some_and(|t| t <= now) {
@@ -924,7 +924,7 @@ impl Relay {
             }
         } else if let Ok(Packet::Deliver(d)) = Packet::decode(out.frame.payload()) {
             // Whether a sleeping leaf listens is a matter of now, not of
-            // when the DELIVER was queued (§10.5).
+            // when the DELIVER was queued (spec "Leaf receive mode").
             frame.preamble_symbols = self.deliver_preamble(d.dst_leaf, d.msg_id, now);
         }
         let airtime = mac::airtime(&frame);
@@ -942,7 +942,7 @@ impl Relay {
             .start(Job::HandOver, Action::Transmit(frame), emit);
     }
 
-    /// The count the current hand-over of `d` carries (§9.2.6): stamped at
+    /// The count the current hand-over of `d` carries (spec "Hop count"): stamped at
     /// its first transmission as the record's highest plus one, repeated by
     /// its retries. Stamped when queued, a frame would keep a count older
     /// than one this relay has since received or sent, and a relay that
@@ -966,7 +966,7 @@ impl Relay {
     fn handover_gave_up(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         match out.kind {
             Kind::Forward => {
-                // Choose again, past this neighbour (§9.3 step 2).
+                // Choose again, past this neighbour (spec "Hand-over" step 2).
                 let to = self.handover.expect().from;
                 if let Some((slot, _)) = self
                     .neighbours
@@ -986,7 +986,7 @@ impl Relay {
     }
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
-    /// took the packet, or refused it (§9.3); see the module documentation.
+    /// took the packet, or refused it (spec "Hand-over"); see the module documentation.
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
@@ -1075,8 +1075,8 @@ impl Relay {
         emit(Action::Trace(trace));
     }
 
-    /// Every attempt of the current hand-over went unanswered (§9.3 step 6).
-    /// `counted`: a failure is counted against the neighbour (§8.2).
+    /// Every attempt of the current hand-over went unanswered (spec "Hand-over" step 6).
+    /// `counted`: a failure is counted against the neighbour (spec "Neighbour table").
     fn handover_failed(
         &mut self,
         out: Outgoing,
@@ -1142,10 +1142,10 @@ impl Relay {
         }
     }
 
-    // --- The owed reply (§9.3) ---
+    // --- The owed reply (spec "Hand-over") ---
 
     /// Start sending the owed reply, if it is ready. Without budget
-    /// for it the relay cannot reply (§9.4); the reply is abandoned.
+    /// for it the relay cannot reply (spec "Duty cycle cap"); the reply is abandoned.
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         let Some(o) = self.replies.due(now) else {
             return false;

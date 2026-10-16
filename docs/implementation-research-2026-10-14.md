@@ -1,7 +1,7 @@
 # Implementation research, 2026-10-14
 
 What exists to implement `protocol.md`, what is missing, and where the design's numbers
-disagree with datasheets and regulators. § numbers refer to the design. Sources at the end.
+disagree with datasheets and regulators. A quoted name after "spec" is a heading of the design, `docs/protocol.md`. Sources at the end.
 
 ## 1. Rust stack
 
@@ -131,7 +131,7 @@ are likely RAK4631 + RAK19007 base + RAK12500 GPS in a box, or a T-Echo Card.
 
 | Quantity | Value | Design said | Note |
 |---|---|---|---|
-| Minimum preamble, SF5/SF6 | **12 symbols** recommended; lora-phy enforces it | 8 symbols | §6.1 sweep-loss argument and §7 airtime need redoing. Heartbeat ≈ 11.8 ms, 255 B ≈ 139 ms with 12-symbol preamble. |
+| Minimum preamble, SF5/SF6 | **12 symbols** recommended; lora-phy enforces it | 8 symbols | Spec "Busy estimate" sweep-loss argument and spec "Heartbeat" airtime need redoing. Heartbeat ≈ 11.8 ms, 255 B ≈ 139 ms with 12-symbol preamble. |
 | Time on air, SF5/SF6 | own formula: 6.25-symbol sync overhead vs 4.25 for SF7+ | | Use the datasheet formula in the simulator and firmware airtime accounting. |
 | Sensitivity, 125 kHz | SF7 −124 dBm, SF12 −137 dBm (boosted). **SF5 not listed** | −120 | Extrapolate ≈ −119 dBm; measure in Phase 2. |
 | Co-channel rejection, same SF | SF7 5 dB, SF12 19 dB | | SF5 unlisted, likely lower. This is the capture threshold in the simulator. |
@@ -154,7 +154,7 @@ are likely RAK4631 + RAK19007 base + RAK12500 GPS in a box, or a T-Echo Card.
   433.05–434.79 MHz, 10 mW e.r.p., ≤ 10% duty cycle, channel spacing not specified, EN 300
   220. g2: same band, 1 mW, no duty-cycle requirement, −13 dBm/10 kHz density. g3:
   434.04–434.79 MHz, 10 mW, no duty cycle, ≤ 25 kHz channels. The design cites "band f1",
-  which is the 2011 labelling. Update §3 and §17.
+  which is the 2011 labelling. Update spec "Regulatory limits" and "Sources".
 - **Ukraine, NCEC decision 81 of 12.02.2025, annex row РІ 50-3-1** (section Р10): 433.04–
   434.79 MHz, ЕВП ≤ 10 мВт, робочий цикл < 10 %, EN 300 220-2 / ДСТУ EN 300 220-2, general
   authorisation, integral or dedicated antenna. Confirmed verbatim from the annex PDF.
@@ -170,7 +170,7 @@ are likely RAK4631 + RAK19007 base + RAK12500 GPS in a box, or a T-Echo Card.
 - **cfr34k/t-echo-lora-aprs** (C, nRF5 SDK): works with the stock bootloader, combined
   SoftDevice+app UF2, 100 µA standby with BLE.
 - **Meshtastic PR #11137**: a rework of listen-before-talk using channel activity detection (CAD) across SX126x/127x/128x/LR11xx,
-  with symbol-time formulas and the CAD_RX exit-mode handoff. Relevant to §9.3.
+  with symbol-time formulas and the CAD_RX exit-mode handoff. Relevant to spec "Hand-over".
 - **meshtastenstein-rs**: Rust Meshtastic on XIAO nRF52840 + Wio-SX1262, lora-phy +
   trouble; never run on nRF hardware; no licence.
 

@@ -202,7 +202,7 @@ pub(crate) struct NodeState {
     pub cad_rng: Stream,
     pub rx_rng: Stream,
     /// A CAD or RSSI held while a packet is being received (core-interface
-    /// §3 rule 8), and its generation.
+    /// spec "Regulatory limits" rule 8), and its generation.
     pub held: Option<(ExKind, Channel)>,
     pub held_gen: u32,
     /// Times the node was restarted (`ScriptAction::Restart`).
@@ -287,7 +287,7 @@ struct OriginRecord {
     /// and their time on air, µs.
     frames: u32,
     airtime_us: u64,
-    /// The largest hand-over count a DATA frame of it carried (§9.2.6).
+    /// The largest hand-over count a DATA frame of it carried (spec "Hop count").
     hops: u8,
 }
 
@@ -398,7 +398,7 @@ pub struct Sim {
     names: Vec<Option<String>>,
     xy: Vec<Xy>,
     sites: Vec<Site>,
-    /// Relay node by short name (§8.1).
+    /// Relay node by short name (spec "Relay identity").
     pub(crate) relay_index: HashMap<u32, u32>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
@@ -1273,7 +1273,7 @@ impl Sim {
 
     /// A CAD or RSSI reading. One that would take the node off a packet it
     /// is receiving waits for the packet's end, at most one longest frame
-    /// (docs/core-interface.md §3 rule 8; design §6.1: a reading is taken
+    /// (docs/core-interface.md §3 rule 8; spec "Busy estimate": a reading is taken
     /// only when no packet is in progress). Scripted checks are not held.
     fn check(&mut self, node: u32, kind: ExKind, c: Channel, scripted: bool) {
         self.settle(node);
@@ -1768,7 +1768,7 @@ impl Sim {
         }
     }
 
-    /// The address of `node` as a sender knows it (design §9.1): a
+    /// The address of `node` as a sender knows it (spec "Addresses"): a
     /// relay's own position; for a leaf, the relay it is attached to, or
     /// the one it was last attached to, as the sender would have learnt
     /// it from an earlier message. `None` for a leaf that never attached:

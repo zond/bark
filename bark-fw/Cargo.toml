@@ -31,7 +31,7 @@ static_cell = "=2.1.1"
 # to P0.18 when that register is erased, a permanent change only SWD can undo.
 # With it, init only ever writes all-ones, a no-op on any UICR state, so this
 # firmware never alters the reset-pin setting the bootloader left.
-# `time-driver-rtc1`: nrf-sdc will take RTC0 (research doc §1).
+# `time-driver-rtc1`: nrf-sdc will take RTC0 (research doc spec "Summary").
 embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "time-driver-rtc1", "gpiote", "reset-pin-as-gpio"] }
 embassy-executor = { version = "=0.10.0", features = ["platform-cortex-m", "executor-thread"] }
 embassy-time = "=0.5.1"

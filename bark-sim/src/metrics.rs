@@ -172,7 +172,7 @@ pub struct NodeMetrics {
     /// Resting-channel changes after the first `Listen`.
     pub home_moves: u64,
     /// For a leaf: times it attached to a relay other than the one it was
-    /// last attached to (design §10.1).
+    /// last attached to (spec "Relay choice").
     pub relay_changes: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
@@ -192,32 +192,32 @@ pub struct NodeMetrics {
 /// of what heartbeats did to a relay's neighbour table.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct CoreCounts {
-    /// Home channel moves after the boot choice (design §6.3).
+    /// Home channel moves after the boot choice (spec "Channel moves").
     pub home_moves: u64,
-    /// Heartbeats skipped because every listen-before-talk check was busy (§7).
+    /// Heartbeats skipped because every listen-before-talk check was busy (spec "Heartbeat").
     pub heartbeats_skipped: u64,
-    /// Heartbeats the bucket held back (§9.4).
+    /// Heartbeats the bucket held back (spec "Duty cycle cap").
     pub heartbeats_deferred: u64,
-    /// DATA packets this relay refused, by what it lacked (§9.2.4).
+    /// DATA packets this relay refused, by what it lacked (spec "Receiving DATA").
     pub refused: DropCounts,
-    /// Refusals this node received, each a ban on the refuser (§9.3).
+    /// Refusals this node received, each a ban on the refuser (spec "Hand-over").
     pub turned_away: u64,
-    /// Hand-overs the bucket held back (§9.4).
+    /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
-    /// Neighbours demoted (§8.2).
+    /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
-    /// Polls of a leaf that could not go out in their slot (§10.2).
+    /// Polls of a leaf that could not go out in their slot (spec "Attach and polls").
     pub polls_skipped: u64,
-    /// Leaves dropped for leaving their polls unanswered (§10.2).
+    /// Leaves dropped for leaving their polls unanswered (spec "Attach and polls").
     pub leaves_dropped: u64,
-    /// ATTACHes that attach a leaf began (§10.2).
+    /// ATTACHes that attach a leaf began (spec "Attach and polls").
     pub attaches_sent: u64,
     /// Of those, unanswered at every attempt.
     pub attaches_failed: u64,
-    /// Messages a neighbour took: sent on (§9.2.3) or returned to the
-    /// parent (§9.2.5).
+    /// Messages a neighbour took: sent on (spec "Next hop") or returned to the
+    /// parent (spec "Return to parent").
     pub handed_over: u64,
-    /// Of those, returned to the parent (§9.2.5).
+    /// Of those, returned to the parent (spec "Return to parent").
     pub returned: u64,
     /// Heartbeats from a relay not in the table that took the place of
     /// one that was (D12).
@@ -243,7 +243,7 @@ pub struct Addressed {
     pub replies: [[u64; 4]; 2],
 }
 
-/// Refusals of a relay's DATA for want of room (§9.2.4), and whether the
+/// Refusals of a relay's DATA for want of room (spec "Receiving DATA"), and whether the
 /// refusing relay then had a free hop place at a count the refused sender
 /// would have sent another of its queued messages to it with: whether a
 /// refusal that named the lowest count it would take could have let the
@@ -406,29 +406,29 @@ pub use bark_proto::DropReason;
 /// Drop counters by reason.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct DropCounts {
-    /// No neighbour left at the origin (§9.2.5).
+    /// No neighbour left at the origin (spec "Return to parent").
     pub no_route: u64,
-    /// The hop cap (§9.2.6).
+    /// The hop cap (spec "Hop count").
     pub hop_cap: u64,
-    /// No place for its record (§9.2.2).
+    /// No place for its record (spec "Message records").
     pub no_record: u64,
-    /// The send queue was full (§9.3).
+    /// The send queue was full (spec "Hand-over").
     pub send_queue_full: u64,
-    /// The duty-cycle budget (§9.4).
+    /// The duty-cycle budget (spec "Duty cycle cap").
     pub budget: u64,
-    /// Fresh work refused while every way on was banned (§9.2.4).
+    /// Fresh work refused while every way on was banned (spec "Receiving DATA").
     pub banned: u64,
-    /// The return to the parent failed (§9.2.5).
+    /// The return to the parent failed (spec "Return to parent").
     pub return_failed: u64,
-    /// For a relay that is gone (§9.2.7).
+    /// For a relay that is gone (spec "Owner").
     pub relay_gone: u64,
-    /// The delivery TTL ran out (§10.4).
+    /// The delivery TTL ran out (spec "Delivery queue").
     pub queue_expired: u64,
-    /// The delivery queue was full (§10.4).
+    /// The delivery queue was full (spec "Delivery queue").
     pub delivery_full: u64,
-    /// The payload was too long (§14).
+    /// The payload was too long (spec "Packet formats").
     pub payload_too_long: u64,
-    /// A leaf found no relay to take it within the delivery TTL (§10.2).
+    /// A leaf found no relay to take it within the delivery TTL (spec "Attach and polls").
     pub no_relay: u64,
 }
 
@@ -482,7 +482,7 @@ pub struct ChannelMetrics {
     pub airtime_by_type: TypeAirtime,
 }
 
-/// Time on air by packet type (design §14), µs.
+/// Time on air by packet type (spec "Packet formats"), µs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TypeAirtime {
     /// HEARTBEAT.
@@ -490,7 +490,7 @@ pub struct TypeAirtime {
     /// ACK, of anything but an ATTACH.
     pub ack_us: u64,
     /// ACK of an ATTACH: its message ID is the leaf's ID, and so is `to`
-    /// (design §14).
+    /// (spec "Packet formats").
     pub attach_ack_us: u64,
     /// ATTACH.
     pub attach_us: u64,
@@ -545,7 +545,7 @@ pub struct AppMetrics {
     /// Messages that reached a node other than their destination.
     pub misdelivered: u64,
     /// Messages the traffic model did not send because their destination
-    /// leaf had never attached, so no sender could know its address (§9.1).
+    /// leaf had never attached, so no sender could know its address (spec "Addresses").
     pub unaddressed: u64,
     /// Drops reported by cores, by reason (events, not messages: two
     /// copies of one message may be dropped in two places).
@@ -555,7 +555,7 @@ pub struct AppMetrics {
     pub latencies_us: Vec<u64>,
 }
 
-/// How soon the network learns that a dark leaf is back (design §10.4):
+/// How soon the network learns that a dark leaf is back (spec "Delivery queue"):
 /// from the moment it is in reach again to the first ATTACH from it that
 /// its relay, or any relay it names, receives.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]

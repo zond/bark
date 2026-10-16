@@ -2,7 +2,7 @@
 
 Written 2026-10-14, before any board has run this firmware. Command
 syntax and output fields are in `src/console.rs` and `README.md`.
-Protocol references (§) are to `docs/protocol.md`.
+A quoted name after "spec" is a heading of `docs/protocol.md`.
 
 The table at the end has one row per field of `RadioParams` in
 `bark-sim/src/phy.rs`. Fill in the "measured" column and copy the
@@ -28,7 +28,7 @@ values into a scenario's `[radio]` table (see the end).
 Repeat every timing measurement at least 10 times and record median and
 range; the stopwatch resolves 1 µs.
 
-## Step 1: transmit, receive, CAD, RSSI, retune (§15 step 1)
+## Step 1: transmit, receive, CAD, RSSI, retune (spec "Implementation notes" step 1)
 
 ### 1.1 Transmit and receive
 
@@ -68,7 +68,7 @@ A> ch 0      (twelve channels, 1.5 MHz)
 `retune_us` with and without a hop. The radio retunes through
 STDBY_XOSC, so no TCXO start is expected: the chip's part is about 62 µs
 (STDBY_XOSC→RX, DS Table 8-2) plus the unlisted RX→STDBY_XOSC step, against
-the simulator's 86 µs (§6.1 assumes ≈0.1 ms); the SPI commands add to it.
+the simulator's 86 µs (spec "Busy estimate" assumes ≈0.1 ms); the SPI commands add to it.
 About 5 000 means a TCXO start (see 1.1).
 
 ### 1.3 RSSI settle time and noise floor
@@ -95,7 +95,7 @@ channel; readings far below it (or 0) mean the receiver was not yet up.
 
 Noise floor: `noise k 1000 1000` on each of the 13 channels, at a few
 times of day. The median is the floor; p10 is the low percentile the
-noise-floor calibration of §6.1 uses. Channel 6 (433.92 MHz) is
+noise-floor calibration of spec "Busy estimate" uses. Channel 6 (433.92 MHz) is
 expected to be the busiest.
 
 ### 1.4 Sweep
@@ -104,7 +104,7 @@ expected to be the busiest.
 A> sweep
 ```
 
-13 readings, `total_us`. §6.1 assumes about 5 ms for all 13.
+13 readings, `total_us`. Spec "Busy estimate" assumes about 5 ms for all 13.
 
 ### 1.5 CAD
 
@@ -122,7 +122,7 @@ the driver starts it again before it returns. B's frames are
 on air 10 % of the time, so about 5 of the 50 CADs land on one; if far
 fewer report busy, CAD misses frames or detects only the preamble.
 
-### 1.6 Ping and the per-hop ACK budget (§9.3)
+### 1.6 Ping and the per-hop ACK budget (spec "Hand-over")
 
 ```
 B> ch 5
@@ -132,7 +132,7 @@ A> ping 5    (×20)
 
 A prints `ping … rtt_us=… within=…`; B prints `pong … cad_us=…
 tx_us=… rx_to_tx_done_us=…`. `rtt_us` runs from A's TxDone to the pong
-received, which is what the 100 ms ACK timeout of §9.3 must cover: B's
+received, which is what the 100 ms ACK timeout of spec "Hand-over" must cover: B's
 reception handling, CAD on A's channel, its transmit start and the 13-byte
 pong (14.4 ms on air). If `within=false`, the ACK timeout or the
 receiver's path needs changing; note which part of B's line dominates.
@@ -147,7 +147,7 @@ RSSI A reports for the last frames received at the 90 % step is the
 sensitivity. CRC failures (`rx_crc_error`) and header failures appear
 before frames stop entirely.
 
-### C1: adjacent-channel rejection (§5, O5)
+### C1: adjacent-channel rejection (spec "Channel plan", O5)
 
 The question is whether 125 kHz spacing (1.0 × bandwidth) separates
 channels. The datasheet gives 60 dB only at 1.5 × bandwidth.
@@ -185,9 +185,9 @@ the fallback when only two boards are at hand.
 
 If rejection at ±1 channel is well below the 60 dB the simulator
 assumes, run the simulator with the measured value; if the network
-suffers, the fallback is 11 channels at 150 kHz (§5).
+suffers, the fallback is 11 channels at 150 kHz (spec "Channel plan").
 
-## Step 2: listen-before-talk, heartbeat, neighbour table (§15 step 2)
+## Step 2: listen-before-talk, heartbeat, neighbour table (spec "Implementation notes" step 2)
 
 The heartbeat and neighbour table need the protocol core, which the
 default build runs and the console does not (README). What the console
@@ -198,20 +198,20 @@ measures for step 2:
 - That all three pairs of boards hear each other: `ping` each way
   between each pair, on different home channels.
 
-## Step 3: busy estimate and home channel (§15 step 3)
+## Step 3: busy estimate and home channel (spec "Implementation notes" step 3)
 
 Also needs the core. What the console measures for step 3:
 
 - Noise floor per channel and its spread (1.3), which sets the busy
-  threshold (floor + 6 dB, §6.1; O3, O11).
+  threshold (floor + 6 dB, spec "Busy estimate"; O3, O11).
 - The cost of the sweep (1.4).
 - An interferer: a fourth board running `beacon k 1390 255` occupies
-  channel k 10 % of the time. A continuous-wave interferer (§15 step 3)
+  channel k 10 % of the time. A continuous-wave interferer (spec "Implementation notes" step 3)
   is not in this console.
 
 ## Not measured here
 
-- The preamble length the modem needs to lock (`D` in §6.1, assumed 4
+- The preamble length the modem needs to lock (`D` in spec "Busy estimate", assumed 4
   symbols): needs a receiver that leaves the channel for a controlled
   gap at random times and counts the frames lost.
 - Same-channel capture (`capture_db`): needs two transmitters on one

@@ -7,7 +7,7 @@ a fixed grid of 256 slots (D39). D41 keeps the relay polling and the
 leaf answering right behind the poll, and the 300 s period; the slots
 keep a spacing, ATTACHED counts the messages waiting, a leaf keeps its
 relay while it is dark, and the relay listens for the answer to each
-poll (§10.2). It was first built (`7227a62`) with a period that
+poll (spec "Attach and polls"). It was first built (`7227a62`) with a period that
 followed the table, L × 4 s within 10 s and 300 s while the relay's
 channel read quiet; that version is "D41 with shortening" below, and
 D41 without it is the decided design, run as that commit with the
@@ -17,7 +17,7 @@ the reachable texts sent from 900 to 3900 s.
 
 ## Summary
 
-- **At the §13 rate D41 delivers 2 points more:** 95.1 → 97.0 % and
+- **At the spec "Capacity and sizing" rate D41 delivers 2 points more:** 95.1 → 97.0 % and
   94.7 → 96.9 % (seeds 1, 2), for 4 % more airtime. A phone back from
   the dark is heard after about 55 s at the median instead of 175 s, and
   half as many leaves end the run without a relay.
@@ -26,7 +26,7 @@ the reachable texts sent from 900 to 3900 s.
   sends 940 to 12 600 polls a minute; with D41 it holds 22 % (even is
   20 %) and the domain sends about 4 300 a minute. After a mass start
   and after 27 relays restart, no hash of the leaf's ID is needed.
-- **Twice the §13 rate is the cliff, for main too.** With four seeds
+- **Twice the spec "Capacity and sizing" rate is the cliff, for main too.** With four seeds
   instead of two, main delivers 94.4, 94.0, 91.9 and 49.5 %: seed 4
   collapses from 1200 s. D41 delivers 92.9, 78.8, 84.3 and 46.2 %, −6.9 ±
   3.1 points paired. It keeps 74 leaves a relay attached instead of 70,
@@ -36,7 +36,7 @@ the reachable texts sent from 900 to 3900 s.
 - **Shortening the period was built, measured and removed:** it tripled
   S2's airtime (74 → 219 s a run), cost the rings at their cap 2.5 % of
   their carried texts and corridor seed 3 0.99 → 0.89, and gained nothing
-  at the §13 rate; shorter periods for small cells wait for sleeping
+  at the spec "Capacity and sizing" rate; shorter periods for small cells wait for sleeping
   leaves and a measurement of the latency they need.
 - **Three departures from the design as decided,** each measured:
   ATTACHED keeps 7 bytes and carries the count of waiting messages in
@@ -88,7 +88,7 @@ without it against 96.3 % with it.
 **A restart, with and without shortening.** A shorter period's one
 operational gain would be that leaves notice a dead or restarted relay
 sooner: their next window, the sign, comes within a period. In S4 at
-the §13 rate with every tenth relay (27) restarting at 1800 s, seed 1:
+the spec "Capacity and sizing" rate with every tenth relay (27) restarting at 1800 s, seed 1:
 
 | | main | D41 | D41 with shortening |
 |---|---|---|---|
@@ -112,22 +112,22 @@ their tables, as on main.
 The design asked for an 8-byte ATTACHED with a byte counting the
 messages waiting. One byte more makes the frame 46.25 symbols instead of
 41.25, 11.84 ms instead of 10.56 ms. Main with the byte added and
-nothing else delivers 93.5 and 91.6 % at twice the §13 rate against 94.4
+nothing else delivers 93.5 and 91.6 % at twice the spec "Capacity and sizing" rate against 94.4
 and 94.0 %, the last bin of seed 2 down to 58 %; D41 with 8 bytes
 delivered 92.9 and 81.0 %, with 7 bytes 95.4 and 92.1 %. So the count
 went into the first byte's four `aux` bits, which held nothing. A
 sleeping leaf told 15 messages wait listens for 6.12 + 15 × 3.13 = 53 s
-(§10.5) and gets any more at its next poll.
+(spec "Leaf receive mode") and gets any more at its next poll.
 
 The room bit, an ATTACHED that says the relay would take a leaf's DATA,
 does not fit. The room a relay has when it polls is the room of that
 instant: a relay at its cap refills continuously, so "room now" holds at
 most polls, and a refused leaf told so offers at once instead of waiting
-out its doubling hold (§10.2), which is what spaces refused offers.
+out its doubling hold (spec "Attach and polls"), which is what spaces refused offers.
 Built as decided, a poll with room ending the hold, it cost the ring at
 its cap 0.9 ± 0.6 points and 5 % of its carried texts. The form that
 only saves offers, a poll without room counted as one more refusal,
-cost the rings 0.3 ± 0.3 and 0.7 ± 0.5 points. At the §13 rate in S4 a
+cost the rings 0.3 ± 0.3 and 0.7 ± 0.5 points. At the spec "Capacity and sizing" rate in S4 a
 leaf is refused too seldom for either to show: both deliver exactly the
 same. It is left out, and the bit with it.
 
@@ -164,7 +164,7 @@ main does.
 
 The ATTACH row counts every ATTACH sent, also those of dark phones,
 which the simulator does not put on the air. D41's leaves began 75 600
-ATTACHes that attach in seed 1 at the §13 rate, 20 000 of them at the
+ATTACHes that attach in seed 1 at the spec "Capacity and sizing" rate, 20 000 of them at the
 start, and 30 400 went unanswered, almost all from phones still dark:
 one attempt a rotation. A relay's keepalive cost rises from 2.9 to 3.2 %
 of its budget with 5 % more leaves and some shortened periods; without
@@ -195,7 +195,7 @@ that cost nothing; the keepalive only moves where it starts.
 0.84, 0.37, 0.13 and 0.60, 0.20, 0.08. The onset does not move.
 
 **Every relay on a roof.** At a tenth of the rate 95.0 → 96.0 %, back
-from dark 176 → 59 s at the median. At the §13 rate both fail, 7.9 and
+from dark 176 → 59 s at the median. At the spec "Capacity and sizing" rate both fail, 7.9 and
 7.3 %, from the DATA load, in the same bin; leaves without a relay at the
 end 9130 → 7550.
 
@@ -231,13 +231,13 @@ restart loses its tables; no other run lost any.
 ## The quiet rule, built and removed
 
 The relay shortened its period only while its own home busy estimate
-(§6.1) was below 3.5 %, until it reached 4.5 %. On main the
-relays read a median of 3.2 and 3.4 % at the §13 rate (90th percentile
+(spec "Busy estimate") was below 3.5 %, until it reached 4.5 %. On main the
+relays read a median of 3.2 and 3.4 % at the spec "Capacity and sizing" rate (90th percentile
 5.7 %) and 5.3 and 5.8 % at twice it (90th percentile 12 %); rooftop
 relays at a tenth of the rate read 4.7 %. Without the band,
 a threshold at 4.5 % would change the period 1.5 times an hour per relay
-at the §13 rate; with it 0.7, measured offline on main's series. Built,
-periods change 2.0 to 2.5 times an hour per relay at the §13 rate and 4
+at the spec "Capacity and sizing" rate; with it 0.7, measured offline on main's series. Built,
+periods change 2.0 to 2.5 times an hour per relay at the spec "Capacity and sizing" rate and 4
 at twice it: shortened polls do raise the readings of co-channel
 neighbours. A relay's reading over time at a steady load has a median
 standard deviation of 0.41 %.
@@ -267,13 +267,13 @@ being unchanged.
 
 ## What did the ×1 gain
 
-D41 without shortening delivers what D41 does at the §13 rate (97.0 %
+D41 without shortening delivers what D41 does at the spec "Capacity and sizing" rate (97.0 %
 seed 1) and better in S2, so the gain is not from polling more often. It
 comes from the leaf: a phone that missed its poll attaches again a
 heartbeat and up to a minute after it is back, where on main it waited
 for the next poll, up to 300 s, or gave its relay up after three empty
 windows and chose again. The earlier, leaf-driven attempt gained the
-same two points at the §13 rate (97.2 and 96.8 %) and collapsed at twice
+same two points at the spec "Capacity and sizing" rate (97.2 and 96.8 %) and collapsed at twice
 it (66 and 64 % on seeds 1 and 2): its ATTACHes at times only the leaf
 chose met DATA the leaf could not hear, 28 % of lost DATA had one on the
 air against 8 % on main. Here that ATTACH is sent only after a missed

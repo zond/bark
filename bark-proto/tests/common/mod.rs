@@ -9,7 +9,7 @@
 //! panics if a core starts a second excursion, sends a short preamble or
 //! an oversized frame, or exceeds the duty cycle; and it holds a channel
 //! check while a reception is in progress (rule 8). It also panics if a
-//! test offers a message to a core that does not accept one (§4).
+//! test offers a message to a core that does not accept one (spec "Physical layer").
 
 #![allow(dead_code)]
 
@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 pub const RETUNE: Duration = Duration::from_micros(200);
 /// Channel activity detection over four symbols.
 pub const CAD: Duration = Duration::from_micros(4 * SYMBOL_TIME.as_micros());
-/// One RSSI reading after the receiver settles (design §6.1: ≈0.3 ms).
+/// One RSSI reading after the receiver settles (spec "Busy estimate": ≈0.3 ms).
 pub const RSSI: Duration = Duration::from_micros(300);
 /// What an idle channel reads.
 pub const NOISE_DBM: i16 = -121;
@@ -472,7 +472,7 @@ impl<C: Core> Harness<C> {
     }
 
     /// The window ending when this transmission ends holds at most 10 %
-    /// (design §3).
+    /// (spec "Regulatory limits").
     fn check_budget(&self, i: usize, start: Instant, airtime: Duration) {
         let end = start + airtime;
         let from = end

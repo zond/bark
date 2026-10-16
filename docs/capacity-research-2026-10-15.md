@@ -7,31 +7,31 @@ protocol code is that of commit `e3dbaaa`, with one read-only addition
 
 ## Summary
 
-At the texting rate of §13 the domain delivers about half of what is
+At the texting rate of spec "Capacity and sizing" the domain delivers about half of what is
 sent. It delivers about 90 % up to half that rate. The first limit to
 give way is the 10 % duty cycle cap of relays on windowsills in the
-centre of the domain. It starts to bind at a quarter of the §13 rate. The
+centre of the domain. It starts to bind at a quarter of the spec "Capacity and sizing" rate. The
 channels never fill: measured at the relays, they stay 2 to 10 % busy.
 
-The cap binds early because each text costs 5 to 6 times the airtime §13
-assumes. §13 counts one DATA frame and one ACK per hop. The run measures
+The cap binds early because each text costs 5 to 6 times the airtime spec "Capacity and sizing"
+assumes. Spec "Capacity and sizing" counts one DATA frame and one ACK per hop. The run measures
 4 to 6 DATA frames per hand-over that succeeds. Most of the extra goes to
 neighbours that do not answer. Fading lets a relay hear the short
 heartbeat of a neighbour whose link is usually too weak for a 121-byte
 DATA frame. Greedy forwarding prefers such a neighbour, because it is the
 farthest and so the closest to the destination. Without fading the same
-domain carries the §13 rate at 93 %, and its cost per text falls from
+domain carries the spec "Capacity and sizing" rate at 93 %, and its cost per text falls from
 4.2 s of airtime to 1.0 s.
 
 Past its limit the domain does not level off. It collapses. At twice the
-§13 rate it delivers 8 %. A domain where every relay is on a roof, §13's
+spec "Capacity and sizing" rate it delivers 8 %. A domain where every relay is on a roof, spec "Capacity and sizing"'s
 own picture, fails even at a tenth of the rate. Each relay then hears
 every other relay's acknowledgements of leaf keepalives, which keep
 every channel about 40 % busy.
 
 Per domain the run carries about 2.2 texts a second at 90 % delivery.
 Over 14 domains that is about 31 texts a second, 9 texts per user per
-day at 300 000 users. §13 predicts 80 texts a second and 23 per user per
+day at 300 000 users. Spec "Capacity and sizing" predicts 80 texts a second and 23 per user per
 day.
 
 ## Setup
@@ -44,20 +44,20 @@ relay on a roof.
 
 | What | Value | Source |
 |---|---|---|
-| Area | 28 km², a square of side 5291.5 m | §13: one collision domain |
-| Relays | 269, uniform at random, 9.6 per km² | §13: indoor coverage density |
-| Of which on roofs | 53, 1.9 per km² | §13 gives no share; this is its outdoor-only density, the relays a city would put up first |
-| The rest | 216 on windowsills, modelled as outdoors | S2's choice. A relay behind a wall would reach an indoor leaf only 120 m away, and 9.6 per km² would leave most leaves without a relay (§10.1 counts on 300 m) |
-| Leaves | 20 000, uniform at random, all indoors | §13: 300 000 users over 14 domains |
-| Texts | Poisson, 23 per leaf per day, 100 bytes | §13 |
+| Area | 28 km², a square of side 5291.5 m | Spec "Capacity and sizing": one collision domain |
+| Relays | 269, uniform at random, 9.6 per km² | Spec "Capacity and sizing": indoor coverage density |
+| Of which on roofs | 53, 1.9 per km² | Spec "Capacity and sizing" gives no share; this is its outdoor-only density, the relays a city would put up first |
+| The rest | 216 on windowsills, modelled as outdoors | S2's choice. A relay behind a wall would reach an indoor leaf only 120 m away, and 9.6 per km² would leave most leaves without a relay (spec "Relay choice" counts on 300 m) |
+| Leaves | 20 000, uniform at random, all indoors | Spec "Capacity and sizing": 300 000 users over 14 domains |
+| Texts | Poisson, 23 per leaf per day, 100 bytes | Spec "Capacity and sizing" |
 | Destination | any other leaf of the domain, all alike | see below |
-| Phones going dark | 5 minutes in each hour on average | S2, §10.4 |
-| Path loss | exponent 3.6, 25.2 dB at 1 m | S2's fit to §4: 750 m to a handheld in the street with 129 dB of budget (10 dBm, §3, to −119 dBm, `reception-research-2026-10-15.md`) |
-| Wall | 14.4 dB per indoor end | S2's fit: 300 m to a handheld indoors (§4) |
-| Rooftop to rooftop | 21.4 dB less loss | 129 − 25.2 − 36 log10 3000: two rooftops hear each other at 3 km (§4, §13). A rooftop's link to anything below the roofs gets no bonus |
+| Phones going dark | 5 minutes in each hour on average | S2, spec "Delivery queue" |
+| Path loss | exponent 3.6, 25.2 dB at 1 m | S2's fit to spec "Physical layer": 750 m to a handheld in the street with 129 dB of budget (10 dBm, spec "Regulatory limits", to −119 dBm, `reception-research-2026-10-15.md`) |
+| Wall | 14.4 dB per indoor end | S2's fit: 300 m to a handheld indoors (spec "Physical layer") |
+| Rooftop to rooftop | 21.4 dB less loss | 129 − 25.2 − 36 log10 3000: two rooftops hear each other at 3 km (spec "Physical layer", "Capacity and sizing"). A rooftop's link to anything below the roofs gets no bonus |
 | Shadowing | 6 dB, fixed per pair | the scenarios' figure since S2; not measured |
 | Fading | 4 dB per pair and channel, 60 s correlation | the scenarios' figure since S2; not measured |
-| Duration | 4500 s; the network settles by 900 s | boot listen 150 s (§6.2), leaf choice within 195 s (§10.1), first moves after 10 minutes (§6.3) |
+| Duration | 4500 s; the network settles by 900 s | boot listen 150 s (spec "Channel at boot"), leaf choice within 195 s (spec "Relay choice"), first moves after 10 minutes (spec "Channel moves") |
 
 **Destinations.** Uniform over the domain gives a mean distance of
 2.8 km and a median of 3 to 5 hand-overs. A city's texts are more local
@@ -67,21 +67,21 @@ domain has edges, with no traffic from beyond them. Both effects are
 left out. The second makes the figures per domain optimistic.
 
 **What is counted.** Delivery is over messages sent from 900 s to
-3900 s, so each had at least the delivery TTL of 10 minutes (§10.4) to
+3900 s, so each had at least the delivery TTL of 10 minutes (spec "Delivery queue") to
 arrive. "At the cap" means the relay's bucket held less than the reply
-reserve and one full frame (242 + 138.6 ms, §9.4, §4), sampled every
+reserve and one full frame (242 + 138.6 ms, spec "Duty cycle cap", "Physical layer"), sampled every
 second. So it could take no full frame of new work. Airtime per text
 counts every frame that carried the message or answered it: DATA,
 DELIVER and their ACKs, attempts that failed included. "Centre" is the
 middle square of half the side, a quarter of the area. The rest is
 "edge". Busy is the time a relay's own channel was 6 dB above the noise
-floor (§6.1), as the simulator measures it at the relay.
+floor (spec "Busy estimate"), as the simulator measures it at the relay.
 
 ## Results
 
 ### The rate sweep
 
-| Rate × §13 | 0.1 | 0.25 | 0.5 | 1 | 2 | 4 |
+| Rate × spec "Capacity and sizing" | 0.1 | 0.25 | 0.5 | 1 | 2 | 4 |
 |---|---|---|---|---|---|---|
 | Offered, texts/s | 0.49 | 1.22 | 2.42 | 4.80 | 9.43 | 17.1 |
 | Delivered | 92.3 % | 91.1 % | 90.5 % | 52.5 % | 8.0 % | 0.4 % |
@@ -108,21 +108,21 @@ floor (§6.1), as the simulator measures it at the relay.
 | Lost without a trace | 0 | 0 | 0 | 0 | 0 | 0 |
 
 The mean airtime per text is far above the median because a few
-searches wander. At half the §13 rate the costliest tenth of the texts
+searches wander. At half the spec "Capacity and sizing" rate the costliest tenth of the texts
 used 62 % of the airtime spent on texts. Some reached the hop cap of 255.
 
 **Seed.** Seed 2 gives the same picture. It delivers 87.3 % at half the
-rate (2.11 texts/s carried) and 45.9 % at the §13 rate (2.22 texts/s).
+rate (2.11 texts/s carried) and 45.9 % at the spec "Capacity and sizing" rate (2.22 texts/s).
 Its centre relays spend 19 % and 66 % of the time at the cap.
 
 ### Where it binds first
 
 1. **The duty cycle cap of relays in the centre, at about a quarter of
-   the §13 rate.** At 0.25 times the rate, 164 relays reach the cap at
+   the spec "Capacity and sizing" rate.** At 0.25 times the rate, 164 relays reach the cap at
    some point. Centre relays spend 2.5 % of the time there, edge relays
    0.8 %. Windowsill relays spend 1.3 %, rooftop relays 0.6 %. At half
    the rate centre relays average 6.2 % airtime and spend 6.8 % of the
-   time at the cap, and delivery holds at 90 %. At the §13 rate they
+   time at the cap, and delivery holds at 90 %. At the spec "Capacity and sizing" rate they
    spend 57 % of the time at the cap and their send queues average 8.6
    frames (2.6 at the edge). Windowsill relays bind before rooftop ones
    because their links are weaker. A windowsill relay sends 6.0 DATA
@@ -130,20 +130,20 @@ Its centre relays spend 19 % and 66 % of the time at the cap.
    relay 2.4.
 2. **Then the leaves.** A relay at the cap refuses its leaves' texts
    with BUSY, and below its reply reserve it does not answer at all
-   (§9.4). A refused leaf holds its text and offers it again, waiting up
-   to 61 s between offers (§10.2). A leaf whose relay does not answer
+   (spec "Duty cycle cap"). A refused leaf holds its text and offers it again, waiting up
+   to 61 s between offers (spec "Attach and polls"). A leaf whose relay does not answer
    gives it up and looks for another. Either way the text waits at the
    sending leaf until the 10-minute TTL ends it. This is the main loss
-   at and above the §13 rate: 3742 of 6172 losses at ×1, 20 191 of
+   at and above the spec "Capacity and sizing" rate: 3742 of 6172 losses at ×1, 20 191 of
    24 251 at ×2. Leaves without a relay at the end grow from 2888 at a
-   tenth of the rate to 6688 at the §13 rate. Delivery queues never
+   tenth of the rate to 6688 at the spec "Capacity and sizing" rate. Delivery queues never
    fill. The largest held 28 of their 41 places. No message was refused
    for a full delivery queue.
 3. **The channels do not bind.** Mean busy time at a relay's own channel
    stays under 10 % at every rate. Rooftop relays, which hear farther,
-   see about twice as much, 13 % at the §13 rate. The busy time is
-   spread evenly over the 13 channels: 6.3 to 7.3 % each at the §13 rate,
-   with 6 to 41 relays on each channel. Measured selection (§6) does
+   see about twice as much, 13 % at the spec "Capacity and sizing" rate. The busy time is
+   spread evenly over the 13 channels: 6.3 to 7.3 % each at the spec "Capacity and sizing" rate,
+   with 6 to 41 relays on each channel. Measured selection (spec "Home channel selection") does
    what it should.
 
 ### Without fading, without dark phones, all on roofs
@@ -159,27 +159,27 @@ Its centre relays spend 19 % and 66 % of the time at the cap.
 | ×1, all relays on roofs | 4.58 | 0.0 % | 0.00 | | | 27 | 8.4 % | 0.2 % | 47 % |
 
 - **Fading is what makes the cap bind early.** With steady links a text
-  costs 1.0 s of airtime and the domain carries the §13 rate. The knee
-  then lies between 1 and 2 times the rate, close to §13's estimate.
+  costs 1.0 s of airtime and the domain carries the spec "Capacity and sizing" rate. The knee
+  then lies between 1 and 2 times the rate, close to spec "Capacity and sizing"'s estimate.
   With fading the same texts cost 4.2 s. A trace shows the mechanism.
   A relay offers a text three times each to two or three neighbours
   that never answer before one takes it. Those neighbours are in its
   table because one heartbeat of 8 bytes reached it during a fade-up.
   They are the ones greedy forwarding prefers: the farthest, so the
   closest to the destination. A neighbour that fails twice is demoted
-  (§8.2). It is promoted again on its next ACK or after 390 s, and each
+  (spec "Neighbour table"). It is promoted again on its next ACK or after 390 s, and each
   other direction finds its own such neighbours. The relays demoted
   2438 neighbours in the hour at a tenth of the rate and 56 054 at the
-  §13 rate.
+  spec "Capacity and sizing" rate.
 - **Dark phones are not the cause.** Without them the result is the
   same.
-- **All on roofs, §13's picture of 270 relays that all hear each other,
+- **All on roofs, spec "Capacity and sizing"'s picture of 270 relays that all hear each other,
   fails at any rate.** Each relay acknowledges its leaves' keepalives:
   20 000 leaves every 60 s with a 14.4 ms ACK is 4.8 s of airtime per
   second, 37 % of each channel when every relay hears every ACK. The
   channels are 38 % busy at a tenth of the rate. The leaves' ATTACHes,
   which get no rooftop bonus, are lost under the relays' ACKs. 18 159 of
-  20 000 leaves had no relay at the end. §13's 2.5 % counts heartbeats
+  20 000 leaves had no relay at the end. Spec "Capacity and sizing"'s 2.5 % counts heartbeats
   only. The heartbeats alone do come to 2.4 % of each channel here.
 
 ### Heartbeats and keepalives
@@ -194,10 +194,10 @@ Its centre relays spend 19 % and 66 % of the time at the cap.
 
 These are sums over every transmitter in the domain. A relay hears only
 part of them; its own channel was 1.7 % busy on average at this rate.
-Heartbeats match §7 and §13: 2.4 % of each channel if every relay
+Heartbeats match spec "Heartbeat" and "Capacity and sizing": 2.4 % of each channel if every relay
 hears every other. Keepalives cost more than heartbeats at every relay.
 Acknowledging 66 leaves on average takes 1.5 % of a relay's airtime,
-15 % of its duty budget, before it forwards a single text. §10.2 counts
+15 % of its duty budget, before it forwards a single text. Spec "Attach and polls" counts
 this load against the channel, about 2 %, but not against the relay's
 budget.
 
@@ -220,7 +220,7 @@ would route better (O4) is not tested here.
 
 ### Queues, refusals and moves
 
-| Rate × §13 | 0.1 | 0.25 | 0.5 | 1 | 2 | 4 |
+| Rate × spec "Capacity and sizing" | 0.1 | 0.25 | 0.5 | 1 | 2 | 4 |
 |---|---|---|---|---|---|---|
 | Send queue, centre mean | 0.0 | 0.2 | 0.5 | 8.6 | 17.8 | 22.5 |
 | Send queue, largest | 3 | 8 | 14 | 40 | 42 | 46 |
@@ -231,7 +231,7 @@ would route better (O4) is not tested here.
 | Home channel moves after boot | 198 | 398 | 561 | 767 | 835 | 908 |
 
 Home channel moves come to 0.6 per relay per hour at a tenth of the
-rate and grow with load. §6.3 meant them to be rare.
+rate and grow with load. Spec "Channel moves" meant them to be rare.
 
 ### Leaves
 
@@ -244,37 +244,37 @@ rate, 39 waited at the relay their leaf was on at the end of the run;
 the rest waited at a relay their leaf had left, or for a leaf with no
 relay. This, with phones dark for longer than the TTL, is the 8 % lost
 at light load. It does not depend on capacity. The design expects the
-sender to retry (§10.4), which the simulated applications do not do. At
+sender to retry (spec "Delivery queue"), which the simulated applications do not do. At
 light load 56 % of texts arrive within 5 s and 79 % within a minute.
 
-## Against §13
+## Against spec "Capacity and sizing"
 
-| | §13 | This run, one domain | Scaled to 14 domains |
+| | Spec "Capacity and sizing" | This run, one domain | Scaled to 14 domains |
 |---|---|---|---|
 | Airtime per text | 0.67 s over 8 hops | 1.25 s median, 3.6 s mean over 3 to 4 hops (×0.5) | |
 | Binding limit | channel time, 35 % usable | relay duty cap in the centre | |
 | Texts/s at 90 % delivery | ≈ 80 city-wide | ≈ 2.2 | ≈ 31 |
 | Texts per user per day | ≈ 23 | ≈ 9 at 20 000 users | ≈ 9 at 300 000 users |
 | Heartbeat load per channel | ≈ 2.5 % | 2.4 % summed over the domain | |
-| Keepalive load | 2 % of a channel at 80 leaves (§10.2) | 1.5 % of each relay's airtime; 37 % of a channel when all relays hear each other | |
+| Keepalive load | 2 % of a channel at 80 leaves (spec "Attach and polls") | 1.5 % of each relay's airtime; 37 % of a channel when all relays hear each other | |
 
-Where §13 is wrong, and why:
+Where spec "Capacity and sizing" is wrong, and why:
 
-1. **Cost per hop.** §13 counts one DATA and one ACK per hop. Fading
+1. **Cost per hop.** Spec "Capacity and sizing" counts one DATA and one ACK per hop. Fading
    puts neighbours in the table that cannot take a DATA frame, and
    greedy forwarding tries them first. The measured cost is 4 to 6 DATA
    frames per hand-over that succeeds, 2.4 without fading.
-2. **The binding limit.** §13 puts the limit at the channel. The
+2. **The binding limit.** Spec "Capacity and sizing" puts the limit at the channel. The
    channels stay under 10 % busy, and the relays' 10 % duty cap binds
    first. With uniform destinations the centre relays carry the through
-   traffic and reach the cap at a quarter to half of the §13 rate. §9.4
-   says the cap binds first in the centre. This confirms it. §13's table
+   traffic and reach the cap at a quarter to half of the spec "Capacity and sizing" rate. Spec "Duty cycle cap"
+   says the cap binds first in the centre. This confirms it. Spec "Capacity and sizing"'s table
    does not take it into account.
-3. **Keepalives.** §13 counts heartbeats against the channel. It counts
+3. **Keepalives.** Spec "Capacity and sizing" counts heartbeats against the channel. It counts
    neither the leaves' keepalives nor the relays' ACKs of them. These are
    the largest load in the domain. They take 15 % of a relay's budget,
    and they make a domain where every relay hears every other unusable.
-4. **Overload.** §13's figures read as a ceiling. The run shows a peak
+4. **Overload.** Spec "Capacity and sizing"'s figures read as a ceiling. The run shows a peak
    and then a collapse. Past the knee each text costs more, from longer
    searches, refusals and bans, so less gets through.
 
@@ -284,7 +284,7 @@ the run.
 
 ## Run time and memory
 
-S4 at the §13 rate, 4500 simulated seconds, took 377 s on the
+S4 at the spec "Capacity and sizing" rate, 4500 simulated seconds, took 377 s on the
 development machine (32 cores, one used) and 358 MB. The 269 busy-time
 observers and the per-second load samples are included. Eleven runs in
 parallel took 5 to 18 minutes each. Profiling found the packet error

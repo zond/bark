@@ -2,8 +2,8 @@
 //! leaf, driven by `bark_driver::Driver` against the SX1262.
 //!
 //! The node's position comes from `BARK_LAT` and `BARK_LON` (degrees) at
-//! build time until the phone app or the GPS can set it (protocol §8.1,
-//! §11). Its seed comes from the chip's random number generator
+//! build time until the phone app or the GPS can set it (spec "Relay identity",
+//! Spec "Position, time, phone link"). Its seed comes from the chip's random number generator
 //! (`docs/core-interface.md` §5).
 
 use bark_driver::{App, Clock, Driver, Outgoing};

@@ -26,13 +26,13 @@ Details that follow from the contract (`core-interface.md`):
 
 - **Never early.** The board's clock counts 32 768 Hz ticks; a deadline is rounded up to the
   next tick, and the loop checks `now >= next_wakeup()` before it delivers a wakeup.
-- **A check waits for a packet in progress** (§3 rule 8; protocol §6.1). The radio reports a
+- **A check waits for a packet in progress** (§3 rule 8; spec "Busy estimate"). The radio reports a
   packet when it detects its preamble or header. A CAD, or an RSSI reading on another channel,
   asked for while one is arriving waits until it ends, at most one longest frame (138.6 ms).
   The frame reaches the core meanwhile, as in the simulator. A transmission never waits.
 - **Every excursion completes.** If the radio fails, a CAD reports busy and an RSSI reading
   0 dBm, the top of the radio's scale, so the core does not transmit on a check it never got; a
-  failed transmission still reports `TxDone`, and the retries of protocol §9.3 cover the frame.
+  failed transmission still reports `TxDone`, and the retries of spec "Hand-over" cover the frame.
   The radio is set listening again on the next step.
 - **Traces are log lines.** The firmware logs as text over USB because the board has no debug
   probe; it does not use defmt, which needs one or a decoder on the host.
@@ -153,7 +153,7 @@ no queue.
 
 | # | Decision | Why |
 |---|---|---|
-| D37 (as drafted here; the roadmap has the decision) | **No queue of received frames.** The radio's one frame is the only buffer: the loop reads it when it is next free, and a frame that ends while the previous one is unread replaces it. The loop must be back at the radio within 3.6 ms of any frame's end; the firmware measures how long it is away (`longest_away_us`), and a board that exceeds it has a bug to fix, not a protocol to change. A frame lost anyway is recovered as any frame lost on the air: DATA, ATTACH and DELIVER by the sender's three attempts (§9.3), an ACK by the sender's retry, which the receiver answers again without acting on it twice (D35), a heartbeat by the next rotation. | The loop is estimated at 1 ms per frame against 3.6 ms; it keeps every frame with room to spare. The simulator assumes no queue and no processing time; with no queue the firmware differs from it only by that 1 ms, well inside the 100 ms ACK timeout. A queue would also deliver frames late, and the core stamps a frame with the time it is handed over: a frame that waited would make an ACK look later than it was and put a busy reading in the wrong place (§6.1). Not chosen: a queue of k frames filled by a higher-priority task, needed only if something stalls the loop for more than 3.6 ms (a BLE connection event, a flash write, an e-paper refresh), with depth the longest stall over 4.9 ms and the newest frame dropped when full; if that work comes, it should not stall the loop, and if it must, the queue comes with an arrival time in `Event::Received`, a contract change. |
+| D37 (as drafted here; the roadmap has the decision) | **No queue of received frames.** The radio's one frame is the only buffer: the loop reads it when it is next free, and a frame that ends while the previous one is unread replaces it. The loop must be back at the radio within 3.6 ms of any frame's end; the firmware measures how long it is away (`longest_away_us`), and a board that exceeds it has a bug to fix, not a protocol to change. A frame lost anyway is recovered as any frame lost on the air: DATA, ATTACH and DELIVER by the sender's three attempts (spec "Hand-over"), an ACK by the sender's retry, which the receiver answers again without acting on it twice (D35), a heartbeat by the next rotation. | The loop is estimated at 1 ms per frame against 3.6 ms; it keeps every frame with room to spare. The simulator assumes no queue and no processing time; with no queue the firmware differs from it only by that 1 ms, well inside the 100 ms ACK timeout. A queue would also deliver frames late, and the core stamps a frame with the time it is handed over: a frame that waited would make an ACK look later than it was and put a busy reading in the wrong place (spec "Busy estimate"). Not chosen: a queue of k frames filled by a higher-priority task, needed only if something stalls the loop for more than 3.6 ms (a BLE connection event, a flash write, an e-paper refresh), with depth the longest stall over 4.9 ms and the newest frame dropped when full; if that work comes, it should not stall the loop, and if it must, the queue comes with an arrival time in `Event::Received`, a contract change. |
 
 ## 3. Not verified
 

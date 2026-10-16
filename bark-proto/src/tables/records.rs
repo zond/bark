@@ -1,4 +1,4 @@
-//! Per-message records (design §9.2.2, roadmap D11, D17): what a relay
+//! Per-message records (spec "Message records", roadmap D11, D17): what a relay
 //! remembers about each message it has received or originated, so that it
 //! can run its part of the depth-first search and recognise a repeat.
 //!
@@ -19,14 +19,14 @@
 //! A message sent on can come back to this relay, returned or offered by
 //! a split copy, and its record must still be here then. On its way it
 //! may wait at each relay as long as a full send queue takes to drain,
-//! each entry waiting out one ban (§9.3, roadmap D31):
+//! each entry waiting out one ban (spec "Hand-over", roadmap D31):
 //!
 //! ```text
 //! (40 + 254) places × 1.56 s = 457.3 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (§3): each costs at least an ACK (13 bytes, 14.40 ms) and one
+//! cycle (spec "Regulatory limits"): each costs at least an ACK (13 bytes, 14.40 ms) and one
 //! DATA packet with no payload (21 bytes, 18.24 ms), together 32.64 ms;
 //! 10 % of 457.3 s is 45.73 s of airtime, and ⌊45.73 s / 32.64 ms⌋ = 1401.
 //! The records of held messages are not evicted and may be older than
@@ -35,7 +35,7 @@
 //! # The tried set
 //!
 //! D17 defined the tried set as the parent, the last child, and every
-//! neighbour before the last child in the order of §9.2.3 (distance to the
+//! neighbour before the last child in the order of spec "Next hop" (distance to the
 //! destination, then short name), which is fixed for a message. The record
 //! keeps instead the neighbours that took the message from this relay,
 //! each by ACKing a hand-over of it, as a mask over neighbour-table slots
@@ -58,7 +58,7 @@ use crate::tables::send_queue::{HOP_PLACES, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
 
-/// The hop cap: the largest count the one-byte `hops` field holds (§9.2.6).
+/// The hop cap: the largest count the one-byte `hops` field holds (spec "Hop count").
 pub const MAX_HOPS: u8 = u8::MAX;
 
 /// How long a full send queue takes to drain with each entry waiting out
@@ -98,17 +98,17 @@ const NO_HOME: Channel = match Channel::new(0) {
     None => panic!("the plan has channels"),
 };
 
-/// What a relay remembers about one message (§9.2.2).
+/// What a relay remembers about one message (spec "Message records").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
     id: MsgId,
     parent: ShortName,
     /// The sender of the last packet of the message received here, with
-    /// `last_hops`: the same pair again is a retransmission (§9.2.4).
+    /// `last_hops`: the same pair again is a retransmission (spec "Receiving DATA").
     last_from: ShortName,
     /// The parent's home channel when the message arrived. A return goes
     /// to the parent's home as the neighbour table has it then, and to
-    /// this one only if the parent has left the table (§9.2.5).
+    /// this one only if the parent has left the table (spec "Return to parent").
     parent_home: Channel,
     highest_hops: u8,
     last_hops: u8,
@@ -124,7 +124,7 @@ impl Record {
     pub fn new(id: MsgId, parent: Option<(ShortName, Channel)>, hops: u8, now: Instant) -> Record {
         let (name, home, flags) = match parent {
             Some((name, home)) => (name, home, HAS_PARENT),
-            // A leaf's packet names no sender (§14).
+            // A leaf's packet names no sender (spec "Packet formats").
             None => (ShortName(0), NO_HOME, 0),
         };
         Record {
@@ -152,13 +152,13 @@ impl Record {
     }
 
     /// The largest count received for the message, or carried by a
-    /// hand-over of it from this relay that succeeded (§9.2.6).
+    /// hand-over of it from this relay that succeeded (spec "Hop count").
     pub fn highest_hops(&self) -> u8 {
         self.highest_hops
     }
 
     /// Whether the message has arrived: this relay owns the destination
-    /// (§9.2.7), or the relay it is addressed to took it from this one.
+    /// (spec "Owner"), or the relay it is addressed to took it from this one.
     pub fn arrived(&self) -> bool {
         self.flags & ARRIVED != 0
     }
@@ -181,8 +181,8 @@ impl Record {
 
     /// Whether a packet of the message from `from` with `hops` repeats
     /// the last one received: a retransmission whose ACK was lost
-    /// (§9.2.4). A sender sends a count only once but in retries
-    /// (§9.2.6), so any other packet is another copy.
+    /// (spec "Receiving DATA"). A sender sends a count only once but in retries
+    /// (spec "Hop count"), so any other packet is another copy.
     pub fn repeats(&self, from: ShortName, hops: u8) -> bool {
         (from, hops) == (self.last_from, self.last_hops)
     }
@@ -198,7 +198,7 @@ impl Record {
 
     /// A hand-over of the message with count `hops` succeeded. The next
     /// one starts above it, so this relay never sends the same count twice
-    /// but as a retry (§9.2.6).
+    /// but as a retry (spec "Hop count").
     pub fn handed_over(&mut self, hops: u8) {
         self.highest_hops = self.highest_hops.max(hops);
     }

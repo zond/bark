@@ -5,7 +5,7 @@ A is commit `df9f248`: leaves send a keepalive ATTACH every 60 s and the relay
 ACKs it, the design of `capacity-research-2026-10-15.md`, with that note's
 measurements added to the simulator. B is commit `2b88ff0`: the relay polls
 each leaf every 300 s, at most one leaf every 1.17 s, and the leaf answers
-(§10.2). Nothing else differs.
+(spec "Attach and polls"). Nothing else differs.
 
 ## Summary
 
@@ -13,12 +13,12 @@ Keepalives were the largest load in the domain and the main cause of lost
 texts, more than the note on capacity found. Taking them off the leaves:
 
 - cuts the relays' cost of keeping their leaves from 14 % of the duty budget
-  to the 2.9 % §10.2 predicts for 70 leaves;
+  to the 2.9 % spec "Attach and polls" predicts for 70 leaves;
 - cuts the channel time of keeping leaves from 77 to 83 % of a channel,
   summed over the domain, to 13 %;
 - leaves 400 leaves without a relay at the end instead of 6000, and changes
   of relay fall from 60 000 to 8 000 an hour;
-- at the §13 texting rate raises delivery from 52.5 % to 94.6 % (seed 1) and
+- at the spec "Capacity and sizing" texting rate raises delivery from 52.5 % to 94.6 % (seed 1) and
   from 45.9 % to 94.1 % (seed 2), and the texts carried from 2.5 to 4.6 a
   second, all that is offered but the dark phones' share. Centre relays spend
   0.2 % and 2.6 % of the time at the cap instead of 57 % and 66 %;
@@ -31,14 +31,14 @@ What is worse:
   at the median instead of 55 to 60 s, 290 to 306 s at the 90th percentile
   instead of 246 to 257 s. This is the poll period, 300 s, against the
   keepalive's 60 s. Its messages still reach it at the delivery retry, every
-  60 s (§10.4), so delivery does not suffer.
-- The all-on-roofs domain still fails at the §13 rate, 7.2 % delivered. The
+  60 s (spec "Delivery queue"), so delivery does not suffer.
+- The all-on-roofs domain still fails at the spec "Capacity and sizing" rate, 7.2 % delivered. The
   cause is now DATA: every relay hears every other's hand-overs, 21 DATA
   frames go out per hand-over that succeeds, and the channels are 41 % busy.
   Polls then cannot find the channel clear within 500 ms of their slot:
   45 823 were skipped and 42 419 leaves dropped and attached again.
 - A relay drops a leaf that left it later, up to 15 minutes after its last
-  answer instead of 3, and a leaf notices a dead relay as late (§10.2).
+  answer instead of 3, and a leaf notices a dead relay as late (spec "Attach and polls").
   Not measured here.
 
 ## Setup
@@ -88,7 +88,7 @@ into reach to the first ATTACH from it that a relay receives.
 | Lost without a trace | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 Paired by seed, B − A in delivered share: +4.5 and +7.3 points at half the
-rate, +42.1 and +48.2 at the §13 rate.
+rate, +42.1 and +48.2 at the spec "Capacity and sizing" rate.
 
 **Why DATA got cheaper.** The capacity note put the cost of 4 to 6 DATA frames
 per hand-over down to fading. Part of it was the keepalives: leaves' ATTACHes
@@ -126,7 +126,7 @@ the ACKs were most of the airtime.
 ## What this does not show
 
 - Every simulated leaf listens all the time. The window a sleeping leaf
-  listens in (§10.2) is built and checked against the relay in the core's
+  listens in (spec "Attach and polls") is built and checked against the relay in the core's
   tests, but no simulated leaf sleeps, and the simulator's clocks do not
   drift.
 - A dead relay is not simulated; how long its leaves stay unreachable,

@@ -1,4 +1,4 @@
-//! The leaf table (design §10.2): leaves attached to this relay, keyed by
+//! The leaf table (spec "Attach and polls"): leaves attached to this relay, keyed by
 //! [`LeafId`], each with its place in the relay's poll schedule.
 //!
 //! The relay polls one leaf at a time, each every [`PERIOD`], and with L
@@ -11,9 +11,9 @@
 //!
 //! When the table is full, an ATTACH from an unknown leaf is not answered,
 //! so the leaf attaches elsewhere. At 256 entries against ≈80 expected
-//! leaves per relay (§10.2) this is an overload case.
+//! leaves per relay (spec "Attach and polls") this is an overload case.
 //!
-//! §10.2 also lists an `rssi` field; nothing in the design reads it, so it
+//! Spec "Attach and polls" also lists an `rssi` field; nothing in the design reads it, so it
 //! is not kept.
 
 use crate::event::MAX_FRAME;
@@ -26,28 +26,28 @@ use crate::tables::{attempt_span, retry_waits, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
 use crate::wire::{RxMode, ACK_LEN, ATTACHED_LEN};
 
-/// Table capacity (design §10.2).
+/// Table capacity (spec "Attach and polls").
 pub const LEAVES: usize = 256;
 
-/// Airtime of a poll: one ATTACHED, 10.56 ms (§14).
+/// Airtime of a poll: one ATTACHED, 10.56 ms (spec "Packet formats").
 pub const POLL_AIRTIME: Duration = time_on_air(ATTACHED_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// P, how often each leaf is polled (design §10.2): half the delivery
+/// P, how often each leaf is polled (spec "Attach and polls"): half the delivery
 /// TTL, so that with the drop after a TTL of unanswered polls a gone leaf
 /// is kept at most a period past the life of its messages.
 pub const PERIOD: Duration = Duration::from_secs(300);
 
 /// The closest two slots come: the spacing of a full table, P / 256 =
-/// 1.17 s (design §10.2, roadmap D39). A poll costs the relay 10.56 ms,
+/// 1.17 s (spec "Attach and polls", roadmap D39). A poll costs the relay 10.56 ms,
 /// so a full table's polls take 0.90 % of its time, 9.2 % of the duty
-/// budget's 9.83 % (§9.4); a full table must leave forwarding nine tenths
+/// budget's 9.83 % (spec "Duty cycle cap"); a full table must leave forwarding nine tenths
 /// of the budget, which needs at least 10.56 ms / (10 % × 9.83 %) =
 /// 1.07 s.
 pub const SPACING_MIN: Duration = PERIOD.div(LEAVES as u64);
 
 /// How late after its slot a poll may start; one that cannot is skipped
-/// and counts as unanswered (design §10.2). It is listen-before-talk's
-/// give-up time (§9.3): a poll goes before a hand-over, so it waits at most
+/// and counts as unanswered (spec "Attach and polls"). It is listen-before-talk's
+/// give-up time (spec "Hand-over"): a poll goes before a hand-over, so it waits at most
 /// for one already under way, a full frame and its ACK timeout, 238.6 ms,
 /// and for an owed ACK, 114.4 ms, which leaves 147 ms of channel checks.
 pub const POLL_LATE: Duration = LBT_GIVE_UP;
@@ -55,20 +55,20 @@ pub const POLL_LATE: Duration = LBT_GIVE_UP;
 /// The poll schedule's parameters, from a configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Polls {
-    /// The delivery TTL (§10.4): a leaf that leaves its polls unanswered
+    /// The delivery TTL (spec "Delivery queue"): a leaf that leaves its polls unanswered
     /// for this long is dropped, so that one dark for less keeps its
     /// relay.
     pub ttl: Duration,
     /// How long after its slot the relay waits for the answer to a poll:
     /// the poll's lateness and airtime, and the leaf's reply time
-    /// (`ack_timeout`, §9.3).
+    /// (`ack_timeout`, spec "Hand-over").
     pub reply_wait: Duration,
     /// How long one hand-over of a full frame lasts with all its attempts
     /// unanswered: each attempt's listen-before-talk to its give-up, the
-    /// frame and the ACK timeout, and the waits between (§9.3), 3.13 s.
+    /// frame and the ACK timeout, and the waits between (spec "Hand-over"), 3.13 s.
     pub span: Duration,
     /// How long the DELIVERs ahead of a leaf's can hold the relay: a full
-    /// send queue (§9.3) of full frames, each with its ACK, 6.12 s.
+    /// send queue (spec "Hand-over") of full frames, each with its ACK, 6.12 s.
     pub queue_wait: Duration,
 }
 
@@ -103,7 +103,7 @@ impl Polls {
     }
 
     /// How long a sleeping leaf listens after the answer to a poll that
-    /// said `waiting` messages wait, unless it has them sooner (§10.5):
+    /// said `waiting` messages wait, unless it has them sooner (spec "Leaf receive mode"):
     /// the DELIVERs ahead of them, and each of them with all its attempts.
     pub const fn listen(&self, waiting: u8) -> Duration {
         if waiting == 0 {
@@ -132,7 +132,7 @@ pub struct LeafEntry {
     pub mode: RxMode,
     /// Its last DELIVER went unanswered: it is not listening, and its
     /// messages wait for its next answer to a poll or the delivery retry
-    /// (§10.4).
+    /// (spec "Delivery queue").
     pub missed: bool,
     /// Its polls have gone unanswered for a TTL: no more are sent, and it
     /// is dropped once the answer to the last is overdue.
@@ -253,7 +253,7 @@ impl Leaves {
         *e = LeafEntry {
             next_poll: next,
             // It listens for the ATTACHED now, and for the messages it
-            // counts after it (§10.5).
+            // counts after it (spec "Leaf receive mode").
             told: now,
             heard: now,
             mode,
@@ -348,7 +348,7 @@ impl Leaves {
     /// Whether `leaf`, which sleeps, is listening at `now` for a message
     /// queued at `enqueued`: it answered the last ATTACHED, which counted
     /// the message, and its wait for those messages has not run out
-    /// (§10.5).
+    /// (spec "Leaf receive mode").
     pub fn awake_for(&self, leaf: LeafId, enqueued: Instant, now: Instant) -> bool {
         self.get(leaf).is_some_and(|e| {
             e.heard >= e.told && enqueued <= e.told && now < e.heard + self.polls.listen(e.waiting)
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(p.spacing(10), Duration::from_secs(30));
         assert_eq!(p.spacing(LEAVES), Duration::from_micros(1_171_875));
         assert_eq!(p.spacing(1000), SPACING_MIN);
-        // A full table's polls against the budget's 9.83 % (§9.4).
+        // A full table's polls against the budget's 9.83 % (spec "Duty cycle cap").
         let budget = 59.0 / 600.0;
         let share = POLL_AIRTIME.as_micros() as f64 / SPACING_MIN.as_micros() as f64;
         assert!((share / budget - 0.0917).abs() < 0.0005, "{share}");

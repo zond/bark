@@ -39,11 +39,11 @@ fn rotation(c: &Config) -> Duration {
 }
 
 /// Each relay's heartbeat lands on the other's home once per rotation
-/// (design §7), so discovery takes one rotation after boot, unless that one
+/// (spec "Heartbeat"), so discovery takes one rotation after boot, unless that one
 /// heartbeat arrives while the receiver is off its home channel: twelve
 /// sweep readings of 0.7 ms a second here, ≈1 % of heartbeats, since this
 /// medium loses a frame to any overlap and ignores the preamble the modem
-/// can lock on after a short gap (§6.1). Then it takes the next rotation.
+/// can lock on after a short gap (spec "Busy estimate"). Then it takes the next rotation.
 #[test]
 fn two_relays_discover_each_other_within_one_rotation() {
     let c = Config::default();
@@ -89,7 +89,7 @@ fn two_relays_discover_each_other_within_one_rotation() {
 
 #[test]
 fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
-    // Design §6.1, roadmap D13: one reading every interval / 13, channels
+    // Spec "Busy estimate", roadmap D13: one reading every interval / 13, channels
     // in turn, so the relay is off its home for one reading at a time.
     let home = ch(4);
     let c = Config {
@@ -135,7 +135,7 @@ fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
         assert!(w[1].0.since(w[0].1) > Duration::from_millis(50));
     }
     // The reading of the home channel does not leave it (core-interface
-    // §3 rule 7); every other one does.
+    // spec "Regulatory limits" rule 7); every other one does.
     for (_, _, a, off) in &sweep {
         assert_eq!(*off, *a != Action::Rssi(home), "{a:?}");
     }
@@ -155,7 +155,11 @@ fn heartbeat_rotates_through_every_channel_in_order() {
     for w in sent.windows(2) {
         let (t0, f0) = w[0];
         let (t1, f1) = w[1];
-        assert_eq!(f1.channel, f0.channel.next(), "k ← k + 1 (design §7)");
+        assert_eq!(
+            f1.channel,
+            f0.channel.next(),
+            r#"k ← k + 1 (spec "Heartbeat")"#
+        );
         let gap = t1.since(t0);
         // The interval plus the listen-before-talk checks on an idle channel.
         assert!(
@@ -193,7 +197,7 @@ fn boot_avoids_busy_channels_and_spreads_ties() {
             h.nodes[0].core.home()
         );
     }
-    // Relays that hear nothing do not all pick channel 0 (design §6.2).
+    // Relays that hear nothing do not all pick channel 0 (spec "Channel at boot").
     let mut h = Harness::new(
         (0..26)
             .map(|i| relay(i as f64 * 10_000.0, 100 + i))
@@ -399,7 +403,7 @@ fn duty_budget_defers_heartbeats_and_never_drops_them() {
     // Deferred, not dropped: the held heartbeat goes out at the instant the
     // budget allows it again, or as soon after as listen-before-talk takes:
     // a few milliseconds, or its backoffs when B's heartbeat is on the
-    // channel (§7).
+    // channel (spec "Heartbeat").
     let lbt = fast.lbt_backoff_max.mul(fast.lbt_attempts as u64);
     let mut checked = 0;
     for until in &deferrals {

@@ -2,7 +2,7 @@
 #
 # Checks greedy forwarding, per-hop ACK, demotion when the middle relay
 # dies, and the drop at A once no route is left (docs/simulator-design.md
-# §6). Bench twin: the same layout on four boards in Phase 3, so the link
+# spec "Home channel selection"). Bench twin: the same layout on four boards in Phase 3, so the link
 # powers are given explicitly rather than generated; replace them with
 # measured values.
 #
@@ -17,7 +17,7 @@ name = "s1-line"
 seed = 1
 duration_s = 1800.0
 # The relays know each other one worst-case rotation (13 heartbeats at
-# 15 s) after their 150 s boot listen (protocol §6.2, §7).
+# 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
 settle_s = 345.0
 
 [origin]

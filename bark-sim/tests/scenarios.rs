@@ -97,7 +97,7 @@ fn busy_block(seed: u64) -> Scenario {
 /// No message to a destination reachable from its origin is lost without
 /// a trace: each is delivered, reported lost where it died, or still held
 /// by a core at the end (`Sim::messages`). A message to an unreachable
-/// destination can end untraced when it has split in two (protocol §9.5):
+/// destination can end untraced when it has split in two (spec "Why the search finds a path"):
 /// both copies search the same relays, and a relay whose search for one
 /// copy has ended absorbs the other. It would be lost anyway, and is
 /// only counted.
@@ -142,7 +142,7 @@ fn same_seed_gives_bit_identical_output() {
         "{}",
         s.table()
     );
-    // Two minutes is inside the relays' boot listen (design §6.2): no leaf
+    // Two minutes is inside the relays' boot listen (spec "Channel at boot"): no leaf
     // has attached, so no message has an address yet.
     assert!(s.app.originated + s.app.unaddressed > 100);
     assert!(
@@ -155,7 +155,7 @@ fn same_seed_gives_bit_identical_output() {
 
 #[test]
 fn capacity_scenario_runs_a_minute_quickly() {
-    // S4 (`scenarios/s4-capacity.toml`): design §13's collision domain,
+    // S4 (`scenarios/s4-capacity.toml`): spec "Capacity and sizing"'s collision domain,
     // 28 km² with 269 relays, a fifth of them on roofs, and 20 000 leaves.
     let mut sc = scenario("s4-capacity.toml");
     sc.duration_s = 60.0;
@@ -184,13 +184,13 @@ fn capacity_scenario_runs_a_minute_quickly() {
         .count();
     assert_eq!(roofs, 53);
     // Two rooftops 3 km apart hear each other at sensitivity on average
-    // (§4, §13); a windowsill pair that far apart does not.
+    // (spec "Physical layer", "Capacity and sizing"); a windowsill pair that far apart does not.
     let p = &sc.links;
     let at_3km = 10.0 - p.path_loss_db(3000.0);
     let sens = sc.radio.sensitivity_dbm();
     assert!((at_3km - p.site_loss_db(Site::Rooftop, Site::Rooftop) - sens).abs() < 0.1);
     assert!(at_3km - p.site_loss_db(Site::Outdoor, Site::Rooftop) < sens - 20.0);
-    // Within the relays' boot listen (design §6.2) no leaf has attached,
+    // Within the relays' boot listen (spec "Channel at boot") no leaf has attached,
     // so the texts have no address yet.
     let texts = s.app.originated + s.app.unaddressed;
     assert!(texts > 200, "{texts} texts in a minute");
@@ -245,10 +245,10 @@ fn s1_parses_and_runs() {
 }
 
 /// One run of S1. Once the relays know each other, a worst-case rotation
-/// after their boot listen (design §6.2, §7), every text with an address
+/// after their boot listen (spec "Channel at boot", "Heartbeat"), every text with an address
 /// is delivered until B is removed at 20 minutes; after that every one is
-/// dropped at A for want of a route (design §9.2.5). The first fails at
-/// B, which is banned for it (design §9.3, roadmap D42), and waits at A
+/// dropped at A for want of a route (spec "Return to parent"). The first fails at
+/// B, which is banned for it (spec "Hand-over", roadmap D42), and waits at A
 /// until A's entry for B expires; meanwhile A takes nothing from its
 /// leaf, which holds its text, and the leaf's application skips the
 /// texts due while it waits (roadmap D34). Every message has a fate,
@@ -315,7 +315,7 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
 
 /// S1b: A and C, which cannot hear each other, hand to B at the same
 /// instant every 30 s, so every first hand-over collides at B. The retry
-/// wait (protocol §9.3, roadmap D22) pulls them apart: over 100 seeds the
+/// wait (spec "Hand-over", roadmap D22) pulls them apart: over 100 seeds the
 /// settled phase delivers 0.961 on average, worst seed 0.900, against
 /// 0.136 with the old 0–50 ms over 20. What is lost is a message whose
 /// three attempts all collided. B demoted by A or C after two such
@@ -384,7 +384,7 @@ fn s2_block_smoke() {
     let nodes = s.nodes.as_ref().expect("per-node metrics");
     for n in nodes.iter().filter(|n| n.label.starts_with("relay")) {
         // The choice at the end of the boot listen and no move after it
-        // (protocol §6.2, §6.3).
+        // (spec "Channel at boot", "Channel moves").
         assert!(
             n.m.home_moves <= 1,
             "{}: {} home moves",
@@ -510,8 +510,8 @@ fn mesh_routes_bursts_and_a_restart() {
 }
 
 /// A restarted relay keeps its position, loses its neighbours and boots
-/// again: it listens before choosing a home channel (protocol §6.2), and
-/// its neighbours are heard again within a rotation after that (§7).
+/// again: it listens before choosing a home channel (spec "Channel at boot"), and
+/// its neighbours are heard again within a rotation after that (spec "Heartbeat").
 #[test]
 fn a_restarted_relay_boots_again_with_its_identity() {
     use bark_proto::{Duration, Instant};

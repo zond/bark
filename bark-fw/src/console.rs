@@ -24,7 +24,7 @@
 //! ```
 //!
 //! Bench frames use packet type 0xF, which the protocol leaves unassigned
-//! (protocol §14): byte 0 is `0xF0 | kind`, bytes 1..5 a big-endian
+//! (spec "Packet formats"): byte 0 is `0xF0 | kind`, bytes 1..5 a big-endian
 //! sequence number, byte 5 the sender's home channel, and the rest
 //! `byte[i] = i`.
 
@@ -192,10 +192,10 @@ enum Command<'l> {
 const RX_DEFAULT_MS: u32 = 10_000;
 /// Most RSSI readings `noise` keeps.
 const NOISE_MAX: usize = 1000;
-/// How long `ping` listens for its pong: ten ACK timeouts (protocol §9.3),
+/// How long `ping` listens for its pong: ten ACK timeouts (spec "Hand-over"),
 /// so a late pong is still seen and timed.
 const PING_WAIT: Duration = Duration::from_millis(1000);
-/// The per-hop ACK timeout the pong is measured against (protocol §9.3).
+/// The per-hop ACK timeout the pong is measured against (spec "Hand-over").
 const ACK_TIMEOUT_US: u32 = 100_000;
 
 const HELP: &str =
@@ -614,7 +614,7 @@ impl<'a> Console<'a> {
                 );
             }
             Command::Beacon(ch, period_ms, len) => {
-                // Regulatory duty cycle (protocol §3): airtime at most
+                // Regulatory duty cycle (spec "Regulatory limits"): airtime at most
                 // DUTY_CYCLE_PERCENT of the period.
                 let min_ms = (airtime_us(len) * 100 / u64::from(DUTY_CYCLE_PERCENT)).div_ceil(1000);
                 if u64::from(period_ms) < min_ms {
@@ -722,8 +722,8 @@ impl<'a> Console<'a> {
             );
             return Ok(());
         };
-        // Listen before talk as a receiver does before an ACK (protocol
-        // §9.3), CAD only.
+        // Listen before talk as a receiver does before an ACK
+        // (spec "Hand-over"), CAD only.
         let (busy, cad_prepare_us, cad_us) = self.radio.cad(reply).await?;
         self.count_cad(busy);
         if busy {

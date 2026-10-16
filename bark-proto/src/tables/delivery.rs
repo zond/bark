@@ -1,7 +1,7 @@
-//! The delivery queue (design §10.4): messages for attached leaves that
+//! The delivery queue (spec "Delivery queue"): messages for attached leaves that
 //! could not be delivered yet, held for a while instead of failed at once.
 //!
-//! Each message lives the delivery TTL (§10.4: 10 minutes); oldest first.
+//! Each message lives the delivery TTL (spec "Delivery queue": 10 minutes); oldest first.
 //! The relay hands a leaf's messages to the send queue in arrival order
 //! with [`DeliveryQueue::pop_for`], and drains
 //! [`DeliveryQueue::pop_expired`] to fail the expired ones.
@@ -9,17 +9,17 @@
 //! A message stays long only for a leaf that does not answer. One that
 //! listens, always or with a check of the channel every 500 ms, takes its
 //! DELIVER at the first hand-over, whose 512 ms preamble spans the check
-//! (§10.5). One that does not is a phone in a pocket, a basement or the
+//! (spec "Leaf receive mode"). One that does not is a phone in a pocket, a basement or the
 //! metro, and its messages wait for the delivery retry after it is back,
-//! at most 60 s later, or its answer to a poll (§10.2), or for the TTL. Leaves in one train or one
+//! at most 60 s later, or its answer to a poll (spec "Attach and polls"), or for the TTL. Leaves in one train or one
 //! basement go dark together, so the queue holds what arrives in a TTL for
-//! every leaf the relay can serve, its leaf table's [`LEAVES`] (§10.2),
-//! at the [`TEXTS_PER_DAY`] each that the network carries (§13):
+//! every leaf the relay can serve, its leaf table's [`LEAVES`] (spec "Attach and polls"),
+//! at the [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
 //! `256 × 23 × 10 min / 1 day = 40.9`, so 41.
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
 //! duplicate that slipped past the per-message records costs nothing here.
-//! A message that finds the queue full is refused (§9.2.4): what is queued
+//! A message that finds the queue full is refused (spec "Receiving DATA"): what is queued
 //! stays, and the sender learns at once that this relay cannot take it.
 
 use crate::ids::{LeafId, MsgId};
@@ -30,7 +30,7 @@ use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
 /// Texts a user receives a day when the network carries all it can
-/// (design §13: ≈23 at 300 000 users).
+/// (spec "Capacity and sizing": ≈23 at 300 000 users).
 pub const TEXTS_PER_DAY: u64 = 23;
 
 /// Queue capacity for `leaves` leaves and messages that live `ttl`; see
@@ -40,7 +40,7 @@ pub const fn queue_for(leaves: usize, ttl: Duration) -> usize {
     (leaves as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
 }
 
-/// Queue capacity for the design's leaf table and 10-minute TTL (§10.4).
+/// Queue capacity for the design's leaf table and 10-minute TTL (spec "Delivery queue").
 pub const DELIVERY_QUEUE: usize = queue_for(LEAVES, Duration::from_secs(600));
 
 const _: () = assert!(DELIVERY_QUEUE == 41);

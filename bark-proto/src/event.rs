@@ -23,7 +23,7 @@ pub struct Frame {
     /// Channel to transmit on.
     pub channel: Channel,
     /// Preamble symbols; never below `radio::MIN_PREAMBLE_SYMBOLS`. Long
-    /// preambles target duty-cycled leaves (design §10.5).
+    /// preambles target duty-cycled leaves (spec "Leaf receive mode").
     pub preamble_symbols: u16,
     /// Number of valid bytes in `bytes`.
     pub len: u8,
@@ -94,7 +94,7 @@ pub enum AppCommand<'a> {
     /// [`crate::Core::accepts_send`] holds, and nothing is reported back
     /// (`docs/core-interface.md` §4).
     Send {
-        /// Position of the destination's relay (design §9.1).
+        /// Position of the destination's relay (spec "Addresses").
         dst_pos: Position,
         /// Destination leaf, or `LeafId::RELAY` for the relay itself.
         dst_leaf: LeafId,
@@ -110,41 +110,41 @@ pub enum AppCommand<'a> {
     },
 }
 
-/// Why a node dropped a message, or refused one (design §9). The network
+/// Why a node dropped a message, or refused one (spec "Forwarding"). The network
 /// sends no failure notices (roadmap D10); these reach only the
 /// simulator's metrics and the firmware's log, through [`Trace`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DropReason {
-    /// The origin has no neighbour left to try (design §9.2.5).
+    /// The origin has no neighbour left to try (spec "Return to parent").
     NoRoute,
-    /// Sending it on would need a count above 255 (design §9.2.6).
+    /// Sending it on would need a count above 255 (spec "Hop count").
     HopCap,
     /// No place for its record: every record is of a message this relay
-    /// holds (design §9.2.2). Refused; the table outnumbers the send
+    /// holds (spec "Message records"). Refused; the table outnumbers the send
     /// queue's places, so this does not happen.
     NoRecord,
-    /// The send queue had no place (design §9.3).
+    /// The send queue had no place (spec "Hand-over").
     SendQueueFull,
     /// The duty-cycle bucket could not fit it with everything queued
-    /// (design §9.2.4, §9.4).
+    /// (spec "Receiving DATA", "Duty cycle cap").
     Budget,
     /// Fresh work, and every neighbour that could take it is banned
-    /// (design §9.2.4). Refused.
+    /// (spec "Receiving DATA"). Refused.
     Banned,
-    /// The hand-over back to the parent failed (design §9.2.5, §9.3).
+    /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
     /// Addressed to a relay itself (leaf 0), reached an owner within 50 m
-    /// that is not that relay: the relay it was for is gone (design §9.2.7).
+    /// that is not that relay: the relay it was for is gone (spec "Owner").
     RelayGone,
-    /// Its leaf did not collect it within the delivery TTL (design §10.4).
+    /// Its leaf did not collect it within the delivery TTL (spec "Delivery queue").
     QueueExpired,
     /// The delivery queue had no room for a message to one of this
-    /// relay's leaves (design §10.4).
+    /// relay's leaves (spec "Delivery queue").
     DeliveryFull,
-    /// The payload is longer than a DATA frame holds (design §14).
+    /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
     /// A leaf could not hand it to a relay within the delivery TTL: it
-    /// had none, or its relay did not answer (design §10.2).
+    /// had none, or its relay did not answer (spec "Attach and polls").
     NoRelay,
 }
 
@@ -193,7 +193,7 @@ pub enum Action {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trace {
     /// The home channel changed: chosen at the end of the boot listen
-    /// (design §6.2) or moved by the move rule (§6.3).
+    /// (spec "Channel at boot") or moved by the move rule (spec "Channel moves").
     HomeChannelMoved {
         /// Previous home.
         from: Channel,
@@ -201,24 +201,24 @@ pub enum Trace {
         to: Channel,
     },
     /// The boot listen heard this relay's own position from another relay
-    /// and stepped about a metre away from it (design §8.1).
+    /// and stepped about a metre away from it (spec "Relay identity").
     PositionShifted {
         /// The new position.
         to: Position,
     },
     /// A heartbeat found its channel busy at every listen-before-talk check
-    /// and was skipped (design §7).
+    /// and was skipped (spec "Heartbeat").
     HeartbeatSkipped {
         /// The channel it was for.
         channel: Channel,
     },
-    /// The duty-cycle budget held a heartbeat back (design §9.4).
+    /// The duty-cycle budget held a heartbeat back (spec "Duty cycle cap").
     HeartbeatDeferred {
         /// When the budget may next allow it.
         until: Instant,
     },
     /// This node dropped the message; nothing else is reported about it,
-    /// to the application either (design §9.1).
+    /// to the application either (spec "Addresses").
     Dropped {
         /// The message.
         msg_id: MsgId,
@@ -227,7 +227,7 @@ pub enum Trace {
     },
     /// A DATA packet was refused, with an ACK that says so if the budget
     /// allowed one, because acting on it needed what `reason` names
-    /// (design §9.2.4). Not a drop: the sender still holds the message and
+    /// (spec "Receiving DATA"). Not a drop: the sender still holds the message and
     /// will try elsewhere.
     Refused {
         /// The message.
@@ -236,14 +236,14 @@ pub enum Trace {
         /// [`DropReason::DeliveryFull`].
         reason: DropReason,
     },
-    /// The receiver of a hand-over refused it (design §9.3).
+    /// The receiver of a hand-over refused it (spec "Hand-over").
     TurnedAway {
         /// The message, or for a DELIVER the delivered message.
         msg_id: MsgId,
         /// The refusing relay.
         by: ShortName,
     },
-    /// The duty-cycle budget held a hand-over back (design §9.4).
+    /// The duty-cycle budget held a hand-over back (spec "Duty cycle cap").
     HandOverDeferred {
         /// The message, or for a DELIVER the delivered message.
         msg_id: MsgId,
@@ -251,17 +251,17 @@ pub enum Trace {
         until: Instant,
     },
     /// A neighbour acknowledged the message, sent on toward the destination
-    /// (design §9.2.3).
+    /// (spec "Next hop").
     Forwarded {
         /// The message.
         msg_id: MsgId,
         /// The neighbour.
         to: ShortName,
-        /// The count it carried (design §9.2.6).
+        /// The count it carried (spec "Hop count").
         hops: u8,
     },
     /// The parent acknowledged the message, returned to it because no
-    /// neighbour was left to try (design §9.2.5).
+    /// neighbour was left to try (spec "Return to parent").
     ReturnedToParent {
         /// The message.
         msg_id: MsgId,
@@ -269,19 +269,19 @@ pub enum Trace {
         to: ShortName,
     },
     /// A neighbour reached the demotion threshold and is no longer a next
-    /// hop (design §8.2).
+    /// hop (spec "Neighbour table").
     Demoted {
         /// The neighbour.
         neighbour: ShortName,
     },
-    /// An attached leaf acknowledged a DELIVER (design §10.3).
+    /// An attached leaf acknowledged a DELIVER (spec "Delivery").
     Delivered {
         /// The message.
         msg_id: MsgId,
         /// The leaf.
         leaf: LeafId,
     },
-    /// A message for a leaf entered the delivery queue (design §10.4).
+    /// A message for a leaf entered the delivery queue (spec "Delivery queue").
     Queued {
         /// The message.
         msg_id: MsgId,
@@ -289,22 +289,22 @@ pub enum Trace {
         leaf: LeafId,
     },
     /// A relay could not poll a leaf within its slot's lateness, for the
-    /// channel or the bucket; it counts as a poll the leaf missed (§10.2).
+    /// channel or the bucket; it counts as a poll the leaf missed (spec "Attach and polls").
     PollSkipped {
         /// The leaf.
         leaf: LeafId,
     },
-    /// A relay dropped a leaf that left its polls unanswered (§10.2).
+    /// A relay dropped a leaf that left its polls unanswered (spec "Attach and polls").
     LeafDropped {
         /// The leaf.
         leaf: LeafId,
     },
-    /// A leaf began an ATTACH that attaches (§10.2).
+    /// A leaf began an ATTACH that attaches (spec "Attach and polls").
     Attaching {
         /// The relay.
         relay: ShortName,
     },
-    /// Every attempt of a leaf's ATTACH went unanswered (§10.2).
+    /// Every attempt of a leaf's ATTACH went unanswered (spec "Attach and polls").
     AttachFailed {
         /// The relay.
         relay: ShortName,

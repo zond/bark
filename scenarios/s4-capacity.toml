@@ -1,6 +1,6 @@
-# S4: one collision domain of the city model (protocol §13), for the
+# S4: one collision domain of the city model (spec "Capacity and sizing"), for the
 # capacity run of roadmap Phase 1 milestone 4. 28 km² with 269 relays and
-# 20 000 phones indoors, texting at the rate §13 says the network carries,
+# 20 000 phones indoors, texting at the rate spec "Capacity and sizing" says the network carries,
 # for one settled hour. docs/capacity-research-2026-10-15.md has the
 # results and the source of every number.
 #
@@ -12,9 +12,9 @@ seed = 1
 # One settled hour after the settle time.
 duration_s = 4500.0
 # The relays choose a home channel after their 150 s boot listen
-# (protocol §6.2) and a leaf attaches within a worst-case rotation, 195 s,
-# of its first heartbeat (§10.1); the move rule acts only on ten minutes
-# of measurement (§6.3), so the first moves come after 750 s.
+# (spec "Channel at boot") and a leaf attaches within a worst-case rotation, 195 s,
+# of its first heartbeat (spec "Relay choice"); the move rule acts only on ten minutes
+# of measurement (spec "Channel moves"), so the first moves come after 750 s.
 settle_s = 900.0
 
 [origin]
@@ -23,15 +23,15 @@ lon = 30.52
 
 [links]
 model = "log_distance"
-# S2's fit to the ranges of protocol §4 at SF5, 10 dBm and the -119 dBm
+# S2's fit to the ranges of spec "Physical layer" at SF5, 10 dBm and the -119 dBm
 # default sensitivity, 129 dB of budget, with free-space loss at 1 m of
 # 25.2 dB: 750 m to a handheld in the street gives n = 3.6, and 300 m to
 # one indoors leaves 14.4 dB for the wall. A windowsill relay counts as
 # outdoors: with a wall at both ends a relay would reach a leaf 120 m
-# away, and §13's 9.6 relays per km² would leave most leaves without one.
+# away, and spec "Capacity and sizing"'s 9.6 relays per km² would leave most leaves without one.
 exponent = 3.6
 indoor_loss_db = 14.4
-# Rooftop relays hear about 3 km (§4, §13): 129 - 25.2 - 36 log10(3000)
+# Rooftop relays hear about 3 km (spec "Physical layer", "Capacity and sizing"): 129 - 25.2 - 36 log10(3000)
 # = -21.4 dB, so a link between two rooftops has 21.4 dB less loss than
 # the same link in the clutter. A rooftop relay's link to anything
 # below the roofs gets no bonus.
@@ -43,9 +43,9 @@ sigma_db = 4.0
 correlation_time_s = 60.0
 step_s = 10.0
 
-# A square of 28 km² (§13): side 5291.5 m.
+# A square of 28 km² (spec "Capacity and sizing"): side 5291.5 m.
 #
-# Relays at §13's 9.6 per km² for indoor coverage. §13 gives no rooftop
+# Relays at spec "Capacity and sizing"'s 9.6 per km² for indoor coverage. Spec "Capacity and sizing" gives no rooftop
 # share; the rooftop ones here are its outdoor-only density, 1.9 per km²,
 # the relays a city would put up first, 53 of the 269.
 [[nodes]]
@@ -63,7 +63,7 @@ width_m = 5291.5
 height_m = 5291.5
 per_km2 = 7.7
 
-# 20 000 phones with their leaves (§13: 300 000 users over 14 domains),
+# 20 000 phones with their leaves (spec "Capacity and sizing": 300 000 users over 14 domains),
 # all indoors.
 [[nodes]]
 place = "density"
@@ -73,7 +73,7 @@ height_m = 5291.5
 per_km2 = 714.2857
 indoor = true
 
-# 23 texts per user per day (§13), 100 bytes each (§13's text), to any
+# 23 texts per user per day (spec "Capacity and sizing"), 100 bytes each (spec "Capacity and sizing"'s text), to any
 # other leaf in the domain alike.
 [[traffic]]
 kind = "poisson"
@@ -82,7 +82,7 @@ payload_min = 100
 payload_max = 100
 destination = { kind = "uniform" }
 
-# As S2: dark five minutes in an hour on average (§10.4).
+# As S2: dark five minutes in an hour on average (spec "Delivery queue").
 [availability]
 mean_available_s = 3300.0
 mean_dark_s = 300.0

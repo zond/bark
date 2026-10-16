@@ -33,8 +33,8 @@ use embassy_futures::select::{select3, Either3};
 /// check may be held for a reception in progress (core-interface §3 rule 8).
 pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// Wait between retuning to another channel and reading its RSSI (design
-/// §6.1: read about 0.3 ms after the retune). The datasheet gives no
+/// Wait between retuning to another channel and reading its RSSI
+/// (spec "Busy estimate": read about 0.3 ms after the retune). The datasheet gives no
 /// settle time (SX1261/2 DS §13.5.4).
 pub const RSSI_DWELL: Duration = Duration::from_micros(300);
 
@@ -64,7 +64,7 @@ pub enum Heard {
     Nothing,
 }
 
-/// The half-duplex LoRa radio at bark's modulation (protocol §4).
+/// The half-duplex LoRa radio at bark's modulation (spec "Physical layer").
 pub trait Radio {
     /// A failure of the radio or its bus.
     type Error: Debug;
@@ -282,7 +282,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     }
 
     /// Whether `action` must wait for the packet being received: a check
-    /// that takes the radio off its channel would cut it short (design §6.1),
+    /// that takes the radio off its channel would cut it short (spec "Busy estimate"),
     /// for at most one longest frame (core-interface §3 rule 8).
     fn holds(&mut self, action: &Action, now: Instant) -> bool {
         let leaves = match action {

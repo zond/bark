@@ -19,7 +19,7 @@ mod transfer;
 pub use leaf::Leaf;
 pub use relay::{Load, Relay};
 
-/// Which half of the protocol a node runs (design §1).
+/// Which half of the protocol a node runs (spec "Summary").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     /// Forwards traffic, sends heartbeats, serves leaves.
@@ -32,68 +32,68 @@ pub enum Role {
 /// sweeps them (roadmap Phase 1 milestone 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// Own position. Relay identity (design §8.1).
+    /// Own position. Relay identity (spec "Relay identity").
     pub position: Position,
     /// Whether `position` is surveyed (heartbeat type 0x1) or GPS-derived (0x2).
     pub surveyed: bool,
-    /// A leaf's ID, which the app generates at random (design §8.1). A
+    /// A leaf's ID, which the app generates at random (spec "Relay identity"). A
     /// leaf given [`LeafId::RELAY`] draws one from its seed. A relay
     /// ignores it.
     pub leaf_id: LeafId,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
-    /// Heartbeat interval bounds, uniform random in between (design §7: 5–15 s).
+    /// Heartbeat interval bounds, uniform random in between (spec "Heartbeat": 5–15 s).
     pub heartbeat_min: Duration,
     /// See `heartbeat_min`.
     pub heartbeat_max: Duration,
-    /// Per-hop ACK timeout (design §9.3: 100 ms).
+    /// Per-hop ACK timeout (spec "Hand-over": 100 ms).
     pub ack_timeout: Duration,
-    /// Per-hop transmit attempts before giving up on a neighbour (design §9.3: 3).
+    /// Per-hop transmit attempts before giving up on a neighbour (spec "Hand-over": 3).
     pub hop_attempts: u8,
     /// Longest random wait of a hand-over or an ACK after a busy
-    /// listen-before-talk check (design §9.3: 0–50 ms).
+    /// listen-before-talk check (spec "Hand-over": 0–50 ms).
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
-    /// `k` waits up to `2^k` units (design §9.3: a full frame and its ACK,
+    /// `k` waits up to `2^k` units (spec "Hand-over": a full frame and its ACK,
     /// 152.96 ms; `tables::RETRY_BACKOFF`).
     pub retry_backoff: Duration,
-    /// Failed transfers before a neighbour is demoted (design §8.2: 2).
+    /// Failed transfers before a neighbour is demoted (spec "Neighbour table": 2).
     pub demote_after_failures: u8,
-    /// Neighbour expiry in heartbeat rotations (design §8.2: 3, ≈400 s).
+    /// Neighbour expiry in heartbeat rotations (spec "Neighbour table": 3, ≈400 s).
     pub neighbour_expiry_rotations: u8,
-    /// Rotations a demotion lasts without an ACK (design §8.2: 3, 390 s).
+    /// Rotations a demotion lasts without an ACK (spec "Neighbour table": 3, 390 s).
     pub demotion_rotations: u8,
     /// How long a leaf waits before it tries its relay again after a
-    /// hand-over to it failed (design §10.2: 60 s, the length of a fade).
+    /// hand-over to it failed (spec "Attach and polls": 60 s, the length of a fade).
     pub leaf_retry: Duration,
-    /// Delivery-queue entry lifetime (design §10.4: 10 min).
+    /// Delivery-queue entry lifetime (spec "Delivery queue": 10 min).
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages, besides the
-    /// retry on each answer to a poll (design §10.4: 60 s).
+    /// retry on each answer to a poll (spec "Delivery queue": 60 s).
     pub delivery_retry: Duration,
-    /// Busy-estimate EMA coefficient as 1/N (design §6.1: 1/600).
+    /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/600).
     pub busy_ema_inverse: u16,
-    /// Interval between 13-channel RSSI sweeps (design §6.1: 1 s).
+    /// Interval between 13-channel RSSI sweeps (spec "Busy estimate": 1 s).
     pub sweep_interval: Duration,
-    /// Busy threshold above noise floor in dB (design §6.1: 6).
+    /// Busy threshold above noise floor in dB (spec "Busy estimate": 6).
     pub busy_threshold_db: u8,
-    /// Move if `busy[home] − min(busy)` exceeds this for `move_dwell` (design §6.3: 0.05, 10 min).
+    /// Move if `busy[home] − min(busy)` exceeds this for `move_dwell` (spec "Channel moves": 0.05, 10 min).
     pub move_threshold_percent: u8,
     /// See `move_threshold_percent`.
     pub move_dwell: Duration,
-    /// Maximum random wait before moving (design §6.3: 5 min).
+    /// Maximum random wait before moving (spec "Channel moves": 5 min).
     pub move_wait_max: Duration,
     /// Heartbeat listen-before-talk checks before the heartbeat is skipped,
-    /// with a random 0–`lbt_backoff_max` wait after each busy one (design
-    /// §7: "retry ... up to three times, then skip").
+    /// with a random 0–`lbt_backoff_max` wait after each busy one
+    /// (spec "Heartbeat": "retry ... up to three times, then skip").
     pub lbt_attempts: u8,
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
-    /// Listen on one channel this long before choosing home (design §6.2:
+    /// Listen on one channel this long before choosing home (spec "Channel at boot":
     /// one full rotation, ≈150 s).
     pub boot_listen: Duration,
     /// Fixed home channel for bench work instead of the measured choice
-    /// (design §6.2). The move rule is off while it is set.
+    /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
 }
 

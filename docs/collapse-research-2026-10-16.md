@@ -10,7 +10,7 @@ were changed copies of the core, run once and thrown away.
 
 ## Summary
 
-At the §13 texting rate and at twice it the domain delivers 94 to 95 %.
+At the spec "Capacity and sizing" texting rate and at twice it the domain delivers 94 to 95 %.
 At three times it delivers 11 to 22 %, and from about 25 minutes into
 the run almost nothing gets through. The fall is not gradual: it takes
 three minutes.
@@ -26,13 +26,13 @@ three minutes.
   failed hand-over is sent at once to another neighbour, usually a longer
   way round. Each costs more frames. More frames keep the receivers
   busier receiving other frames and deaf more often, and lose more ACKs,
-  so more attempts are lost. Above about three times the §13 rate this
+  so more attempts are lost. Above about three times the spec "Capacity and sizing" rate this
   feeds itself.
 - **Why 250 kHz collapses at the same rate as 125 kHz:** both use the
   same spectrum. Six 250 kHz channels and thirteen 125 kHz channels give
   each message the same time on its channel; what is lost is lost to
   frames on the receiver's channel, not to any one relay's duty cap.
-  Measured, the mean channel busy at the relays is 1.0 % at the §13 rate
+  Measured, the mean channel busy at the relays is 1.0 % at the spec "Capacity and sizing" rate
   with 125, 250 and 500 kHz alike.
 - **What kicks it off in the runs measured:** the polls of D39. Every
   leaf took its slot when it attached, and the leaves attached together,
@@ -156,8 +156,8 @@ in the same minute, and from there the same climb follows: DATA frames
 per hand-over 1.75 → 3.0, hand-overs 3600 → 5700 a minute at the same
 offered load, leaves holding texts 120 → 5000. With the poll slots spread
 (below) the first relays reach the cap at 540 s instead: at three times
-the §13 rate the centre relays of A are over their duty cap without any
-burst, as the capacity note found at the §13 rate before D39.
+the spec "Capacity and sizing" rate the centre relays of A are over their duty cap without any
+burst, as the capacity note found at the spec "Capacity and sizing" rate before D39.
 
 **With no duty cap** (D1mW, ×4) the run shows the same shape: delivered
 above 95 % until 1200 s, then hops per delivered text 5.8 → 15 → 38 and
@@ -166,12 +166,12 @@ frames per delivered text 26 → 400 → 1100, and 291 347 demotions against
 leaves; 46 672 texts end the run never forwarded by a relay, more than
 the 20 000 leaves can hold, so most of them wait in their first relay's
 send queue. Without a cap the regular room is ⌈60 s / 153 ms⌉ = 393 places
-(§9.3, the bucket's depth over a hand-over), so admission never pushes
+(spec "Hand-over", the bucket's depth over a hand-over), so admission never pushes
 back. That the run collapses at all says the loop is in the hand-overs.
 
 ## Where the lost attempts go, below the cliff
 
-At twice the §13 rate, where delivery is still 94 %, the attempts already
+At twice the spec "Capacity and sizing" rate, where delivery is still 94 %, the attempts already
 fail often, as a diagnostic trace on another branch found (47 % of
 ACK waits unanswered at 125 kHz):
 
@@ -207,7 +207,7 @@ at the median and 48 minutes at the 90th percentile, `QueueExpired` 12
 and 32 minutes, `NoRoute` 7 and 33 minutes.
 
 Leaves refused or unanswered hold their text, offer it again after the
-hold (§10.2) and drop it at the TTL. Their offers are full DATA frames:
+hold (spec "Attach and polls") and drop it at the TTL. Their offers are full DATA frames:
 12 to 14 s of airtime a second in the collapse, a third of the total.
 Making them wait the longest hold, 61 s, after the first refusal cut that
 to 8 to 9 s a second and changed nothing else: delivery 15.8 % against
@@ -224,7 +224,7 @@ But each channel now carries twice the texts, so the time each text keeps
 its channel busy, which is what a receiver on that channel loses to it, is
 the same. The spectrum is 13 × 125 = 1625 kHz against 6 × 250 = 1500 kHz.
 Measured at the relays, the mean busy share of a channel is 1.0 % at the
-§13 rate with 125, 250 and 500 kHz alike, and 2.8, 2.3 and 2.0 % at
+spec "Capacity and sizing" rate with 125, 250 and 500 kHz alike, and 2.8, 2.3 and 2.0 % at
 twice it. The attempt losses that grow with load are counted in frames
 on the receiver's channel, and they are the same in A and B250 at the same
 texting rate. The duty cap is a second limit at 125 kHz that happens to
@@ -249,7 +249,7 @@ seed named, against the same seed unchanged. Not merged, not to be.
 | No demotion | 24.8 % (onset 1500 s) | 12.5 % | |
 | No demotion, poll slots spread | 21.1 % | | |
 | A refused leaf waits 61 s at once | 15.8 % | | |
-| An unanswered hand-over is pushback: after the k-th failed forward or return in a row the relay starts no hand-over for one ban doubled k − 1 times, up to 61 s (the hold of §9.3), and takes no fresh work meanwhile | **81.8 %** (94 % until 2400 s, then collapses) | **34.2 %** | 94.6 % (B250), 94.4 % (A) |
+| An unanswered hand-over is pushback: after the k-th failed forward or return in a row the relay starts no hand-over for one ban doubled k − 1 times, up to 61 s (the hold of spec "Hand-over"), and takes no fresh work meanwhile | **81.8 %** (94 % until 2400 s, then collapses) | **34.2 %** | 94.6 % (B250), 94.4 % (A) |
 
 The last one is the only change that moves the cliff by much. With it
 the B250 domain carries the ×3 load for 40 minutes; then send queues fill
@@ -265,16 +265,16 @@ trace with it; the diagnostic copy was not checked further.
    and a tenth of ACKs.
 2. A burst of extra frames (a poll minute at 250 kHz) or the duty cap of
    the centre relays (at 125 kHz) pushes the loss up.
-3. Each lost attempt is sent again, up to three times (§9.3), and a
+3. Each lost attempt is sent again, up to three times (spec "Hand-over"), and a
    hand-over whose three attempts fail goes at once to the next
-   candidate (§9.2.3), usually a longer way, and twice in a row demotes
-   the neighbour for three rotations (§8.2), sending later texts the
+   candidate (spec "Next hop"), usually a longer way, and twice in a row demotes
+   the neighbour for three rotations (spec "Neighbour table"), sending later texts the
    longer way too. Nothing slows a relay whose hand-overs fail, and
    nothing tells the leaves.
 4. More frames: the receivers are busier and deaf more, more ACKs are
    lost. DATA frames per text grow fourfold in three minutes.
-5. Buckets run dry. Relays at the cap refuse fresh texts (§9.2.4, D34),
-   which is right, and stay silent below the reply reserve (§9.4), which
+5. Buckets run dry. Relays at the cap refuse fresh texts (spec "Receiving DATA", D34),
+   which is right, and stay silent below the reply reserve (spec "Duty cycle cap"), which
    is one more unanswered attempt for their neighbours.
 6. The texts already inside never end by time. They keep the buckets dry
    for up to 50 minutes. The leaves' texts wait their ten minutes and are
@@ -319,12 +319,12 @@ on the other branch:
 ## Draft decision (number to be assigned)
 
 **An unanswered hand-over is pushback, and a message's life in the
-network ends with its TTL.** (Spec §8.2, §9.2.3, §9.2.4, §9.3, §9.4,
-§10.2, §14.)
+network ends with its TTL.** (Spec "Neighbour table", "Next hop", "Receiving DATA", "Hand-over", "Duty cycle cap",
+"Attach and polls", "Packet formats".)
 
 (1) *Failure backs the sender off.* After the k-th hand-over in a row that
-fails, three attempts unanswered (§9.3 step 6), forward or return, the
-relay starts no hand-over for the hold of §9.3, one ban doubled k − 1
+fails, three attempts unanswered (spec "Hand-over" step 6), forward or return, the
+relay starts no hand-over for the hold of spec "Hand-over", one ban doubled k − 1
 times, up to the bucket's refill of 61 s, and takes no fresh work while
 it waits (D34's gate, which now also refuses while backing off). A
 hand-over that succeeds ends the run. No new constant: the ban and its
@@ -337,12 +337,12 @@ sends the message the long way at once.
 delivery TTL, in units of 10 s (one byte holds 600 s at that unit), set
 by the origin and lowered by each relay by the time the message spent
 there; a relay drops a message whose time is gone, as the delivery queue
-and the leaf already do (§10.2, §10.4). Today a message admitted to the
+and the leaf already do (spec "Attach and polls", "Delivery queue"). Today a message admitted to the
 network lives as long as hand-overs to somebody succeed, measured up to
 53 minutes, and keeps the relays at the cap long after its sender and
 its destination's queue would have given up on it. This adds an end to
 the list of D31; the time is the one the spec already gives the network
-(§10.2: "the time the network itself would keep it").
+(spec "Attach and polls": "the time the network itself would keep it").
 
 (3) *Polls and keepalives are spread over their period by the leaf's ID,*
 whatever the time it attached (see above).

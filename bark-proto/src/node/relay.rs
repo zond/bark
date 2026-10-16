@@ -1,10 +1,10 @@
 //! The relay: medium access, forwarding and the leaves it serves.
 //!
 //! This file holds the medium access: boot listen and home channel
-//! (design §6), the busy sweep (§6.1), the heartbeat (§7), the neighbour
-//! table (§8) and the duty-cycle budget (§3, §9.4). Routing and the
-//! per-hop transfer (§9) are in `relay/forward.rs`, the leaves this relay
-//! serves (§10) in `relay/service.rs`.
+//! (spec "Home channel selection"), the busy sweep (spec "Busy estimate"), the heartbeat (spec "Heartbeat"), the neighbour
+//! table (spec "Neighbours") and the duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"). Routing and the
+//! per-hop transfer (spec "Forwarding") are in `relay/forward.rs`, the leaves this relay
+//! serves (spec "Leaves") in `relay/service.rs`.
 //!
 //! # Radio discipline
 //!
@@ -14,14 +14,14 @@
 //! queue, and the sweep. The relay keeps at most one excursion outstanding
 //! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
 //! the first job that is ready, in that order: an owed reply is worth
-//! nothing once its sender stops waiting, 100 ms after the frame (§9.3),
-//! and a poll is skipped once it is 500 ms late (§10.2). A job that has begun a sequence of excursions (CAD,
+//! nothing once its sender stops waiting, 100 ms after the frame (spec "Hand-over"),
+//! and a poll is skipped once it is 500 ms late (spec "Attach and polls"). A job that has begun a sequence of excursions (CAD,
 //! RSSI, transmit) continues it from each completion event, so sequences
 //! never interleave; the hand-over alone lets an owed reply in before it
 //! transmits, since its frame can take 139 ms on air. While a hand-over
 //! waits for its ACK, only an owed reply uses the radio: the heartbeat and
 //! the sweep would take the relay off its home channel, where the ACK
-//! arrives (§9.3), and a poll would make it deaf to it. After a poll, the
+//! arrives (spec "Hand-over"), and a poll would make it deaf to it. After a poll, the
 //! relay listens for the leaf's answer as for an ACK: until it comes or
 //! the ACK timeout passes, only an owed reply uses the radio. Jobs that are not ready say when they will be, and the earliest
 //! of those is `next_wakeup`.
@@ -62,7 +62,7 @@ enum Job {
 enum Stage {
     /// Not started: the driver's first `Wakeup` starts it.
     Off,
-    /// Listening before choosing a home channel (design §6.2), until then.
+    /// Listening before choosing a home channel (spec "Channel at boot"), until then.
     Booting(Instant),
     Running,
 }
@@ -76,7 +76,7 @@ enum Check {
     Tx,
 }
 
-/// The busy sweep (design §6.1): one RSSI reading at a time, channels in
+/// The busy sweep (spec "Busy estimate"): one RSSI reading at a time, channels in
 /// turn, spread over the sweep interval.
 struct Sweep {
     next_at: Instant,
@@ -102,8 +102,8 @@ struct HomeReading {
     dbm: Option<i16>,
 }
 
-/// The rotating heartbeat (design §7) and the one-off announcement on the
-/// old channel after a move (§6.3).
+/// The rotating heartbeat (spec "Heartbeat") and the one-off announcement on the
+/// old channel after a move (spec "Channel moves").
 struct Beacon {
     next_at: Instant,
     /// Not before this: a listen-before-talk backoff or a budget deferral.
@@ -117,7 +117,7 @@ struct Beacon {
     check: Check,
 }
 
-/// The move rule's timers (design §6.3).
+/// The move rule's timers (spec "Channel moves").
 #[derive(Default)]
 struct Mover {
     excess_since: Option<Instant>,
@@ -127,15 +127,15 @@ struct Mover {
 /// A snapshot of a relay's tables and budget ([`Relay::load`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Load {
-    /// Airtime in the duty-cycle bucket (design §9.4).
+    /// Airtime in the duty-cycle bucket (spec "Duty cycle cap").
     pub bucket: Duration,
-    /// Frames in the send queue, hop places included (§9.3).
+    /// Frames in the send queue, hop places included (spec "Hand-over").
     pub send_queue: usize,
-    /// Messages waiting for a leaf (§10.4).
+    /// Messages waiting for a leaf (spec "Delivery queue").
     pub delivery_queue: usize,
-    /// Leaf table entries, expired ones not yet removed included (§10.2).
+    /// Leaf table entries, expired ones not yet removed included (spec "Attach and polls").
     pub leaves: usize,
-    /// Neighbour table entries, expired ones not yet removed included (§8.2).
+    /// Neighbour table entries, expired ones not yet removed included (spec "Neighbour table").
     pub neighbours: usize,
 }
 
@@ -159,14 +159,14 @@ pub struct Relay {
     handover: Transfer,
     /// Neighbour slots the current forward passed over because
     /// listen-before-talk gave up on them, they refused it, or its
-    /// attempts went unanswered (§9.3); not tried.
+    /// attempts went unanswered (spec "Hand-over"); not tried.
     skipped: u64,
     replies: Replies,
     leaves: Leaves,
     poller: service::Poller,
     delivery: DeliveryQueue,
     delivered: Delivered,
-    /// When queued deliveries are next retried (§10.4: every 60 s).
+    /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
     delivery_retry_at: Instant,
     /// When the bucket lets the application send, if only it is missing.
     app_ready_at: Option<Instant>,
@@ -346,12 +346,12 @@ impl Relay {
     }
 
     /// Configuration. `position` is the relay's identity, which the boot
-    /// listen may have moved by a metre (design §8.1).
+    /// listen may have moved by a metre (spec "Relay identity").
     pub fn config(&self) -> &Config {
         &self.config
     }
 
-    /// Whether the boot listen (design §6.2) is still running.
+    /// Whether the boot listen (spec "Channel at boot") is still running.
     pub fn booting(&self) -> bool {
         !matches!(self.stage, Stage::Running)
     }
@@ -378,7 +378,7 @@ impl Relay {
     }
 
     /// The lowest count a packet from a relay may carry to be taken into
-    /// a hop place now, if any is free (§9.3). For a driver to sample;
+    /// a hop place now, if any is free (spec "Hand-over"). For a driver to sample;
     /// reading it changes nothing.
     pub fn lowest_free_hop_place(&self) -> Option<u8> {
         self.queue.lowest_free_place()
@@ -386,7 +386,7 @@ impl Relay {
 
     /// The highest count this relay would send, of the forwards in its
     /// send queue that could go to the neighbour named `to`: live, not
-    /// handed the message, not its parent (§9.2.3, §9.2.6). For a driver
+    /// handed the message, not its parent (spec "Next hop", "Hop count"). For a driver
     /// to sample; reading it changes nothing.
     pub fn highest_count_for(&self, to: ShortName, now: Instant) -> Option<u8> {
         let (slot, n) = self.neighbours.by_short(to)?;
@@ -428,7 +428,7 @@ impl Relay {
         emit(Action::Listen(self.home));
     }
 
-    /// End of the boot listen: choose home (design §6.2), start heartbeats.
+    /// End of the boot listen: choose home (spec "Channel at boot"), start heartbeats.
     fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
         if self.config.home_override.is_none() {
@@ -452,7 +452,7 @@ impl Relay {
         }
     }
 
-    /// `argmin busy[c]`, ties within 0.01 broken at random (design §6.2),
+    /// `argmin busy[c]`, ties within 0.01 broken at random (spec "Channel at boot"),
     /// so relays that hear nothing do not all pick channel 0.
     fn quietest(&mut self) -> Channel {
         let min = Channel::all()
@@ -479,7 +479,7 @@ impl Relay {
         }
         if self.mover.move_at.is_some_and(|t| now >= t) {
             self.mover = Mover::default();
-            // Re-check after the random wait (design §6.3).
+            // Re-check after the random wait (spec "Channel moves").
             if self.excess() {
                 let old = self.home;
                 let to = self.quietest();
@@ -513,13 +513,13 @@ impl Relay {
         }
     }
 
-    // --- Sweep (design §6.1) ---
+    // --- Sweep (spec "Busy estimate") ---
 
     fn sweep_due(&self, now: Instant) -> bool {
         now >= self.sweep.next_at
     }
 
-    /// Each channel once per sweep interval, one reading at a time (§6.1,
+    /// Each channel once per sweep interval, one reading at a time (spec "Busy estimate",
     /// roadmap D13): one reading is away for less than the preamble leaves
     /// the modem to lock on after it, so it costs no packet; thirteen in a
     /// burst would.
@@ -536,7 +536,7 @@ impl Relay {
 
     /// A reading of the home channel is held for one sweep interval, longer
     /// than any packet it can fall in, and then counts only energy that
-    /// would stay on the channel if this relay left it (§6.1).
+    /// would stay on the channel if this relay left it (spec "Busy estimate").
     fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
             if let Some(p) = self.sweep.pending.take() {
@@ -570,7 +570,7 @@ impl Relay {
         }
     }
 
-    /// `busy[home] − min busy` above the move threshold (design §6.3).
+    /// `busy[home] − min busy` above the move threshold (spec "Channel moves").
     fn excess(&self) -> bool {
         let min = Channel::all()
             .map(|c| self.busy.fraction(c))
@@ -592,7 +592,7 @@ impl Relay {
         }
     }
 
-    // --- Heartbeat (design §7) ---
+    // --- Heartbeat (spec "Heartbeat") ---
 
     fn beacon_due(&self, now: Instant) -> bool {
         self.stage == Stage::Running
@@ -672,7 +672,7 @@ impl Relay {
         }
     }
 
-    /// The heartbeat went out, or was skipped (design §7). A skipped one
+    /// The heartbeat went out, or was skipped (spec "Heartbeat"). A skipped one
     /// keeps its channel, so the neighbours parked there are not left out
     /// for a whole rotation.
     fn heartbeat_done(&mut self, now: Instant, sent: bool) {
@@ -696,12 +696,12 @@ impl Relay {
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.count_busy(bytes, now);
         // A booting relay has no home channel yet to be reached on, nor
-        // neighbours to forward to: it takes no traffic (§6.2).
+        // neighbours to forward to: it takes no traffic (spec "Channel at boot").
         let running = self.stage == Stage::Running;
         let decoded = Packet::decode(bytes);
-        // A relay's DATA says where it listens now (§9.2.1); a leaf's
+        // A relay's DATA says where it listens now (spec "Packet sender"); a leaf's
         // (`hops` 0) names no relay. Its DATA and ACKs show how well it is
-        // heard (§8.2).
+        // heard (spec "Neighbour table").
         match decoded {
             Ok(Packet::Data(d)) if d.hops > 0 => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
@@ -722,7 +722,7 @@ impl Relay {
         }
     }
 
-    /// Account a reception on the home channel to the busy estimate (§6.1).
+    /// Account a reception on the home channel to the busy estimate (spec "Busy estimate").
     /// Packets addressed to this relay, and the replies to its own
     /// hand-overs, follow it to any channel it moves to, so they are not
     /// counted, and a home reading taken while one was on the air is set
@@ -731,7 +731,7 @@ impl Relay {
     fn count_busy(&mut self, bytes: &[u8], now: Instant) {
         // The driver does not report the preamble a sender used. Assuming
         // the minimum undercounts only frames for sleeping leaves, which
-        // are rare (design §10.5).
+        // are rare (spec "Leaf receive mode").
         let len = bytes.len().min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
         let me = self.me();
@@ -763,7 +763,7 @@ impl Relay {
         }
         if let Stage::Booting(_) = self.stage {
             // Another relay holds this identity: step two counts (≈1.2 m)
-            // north and listen again (design §8.1).
+            // north and listen again (spec "Relay identity").
             let to = Position {
                 lat: hb.position.lat + 2,
                 ..hb.position
@@ -918,7 +918,7 @@ mod tests {
         // It fits the board's RAM: 255 KiB for the application
         // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
         // (docs/implementation-research-2026-10-14.md), and Embassy and the
-        // stacks, about 16 KiB (design §15).
+        // stacks, about 16 KiB (spec "Implementation notes").
         let ram = (255 - 5 - 16) * 1024;
         assert!(relay <= ram, "{relay} of {ram}");
         assert!(leaf < 1024, "{leaf}");
@@ -971,7 +971,7 @@ mod tests {
     /// within the poll's lateness, so that it can listen for it then. A
     /// DELIVER to it has the long preamble, unless it is for a message the
     /// last poll the leaf answered counted: then the leaf listens, and it
-    /// has the short one (protocol §10.2, §10.5).
+    /// has the short one (spec "Attach and polls", "Leaf receive mode").
     #[test]
     fn a_hybrid_leaf_is_polled_at_its_slot_with_a_short_preamble() {
         use crate::ids::{LeafId, MsgId};
@@ -1076,7 +1076,7 @@ mod tests {
 
     /// After a poll the relay listens for the answer, as for an ACK: a
     /// DELIVER queued behind the poll waits for the ACK timeout, and goes
-    /// at once when the answer comes (protocol §10.2).
+    /// at once when the answer comes (spec "Attach and polls").
     #[test]
     fn the_relay_listens_for_the_answer_to_its_poll() {
         use crate::ids::{LeafId, MsgId};
@@ -1202,7 +1202,7 @@ mod tests {
     /// A relay whose bucket is spent holds one message for a listening
     /// leaf, and nothing else happens: it wakes when its bucket will fit
     /// the DELIVER with the reply reserve, and sends it then, not at the
-    /// 60 s retry (protocol §9.3, §10.4).
+    /// 60 s retry (spec "Hand-over", "Delivery queue").
     #[test]
     fn a_deliver_waits_for_the_bucket_not_the_retry() {
         use crate::ids::{LeafId, MsgId};
@@ -1358,7 +1358,7 @@ mod tests {
         assert_eq!(acks(&sent, &a, a_home), 1);
         assert_eq!(sent.len(), 1, "B's packet was answered");
 
-        // B's retry, after the retry wait (§9.3).
+        // B's retry, after the retry wait (spec "Hand-over").
         now += Duration::from_millis(200);
         actions.clear();
         r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
@@ -1525,7 +1525,7 @@ mod tests {
 
     /// A full record table gives up the least recently active record of a
     /// message this relay does not hold: a message waiting in the send
-    /// queue keeps its record however old (protocol §9.2.2, roadmap D31).
+    /// queue keeps its record however old (spec "Message records", roadmap D31).
     #[test]
     fn a_waiting_message_keeps_its_record() {
         use crate::ids::{LeafId, MsgId};
@@ -1863,7 +1863,7 @@ mod tests {
 
     /// A neighbour whose heartbeats this relay stops hearing, but which
     /// answers its hand-overs, taking or refusing them, is alive and stays
-    /// in the table past the 390 s a heartbeat alone keeps it (§8.2, §9.3).
+    /// in the table past the 390 s a heartbeat alone keeps it (spec "Neighbour table", "Hand-over").
     /// Without this, a relay whose only neighbour's heartbeats were lost
     /// for a few rotations dropped it while it was carrying every message.
     #[test]
@@ -2068,7 +2068,7 @@ mod tests {
     /// A packet already in the network is taken under the same bans, into
     /// the regular room and, with the bucket spent, a hop place: the hop
     /// places' argument against gridlock needs every such packet to move
-    /// on (§9.3, roadmap D31, D34).
+    /// on (spec "Hand-over", roadmap D31, D34).
     #[test]
     fn a_packet_in_the_network_is_taken_whatever_the_bans() {
         let (mut r, mut now, far) = with_every_neighbour_banned();
@@ -2081,7 +2081,7 @@ mod tests {
     /// A hand-over carries the record's highest count plus one, stamped at
     /// its first transmission and repeated by its retries; readdressed
     /// after a failure it carries the count of its new first transmission;
-    /// one that succeeds raises the highest to its count (§9.2.6, roadmap
+    /// one that succeeds raises the highest to its count (spec "Hop count", roadmap
     /// D35). Stamped when queued, the frame would carry 2 throughout.
     #[test]
     fn a_hand_over_stamps_its_count_at_its_first_transmission() {
@@ -2167,7 +2167,7 @@ mod tests {
     }
 
     /// A retransmission, the same sender and count again, is ACKed and not
-    /// taken; so is another copy while this relay holds one (§9.2.4 cases
+    /// taken; so is another copy while this relay holds one (spec "Receiving DATA" cases
     /// 3 and 4, roadmap D35). Here the relay holds the message, waiting
     /// for its banned neighbours.
     #[test]
@@ -2220,7 +2220,7 @@ mod tests {
 
     /// Once the relay a message is addressed to has taken it from this
     /// one, the message has arrived: a later copy is only ACKed, wherever
-    /// it comes from (§9.2.4 case 1, roadmap D35).
+    /// it comes from (spec "Receiving DATA" case 1, roadmap D35).
     #[test]
     fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         use crate::ids::LeafId;

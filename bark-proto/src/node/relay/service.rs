@@ -1,7 +1,7 @@
-//! The leaves a relay serves (design §10): ATTACH into the leaf table,
+//! The leaves a relay serves (spec "Leaves"): ATTACH into the leaf table,
 //! the polls that keep it, and delivery from the delivery queue.
 //!
-//! # Polls (§10.2)
+//! # Polls (spec "Attach and polls")
 //!
 //! An ATTACH that attaches is answered with ATTACHED, which names the
 //! leaf's slot. At each slot the relay sends the leaf an ATTACHED, its
@@ -11,18 +11,18 @@
 //! slot is skipped, so that a sleeping leaf's window bounds it. Each
 //! ATTACHED counts the messages queued for the leaf, and while a sleeping
 //! leaf listens for those after answering, their DELIVERs have the short
-//! preamble (§10.5). A leaf that leaves its polls unanswered for a
+//! preamble (spec "Leaf receive mode"). A leaf that leaves its polls unanswered for a
 //! delivery TTL is dropped (`tables/leaves.rs`).
 //!
-//! Every message for a leaf goes through the delivery queue (§10.4): it is
+//! Every message for a leaf goes through the delivery queue (spec "Delivery queue"): it is
 //! queued when it arrives here, whether or not the leaf is attached, and
 //! leaves the queue when the leaf ACKs its DELIVER or when the delivery TTL
 //! runs out. A queued message for an attached leaf is handed to the send
 //! queue as a DELIVER, one per leaf at a time and oldest first, when it
 //! arrives, when the previous one is ACKed, on each answer to a poll,
-//! every `delivery_retry` (§10.4: 60 s), and whenever a hand-over ends and
+//! every `delivery_retry` (spec "Delivery queue": 60 s), and whenever a hand-over ends and
 //! frees room in the send queue. It needs room as a forward does: a place,
-//! and its airtime with everything queued in the bucket (§9.3). One the
+//! and its airtime with everything queued in the bucket (spec "Hand-over"). One the
 //! bucket cannot fit yet is offered again the moment it will, as a
 //! deferred hand-over is started then (`feed_at`). A DELIVER
 //! whose hand-over fails stays queued, and its leaf is marked as not
@@ -30,12 +30,12 @@
 //! poll and the 60 s retry do, or a DELIVER would follow DELIVER to a dark
 //! phone.
 //!
-//! An unknown leaf is queued like an absent one: §9.2.7 has the owner
+//! An unknown leaf is queued like an absent one: spec "Owner" has the owner
 //! queue when nobody knows the leaf, and it may attach within the TTL.
 //!
 //! A relay whose leaf table is full does not answer, so the leaf attaches
 //! elsewhere (`tables/leaves.rs`). ATTACHED and polls are replies and may
-//! spend the reply reserve (§9.4): a busy relay still keeps its leaves.
+//! spend the reply reserve (spec "Duty cycle cap"): a busy relay still keeps its leaves.
 
 use super::{Check, Job, Relay};
 use crate::event::{Action, DropReason, Frame, Trace};
@@ -49,7 +49,7 @@ use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
 use crate::wire::{Attach, Attached, Deliver, Packet, RxMode, WAITING_MAX};
 
-/// The poll in progress (design §10.2).
+/// The poll in progress (spec "Attach and polls").
 pub(super) struct Poller {
     /// The leaf and its slot.
     pub(super) current: Option<(LeafId, Instant)>,
@@ -71,7 +71,7 @@ impl Poller {
 }
 
 impl Relay {
-    /// An ATTACH for this relay (§10.2): one that attaches is answered with
+    /// An ATTACH for this relay (spec "Attach and polls"): one that attaches is answered with
     /// ATTACHED; one that answers a poll is not answered.
     pub(super) fn attach(&mut self, a: Attach, now: Instant) {
         if a.reply {
@@ -84,7 +84,7 @@ impl Relay {
             return;
         }
         let reply = Reply::Attached(a.leaf);
-        // Taken only if it can be answered, as a DATA packet is (§9.3).
+        // Taken only if it can be answered, as a DATA packet is (spec "Hand-over").
         if !self.can_reply(POLL_AIRTIME, now) || !self.replies.can_owe(reply, self.home, now) {
             return;
         }
@@ -124,7 +124,7 @@ impl Relay {
         }
     }
 
-    // --- Polls (§10.2) ---
+    // --- Polls (spec "Attach and polls") ---
 
     /// Whether a poll may start now: one has begun, or a slot has come.
     pub(super) fn poll_due(&self, now: Instant) -> bool {
@@ -215,7 +215,7 @@ impl Relay {
     }
 
     /// Until when the relay keeps listening for the answer to its last
-    /// poll, as it does for the ACK of a hand-over (§9.3): a frame of its
+    /// poll, as it does for the ACK of a hand-over (spec "Hand-over"): a frame of its
     /// own would make it deaf to it. Cleared once that is past.
     pub(super) fn answer_wait(&mut self, now: Instant) -> Option<Instant> {
         if self.poller.answer.is_some_and(|(_, t)| t <= now) {
@@ -284,7 +284,7 @@ impl Relay {
 
     /// The preamble of a DELIVER of `msg_id` to `leaf` sent at `now`: the
     /// leaf's mode's, unless the leaf sleeps and listens with the ordinary
-    /// receiver for what its last answered poll counted (§10.5).
+    /// receiver for what its last answered poll counted (spec "Leaf receive mode").
     pub(super) fn deliver_preamble(&self, leaf: LeafId, msg_id: MsgId, now: Instant) -> u16 {
         let mode = self.leaves.get(leaf).map_or(RxMode::Listening, |e| e.mode);
         let counted = self
@@ -347,8 +347,8 @@ impl Relay {
         self.deliver_now(d.dst_leaf, now);
     }
 
-    /// Drop leaves that stopped answering (§10.2); expire and retry the
-    /// delivery queue (§10.4).
+    /// Drop leaves that stopped answering (spec "Attach and polls"); expire and retry the
+    /// delivery queue (spec "Delivery queue").
     pub(super) fn service_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.leaves
             .expire(now, |leaf| emit(Action::Trace(Trace::LeafDropped { leaf })));

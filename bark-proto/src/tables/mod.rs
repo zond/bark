@@ -19,12 +19,12 @@ use crate::time::Duration;
 use crate::wire::ACK_LEN;
 
 /// How long a hand-over keeps trying listen-before-talk before it gives
-/// up and chooses the next hop again (design §9.3 step 2).
+/// up and chooses the next hop again (spec "Hand-over" step 2).
 pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
-/// gives up, a full frame on air, and the ACK timeout (design §9.2.2,
-/// §9.3): 738.6 ms with the design's 100 ms timeout.
+/// gives up, a full frame on air, and the ACK timeout (spec "Message records",
+/// "Hand-over"): 738.6 ms with the design's 100 ms timeout.
 pub const fn attempt_span(ack_timeout: Duration) -> Duration {
     Duration::from_micros(
         LBT_GIVE_UP.as_micros()
@@ -34,7 +34,7 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
 }
 
 /// The time one hand-over holds its receiver: a full frame and its ACK,
-/// 138.56 + 14.40 = 152.96 ms (design §9.3).
+/// 138.56 + 14.40 = 152.96 ms (spec "Hand-over").
 ///
 /// It is the unit of the wait before a retry. Two senders that cannot hear
 /// each other and have collided at one receiver both miss the ACK and
@@ -76,7 +76,7 @@ pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
 /// first attempt, when every attempt goes unanswered: the retries, each
 /// waiting the longest before it ([`retry_waits`]) and for the channel,
 /// carrying a full frame and waiting out the ACK timeout. 2.39 s with the
-/// design's 100 ms timeout and three attempts (§9.3).
+/// design's 100 ms timeout and three attempts (spec "Hand-over").
 pub const fn retrying_span(
     ack_timeout: Duration,
     hop_attempts: u8,
@@ -88,7 +88,7 @@ pub const fn retrying_span(
     )
 }
 
-/// Table sizes against the RAM budget of design §15.
+/// Table sizes against the RAM budget of spec "Implementation notes".
 #[cfg(test)]
 pub(crate) mod sizes {
     extern crate std;
@@ -105,8 +105,8 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), 272);
         // The send queue's regular room follows from the duty bucket, its
-        // hop places from the hop count (§9.3), and the delivery queue's
-        // places from a full leaf table over one TTL (§10.4).
+        // hop places from the hop count (spec "Hand-over"), and the delivery queue's
+        // places from a full leaf table over one TTL (spec "Delivery queue").
         assert_eq!(send_queue::SEND_QUEUE, 40);
         assert_eq!(send_queue::HOP_PLACES, 254);
         assert_eq!(delivery::DELIVERY_QUEUE, 41);

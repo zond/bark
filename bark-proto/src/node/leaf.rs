@@ -1,10 +1,10 @@
-//! The leaf (design §10): a carried node that attaches to one relay,
+//! The leaf (spec "Leaves"): a carried node that attaches to one relay,
 //! hands it the messages its application sends, and takes delivery of
 //! the messages for it. It sends no heartbeats and forwards nothing.
 //!
 //! # Receive mode
 //!
-//! Only the always-listening mode of §10.5 is implemented: the leaf
+//! Only the always-listening mode of spec "Leaf receive mode" is implemented: the leaf
 //! listens on its relay's home channel all the time and declares
 //! [`RxMode::Listening`] in its ATTACH. The duty-cycled and hybrid modes,
 //! which sleep between CADs and need the relay's long preamble, are
@@ -12,7 +12,7 @@
 //! runs them yet. The leaf keeps the window in which its next poll comes
 //! ([`Leaf::poll_window`]), which such a leaf would listen in.
 //!
-//! # Relay choice (§10.1)
+//! # Relay choice (spec "Relay choice")
 //!
 //! The leaf keeps the relays it hears in a small table ([`CANDIDATES`]),
 //! each with the mean RSSI of its last two heartbeats. It attaches to the
@@ -26,7 +26,7 @@
 //! [`SWITCH_MARGIN_DB`]. It attaches to the new relay at once and leaves
 //! the old one to drop it.
 //!
-//! # Keeping the relay (§10.2)
+//! # Keeping the relay (spec "Attach and polls")
 //!
 //! The leaf attaches with an ATTACH, which the relay answers with ATTACHED;
 //! that names the time of the leaf's first poll. After that the relay
@@ -55,21 +55,21 @@
 //! unanswered at every attempt waits for a heartbeat as above. Failures in
 //! two retries in a row give the relay up only if the leaf has heard
 //! another relay since the first. A relay's heartbeat that names a new
-//! home channel (§6.3) moves the leaf with it; the schedule goes on there.
+//! home channel (spec "Channel moves") moves the leaf with it; the schedule goes on there.
 //! A leaf that has lost its relay takes the strongest other one it has
 //! heard, as above.
 //!
 //! # Sending
 //!
 //! A message from the application goes to the relay as DATA with `hops`
-//! and `src_hop` zero (§14), with the per-hop transfer of §9.3. The leaf
+//! and `src_hop` zero (spec "Packet formats"), with the per-hop transfer of spec "Hand-over". The leaf
 //! holds one message at a time, and takes one from the application only
 //! when it holds none ([`Core::accepts_send`]); nothing about it is
 //! reported back. A message the leaf cannot hand over, because it has no
 //! relay or its relay does not answer, is held and tried again as above
-//! for up to the delivery TTL (§10.4: 10 minutes), the time the network
+//! for up to the delivery TTL (spec "Delivery queue": 10 minutes), the time the network
 //! itself would keep it; then it is dropped with [`DropReason::NoRelay`].
-//! A relay that refuses the message (§9.2.4) is busy, not failing: the
+//! A relay that refuses the message (spec "Receiving DATA") is busy, not failing: the
 //! leaf holds the message and offers it again after one [`BAN`], the
 //! time the relay's bucket takes to refill what it could not fit, doubled
 //! after each further refusal in a row ([`hold`]; roadmap D27, D29).
@@ -79,9 +79,9 @@
 //! # Receiving
 //!
 //! A DELIVER for this leaf is ACKed with the leaf's ID as `from` and its
-//! relay's short name as `to` (§14), and surfaced once. One that arrives
+//! relay's short name as `to` (spec "Packet formats"), and surfaced once. One that arrives
 //! while the leaf's one owed reply is another's is ignored, as a relay
-//! ignores DATA then (§9.3). A relay re-sends the oldest message it holds
+//! ignores DATA then (spec "Hand-over"). A relay re-sends the oldest message it holds
 //! for a leaf before any other (`relay/service.rs`), so a repeat follows
 //! its first copy with nothing from that relay in between; remembering
 //! the last [`SEEN`] messages covers the relay and the one the leaf has
@@ -105,7 +105,7 @@ use crate::wire::{
 };
 
 /// How much stronger, in its mean over two heartbeats, another relay must
-/// be to take a leaf from its relay (§10.1).
+/// be to take a leaf from its relay (spec "Relay choice").
 ///
 /// A heartbeat's RSSI is the link's mean plus fading with σ = 4 dB in the
 /// scenarios (`scenarios/s2-block.toml`, after typical indoor multipath).
@@ -118,21 +118,21 @@ use crate::wire::{
 pub const SWITCH_MARGIN_DB: i16 = 8;
 
 /// Heartbeats a relay must have been heard over before a leaf switches to
-/// it (§10.1: 2); see [`SWITCH_MARGIN_DB`].
+/// it (spec "Relay choice": 2); see [`SWITCH_MARGIN_DB`].
 pub const SWITCH_HEARTBEATS: u8 = 2;
 
 /// Relays a leaf keeps track of besides its own. An indoor leaf reaches
-/// relays within ≈300 m (§4); at the design's indoor density of ≈9.6
-/// relays/km² (§13) that is π × 0.3² × 9.6 ≈ 2.7 relays. Where there are
+/// relays within ≈300 m (spec "Physical layer"); at the design's indoor density of ≈9.6
+/// relays/km² (spec "Capacity and sizing") that is π × 0.3² × 9.6 ≈ 2.7 relays. Where there are
 /// more, the weakest is forgotten first, so the table always holds the
 /// strongest.
 pub const CANDIDATES: usize = 4;
 
 /// Consecutive retry periods with a failed hand-over after which a leaf
-/// gives its relay up (§10.2).
+/// gives its relay up (spec "Attach and polls").
 pub const FAILED_PERIODS: u8 = 2;
 
-/// Frequency tolerance of each end's clock, parts per million (§10.2). A
+/// Frequency tolerance of each end's clock, parts per million (spec "Attach and polls"). A
 /// 32.768 kHz tuning-fork crystal is typically ±20 ppm at 25 °C and drifts
 /// by −0.034 ppm/°C² away from it, ≈ −30 ppm more at −5 °C; ±50 ppm covers
 /// a crystal from −5 to +55 °C. The nRF52840's internal RC oscillator, at
@@ -300,7 +300,7 @@ impl Leaf {
 
     /// The relay this leaf is attached to: chosen, and its ATTACH
     /// answered. Its position plus [`Leaf::id`] is the leaf's address
-    /// (§9.1).
+    /// (spec "Addresses").
     pub fn relay(&self) -> Option<Position> {
         self.relay.filter(|_| self.attached).map(|r| r.position)
     }
@@ -319,7 +319,7 @@ impl Leaf {
     /// slot less the
     /// drift of two clocks at [`CLOCK_PPM`] since the last one and half a
     /// [`POLL_UNIT`] of rounding, to the slot plus the poll's lateness and
-    /// airtime and the same margin. A sleeping leaf listens in it (§10.2).
+    /// airtime and the same margin. A sleeping leaf listens in it (spec "Attach and polls").
     pub fn poll_window(&self) -> Option<(Instant, Instant)> {
         if !self.attached || self.adrift {
             return None;
@@ -334,31 +334,31 @@ impl Leaf {
     }
 
     /// How long a candidate relay may go unheard before the leaf forgets
-    /// it: the life of a neighbour entry (§8.2).
+    /// it: the life of a neighbour entry (spec "Neighbour table").
     fn silence(&self) -> Duration {
         NeighbourParams::from_config(&self.config).expire_after
     }
 
     /// How long a leaf listens before it has heard every relay in range: a
-    /// worst-case rotation, 13 × `heartbeat_max` (§7).
+    /// worst-case rotation, 13 × `heartbeat_max` (spec "Heartbeat").
     fn rotation(&self) -> Duration {
         NeighbourParams::from_config(&self.config).stale_after
     }
 
     /// RSSI above which listen-before-talk finds the channel busy: the
-    /// nominal noise floor plus the busy margin (§6.1). A leaf runs no
+    /// nominal noise floor plus the busy margin (spec "Busy estimate"). A leaf runs no
     /// sweep to calibrate its floor.
     fn busy_dbm(&self) -> i16 {
         NOMINAL_NOISE_FLOOR_DBM + self.config.busy_threshold_db as i16
     }
 
-    // --- Relay choice (§10.1) ---
+    // --- Relay choice (spec "Relay choice") ---
 
     fn heartbeat(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.listening_since.get_or_insert(now);
         if self.awaiting_heartbeat {
             // A relay is in reach again. The wait spreads the leaves that
-            // come back together over a minute (§10.2).
+            // come back together over a minute (spec "Attach and polls").
             self.awaiting_heartbeat = false;
             let wait = self.rng.duration(Duration::ZERO, self.config.leaf_retry);
             self.attach_at = self.attach_at.min(now + wait);
@@ -368,7 +368,7 @@ impl Leaf {
             relay.heard(&hb, rssi, now);
             self.relay = Some(relay);
             if moved {
-                // The announcement of a move (§6.3): follow; the polls go on
+                // The announcement of a move (spec "Channel moves"): follow; the polls go on
                 // on the new channel.
                 self.home = hb.home;
                 emit(Action::Listen(hb.home));
@@ -420,7 +420,7 @@ impl Leaf {
             .max_by_key(|(_, c)| c.rssi)
     }
 
-    /// Attach to a relay, or move to a better one, if the rules of §10.1
+    /// Attach to a relay, or move to a better one, if the rules of spec "Relay choice"
     /// say so now.
     fn choose(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some((slot, best)) = self.strongest(now) else {
@@ -482,7 +482,7 @@ impl Leaf {
 
     /// Before an ATTACH of a leaf adrift: if it has not heard its relay
     /// since the polls stopped but has heard another, its relay is dead or
-    /// out of reach, and it takes the strongest of those (§10.1).
+    /// out of reach, and it takes the strongest of those (spec "Relay choice").
     fn reconsider(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let since = self.told_at;
         let Some(relay) = self.relay else { return };
@@ -502,7 +502,7 @@ impl Leaf {
         }
     }
 
-    // --- Sending (§9.3, §10.2) ---
+    // --- Sending (spec "Hand-over", "Attach and polls") ---
 
     fn outgoing_id(&self) -> Option<MsgId> {
         match Packet::decode(self.outgoing.as_ref()?.payload()) {
@@ -591,7 +591,7 @@ impl Leaf {
             .filter(|_| self.attached && now >= self.outgoing_at)
         {
             self.sending = Sending::Data;
-            // A leaf's DATA names no sender (`src_hop` 0, §14).
+            // A leaf's DATA names no sender (`src_hop` 0, spec "Packet formats").
             let expect = Ack {
                 msg_id,
                 from,
@@ -723,7 +723,7 @@ impl Leaf {
 
     /// The next ATTACH waits for a heartbeat, which says a relay is in
     /// reach; at the latest it goes a rotation on, when every relay in
-    /// reach would have been heard (§10.2).
+    /// reach would have been heard (spec "Attach and polls").
     fn await_heartbeat(&mut self, now: Instant) {
         self.awaiting_heartbeat = true;
         self.attach_at = now + self.rotation();
@@ -747,13 +747,13 @@ impl Leaf {
         self.refusals = 0;
     }
 
-    /// The receive mode this leaf declares (§10.5).
+    /// The receive mode this leaf declares (spec "Leaf receive mode").
     fn mode(&self) -> RxMode {
         RxMode::Listening
     }
 
     /// An ATTACHED for this leaf: the answer to its ATTACH, or in its window
-    /// a poll, which it answers once (§10.2). Either names the next poll.
+    /// a poll, which it answers once (spec "Attach and polls"). Either names the next poll.
     fn attached_rx(&mut self, a: Attached, now: Instant) {
         let Some(relay) = self.relay else { return };
         let attaching = self.sending == Sending::Attach && !self.transfer.idle();
@@ -815,7 +815,7 @@ impl Leaf {
         mac::frame(&packet, o.channel, MIN_PREAMBLE_SYMBOLS)
     }
 
-    /// The relay refused the message (§9.2.4). It hears the leaf, so this
+    /// The relay refused the message (spec "Receiving DATA"). It hears the leaf, so this
     /// counts as hearing it and is no failure; the message waits out the
     /// hold.
     fn refused(&mut self, ack: Ack, now: Instant) {
@@ -831,7 +831,7 @@ impl Leaf {
         self.outgoing_at = now + hold(self.refusals);
     }
 
-    // --- Receiving (§10.3) ---
+    // --- Receiving (spec "Delivery") ---
 
     fn deliver(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         // The relay is the leaf's own: DELIVER does not name its sender.
@@ -843,7 +843,7 @@ impl Leaf {
             refused: false,
         };
         // Taken only if it can be answered, as a relay takes DATA: the
-        // relay's retry brings it again (§9.3, roadmap D29).
+        // relay's retry brings it again (spec "Hand-over", roadmap D29).
         if !self.acks.can_owe(ack, self.home, now) {
             return;
         }
@@ -1010,7 +1010,7 @@ impl Core for Leaf {
         w
     }
 
-    /// A leaf holds one message at a time (§10.2).
+    /// A leaf holds one message at a time (spec "Attach and polls").
     fn accepts_send(&self, _now: Instant) -> bool {
         self.outgoing.is_none()
     }

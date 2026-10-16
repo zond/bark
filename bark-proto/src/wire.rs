@@ -1,4 +1,4 @@
-//! Encoding and decoding of every packet in design §14.
+//! Encoding and decoding of every packet in spec "Packet formats".
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Fields that locate
 //! a place (heartbeat `pos`, DATA `dst_pos`) are the 7-byte form of
@@ -19,7 +19,7 @@
 //! ```
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
-//! refusal is for this hop only (§9.2.4); the network still sends no
+//! refusal is for this hop only (spec "Receiving DATA"); the network still sends no
 //! failure notices (D10). An ACK names the message, the node answering
 //! and the node answered, so that a sender takes only the answer to its
 //! own offer, however many others offer the same message to the same
@@ -67,7 +67,7 @@ const FIRST: usize = 0;
 const TYPE_SHIFT: u32 = 4;
 const AUX_MASK: u8 = 0x0f;
 
-// Type codes (design §14).
+// Type codes (spec "Packet formats").
 const T_HEARTBEAT_SURVEYED: u8 = 0x1;
 const T_HEARTBEAT_GPS: u8 = 0x2;
 const T_ACK: u8 = 0x3;
@@ -78,14 +78,14 @@ const T_ATTACHED: u8 = 0x7;
 
 // HEARTBEAT.
 const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
-/// HEARTBEAT length (design §14: 8).
+/// HEARTBEAT length (spec "Packet formats": 8).
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + POS_LEN;
 
 // ACK.
 const ACK_ID: usize = FIRST + FIRST_LEN;
 const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
 const ACK_TO: usize = ACK_FROM + NAME_LEN;
-/// ACK length (design §14: 13).
+/// ACK length (spec "Packet formats": 13).
 pub const ACK_LEN: usize = ACK_TO + NAME_LEN;
 /// The `aux` bit of an ACK that refuses.
 const ACK_REFUSED: u8 = 0x1;
@@ -93,9 +93,9 @@ const ACK_REFUSED: u8 = 0x1;
 // ATTACH.
 const ATTACH_LEAF: usize = FIRST + FIRST_LEN;
 const ATTACH_RELAY: usize = ATTACH_LEAF + LEAF_ID_LEN;
-/// ATTACH length (design §14: 9).
+/// ATTACH length (spec "Packet formats": 9).
 pub const ATTACH_LEN: usize = ATTACH_RELAY + NAME_LEN;
-/// The `aux` bit of an ATTACH that answers a poll (design §10.2).
+/// The `aux` bit of an ATTACH that answers a poll (spec "Attach and polls").
 const ATTACH_REPLY: u8 = 0x8;
 /// The `aux` bits of an ATTACH that hold the receive mode.
 const ATTACH_MODE: u8 = 0x7;
@@ -104,7 +104,7 @@ const ATTACH_MODE: u8 = 0x7;
 const ATTACHED_LEAF: usize = FIRST + FIRST_LEN;
 const ATTACHED_NEXT: usize = ATTACHED_LEAF + LEAF_ID_LEN;
 const NEXT_POLL_LEN: usize = 2;
-/// ATTACHED length (design §14: 7).
+/// ATTACHED length (spec "Packet formats": 7).
 pub const ATTACHED_LEN: usize = ATTACHED_NEXT + NEXT_POLL_LEN;
 
 // DATA.
@@ -113,13 +113,13 @@ const DATA_SRC_HOP: usize = DATA_DST_HOP + NAME_LEN;
 const DATA_DST_POS: usize = DATA_SRC_HOP + NAME_LEN;
 const DATA_DST_LEAF: usize = DATA_DST_POS + POS_LEN;
 const DATA_HOPS: usize = DATA_DST_LEAF + LEAF_ID_LEN;
-/// DATA header length (design §14: 21).
+/// DATA header length (spec "Packet formats": 21).
 pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
 
 // DELIVER.
 const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
 const DELIVER_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
-/// DELIVER header length before the payload (design §14: 9).
+/// DELIVER header length before the payload (spec "Packet formats": 9).
 pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
@@ -131,7 +131,7 @@ const _: () = assert!(ATTACHED_LEN == 7);
 const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9);
 const _: () = assert!(MAX_PAYLOAD == 234);
 
-/// A leaf's receive mode, carried in ATTACH `aux` (design §10.5). Sets the
+/// A leaf's receive mode, carried in ATTACH `aux` (spec "Leaf receive mode"). Sets the
 /// preamble of packets the relay sends to the leaf.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -155,7 +155,7 @@ impl RxMode {
         }
     }
 
-    /// Preamble of packets to a leaf in this mode (design §10.5): the
+    /// Preamble of packets to a leaf in this mode (spec "Leaf receive mode"): the
     /// minimum for a leaf that listens, and at least 512 ms, 2000 symbols,
     /// for one that wakes for a CAD every 500 ms, so that every wake finds
     /// a preamble on the air.
@@ -170,12 +170,12 @@ impl RxMode {
     }
 }
 
-/// Shortest preamble for a leaf that sleeps between CADs (design §10.5).
+/// Shortest preamble for a leaf that sleeps between CADs (spec "Leaf receive mode").
 pub const SLEEPING_PREAMBLE: Duration = Duration::from_millis(512);
 
 const _: () = assert!(RxMode::Hybrid.preamble_symbols() == 2000);
 
-/// HEARTBEAT, types 0x1 and 0x2 (design §7).
+/// HEARTBEAT, types 0x1 and 0x2 (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
     /// Surveyed (0x1) or GPS-derived (0x2) position.
@@ -204,7 +204,7 @@ impl From<LeafId> for AckName {
     }
 }
 
-/// ACK, type 0x3 (design §9.3): the answer to an offer, taken or refused.
+/// ACK, type 0x3 (spec "Hand-over"): the answer to an offer, taken or refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
     /// The answered message; for an ATTACH, the leaf's ID read as a
@@ -214,7 +214,7 @@ pub struct Ack {
     pub from: AckName,
     /// The answered relay or leaf.
     pub to: AckName,
-    /// The offer is refused (§9.2.4): `from` does not take it.
+    /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
 }
 
@@ -226,7 +226,7 @@ impl Ack {
     }
 }
 
-/// ATTACH, type 0x4 (design §10.2).
+/// ATTACH, type 0x4 (spec "Attach and polls").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attach {
     /// The attaching leaf.
@@ -250,20 +250,20 @@ impl Attach {
 }
 
 /// The most messages waiting an ATTACHED can count: all four bits of its
-/// `aux` (design §10.5). The byte a count up to 255 would take makes the
+/// `aux` (spec "Leaf receive mode"). The byte a count up to 255 would take makes the
 /// frame 46.25 symbols instead of 41.25, 11.84 ms instead of 10.56, and
 /// that 12 % more poll airtime alone tipped the capacity domain at twice
-/// the §13 rate into collapse (roadmap D41).
+/// the spec "Capacity and sizing" rate into collapse (roadmap D41).
 pub const WAITING_MAX: u8 = AUX_MASK;
 
-/// Unit of ATTACHED's time to the next poll (design §10.2). Sixteen bits
+/// Unit of ATTACHED's time to the next poll (spec "Attach and polls"). Sixteen bits
 /// of it reach 655 s, past the delivery TTL of 600 s, which bounds the
-/// poll period (design §10.2); it is a third of the clock
+/// poll period (spec "Attach and polls"); it is a third of the clock
 /// drift over the default period, so a poll time rounded to it costs a
 /// sleeping leaf's window little.
 pub const POLL_UNIT: Duration = Duration::from_millis(10);
 
-/// ATTACHED, type 0x7 (design §10.2): the relay to one of its leaves, on
+/// ATTACHED, type 0x7 (spec "Attach and polls"): the relay to one of its leaves, on
 /// the relay's home channel. It answers an ATTACH that attaches, and on
 /// its own it is a poll, which the leaf answers with an ATTACH.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,7 +274,7 @@ pub struct Attached {
     /// [`POLL_UNIT`]s. Not a period: each ATTACHED names the next slot
     /// afresh.
     pub next_poll: u16,
-    /// Messages the relay holds for the leaf (§10.4), up to
+    /// Messages the relay holds for the leaf (spec "Delivery queue"), up to
     /// [`WAITING_MAX`].
     pub waiting: u8,
 }
@@ -297,7 +297,7 @@ impl Attached {
     }
 }
 
-/// DATA, type 0x5 (design §9, §14).
+/// DATA, type 0x5 (spec "Forwarding", "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
     /// The sender's home channel, where the ACK and anything sent straight
@@ -311,7 +311,7 @@ pub struct Data<'a> {
     pub dst_pos: Position,
     /// The destination leaf, or [`LeafId::RELAY`].
     pub dst_leaf: LeafId,
-    /// Hand-overs so far (design §9.2.6).
+    /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
@@ -324,7 +324,7 @@ impl Data<'_> {
     }
 }
 
-/// DELIVER, type 0x6: relay to leaf on the relay's home channel (design §10.3).
+/// DELIVER, type 0x6: relay to leaf on the relay's home channel (spec "Delivery").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Deliver<'a> {
     /// The receiving leaf.
@@ -600,7 +600,7 @@ mod tests {
 
     extern crate std;
 
-    /// Encode, check the length against the table of design §14, decode,
+    /// Encode, check the length against the table of spec "Packet formats", decode,
     /// compare.
     fn round_trip(p: &Packet<'_>) {
         let mut buf = [0; MAX_FRAME];

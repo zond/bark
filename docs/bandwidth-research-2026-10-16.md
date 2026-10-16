@@ -53,7 +53,7 @@ The nominal noise floor the core starts from was moved by the same 3 and
 S1b, the corridor) cannot show a power change and are listed for
 completeness only.
 
-Scenarios: S4 at 1, 2, 3 and 4 times the §13 texting rate (seeds 1 and
+Scenarios: S4 at 1, 2, 3 and 4 times the spec "Capacity and sizing" texting rate (seeds 1 and
 2); the standard suite at 10 seeds. For the 1 mW row a second S4 was
 built with 3.6 times the relay density (966 relays), since 10 dB less
 power is 0.53 of the reach at the scenarios' path-loss exponent of 3.6,
@@ -108,7 +108,7 @@ and 1 / 0.53² = 3.6 times the relays keep the same neighbour graph.
   often. Each change costs an attach exchange. Measured before D41,
   which changed how leaves keep and choose relays.
 - Three channels cannot avoid 433.92 MHz, the busiest spot in the band
-  for keyfobs and sensors (§5), and leave the move rule two alternatives
+  for keyfobs and sensors (spec "Channel plan"), and leave the move rule two alternatives
   instead of twelve. Six still can.
 - Neighbour expiry, three rotations, falls from 390 s to 180 and 90 s,
   so a neighbour in a fade leaves the table sooner. Not measured either

@@ -176,17 +176,17 @@ retune times.
 | `power <dbm>` | transmit power, clamped to −9..10 dBm | the power in effect |
 | `beacon <k> <ms> [len]` | send a bench frame (default 13 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
-| `ping <k>` | send a 13-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (protocol §9.3) |
+| `ping <k>` | send a 13-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
-home channel answers it like an ACK (protocol §9.3): CAD on the sender's
+home channel answers it like an ACK (spec "Hand-over"): CAD on the sender's
 home channel (named in the ping), then a 13-byte pong, then back home; it
 prints the time of each part. It does not do the RSSI half of
 listen-before-talk.
 
-Bench frames are packet type 0xF (reserved in protocol §14): byte 0 is
+Bench frames are packet type 0xF (reserved in spec "Packet formats"): byte 0 is
 `0xF0 | kind` (0 test or beacon, 1 ping, 2 pong), bytes 1 to 4 a
 big-endian sequence number, byte 5 the sender's home channel, then
 `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB

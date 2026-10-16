@@ -1,9 +1,9 @@
-//! Global WGS-84 position in the 7-byte fixed-point wire form (design §7, §11).
+//! Global WGS-84 position in the 7-byte fixed-point wire form (spec "Heartbeat", "Position, time, phone link").
 //!
 //! Latitude is 25 bits and longitude 26 bits of two's-complement fixed point.
 //! Both use the same angular unit, 180° / 2²⁵ = 360° / 2²⁶ ≈ 5.36 µdeg,
 //! which is ≈0.6 m along a meridian. A relay's position is its identity
-//! (design §8.1), so equality here is identity equality.
+//! (spec "Relay identity"), so equality here is identity equality.
 
 /// Angular unit of one count, in degrees: 180 / 2²⁵.
 pub const UNIT_DEG: f64 = 180.0 / (1u64 << 25) as f64;
@@ -104,7 +104,7 @@ const SHORT_MASK: u32 = 0xffff;
 pub const SHORT_PERIOD: i32 = 1 << 16;
 
 /// A relay's 4-byte name in packet fields that only name it (ATTACH
-/// `relay`, DATA `dst_hop` and `src_hop`; design §8.1, roadmap D14): the
+/// `relay`, DATA `dst_hop` and `src_hop`; spec "Relay identity", roadmap D14): the
 /// low 16 bits of its latitude count, then the low 16 bits of its
 /// longitude count, big-endian.
 ///
@@ -112,7 +112,7 @@ pub const SHORT_PERIOD: i32 = 1 << 16;
 /// 39 km of latitude, and 39 km × cos(latitude) of longitude (25 km at
 /// 50° N). Two relays share a name only if they share a 0.6 m cell, which
 /// is one identity, or are at least that far apart on one axis, far beyond
-/// the ≈3 km a relay hears (design §13). [`Position::from_short`] rebuilds
+/// the ≈3 km a relay hears (spec "Capacity and sizing"). [`Position::from_short`] rebuilds
 /// the full position from any point within half a period on each axis,
 /// 19.5 km north-south and 12.6 km east-west at 50° N, so a name is
 /// unambiguous among everything a node hears up to about 80° N or S, where
@@ -250,7 +250,7 @@ mod tests {
             proptest::prop_assert_eq!(Position::from_short(p.short(), near), p);
         }
 
-        /// The hearing radius, ≈3 km (design §13), fits up to 80° N or S.
+        /// The hearing radius, ≈3 km (spec "Capacity and sizing"), fits up to 80° N or S.
         #[test]
         fn short_round_trips_within_3_km_to_80_degrees(
             lat in lat_within(80.0),

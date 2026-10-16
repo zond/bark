@@ -1,21 +1,21 @@
-//! Per-channel busy estimate (design §6.1), in integer arithmetic.
+//! Per-channel busy estimate (spec "Busy estimate"), in integer arithmetic.
 //!
 //! # Busy fraction
 //!
 //! Each channel keeps `busy[c]`, the moving average of a busy indicator
 //! sampled once per sweep: 1 if the RSSI exceeds the noise floor by
-//! `busy_threshold_db` (§6.1: 6 dB), else 0. Values are fixed point with
+//! `busy_threshold_db` (spec "Busy estimate": 6 dB), else 0. Values are fixed point with
 //! [`ONE`] = 2²⁴ meaning "always busy". The average is an EMA with
-//! coefficient `1 / busy_ema_inverse` (§6.1: 1/600, ten minutes at one
+//! coefficient `1 / busy_ema_inverse` (spec "Busy estimate": 1/600, ten minutes at one
 //! sample per second), except that its first `busy_ema_inverse` samples
 //! use `1/n` for the `n`th sample: a plain running mean, so a node that has
 //! just booted has an unbiased estimate after its one-rotation listen
-//! (§6.2) instead of one dragged towards an arbitrary start value. The
+//! (spec "Channel at boot") instead of one dragged towards an arbitrary start value. The
 //! integer division truncates, which biases the estimate by less than
 //! `busy_ema_inverse / ONE` (3.6 × 10⁻⁵ at 1/600).
 //!
 //! The home estimate counts only what would stay on the channel if the
-//! node moved (§6.1, roadmap D24). Packets addressed to the node, and the
+//! node moved (spec "Busy estimate", roadmap D24). Packets addressed to the node, and the
 //! ACKs of its own hand-overs, would follow it to its new channel, so
 //! counting them would make a busy relay flee its own traffic. A home
 //! sample is therefore 1 if the RSSI says busy and no packet for this
@@ -25,7 +25,7 @@
 //!
 //! # Noise floor
 //!
-//! §6.1 says: a low percentile of RSSI readings over the first rotation,
+//! Spec "Busy estimate" says: a low percentile of RSSI readings over the first rotation,
 //! recalibrated slowly; the method is open item O11. Here: every sample,
 //! from every channel, goes into a histogram of 1 dB bins, and the floor
 //! is its 10th percentile. The receiver's noise is the same on all 13
@@ -33,10 +33,10 @@
 //! 10th percentile is right as long as a tenth of the samples hit a quiet
 //! channel. If nine-tenths of all readings on all channels are signals,
 //! the floor rises to the signals and every channel looks idle; carrier
-//! sense keeps real load far below that (≈35 % usable, §13). When the histogram holds two busy windows of samples
+//! sense keeps real load far below that (≈35 % usable, spec "Capacity and sizing"). When the histogram holds two busy windows of samples
 //! (2 × 13 × `busy_ema_inverse`), every bin is halved, so the floor tracks
 //! drift on the busy estimate's own time scale. Until the first sample the
-//! floor is the design's nominal −118 dBm (§4). The 10th percentile and the
+//! floor is the design's nominal −118 dBm (spec "Physical layer"). The 10th percentile and the
 //! 1 dB bins are first choices for O11, to be checked on the bench.
 
 use crate::node::Config;
@@ -52,7 +52,7 @@ pub const fn percent(percent: u8) -> u32 {
 }
 
 /// Noise floor before any sample: thermal noise in 125 kHz plus the
-/// receiver's noise figure (design §4: ≈−118 dBm).
+/// receiver's noise figure (spec "Physical layer": ≈−118 dBm).
 pub const NOMINAL_NOISE_FLOOR_DBM: i16 = -118;
 
 /// Lowest RSSI the SX1262 reports: `−RssiInst / 2` with an 8-bit register,
@@ -300,7 +300,11 @@ mod tests {
     #[test]
     fn threshold_follows_floor() {
         let mut b = BusyEstimator::new(600, 6);
-        assert_eq!(b.threshold_dbm(), -112, "design §6.1: ≈−112 dBm");
+        assert_eq!(
+            b.threshold_dbm(),
+            -112,
+            r#"spec "Busy estimate": ≈−112 dBm"#
+        );
         for _ in 0..100 {
             b.sample(ch(0), -124);
         }

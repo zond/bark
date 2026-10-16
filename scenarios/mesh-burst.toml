@@ -11,14 +11,14 @@
 # i + 12 (mod 25) every 600 s, so the flows cross the whole mesh. The
 # first message waits until every leaf has attached: the relays' 150 s
 # boot listen, up to a worst-case rotation (195 s) for a leaf to hear its
-# first heartbeat, and a rotation more before it chooses (protocol §10.1),
+# first heartbeat, and a rotation more before it chooses (spec "Relay choice"),
 # 540 s.
 
 name = "mesh-burst"
 seed = 1
 duration_s = 2700.0
 # As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+# heartbeats at 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
 settle_s = 345.0
 
 [origin]

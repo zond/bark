@@ -1,5 +1,5 @@
-//! The neighbour table (design §8.2): relays heard by heartbeat, keyed by
-//! position, which is their identity (§8.1).
+//! The neighbour table (spec "Neighbour table"): relays heard by heartbeat, keyed by
+//! position, which is their identity (spec "Relay identity").
 //!
 //! # Slots
 //!
@@ -13,14 +13,14 @@
 //! A rotation is the time for a neighbour's heartbeat to step through all
 //! channels and come back to ours: `CHANNELS` heartbeats at the mean
 //! interval, 13 × 10 s = 130 s. An entry expires
-//! `neighbour_expiry_rotations` rotations after its last heartbeat (§8.2:
+//! `neighbour_expiry_rotations` rotations after its last heartbeat (spec "Neighbour table":
 //! 3, 390 s).
 //!
 //! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
-//! (§8.2: 2) the neighbour is demoted: a next hop only when no other with
-//! margin is left (§9.2.3, roadmap D25). Demotion ends
+//! (spec "Neighbour table": 2) the neighbour is demoted: a next hop only when no other with
+//! margin is left (spec "Next hop", roadmap D25). Demotion ends
 //! when the neighbour ACKs a packet from this relay, which resets
-//! `fail_count` because §8.2 counts consecutive failures, or
+//! `fail_count` because spec "Neighbour table" counts consecutive failures, or
 //! `demotion_rotations` rotations (3, 390 s) after the failure that
 //! demoted it; then `fail_count` starts again from zero. A heartbeat
 //! refreshes the entry but leaves `fail_count` alone (roadmap D18): it
@@ -30,18 +30,18 @@
 //!
 //! A neighbour has margin when its averaged RSSI, `rssi`, is high enough
 //! for a full-length frame to get through a fade of [`FADE_DEPTH_DB`]
-//! (§9.2.3). The average takes in every frame heard from the neighbour:
+//! (spec "Next hop"). The average takes in every frame heard from the neighbour:
 //! heartbeats, its DATA, and its ACKs, which are the best evidence that
 //! its link carries frames. Each new frame counts half, as the leaf's mean
-//! of two heartbeats does (§10.1). A neighbour without margin stays in the
+//! of two heartbeats does (spec "Relay choice"). A neighbour without margin stays in the
 //! table: it is alive.
 //!
 //! [`FADE_DEPTH_DB`]: crate::radio::FADE_DEPTH_DB
 //!
 //! # Bans
 //!
-//! A neighbour that refuses a hand-over (§9.2.4) is banned for
-//! [`BAN`]: no next hop at all until then (§9.2.3, roadmap D29). A refusal
+//! A neighbour that refuses a hand-over (spec "Receiving DATA") is banned for
+//! [`BAN`]: no next hop at all until then (spec "Next hop", roadmap D29). A refusal
 //! is no failure: it says the neighbour hears us.
 //!
 //! A failed hand-over bans it too, for [`hold`] of its `fail_count`: one
@@ -67,7 +67,7 @@
 //! 3. nothing: the newcomer is not added.
 //!
 //! Least-recently-heard eviction fails on a rooftop relay that hears ≈270
-//! relays (§13): about two heartbeats a second arrive on its channel, so
+//! relays (spec "Capacity and sizing"): about two heartbeats a second arrive on its channel, so
 //! an entry would last about 64 / 2 = 30 s and every `fail_count` would be
 //! forgotten within a minute. Keeping incumbents replaces exactly the
 //! entries that are failing or not being heard. Whether a set spread
@@ -82,7 +82,7 @@ use crate::tables::budget::hold;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
 
-/// Table capacity (design §8.2).
+/// Table capacity (spec "Neighbour table").
 pub const NEIGHBOURS: usize = 64;
 
 /// One neighbouring relay.
@@ -221,7 +221,7 @@ impl Neighbours {
         self.slot(self.slot_of(position)?)
     }
 
-    /// The slot and entry a short name (design §8.1) names. Every entry was
+    /// The slot and entry a short name (spec "Relay identity") names. Every entry was
     /// heard, so lies within hearing range, where a short name is unique.
     pub fn by_short(&self, short: ShortName) -> Option<(usize, &Neighbour)> {
         self.slots().find(|(_, n)| n.position.short() == short)
@@ -234,7 +234,7 @@ impl Neighbours {
 
     /// The averaged RSSI, dBm, from which a neighbour has margin: a
     /// full-length frame reaches it through a fade, with the noise floor
-    /// at `noise_floor_dbm` (§9.2.3, roadmap D38).
+    /// at `noise_floor_dbm` (spec "Next hop", roadmap D38).
     pub fn margin_dbm(noise_floor_dbm: i16) -> f32 {
         noise_floor_dbm as f32 + full_frame_rssi_above_noise_db()
     }
@@ -255,7 +255,7 @@ impl Neighbours {
     }
 
     /// Neighbours that work at `now`, with their slots: live and not
-    /// demoted. The owner rule (§9.2.7) looks only at these.
+    /// demoted. The owner rule (spec "Owner") looks only at these.
     pub fn candidates(&self, now: Instant) -> impl Iterator<Item = (usize, &Neighbour)> {
         self.live(now)
             .filter(move |(_, n)| !self.is_demoted(n, now))
@@ -313,7 +313,7 @@ impl Neighbours {
 
     /// `position` answered a packet from this relay at `now`, taking or
     /// refusing it: it is alive, whether or not its heartbeats are heard
-    /// (§9.3).
+    /// (spec "Hand-over").
     pub fn answered(&mut self, position: Position, now: Instant) {
         if let Some(n) = self.entry_mut(position) {
             n.last_heard = n.last_heard.max(now);
@@ -329,7 +329,7 @@ impl Neighbours {
     }
 
     /// A packet from the neighbour named `name` gave its home channel in
-    /// `aux` (§14): that is where it listens now, newer than its last
+    /// `aux` (spec "Packet formats"): that is where it listens now, newer than its last
     /// heartbeat if it has moved since.
     pub fn home_heard(&mut self, name: ShortName, home: Channel) {
         if let Some(n) = self.by_short_mut(name) {

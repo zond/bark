@@ -1,4 +1,4 @@
-//! Routing between relays (design §9.2, §9.3), driven through real bytes
+//! Routing between relays (spec "Routing", "Hand-over"), driven through real bytes
 //! on the test medium. Every relay's application can send; a message to a
 //! relay itself (leaf 0) is delivered to its application.
 
@@ -23,7 +23,7 @@ fn pos(east: f64, north: f64) -> Position {
     )
 }
 
-/// The boot listen is a full rotation in the design (§6.2); a short one
+/// The boot listen is a full rotation in the design (spec "Channel at boot"); a short one
 /// keeps the tests quick and changes nothing after it.
 fn relay(east: f64, north: f64, seed: u64) -> Node {
     Node::Relay(Relay::new(
@@ -52,7 +52,7 @@ fn knows(h: &Harness<Node>, a: usize, b: usize) -> bool {
     core(h, a).neighbours().any(|n| n.position == target)
 }
 
-/// Run until every linked pair knows each other (design §7: within about a
+/// Run until every linked pair knows each other (spec "Heartbeat": within about a
 /// rotation after boot).
 fn discover(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
@@ -103,7 +103,7 @@ fn delivered(h: &Harness<Node>, i: usize, id: MsgId) -> bool {
 
 /// Relay `x`'s application sends `d` one short message after another,
 /// each as soon as `x` takes it, until relay `f`, `x`'s only neighbour,
-/// refuses one (§9.2.4): `f`'s send queue is then full, as long as `f`'s
+/// refuses one (spec "Receiving DATA"): `f`'s send queue is then full, as long as `f`'s
 /// own frames are lost.
 fn fill(h: &mut Harness<Node>, x: usize, f: usize, d: usize) {
     let refused = |h: &Harness<Node>| {
@@ -124,7 +124,7 @@ fn fill(h: &mut Harness<Node>, x: usize, f: usize, d: usize) {
 }
 
 /// Four relays; the greedy choice at O, X, is a dead end. X has no
-/// neighbour but its parent, so it returns the message (§9.2.5); O takes
+/// neighbour but its parent, so it returns the message (spec "Return to parent"); O takes
 /// its next candidate, Y, which reaches D.
 ///
 /// ```text
@@ -180,7 +180,7 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
 }
 
 /// A relay that has had the message, and holds none of it now, takes it
-/// when it is offered and goes on with its own search (§9.2.4 case 5).
+/// when it is offered and goes on with its own search (spec "Receiving DATA" case 5).
 /// O, P and Q all hear each other; only R reaches D.
 ///
 /// O → P → Q → O: O goes on, to Q, its next candidate. For Q, O is a
@@ -294,9 +294,9 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 }
 
 /// A neighbour whose hand-over failed, and which never had the message,
-/// later offers it here (§9.2.4 case 5): X's first six frames to Y are
+/// later offers it here (spec "Receiving DATA" case 5): X's first six frames to Y are
 /// lost, two hand-overs with Y's ban waited out between them (roadmap
-/// D42), and the second demotes Y (§8.2). Y stays untried (roadmap D36),
+/// D42), and the second demotes Y (spec "Neighbour table"). Y stays untried (roadmap D36),
 /// so X moves on to Z, and Z hands it to
 /// Y, which offers it to X. X holds none of it and takes it, and hands it
 /// to Y, its one candidate left. For Y, X is a neighbour it handed the
@@ -350,7 +350,7 @@ fn a_neighbour_whose_hand_over_failed_is_tried_again() {
 /// Y succeeds but every ACK is lost, so X counts it failed, bans Y and
 /// waits for the ban. Y searches too, finds a dead end through P and
 /// returns the message to X while X still holds its copy: the two merge
-/// (§9.2.4 case 4). When the ban ends X offers it to Y again; Y has
+/// (spec "Receiving DATA" case 4). When the ban ends X offers it to Y again; Y has
 /// nothing left and returns it, and that packet, from the neighbour X is
 /// handing it to, ends X's hand-over (case 5) and marks Y tried. X goes
 /// on to Z, which reaches D. One copy, and nothing dropped: before, X
@@ -361,7 +361,7 @@ fn a_neighbour_whose_hand_over_failed_is_tried_again() {
 /// within 3 × (138.6 + 100) = 716 ms of its first frame's start; Y's
 /// first two frames to P are lost, so Y's return comes after that, from
 /// 1075 ms, within X's ban. Each relay has its own home channel, none
-/// samples other channels (§6.1), and P has just sent a heartbeat, so P
+/// samples other channels (spec "Busy estimate"), and P has just sent a heartbeat, so P
 /// hears every frame Y sends it.
 ///
 #[test]
@@ -412,7 +412,7 @@ fn a_split_heals_at_a_sender_that_waits() {
         }
     }));
     // Start just as P sends a heartbeat: its next is at least 5 s off
-    // (§7), so P is home for all of Y's frames.
+    // (spec "Heartbeat"), so P is home for all of Y's frames.
     let beats = h.nodes[p].sent.len();
     let beat = |h: &Harness<Node>| {
         h.nodes[p].sent[beats..]
@@ -540,17 +540,17 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
 /// A parent offers the message again to a child it forgot (roadmap D35,
 /// B). P's message is for L, a leaf of Q's that is not there, and Q's
 /// delivery queue is full of its own messages for L, so Q refuses it
-/// (§10.4) and P waits for each ban to end (§9.3). Meanwhile P has tried
+/// (spec "Delivery queue") and P waits for each ban to end (spec "Hand-over"). Meanwhile P has tried
 /// C, a dead end, which returned it. C is then out of P's hearing long
 /// enough for its entry to expire, and comes back into a new slot, which
-/// clears the mark that P handed it the message (§9.2.2). When Q next
+/// clears the mark that P handed it the message (spec "Message records"). When Q next
 /// refuses, P offers it to C again. Before, C, which had returned it and
 /// holds none of it, only ACKed what came from its parent: no copy was
 /// left. Now C takes it and returns it at once, and P waits for Q, which
 /// takes it once its queue has room.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
-/// three rotations, 58.5 s (§8.2), so the test runs in minutes, not
+/// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in minutes, not
 /// hours.
 #[test]
 fn a_child_offered_the_message_again_by_its_parent_returns_it() {
@@ -722,7 +722,7 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
 /// takes P's hand-over, but its ACKs are lost, so P counts it failed and
 /// bans C (roadmap D42); with no other candidate the message waits in
 /// P's queue for the ban. C, a dead end, returns it meanwhile, and the
-/// copies merge at P (§9.2.4 case 4). C never ACKed it, so it is untried
+/// copies merge at P (spec "Receiving DATA" case 4). C never ACKed it, so it is untried
 /// (roadmap D36), and P hands it to C again when the ban ends. C,
 /// receiving it from its parent with nothing left to try, returns it; P
 /// has now tried C and drops it. Two returns, and nothing more on the
@@ -790,13 +790,13 @@ fn a_return_does_not_go_back_and_forth() {
 
 /// A split met by the search coming back (roadmap D36). X's message is
 /// for L, a leaf of P's that is not there, and P's delivery queue is full
-/// of its own messages for L, so P refuses it (§10.4) and Y, P's only
-/// neighbour but its parent, waits for each ban to end (§9.3). X's
+/// of its own messages for L, so P refuses it (spec "Delivery queue") and Y, P's only
+/// neighbour but its parent, waits for each ban to end (spec "Hand-over"). X's
 /// hand-over to Y was taken, but Y's ACKs were lost, so X counts it
 /// failed, twice, the second time once Y's ban has ended (roadmap D42),
 /// leaves Y untried and moves on to Z, a dead end, which returns
 /// it. X then hands it to Y again, with a higher count. Y holds its copy,
-/// so it only ACKs (§9.2.4 case 4): the two copies merge, one round trip
+/// so it only ACKs (spec "Receiving DATA" case 4): the two copies merge, one round trip
 /// more than had Y's first ACK come through, and nothing is lost. Once
 /// P's messages expire, P takes Y's.
 ///
@@ -885,7 +885,7 @@ fn a_split_met_again_merges() {
 }
 
 /// With D unreachable, the same search ends at the origin with a drop
-/// for want of a route (§9.2.5). The origin's application hears nothing
+/// for want of a route (spec "Return to parent"). The origin's application hears nothing
 /// of it (core-interface §4).
 #[test]
 fn search_without_owner_ends_at_the_origin() {
@@ -919,8 +919,8 @@ fn search_without_owner_ends_at_the_origin() {
     }
 }
 
-/// D's first ACK is lost; A retransmits with the same count (§9.2.6). D
-/// takes it for a copy (§9.2.4 case 3), ACKs it and does not deliver it
+/// D's first ACK is lost; A retransmits with the same count (spec "Hop count"). D
+/// takes it for a copy (spec "Receiving DATA" case 3), ACKs it and does not deliver it
 /// again.
 #[test]
 fn a_retransmission_is_acked_and_not_delivered_twice() {
@@ -969,9 +969,9 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
 }
 
 /// O, M, D in a line. O's message to D fails at M twice, each failure
-/// banning M (roadmap D42), and the second demotes it (§8.2); M is O's
+/// banning M (roadmap D42), and the second demotes it (spec "Neighbour table"); M is O's
 /// only way on, so the message waits for each ban and is still handed to
-/// M, as the last resort (§9.2.3, roadmap D25), and arrives.
+/// M, as the last resort (spec "Next hop", roadmap D25), and arrives.
 #[test]
 fn a_demoted_neighbour_is_the_last_resort() {
     let (o, m, d) = (0, 1, 2);
@@ -1007,7 +1007,7 @@ fn a_demoted_neighbour_is_the_last_resort() {
 
 /// Packet RSSI of a link heard 2 dB above the test medium's noise
 /// (`common::NOISE_DBM`, −121 dBm): a heartbeat gets through, but a
-/// full-length frame would not ride out a fade (§9.2.3, roadmap D38).
+/// full-length frame would not ride out a fade (spec "Next hop", roadmap D38).
 const FAINT_DBM: i16 = -119;
 
 /// The DATA frames relay `from` sent to relay `to`.
@@ -1021,7 +1021,7 @@ fn data_sent(h: &Harness<Node>, from: usize, to: usize) -> usize {
 }
 
 /// O hears F, the neighbour nearest D, only faintly: F is no candidate
-/// while M, heard well, is left (§9.2.3, roadmap D38).
+/// while M, heard well, is left (spec "Next hop", roadmap D38).
 ///
 /// ```text
 ///          F
@@ -1053,7 +1053,7 @@ fn a_faint_neighbour_is_not_chosen() {
 }
 
 /// O's only way to D is F, heard faintly. F is the last resort: the
-/// message goes through it (§9.2.3, roadmap D38). F's ACK, heard as well
+/// message goes through it (spec "Next hop", roadmap D38). F's ACK, heard as well
 /// as the link now is, gives F margin.
 ///
 /// ```text
@@ -1104,8 +1104,8 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
-/// (§9.2.4), and O hands the message to F2 at once, counting no failure
-/// against F1 (§9.3). O bans F1: no message is offered to it until the
+/// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
+/// against F1 (spec "Hand-over"). O bans F1: no message is offered to it until the
 /// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
 ///
 /// ```text
@@ -1188,10 +1188,10 @@ fn a_ban_excludes_the_neighbour_and_expires() {
 
 /// P, O, F in a line. F's delivery queue is full of its own application's
 /// messages for its leaf L, which is not there, so F refuses P's message
-/// for L (§9.2.4, §10.4). F is the only neighbour O has not
+/// for L (spec "Receiving DATA", "Delivery queue"). F is the only neighbour O has not
 /// tried, so the message waits in O's queue until F's ban ends, and O
 /// offers it to F again then, once a ban; it is not returned to P or
-/// dropped (§9.2.5, roadmap D31). Meanwhile O's queue moves on: its own
+/// dropped (spec "Return to parent", roadmap D31). Meanwhile O's queue moves on: its own
 /// message for P goes out. Once F's messages expire, F takes the waiting
 /// one.
 #[test]
@@ -1287,13 +1287,13 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
 
 /// F, O's only neighbour, has its delivery queue full of its own
 /// application's messages for its leaf L, which is not there, and so
-/// refuses O's message for L (§9.2.4, §10.4). O holds the
+/// refuses O's message for L (spec "Receiving DATA", "Delivery queue"). O holds the
 /// message rather than drop it, says it takes no other, and offers it
 /// again one ban after the first refusal, two after the second, four
-/// after the third, and so on up to the bucket's refill (§9.3,
+/// after the third, and so on up to the bucket's refill (spec "Hand-over",
 /// `budget::hold`). Once F's messages expire F takes it, and O's
 /// application may send again; its next message starts from one ban
-/// (§9.2.5, roadmap D29).
+/// (spec "Return to parent", roadmap D29).
 #[test]
 fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
     use bark_proto::tables::budget::{hold, BAN};
@@ -1315,7 +1315,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         );
         MsgId::of(pf, l, text)
     };
-    // Payloads are unique (§11): F remembers the messages of each fill.
+    // Payloads are unique (spec "Position, time, phone link"): F remembers the messages of each fill.
     let fill = |h: &mut Harness<Node>, round: u8, n: usize| {
         for k in 0..n as u8 {
             to_l(h, f, &[b'f', round, k]);
@@ -1392,10 +1392,10 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
 }
 
 /// O's only neighbour C is gone. O's own message fails its three
-/// attempts there, which bans C (§9.3, roadmap D42); with no other
+/// attempts there, which bans C (spec "Hand-over", roadmap D42); with no other
 /// neighbour the message waits for each ban and is offered to C again,
-/// and O takes no other message meanwhile (§9.2.5). Once C's entry
-/// expires (§8.2), O has no neighbour, drops the message for want of a
+/// and O takes no other message meanwhile (spec "Return to parent"). Once C's entry
+/// expires (spec "Neighbour table"), O has no neighbour, drops the message for want of a
 /// route, and is ready again.
 #[test]
 fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
@@ -1444,9 +1444,9 @@ fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
 
 /// P, R, C, D in a line, and C is gone. R's only candidate fails and is
 /// banned, longer after each failure (roadmap D42), and R waits for each
-/// ban rather than give up on C. Once its entry for C expires (§8.2), R's
+/// ban rather than give up on C. Once its entry for C expires (spec "Neighbour table"), R's
 /// search ends as before: it returns the message to P, which has no
-/// other neighbour and, as the origin, drops it (§9.2.5).
+/// other neighbour and, as the origin, drops it (spec "Return to parent").
 #[test]
 fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     let config = Config::default();
@@ -1489,10 +1489,10 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     }));
 }
 
-/// P hands a message to C and moves its home channel (§6.3) while C is
+/// P hands a message to C and moves its home channel (spec "Channel moves") while C is
 /// still searching; C then returns the message to P's new home, as C's
 /// neighbour table has it from P's announcement, not to the channel P
-/// was on when it handed the message over (§9.2.5). P then tries Y, which
+/// was on when it handed the message over (spec "Return to parent"). P then tries Y, which
 /// reaches D. C searches for a while because its four other neighbours,
 /// X, are gone: each costs three unanswered attempts and is banned, and
 /// the message waits for the bans (roadmap D42) until C's entries for them
@@ -1511,7 +1511,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     use bark_proto::{Action, Channel, CHANNELS};
     let (p, c, y, d) = (0, 1, 2, 3);
     let xs = [4, 5, 6, 7];
-    // Move once the home has been busy this long, at once (§6.3: 10 min
+    // Move once the home has been busy this long, at once (spec "Channel moves": 10 min
     // and up to 5 min more, which only make the test longer).
     let dwell = secs(20);
     let topology = |c_home: u8| {
@@ -1581,7 +1581,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     h.run_for(dwell - Duration::from_millis(300));
     let id = send(&mut h, p, d, b"after the move");
     // C's entries for the X expire three rotations after their last
-    // heartbeat (§8.2: 390 s); until then C waits for their bans.
+    // heartbeat (spec "Neighbour table": 390 s); until then C waits for their bans.
     assert!(
         h.run_until(h.now + secs(450), |h| delivered(h, d, id)),
         "not delivered"
@@ -1624,14 +1624,14 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// offer F a new short message each time their ban of F ends, for an hour
 /// and five minutes; F, its frames to D all lost, keeps its send queue
 /// full and refuses nearly all of them. A forward is not held
-/// (§9.2.5): each sender asks for one reply per ban, 1.53 s, together
+/// (spec "Return to parent"): each sender asks for one reply per ban, 1.53 s, together
 /// seventeen a second, 18 % of F's time on air against the 9.83 % its
 /// bucket refills. So the replies run down the reply reserve, and F stays
-/// silent rather than spend the heartbeat reserve (§9.4, roadmap D27,
+/// silent rather than spend the heartbeat reserve (spec "Duty cycle cap", roadmap D27,
 /// D29). No hour holds more than 360 s, replies included (the harness
 /// checks every transmission), and no heartbeat of F is held back. The
 /// senders' frames are put on the air past their cores, which hold their
-/// own application's message for longer after each refusal (§9.3).
+/// own application's message for longer after each refusal (spec "Hand-over").
 #[test]
 fn replies_stay_within_the_reserve() {
     use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
@@ -1740,9 +1740,9 @@ fn replies_stay_within_the_reserve() {
 }
 
 /// O sends D a full frame every 2 s, 7 % of D's home channel and more than
-/// the 5 % that moves a relay (§6.3). The traffic is D's own and would
+/// the 5 % that moves a relay (spec "Channel moves"). The traffic is D's own and would
 /// follow it to any channel, so D does not count it as busy and stays, and
-/// neither does O for D's ACKs (§6.1, roadmap D24).
+/// neither does O for D's ACKs (spec "Busy estimate", roadmap D24).
 #[test]
 fn a_relay_does_not_flee_its_own_traffic() {
     use bark_proto::tables::busy::{percent, ONE};
@@ -1781,27 +1781,27 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
-/// bucket lets through (§9.4). F works at the edge of its bucket: it
+/// bucket lets through (spec "Duty cycle cap"). F works at the edge of its bucket: it
 /// refuses a message when the message's frame and everything it
-/// has queued would not fit in the bucket (§9.2.4), and a hand-over whose
+/// has queued would not fit in the bucket (spec "Receiving DATA"), and a hand-over whose
 /// retries the bucket cannot fit yet waits for it, never longer than the
 /// refill of a frame and the reply reserve, instead of being dropped. Its
 /// heartbeats are never held back. The harness panics if any hour holds
 /// more than 10 %, replies included.
 ///
-/// O, refused, bans F without counting a failure (§9.3); F is its only
+/// O, refused, bans F without counting a failure (spec "Hand-over"); F is its only
 /// neighbour, so O holds its application's message and offers it again
-/// after its hold, and its application waits (§9.2.5, §9.3). O and D
+/// after its hold, and its application waits (spec "Return to parent", "Hand-over"). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
 /// frames, all four of F's attempts go unanswered, and F returns the
-/// message to O as the search requires (§9.2.5). O, its bucket spent on
+/// message to O as the search requires (spec "Return to parent"). O, its bucket spent on
 /// offering its held message once a ban, may refuse the return, and F
 /// then drops it: the only drops F makes.
 ///
 /// The home channels are fixed. The frames this test loses on the way to D
 /// are on the air at D but never received, so D cannot tell them from
-/// other nodes' traffic (§6.1): about two thirds of F's airtime, enough to
-/// move D every hour or so (§6.3), and messages handed over in the minutes
+/// other nodes' traffic (spec "Busy estimate"): about two thirds of F's airtime, enough to
+/// move D every hour or so (spec "Channel moves"), and messages handed over in the minutes
 /// before F hears D's new channel fail for that reason, which is not what
 /// this test is about. F makes one attempt more than the
 /// design's three: D also misses a frame now and then while it sweeps or
@@ -1891,7 +1891,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     h.run_for(secs(600));
     let tf = traces(&h, f);
     // No hand-over waits longer than the refill of a full frame and the
-    // reply reserve it leaves (§9.4).
+    // reply reserve it leaves (spec "Duty cycle cap").
     let frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + REPLY_RESERVE;
     let refill = Duration::from_micros(
         (frame.as_micros() * DUTY_CYCLE_WINDOW.as_micros()).div_ceil((BUDGET - DEPTH).as_micros()),
@@ -2050,7 +2050,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     );
 }
 
-// --- Silence is pushback (§9.3 step 6, roadmap D42) ---
+// --- Silence is pushback (spec "Hand-over" step 6, roadmap D42) ---
 
 /// When relay `from` sent a DATA of `id` to relay `to`.
 fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
@@ -2066,7 +2066,7 @@ fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Insta
 }
 
 /// `times` split where two frames are a ban or more apart: the
-/// attempts of one hand-over each, as a retry waits less (§9.3).
+/// attempts of one hand-over each, as a retry waits less (spec "Hand-over").
 fn handovers(times: &[Instant]) -> Vec<Vec<Instant>> {
     let mut out: Vec<Vec<Instant>> = Vec::new();
     for &t in times {
@@ -2085,11 +2085,11 @@ fn entry(h: &Harness<Node>, at: usize, of: usize) -> Neighbour {
 
 /// O, with F1 and F2 both reaching D, F1 the nearer; P behind O. Every
 /// DATA from O to F1 is lost. O's message fails at F1, which bans F1 for
-/// one ban (§9.3, roadmap D42), and waits for the ban. P's message, which
+/// one ban (spec "Hand-over", roadmap D42), and waits for the ban. P's message, which
 /// reaches O within it, goes to F2 at once and is never offered to F1:
 /// the ban holds for every message. When the ban ends O's message goes
 /// to F1 again with three fresh attempts; that second failure demotes F1
-/// (§8.2), and only then does it go to F2, at once.
+/// (spec "Neighbour table"), and only then does it go to F2, at once.
 ///
 /// ```text
 ///               F1
@@ -2158,7 +2158,7 @@ fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
 /// P, O, M, D in a line; every DATA from O to M is lost. P's message
 /// waits at O, M being its only candidate, and is offered to M again as
 /// each ban ends: one ban after the first failure, two after the second,
-/// four after the third, and so on up to the bucket's refill, 61 s (§9.3,
+/// four after the third, and so on up to the bucket's refill, 61 s (spec "Hand-over",
 /// `budget::hold`). Once M's link is back M takes it, which clears its
 /// failure count, and the next failure bans it for one ban again.
 #[test]
@@ -2210,8 +2210,8 @@ fn the_ban_after_failures_in_a_row_doubles_up_to_the_bucket_s_refill() {
 /// R, P, O, M, D in a line. P's message reaches O first and R's, which
 /// has come one hand-over farther, after it. O's first three frames to M
 /// are lost, so M is banned, and both messages wait for it, M being O's
-/// only candidate for either (§9.3). When the ban ends the most travelled
-/// goes first, R's, though it arrived second (§9.3, roadmap D31), and
+/// only candidate for either (spec "Hand-over"). When the ban ends the most travelled
+/// goes first, R's, though it arrived second (spec "Hand-over", roadmap D31), and
 /// then P's.
 #[test]
 fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {
@@ -2264,7 +2264,7 @@ fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {
 
 /// F1 is gone. O's first message tries it three times, which bans it
 /// (roadmap D42), waits for the ban and tries it three times more; that
-/// second failure demotes it (§8.2) and the message goes to F2 at once.
+/// second failure demotes it (spec "Neighbour table") and the message goes to F2 at once.
 /// The next messages go to F2 without a frame to F1: a dead neighbour is
 /// routed around (roadmap D25), and only the first message pays for it.
 #[test]
@@ -2302,7 +2302,7 @@ fn a_dead_neighbour_is_routed_around() {
 /// dead end for P's message, so it returns it, but every DATA from C to P
 /// is lost. The return's three attempts ban P; the return waits for the
 /// ban and goes again with three fresh attempts, whose failure demotes P
-/// (§8.2), and only then is it dropped, as a failed return is (§9.2.5).
+/// (spec "Neighbour table"), and only then is it dropped, as a failed return is (spec "Return to parent").
 #[test]
 fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
     let (p, c) = (0, 1);

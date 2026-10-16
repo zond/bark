@@ -13,7 +13,7 @@ name = "corridor"
 seed = 1
 duration_s = 1800.0
 # As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 150 s boot listen (protocol §6.2, §7).
+# heartbeats at 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
 settle_s = 345.0
 
 [origin]

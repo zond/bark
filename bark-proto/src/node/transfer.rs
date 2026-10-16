@@ -1,8 +1,8 @@
-//! Per-hop transfer (design §9.3), shared by both roles: one frame handed
+//! Per-hop transfer (spec "Hand-over"), shared by both roles: one frame handed
 //! to one receiver until it answers or the sender gives up ([`Transfer`]),
 //! and the one reply this node can owe the sender of what it received
 //! ([`Replies`]): an ACK, taking or refusing, or between a relay and its
-//! leaf an ATTACHED or an ATTACH (§10.2).
+//! leaf an ATTACHED or an ATTACH (spec "Attach and polls").
 //!
 //! Both only keep the state; the role owns the radio (`mac.rs`), the frame
 //! and the duty-cycle budget, starts each excursion and reports its
@@ -12,7 +12,7 @@
 //!
 //! 1. Listen before talking on the receiver's home channel: CAD, then RSSI.
 //!    If either finds the channel busy, wait a random 0–`hop_backoff_max`
-//!    (§9.3: 50 ms) and check again; once the checks of one attempt have
+//!    (spec "Hand-over": 50 ms) and check again; once the checks of one attempt have
 //!    found it busy for [`LBT_GIVE_UP`] (500 ms), give up ([`Check::GaveUp`]).
 //! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
 //! 3. No ACK: wait a random time in `[0, retry_window]` and go back to 1,
@@ -20,7 +20,7 @@
 //!    failed. The window is twice the time one hand-over holds its
 //!    receiver and doubles per attempt ([`retry_window`]), so that two
 //!    senders that cannot hear each other and have collided at the
-//!    receiver come apart (§9.3, roadmap D22).
+//!    receiver come apart (spec "Hand-over", roadmap D22).
 //!
 //! An ACK answers the hand-over only if it names the message, the
 //! receiver as `from` and this node as `to` (roadmap D19, D32): another
@@ -75,7 +75,7 @@ pub(crate) enum Missed {
     Failed,
 }
 
-/// One hand-over (design §9.3).
+/// One hand-over (spec "Hand-over").
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Transfer {
     step: Step,
@@ -284,12 +284,12 @@ impl Transfer {
 /// What a node replies with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reply {
-    /// An ACK, taking or refusing (§9.3).
+    /// An ACK, taking or refusing (spec "Hand-over").
     Ack(Ack),
-    /// A relay's ATTACHED to this leaf's ATTACH that attaches (§10.2). The
+    /// A relay's ATTACHED to this leaf's ATTACH that attaches (spec "Attach and polls"). The
     /// relay builds it as it transmits, from the leaf's slot.
     Attached(LeafId),
-    /// A leaf's ATTACH that answers its relay's poll (§10.2).
+    /// A leaf's ATTACH that answers its relay's poll (spec "Attach and polls").
     Attach(Attach),
 }
 
@@ -321,7 +321,7 @@ enum ReplyStep {
 }
 
 /// The one reply this node can owe (roadmap D29). It is sent with
-/// listen-before-talk, as the receiver of §9.3 does, with the hand-over's
+/// listen-before-talk, as the receiver of spec "Hand-over" does, with the hand-over's
 /// backoff, and abandoned once its sender has stopped waiting.
 ///
 /// One place, because a node that owes a reply has the radio's next

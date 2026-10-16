@@ -1,5 +1,5 @@
 //! The SX1262: power-up, the pins the driver drives, and bark's modulation
-//! (protocol §4) on top of `lora-phy`.
+//! (spec "Physical layer") on top of `lora-phy`.
 //!
 //! "DS" is the SX1261/2 datasheet, Rev 1.2 (June 2019).
 
@@ -46,7 +46,7 @@ pub const MAX_LEN: usize = MAX_FRAME;
 pub const ANTENNA_GAIN_DBD: i8 = 0;
 
 /// Highest conducted power the console allows: the regulatory ERP limit
-/// (ERC/REC 70-03 band g1, 10 mW; protocol §3) less antenna gain.
+/// (ERC/REC 70-03 band g1, 10 mW; spec "Regulatory limits") less antenna gain.
 pub const MAX_TX_DBM: i8 = MAX_ERP_DBM - ANTENNA_GAIN_DBD;
 
 /// Lowest power the SX1262 high-power PA can be set to (DS §13.4.4 SetTxParams).
@@ -259,7 +259,7 @@ impl<'a> Radio<'a> {
             rx_boost: false,
         };
         // `false`: the private sync word 0x1424, not LoRaWAN's public 0x3444
-        // (protocol §4).
+        // (spec "Physical layer").
         let mut lora = LoRa::new(Sx126x::new(spi, iv, chip), false, Delay).await?;
         // Packet parameters do not depend on the channel.
         let mdl = lora.create_modulation_params(SF, BW, CR, CHANNEL_0_HZ)?;

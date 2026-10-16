@@ -21,7 +21,7 @@ use bark_proto::{
     Action, Config, Core, Duration, Event, Instant, LeafId, Position, Relay, MAX_FRAME,
 };
 
-/// Neighbours: the table's capacity (design §8.2).
+/// Neighbours: the table's capacity (spec "Neighbour table").
 const NEIGHBOURS: usize = 64;
 /// Simulated time.
 const RUN: Duration = Duration::from_secs(600);

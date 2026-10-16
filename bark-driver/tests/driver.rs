@@ -477,7 +477,7 @@ fn a_transmit_goes_out_and_completes() {
 
 /// A check asked for while a packet is arriving waits for it to end, the
 /// frame reaches the core first, and the check runs after (core-interface
-/// §3 rule 8).
+/// spec "Regulatory limits" rule 8).
 #[test]
 fn a_check_waits_for_the_packet_in_progress() {
     let world = World::default();

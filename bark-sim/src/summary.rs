@@ -211,7 +211,7 @@ pub struct Summary {
     pub max_airtime_fraction: f64,
     /// Resting-channel changes.
     pub home_moves: u64,
-    /// Leaves attaching to a relay other than their last (design §10.1).
+    /// Leaves attaching to a relay other than their last (spec "Relay choice").
     pub relay_changes: u64,
     /// Dark leaves coming back, if any went dark.
     #[serde(skip_serializing_if = "Option::is_none")]

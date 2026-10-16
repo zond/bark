@@ -1,4 +1,4 @@
-//! Leaves and relays together (design §9, §10), driven through real bytes
+//! Leaves and relays together (spec "Forwarding", "Leaves"), driven through real bytes
 //! on the test medium, with the design's timings throughout.
 
 mod common;
@@ -108,8 +108,8 @@ fn dropped(h: &Harness<Node>, i: usize, id: MsgId) -> Option<(Instant, DropReaso
 }
 
 /// Run until every leaf is attached to its relay: the relays' boot listen
-/// (§6.2), up to a rotation for each leaf to hear its relay, and a
-/// rotation of listening before it chooses (§10.1).
+/// (spec "Channel at boot"), up to a rotation for each leaf to hear its relay, and a
+/// rotation of listening before it chooses (spec "Relay choice").
 fn settle(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
     let deadline = Instant::ZERO + secs(150 + 2 * 195);
@@ -135,7 +135,7 @@ fn leaf_to_leaf_across_two_relays() {
         h.link(a, b);
     }
     settle(&mut h, &[(l1, r1), (l2, r2)]);
-    // Wait until the relays know each other (§7).
+    // Wait until the relays know each other (spec "Heartbeat").
     let knows = |h: &Harness<Node>| {
         the_relay(h, r1)
             .neighbours()
@@ -164,9 +164,9 @@ fn leaf_to_leaf_across_two_relays() {
 
 /// R1's delivery queue is full: its application has filled it with
 /// messages for L3, which is dark. R1 refuses L1's message for L3
-/// (§9.2.4, §10.4); L1 keeps its relay, holds the message and offers
+/// (spec "Receiving DATA", "Delivery queue"); L1 keeps its relay, holds the message and offers
 /// it again one ban after the first refusal, twice that after the second,
-/// and so on (§9.3, §10.2, roadmap D27, D29), until L3 is back, R1 has
+/// and so on (spec "Hand-over", "Attach and polls", roadmap D27, D29), until L3 is back, R1 has
 /// room, and it arrives.
 #[test]
 fn a_leaf_told_busy_holds_its_message_for_the_ban() {
@@ -236,9 +236,9 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
 
 /// L2 goes dark while R1's application sends it more messages than R2's
 /// delivery queue holds. R2 queues them until the queue is full and then
-/// refuses the next (§9.2.4, §10.4), keeping what it has. R1
+/// refuses the next (spec "Receiving DATA", "Delivery queue"), keeping what it has. R1
 /// holds that one, its application's, and offers it again after each ban
-/// (§9.3), so its application waits. R2's DELIVERs to L2 go unanswered,
+/// (spec "Hand-over"), so its application waits. R2's DELIVERs to L2 go unanswered,
 /// and R2 does not hand L2 another each time its send queue frees up:
 /// until L2 is heard again only the 60 s retry tries it. Back, L2 gets
 /// every message, the held one too.
@@ -319,7 +319,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
 }
 
 /// The destination leaf's first ACK of the DELIVER is lost: the relay
-/// sends it again, the leaf ACKs again and surfaces it once (§10.3).
+/// sends it again, the leaf ACKs again and surfaces it once (spec "Delivery").
 #[test]
 fn a_repeated_deliver_is_acked_and_surfaced_once() {
     let (r, l1, l2) = (0, 1, 2);
@@ -347,9 +347,9 @@ fn a_repeated_deliver_is_acked_and_surfaced_once() {
     assert!(handed_over(&h, l1, id));
 }
 
-/// Three relays in a line with a leaf at each end (design §15 step 4).
+/// Three relays in a line with a leaf at each end (spec "Implementation notes" step 4).
 /// Messages are delivered; then the middle relay is unplugged, and every
-/// later message ends at A, dropped for want of a route (§9.2.5), once
+/// later message ends at A, dropped for want of a route (spec "Return to parent"), once
 /// A's entry for the middle relay has expired.
 #[test]
 fn line_of_three_loses_its_middle() {
@@ -390,11 +390,11 @@ fn line_of_three_loses_its_middle() {
     let removed = h.now;
     println!("B removed at {:.1} s", removed.as_micros() as f64 / 1e6);
     // The first message after the removal fails at B, which is banned for
-    // longer after each failure (§9.3, roadmap D42), and waits at A. While
+    // longer after each failure (spec "Hand-over", roadmap D42), and waits at A. While
     // B, A's only neighbour, is banned, A takes nothing from its leaf
-    // (§9.2.4, roadmap D34): the leaf holds its message and offers it
-    // again. B is demoted after two failures (§8.2) but stays A's last
-    // resort (§9.2.3, roadmap D25) until its entry expires, three rotations
+    // (spec "Receiving DATA", roadmap D34): the leaf holds its message and offers it
+    // again. B is demoted after two failures (spec "Neighbour table") but stays A's last
+    // resort (spec "Next hop", roadmap D25) until its entry expires, three rotations
     // after its last heartbeat; from then on A has no neighbour, and every
     // message it holds or is offered is dropped for want of a route.
     let expiry = bark_proto::tables::neighbours::NeighbourParams::from_config(&c).expire_after;
@@ -448,7 +448,7 @@ fn line_of_three_loses_its_middle() {
 
 /// The address decides who delivers, not the leaf table (roadmap D21). A
 /// leaf that has just moved to another relay stays in the old one's leaf
-/// table until it times out (§10.2); a message for it at its new address
+/// table until it times out (spec "Attach and polls"); a message for it at its new address
 /// that passes the old relay goes on to the address.
 #[test]
 fn a_relay_holding_the_leaf_routes_by_the_address() {
@@ -508,7 +508,7 @@ fn first_heartbeat_and_attach(h: &Harness<Node>, l: usize) -> (Instant, Instant)
 }
 
 /// A leaf attaches to the strongest relay it hears over a rotation of
-/// listening, not to the first (§10.1).
+/// listening, not to the first (spec "Relay choice").
 #[test]
 fn a_leaf_chooses_the_strongest_relay_after_a_rotation() {
     let rotation = Config::default().heartbeat_max.mul(13);
@@ -534,7 +534,7 @@ fn a_leaf_chooses_the_strongest_relay_after_a_rotation() {
 }
 
 /// A leaf with a message to send does not wait out the rotation, and holds
-/// the message until it has a relay (§10.1, §10.2).
+/// the message until it has a relay (spec "Relay choice", "Attach and polls").
 #[test]
 fn a_message_waits_for_a_relay() {
     let (r, l) = (0, 1);
@@ -564,7 +564,7 @@ fn a_message_waits_for_a_relay() {
     );
 }
 
-/// A message no relay takes is dropped after the delivery TTL (§10.4),
+/// A message no relay takes is dropped after the delivery TTL (spec "Delivery queue"),
 /// not at once, and the application is not told.
 #[test]
 fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
@@ -596,7 +596,7 @@ fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
 }
 
 /// A leaf moves to a relay only when it is stronger by the margin over two
-/// heartbeats (§10.1).
+/// heartbeats (spec "Relay choice").
 #[test]
 fn a_leaf_switches_only_to_a_clearly_stronger_relay() {
     let (r1, r2, r3, l) = (0, 1, 2, 3);
@@ -631,7 +631,7 @@ fn a_leaf_switches_only_to_a_clearly_stronger_relay() {
     assert!(heard >= 2, "switched after {heard} heartbeat(s)");
 }
 
-// --- Polls (§10.2, roadmap D39, D41) ---
+// --- Polls (spec "Attach and polls", roadmap D39, D41) ---
 
 use bark_proto::tables::leaves::{Polls, PERIOD, POLL_AIRTIME, POLL_LATE};
 use bark_proto::wire::{Attach, Attached};
@@ -753,7 +753,7 @@ fn a_leaf_is_attached_by_attached_and_answers_only_polls() {
 
 /// With several leaves the polls keep the spacing: three leaves that
 /// attached within seconds of each other are polled every 300 s, 100 s
-/// apart (§10.2).
+/// apart (spec "Attach and polls").
 #[test]
 fn a_relay_spreads_its_polls() {
     let r = 0;
@@ -799,7 +799,7 @@ fn a_relay_spreads_its_polls() {
 
 /// A leaf that stops answering is polled until its polls have gone
 /// unanswered for a TTL, and dropped once the answer to the last is
-/// overdue; until then it is kept (§10.2). At 300 s that is three
+/// overdue; until then it is kept (spec "Attach and polls"). At 300 s that is three
 /// polls.
 #[test]
 fn a_leaf_that_misses_its_polls_for_a_ttl_is_dropped() {
@@ -832,7 +832,7 @@ fn a_leaf_that_misses_its_polls_for_a_ttl_is_dropped() {
 /// One poll lost to a fade costs one ATTACH: the leaf, which no longer
 /// knows its slot, attaches again a heartbeat and up to a minute later,
 /// and the relay, which still has it, answers with its slot unchanged; the
-/// polls go on (§10.2).
+/// polls go on (spec "Attach and polls").
 #[test]
 fn a_lost_poll_costs_one_attach() {
     use std::cell::Cell;
@@ -884,7 +884,7 @@ fn a_lost_poll_costs_one_attach() {
 /// A phone out of reach of every relay for longer than a TTL keeps its
 /// relay. It sends nothing it cannot be heard for but one ATTACH a
 /// rotation; its relay drops it; back in reach, it attaches to the same
-/// relay a random 0 to 60 s after the first heartbeat it hears (§10.2).
+/// relay a random 0 to 60 s after the first heartbeat it hears (spec "Attach and polls").
 #[test]
 fn a_dark_leaf_keeps_its_relay_and_attaches_after_a_heartbeat() {
     use std::cell::Cell;
@@ -935,7 +935,7 @@ fn a_dark_leaf_keeps_its_relay_and_attaches_after_a_heartbeat() {
 /// A leaf whose relay dies takes the next poll that does not come as the
 /// sign: after the next heartbeat it hears, from the other relay, and a
 /// random wait, it has not heard its own since the polls stopped, and
-/// attaches to the other one (§10.1, §10.2).
+/// attaches to the other one (spec "Relay choice", "Attach and polls").
 #[test]
 fn a_leaf_whose_relay_dies_attaches_to_another() {
     let (r1, r2, l) = (0, 1, 2);
@@ -968,8 +968,8 @@ fn a_leaf_whose_relay_dies_attaches_to_another() {
 }
 
 /// A message for a leaf waits while its DELIVERs go unanswered; the next
-/// poll counts it, and the DELIVER follows the answer at once (§10.2,
-/// §10.4).
+/// poll counts it, and the DELIVER follows the answer at once (spec "Attach and polls",
+/// "Delivery queue").
 #[test]
 fn a_poll_counts_the_messages_waiting() {
     use std::cell::Cell;

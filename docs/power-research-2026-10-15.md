@@ -13,39 +13,39 @@ for this network, and the measurements say so twice over.
 
 - **Where the relays' 10 % duty cycle binds, which is S4, the design's
   domain, it costs capacity.** Shorter hops cost the same airtime per
-  hop, and there are more of them. At twice the §13 texting rate the
+  hop, and there are more of them. At twice the spec "Capacity and sizing" texting rate the
   degree rule delivers 37 to 59 % where full power delivers 94 %. It also
   splits the network: with N = 8 one relay is cut off in each seed, and N
   had to be 12 before the S4 relays stayed connected.
 - **Per-receiver power alone buys nothing measurable once D38 and D39 are
-  in.** At twice the §13 rate it delivers 94.6 % against 94.4 % (seed 1)
+  in.** At twice the spec "Capacity and sizing" rate it delivers 94.6 % against 94.4 % (seed 1)
   and 94.5 against 94.0 % (seed 2). It takes a third off the area each
   frame disturbs, but the channels were never what bound.
 - **Where the channel binds, power control is the fix, but it must lower
   the heartbeats too.** In the domain where every relay is on a roof
-  and all hear each other, §13's own picture, full power delivers 7.9 %
-  at the §13 rate. Per-receiver power for data raises that only to
+  and all hear each other, spec "Capacity and sizing"'s own picture, full power delivers 7.9 %
+  at the spec "Capacity and sizing" rate. Per-receiver power for data raises that only to
   12.9 %: heartbeats at full power keep every relay in every table and
   routes stay long. Heartbeats at the lowest power that reaches the
   relay's 8 to 16 nearest neighbours, with one rotation in three at full
   power, and data at per-receiver power (rule c) deliver 90.5 to 90.8 %.
-- **That same rule costs the mixed domain at twice the §13 rate,** where
+- **That same rule costs the mixed domain at twice the spec "Capacity and sizing" rate,** where
   the domain is close to its limit: with N of 12 or 16 it delivers 92.7
   to 94.4 % in seed 1 but 77.5 to 81 % in seed 2, against 94 %; with N = 8
   52 to 91 %. Rooftop relays there carry the long hops, and whispering
   shortens them.
 - **In overload both lose.** In a 2 × 2 tiling of domains whose texts
-  cross the whole 112 km², at the §13 rate, full power carries 4.7 texts
+  cross the whole 112 km², at the spec "Capacity and sizing" rate, full power carries 4.7 texts
   a second, per-receiver power 2.1 and rule (c) 1.6.
 
 So no rule wins everywhere. What decides is which limit binds at the
 relay: its duty budget, which power cannot change, or the channel, which
 it can. The recommendation is to keep full power, keep the five spare
-heartbeat bits for the sender's power (§7), which costs nothing, and
+heartbeat bits for the sender's power (spec "Heartbeat"), which costs nothing, and
 hold rule (c) as the measured remedy for rooftop-dense areas, to be
 switched on by a relay's own measured channel load once a gate for it
-has been tested. §13's "+ per-packet power control ≈ 2× capacity"
-assumes the channel binds; in S4 it does not, and the doubling §13
+has been tested. Spec "Capacity and sizing"'s "+ per-packet power control ≈ 2× capacity"
+assumes the channel binds; in S4 it does not, and the doubling spec "Capacity and sizing"
 expected came from D38 and D39 instead.
 
 ## The question
@@ -65,7 +65,7 @@ a to b equals the loss from b to a, antenna gains of both ends included.
 So a relay that hears a heartbeat at RSSI R, sent at power P, knows the
 path loss L = P − R, and that the sender would hear it at any power p
 with p − L at or above the sender's sensitivity. It needs P. The
-heartbeat has five spare bits after its position (§7), enough to state
+heartbeat has five spare bits after its position (spec "Heartbeat"), enough to state
 it. The prototype uses four for the sender's operating power in 2 dB
 steps below +10 dBm, down to −8 dBm, the lowest even step at or above the
 SX1262's −9 dBm (SX1261/2 datasheet §13.4.4, SetTxParams: −9 to +22 dBm
@@ -108,7 +108,7 @@ Every rule below uses 8 dB over a sensitivity of −119 dBm.
 ### Who hears whom when powers differ
 
 A hand-over needs both directions: the DATA must reach the neighbour and
-its ACK must reach back (§9.3). With heartbeats stating their power, a
+its ACK must reach back (spec "Hand-over"). With heartbeats stating their power, a
 relay knows its own operating power, the neighbour's, and the loss
 between them. The rule the prototype applies when relays lower their
 operating power: a neighbour is a next hop only if
@@ -148,7 +148,7 @@ What a text costs is two things:
 - **Channel time over area.** Each hop occupies its channel over the area
   it disturbs. For hops of length r over a distance D there are D/r of
   them, each disturbing an area ∝ r²: the cost per text ∝ D·r. Shorter
-  hops cost less, and the channel is reused more. This is §13's argument
+  hops cost less, and the channel is reused more. This is spec "Capacity and sizing"'s argument
   for power control.
 - **Airtime at relays.** Each hop costs the sending relay one frame of
   its duty budget whatever its power: the cost per text ∝ D/r. Shorter
@@ -185,7 +185,7 @@ it; it is recomputed after each heartbeat.
 **Discovery.** Under (a) and (c) one rotation of heartbeats in k goes at
 full power, so that every relay in reach is still heard and measured and
 a newcomer finds a relay that whispers. k is at most 3: an entry expires
-three rotations after its last heartbeat (§8.2), so a relay heard only
+three rotations after its last heartbeat (spec "Neighbour table"), so a relay heard only
 at full power must be heard at least that often. With the D38 average,
 the loss to such a relay is then at most 6.5 minutes old. A heartbeat at
 full power adds its sender to the table only if a full frame at full
@@ -296,7 +296,7 @@ baseline of the same commit:
 | (c) N = 12, six sectors | 95.7 % | | 92.7 % | 80.3 % | 8.98 | 1.30 | 5.3 | 20 % | 3.3 % | 5.5 |
 | (c) N = 16 | 95.5 % | | 92.7 % | 81.0 % | 8.99 | 1.24 | 5.1 | 21 % | 3.5 % | 5.6 |
 
-At the §13 rate every rule delivers what the dark phones allow; the
+At the spec "Capacity and sizing" rate every rule delivers what the dark phones allow; the
 domain has room. At twice the rate:
 
 - **Per-receiver power changes nothing that matters.** It lowers the
@@ -375,13 +375,13 @@ On **1592331** (D39 without D38), at twice the rate: full power 34.0 %;
 a hard filter that keeps out neighbours a full frame at full power does
 not reach with 8 dB (the prototype's `reach_filter`) 80.0 %; that filter
 and per-receiver power 94.3 %, as much as D38's ranking gives alone;
-per-receiver power without the filter 28.5 %. On roofs at the §13 rate
+per-receiver power without the filter 28.5 %. On roofs at the spec "Capacity and sizing" rate
 (c) N = 8 with the filter delivered 90.2 % against 7.2 %. So per-receiver power helped
 only while far, faint neighbours were being tried first.
 
 On **af0cb7a** (before D38 and D39), keepalive ACKs were the largest load
 on every channel. There per-receiver power on top of the filter added 9
-to 18 points at the §13 rate (92.1 against 83.4 % in seed 1, 80.0
+to 18 points at the spec "Capacity and sizing" rate (92.1 against 83.4 % in seed 1, 80.0
 against 61.9 % in seed 2), mostly by sending the keepalive ACKs quieter.
 **This conclusion changed with D39**: with keepalives gone, the same rule
 adds nothing. The all-on-roofs domain failed under every rule (0 to 50 %)
@@ -391,9 +391,9 @@ because of the keepalive ACKs.
 
 Leaves without a relay at the end, of 20 000: 474 at full power at twice
 the rate (seed 1), 449 under (b), 658 under (c) N = 8, 877 to 978 under
-(a); on roofs at the §13 rate 9130 at full power (the relays are too busy
+(a); on roofs at the spec "Capacity and sizing" rate 9130 at full power (the relays are too busy
 to poll), 664 under (c), 5900 to 6800 under (a). A leaf chooses its
-relay by heartbeat RSSI (§10.1), and under (a) a relay's polls and
+relay by heartbeat RSSI (spec "Relay choice"), and under (a) a relay's polls and
 deliveries go at its whispering power, so a leaf that heard a discovery
 heartbeat may attach to a relay that cannot reach it. Under (c) polls
 and deliveries go at the power the leaf's own loss needs.
@@ -418,7 +418,7 @@ inside a domain it does across borders too. The per-domain figures are
 therefore the city's per-area figures as long as traffic stays local.
 Traffic that crosses the city does not, and the run that shows it is a
 2 × 2 tiling: 112 km², the same densities (1075 relays, 80 000 leaves),
-the §13 texting rate, destinations uniform over the whole area, seed 1,
+the spec "Capacity and sizing" texting rate, destinations uniform over the whole area, seed 1,
 on 2097d3a. Each run took 47 to 51 minutes and 1.3 GB.
 
 | Rule | Offered, texts/s | Delivered | Carried, texts/s | Air per text, s | Hops | Busy at relays | Relay dBm |
@@ -485,7 +485,7 @@ For rule (c), and for any later one:
   and ACK do not state their power. Stating it in DATA and ACK (no spare
   bits there) would remove the confound.
 - The gate that would switch (c) on only where the channel binds is not
-  built or tested. A relay could use its own busy estimate (§6.1), which
+  built or tested. A relay could use its own busy estimate (spec "Busy estimate"), which
   in these runs was 2 to 7 % at relays in the mixed domain and 41 % on
   the roofs.
 - O4, a rooftop table spread around the relay instead of D12's
@@ -497,4 +497,4 @@ For rule (c), and for any later one:
 
 ## Draft decision row
 
-| D40 (draft) | **Transmit power stays at the ERP limit; heartbeats state it.** Heartbeats carry the sender's transmit power in their five spare position bits (all zero: +10 dBm), and every frame goes at +10 dBm. The heartbeat-and-data power rule (c), operating power for the 12th-nearest neighbour by loss with 8 dB of margin, one heartbeat rotation in three at full power, data at the power each receiver's loss needs, is the measured remedy where relays all hear each other, and is not adopted until a relay can tell, from its own channel load, that it is in such an area. | `power-research-2026-10-15.md`: in S4 the duty cycle binds; per-receiver power changes nothing (94.6 against 94.4 % at twice the §13 rate), the degree rule costs 35 to 57 points, and (c) up to 17 points in seed 2. Where all relays are on roofs (c) takes delivery from 7.9 to 90.5 %. |
+| D40 (draft) | **Transmit power stays at the ERP limit; heartbeats state it.** Heartbeats carry the sender's transmit power in their five spare position bits (all zero: +10 dBm), and every frame goes at +10 dBm. The heartbeat-and-data power rule (c), operating power for the 12th-nearest neighbour by loss with 8 dB of margin, one heartbeat rotation in three at full power, data at the power each receiver's loss needs, is the measured remedy where relays all hear each other, and is not adopted until a relay can tell, from its own channel load, that it is in such an area. | `power-research-2026-10-15.md`: in S4 the duty cycle binds; per-receiver power changes nothing (94.6 against 94.4 % at twice the spec "Capacity and sizing" rate), the degree rule costs 35 to 57 points, and (c) up to 17 points in seed 2. Where all relays are on roofs (c) takes delivery from 7.9 to 90.5 %. |

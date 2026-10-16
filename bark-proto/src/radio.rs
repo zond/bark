@@ -1,13 +1,13 @@
 //! The physical layer as the core sees it: channel plan and modulation
-//! constants from design §4 and §5. Everything here is a number the radio
+//! constants from spec "Physical layer" and "Channel plan". Everything here is a number the radio
 //! or the regulator fixes, not a tunable.
 
 use crate::time::Duration;
 
-/// Number of channels in the plan (design §5).
+/// Number of channels in the plan (spec "Channel plan").
 pub const CHANNELS: u8 = 13;
 
-/// Centre frequency of channel 0 in Hz (design §5: f_k = 433.170 MHz + k × 125 kHz).
+/// Centre frequency of channel 0 in Hz (spec "Channel plan": f_k = 433.170 MHz + k × 125 kHz).
 pub const CHANNEL_0_HZ: u32 = 433_170_000;
 
 /// Channel spacing in Hz, equal to the signal bandwidth.
@@ -30,7 +30,7 @@ pub const SYMBOL_TIME: Duration =
 /// "for SF5 and SF6 the minimum preamble length is 12 symbols").
 pub const MIN_PREAMBLE_SYMBOLS: u16 = 12;
 
-/// Maximum ERP in dBm (ERC/REC 70-03 Annex 1 band g1, 10 mW; design §3).
+/// Maximum ERP in dBm (ERC/REC 70-03 Annex 1 band g1, 10 mW; spec "Regulatory limits").
 pub const MAX_ERP_DBM: i8 = 10;
 
 /// Duty-cycle cap as a fraction of the budget window (band g1: 10 %).
@@ -63,7 +63,7 @@ impl Channel {
         CHANNEL_0_HZ + self.0 as u32 * CHANNEL_SPACING_HZ
     }
 
-    /// The next channel in the heartbeat rotation, `(k + 1) mod 13` (design §7).
+    /// The next channel in the heartbeat rotation, `(k + 1) mod 13` (spec "Heartbeat").
     pub const fn next(self) -> Channel {
         Channel((self.0 + 1) % CHANNELS)
     }
@@ -160,7 +160,7 @@ mod tests {
         // 8-byte heartbeat, 12-symbol preamble. Payload bits:
         // 8·8 + 16 − 4·5 + 8 = 68 → ceil(68 / 20) = 4 → ×5 = 20 symbols.
         // Total 12 + 6.25 + 8 + 20 = 46.25 symbols × 256 µs = 11.84 ms,
-        // which is the "≈12 ms" of design §7.
+        // which is the "≈12 ms" of spec "Heartbeat".
         let t = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
         assert_eq!(t.as_micros(), 11_840);
     }

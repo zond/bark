@@ -1,4 +1,4 @@
-//! Identifiers carried on the wire (design §9.1, §14).
+//! Identifiers carried on the wire (spec "Addresses", "Packet formats").
 
 use crate::position::Position;
 
@@ -11,7 +11,7 @@ impl LeafId {
     pub const RELAY: LeafId = LeafId([0; 4]);
 }
 
-/// A message's identity (design §14, roadmap D15). No packet carries it
+/// A message's identity (spec "Packet formats", roadmap D15). No packet carries it
 /// except the ACK and DELIVER that answer for a message: every node that
 /// handles the message computes it with [`MsgId::of`], and gets the same
 /// value on every hop because none of the hashed fields changes.
@@ -23,8 +23,8 @@ impl MsgId {
     /// 32-bit FNV-1a over `dst_pos` in its 7 wire bytes, `dst_leaf` and
     /// `payload`, concatenated. FNV-1a because the phone app must compute
     /// it too, and it is a few lines in any language. The app keeps
-    /// payloads unique (design §11), so two IDs collide only by chance:
-    /// among the 1695 messages a relay remembers at most (§9.2.2), with
+    /// payloads unique (spec "Position, time, phone link"), so two IDs collide only by chance:
+    /// among the 1695 messages a relay remembers at most (spec "Message records"), with
     /// probability about 3 × 10⁻⁴.
     pub fn of(dst_pos: Position, dst_leaf: LeafId, payload: &[u8]) -> MsgId {
         let mut h: u32 = 0x811c_9dc5;
