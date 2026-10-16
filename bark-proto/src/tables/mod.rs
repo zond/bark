@@ -103,7 +103,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 256);
         assert_eq!(size_of::<records::Record>(), 32);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 272);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 280);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full leaf table over one TTL (spec "Delivery queue").
@@ -138,7 +138,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 272,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280,
             ),
             (
                 "delivered",

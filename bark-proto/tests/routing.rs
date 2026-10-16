@@ -437,6 +437,16 @@ fn a_split_heals_at_a_sender_that_waits() {
 }
 
 /// A relay at `east`, `north` with `config`, its position aside.
+/// A relay whose full delivery queue frees well within a message's time:
+/// its own messages, which fill it, are kept 400 s, and a message waiting
+/// for a place there has 600 s on its way (spec "Receiving DATA", "Delivery queue").
+fn brief(config: Config) -> Config {
+    Config {
+        delivery_ttl: secs(400),
+        ..config
+    }
+}
+
 fn relay_with(east: f64, north: f64, seed: u64, config: Config) -> Node {
     Node::Relay(Relay::new(
         Config {
@@ -565,7 +575,7 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     let nodes = [
         (0.0, 0.0, 151, quick),
         (-300.0, 100.0, 152, quick),
-        (400.0, 0.0, 153, quick),
+        (400.0, 0.0, 153, brief(quick)),
     ]
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
@@ -818,7 +828,7 @@ fn a_split_met_again_merges() {
         (0.0, 0.0, 181, hasty),
         (400.0, 0.0, 182, Config::default()),
         (300.0, -300.0, 183, Config::default()),
-        (800.0, 0.0, 184, Config::default()),
+        (800.0, 0.0, 184, brief(Config::default())),
     ]
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
@@ -1203,7 +1213,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
         vec![
             relay(-400.0, 0.0, 120),
             relay(0.0, 0.0, 121),
-            relay(400.0, 0.0, 122),
+            relay_with(400.0, 0.0, 122, brief(Config::default())),
         ],
         &[(p, o), (o, f)],
     );
@@ -1300,7 +1310,10 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
     use bark_proto::tables::delivery::DELIVERY_QUEUE;
     let (o, f) = (0, 1);
     let mut h = build(
-        vec![relay(0.0, 0.0, 141), relay(400.0, 0.0, 142)],
+        vec![
+            relay(0.0, 0.0, 141),
+            relay_with(400.0, 0.0, 142, brief(Config::default())),
+        ],
         &[(o, f)],
     );
     let (pf, l) = (position(&h, f), LeafId([7; 4]));
@@ -1487,6 +1500,91 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
         msg_id: id,
         reason: DropReason::NoRoute
     }));
+}
+
+/// The same line, C gone. Every DATA of the message, the forward to R
+/// and R's return to P alike, carries the time its origin gave it less
+/// the time it has spent since, rounded down (spec "Receiving DATA"). With a
+/// shorter TTL at P, R's copy ends at that time while it waits for C's
+/// bans, before C's entry expires, and is never returned.
+#[test]
+fn the_time_left_travels_with_the_message_and_its_return() {
+    use bark_proto::wire::TTL_UNIT;
+    let (p, r, c, d) = (0, 1, 2, 3);
+    let line = |ttl| {
+        let mut h = build(
+            vec![
+                relay_with(
+                    0.0,
+                    0.0,
+                    131,
+                    Config {
+                        delivery_ttl: ttl,
+                        ..Config::default()
+                    },
+                ),
+                relay(400.0, 0.0, 132),
+                relay(800.0, 0.0, 133),
+                relay(1200.0, 0.0, 134),
+            ],
+            &[(p, r), (r, c), (c, d)],
+        );
+        h.kill(c);
+        h
+    };
+    let datas = |h: &Harness<Node>, i: usize, id: MsgId| {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Data(q)) if q.msg_id() == id => Some((*t, q.time_left)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let ttl = secs(600);
+    let mut h = line(ttl);
+    let start = h.now;
+    let id = send(&mut h, p, d, b"timed");
+    let returned = |h: &Harness<Node>| {
+        traces(h, r)
+            .iter()
+            .any(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
+    };
+    assert!(h.run_until(start + ttl, returned), "R did not return it");
+    let (sent_p, sent_r) = (datas(&h, p, id), datas(&h, r, id));
+    let (last, left) = *sent_r.last().unwrap();
+    assert!(
+        last.since(start) > secs(390),
+        "returned once C's entry expired"
+    );
+    for (t, left) in sent_p.iter().chain(&sent_r) {
+        let most = (ttl - t.since(start)).as_micros() / TTL_UNIT.as_micros();
+        assert!(
+            (*left as u64) <= most && *left >= 1,
+            "{left} units at {t:?}"
+        );
+    }
+    // Rounded down twice, at P and at R, so at most two units short.
+    let exact = (ttl - last.since(start)).as_micros() / TTL_UNIT.as_micros();
+    assert!(u64::from(left) + 2 >= exact, "{left} units, {exact} left");
+
+    let short = secs(120);
+    let mut h = line(short);
+    let start = h.now;
+    let id = send(&mut h, p, d, b"timed");
+    let ended = |h: &Harness<Node>| {
+        traces(h, r).contains(&Trace::Dropped {
+            msg_id: id,
+            reason: DropReason::Expired,
+        })
+    };
+    assert!(h.run_until(start + short, ended), "R kept it past its time");
+    h.run_for(secs(400));
+    assert!(!returned(&h));
+    assert!(!traces(&h, p)
+        .iter()
+        .any(|t| matches!(t, Trace::Dropped { .. })));
 }
 
 /// P hands a message to C and moves its home channel (spec "Channel moves") while C is

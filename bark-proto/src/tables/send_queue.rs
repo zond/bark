@@ -89,6 +89,9 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
+    /// When a DATA's time left reaches zero (spec "Receiving DATA");
+    /// [`Instant::MAX`] for a DELIVER, which the delivery queue's TTL ends.
+    pub expires: Instant,
 }
 
 impl Outgoing {
@@ -100,6 +103,7 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
+            expires: Instant::MAX,
         }
     }
 

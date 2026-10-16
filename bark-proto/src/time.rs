@@ -29,6 +29,9 @@ impl Instant {
         self.0
     }
 
+    /// Later than any instant a clock reaches: for what never ends.
+    pub const MAX: Instant = Instant(u64::MAX);
+
     /// `self - earlier`, saturating at zero if `earlier` is later.
     pub const fn since(self, earlier: Instant) -> Duration {
         Duration(self.0.saturating_sub(earlier.0))
@@ -85,6 +88,14 @@ impl Add<Duration> for Instant {
 impl AddAssign<Duration> for Instant {
     fn add_assign(&mut self, d: Duration) {
         self.0 += d.0;
+    }
+}
+
+impl Sub<Duration> for Instant {
+    type Output = Instant;
+    /// Saturating at the epoch.
+    fn sub(self, d: Duration) -> Instant {
+        Instant(self.0.saturating_sub(d.0))
     }
 }
 

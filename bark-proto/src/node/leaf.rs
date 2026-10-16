@@ -101,7 +101,7 @@ use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
 use crate::wire::{
     Ack, AckName, Attach, Attached, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD,
-    POLL_UNIT,
+    POLL_UNIT, TTL_UNIT,
 };
 
 /// How much stronger, in its mean over two heartbeats, another relay must
@@ -233,7 +233,8 @@ pub struct Leaf {
     sending: Sending,
     /// The message being sent, as DATA; readdressed for each hand-over.
     outgoing: Option<Frame>,
-    /// When the message is given up if it has not been handed over.
+    /// When the message's time runs out (spec "Receiving DATA"); it is given up
+    /// one [`TTL_UNIT`] before, when a DATA could no longer carry it.
     outgoing_until: Instant,
     /// Not before this is the message offered: the relay said it was busy.
     outgoing_at: Instant,
@@ -532,7 +533,8 @@ impl Leaf {
             dst_pos,
             dst_leaf,
             hops: 0,
-            time_left: Data::units(self.config.delivery_ttl),
+            // Stamped as each attempt goes (`frame`).
+            time_left: 0,
             payload,
         };
         self.outgoing = Some(mac::frame(
@@ -603,8 +605,14 @@ impl Leaf {
         }
     }
 
-    /// The frame of the hand-over, addressed to the relay as it is now.
-    fn frame(&self) -> Option<Frame> {
+    /// When the message is given up: no whole unit of its time is left.
+    fn give_up_at(&self) -> Instant {
+        self.outgoing_until - TTL_UNIT
+    }
+
+    /// The frame of the hand-over, addressed to the relay as it is now,
+    /// with the message's time as it is now.
+    fn frame(&self, now: Instant) -> Option<Frame> {
         let relay = self.relay?.position.short();
         let packet = match self.sending {
             Sending::Attach => Packet::Attach(Attach {
@@ -620,6 +628,7 @@ impl Leaf {
                 let addressed = Data {
                     sender_home: self.home,
                     dst_hop: relay,
+                    time_left: Data::units(self.outgoing_until.since(now)),
                     ..d
                 };
                 return Some(mac::frame(
@@ -636,7 +645,7 @@ impl Leaf {
         if !self.transfer.due(now) {
             return false;
         }
-        let Some(frame) = self.frame() else {
+        let Some(frame) = self.frame(now) else {
             self.transfer.cancel();
             return false;
         };
@@ -669,7 +678,7 @@ impl Leaf {
                     self.transfer.hold(now);
                     return;
                 }
-                let Some(frame) = self.frame() else {
+                let Some(frame) = self.frame(now) else {
                     self.transfer.cancel();
                     return;
                 };
@@ -922,7 +931,7 @@ impl Leaf {
             // The end of the first rotation of listening.
             self.choose(now, emit);
         }
-        if self.outgoing.is_some() && now >= self.outgoing_until {
+        if self.outgoing.is_some() && now >= self.give_up_at() {
             self.give_up_message(emit);
         }
     }
@@ -988,7 +997,7 @@ impl Core for Leaf {
             None => {}
         }
         if self.outgoing.is_some() {
-            at(self.outgoing_until);
+            at(self.give_up_at());
         }
         if self.transfer.awaiting_ack() || self.radio.idle() {
             if let Some(t) = self.transfer.wake_at() {

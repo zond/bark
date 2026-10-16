@@ -539,7 +539,8 @@ fn a_leaf_chooses_the_strongest_relay_after_a_rotation() {
 }
 
 /// A leaf with a message to send does not wait out the rotation, and holds
-/// the message until it has a relay (spec "Relay choice", "Attach and polls").
+/// the message until it has a relay (spec "Relay choice", "Attach and polls"). Its DATA
+/// carries the TTL less the time the leaf held it (spec "Receiving DATA").
 #[test]
 fn a_message_waits_for_a_relay() {
     let (r, l) = (0, 1);
@@ -558,9 +559,21 @@ fn a_message_waits_for_a_relay() {
         },
     );
     let id = MsgId::of(dst, LeafId::RELAY, text);
+    let taken = h.now;
     assert!(h.run_until(Instant::ZERO + secs(600), |h| received(h, r, id) == 1));
     h.run_for(secs(1));
     assert!(handed_over(&h, l, id));
+    use bark_proto::wire::{Data, Packet};
+    let (t, left) = h.nodes[l]
+        .sent
+        .iter()
+        .find_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some((*t, d.time_left)),
+            _ => None,
+        })
+        .expect("a DATA");
+    assert!(t.since(taken) > secs(10), "held {:?}", t.since(taken));
+    assert_eq!(left, Data::units(secs(600) - t.since(taken)));
     let (heard, attach) = first_heartbeat_and_attach(&h, l);
     assert!(
         attach.since(heard) < Duration::from_millis(100),
@@ -570,7 +583,8 @@ fn a_message_waits_for_a_relay() {
 }
 
 /// A message no relay takes is dropped after the delivery TTL (spec "Delivery queue"),
-/// not at once, and the application is not told.
+/// not at once, and the application is not told. It goes once less than
+/// a unit of its time is left, which no DATA can carry (spec "Receiving DATA").
 #[test]
 fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
     let mut h = Harness::new(vec![leaf(0.0, 1, 43)]);
@@ -585,7 +599,8 @@ fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
         },
     );
     let id = MsgId::of(dst, LeafId([9; 4]), text);
-    h.run_for(secs(599));
+    let last = secs(600) - bark_proto::wire::TTL_UNIT;
+    h.run_for(last - secs(1));
     assert_eq!(the_leaf(&h, 0).holding(), Some(id));
     assert!(!h.accepts(0), "a leaf holds one message");
     h.run_for(secs(2));

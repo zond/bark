@@ -87,7 +87,8 @@
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
-//! is not returned or dropped: overload makes a message wait, never end.
+//! is not returned or dropped: overload makes a message wait, never end;
+//! only its time does (below).
 //! Only a search exhausted by neighbours tried or set aside returns or
 //! drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
@@ -96,6 +97,19 @@
 //! leaf that finds the delivery queue full is set aside ([`Held`]) until
 //! the queue has a place (spec "Return to parent"). Either way the application is given no
 //! other meanwhile.
+//!
+//! # Time left (spec "Receiving DATA")
+//!
+//! A queued DATA keeps when its time runs out, from the packet it came in:
+//! the time it carried less its time on air, which passed after the
+//! sender stamped it. Each attempt carries what is left then, rounded
+//! down to whole [`TTL_UNIT`]s. With no more than one unit left it cannot
+//! be sent with any, and it is dropped wherever it waits, as soon as that
+//! happens, so its place frees at once. Without an end by time a message
+//! the network has taken lives as long as hand-overs to someone succeed,
+//! which past the capacity domain's collapse was up to an hour (roadmap
+//! D44). A packet that comes with its time gone is taken as no work, and
+//! ends here. At its owner the delivery queue's own TTL takes over.
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
@@ -112,7 +126,7 @@ use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckName, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
+use crate::wire::{Ack, AckName, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
 /// A relay within this distance of a destination that is not its own
 /// position, with no live, undemoted neighbour closer, owns it
@@ -319,6 +333,10 @@ impl Relay {
         let case = self.classify(id, repeat);
         let owner = case != Case::AckOnly && self.owns(d.dst_pos, now);
         let sends = case != Case::AckOnly && !owner;
+        // The time left was stamped as the frame went on air. Gone, the
+        // packet is no work, and the message ends here.
+        let expires = now + d.time_left() - data_airtime(d.payload.len());
+        let expired = sends && now >= expires - TTL_UNIT;
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
         let record_at = match case {
@@ -326,7 +344,7 @@ impl Relay {
             _ => None,
         };
         let mut place = 0;
-        let refusal = if case == Case::AckOnly {
+        let refusal = if case == Case::AckOnly || expired {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
@@ -398,7 +416,10 @@ impl Relay {
             Case::New | Case::Search if owner => {
                 self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
             }
-            Case::New | Case::Search => self.send_on(&d, place, emit),
+            Case::New | Case::Search if expired => {
+                self.drop_msg(id, DropReason::Expired, emit);
+            }
+            Case::New | Case::Search => self.send_on(&d, place, expires, emit),
         }
     }
 
@@ -463,10 +484,10 @@ impl Relay {
     }
 
     /// Queue `d` onward into `place`, a forward addressed when its
-    /// hand-over starts. Carries the received count plus one, which places
-    /// it among waiting entries, until its hand-over stamps the count it is
-    /// sent with (spec "Hop count").
-    fn send_on(&mut self, d: &Data<'_>, place: u8, emit: &mut dyn FnMut(Action)) {
+    /// hand-over starts, whose time is gone at `expires`. Carries the
+    /// received count plus one, which places it among waiting entries,
+    /// until its hand-over stamps the count it is sent with (spec "Hop count").
+    fn send_on(&mut self, d: &Data<'_>, place: u8, expires: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
@@ -481,6 +502,7 @@ impl Relay {
         };
         let out = Outgoing {
             place,
+            expires,
             ..Outgoing::new(data_frame(&out, self.home), Kind::Forward)
         };
         if self.queue.push(out).is_err() {
@@ -618,6 +640,9 @@ impl Relay {
             return;
         };
         self.set_own(Some(id));
+        // This relay is the message's first holder: its time starts now.
+        let ttl = self.config.delivery_ttl;
+        let expires = now + ttl;
         let d = Data {
             sender_home: self.home,
             dst_hop: ShortName(0),
@@ -625,7 +650,7 @@ impl Relay {
             dst_pos,
             dst_leaf,
             hops: 0,
-            time_left: Data::units(self.config.delivery_ttl),
+            time_left: Data::units(ttl),
             payload,
         };
         if self.owns(dst_pos, now) {
@@ -633,6 +658,8 @@ impl Relay {
             record.set_arrived();
             self.records.put(at, record);
             if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+                // At its owner: the delivery queue's TTL, not its time
+                // left, ends it from here (spec "Delivery queue").
                 let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
                 self.held = Some(Held { out });
             } else {
@@ -641,7 +668,7 @@ impl Relay {
             return;
         }
         self.records.put(at, Record::new(id, None, 0, now));
-        self.send_on(&d, 0, emit);
+        self.send_on(&d, 0, expires, emit);
     }
 
     // --- The hand-over (spec "Hand-over") ---
@@ -904,18 +931,26 @@ impl Relay {
         let mut frame = out.frame;
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             let id = d.msg_id();
-            let Some(hops) = self.count(&d, id) else {
+            let time_left = Data::units(out.expires.since(now));
+            let (Some(hops), false) = (self.count(&d, id), gone(&out, now)) else {
+                let reason = match gone(&out, now) {
+                    true => DropReason::Expired,
+                    false => DropReason::HopCap,
+                };
                 self.handover.cancel();
                 self.queue.take_current();
                 self.skipped = 0;
                 self.feed_due = true;
-                self.drop_msg(id, DropReason::HopCap, emit);
+                self.drop_msg(id, reason, emit);
                 return;
             };
+            // Each attempt carries the time as it is when it goes, so a
+            // retry never claims more than is left.
             frame = data_frame(
                 &Data {
                     sender_home: self.home,
                     hops,
+                    time_left,
                     ..d
                 },
                 out.frame.channel,
@@ -1192,6 +1227,63 @@ impl Relay {
                 self.handover_failed(out, true, now, emit);
             }
         }
+        self.expire(now, emit);
+    }
+
+    /// Drop every message in the send queue whose time is gone (spec "Receiving DATA"):
+    /// it could no longer be sent with a whole unit left. Waiting for a
+    /// ban, in a hop place or a return alike; it frees its place at once
+    /// rather than when its turn comes. One whose frame is on air or waits
+    /// for its ACK ends at its next attempt instead (`transmit_current`).
+    /// A message set aside for the delivery queue is at its owner, where
+    /// that queue's TTL ends it.
+    fn expire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.time_gone_at().is_none_or(|t| t > now) {
+            return;
+        }
+        loop {
+            let under_way = self.under_way();
+            let found = self
+                .queue
+                .iter()
+                .enumerate()
+                .position(|(i, o)| Some(i) != under_way && gone(o, now));
+            let Some(i) = found else { break };
+            let id = self.queue.iter().nth(i).and_then(Outgoing::msg_id);
+            if self.queue.current_index() == Some(i) {
+                // Not yet on air: waiting its turn, for the bucket or to retry.
+                self.handover.cancel();
+                self.skipped = 0;
+            }
+            let mut k = 0;
+            self.queue.retain(|_, _| {
+                k += 1;
+                k != i + 1
+            });
+            self.feed_due = true;
+            self.drop_msg(id.unwrap_or_default(), DropReason::Expired, emit);
+        }
+    }
+
+    /// The send queue's entry whose frame is on air or waiting for its ACK.
+    fn under_way(&self) -> Option<usize> {
+        let on_air = matches!(self.handover.step(), Step::Tx | Step::AwaitAck(_));
+        self.queue.current_index().filter(|_| on_air)
+    }
+
+    /// When the earliest message in the send queue, but for one on air or
+    /// waiting for its ACK, can no longer be sent with a whole unit of time
+    /// left.
+    fn time_gone_at(&self) -> Option<Instant> {
+        let under_way = self.under_way();
+        self.queue
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| Some(*i) != under_way)
+            .map(|(_, o)| o.expires)
+            .min()
+            .filter(|&t| t != Instant::MAX)
+            .map(|t| t - TTL_UNIT)
     }
 
     /// When forwarding next needs the core. The ACK wait counts even while
@@ -1215,6 +1307,15 @@ impl Relay {
                 at(t);
             }
         }
+        if let Some(t) = self.time_gone_at() {
+            at(t);
+        }
         w
     }
+}
+
+/// Whether `out`'s time is gone: no more than one unit is left, and a
+/// DATA carries only whole ones, rounded down (spec "Receiving DATA").
+fn gone(out: &Outgoing, now: Instant) -> bool {
+    out.expires != Instant::MAX && now >= out.expires - TTL_UNIT
 }

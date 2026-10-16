@@ -2018,6 +2018,24 @@ mod tests {
         tag: u8,
         hops: u8,
     ) -> (Option<u8>, Option<crate::event::DropReason>) {
+        let (place, refused, _) = offer_timed(r, now, dst, tag, hops, u8::MAX);
+        (place, refused)
+    }
+
+    /// [`offer_data`] with `time_left` units left; also returns why the
+    /// message was dropped, if it was.
+    fn offer_timed(
+        r: &mut Relay,
+        now: &mut Instant,
+        dst: Position,
+        tag: u8,
+        hops: u8,
+        time_left: u8,
+    ) -> (
+        Option<u8>,
+        Option<crate::event::DropReason>,
+        Option<crate::event::DropReason>,
+    ) {
         use crate::ids::LeafId;
         use crate::position::ShortName;
         use crate::wire::{Data, MAX_PAYLOAD};
@@ -2029,7 +2047,7 @@ mod tests {
             dst_pos: dst,
             dst_leaf: LeafId::RELAY,
             hops,
-            time_left: u8::MAX,
+            time_left,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2039,10 +2057,11 @@ mod tests {
             snr_db: 10,
             bytes: &f.bytes[..f.len as usize],
         };
-        let mut refused = None;
+        let (mut refused, mut dropped) = (None, None);
         let mut pending = Vec::new();
         r.handle(event, *now, &mut |a| match a {
             Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::Trace(Trace::Dropped { reason, .. }) => dropped = Some(reason),
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
             _ => {}
         });
@@ -2053,7 +2072,68 @@ mod tests {
             .iter()
             .find(|o| o.msg_id() == Some(d.msg_id()))
             .map(|o| o.place);
-        (place, refused)
+        (place, refused, dropped)
+    }
+
+    /// A packet whose time is gone, one unit left that the time on air has
+    /// eaten into, is no work: taken, not refused, and the message ends
+    /// here. With two units it is queued (spec "Receiving DATA").
+    #[test]
+    fn a_packet_whose_time_is_gone_is_taken_and_ends() {
+        use crate::event::DropReason;
+        let (mut r, mut now, far) = with_every_neighbour_banned();
+        assert_eq!(
+            offer_timed(&mut r, &mut now, far, 1, 2, 1),
+            (None, None, Some(DropReason::Expired))
+        );
+        assert_eq!(
+            offer_timed(&mut r, &mut now, far, 2, 2, 2),
+            (Some(0), None, None)
+        );
+    }
+
+    /// A message waiting here carries its time as it is at each attempt,
+    /// rounded down, and is dropped once no whole unit is left, waiting for
+    /// a ban or not; a hop place frees with it (spec "Receiving DATA").
+    #[test]
+    fn a_waiting_message_ends_with_its_time() {
+        use crate::wire::{Data, TTL_UNIT};
+        let (mut r, start, far) = with_every_neighbour_banned();
+        let mut now = start;
+        let units = 8;
+        let (place, _, _) = offer_timed(&mut r, &mut now, far, 1, 2, units);
+        assert_eq!(place, Some(0));
+        // At least the time on air of the frame is gone already.
+        let deadline = start + TTL_UNIT.mul(units as u64);
+        // The neighbours do not answer: the message waits for their bans.
+        let sent = drive(&mut r, &mut now, deadline);
+        let offers: Vec<_> = sent
+            .iter()
+            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) => Some((*t, d.time_left)),
+                _ => None,
+            })
+            .collect();
+        assert!(offers.len() >= 3, "{offers:?}");
+        for (t, left) in &offers {
+            assert!(*left >= 1, "sent with no time left");
+            assert!(
+                *left <= Data::units(deadline.since(*t)),
+                "{left} units at {t:?}"
+            );
+        }
+        assert!(r.holding().next().is_none(), "kept past its time");
+        assert!(offers.iter().all(|(t, _)| *t < deadline - TTL_UNIT));
+
+        // In a hop place, the same.
+        let spend = r.budget.available(now) - Duration::from_millis(300);
+        r.budget.record(spend, now);
+        let (place, _, _) = offer_timed(&mut r, &mut now, far, 2, 2, 3);
+        assert_eq!(place, Some(2));
+        let until = now + TTL_UNIT.mul(2);
+        drive(&mut r, &mut now, until);
+        assert!(r.holding().next().is_none());
+        assert_eq!(r.lowest_free_hop_place(), Some(1));
     }
 
     /// A leaf's message is refused while every neighbour that could take it
