@@ -404,6 +404,13 @@ impl Relay {
         self.heartbeat_power().0.operating_dbm
     }
 
+    /// Whether a hand-over is under way: begun and not yet answered or
+    /// given up, waits for a backoff, a retry or the bucket included. For
+    /// a driver to sample; reading it changes nothing.
+    pub fn handing_over(&self) -> bool {
+        !self.handover.idle()
+    }
+
     /// How loaded the relay is at `now`, for a driver to sample. Reading
     /// it changes nothing.
     pub fn load(&self, now: Instant) -> Load {

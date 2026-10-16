@@ -1,15 +1,15 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
-//! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]`.
-//! Prints a short table; writes the JSON summary, the CSV time series, the
-//! per-message CSV, the per-node event trace and the links between relays
-//! when asked.
+//! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
+//! [--series FILE]`. Prints a short table; writes the JSON summary, the CSV
+//! time series, the per-message CSV, the per-node event trace, the links
+//! between relays and the per-minute series of every relay when asked.
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -25,7 +25,7 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let mut path = None;
     let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
-    let (mut messages, mut links) = (None, None);
+    let (mut messages, mut links, mut series) = (None, None, None);
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -51,6 +51,7 @@ fn run() -> Result<(), String> {
             "--trace" => trace = Some(PathBuf::from(val("--trace")?)),
             "--messages" => messages = Some(PathBuf::from(val("--messages")?)),
             "--links" => links = Some(PathBuf::from(val("--links")?)),
+            "--series" => series = Some(PathBuf::from(val("--series")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -67,7 +68,7 @@ fn run() -> Result<(), String> {
     if let Some(d) = duration {
         sc.duration_s = d;
     }
-    if csv.is_some() && sc.metrics.cadence_s.is_none() {
+    if (csv.is_some() || series.is_some()) && sc.metrics.cadence_s.is_none() {
         sc.metrics.cadence_s = Some(10.0);
     }
     let t0 = std::time::Instant::now();
@@ -75,6 +76,9 @@ fn run() -> Result<(), String> {
     if let Some(p) = &trace {
         let f = std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()))?;
         sim.trace_to(Box::new(std::io::BufWriter::new(f)));
+    }
+    if series.is_some() {
+        sim.series_on();
     }
     let built = t0.elapsed();
     sim.run();
@@ -94,6 +98,9 @@ fn run() -> Result<(), String> {
     }
     if let Some(p) = messages {
         std::fs::write(&p, sim.messages_csv()).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if let (Some(p), Some(s)) = (series, sim.series()) {
+        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let Some(p) = csv {
         std::fs::write(&p, sim.metrics.csv()).map_err(|e| format!("{}: {e}", p.display()))?;

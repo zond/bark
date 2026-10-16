@@ -279,6 +279,10 @@ struct OriginRecord {
     reachable: bool,
     /// When it first reached its destination's application.
     delivered_at: Option<Instant>,
+    /// When its origin's core took it from the application.
+    taken_at: Option<Instant>,
+    /// When a node dropped it.
+    dropped_at: Option<Instant>,
     /// Frames that carried it or answered it (DATA, DELIVER, their ACKs),
     /// and their time on air, µs.
     frames: u32,
@@ -312,6 +316,10 @@ pub struct MessageRow {
     pub hops: u8,
     /// Straight-line distance from origin to destination, metres.
     pub distance_m: f64,
+    /// Origination to its core taking it, seconds.
+    pub taken_s: Option<f64>,
+    /// Origination to its drop, seconds.
+    pub dropped_s: Option<f64>,
 }
 
 /// A message an application waits to hand to its core.
@@ -397,7 +405,7 @@ pub struct Sim {
     xy: Vec<Xy>,
     sites: Vec<Site>,
     /// Relay node by short name (§8.1).
-    relay_index: HashMap<u32, u32>,
+    pub(crate) relay_index: HashMap<u32, u32>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
@@ -454,7 +462,15 @@ pub struct Sim {
     /// Per relay, its connected component among the relays at the start
     /// of the run; see [`Sim::reachable`].
     component: Vec<u32>,
+    /// The per-minute series, when asked for (`Sim::series_on`).
+    series: Option<String>,
+    /// Frames on air addressed to a relay: key to (relay, kind, state at
+    /// the start), for [`crate::metrics::Addressed`].
+    pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
 }
+
+/// The interval of the series, µs.
+const SERIES_EVERY_US: u64 = 60_000_000;
 
 fn secs(s: f64) -> Duration {
     Duration::from_micros((s * 1e6).round() as u64)
@@ -594,6 +610,8 @@ impl Sim {
                 .min(),
             tracer: None,
             component: Vec::new(),
+            series: None,
+            addressed: HashMap::new(),
         };
         sim.component = sim.components();
         sim.setup(sc, &placed)?;
@@ -927,10 +945,78 @@ impl Sim {
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
                 self.sample_load();
+                if self.now.as_micros().is_multiple_of(SERIES_EVERY_US) {
+                    self.series_rows();
+                }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
             }
         }
+    }
+
+    /// Keep the per-minute series (`bark-sim --series FILE`); needs the
+    /// metrics cadence to divide a minute.
+    pub fn series_on(&mut self) {
+        let mut s = String::new();
+        for i in 0..self.n_relays {
+            let xy = self.xy(i);
+            s.push_str(&format!(
+                "{{\"relay\":{i},\"x\":{:.0},\"y\":{:.0},\"site\":\"{:?}\"}}\n",
+                xy.x,
+                xy.y,
+                self.site(i)
+            ));
+        }
+        self.series = Some(s);
+    }
+
+    /// The series so far, one JSON object a line: each relay once with
+    /// its place, then per minute each relay's counters and load, and the
+    /// leaves' counters summed.
+    pub fn series(&self) -> Option<&str> {
+        self.series.as_deref()
+    }
+
+    fn series_rows(&mut self) {
+        let Some(mut s) = self.series.take() else {
+            return;
+        };
+        let t = self.now.as_micros() / 1_000_000;
+        for (i, r) in self.relays.iter().enumerate() {
+            let l = r.load(self.now);
+            let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
+            s.push_str(&format!(
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"m\":{m}}}\n",
+                self.nodes[i].alive,
+                r.booting(),
+                l.bucket.as_micros(),
+                l.send_queue,
+                l.delivery_queue,
+                l.leaves,
+                l.neighbours
+            ));
+        }
+        let mut a = crate::metrics::LeafSums::default();
+        for (k, leaf) in self.leaves.iter().enumerate() {
+            let n = self.n_relays as usize + k;
+            a.add(
+                &self.metrics.nodes[n],
+                leaf.relay().is_some(),
+                leaf.holding().is_some(),
+                self.offers[n].is_some(),
+                self.nodes[n].present,
+            );
+        }
+        let app = &self.metrics.app;
+        s.push_str(&format!(
+            "{{\"t\":{t},\"leaves\":{},\"addressed\":{},\"originated\":{},\"delivered\":{},\"skipped\":{}}}\n",
+            serde_json::to_string(&a).expect("serialisable"),
+            serde_json::to_string(&self.metrics.addressed).expect("serialisable"),
+            app.originated,
+            app.delivered,
+            app.skipped
+        ));
+        self.series = Some(s);
     }
 
     /// Sample every running relay's bucket, queues and tables.
@@ -947,6 +1033,11 @@ impl Sim {
                 .load
                 .get_or_insert_with(Default::default)
                 .add(&l, REPLY_RESERVE + full_frame, REPLY_RESERVE, NEIGHBOURS);
+            if r.handing_over() {
+                if let Some(load) = &mut self.metrics.nodes[i].load {
+                    load.handing_over += 1;
+                }
+            }
             if self.power_on {
                 self.metrics.nodes[i]
                     .tx_power
@@ -1057,7 +1148,11 @@ impl Sim {
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::PollSkipped { .. } => c.polls_skipped += 1,
                     Trace::LeafDropped { .. } => c.leaves_dropped += 1,
-                    Trace::Forwarded { .. } | Trace::ReturnedToParent { .. } => c.handed_over += 1,
+                    Trace::Forwarded { .. } => c.handed_over += 1,
+                    Trace::ReturnedToParent { .. } => {
+                        c.handed_over += 1;
+                        c.returned += 1;
+                    }
                     _ => {}
                 }
             }
@@ -1348,6 +1443,7 @@ impl Sim {
         {
             if o.fate != Fate::Delivered {
                 o.fate = Fate::Dropped { node, reason };
+                o.dropped_at = Some(self.now);
             }
         }
     }
@@ -1415,6 +1511,8 @@ impl Sim {
                 airtime_s: o.airtime_us as f64 / 1e6,
                 hops: o.hops,
                 distance_m: self.xy[o.src as usize].dist(self.xy[o.dst as usize]),
+                taken_s: o.taken_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
+                dropped_s: o.dropped_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
             })
             .collect()
     }
@@ -1436,7 +1534,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m\n",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s\n",
         );
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
@@ -1448,8 +1546,10 @@ impl Sim {
                 }
             };
             let latency = r.latency_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -1632,6 +1732,8 @@ impl Sim {
             fate: Fate::Unaccounted,
             reachable,
             delivered_at: None,
+            taken_at: None,
+            dropped_at: None,
             frames: 0,
             airtime_us: 0,
             hops: 0,
@@ -1671,6 +1773,7 @@ impl Sim {
         let Some(o) = self.offers[src as usize].take() else {
             return;
         };
+        self.origins[o.tag as usize].taken_at = Some(now);
         let wait = now.since(self.origins[o.tag as usize].t);
         if wait > Duration::ZERO {
             let app = &mut self.metrics.app;
@@ -1940,6 +2043,8 @@ mod tests {
                 fate: Fate::Unaccounted,
                 reachable: true,
                 delivered_at: None,
+                taken_at: None,
+                dropped_at: None,
                 frames: 0,
                 airtime_us: 0,
                 hops: 0,

@@ -121,11 +121,21 @@ impl Sim {
             preamble_weight: (MIN_PREAMBLE_SYMBOLS as f64 / preamble as f64).min(1.0),
         };
         let air = end.since(start).as_micros();
-        let decoded = WirePacket::decode(tx.frame.payload()).ok();
+        let frame = tx.frame;
+        let decoded = WirePacket::decode(frame.payload()).ok();
         let msg = match decoded {
             Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops)),
             Some(WirePacket::Deliver(d)) => Some((d.msg_id, 0)),
             Some(WirePacket::Ack(a)) => Some((a.msg_id, 0)),
+            _ => None,
+        };
+        let to = match decoded {
+            Some(WirePacket::Data(d)) => {
+                Some((d.dst_hop.0, if src < self.relays() { 0 } else { 2 }))
+            }
+            Some(WirePacket::Ack(a)) if src < self.relays() => {
+                Some((u32::from_be_bytes(a.to.0), 1))
+            }
             _ => None,
         };
         let m = &mut self.metrics;
@@ -148,6 +158,20 @@ impl Sim {
         chm.airtime_by_type.add(decoded.as_ref(), air);
         if let Some((id, hops)) = msg {
             self.message_frame(id, hops, air);
+        }
+        if let Some(d) = to.and_then(|(name, kind)| self.relay_index.get(&name).map(|&d| (d, kind)))
+        {
+            let st = &self.nodes[d.0 as usize];
+            let state = if st.resting != Some(ch) {
+                4
+            } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
+                3
+            } else if matches!(st.lock, Lock::Rx(_)) {
+                2
+            } else {
+                1
+            };
+            self.addressed.insert(key, (d.0, d.1, state));
         }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
@@ -204,6 +228,14 @@ impl Sim {
                     }
                 }
             }
+        }
+        if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
+            let fate = if got.iter().any(|g| g.0 == d) {
+                0
+            } else {
+                state
+            };
+            self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
         }
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;

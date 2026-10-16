@@ -253,12 +253,79 @@ pub struct CoreCounts {
     /// Messages a neighbour took: sent on (§9.2.3) or returned to the
     /// parent (§9.2.5).
     pub handed_over: u64,
+    /// Of those, returned to the parent (§9.2.5).
+    pub returned: u64,
     /// Heartbeats from a relay not in the table that took the place of
     /// one that was (D12).
     pub evictions: u64,
     /// Heartbeats from a relay not in the full table that found no place
     /// (D12).
     pub rejections: u64,
+}
+
+/// What became of frames addressed to one relay, by what that relay was
+/// doing when the frame started: `[kind][fate]`. Kinds: a relay's DATA to a
+/// relay, a relay's ACK to a relay, a leaf's DATA to its relay. Fates:
+/// received; lost although the receiver was listening and free; lost while
+/// it was receiving another frame; lost while it was deaf on the channel
+/// (checking, transmitting, retuning); lost while it was on another channel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Addressed {
+    /// Counts.
+    pub counts: [[u64; 5]; 3],
+}
+
+/// The leaves' counters summed, for the series (`Sim::series_on`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct LeafSums {
+    /// Leaves in reach (not dark).
+    pub present: u64,
+    /// Leaves attached to a relay.
+    pub attached: u64,
+    /// Leaves holding a message for their relay.
+    pub holding: u64,
+    /// Leaves whose application waits to hand one over.
+    pub waiting: u64,
+    /// Frames sent.
+    pub tx_frames: u64,
+    /// Airtime by type, µs.
+    pub airtime_by_type: TypeAirtime,
+    /// Relay changes.
+    pub relay_changes: u64,
+    /// Messages dropped: no relay took them within the TTL.
+    pub no_relay: u64,
+    /// Messages received.
+    pub messages_in: u64,
+}
+
+impl LeafSums {
+    /// Add one leaf.
+    pub fn add(
+        &mut self,
+        m: &NodeMetrics,
+        attached: bool,
+        holding: bool,
+        waiting: bool,
+        present: bool,
+    ) {
+        self.present += present as u64;
+        self.attached += attached as u64;
+        self.holding += holding as u64;
+        self.waiting += waiting as u64;
+        self.tx_frames += m.tx_frames;
+        let (a, b) = (&mut self.airtime_by_type, &m.airtime_by_type);
+        a.heartbeat_us += b.heartbeat_us;
+        a.ack_us += b.ack_us;
+        a.attach_ack_us += b.attach_ack_us;
+        a.attach_us += b.attach_us;
+        a.data_us += b.data_us;
+        a.deliver_us += b.deliver_us;
+        a.attached_us += b.attached_us;
+        a.other_us += b.other_us;
+        self.relay_changes += m.relay_changes;
+        self.no_relay += m.drops.no_relay;
+        self.messages_in += m.messages_in;
+    }
 }
 
 /// A relay's load, sampled at the metrics cadence: the bucket, the queues
@@ -272,6 +339,8 @@ pub struct LoadStats {
     pub at_cap: u64,
     /// Samples below the reply reserve: only heartbeats and replies go.
     pub below_reserve: u64,
+    /// Samples with a hand-over under way (`Relay::handing_over`).
+    pub handing_over: u64,
     /// Runs of consecutive samples at the cap.
     pub cap_episodes: u64,
     /// The longest such run, samples.
@@ -586,6 +655,8 @@ pub struct Metrics {
     pub app: AppMetrics,
     /// Dark leaves coming back.
     pub returns: LeafReturns,
+    /// Frames addressed to a relay, by fate.
+    pub addressed: Addressed,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.
