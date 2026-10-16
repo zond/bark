@@ -4,7 +4,7 @@
 of 28 km², 269 relays, 20 000 indoor leaves). Builds on
 `capacity-research-2026-10-15.md` and `leaf-polls-2026-10-15.md` (D39).
 Spec references are to `protocol.md`. Protocol code: main `f1fa059`; the
-simulator gains read-only instruments (commit `85cffb8`) that change no
+simulator gains read-only instruments (commits `85cffb8` and `fe6ef32`) that change no
 result. Nothing here changes the protocol. The experiments named below
 were changed copies of the core, run once and thrown away.
 
