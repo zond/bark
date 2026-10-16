@@ -300,7 +300,9 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 /// to Y, its one candidate left. For Y, X is a neighbour it handed the
 /// message to, so this is X's return: Y goes on to E, which reaches D.
 /// Before, a failed hand-over marked Y tried, X dropped the message for
-/// want of a route, and E was never tried.
+/// want of a route, and E was never tried. X moves on at once after a
+/// failure (`AfterFailure::Reroute`), so Y is offered it again only by
+/// the search coming back.
 ///
 /// ```text
 ///   E - Y - X          D (far east)
@@ -310,9 +312,13 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 #[test]
 fn a_neighbour_whose_hand_over_failed_is_tried_again() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
+    let reroute = Config {
+        after_failure: AfterFailure::Reroute,
+        ..Config::default()
+    };
     let mut h = build(
         vec![
-            relay(500.0, 0.0, 121),
+            relay_with(500.0, 0.0, 121, reroute),
             relay(600.0, 300.0, 122),
             relay(400.0, -300.0, 123),
             relay(300.0, 400.0, 124),
@@ -386,8 +392,11 @@ fn a_split_copy_returned_to_a_relay_holding_none_searches_on() {
         sweep_interval: secs(3600),
         ..Config::default()
     };
+    // X moves on at once after a failure, so the return finds it holding
+    // none.
     let at_once = Config {
         retry_backoff: Duration::ZERO,
+        after_failure: AfterFailure::Reroute,
         ..listening
     };
     let mut h = build(
@@ -485,15 +494,16 @@ fn returns(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
 }
 
 /// A child returns the message to a parent that gave up on it (roadmap
-/// D35, A). P's hand-over to C is taken, but C's ACKs are lost, so P
-/// moves on to S. S hands it to C while C is still offering it to S, so
+/// D35, A). P's hand-over to C is taken, but C's ACKs are lost, so P,
+/// once it has waited for C's ban and failed a second time, which demotes
+/// C (roadmap D42), moves on to S. S hands it to C while C is still offering it to S, so
 /// C takes it as S's return; C has nothing left and returns it to P,
 /// which holds none of it. Before, P took this for an offer from an
 /// earlier child and sent it straight back, and C, receiving it from its
 /// parent, only ACKed it: no copy was left, and T, which reaches D, was
 /// never tried. Now P takes it as C's return. C never ACKed it, so it is
-/// untried (roadmap D36), but P's failed hand-over to it banned it
-/// (roadmap D42), so P goes on to T at once.
+/// untried (roadmap D36), but banned and demoted, so P goes on to T at
+/// once.
 ///
 /// ```text
 ///       C              D (far east)
@@ -641,7 +651,8 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
 }
 
 /// A copy taken for a retransmission (roadmap D35, C). X's hand-over to
-/// Y is taken, but Y's ACKs are lost, so X moves on to Z. Y and Z are dead
+/// Y is taken, but Y's ACKs are lost, so X, once a second failure has
+/// demoted Y (roadmap D42), moves on to Z. Y and Z are dead
 /// ends and return it, Y after X has handed it to Z, and Z after Y, with
 /// the count Y's return raised X's highest to. Before, X took Y's return
 /// for an earlier child's offer and sent it straight back, where Y only
@@ -649,8 +660,8 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
 /// handled, and only ACKed it: no copy was left, and W, which reaches D,
 /// was never tried. A retransmission is now the last packet's sender and
 /// count again. X, holding none, takes Y's return. Y never ACKed it, so
-/// it is untried (roadmap D36), but X's failed hand-over banned it
-/// (roadmap D42), so X goes on to W, which reaches D. Once the ban ends,
+/// it is untried (roadmap D36), but banned and demoted, so X goes on to
+/// W, which reaches D. Once the ban ends,
 /// a later return brings X its copy back and X offers Y again; Y returns
 /// it a second time and X, the origin with nothing left, drops that copy
 /// as a search ends. The message arrives once.
@@ -803,7 +814,8 @@ fn a_return_does_not_go_back_and_forth() {
 /// of its own messages for L, so P refuses it (§10.4) and Y, P's only
 /// neighbour but its parent, waits for each ban to end (§9.3). X's
 /// hand-over to Y was taken, but Y's ACKs were lost, so X counts it
-/// failed, leaves Y untried and moves on to Z, a dead end, which returns
+/// failed, twice, the second time once Y's ban has ended (roadmap D42),
+/// leaves Y untried and moves on to Z, a dead end, which returns
 /// it. X then hands it to Y again, with a higher count. Y holds its copy,
 /// so it only ACKs (§9.2.4 case 4): the two copies merge, one round trip
 /// more than had Y's first ACK come through, and nothing is lost. Once
@@ -2093,10 +2105,11 @@ fn entry(h: &Harness<Node>, at: usize, of: usize) -> Neighbour {
     *core(h, at).neighbours().find(|n| n.position == p).unwrap()
 }
 
-/// O, with F1 and F2 both reaching D, F1 the nearer. Every DATA from O
-/// to F1 is lost. The first message's three attempts go unanswered: F1
-/// is banned for one ban (§9.3, roadmap D42) and the message goes to F2
-/// at once. A second message within the ban is not offered to F1 at all.
+/// O, with F1 and F2 both reaching D, F1 the nearer, and O moving on at
+/// once after a failure (`AfterFailure::Reroute`). Every DATA from O to
+/// F1 is lost. The first message's three attempts go unanswered: F1 is
+/// banned for one ban (§9.3, roadmap D42) and the message goes to F2 at
+/// once. A second message within the ban is not offered to F1 at all.
 /// After the ban, with the link back, F1 takes the third, and its ACK
 /// clears its failure count.
 ///
@@ -2110,9 +2123,13 @@ fn entry(h: &Harness<Node>, at: usize, of: usize) -> Neighbour {
 #[test]
 fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     let (o, f1, f2, d) = (0, 1, 2, 3);
+    let reroute = Config {
+        after_failure: AfterFailure::Reroute,
+        ..Config::default()
+    };
     let mut h = build(
         vec![
-            relay(0.0, 0.0, 201),
+            relay_with(0.0, 0.0, 201, reroute),
             relay(400.0, 50.0, 202),
             relay(400.0, -100.0, 203),
             relay(800.0, 0.0, 204),
@@ -2268,17 +2285,33 @@ fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {
     no_drops(&h);
 }
 
-/// F1 is gone. O's first message tries it three times and goes to F2
-/// at once; F1 is banned for one ban (roadmap D42). The second message,
-/// after that ban, tries F1 again, and that second failure demotes it
-/// (§8.2) and goes to F2 at once too. The third goes to F2 without a
-/// frame to F1: a dead neighbour is routed around (roadmap D25).
+/// F1 is gone, and O moves on at once after a failure
+/// (`AfterFailure::Reroute`). O's first message tries F1 three times and
+/// goes to F2 at once; F1 is banned for one ban (roadmap D42). The second
+/// message, after that ban, tries F1 again, and that second failure
+/// demotes it (§8.2) and goes to F2 at once too. The third goes to F2
+/// without a frame to F1: a dead neighbour is routed around (roadmap
+/// D25). Waiting for a silent neighbour, the design's rule, the first
+/// message pays both failures and the next ones none.
 #[test]
 fn a_dead_neighbour_is_routed_around() {
+    for (after_failure, expected) in [
+        (AfterFailure::Reroute, vec![3, 3, 0]),
+        (AfterFailure::Wait, vec![6, 0, 0]),
+    ] {
+        dead_neighbour_routed_around(after_failure, expected);
+    }
+}
+
+fn dead_neighbour_routed_around(after_failure: AfterFailure, expected: Vec<usize>) {
     let (o, f1, f2, d) = (0, 1, 2, 3);
+    let config = Config {
+        after_failure,
+        ..Config::default()
+    };
     let mut h = build(
         vec![
-            relay(0.0, 0.0, 231),
+            relay_with(0.0, 0.0, 231, config),
             relay(400.0, 50.0, 232),
             relay(400.0, -100.0, 233),
             relay(800.0, 0.0, 234),
@@ -2297,15 +2330,15 @@ fn a_dead_neighbour_is_routed_around() {
         tried.push(to_f1.len());
         h.run_for(secs(10));
     }
-    assert_eq!(tried, vec![3, 3, 0]);
+    assert_eq!(tried, expected, "{after_failure:?}");
     assert!(traces(&h, o).contains(&Trace::Demoted {
         neighbour: position(&h, f1).short()
     }));
     no_drops(&h);
 }
 
-/// As above, but O waits for a silent neighbour (`AfterFailure::Wait`,
-/// roadmap D42): F1 drops every DATA from O, so the first three attempts
+/// O waits for a silent neighbour (`AfterFailure::Wait`, roadmap D42):
+/// F1 drops every DATA from O, so the first three attempts
 /// ban it and the message waits for the ban and goes to F1 again, with
 /// three fresh attempts. Their failure demotes F1 (§8.2), and only then
 /// does the message go to F2, at once.

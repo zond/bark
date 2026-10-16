@@ -78,12 +78,13 @@
 //! A hand-over whose attempts all go unanswered bans its receiver too,
 //! longer after each failure in a row (`tables/neighbours.rs`, roadmap
 //! D42): silence says the channel or the receiver is full, and offering
-//! it the next message at once only adds frames there. By default the
-//! failed forward goes on to its next candidate at once
-//! ([`AfterFailure::Reroute`]). With [`AfterFailure::Wait`] it waits for
-//! the ban and goes to the same neighbour again, and moves on only once
-//! a failure has demoted it; a return waits the same way, and is dropped
-//! only then.
+//! it the next message at once only adds frames there. The failed
+//! forward waits for the ban and goes to the same neighbour again, and
+//! moves on only once a failure has demoted it; a return waits the same
+//! way, and is dropped only then ([`AfterFailure::Wait`]). Going to the
+//! next candidate at once instead ([`AfterFailure::Reroute`]) sends the
+//! message the long way round just when the channel is full, and
+//! measured, it undoes the ban's gain (roadmap D42).
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It

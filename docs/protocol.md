@@ -643,9 +643,9 @@ queue has a place. Until a first hop takes it, the application is given
 no other message (§9.1), nor one while every neighbour is banned
 (§9.2.4).
 
-If the hand-over to the parent fails (§9.3), the relay drops the message
-and the search ends early; the parent is banned like any neighbour that
-does not answer (§9.3 step 6). A parent that refuses the return has not
+If the hand-over to the parent fails twice in a row, the second time
+after waiting for the parent's ban (§9.3 step 6), the relay drops the
+message and the search ends early. A parent that refuses the return has not
 failed: the return waits for the ban and goes again (§9.3).
 
 #### 9.2.6 The hop counter
@@ -743,44 +743,46 @@ waiting their turn are held in the relay's send queue.
    14.4 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: wait a random time, retry, up to 3 attempts. Then the
    hand-over has failed: count a failure against the neighbour (§8.2:
-   demoted after 2 consecutive failures), **ban** it as a refusal does,
-   for every message, and choose the next hop again (§9.2.3). The ban
-   after the k-th failure in a row is one refusal's ban doubled k − 1
-   times: 1.56 s, 3.11 s, 6.2 s and so on, up to the bucket's refill,
-   61 s, the ladder the relay's own message waits on below; an ACK from
-   the neighbour resets its failure count and so starts the ladder again
-   (roadmap D42). The neighbour is set aside for this hand-over, as in
-   step 2, but not counted as tried: in the simulated loaded corridor an
-   attempt was lost to a collision at the receiver about four times as
-   often as by its ACK going astray (roadmap D34), so the neighbour most
-   likely does not have the message. It stays a candidate when the
-   message is next routed here, once its ban has ended. If it did take
-   it, the next offer costs one round trip: it holds the message and
-   only ACKs, or has finished with it and returns it (§9.2.4) (roadmap
-   D36).
-
-   A relay may instead wait for a silent neighbour (`after_failure`
-   wait, roadmap D42): the message is not routed again at once but
-   waits in its place for that neighbour's ban, and is offered to it
-   again with three fresh attempts; only once a failure has demoted the
-   neighbour (§8.2) is it set aside and the next hop chosen. A return
-   waits for the parent the same way, and is dropped only when a failure
-   demotes the parent. A DELIVER is not affected: its leaf is not a
-   neighbour, and the delivery queue already keeps it (§10.4).
+   demoted after 2 consecutive failures) and **ban** it as a refusal
+   does, for every message. The ban after the k-th failure in a row is
+   one refusal's ban doubled k − 1 times: 1.56 s, 3.11 s, 6.2 s and so
+   on, up to the bucket's refill, 61 s, the ladder the relay's own
+   message waits on below; an ACK from the neighbour resets its failure
+   count and so starts the ladder again (roadmap D42). The message waits
+   in its place for that ban and is offered to the same neighbour again,
+   with three fresh attempts. Once a failure has demoted the neighbour,
+   the message instead chooses the next hop at once (§9.2.3): the
+   neighbour is set aside for this hand-over, as in step 2, but not
+   counted as tried. In the simulated loaded corridor an attempt was
+   lost to a collision at the receiver about four times as often as by
+   its ACK going astray (roadmap D34), so the neighbour most likely does
+   not have the message. It stays a candidate when the message is next
+   routed here, once its ban has ended. If it did take it, the next offer
+   costs one round trip: it holds the message and only ACKs, or has
+   finished with it and returns it (§9.2.4) (roadmap D36). A return
+   waits for its parent the same way and is dropped when a failure
+   demotes the parent (§9.2.5). A DELIVER is not affected: its leaf is
+   not a neighbour, and the delivery queue keeps it (§10.4).
 
 **Silence is pushback.** A refusal measures one thing, what one
 hand-over takes from the receiver's bucket, and the bucket refills that
 in one ban. Silence says only that the channel or the receiver is full,
 or that the link is gone, and not how full; so its ban doubles with
 each silence in a row, as the hold of a refused message does, and ends
-at the longest anything waits for a bucket. Without it a neighbour that
-stops answering under load is offered every other message at once, each
-offer up to three more frames where frames are already being lost; in
-the simulated capacity domain at three times the §13 texting rate that
-loop is what breaks first (roadmap D42). The price is paid by messages
-whose every way on is silent: they wait, as for refusals, and a
-neighbour that is gone is tried again after each ban until its entry
-expires (§8.2).
+at the longest anything waits for a bucket. Without the ban a neighbour
+that stops answering under load is offered every other message at once,
+each offer up to three more frames where frames are already being
+lost; in the simulated capacity domain at three times the §13 texting
+rate that loop is what breaks first. The message whose hand-over failed
+waits for the same neighbour rather than going to the next one: the
+next one is usually a longer way round, which costs more frames on the
+same full channels, and measured, going there at once undoes what the
+ban gains (roadmap D42; `after_failure` reroute keeps it for
+comparison). Silence twice in a row demotes the neighbour, and a link
+that is really gone then costs one ban and one more hand-over before
+the message moves on. Messages whose every way on is silent wait, as
+for refusals, and a neighbour that is gone is tried again after each
+ban until its entry expires (§8.2).
 
 **Refusal.** An ACK that answers the outstanding hand-over and says
 refused means the receiver does not take the packet (§9.2.4). The
@@ -803,8 +805,8 @@ remaining candidate is banned, by refusals or by silence, waits in its
 place in the send queue, with its airtime still counted (§9.2.4), until
 the earliest ban ends, and is routed again then, at the origin or
 anywhere else. A message ends only when it is delivered, when its
-search runs out of neighbours (§9.2.5), when a return's attempts all go
-unanswered (step 6), when its leaf never wakes (§10.4), at the hop cap
+search runs out of neighbours (§9.2.5), when a return goes unanswered twice
+in a row (step 6), when its leaf never wakes (§10.4), at the hop cap
 (§9.2.6), or when a node holding it dies (roadmap D31).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
@@ -859,8 +861,9 @@ D22).
 An ACK resets the neighbour's failure count and refreshes its last-heard
 time (§8.2): a neighbour that answers is alive whether or not its
 heartbeats are heard. A failed hand-over
-that was itself a return to the parent is not retried elsewhere: the
-message is dropped.
+that was itself a return to the parent is not retried elsewhere: it
+waits for the parent's ban and goes once more, and after a second
+failure the message is dropped.
 
 The receiver retunes to the sender's channel, listens before talking,
 sends the ACK, and retunes home. The ACK is the first byte, whose `aux`

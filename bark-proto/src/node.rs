@@ -110,7 +110,7 @@ pub enum AfterFailure {
     /// Offer it to the next candidate at once.
     Reroute,
     /// Offer it to the same neighbour again when its ban ends; move on
-    /// only once the neighbour is demoted.
+    /// only once the neighbour is demoted. The design's rule.
     Wait,
 }
 
@@ -192,7 +192,7 @@ impl Config {
         demote_after_failures: 2,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
-        after_failure: AfterFailure::Reroute,
+        after_failure: AfterFailure::Wait,
         leaf_retry: Duration::from_secs(60),
         delivery_ttl: Duration::from_secs(600),
         delivery_retry: Duration::from_secs(60),
