@@ -31,11 +31,11 @@ mod service;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
-use crate::ids::MsgId;
+use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer};
 use crate::node::{Config, Core, Rng};
-use crate::position::{Position, ShortName};
+use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
@@ -142,6 +142,8 @@ pub struct Load {
 /// Relay role.
 pub struct Relay {
     config: Config,
+    /// This node's ID: `config.node_id`, or drawn from the seed.
+    id: NodeId,
     plane: LocalPlane,
     rng: Rng,
     home: Channel,
@@ -200,6 +202,7 @@ impl Relay {
             None => unreachable!(),
         };
         Relay {
+            id: NodeId::NONE,
             plane: LocalPlane::ORIGIN,
             home: channel,
             stage: Stage::Off,
@@ -260,6 +263,10 @@ impl Relay {
     /// `config` and `seed`: everything it held is gone.
     pub fn reset(&mut self, config: Config, seed: u64) {
         let mut rng = Rng::new(seed);
+        let mut node_id = config.node_id;
+        while node_id == NodeId::NONE {
+            node_id = NodeId((rng.next_u64() as u32).to_be_bytes());
+        }
         let home = config
             .home_override
             .unwrap_or_else(|| random_channel(&mut rng));
@@ -268,6 +275,7 @@ impl Relay {
         // large tables are emptied where they lie.
         let Relay {
             config: c,
+            id,
             plane,
             rng: r,
             home: h,
@@ -296,6 +304,7 @@ impl Relay {
             feed_due,
             feed_at,
         } = self;
+        *id = node_id;
         *plane = LocalPlane::new(config.position);
         *h = home;
         *stage = Stage::Off;
@@ -345,10 +354,14 @@ impl Relay {
         self.home
     }
 
-    /// Configuration. `position` is the relay's identity, which the boot
-    /// listen may have moved by a metre (spec "Relay identity").
+    /// Configuration.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// This node's ID (spec "Addresses").
+    pub fn id(&self) -> NodeId {
+        self.id
     }
 
     /// Whether the boot listen (spec "Channel at boot") is still running.
@@ -385,11 +398,11 @@ impl Relay {
     }
 
     /// The highest count this relay would send, of the forwards in its
-    /// send queue that could go to the neighbour named `to`: live, not
-    /// handed the message, not its parent (spec "Next hop", "Hop count"). For a driver
+    /// send queue that could go to the neighbour `to`: live, not handed the
+    /// message, not its parent (spec "Next hop", "Hop count"). For a driver
     /// to sample; reading it changes nothing.
-    pub fn highest_count_for(&self, to: ShortName, now: Instant) -> Option<u8> {
-        let (slot, n) = self.neighbours.by_short(to)?;
+    pub fn highest_count_for(&self, to: NodeId, now: Instant) -> Option<u8> {
+        let (slot, n) = self.neighbours.by_id(to)?;
         if self.neighbours.is_expired(n, now) {
             return None;
         }
@@ -610,7 +623,8 @@ impl Relay {
         let hb = Heartbeat {
             surveyed: self.config.surveyed,
             home: self.home,
-            position: self.config.position,
+            id: self.id,
+            short: self.config.position.short(),
         };
         mac::frame(&Packet::Heartbeat(hb), channel, MIN_PREAMBLE_SYMBOLS)
     }
@@ -707,14 +721,11 @@ impl Relay {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
                 self.neighbours.frame_heard(d.src_hop, rssi);
             }
-            Ok(Packet::Ack(a)) => {
-                let from = ShortName(u32::from_be_bytes(a.from.0));
-                self.neighbours.frame_heard(from, rssi);
-            }
+            Ok(Packet::Ack(a)) => self.neighbours.frame_heard(a.from, rssi),
             _ => {}
         }
         match decoded {
-            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
+            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
             Ok(Packet::Attach(a)) if running && a.relay == self.me() => self.attach(a, now),
@@ -752,25 +763,15 @@ impl Relay {
         }
     }
 
-    fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if hb.position != self.config.position {
-            let heard = self.neighbours.heard(&hb, rssi, &self.plane, now);
-            if let Some(slot) = heard.new_occupant() {
-                self.records.slot_reoccupied(slot);
-                self.skipped &= !(1 << slot);
-            }
+    fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant) {
+        if hb.id == self.id {
             return;
         }
-        if let Stage::Booting(_) = self.stage {
-            // Another relay holds this identity: step two counts (≈1.2 m)
-            // north and listen again (spec "Relay identity").
-            let to = Position {
-                lat: hb.position.lat + 2,
-                ..hb.position
-            };
-            self.set_position(to);
-            self.stage = Stage::Booting(now + self.config.boot_listen);
-            emit(Action::Trace(Trace::PositionShifted { to }));
+        let position = hb.position(self.config.position);
+        let heard = self.neighbours.heard(&hb, position, rssi, &self.plane, now);
+        if let Some(slot) = heard.new_occupant() {
+            self.records.slot_reoccupied(slot);
+            self.skipped &= !(1 << slot);
         }
     }
 
@@ -784,9 +785,9 @@ impl Relay {
         match cmd {
             AppCommand::Send {
                 dst_pos,
-                dst_leaf,
+                dst_id,
                 payload,
-            } => self.originate(dst_pos, dst_leaf, payload, now, emit),
+            } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::SetPosition { position, surveyed } => {
                 self.config.surveyed = surveyed;
                 self.set_position(position);
@@ -905,6 +906,19 @@ mod tests {
     use crate::tables::budget::BAN;
     use std::vec::Vec;
 
+    /// The ID a test gives the relay heard at `p`.
+    fn id_of(p: Position) -> NodeId {
+        NodeId(p.short().0.to_be_bytes())
+    }
+
+    /// The ID numbered `n`.
+    fn name(n: u32) -> NodeId {
+        NodeId(n.to_be_bytes())
+    }
+
+    /// The ID of a node no test builds.
+    const NOBODY: NodeId = NodeId([9; 4]);
+
     #[test]
     fn sizes() {
         // docs/core-interface.md §6: the tables, and around them the medium
@@ -974,7 +988,7 @@ mod tests {
     /// has the short one (spec "Attach and polls", "Leaf receive mode").
     #[test]
     fn a_hybrid_leaf_is_polled_at_its_slot_with_a_short_preamble() {
-        use crate::ids::{LeafId, MsgId};
+        use crate::ids::{MsgId, NodeId};
         use crate::tables::delivery::Queued;
         use crate::tables::leaves::{PERIOD, POLL_AIRTIME, POLL_LATE};
         use crate::wire::{Attach, RxMode};
@@ -991,7 +1005,7 @@ mod tests {
         let mut now = Instant::ZERO;
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         now = Instant::ZERO + Duration::from_secs(10);
-        let leaf = LeafId([9; 4]);
+        let leaf = NodeId([9; 4]);
         let (me, home) = (r.me(), r.home);
         let attach = |reply| {
             let a = Attach {
@@ -1079,7 +1093,7 @@ mod tests {
     /// at once when the answer comes (spec "Attach and polls").
     #[test]
     fn the_relay_listens_for_the_answer_to_its_poll() {
-        use crate::ids::{LeafId, MsgId};
+        use crate::ids::{MsgId, NodeId};
         use crate::tables::delivery::Queued;
         use crate::wire::{Attach, RxMode};
         let hour = Duration::from_secs(3600);
@@ -1091,7 +1105,7 @@ mod tests {
             heartbeat_max: hour,
             ..Config::default()
         };
-        let leaf = LeafId([5; 4]);
+        let leaf = NodeId([5; 4]);
         let frames = |reply| {
             let a = Attach {
                 leaf,
@@ -1167,7 +1181,7 @@ mod tests {
     /// what a new one does.
     #[test]
     fn a_reset_relay_is_a_new_one() {
-        use crate::ids::LeafId;
+        use crate::ids::NodeId;
         let config = Config {
             boot_listen: Duration::from_secs(1),
             ..Config::default()
@@ -1177,7 +1191,7 @@ mod tests {
         drive(&mut used, &mut now, Instant::ZERO + Duration::from_secs(30));
         let send = AppCommand::Send {
             dst_pos: config.position,
-            dst_leaf: LeafId([1; 4]),
+            dst_id: NodeId([1; 4]),
             payload: b"queued",
         };
         used.handle(Event::App(send), now, &mut |_| {});
@@ -1205,7 +1219,7 @@ mod tests {
     /// 60 s retry (spec "Hand-over", "Delivery queue").
     #[test]
     fn a_deliver_waits_for_the_bucket_not_the_retry() {
-        use crate::ids::{LeafId, MsgId};
+        use crate::ids::{MsgId, NodeId};
         use crate::tables::budget::REPLY_RESERVE;
         use crate::tables::delivery::Queued;
         use crate::wire::{Deliver, RxMode};
@@ -1223,7 +1237,7 @@ mod tests {
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         assert!(!r.booting());
         now = Instant::ZERO + Duration::from_secs(10);
-        let leaf = LeafId([7; 4]);
+        let leaf = NodeId([7; 4]);
         r.leaves.attached(leaf, RxMode::Listening, 0, now).unwrap();
         r.budget.record(r.budget.available(now), now);
         let q = Queued::new(MsgId(42), leaf, b"later", now).unwrap();
@@ -1278,8 +1292,6 @@ mod tests {
     #[test]
     fn a_packet_that_cannot_be_answered_is_not_taken() {
         use crate::event::AppEvent;
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::wire::Data;
         let hour = Duration::from_secs(3600);
         let config = Config {
@@ -1298,9 +1310,9 @@ mod tests {
         let packet = |home: Channel, from: u32, text: &'static [u8]| Data {
             sender_home: home,
             dst_hop: r.me(),
-            src_hop: ShortName(from),
+            src_hop: name(from),
             dst_pos: r.config.position,
-            dst_leaf: LeafId::RELAY,
+            dst_id: r.me(),
             hops: 1,
             time_left: u8::MAX,
             payload: text,
@@ -1378,7 +1390,7 @@ mod tests {
     /// place.
     #[test]
     fn the_application_waits_for_room() {
-        use crate::ids::LeafId;
+        use crate::ids::NodeId;
         use crate::tables::budget::DEPTH;
         use crate::tables::delivery::DELIVERY_QUEUE;
         let hour = Duration::from_secs(3600);
@@ -1403,7 +1415,7 @@ mod tests {
         let send = |r: &mut Relay, k: u8, now| {
             let cmd = AppCommand::Send {
                 dst_pos: me,
-                dst_leaf: LeafId([1; 4]),
+                dst_id: NodeId([1; 4]),
                 payload: &[k],
             };
             r.handle(Event::App(cmd), now, &mut |_| {});
@@ -1450,8 +1462,6 @@ mod tests {
     #[test]
     fn a_packet_that_has_travelled_takes_a_hop_place() {
         use crate::event::DropReason;
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::wire::{Data, MAX_PAYLOAD};
         let hour = Duration::from_secs(3600);
         let config = Config {
@@ -1479,9 +1489,9 @@ mod tests {
             let d = Data {
                 sender_home: home,
                 dst_hop: r.me(),
-                src_hop: ShortName(1),
+                src_hop: name(1),
                 dst_pos: far,
-                dst_leaf: LeafId::RELAY,
+                dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
                 payload: &payload,
@@ -1530,8 +1540,7 @@ mod tests {
     /// queue keeps its record however old (spec "Message records", roadmap D31).
     #[test]
     fn a_waiting_message_keeps_its_record() {
-        use crate::ids::{LeafId, MsgId};
-        use crate::position::ShortName;
+        use crate::ids::MsgId;
         use crate::tables::records::{Record, HELD, RECORDS};
         use crate::wire::{Data, MAX_PAYLOAD};
         let hour = Duration::from_secs(3600);
@@ -1559,9 +1568,9 @@ mod tests {
             let d = Data {
                 sender_home: Channel::new(5).unwrap(),
                 dst_hop: r.me(),
-                src_hop: ShortName(1),
+                src_hop: name(1),
                 dst_pos: far,
-                dst_leaf: LeafId::RELAY,
+                dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
                 payload: &payload,
@@ -1616,8 +1625,7 @@ mod tests {
     /// at every ban and left the oldest waiting for minutes.
     #[test]
     fn waiting_entries_keep_arrival_order_through_bans() {
-        use crate::ids::{LeafId, MsgId};
-        use crate::position::ShortName;
+        use crate::ids::MsgId;
         use crate::tables::budget::BAN;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
@@ -1659,7 +1667,8 @@ mod tests {
         let hb = Heartbeat {
             surveyed: true,
             home: b_home,
-            position: b,
+            id: id_of(b),
+            short: b.short(),
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         // Four forwards for B, queued in this order.
@@ -1668,15 +1677,15 @@ mod tests {
             let payload = [tag];
             let d = Data {
                 sender_home: home,
-                dst_hop: ShortName(0),
+                dst_hop: name(0),
                 src_hop: r.me(),
                 dst_pos: far,
-                dst_leaf: LeafId::RELAY,
+                dst_id: NOBODY,
                 hops: 2,
                 time_left: u8::MAX,
                 payload: &payload,
             };
-            let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+            let parent = Some((name(7), Channel::new(6).unwrap()));
             let at = r.record_place().unwrap();
             r.records.put(at, Record::new(d.msg_id(), parent, 1, now));
             let f = mac::frame(&Packet::Data(d), home, MIN_PREAMBLE_SYMBOLS);
@@ -1705,8 +1714,8 @@ mod tests {
                         now += Duration::from_millis(5);
                         let reply = Packet::Ack(Ack {
                             msg_id: id,
-                            from: b.short().into(),
-                            to: r.me().into(),
+                            from: id_of(b),
+                            to: r.me(),
                             refused: offers.len() <= refusals,
                         });
                         pending.extend(hear(&mut r, now, &reply));
@@ -1749,8 +1758,6 @@ mod tests {
     /// this relay, was lost.
     #[test]
     fn an_answer_to_another_sender_is_not_ours() {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
         use crate::wire::{Ack, Data, Heartbeat};
@@ -1791,21 +1798,22 @@ mod tests {
         let hb = Heartbeat {
             surveyed: true,
             home: Channel::new(5).unwrap(),
-            position: d_pos,
+            id: id_of(d_pos),
+            short: d_pos.short(),
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         let data = Data {
             sender_home: home,
-            dst_hop: ShortName(0),
+            dst_hop: name(0),
             src_hop: r.me(),
             dst_pos: far,
-            dst_leaf: LeafId::RELAY,
+            dst_id: NOBODY,
             hops: 2,
             time_left: u8::MAX,
             payload: b"one message, two senders",
         };
         let id = data.msg_id();
-        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records.put(at, Record::new(id, parent, 1, now));
         let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
@@ -1833,12 +1841,12 @@ mod tests {
         }
         let to_me = Ack {
             msg_id: id,
-            from: d_pos.short().into(),
-            to: r.me().into(),
+            from: id_of(d_pos),
+            to: r.me(),
             refused: false,
         };
         let to_c = Ack {
-            to: ShortName(0x0c0c_0c0c).into(),
+            to: name(0x0c0c_0c0c),
             ..to_me
         };
         let banned = |r: &Relay, now| {
@@ -1873,8 +1881,6 @@ mod tests {
     /// for a few rotations dropped it while it was carrying every message.
     #[test]
     fn a_neighbour_that_answers_stays_live() {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
         use crate::wire::{Ack, Data};
@@ -1917,7 +1923,8 @@ mod tests {
             &Packet::Heartbeat(Heartbeat {
                 surveyed: true,
                 home: Channel::new(5).unwrap(),
-                position: d_pos,
+                id: id_of(d_pos),
+                short: d_pos.short(),
             }),
         );
         let expiry = r.neighbours.params().expire_after;
@@ -1929,16 +1936,16 @@ mod tests {
             let payload = [tag];
             let data = Data {
                 sender_home: home,
-                dst_hop: ShortName(0),
+                dst_hop: name(0),
                 src_hop: r.me(),
                 dst_pos: far,
-                dst_leaf: LeafId::RELAY,
+                dst_id: NOBODY,
                 hops: 2,
                 time_left: u8::MAX,
                 payload: &payload,
             };
             let id = data.msg_id();
-            let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+            let parent = Some((name(7), Channel::new(6).unwrap()));
             let at = r.record_place().unwrap();
             r.records.put(at, Record::new(id, parent, 1, *now));
             let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
@@ -1952,8 +1959,8 @@ mod tests {
                 .any(|(_, f)| f.channel == Channel::new(5).unwrap()));
             let ack = Ack {
                 msg_id: id,
-                from: d_pos.short().into(),
-                to: r.me().into(),
+                from: id_of(d_pos),
+                to: r.me(),
                 refused,
             };
             let pending = hear(r, *now, &Packet::Ack(ack));
@@ -1990,16 +1997,18 @@ mod tests {
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         let me = r.config.position;
         for k in 1..=2 {
+            let at = Position {
+                lat: me.lat + 5_000 * k,
+                ..me
+            };
             let hb = Heartbeat {
                 surveyed: true,
                 home: Channel::new(5).unwrap(),
-                position: Position {
-                    lat: me.lat + 5_000 * k,
-                    ..me
-                },
+                id: id_of(at),
+                short: at.short(),
             };
-            r.neighbours.heard(&hb, -80, &r.plane, now);
-            r.neighbours.refused(hb.position, now + BAN);
+            r.neighbours.heard(&hb, at, -80, &r.plane, now);
+            r.neighbours.refused(hb.id, now + BAN);
         }
         let far = Position {
             lat: me.lat + 100_000,
@@ -2036,16 +2045,14 @@ mod tests {
         Option<crate::event::DropReason>,
         Option<crate::event::DropReason>,
     ) {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::wire::{Data, MAX_PAYLOAD};
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
-            src_hop: ShortName(if hops == 0 { 0 } else { 1 }),
+            src_hop: name(if hops == 0 { 0 } else { 1 }),
             dst_pos: dst,
-            dst_leaf: LeafId::RELAY,
+            dst_id: NOBODY,
             hops,
             time_left,
             payload: &payload,
@@ -2172,8 +2179,6 @@ mod tests {
     /// D35). Stamped when queued, the frame would carry 2 throughout.
     #[test]
     fn a_hand_over_stamps_its_count_at_its_first_transmission() {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
         use crate::wire::{Ack, Data};
@@ -2186,30 +2191,27 @@ mod tests {
         });
         let data = Data {
             sender_home: r.home,
-            dst_hop: ShortName(0),
+            dst_hop: name(0),
             src_hop: r.me(),
             dst_pos: far,
-            dst_leaf: LeafId::RELAY,
+            dst_id: NOBODY,
             hops: 2,
             time_left: u8::MAX,
             payload: b"count",
         };
         let id = data.msg_id();
-        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records.put(at, Record::new(id, parent, 1, now));
         let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
         r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
         // A copy with a higher count arrived since it was queued.
-        r.records
-            .get_mut(id)
-            .unwrap()
-            .received(ShortName(8), 6, now);
+        r.records.get_mut(id).unwrap().received(name(8), 6, now);
 
         let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u8> {
             sent.iter()
                 .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-                    Ok(Packet::Data(d)) if d.dst_hop == to.short() => Some(d.hops),
+                    Ok(Packet::Data(d)) if d.dst_hop == id_of(to) => Some(d.hops),
                     _ => None,
                 })
                 .collect()
@@ -2226,10 +2228,7 @@ mod tests {
         }
         assert_eq!(counts(&sent, nearest), [7, 7, 7], "stamped, then repeated");
         // Another copy arrives during the last attempt.
-        r.records
-            .get_mut(id)
-            .unwrap()
-            .received(ShortName(8), 9, now);
+        r.records.get_mut(id).unwrap().received(name(8), 9, now);
         while counts(&sent, near).is_empty() {
             let until = now + Duration::from_millis(10);
             sent.extend(drive(&mut r, &mut now, until));
@@ -2239,8 +2238,8 @@ mod tests {
         assert_eq!(counts(&sent, near), [10], "readdressed: stamped again");
         let ack = Ack {
             msg_id: id,
-            from: near.short().into(),
-            to: r.me().into(),
+            from: id_of(near),
+            to: r.me(),
             refused: false,
         };
         let f = mac::frame(&Packet::Ack(ack), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2260,17 +2259,15 @@ mod tests {
     /// for its banned neighbours.
     #[test]
     fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::wire::Data;
         let (mut r, mut now, far) = with_every_neighbour_banned();
         let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u8| {
             let d = Data {
                 sender_home: Channel::new(5).unwrap(),
                 dst_hop: r.me(),
-                src_hop: ShortName(from),
+                src_hop: name(from),
                 dst_pos: far,
-                dst_leaf: LeafId::RELAY,
+                dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
                 payload: b"again",
@@ -2312,8 +2309,6 @@ mod tests {
     /// it comes from (spec "Receiving DATA" case 1, roadmap D35).
     #[test]
     fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
         use crate::tables::records::Record;
         use crate::tables::send_queue::{Kind, Outgoing};
         use crate::wire::{Ack, Data};
@@ -2326,16 +2321,16 @@ mod tests {
         };
         let data = Data {
             sender_home: r.home,
-            dst_hop: ShortName(0),
+            dst_hop: name(0),
             src_hop: r.me(),
             dst_pos: addressed,
-            dst_leaf: LeafId::RELAY,
+            dst_id: id_of(addressed),
             hops: 2,
             time_left: u8::MAX,
             payload: b"arrived",
         };
         let id = data.msg_id();
-        let parent = Some((ShortName(7), Channel::new(6).unwrap()));
+        let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records.put(at, Record::new(id, parent, 1, now));
         let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2346,7 +2341,7 @@ mod tests {
         let sent = drive_from(&mut r, &mut now, until, pending);
         assert!(sent.iter().any(|(_, f)| matches!(
             Packet::decode(f.payload()),
-            Ok(Packet::Data(d)) if d.dst_hop == addressed.short()
+            Ok(Packet::Data(d)) if d.dst_hop == id_of(addressed)
         )));
         let hear = |r: &mut Relay, now: &mut Instant, p: &Packet<'_>| {
             let f = mac::frame(p, r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2363,8 +2358,8 @@ mod tests {
         };
         let ack = Ack {
             msg_id: id,
-            from: addressed.short().into(),
-            to: r.me().into(),
+            from: id_of(addressed),
+            to: r.me(),
             refused: false,
         };
         hear(&mut r, &mut now, &Packet::Ack(ack));
@@ -2373,7 +2368,7 @@ mod tests {
         let copy = Data {
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
-            src_hop: ShortName(9),
+            src_hop: name(9),
             hops: 5,
             time_left: u8::MAX,
             ..data

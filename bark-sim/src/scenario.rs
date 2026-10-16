@@ -263,8 +263,8 @@ pub enum ScriptAction {
     /// Remove the node for good (power off).
     Remove,
     /// Power the node off and on again at once: it loses every table and
-    /// timer and boots afresh with the same identity, its position or
-    /// leaf ID, as a solar relay does after a night.
+    /// timer and boots afresh with the same ID and position, as a solar
+    /// relay does after a night.
     Restart,
     /// Driver-level `Listen(channel)`, as if the core had asked.
     Listen,

@@ -2,13 +2,18 @@
 
 use crate::position::Position;
 
-/// A leaf's 4-byte identifier. Zero means "the relay itself".
+/// A node's 4-byte identifier, four opaque bytes in order. Every node
+/// has one; it names the node in the packet fields that only name a node
+/// (DATA `dst_hop` and `src_hop`, ACK `from` and `to`, ATTACH `relay`)
+/// and with a position makes a destination address (spec "Addresses").
+/// Zero names no node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct LeafId(pub [u8; 4]);
+pub struct NodeId(pub [u8; 4]);
 
-impl LeafId {
-    /// The relay-itself address.
-    pub const RELAY: LeafId = LeafId([0; 4]);
+impl NodeId {
+    /// No node: a leaf's DATA names no sender, and a node configured with
+    /// it draws its own.
+    pub const NONE: NodeId = NodeId([0; 4]);
 }
 
 /// A message's identity (spec "Packet formats", roadmap D15). No packet carries it
@@ -19,16 +24,16 @@ impl LeafId {
 pub struct MsgId(pub u32);
 
 impl MsgId {
-    /// The ID of a message to `(dst_pos, dst_leaf)` carrying `payload`:
-    /// 32-bit FNV-1a over `dst_pos` in its 7 wire bytes, `dst_leaf` and
+    /// The ID of a message to `(dst_pos, dst_id)` carrying `payload`:
+    /// 32-bit FNV-1a over `dst_pos` in its 7 wire bytes, `dst_id` and
     /// `payload`, concatenated. FNV-1a because the phone app must compute
     /// it too, and it is a few lines in any language. The app keeps
     /// payloads unique (spec "Phone link"), so two IDs collide only by chance:
     /// among the 1855 messages a relay remembers at most (spec "Message records"), with
     /// probability about 4 × 10⁻⁴.
-    pub fn of(dst_pos: Position, dst_leaf: LeafId, payload: &[u8]) -> MsgId {
+    pub fn of(dst_pos: Position, dst_id: NodeId, payload: &[u8]) -> MsgId {
         let mut h: u32 = 0x811c_9dc5;
-        for part in [&dst_pos.encode()[..], &dst_leaf.0, payload] {
+        for part in [&dst_pos.encode()[..], &dst_id.0, payload] {
             for &b in part {
                 h ^= b as u32;
                 h = h.wrapping_mul(0x0100_0193);
@@ -55,7 +60,7 @@ mod tests {
         assert_eq!(fnv1a(b"a"), 0xe40c_292c);
         assert_eq!(fnv1a(b"foobar"), 0xbf9c_f968);
         let p = Position::from_degrees(50.45, 30.52);
-        let leaf = LeafId([1, 2, 3, 4]);
+        let leaf = NodeId([1, 2, 3, 4]);
         let mut all = [0u8; 7 + 4 + 5];
         all[..7].copy_from_slice(&p.encode());
         all[7..11].copy_from_slice(&leaf.0);
@@ -66,7 +71,7 @@ mod tests {
     #[test]
     fn every_field_counts() {
         let p = Position::from_degrees(50.45, 30.52);
-        let a = MsgId::of(p, LeafId([1, 2, 3, 4]), b"a");
+        let a = MsgId::of(p, NodeId([1, 2, 3, 4]), b"a");
         assert_ne!(
             a,
             MsgId::of(
@@ -74,12 +79,12 @@ mod tests {
                     lat: p.lat + 1,
                     ..p
                 },
-                LeafId([1, 2, 3, 4]),
+                NodeId([1, 2, 3, 4]),
                 b"a"
             )
         );
-        assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 5]), b"a"));
-        assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 4]), b"b"));
-        assert_ne!(a, MsgId::of(p, LeafId([1, 2, 3, 4]), b"a\0"));
+        assert_ne!(a, MsgId::of(p, NodeId([1, 2, 3, 5]), b"a"));
+        assert_ne!(a, MsgId::of(p, NodeId([1, 2, 3, 4]), b"b"));
+        assert_ne!(a, MsgId::of(p, NodeId([1, 2, 3, 4]), b"a\0"));
     }
 }

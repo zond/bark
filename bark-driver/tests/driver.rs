@@ -17,8 +17,7 @@ use bark_driver::{App, Clock, Driver, Heard, Outgoing, Radio, MAX_AIRTIME, RSSI_
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, LeafId, Position, Relay,
-    MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, Position, Relay, MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -543,11 +542,12 @@ fn a_relay_runs_through_the_loop() {
     let world = World::default();
     let me = Position::from_degrees(50.45, 30.52);
     let relay = Relay::new(relay_config(me), 7);
+    let my_id = relay.id();
     let mut d = driver(relay, &world, Duration::ZERO);
     d.app_mut().outgoing = Some((
         Outgoing {
             dst_pos: me,
-            dst_leaf: LeafId::RELAY,
+            dst_id: my_id,
             len: 5,
         },
         b"hello".to_vec(),
@@ -559,7 +559,8 @@ fn a_relay_runs_through_the_loop() {
     let hb = Packet::Heartbeat(Heartbeat {
         surveyed: true,
         home: ch(6),
-        position: other,
+        id: bark_proto::NodeId([6; 4]),
+        short: other.short(),
     });
     let mut buf = [0u8; MAX_FRAME];
     let len = hb.encode(&mut buf).expect("encodes");
@@ -582,7 +583,7 @@ fn a_relay_runs_through_the_loop() {
         .iter()
         .filter_map(|(t, op)| match op {
             Op::Transmit(f) => match Packet::decode(f.payload()) {
-                Ok(Packet::Heartbeat(h)) if h.position == me => Some(*t),
+                Ok(Packet::Heartbeat(h)) if h.position(me) == me => Some(*t),
                 _ => None,
             },
             _ => None,

@@ -1,6 +1,6 @@
 //! Routing between relays (spec "Routing", "Hand-over"), driven through real bytes
 //! on the test medium. Every relay's application can send; a message to a
-//! relay itself (leaf 0) is delivered to its application.
+//! relay itself (its own ID) is delivered to its application.
 
 mod common;
 
@@ -8,7 +8,7 @@ use bark_proto::tables::budget::{hold, BAN};
 use bark_proto::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
-    AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node, Position,
+    AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, Node, NodeId, Position,
     Relay, Trace,
 };
 use common::{ch, secs, Harness};
@@ -73,17 +73,20 @@ fn build(nodes: Vec<Node>, links: &[(usize, usize)]) -> Harness<Node> {
 
 /// Relay `from`'s application sends `text` to relay `to` itself.
 fn send(h: &mut Harness<Node>, from: usize, to: usize, text: &[u8]) -> MsgId {
-    let dst_pos = position(h, to);
+    let (dst_pos, dst_id) = (position(h, to), core(h, to).id());
     h.command(
         from,
         AppCommand::Send {
             dst_pos,
-            dst_leaf: LeafId::RELAY,
+            dst_id,
             payload: text,
         },
     );
-    MsgId::of(dst_pos, LeafId::RELAY, text)
+    MsgId::of(dst_pos, dst_id, text)
 }
+
+/// The ID of a node no test builds.
+const NOBODY: NodeId = NodeId([9; 4]);
 
 fn messages(h: &Harness<Node>, i: usize, id: MsgId) -> usize {
     h.nodes[i]
@@ -149,7 +152,7 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
         h.run_until(h.now + secs(10), |h| delivered(h, d, id)),
         "not delivered"
     );
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert!(traces(&h, x).contains(&Trace::ReturnedToParent {
         msg_id: id,
         to: name(o)
@@ -205,7 +208,7 @@ fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
         h.run_until(h.now + secs(10), |h| delivered(h, d, id)),
         "not delivered"
     );
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     let returned = |at: usize, to: usize| {
         traces(&h, at).contains(&Trace::ReturnedToParent {
             msg_id: id,
@@ -221,7 +224,7 @@ fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
 }
 
 /// The forwards of message `id` at relay `i`, in order.
-fn forwards(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<bark_proto::ShortName> {
+fn forwards(h: &Harness<Node>, i: usize, id: MsgId) -> Vec<NodeId> {
     traces(h, i)
         .into_iter()
         .filter_map(|t| match t {
@@ -286,7 +289,7 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
         "not delivered: X {:?}",
         traces(&h, x)
     );
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert_eq!(forwards(&h, x, id), vec![name(y), name(z)]);
     assert_eq!(forwards(&h, y, id), vec![name(c), name(x), name(e)]);
     assert_eq!(messages(&h, d, id), 1);
@@ -337,7 +340,7 @@ fn a_neighbour_whose_hand_over_failed_is_tried_again() {
         traces(&h, y)
     );
     h.run_for(secs(10));
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert_eq!(forwards(&h, x, id), vec![name(z), name(y)]);
     assert_eq!(forwards(&h, z, id), vec![name(y)]);
     assert_eq!(forwards(&h, y, id), vec![name(x), name(e)]);
@@ -397,7 +400,7 @@ fn a_split_heals_at_a_sender_that_waits() {
         ],
         &[(x, y), (y, p), (x, z), (z, d)],
     );
-    let [nx, ny, np, nz] = [x, y, p, z].map(|i| position(&h, i).short());
+    let [nx, ny, np, nz] = [x, y, p, z].map(|i| core(&h, i).id());
     let (mut moved_on, mut to_p) = (false, 0);
     h.lose = Some(Box::new(move |_, _, to, bytes| {
         match Packet::decode(bytes) {
@@ -407,7 +410,7 @@ fn a_split_heals_at_a_sender_that_waits() {
                 to_p += usize::from(lose);
                 lose
             }
-            Ok(Packet::Ack(a)) => !moved_on && (a.from, a.to) == (ny.into(), nx.into()),
+            Ok(Packet::Ack(a)) => !moved_on && (a.from, a.to) == (ny, nx),
             _ => false,
         }
     }));
@@ -421,7 +424,7 @@ fn a_split_heals_at_a_sender_that_waits() {
     };
     assert!(h.run_until(h.now + secs(20), beat));
     let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
-    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let name = |h: &Harness<Node>, i| core(h, i).id();
     let nx = name(&h, x);
     let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
     assert!(h.run_until(h.now + secs(20), |h| {
@@ -459,7 +462,7 @@ fn relay_with(east: f64, north: f64, seed: u64, config: Config) -> Node {
 }
 
 /// The DATA in `bytes`, by sender and receiver, if it is one.
-fn data_names(bytes: &[u8]) -> Option<(bark_proto::ShortName, bark_proto::ShortName)> {
+fn data_names(bytes: &[u8]) -> Option<(NodeId, NodeId)> {
     match Packet::decode(bytes) {
         Ok(Packet::Data(d)) => Some((d.src_hop, d.dst_hop)),
         _ => None,
@@ -467,7 +470,7 @@ fn data_names(bytes: &[u8]) -> Option<(bark_proto::ShortName, bark_proto::ShortN
 }
 
 /// The ACK in `bytes`, by its sender and the one it answers, if it is one.
-fn ack_names(bytes: &[u8]) -> Option<(bark_proto::wire::AckName, bark_proto::wire::AckName)> {
+fn ack_names(bytes: &[u8]) -> Option<(NodeId, NodeId)> {
     match Packet::decode(bytes) {
         Ok(Packet::Ack(a)) => Some((a.from, a.to)),
         _ => None,
@@ -523,14 +526,14 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, s), (p, t), (c, s), (t, d)]);
-    let [np, nc, ns] = [p, c, s].map(|i| position(&h, i).short());
+    let [np, nc, ns] = [p, c, s].map(|i| core(&h, i).id());
     let mut p_moved = false;
     h.lose = Some(Box::new(move |_, _, _, bytes| {
         if let Some(names) = data_names(bytes) {
             p_moved |= names == (np, ns);
             return names == (nc, ns);
         }
-        ack_names(bytes) == Some((nc.into(), np.into())) && !p_moved
+        ack_names(bytes) == Some((nc, np)) && !p_moved
     }));
     let id = send(&mut h, p, d, b"gave up");
     assert!(
@@ -539,7 +542,7 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
         traces(&h, p),
         traces(&h, c)
     );
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert_eq!(forwards(&h, p, id), vec![name(s), name(t)]);
     assert_eq!(forwards(&h, s, id), vec![name(c)]);
     assert_eq!(returns(&h, c, id), 1);
@@ -580,13 +583,13 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
-    let (pq, l) = (position(&h, q), LeafId([7; 4]));
+    let (pq, l) = (position(&h, q), NodeId([7; 4]));
     let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
                 dst_pos: pq,
-                dst_leaf: l,
+                dst_id: l,
                 payload: text,
             },
         );
@@ -596,7 +599,7 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
         to_l(&mut h, q, &[b'q', k]);
     }
     let id = to_l(&mut h, p, b"forgotten");
-    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let name = |h: &Harness<Node>, i| core(h, i).id();
     let back = |h: &Harness<Node>| returns(h, c, id) == 1;
     assert!(h.run_until(h.now + secs(10), back), "C did not return it");
     let returned_at = h.now;
@@ -605,7 +608,7 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     h.run_for(expiry + secs(1));
     let nc = name(&h, c);
     assert!(
-        !core(&h, p).neighbours().any(|n| n.position.short() == nc),
+        !core(&h, p).neighbours().any(|n| n.id == nc),
         "C did not expire at P"
     );
     h.link(p, c);
@@ -684,7 +687,7 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(x, y), (x, z), (x, w), (w, d)]);
-    let [nx, ny, nz] = [x, y, z].map(|i| position(&h, i).short());
+    let [nx, ny, nz] = [x, y, z].map(|i| core(&h, i).id());
     let (mut x_moved, mut y_back) = (false, false);
     h.lose = Some(Box::new(move |_, _, _, bytes| {
         if let Some(names) = data_names(bytes) {
@@ -695,7 +698,7 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
             }
             return names == (nz, nx) && !y_back;
         }
-        ack_names(bytes) == Some((ny.into(), nx.into())) && !x_moved
+        ack_names(bytes) == Some((ny, nx)) && !x_moved
     }));
     let id = send(&mut h, x, d, b"seen before");
     assert!(
@@ -705,7 +708,7 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
     );
     // Z's return.
     h.run_for(secs(10));
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert_eq!(forwards(&h, x, id), vec![name(z), name(w), name(y)]);
     assert_eq!((returns(&h, y, id), returns(&h, z, id)), (2, 1));
     assert_eq!(messages(&h, d, id), 1);
@@ -753,7 +756,7 @@ fn a_return_does_not_go_back_and_forth() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c)]);
-    let [np, nc] = [p, c].map(|i| position(&h, i).short());
+    let [np, nc] = [p, c].map(|i| core(&h, i).id());
     // C's return waits until P has given up: after P's third frame and
     // its ACK timeout, 100 ms.
     let (mut offers, mut open_at) = (0, None);
@@ -766,20 +769,20 @@ fn a_return_does_not_go_back_and_forth() {
             false
         }
         Some(n) if n == (nc, np) => open_at.is_none_or(|t| now < t),
-        _ => offers <= 3 && ack_names(bytes) == Some((nc.into(), np.into())),
+        _ => offers <= 3 && ack_names(bytes) == Some((nc, np)),
     }));
     let (dst_pos, text) = (pos(5_000.0, 0.0), b"back and forth");
     h.command(
         p,
         AppCommand::Send {
             dst_pos,
-            dst_leaf: LeafId::RELAY,
+            dst_id: NOBODY,
             payload: text,
         },
     );
-    let id = MsgId::of(dst_pos, LeafId::RELAY, text);
+    let id = MsgId::of(dst_pos, NOBODY, text);
     h.run_for(secs(60));
-    let datas = |from: usize, to: bark_proto::ShortName| {
+    let datas = |from: usize, to: NodeId| {
         h.nodes[from]
             .sent
             .iter()
@@ -833,13 +836,13 @@ fn a_split_met_again_merges() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(x, y), (x, z), (y, p)]);
-    let (pp, l) = (position(&h, p), LeafId([7; 4]));
+    let (pp, l) = (position(&h, p), NodeId([7; 4]));
     let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
                 dst_pos: pp,
-                dst_leaf: l,
+                dst_id: l,
                 payload: text,
             },
         );
@@ -848,14 +851,14 @@ fn a_split_met_again_merges() {
     for k in 0..DELIVERY_QUEUE as u8 {
         to_l(&mut h, p, &[b'p', k]);
     }
-    let [nx, ny, nz] = [x, y, z].map(|i| position(&h, i).short());
+    let [nx, ny, nz] = [x, y, z].map(|i| core(&h, i).id());
     let mut x_moved = false;
     h.lose = Some(Box::new(move |_, _, _, bytes| {
         x_moved |= data_names(bytes) == Some((nx, nz));
-        ack_names(bytes) == Some((ny.into(), nx.into())) && !x_moved
+        ack_names(bytes) == Some((ny, nx)) && !x_moved
     }));
     let id = to_l(&mut h, x, b"merged");
-    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let name = |h: &Harness<Node>, i| core(h, i).id();
     let again = |h: &Harness<Node>| forwards(h, x, id).len() == 2;
     assert!(
         h.run_until(h.now + secs(10), again),
@@ -868,7 +871,7 @@ fn a_split_met_again_merges() {
     let acks = h.nodes[y]
         .sent
         .iter()
-        .filter(|(_, f)| ack_names(f.payload()) == Some((ny.into(), nx.into())))
+        .filter(|(_, f)| ack_names(f.payload()) == Some((ny, nx)))
         .count();
     assert!(acks >= 2, "Y took X's first offer, and answered the second");
     assert!(traces(&h, y)
@@ -1022,7 +1025,7 @@ const FAINT_DBM: i16 = -119;
 
 /// The DATA frames relay `from` sent to relay `to`.
 fn data_sent(h: &Harness<Node>, from: usize, to: usize) -> usize {
-    let (a, b) = (position(h, from).short(), position(h, to).short());
+    let (a, b) = (core(h, from).id(), core(h, to).id());
     h.nodes[from]
         .sent
         .iter()
@@ -1057,7 +1060,7 @@ fn a_faint_neighbour_is_not_chosen() {
     discover(&mut h, &links);
     let id = send(&mut h, o, d, b"the strong way");
     assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert_eq!(forwards(&h, o, id), vec![name(m)]);
     assert_eq!(data_sent(&h, o, f), 0);
 }
@@ -1095,7 +1098,7 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
             .received
             .iter()
             .filter(|(_, b)| {
-                matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.position == target)
+                matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.short == target.short())
             })
             .count()
     };
@@ -1145,7 +1148,7 @@ fn a_ban_excludes_the_neighbour_and_expires() {
         losing.get() && from == f1 && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
     fill(&mut h, x, f1, d);
-    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let name = |h: &Harness<Node>, i| core(h, i).id();
     let (n1, n2) = (name(&h, f1), name(&h, f2));
     let to_f1 = |h: &Harness<Node>, id: MsgId| {
         h.nodes[o].sent.iter().any(|(_, fr)| {
@@ -1217,13 +1220,13 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
         ],
         &[(p, o), (o, f)],
     );
-    let (pf, l) = (position(&h, f), LeafId([7; 4]));
+    let (pf, l) = (position(&h, f), NodeId([7; 4]));
     let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
                 dst_pos: pf,
-                dst_leaf: l,
+                dst_id: l,
                 payload: text,
             },
         );
@@ -1232,7 +1235,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
     for k in 0..DELIVERY_QUEUE as u8 {
         to_l(&mut h, f, &[b'f', k]);
     }
-    let nf = pf.short();
+    let nf = core(&h, f).id();
     let offers_to_f = |h: &Harness<Node>, id: MsgId| {
         h.nodes[o]
             .sent
@@ -1316,13 +1319,13 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         ],
         &[(o, f)],
     );
-    let (pf, l) = (position(&h, f), LeafId([7; 4]));
+    let (pf, l) = (position(&h, f), NodeId([7; 4]));
     let to_l = |h: &mut Harness<Node>, from: usize, text: &[u8]| {
         h.command(
             from,
             AppCommand::Send {
                 dst_pos: pf,
-                dst_leaf: l,
+                dst_id: l,
                 payload: text,
             },
         );
@@ -1334,7 +1337,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
             to_l(h, f, &[b'f', round, k]);
         }
     };
-    let nf = pf.short();
+    let nf = core(&h, f).id();
     let refusals = |h: &Harness<Node>, id: MsgId| {
         h.nodes[o]
             .traces
@@ -1419,7 +1422,13 @@ fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
         &[(o, c)],
     );
     h.kill(c);
+    let nc = core(&h, c).id();
     let gone = h.now;
+    let heard = core(&h, o)
+        .neighbours()
+        .find(|n| n.id == nc)
+        .unwrap()
+        .last_heard;
     let id = send(&mut h, o, c, b"nobody answers");
     let dropped = Trace::Dropped {
         msg_id: id,
@@ -1446,10 +1455,7 @@ fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
         h.run_until(gone + expiry + last_ban + secs(1), |h| traces(h, o)
             .contains(&dropped))
     );
-    assert!(
-        h.now + config.heartbeat_max >= gone + expiry,
-        "dropped before C expired"
-    );
+    assert!(h.now >= heard + expiry, "dropped before C expired");
     h.run_for(secs(1));
     assert!(h.accepts(o));
     assert!(h.nodes[o].app.is_empty());
@@ -1491,7 +1497,7 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     );
     // P's ACK of the return, which R traces.
     h.run_for(secs(1));
-    let name = |i| position(&h, i).short();
+    let name = |i| core(&h, i).id();
     assert!(traces(&h, r).contains(&Trace::ReturnedToParent {
         msg_id: id,
         to: name(p)
@@ -1692,7 +1698,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     let (moved_at, new) = moved.expect("P did not move");
     assert_ne!(new, old);
     let data_to = |i: usize, to: usize| {
-        let to = position(&h, to).short();
+        let to = core(&h, to).id();
         h.nodes[i]
             .sent
             .iter()
@@ -1713,7 +1719,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     assert_eq!(channel, new, "returned to P's old home");
     assert!(traces(&h, c).contains(&Trace::ReturnedToParent {
         msg_id: id,
-        to: position(&h, p).short()
+        to: core(&h, p).id()
     }));
     no_drops(&h);
 }
@@ -1769,7 +1775,7 @@ fn replies_stay_within_the_reserve() {
     }));
     let start = h.now;
     let end = start + DUTY_CYCLE_WINDOW + secs(300);
-    let (pf, pd) = (position(&h, f), position(&h, d));
+    let (pf, pd, nd) = (core(&h, f).id(), position(&h, d), core(&h, d).id());
     let step = BAN.div(senders.len() as u64);
     let mut k = 0u32;
     while h.now < end {
@@ -1777,10 +1783,10 @@ fn replies_stay_within_the_reserve() {
             let text = k.to_be_bytes();
             let data = Data {
                 sender_home: ch(2 + (i % 11) as u8),
-                dst_hop: pf.short(),
-                src_hop: position(&h, s).short(),
+                dst_hop: pf,
+                src_hop: core(&h, s).id(),
                 dst_pos: pd,
-                dst_leaf: LeafId::RELAY,
+                dst_id: nd,
                 hops: 1,
                 time_left: u8::MAX,
                 payload: &text,
@@ -2049,7 +2055,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             .count(),
         deferred.len(),
     );
-    let (pf, pd) = (position(&h, f).short(), position(&h, d).short());
+    let (pf, pd) = (core(&h, f).id(), core(&h, d).id());
     let gap = h.nodes[f]
         .sent
         .iter()
@@ -2063,7 +2069,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     let acks_from_d = |frames: &[(Instant, Vec<u8>)]| {
         frames
             .iter()
-            .filter(|(_, b)| matches!(Packet::decode(b), Ok(Packet::Ack(a)) if a.from == pd.into()))
+            .filter(|(_, b)| matches!(Packet::decode(b), Ok(Packet::Ack(a)) if a.from == pd))
             .count()
     };
     let d_sent: Vec<_> = h.nodes[d]
@@ -2153,7 +2159,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
 
 /// When relay `from` sent a DATA of `id` to relay `to`.
 fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
-    let to = position(h, to).short();
+    let to = core(h, to).id();
     h.nodes[from]
         .sent
         .iter()
@@ -2213,7 +2219,7 @@ fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     h.lose = Some(Box::new(move |_, from, to, bytes| {
         (from, to) == (o, f1) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    let name = |h: &Harness<Node>, i| position(h, i).short();
+    let name = |h: &Harness<Node>, i| core(h, i).id();
     let first = send(&mut h, o, d, b"first");
     let failed = |h: &Harness<Node>| {
         data_times(h, o, f1, first).len() == 3 && entry(h, o, f1).fail_count == 1
@@ -2392,7 +2398,7 @@ fn a_dead_neighbour_is_routed_around() {
     }
     assert_eq!(tried, vec![6, 0, 0]);
     assert!(traces(&h, o).contains(&Trace::Demoted {
-        neighbour: position(&h, f1).short()
+        neighbour: core(&h, f1).id()
     }));
     no_drops(&h);
 }
@@ -2420,11 +2426,11 @@ fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
         p,
         AppCommand::Send {
             dst_pos,
-            dst_leaf: LeafId::RELAY,
+            dst_id: NOBODY,
             payload: text,
         },
     );
-    let id = MsgId::of(dst_pos, LeafId::RELAY, text);
+    let id = MsgId::of(dst_pos, NOBODY, text);
     let failed = Trace::Dropped {
         msg_id: id,
         reason: DropReason::ReturnFailed,
@@ -2435,6 +2441,6 @@ fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
     let gap = runs[1][0].since(runs[0][2]);
     assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
     assert!(traces(&h, c).contains(&Trace::Demoted {
-        neighbour: position(&h, p).short()
+        neighbour: core(&h, p).id()
     }));
 }

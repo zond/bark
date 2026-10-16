@@ -7,8 +7,8 @@
 //! the radio is listening again; the core has at most one radio excursion
 //! outstanding at a time.
 
-use crate::ids::{LeafId, MsgId};
-use crate::position::{Position, ShortName};
+use crate::ids::{MsgId, NodeId};
+use crate::position::Position;
 use crate::radio::Channel;
 use crate::time::Instant;
 
@@ -89,15 +89,15 @@ pub enum Event<'a> {
 /// Commands from the application side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppCommand<'a> {
-    /// Originate a message to `(dst_pos, dst_leaf)` with an opaque payload,
+    /// Originate a message to `(dst_pos, dst_id)` with an opaque payload,
     /// whose ID is [`MsgId::of`] the three. Offered only while
     /// [`crate::Core::accepts_send`] holds, and nothing is reported back
     /// (`docs/core-interface.md` §4).
     Send {
-        /// Position of the destination's relay (spec "Addresses").
+        /// The destination's position (spec "Addresses").
         dst_pos: Position,
-        /// Destination leaf, or `LeafId::RELAY` for the relay itself.
-        dst_leaf: LeafId,
+        /// The destination node.
+        dst_id: NodeId,
         /// Opaque payload; the core never looks inside.
         payload: &'a [u8],
     },
@@ -133,9 +133,6 @@ pub enum DropReason {
     Banned,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
-    /// Addressed to a relay itself (leaf 0), reached an owner within 50 m
-    /// that is not that relay: the relay it was for is gone (spec "Owner").
-    RelayGone,
     /// Its leaf did not collect it within the delivery TTL (spec "Delivery queue").
     QueueExpired,
     /// Its time left ran out before it reached its owner (spec "Receiving DATA").
@@ -202,12 +199,6 @@ pub enum Trace {
         /// New home.
         to: Channel,
     },
-    /// The boot listen heard this relay's own position from another relay
-    /// and stepped about a metre away from it (spec "Relay identity").
-    PositionShifted {
-        /// The new position.
-        to: Position,
-    },
     /// A heartbeat found its channel busy at every listen-before-talk check
     /// and was skipped (spec "Heartbeat").
     HeartbeatSkipped {
@@ -242,8 +233,8 @@ pub enum Trace {
     TurnedAway {
         /// The message, or for a DELIVER the delivered message.
         msg_id: MsgId,
-        /// The refusing relay.
-        by: ShortName,
+        /// The refusing node.
+        by: NodeId,
     },
     /// The duty-cycle budget held a hand-over back (spec "Duty cycle cap").
     HandOverDeferred {
@@ -258,7 +249,7 @@ pub enum Trace {
         /// The message.
         msg_id: MsgId,
         /// The neighbour.
-        to: ShortName,
+        to: NodeId,
         /// The count it carried (spec "Hop count").
         hops: u8,
     },
@@ -268,47 +259,47 @@ pub enum Trace {
         /// The message.
         msg_id: MsgId,
         /// The parent.
-        to: ShortName,
+        to: NodeId,
     },
     /// A neighbour reached the demotion threshold and is no longer a next
     /// hop (spec "Neighbour table").
     Demoted {
         /// The neighbour.
-        neighbour: ShortName,
+        neighbour: NodeId,
     },
     /// An attached leaf acknowledged a DELIVER (spec "Delivery").
     Delivered {
         /// The message.
         msg_id: MsgId,
         /// The leaf.
-        leaf: LeafId,
+        leaf: NodeId,
     },
     /// A message for a leaf entered the delivery queue (spec "Delivery queue").
     Queued {
         /// The message.
         msg_id: MsgId,
         /// The leaf.
-        leaf: LeafId,
+        leaf: NodeId,
     },
     /// A relay could not poll a leaf within its slot's lateness, for the
     /// channel or the bucket; it counts as a poll the leaf missed (spec "Attach and polls").
     PollSkipped {
         /// The leaf.
-        leaf: LeafId,
+        leaf: NodeId,
     },
     /// A relay dropped a leaf that left its polls unanswered (spec "Attach and polls").
     LeafDropped {
         /// The leaf.
-        leaf: LeafId,
+        leaf: NodeId,
     },
     /// A leaf began an ATTACH that attaches (spec "Attach and polls").
     Attaching {
         /// The relay.
-        relay: ShortName,
+        relay: NodeId,
     },
     /// Every attempt of a leaf's ATTACH went unanswered (spec "Attach and polls").
     AttachFailed {
         /// The relay.
-        relay: ShortName,
+        relay: NodeId,
     },
 }

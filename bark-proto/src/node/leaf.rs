@@ -79,7 +79,7 @@
 //! # Receiving
 //!
 //! A DELIVER for this leaf is ACKed with the leaf's ID as `from` and its
-//! relay's short name as `to` (spec "Packet formats"), and surfaced once. One that arrives
+//! relay's ID as `to` (spec "Packet formats"), and surfaced once. One that arrives
 //! while the leaf's one owed reply is another's is ignored, as a relay
 //! ignores DATA then (spec "The ACK"). A relay re-sends the oldest message it holds
 //! for a leaf before any other (`relay/service.rs`), so a repeat follows
@@ -88,11 +88,11 @@
 //! just left.
 
 use crate::event::{Action, AppCommand, AppEvent, DropReason, Event, Frame, Trace, MAX_FRAME};
-use crate::ids::{LeafId, MsgId};
+use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Check, Missed, Replies, Reply, Step, Transfer};
 use crate::node::{Config, Core, Rng};
-use crate::position::{Position, ShortName};
+use crate::position::Position;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, Budget};
 use crate::tables::busy::NOMINAL_NOISE_FLOOR_DBM;
@@ -100,8 +100,8 @@ use crate::tables::leaves::{POLL_AIRTIME, POLL_LATE};
 use crate::tables::neighbours::NeighbourParams;
 use crate::time::{Duration, Instant};
 use crate::wire::{
-    Ack, AckName, Attach, Attached, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD,
-    POLL_UNIT, TTL_UNIT,
+    Ack, Attach, Attached, Data, Deliver, Heartbeat, Packet, RxMode, MAX_PAYLOAD, POLL_UNIT,
+    TTL_UNIT,
 };
 
 /// How much stronger, in its mean over two heartbeats, another relay must
@@ -160,6 +160,7 @@ enum Sending {
 /// A relay the leaf has heard.
 #[derive(Clone, Copy, Debug)]
 struct Heard {
+    id: NodeId,
     position: Position,
     home: Channel,
     /// Mean RSSI of the last two heartbeats, dBm; the one heartbeat until
@@ -173,9 +174,10 @@ struct Heard {
 }
 
 impl Heard {
-    fn new(hb: &Heartbeat, rssi: i16, now: Instant) -> Heard {
+    fn new(hb: &Heartbeat, position: Position, rssi: i16, now: Instant) -> Heard {
         Heard {
-            position: hb.position,
+            id: hb.id,
+            position,
             home: hb.home,
             rssi,
             last: rssi,
@@ -198,7 +200,7 @@ impl Heard {
 pub struct Leaf {
     config: Config,
     rng: Rng,
-    id: LeafId,
+    id: NodeId,
     started: bool,
     /// The channel the leaf listens on: its relay's home.
     home: Channel,
@@ -252,9 +254,9 @@ impl Leaf {
     /// `config.leaf_id`, or one drawn from `seed` if that is zero.
     pub fn new(config: Config, seed: u64) -> Leaf {
         let mut rng = Rng::new(seed);
-        let mut id = config.leaf_id;
-        while id == LeafId::RELAY {
-            id = LeafId((rng.next_u64() as u32).to_be_bytes());
+        let mut id = config.node_id;
+        while id == NodeId::NONE {
+            id = NodeId((rng.next_u64() as u32).to_be_bytes());
         }
         let first = Channel::all().next().expect("the plan has channels");
         let random = Channel::new(rng.range(0, CHANNELS as u64 - 1) as u8).unwrap_or(first);
@@ -295,7 +297,7 @@ impl Leaf {
     }
 
     /// This leaf's ID.
-    pub fn id(&self) -> LeafId {
+    pub fn id(&self) -> NodeId {
         self.id
     }
 
@@ -364,7 +366,7 @@ impl Leaf {
             let wait = self.rng.duration(Duration::ZERO, self.config.leaf_retry);
             self.attach_at = self.attach_at.min(now + wait);
         }
-        if let Some(mut relay) = self.relay.filter(|r| r.position == hb.position) {
+        if let Some(mut relay) = self.relay.filter(|r| r.id == hb.id) {
             let moved = relay.home != hb.home;
             relay.heard(&hb, rssi, now);
             self.relay = Some(relay);
@@ -382,12 +384,7 @@ impl Leaf {
 
     /// Note a heartbeat from a relay other than the leaf's own.
     fn remember(&mut self, hb: &Heartbeat, rssi: i16, now: Instant) {
-        if let Some(c) = self
-            .candidates
-            .iter_mut()
-            .flatten()
-            .find(|c| c.position == hb.position)
-        {
+        if let Some(c) = self.candidates.iter_mut().flatten().find(|c| c.id == hb.id) {
             c.heard(hb, rssi, now);
             return;
         }
@@ -406,7 +403,8 @@ impl Leaf {
             (weakest.rssi < rssi).then_some(i)
         });
         if let Some(i) = slot {
-            self.candidates[i] = Some(Heard::new(hb, rssi, now));
+            let position = hb.position(self.config.position);
+            self.candidates[i] = Some(Heard::new(hb, position, rssi, now));
         }
     }
 
@@ -515,7 +513,7 @@ impl Leaf {
     fn app(&mut self, cmd: AppCommand<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let AppCommand::Send {
             dst_pos,
-            dst_leaf,
+            dst_id,
             payload,
         } = cmd
         else {
@@ -531,7 +529,7 @@ impl Leaf {
             dst_hop: Default::default(),
             src_hop: Default::default(),
             dst_pos,
-            dst_leaf,
+            dst_id,
             hops: 0,
             // Stamped as each attempt goes (`frame`).
             time_left: 0,
@@ -576,16 +574,15 @@ impl Leaf {
             self.reconsider(now, emit);
         }
         let Some(relay) = self.relay else { return };
-        let from = AckName::from(relay.position.short());
+        let from = relay.id;
         if attach {
             self.sending = Sending::Attach;
-            let relay = relay.position.short();
-            emit(Action::Trace(Trace::Attaching { relay }));
+            emit(Action::Trace(Trace::Attaching { relay: relay.id }));
             // Answered by ATTACHED, never by an ACK (`attached_rx`).
             let expect = Ack {
                 msg_id: MsgId(0),
                 from,
-                to: self.id.into(),
+                to: self.id,
                 refused: false,
             };
             self.transfer.start(expect, 0, now);
@@ -598,7 +595,7 @@ impl Leaf {
             let expect = Ack {
                 msg_id,
                 from,
-                to: ShortName(0).into(),
+                to: NodeId::NONE,
                 refused: false,
             };
             self.transfer.start(expect, 0, now);
@@ -613,7 +610,7 @@ impl Leaf {
     /// The frame of the hand-over, addressed to the relay as it is now,
     /// with the message's time as it is now.
     fn frame(&self, now: Instant) -> Option<Frame> {
-        let relay = self.relay?.position.short();
+        let relay = self.relay?.id;
         let packet = match self.sending {
             Sending::Attach => Packet::Attach(Attach {
                 leaf: self.id,
@@ -710,8 +707,7 @@ impl Leaf {
     /// [`FAILED_PERIODS`] periods in a row. A message stays held.
     fn send_failed(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if let (Sending::Attach, Some(r)) = (self.sending, self.relay) {
-            let relay = r.position.short();
-            emit(Action::Trace(Trace::AttachFailed { relay }));
+            emit(Action::Trace(Trace::AttachFailed { relay: r.id }));
         }
         self.failed_periods = self.failed_periods.saturating_add(1);
         if self.failed_periods == 1 {
@@ -782,7 +778,7 @@ impl Leaf {
             }
             let reply = Reply::Attach(Attach {
                 leaf: self.id,
-                relay: relay.position.short(),
+                relay: relay.id,
                 mode: self.mode(),
                 reply: true,
             });
@@ -845,11 +841,11 @@ impl Leaf {
 
     fn deliver(&mut self, d: Deliver<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         // The relay is the leaf's own: DELIVER does not name its sender.
-        let relay = self.relay.map_or(ShortName(0), |r| r.position.short());
+        let relay = self.relay.map_or(NodeId::NONE, |r| r.id);
         let ack = Ack {
             msg_id: d.msg_id,
-            from: self.id.into(),
-            to: relay.into(),
+            from: self.id,
+            to: relay,
             refused: false,
         };
         // Taken only if it can be answered, as a relay takes DATA: the
@@ -1047,7 +1043,7 @@ mod tests {
         let home = Channel::new(3).unwrap();
         let config = Config {
             home_override: Some(home),
-            leaf_id: LeafId([0, 0, 0, 7]),
+            node_id: NodeId([0, 0, 0, 7]),
             ..Config::default()
         };
         let mut l = Leaf::new(config, 1);

@@ -18,7 +18,7 @@ use std::time::Instant as Wall;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::wire::{Data, Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, Config, Core, Duration, Event, Instant, LeafId, Position, Relay, MAX_FRAME,
+    Action, Config, Core, Duration, Event, Instant, NodeId, Position, Relay, MAX_FRAME,
 };
 
 /// Neighbours: the table's capacity (spec "Neighbour table").
@@ -100,14 +100,15 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                 true => Packet::Heartbeat(Heartbeat {
                     surveyed: true,
                     home: nhome,
-                    position: pos,
+                    id: NodeId(pos.short().0.to_be_bytes()),
+                    short: pos.short(),
                 }),
                 false => Packet::Data(Data {
                     sender_home: nhome,
-                    dst_hop: me.short(),
-                    src_hop: pos.short(),
+                    dst_hop: relay.id(),
+                    src_hop: NodeId(pos.short().0.to_be_bytes()),
                     dst_pos: far,
-                    dst_leaf: LeafId::RELAY,
+                    dst_id: NodeId([9; 4]),
                     hops: 1 + (seq % 20) as u8,
                     time_left: u8::MAX,
                     payload: &payload,

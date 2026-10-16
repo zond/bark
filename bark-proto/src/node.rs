@@ -6,7 +6,7 @@
 //! per-hop transfer of `node/transfer.rs`.
 
 use crate::event::{Action, Event};
-use crate::ids::LeafId;
+use crate::ids::NodeId;
 use crate::position::Position;
 use crate::radio::{Channel, CHANNELS};
 use crate::time::{Duration, Instant};
@@ -32,14 +32,14 @@ pub enum Role {
 /// sweeps them (roadmap Phase 1 milestone 5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// Own position. Relay identity (spec "Relay identity").
+    /// Own position.
     pub position: Position,
     /// Whether `position` is surveyed (heartbeat type 0x1) or GPS-derived (0x2).
     pub surveyed: bool,
-    /// A leaf's ID, which the app generates at random (spec "Relay identity"). A
-    /// leaf given [`LeafId::RELAY`] draws one from its seed. A relay
-    /// ignores it.
-    pub leaf_id: LeafId,
+    /// The node's ID: on the board from the chip's hardware ID, in the
+    /// simulator one per node. A node given [`NodeId::NONE`] draws one from
+    /// its seed.
+    pub node_id: NodeId,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds, uniform random in between (spec "Heartbeat": 5–15 s).
@@ -111,7 +111,7 @@ impl Config {
     pub const DEFAULT: Config = Config {
         position: Position { lat: 0, lon: 0 },
         surveyed: true,
-        leaf_id: LeafId::RELAY,
+        node_id: NodeId::NONE,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,

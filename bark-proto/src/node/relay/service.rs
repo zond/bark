@@ -39,7 +39,7 @@
 
 use super::{Check, Job, Relay};
 use crate::event::{Action, DropReason, Frame, Trace};
-use crate::ids::{LeafId, MsgId};
+use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
 use crate::node::transfer::{Owed, Reply};
 use crate::radio::MIN_PREAMBLE_SYMBOLS;
@@ -52,13 +52,13 @@ use crate::wire::{Attach, Attached, Deliver, Packet, RxMode, WAITING_MAX};
 /// The poll in progress (spec "Attach and polls").
 pub(super) struct Poller {
     /// The leaf and its slot.
-    pub(super) current: Option<(LeafId, Instant)>,
+    pub(super) current: Option<(NodeId, Instant)>,
     /// Not before this: a listen-before-talk backoff.
     pub(super) ready_at: Instant,
     pub(super) check: Check,
     /// The poll sent last, while its answer may still come: the leaf and
     /// the end of the wait.
-    pub(super) answer: Option<(LeafId, Instant)>,
+    pub(super) answer: Option<(NodeId, Instant)>,
 }
 
 impl Poller {
@@ -98,12 +98,12 @@ impl Relay {
     }
 
     /// Messages queued for `leaf`, as ATTACHED counts them.
-    fn waiting(&self, leaf: LeafId) -> u8 {
+    fn waiting(&self, leaf: NodeId) -> u8 {
         self.delivery.count_for(leaf).min(WAITING_MAX as usize) as u8
     }
 
     /// ATTACHED for `leaf`, sent at `now`, naming its next slot.
-    fn attached_frame(&self, leaf: LeafId, now: Instant) -> Frame {
+    fn attached_frame(&self, leaf: NodeId, now: Instant) -> Frame {
         let entry = self.leaves.get(leaf);
         let next = entry.map_or(Duration::ZERO, |e| e.next_poll.since(now + POLL_AIRTIME));
         let waiting = entry.map_or(0, |e| e.waiting);
@@ -243,7 +243,7 @@ impl Relay {
     /// ending will make room.
     pub(super) fn try_deliver(
         &mut self,
-        leaf: LeafId,
+        leaf: NodeId,
         retry: bool,
         now: Instant,
     ) -> Result<(), Option<Instant>> {
@@ -285,7 +285,7 @@ impl Relay {
     /// The preamble of a DELIVER of `msg_id` to `leaf` sent at `now`: the
     /// leaf's mode's, unless the leaf sleeps and listens with the ordinary
     /// receiver for what its last answered poll counted (spec "Leaf receive mode").
-    pub(super) fn deliver_preamble(&self, leaf: LeafId, msg_id: MsgId, now: Instant) -> u16 {
+    pub(super) fn deliver_preamble(&self, leaf: NodeId, msg_id: MsgId, now: Instant) -> u16 {
         let mode = self.leaves.get(leaf).map_or(RxMode::Listening, |e| e.mode);
         let counted = self
             .delivery
@@ -324,7 +324,7 @@ impl Relay {
 
     /// Hand `leaf`'s oldest message to the send queue as [`Self::feed`]
     /// would, for a leaf that is listening or not.
-    pub(super) fn deliver_now(&mut self, leaf: LeafId, now: Instant) {
+    pub(super) fn deliver_now(&mut self, leaf: NodeId, now: Instant) {
         if let Err(Some(at)) = self.try_deliver(leaf, true, now) {
             self.feed_at = Some(self.feed_at.map_or(at, |t| t.min(at)));
         }

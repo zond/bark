@@ -29,8 +29,11 @@ fn relay(east: f64, seed: u64) -> Relay {
 }
 
 fn knows(h: &Harness<Relay>, a: usize, b: usize) -> bool {
-    let target = h.nodes[b].core.config().position;
-    h.nodes[a].core.neighbours().any(|n| n.position == target)
+    let (id, position) = (h.nodes[b].core.id(), h.nodes[b].core.config().position);
+    h.nodes[a]
+        .core
+        .neighbours()
+        .any(|n| n.id == id && n.position == position)
 }
 
 /// Worst case for one rotation: thirteen heartbeats at the longest interval.
@@ -172,8 +175,8 @@ fn heartbeat_rotates_through_every_channel_in_order() {
         };
         let me = h.nodes[0].core.config().position;
         assert_eq!(
-            (hb.home, hb.position, hb.surveyed),
-            (h.nodes[0].core.home(), me, true)
+            (hb.home, hb.id, hb.position(me), hb.surveyed),
+            (h.nodes[0].core.home(), h.nodes[0].core.id(), me, true)
         );
         assert_eq!(f0.len as usize, HEARTBEAT_LEN);
     }
@@ -310,9 +313,9 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
 }
 
 #[test]
-fn boot_steps_off_an_occupied_position() {
-    // A is running when B boots at the same position; B hears A and moves.
-    // B listens a worst-case rotation, so it hears A for certain.
+fn two_relays_at_one_position_are_two_nodes() {
+    // A is running when B boots at the same position: their IDs tell them
+    // apart, and neither moves.
     let c = Config::default();
     let p = pos(0.0, 0.0);
     let mut h = Harness::new(vec![
@@ -338,17 +341,8 @@ fn boot_steps_off_an_occupied_position() {
     h.link(0, 1);
     h.start_at(1, at(60));
     h.run_until(at(60) + rotation(&c).mul(3), |_| false);
-    let b = h.nodes[1].core.config().position;
-    assert_ne!(b, p);
-    assert_eq!(
-        (b.lat - p.lat, b.lon),
-        (2, p.lon),
-        "two counts, ≈1.2 m north"
-    );
-    assert!(h.nodes[1]
-        .traces
-        .iter()
-        .any(|(_, t)| *t == Trace::PositionShifted { to: b }));
+    assert_eq!(h.nodes[1].core.config().position, p);
+    assert_ne!(h.nodes[0].core.id(), h.nodes[1].core.id());
     assert!(
         knows(&h, 1, 0) && knows(&h, 0, 1),
         "both run as distinct relays"

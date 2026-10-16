@@ -115,10 +115,10 @@
 
 use super::{Job, Relay};
 use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
-use crate::ids::{LeafId, MsgId};
+use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Step};
-use crate::position::{Position, ShortName};
+use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
@@ -126,7 +126,7 @@ use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckName, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
+use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
 /// A relay within this distance of a destination that is not its own
 /// position, with no live, undemoted neighbour closer, owns it
@@ -181,17 +181,17 @@ fn data_frame(d: &Data<'_>, channel: Channel) -> Frame {
 }
 
 impl Relay {
-    /// This relay's short name (spec "Relay identity").
-    pub(super) fn me(&self) -> ShortName {
-        self.config.position.short()
+    /// This node's ID.
+    pub(super) fn me(&self) -> NodeId {
+        self.id
     }
 
     /// The ACK by which `from` takes this relay's offer of `msg_id`.
-    fn expect(&self, msg_id: MsgId, from: AckName) -> Ack {
+    fn expect(&self, msg_id: MsgId, from: NodeId) -> Ack {
         Ack {
             msg_id,
             from,
-            to: self.me().into(),
+            to: self.me(),
             refused: false,
         }
     }
@@ -287,7 +287,7 @@ impl Relay {
 
     /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
     /// live neighbour nearest `dst` that is not in the tried set, not set
-    /// aside and not banned, ties broken by short name; a demoted one only
+    /// aside and not banned, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
     /// no other at all (roadmap D25, D29, D38).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
@@ -303,7 +303,7 @@ impl Relay {
             .filter(|(slot, n)| {
                 !record.handed(*slot)
                     && skipped & (1 << slot) == 0
-                    && Some(n.position.short()) != parent
+                    && Some(n.id) != parent
                     && !self.neighbours.is_banned(n, now)
             })
             .min_by(|(_, a), (_, b)| {
@@ -312,7 +312,7 @@ impl Relay {
                     .cmp(&faint(b))
                     .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
-                    .then(a.position.short().0.cmp(&b.position.short().0))
+                    .then(a.id.0.cmp(&b.id.0))
             })
             .map(|(slot, n)| (slot, *n))
     }
@@ -338,7 +338,7 @@ impl Relay {
         let expires = now + d.time_left() - data_airtime(d.payload.len());
         let expired = sends && now >= expires - TTL_UNIT;
         let deadline = now + self.config.ack_timeout;
-        let for_leaf = owner && d.dst_leaf != LeafId::RELAY;
+        let for_leaf = owner && d.dst_id != self.me();
         let record_at = match case {
             Case::New => self.record_place(),
             _ => None,
@@ -367,8 +367,8 @@ impl Relay {
         };
         let reply = Ack {
             msg_id: id,
-            from: self.me().into(),
-            to: d.src_hop.into(),
+            from: self.me(),
+            to: d.src_hop,
             refused: refusal.is_some(),
         };
         if !self.replies.can_owe(reply, d.sender_home, now) {
@@ -414,7 +414,7 @@ impl Relay {
                 self.delivered.offered(id, now);
             }
             Case::New | Case::Search if owner => {
-                self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
+                self.arrive(id, d.dst_id, d.payload, now, emit);
             }
             Case::New | Case::Search if expired => {
                 self.drop_msg(id, DropReason::Expired, emit);
@@ -455,10 +455,10 @@ impl Relay {
 
     /// Whether the current hand-over is of message `id` to `to`, sent at
     /// least once.
-    fn handing(&self, id: MsgId, to: ShortName) -> bool {
+    fn handing(&self, id: MsgId, to: NodeId) -> bool {
         !self.handover.idle()
             && self.handover.transmitted()
-            && self.handover.expect() == self.expect(id, to.into())
+            && self.handover.expect() == self.expect(id, to)
     }
 
     /// Where a new record goes: never in place of the record of a message
@@ -495,7 +495,7 @@ impl Relay {
         }
         let out = Data {
             sender_home: self.home,
-            dst_hop: ShortName(0),
+            dst_hop: NodeId::NONE,
             src_hop: self.me(),
             hops: d.hops + 1,
             ..*d
@@ -511,12 +511,12 @@ impl Relay {
     }
 
     /// The message has reached its owner, this relay (spec "Owner"): deliver it
-    /// to the application or queue it for the leaf.
+    /// to the application if it is for this node, or queue it for the
+    /// node it is for.
     fn arrive(
         &mut self,
         id: MsgId,
-        dst: Position,
-        leaf: LeafId,
+        leaf: NodeId,
         payload: &[u8],
         now: Instant,
         emit: &mut dyn FnMut(Action),
@@ -524,11 +524,7 @@ impl Relay {
         if self.own == Some(id) {
             self.set_own(None);
         }
-        if leaf == LeafId::RELAY {
-            if dst != self.config.position {
-                self.drop_msg(id, DropReason::RelayGone, emit);
-                return;
-            }
+        if leaf == self.me() {
             self.delivered.insert(id, now);
             let mut buf = [0; MAX_FRAME];
             buf[..payload.len()].copy_from_slice(payload);
@@ -605,7 +601,7 @@ impl Relay {
         }
         self.held = None;
         if let Ok(Packet::Data(d)) = Packet::decode(h.out.frame.payload()) {
-            self.arrive(d.msg_id(), d.dst_pos, d.dst_leaf, d.payload, now, emit);
+            self.arrive(d.msg_id(), d.dst_id, d.payload, now, emit);
         }
     }
 
@@ -623,7 +619,7 @@ impl Relay {
     pub(super) fn originate(
         &mut self,
         dst_pos: Position,
-        dst_leaf: LeafId,
+        dst_id: NodeId,
         payload: &[u8],
         now: Instant,
         emit: &mut dyn FnMut(Action),
@@ -631,7 +627,7 @@ impl Relay {
         if payload.len() > MAX_PAYLOAD || !self.accepts_send(now) {
             return;
         }
-        let id = MsgId::of(dst_pos, dst_leaf, payload);
+        let id = MsgId::of(dst_pos, dst_id, payload);
         if self.records.get(id).is_some() || self.delivered.contains(id) {
             return;
         }
@@ -645,10 +641,10 @@ impl Relay {
         let expires = now + ttl;
         let d = Data {
             sender_home: self.home,
-            dst_hop: ShortName(0),
+            dst_hop: NodeId::NONE,
             src_hop: self.me(),
             dst_pos,
-            dst_leaf,
+            dst_id,
             hops: 0,
             time_left: Data::units(ttl),
             payload,
@@ -657,13 +653,13 @@ impl Relay {
             let mut record = Record::new(id, None, 0, now);
             record.set_arrived();
             self.records.put(at, record);
-            if dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+            if dst_id != self.me() && self.delivery.is_full() {
                 // At its owner: the delivery queue's TTL, not its time
                 // left, ends it from here (spec "Delivery queue").
                 let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
                 self.held = Some(Held { out });
             } else {
-                self.arrive(id, dst_pos, dst_leaf, payload, now, emit);
+                self.arrive(id, dst_id, payload, now, emit);
             }
             return;
         }
@@ -692,15 +688,11 @@ impl Relay {
             let routed = match out.kind {
                 Kind::Forward => self.route(out, now, emit),
                 Kind::Return => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(d)) => {
-                        Routed::To(out, self.expect(d.msg_id(), d.dst_hop.into()))
-                    }
+                    Ok(Packet::Data(d)) => Routed::To(out, self.expect(d.msg_id(), d.dst_hop)),
                     _ => Routed::Done,
                 },
                 Kind::Deliver => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Deliver(d)) => {
-                        Routed::To(out, self.expect(d.msg_id, d.dst_leaf.into()))
-                    }
+                    Ok(Packet::Deliver(d)) => Routed::To(out, self.expect(d.msg_id, d.dst_leaf)),
                     _ => Routed::Done,
                 },
             };
@@ -754,16 +746,16 @@ impl Relay {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
-            if self.own == Some(id) && d.dst_leaf != LeafId::RELAY && self.delivery.is_full() {
+            if self.own == Some(id) && d.dst_id != self.me() && self.delivery.is_full() {
                 return Routed::Hold;
             }
-            self.arrive(id, d.dst_pos, d.dst_leaf, d.payload, now, emit);
+            self.arrive(id, d.dst_id, d.payload, now, emit);
             return Routed::Done;
         }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
-            let to = n.position.short();
+            let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home);
-            return Routed::To(Outgoing { frame, ..out }, self.expect(id, to.into()));
+            return Routed::To(Outgoing { frame, ..out }, self.expect(id, to));
         }
         if let Some(t) = self.ban_ends(&record, now) {
             if self.own == Some(id) {
@@ -789,7 +781,7 @@ impl Relay {
                         kind: Kind::Return,
                         ..out
                     },
-                    self.expect(id, parent.into()),
+                    self.expect(id, parent),
                 )
             }
             None => {
@@ -831,10 +823,10 @@ impl Relay {
             .min()
     }
 
-    /// The home channel of the neighbour named `name`, as its latest
-    /// heartbeat or packet gave it.
-    fn home_of(&self, name: ShortName) -> Option<Channel> {
-        self.neighbours.by_short(name).map(|(_, n)| n.home)
+    /// The home channel of neighbour `id`, as its latest heartbeat or
+    /// packet gave it.
+    fn home_of(&self, id: NodeId) -> Option<Channel> {
+        self.neighbours.by_id(id).map(|(_, n)| n.home)
     }
 
     /// Address the current frame as its receiver is now, before each attempt
@@ -1004,11 +996,7 @@ impl Relay {
             Kind::Forward => {
                 // Choose again, past this neighbour (spec "Hand-over" step 2).
                 let to = self.handover.expect().from;
-                if let Some((slot, _)) = self
-                    .neighbours
-                    .slots()
-                    .find(|(_, n)| AckName::from(n.position.short()) == to)
-                {
+                if let Some(slot) = self.neighbours.slot_of(to) {
                     self.skipped |= 1 << slot;
                 }
             }
@@ -1039,16 +1027,16 @@ impl Relay {
             return;
         };
         let msg_id = out.msg_id().unwrap_or_default();
-        let by = ShortName(u32::from_be_bytes(ack.from.0));
+        let by = ack.from;
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
-        let slot = self.neighbours.by_short(by).map(|(s, n)| (s, n.position));
-        if let Some((_, position)) = slot {
-            self.neighbours.answered(position, now);
-            self.neighbours.refused(position, now + BAN);
+        let slot = self.neighbours.slot_of(by);
+        if slot.is_some() {
+            self.neighbours.answered(by, now);
+            self.neighbours.refused(by, now + BAN);
         }
         match out.kind {
             Kind::Forward => {
-                if let Some((slot, _)) = slot {
+                if let Some(slot) = slot {
                     self.skipped |= 1 << slot;
                 }
                 self.handover.cancel();
@@ -1079,18 +1067,17 @@ impl Relay {
             _ => return,
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
-        let slot = self.neighbours.by_short(to).map(|(s, n)| (s, n.position));
-        let receiver = slot.map(|(_, p)| p);
-        if let Some(p) = receiver {
-            self.neighbours.succeeded(p, now);
+        let slot = self.neighbours.slot_of(to);
+        if slot.is_some() {
+            self.neighbours.succeeded(to, now);
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(d.hops);
-            if let (Kind::Forward, Some((s, _))) = (out.kind, slot) {
+            if let (Kind::Forward, Some(s)) = (out.kind, slot) {
                 r.handed_to(s);
             }
-            if receiver == Some(d.dst_pos) {
-                // The relay it is addressed to took it: it has arrived.
+            if to == d.dst_id {
+                // The node it is addressed to took it: it has arrived.
                 r.set_arrived();
             }
         }
@@ -1138,7 +1125,7 @@ impl Relay {
             if out.kind == Kind::Forward {
                 // Most likely the frame, not the ACK, was lost: the
                 // neighbour stays untried, set aside for this choice only.
-                if let Some((slot, _)) = self.neighbours.by_short(d.dst_hop) {
+                if let Some(slot) = self.neighbours.slot_of(d.dst_hop) {
                     self.skipped |= 1 << slot;
                 }
             }
@@ -1163,18 +1150,18 @@ impl Relay {
     /// when its ban ends, until a failure demotes it. A demoted neighbour
     /// is likely gone or faded; a forward then takes its next candidate,
     /// and a return is dropped.
-    fn wait_for(&self, name: ShortName, now: Instant) -> Option<Instant> {
-        let (_, n) = self.neighbours.by_short(name)?;
+    fn wait_for(&self, id: NodeId, now: Instant) -> Option<Instant> {
+        let (_, n) = self.neighbours.by_id(id)?;
         (!self.neighbours.is_demoted(n, now)).then_some(n.banned_until)
     }
 
-    fn count_failure(&mut self, name: ShortName, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Some((_, n)) = self.neighbours.by_short(name) else {
+    fn count_failure(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some((_, n)) = self.neighbours.by_id(id) else {
             return;
         };
-        let (position, was) = (n.position, self.neighbours.is_demoted(n, now));
-        if self.neighbours.failed(position, now) == Some(true) && !was {
-            emit(Action::Trace(Trace::Demoted { neighbour: name }));
+        let was = self.neighbours.is_demoted(n, now);
+        if self.neighbours.failed(id, now) == Some(true) && !was {
+            emit(Action::Trace(Trace::Demoted { neighbour: id }));
         }
     }
 

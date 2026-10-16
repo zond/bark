@@ -2,8 +2,8 @@
 //!
 //! Latitude is 25 bits and longitude 26 bits of two's-complement fixed point.
 //! Both use the same angular unit, 180° / 2²⁵ = 360° / 2²⁶ ≈ 5.36 µdeg,
-//! which is ≈0.6 m along a meridian. A relay's position is its identity
-//! (spec "Relay identity"), so equality here is identity equality.
+//! which is ≈0.6 m along a meridian. A node's identity is its
+//! [`crate::NodeId`]; a position is where it is.
 
 /// Angular unit of one count, in degrees: 180 / 2²⁵.
 pub const UNIT_DEG: f64 = 180.0 / (1u64 << 25) as f64;
@@ -103,16 +103,15 @@ const SHORT_MASK: u32 = 0xffff;
 /// Counts after which a short name repeats on each axis: 2¹⁶.
 pub const SHORT_PERIOD: i32 = 1 << 16;
 
-/// A relay's 4-byte name in packet fields that only name it (ATTACH
-/// `relay`, DATA `dst_hop` and `src_hop`; spec "Relay identity", roadmap D14): the
-/// low 16 bits of its latitude count, then the low 16 bits of its
-/// longitude count, big-endian.
+/// A position's 4-byte short form, which the heartbeat carries (spec
+/// "Relay identity", roadmap D14): the low 16 bits of its latitude count,
+/// then the low 16 bits of its longitude count, big-endian.
 ///
-/// One count is 180° / 2²⁵ ≈ 0.6 m, so the name repeats every 2¹⁶ counts:
-/// 39 km of latitude, and 39 km × cos(latitude) of longitude (25 km at
-/// 50° N). Two relays share a name only if they share a 0.6 m cell, which
-/// is one identity, or are at least that far apart on one axis, far beyond
-/// the ≈3 km a relay hears (spec "Capacity and sizing"). [`Position::from_short`] rebuilds
+/// One count is 180° / 2²⁵ ≈ 0.6 m, so the short form repeats every 2¹⁶
+/// counts: 39 km of latitude, and 39 km × cos(latitude) of longitude (25 km
+/// at 50° N). Two positions share it only if they share a 0.6 m cell or are
+/// at least that far apart on one axis, far beyond the ≈3 km a relay hears
+/// (spec "Capacity and sizing"). [`Position::from_short`] rebuilds
 /// the full position from any point within half a period on each axis,
 /// 19.5 km north-south and 12.6 km east-west at 50° N, so a name is
 /// unambiguous among everything a node hears up to about 80° N or S, where

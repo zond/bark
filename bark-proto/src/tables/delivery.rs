@@ -22,7 +22,7 @@
 //! A message that finds the queue full is refused (spec "Receiving DATA"): what is queued
 //! stays, and the sender learns at once that this relay cannot take it.
 
-use crate::ids::{LeafId, MsgId};
+use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
 use crate::tables::fixed::FixedVec;
 use crate::tables::leaves::LEAVES;
@@ -51,7 +51,7 @@ pub struct Queued {
     /// The message.
     pub msg_id: MsgId,
     /// The leaf it is for.
-    pub leaf: LeafId,
+    pub leaf: NodeId,
     /// When it was queued.
     pub enqueued: Instant,
     len: u8,
@@ -60,7 +60,7 @@ pub struct Queued {
 
 impl Queued {
     /// A message, or `None` if `payload` exceeds [`MAX_PAYLOAD`].
-    pub fn new(msg_id: MsgId, leaf: LeafId, payload: &[u8], now: Instant) -> Option<Queued> {
+    pub fn new(msg_id: MsgId, leaf: NodeId, payload: &[u8], now: Instant) -> Option<Queued> {
         if payload.len() > MAX_PAYLOAD {
             return None;
         }
@@ -115,7 +115,7 @@ impl DeliveryQueue {
     pub const fn new(ttl: Duration) -> DeliveryQueue {
         let fill = Queued {
             msg_id: MsgId(0),
-            leaf: LeafId::RELAY,
+            leaf: NodeId::NONE,
             enqueued: Instant::ZERO,
             len: 0,
             payload: [0; MAX_PAYLOAD],
@@ -152,7 +152,7 @@ impl DeliveryQueue {
     }
 
     /// Number of messages queued for `leaf`.
-    pub fn count_for(&self, leaf: LeafId) -> usize {
+    pub fn count_for(&self, leaf: NodeId) -> usize {
         self.iter().filter(|q| q.leaf == leaf).count()
     }
 
@@ -168,7 +168,7 @@ impl DeliveryQueue {
     }
 
     /// Take the oldest message for `leaf`.
-    pub fn pop_for(&mut self, leaf: LeafId) -> Option<Queued> {
+    pub fn pop_for(&mut self, leaf: NodeId) -> Option<Queued> {
         let i = self.iter().position(|q| q.leaf == leaf)?;
         Some(self.entries.remove(i))
     }
@@ -203,8 +203,8 @@ mod tests {
         Instant::from_micros(s * 1_000_000)
     }
 
-    fn leaf(i: u8) -> LeafId {
-        LeafId([i; 4])
+    fn leaf(i: u8) -> NodeId {
+        NodeId([i; 4])
     }
 
     fn msg(id: u32, to: u8, t: u64) -> Queued {

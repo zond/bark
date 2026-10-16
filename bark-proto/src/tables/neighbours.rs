@@ -1,5 +1,5 @@
 //! The neighbour table (spec "Neighbour table"): relays heard by heartbeat, keyed by
-//! position, which is their identity (spec "Relay identity").
+//! node ID, each with the position its heartbeat gave.
 //!
 //! # Slots
 //!
@@ -75,8 +75,9 @@
 //! function to replace if so.
 
 use crate::geo::{LocalPlane, Point};
+use crate::ids::NodeId;
 use crate::node::Config;
-use crate::position::{Position, ShortName};
+use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::tables::budget::hold;
 use crate::time::{Duration, Instant};
@@ -88,7 +89,9 @@ pub const NEIGHBOURS: usize = 64;
 /// One neighbouring relay.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Neighbour {
-    /// Its position: the key and its identity.
+    /// Its ID: the key.
+    pub id: NodeId,
+    /// Its position, rebuilt from its heartbeat's short form.
     pub position: Position,
     /// Its position in this node's local plane.
     pub local: Point,
@@ -209,22 +212,19 @@ impl Neighbours {
         self.slots.get(slot)?.as_ref()
     }
 
-    /// The slot of `position`.
-    pub fn slot_of(&self, position: Position) -> Option<usize> {
-        self.slots()
-            .find(|(_, n)| n.position == position)
-            .map(|(i, _)| i)
+    /// The slot of `id`.
+    pub fn slot_of(&self, id: NodeId) -> Option<usize> {
+        self.slots().find(|(_, n)| n.id == id).map(|(i, _)| i)
     }
 
-    /// The entry for `position`.
-    pub fn get(&self, position: Position) -> Option<&Neighbour> {
-        self.slot(self.slot_of(position)?)
+    /// The entry for `id`.
+    pub fn get(&self, id: NodeId) -> Option<&Neighbour> {
+        self.slot(self.slot_of(id)?)
     }
 
-    /// The slot and entry a short name (spec "Relay identity") names. Every entry was
-    /// heard, so lies within hearing range, where a short name is unique.
-    pub fn by_short(&self, short: ShortName) -> Option<(usize, &Neighbour)> {
-        self.slots().find(|(_, n)| n.position.short() == short)
+    /// The slot and entry of `id`.
+    pub fn by_id(&self, id: NodeId) -> Option<(usize, &Neighbour)> {
+        self.slots().find(|(_, n)| n.id == id)
     }
 
     /// Whether `n` is demoted at `now`.
@@ -266,11 +266,23 @@ impl Neighbours {
         self.slots().filter(move |(_, n)| !self.is_expired(n, now))
     }
 
-    /// A heartbeat from `hb.position` was heard at `now` with packet RSSI
-    /// `rssi`. Refreshes its channel, flag, time and RSSI, or adds it.
-    pub fn heard(&mut self, hb: &Heartbeat, rssi: i16, plane: &LocalPlane, now: Instant) -> Heard {
-        if let Some(i) = self.slot_of(hb.position) {
+    /// A heartbeat from `hb.id` at `position` was heard at `now` with
+    /// packet RSSI `rssi`. Refreshes its position, channel, flag, time and
+    /// RSSI, or adds it.
+    pub fn heard(
+        &mut self,
+        hb: &Heartbeat,
+        position: Position,
+        rssi: i16,
+        plane: &LocalPlane,
+        now: Instant,
+    ) -> Heard {
+        if let Some(i) = self.slot_of(hb.id) {
             if let Some(n) = &mut self.slots[i] {
+                if n.position != position {
+                    n.position = position;
+                    n.local = plane.point(position);
+                }
                 n.home = hb.home;
                 n.surveyed = hb.surveyed;
                 n.last_heard = now;
@@ -279,8 +291,9 @@ impl Neighbours {
             return Heard::Refreshed(i);
         }
         let new = Neighbour {
-            position: hb.position,
-            local: plane.point(hb.position),
+            id: hb.id,
+            position,
+            local: plane.point(position),
             home: hb.home,
             last_heard: now,
             demoted_at: Instant::ZERO,
@@ -302,61 +315,54 @@ impl Neighbours {
         }
     }
 
-    /// `position` took a packet from this relay at `now`: its failures
-    /// are over, and it is alive.
-    pub fn succeeded(&mut self, position: Position, now: Instant) {
-        if let Some(n) = self.entry_mut(position) {
+    /// `id` took a packet from this relay at `now`: its failures are
+    /// over, and it is alive.
+    pub fn succeeded(&mut self, id: NodeId, now: Instant) {
+        if let Some(n) = self.entry_mut(id) {
             n.fail_count = 0;
         }
-        self.answered(position, now);
+        self.answered(id, now);
     }
 
-    /// `position` answered a packet from this relay at `now`, taking or
-    /// refusing it: it is alive, whether or not its heartbeats are heard
+    /// `id` answered a packet from this relay at `now`, taking or refusing
+    /// it: it is alive, whether or not its heartbeats are heard
     /// (spec "The ACK").
-    pub fn answered(&mut self, position: Position, now: Instant) {
-        if let Some(n) = self.entry_mut(position) {
+    pub fn answered(&mut self, id: NodeId, now: Instant) {
+        if let Some(n) = self.entry_mut(id) {
             n.last_heard = n.last_heard.max(now);
         }
     }
 
-    /// A DATA or ACK frame from the neighbour named `name` was heard with
-    /// packet RSSI `rssi`.
-    pub fn frame_heard(&mut self, name: ShortName, rssi: i16) {
-        if let Some(n) = self.by_short_mut(name) {
+    /// A DATA or ACK frame from neighbour `id` was heard with packet RSSI
+    /// `rssi`.
+    pub fn frame_heard(&mut self, id: NodeId, rssi: i16) {
+        if let Some(n) = self.entry_mut(id) {
             n.rssi = average(n.rssi, rssi);
         }
     }
 
-    /// A packet from the neighbour named `name` gave its home channel in
-    /// `aux` (spec "Packet formats"): that is where it listens now, newer than its last
+    /// A packet from neighbour `id` gave its home channel in `aux` (spec
+    /// "Packet formats"): that is where it listens now, newer than its last
     /// heartbeat if it has moved since.
-    pub fn home_heard(&mut self, name: ShortName, home: Channel) {
-        if let Some(n) = self.by_short_mut(name) {
+    pub fn home_heard(&mut self, id: NodeId, home: Channel) {
+        if let Some(n) = self.entry_mut(id) {
             n.home = home;
         }
     }
 
-    fn by_short_mut(&mut self, name: ShortName) -> Option<&mut Neighbour> {
-        self.slots
-            .iter_mut()
-            .flatten()
-            .find(|n| n.position.short() == name)
-    }
-
-    /// `position` refused a hand-over: banned until `until`.
-    pub fn refused(&mut self, position: Position, until: Instant) {
-        if let Some(n) = self.entry_mut(position) {
+    /// `id` refused a hand-over: banned until `until`.
+    pub fn refused(&mut self, id: NodeId, until: Instant) {
+        if let Some(n) = self.entry_mut(id) {
             n.banned_until = until;
         }
     }
 
-    /// A hand-over to `position` failed at `now`: it is banned, longer
-    /// after each failure in a row. Returns whether it is now demoted, or
-    /// `None` if it is not in the table.
-    pub fn failed(&mut self, position: Position, now: Instant) -> Option<bool> {
+    /// A hand-over to `id` failed at `now`: it is banned, longer after each
+    /// failure in a row. Returns whether it is now demoted, or `None` if it
+    /// is not in the table.
+    pub fn failed(&mut self, id: NodeId, now: Instant) -> Option<bool> {
         let params = self.params;
-        let n = self.entry_mut(position)?;
+        let n = self.entry_mut(id)?;
         if n.fail_count >= params.demote_after && now.since(n.demoted_at) >= params.demotion {
             n.fail_count = 0;
         }
@@ -392,11 +398,8 @@ impl Neighbours {
         }
     }
 
-    fn entry_mut(&mut self, position: Position) -> Option<&mut Neighbour> {
-        self.slots
-            .iter_mut()
-            .flatten()
-            .find(|n| n.position == position)
+    fn entry_mut(&mut self, id: NodeId) -> Option<&mut Neighbour> {
+        self.slots.iter_mut().flatten().find(|n| n.id == id)
     }
 }
 
@@ -431,16 +434,29 @@ mod tests {
         NeighbourParams::from_config(&Config::default())
     }
 
-    fn hb(i: i32, home: u8) -> Heartbeat {
-        Heartbeat {
+    /// Neighbour `i`'s heartbeat, its position and ID following from `i`.
+    fn hb(i: i32, home: u8) -> (Heartbeat, Position) {
+        let hb = Heartbeat {
             surveyed: true,
             home: Channel::new(home).unwrap(),
-            position: pos(i),
-        }
+            id: id(i),
+            short: pos(i).short(),
+        };
+        (hb, pos(i))
+    }
+
+    fn id(i: i32) -> NodeId {
+        NodeId((i as u32 + 1).to_be_bytes())
     }
 
     fn pos(i: i32) -> Position {
         Position { lat: i, lon: -i }
+    }
+
+    /// Hear neighbour `i`'s heartbeat on channel `home`.
+    fn hear(t: &mut Neighbours, i: i32, home: u8, rssi: i16, now: Instant) -> Heard {
+        let (hb, p) = hb(i, home);
+        t.heard(&hb, p, rssi, &plane(), now)
     }
 
     fn at(s: u64) -> Instant {
@@ -474,62 +490,59 @@ mod tests {
         // packet RSSI of −117 + 4.1 dBm.
         let floor = -117;
         let mut t = Neighbours::new(params());
-        t.heard(&hb(1, 0), -114, &plane(), at(0));
-        let n = *t.get(pos(1)).unwrap();
+        hear(&mut t, 1, 0, -114, at(0));
+        let n = *t.get(id(1)).unwrap();
         assert!(!Neighbours::has_margin(&n, floor), "a faint heartbeat");
-        t.frame_heard(n.position.short(), -110);
-        let n = *t.get(pos(1)).unwrap();
+        t.frame_heard(n.id, -110);
+        let n = *t.get(id(1)).unwrap();
         assert_eq!(n.rssi, -112.0, "a new frame counts half");
         assert!(Neighbours::has_margin(&n, floor), "an ACK heard well");
-        t.heard(&hb(1, 0), -118, &plane(), at(130));
-        assert!(!Neighbours::has_margin(t.get(pos(1)).unwrap(), floor));
+        hear(&mut t, 1, 0, -118, at(130));
+        assert!(!Neighbours::has_margin(t.get(id(1)).unwrap(), floor));
     }
 
     #[test]
     fn heard_adds_and_refreshes() {
         let mut t = Neighbours::new(params());
-        assert_eq!(t.heard(&hb(1000, 3), -80, &plane(), at(0)), Heard::Added(0));
-        let n = *t.get(pos(1000)).unwrap();
+        assert_eq!(hear(&mut t, 1000, 3, -80, at(0)), Heard::Added(0));
+        let n = *t.get(id(1000)).unwrap();
         assert_eq!(n.home.index(), 3);
         assert!((n.local.north - 1000.0 * crate::position::UNIT_M as f32).abs() < 0.01);
-        t.failed(n.position, at(5));
-        assert_eq!(
-            t.heard(&hb(1000, 4), -80, &plane(), at(10)),
-            Heard::Refreshed(0)
-        );
-        let n = *t.get(n.position).unwrap();
+        t.failed(n.id, at(5));
+        assert_eq!(hear(&mut t, 1000, 4, -80, at(10)), Heard::Refreshed(0));
+        let n = *t.get(n.id).unwrap();
         assert_eq!(
             (n.home.index(), n.fail_count, n.last_heard),
             (4, 1, at(10)),
             "a heartbeat is not an ACK"
         );
         assert_eq!(t.len(), 1);
-        t.home_heard(n.position.short(), Channel::new(7).unwrap());
-        assert_eq!(t.get(n.position).unwrap().home.index(), 7);
+        t.home_heard(n.id, Channel::new(7).unwrap());
+        assert_eq!(t.get(n.id).unwrap().home.index(), 7);
         assert_eq!(
-            t.get(n.position).unwrap().last_heard,
+            t.get(n.id).unwrap().last_heard,
             at(10),
             "a packet's channel is not a heartbeat"
         );
     }
 
     #[test]
-    fn lookup_by_short_name() {
+    fn lookup_by_id() {
         let mut t = Neighbours::new(params());
-        t.heard(&hb(7, 0), -80, &plane(), at(0));
-        t.heard(&hb(9, 0), -80, &plane(), at(0));
+        hear(&mut t, 7, 0, -80, at(0));
+        hear(&mut t, 9, 0, -80, at(0));
         assert_eq!(
-            t.by_short(pos(9).short()).map(|(i, n)| (i, n.position)),
+            t.by_id(id(9)).map(|(i, n)| (i, n.position)),
             Some((1, pos(9)))
         );
-        assert_eq!(t.by_short(pos(8).short()), None);
+        assert_eq!(t.by_id(id(8)), None);
     }
 
     #[test]
     fn demotion_ends_on_ack_or_after_three_rotations_not_on_heartbeat() {
         let mut t = Neighbours::new(params());
-        t.heard(&hb(1, 0), -80, &plane(), at(0));
-        let p = pos(1);
+        hear(&mut t, 1, 0, -80, at(0));
+        let p = id(1);
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
         t.succeeded(p, at(1));
@@ -540,10 +553,10 @@ mod tests {
         );
         assert_eq!(t.failed(p, at(2)), Some(true));
         assert_eq!(t.candidates(at(2)).count(), 0);
-        assert_eq!(t.failed(pos(2), at(2)), None);
+        assert_eq!(t.failed(id(2), at(2)), None);
 
         // Heartbeats keep it alive but demoted (D18).
-        t.heard(&hb(1, 0), -80, &plane(), at(300));
+        hear(&mut t, 1, 0, -80, at(300));
         assert_eq!(
             t.candidates(at(300)).count(),
             0,
@@ -563,8 +576,8 @@ mod tests {
     #[test]
     fn expiry_frees_the_slot_and_keeps_the_others() {
         let mut t = Neighbours::new(params());
-        t.heard(&hb(1, 0), -80, &plane(), at(0));
-        t.heard(&hb(2, 0), -80, &plane(), at(100));
+        hear(&mut t, 1, 0, -80, at(0));
+        hear(&mut t, 2, 0, -80, at(100));
         assert_eq!(t.next_expiry(), Some(at(390)));
         assert_eq!(
             t.candidates(at(390)).count(),
@@ -575,10 +588,10 @@ mod tests {
         assert_eq!(t.len(), 2);
         t.expire(at(390));
         assert_eq!(t.len(), 1);
-        assert_eq!(t.slot_of(pos(2)), Some(1), "slots do not move");
+        assert_eq!(t.slot_of(id(2)), Some(1), "slots do not move");
         assert_eq!(t.next_expiry(), Some(at(490)));
         assert_eq!(
-            t.heard(&hb(3, 0), -80, &plane(), at(400)),
+            hear(&mut t, 3, 0, -80, at(400)),
             Heard::Added(0),
             "the free slot is reused"
         );
@@ -589,28 +602,22 @@ mod tests {
         let mut t = Neighbours::new(params());
         for i in 0..NEIGHBOURS as i32 {
             assert_eq!(
-                t.heard(&hb(i, 0), -80, &plane(), at(i as u64)),
+                hear(&mut t, i, 0, -80, at(i as u64)),
                 Heard::Added(i as usize)
             );
         }
         // All live and recently heard: the newcomer is turned away.
-        assert_eq!(
-            t.heard(&hb(100, 0), -80, &plane(), at(100)),
-            Heard::Rejected
-        );
+        assert_eq!(hear(&mut t, 100, 0, -80, at(100)), Heard::Rejected);
         // A demoted entry goes first, even though others are older.
-        t.failed(pos(40), at(100));
-        t.failed(pos(40), at(100));
-        match t.heard(&hb(101, 0), -80, &plane(), at(101)) {
+        t.failed(id(40), at(100));
+        t.failed(id(40), at(100));
+        match hear(&mut t, 101, 0, -80, at(101)) {
             Heard::Replaced(40, old) => assert_eq!(old.position, pos(40)),
             other => panic!("{other:?}"),
         }
         // Entry 0, last heard at 0 s, is stale at 195 s.
-        assert_eq!(
-            t.heard(&hb(102, 0), -80, &plane(), at(194)),
-            Heard::Rejected
-        );
-        match t.heard(&hb(103, 0), -80, &plane(), at(195)) {
+        assert_eq!(hear(&mut t, 102, 0, -80, at(194)), Heard::Rejected);
+        match hear(&mut t, 103, 0, -80, at(195)) {
             Heard::Replaced(0, old) => assert_eq!(old.position, pos(0)),
             other => panic!("{other:?}"),
         }
@@ -621,16 +628,13 @@ mod tests {
     fn a_lapsed_demotion_is_not_preferred_for_eviction() {
         let mut t = Neighbours::new(params());
         for i in 0..NEIGHBOURS as i32 {
-            t.heard(&hb(i, 0), -80, &plane(), at(0));
+            hear(&mut t, i, 0, -80, at(0));
         }
-        t.failed(pos(5), at(0));
-        t.failed(pos(5), at(0));
+        t.failed(id(5), at(0));
+        t.failed(id(5), at(0));
         for i in 0..NEIGHBOURS as i32 {
-            t.heard(&hb(i, 0), -80, &plane(), at(390));
+            hear(&mut t, i, 0, -80, at(390));
         }
-        assert_eq!(
-            t.heard(&hb(100, 0), -80, &plane(), at(391)),
-            Heard::Rejected
-        );
+        assert_eq!(hear(&mut t, 100, 0, -80, at(391)), Heard::Rejected);
     }
 }

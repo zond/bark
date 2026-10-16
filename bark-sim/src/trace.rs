@@ -1,14 +1,14 @@
 //! The per-node event trace (`bark-sim --trace FILE`): one line per thing a
 //! core heard, was told or did, for following a message or a leaf by eye.
 //!
-//! A line is `<seconds> <node>: <what>`. Packets are decoded; relays are
-//! named by node label rather than short name, and a message by its traffic
+//! A line is `<seconds> <node>: <what>`. Packets are decoded; nodes are
+//! named by node label rather than ID, and a message by its traffic
 //! tag (`#n`, the order it was originated in) where the simulator knows it.
 //! Channel checks and sweep readings are left out: a relay takes thirteen a
 //! second and they would drown everything else.
 
-use bark_proto::wire::{AckName, Packet};
-use bark_proto::{Action, AppCommand, AppEvent, Event, Instant, LeafId, MsgId, ShortName, Trace};
+use bark_proto::wire::Packet;
+use bark_proto::{Action, AppCommand, AppEvent, Event, Instant, MsgId, NodeId, Trace};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write;
@@ -17,38 +17,17 @@ use std::io::Write;
 pub(crate) struct Names {
     /// Node label by index.
     pub labels: Vec<String>,
-    /// Relay node by short name.
-    pub relays: HashMap<u32, u32>,
-    /// Leaf node by leaf ID.
-    pub leaves: HashMap<[u8; 4], u32>,
+    /// Node by ID.
+    pub ids: HashMap<[u8; 4], u32>,
 }
 
 impl Names {
-    fn relay(&self, s: ShortName) -> String {
-        match self.relays.get(&s.0) {
+    /// The node `id` names. Zero is a leaf's DATA, which names no sender.
+    fn node(&self, id: NodeId) -> String {
+        match self.ids.get(&id.0) {
             Some(&n) => self.labels[n as usize].clone(),
-            None => format!("{:08x}", s.0),
-        }
-    }
-
-    fn leaf(&self, l: LeafId) -> String {
-        match self.leaves.get(&l.0) {
-            Some(&n) => self.labels[n as usize].clone(),
-            None if l == LeafId::RELAY => "relay".into(),
-            None => format!("leaf id {:02x?}", l.0),
-        }
-    }
-
-    /// An ACK names a relay or a leaf; try both. Zero is a leaf's DATA,
-    /// which names no sender.
-    fn party(&self, f: AckName) -> String {
-        let s = ShortName(u32::from_be_bytes(f.0));
-        if s.0 == 0 {
-            "a leaf".into()
-        } else if self.relays.contains_key(&s.0) {
-            self.relay(s)
-        } else {
-            self.leaf(LeafId(f.0))
+            None if id == NodeId::NONE => "a leaf".into(),
+            None => format!("id {:02x?}", id.0),
         }
     }
 }
@@ -99,41 +78,41 @@ impl Tracer {
                 format!(
                     "ACK {} from {} to {}{}",
                     self.msg(a.msg_id, tags),
-                    n.party(a.from),
-                    n.party(a.to),
+                    n.node(a.from),
+                    n.node(a.to),
                     if a.refused { ", refused" } else { "" }
                 )
             }
             Ok(Packet::Attach(a)) => format!(
                 "ATTACH {} to {}{}",
-                n.leaf(a.leaf),
-                n.relay(a.relay),
+                n.node(a.leaf),
+                n.node(a.relay),
                 if a.reply { ", answering a poll" } else { "" }
             ),
             Ok(Packet::Attached(a)) => format!(
                 "ATTACHED {}, next poll in {} ms",
-                n.leaf(a.leaf),
+                n.node(a.leaf),
                 a.next_poll().as_millis()
             ),
             Ok(Packet::Data(d)) => {
                 let src = if d.hops == 0 {
                     "a leaf".into()
                 } else {
-                    n.relay(d.src_hop)
+                    n.node(d.src_hop)
                 };
                 format!(
                     "DATA {} to {} from {src} (home {}), hops {}, for {}",
                     payload_tag(d.payload),
-                    n.relay(d.dst_hop),
+                    n.node(d.dst_hop),
                     d.sender_home.index(),
                     d.hops,
-                    n.leaf(d.dst_leaf),
+                    n.node(d.dst_id),
                 )
             }
             Ok(Packet::Deliver(d)) => format!(
                 "DELIVER {} to {}",
                 payload_tag(d.payload),
-                n.leaf(d.dst_leaf)
+                n.node(d.dst_leaf)
             ),
             Err(e) => format!("undecodable {e:?}"),
         }
@@ -160,11 +139,11 @@ impl Tracer {
                 self.packet(bytes, tags)
             ),
             Event::App(AppCommand::Send {
-                dst_leaf, payload, ..
+                dst_id, payload, ..
             }) => format!(
                 "app send {} to {}",
                 payload_tag(payload),
-                self.names.leaf(*dst_leaf)
+                self.names.node(*dst_id)
             ),
             _ => return,
         };
@@ -206,7 +185,7 @@ impl Tracer {
                         what,
                         "{} turned away by {}",
                         self.msg(msg_id, tags),
-                        n.relay(by)
+                        n.node(by)
                     ),
                     Trace::HandOverDeferred { msg_id, until } => write!(
                         what,
@@ -218,27 +197,27 @@ impl Tracer {
                         what,
                         "forwarded {} to {} at hops {hops}",
                         self.msg(msg_id, tags),
-                        n.relay(to)
+                        n.node(to)
                     ),
                     Trace::ReturnedToParent { msg_id, to } => write!(
                         what,
                         "returned {} to {}",
                         self.msg(msg_id, tags),
-                        n.relay(to)
+                        n.node(to)
                     ),
-                    Trace::Demoted { neighbour } => write!(what, "demoted {}", n.relay(neighbour)),
+                    Trace::Demoted { neighbour } => write!(what, "demoted {}", n.node(neighbour)),
                     Trace::Delivered { msg_id, leaf } => write!(
                         what,
                         "delivered {} to {}",
                         self.msg(msg_id, tags),
-                        n.leaf(leaf)
+                        n.node(leaf)
                     ),
                     Trace::Queued { msg_id, leaf } => {
                         write!(
                             what,
                             "queued {} for {}",
                             self.msg(msg_id, tags),
-                            n.leaf(leaf)
+                            n.node(leaf)
                         )
                     }
                     other => write!(what, "{other:?}"),

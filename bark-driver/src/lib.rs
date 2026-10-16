@@ -24,7 +24,7 @@ use core::future::pending;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{
-    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, LeafId, Position,
+    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position,
     MAX_FRAME,
 };
 use embassy_futures::select::{select3, Either3};
@@ -104,10 +104,10 @@ pub trait Clock {
 /// A message the application wants to send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outgoing {
-    /// Position of the destination's relay.
+    /// The destination's position (spec "Addresses").
     pub dst_pos: Position,
-    /// Destination leaf, or [`LeafId::RELAY`].
-    pub dst_leaf: LeafId,
+    /// The destination node.
+    pub dst_id: NodeId,
     /// Payload bytes copied into the buffer given to [`App::take`].
     pub len: usize,
 }
@@ -347,7 +347,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let payload = self.payload;
         let send = AppCommand::Send {
             dst_pos: out.dst_pos,
-            dst_leaf: out.dst_leaf,
+            dst_id: out.dst_id,
             payload: &payload[..out.len.min(MAX_PAYLOAD)],
         };
         self.deliver(Event::App(send)).await

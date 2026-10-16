@@ -405,15 +405,14 @@ mod tests {
 
     /// A DATA frame with `hops` that has waited until `due` ms, if given.
     fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
-        use crate::ids::LeafId;
-        use crate::position::ShortName;
+        use crate::ids::NodeId;
         use crate::wire::Data;
         let d = Data {
             sender_home: Channel::new(3).unwrap(),
-            dst_hop: ShortName(1),
-            src_hop: ShortName(2),
+            dst_hop: NodeId([1; 4]),
+            src_hop: NodeId([2; 4]),
             dst_pos: crate::position::Position { lat: 0, lon: 0 },
-            dst_leaf: LeafId::RELAY,
+            dst_id: NodeId([3; 4]),
             hops,
             time_left: 1,
             payload: &[tag],

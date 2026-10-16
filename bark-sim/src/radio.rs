@@ -32,9 +32,9 @@
 
 use crate::metrics::Outcome;
 use crate::phy::{self, Deaf, Loss};
-use crate::sim::{Arrival, ExKind, Lock, Rx, Sim};
+use crate::sim::{key, Arrival, ExKind, Lock, Rx, Sim};
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::{AckName, Packet as WirePacket};
+use bark_proto::wire::Packet as WirePacket;
 use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 
 /// Tolerance for threshold comparisons in dB, so that an exact 5.0 dB
@@ -105,7 +105,7 @@ impl Sim {
         }
         let tx = self.txs[slot as usize].as_mut().expect("valid slot");
         tx.on_air = true;
-        let (src, key, end, start) = (tx.src, tx.key, tx.end, tx.start);
+        let (src, tx_key, end, start) = (tx.src, tx.key, tx.end, tx.start);
         let ch = tx.frame.channel;
         let preamble = tx.frame.preamble_symbols;
         let packet = Packet {
@@ -124,11 +124,9 @@ impl Sim {
         };
         let to = match decoded {
             Some(WirePacket::Data(d)) => {
-                Some((d.dst_hop.0, if src < self.relays() { 0 } else { 2 }))
+                Some((key(d.dst_hop), if src < self.relays() { 0 } else { 2 }))
             }
-            Some(WirePacket::Ack(a)) if src < self.relays() => {
-                Some((u32::from_be_bytes(a.to.0), 1))
-            }
+            Some(WirePacket::Ack(a)) if src < self.relays() => Some((key(a.to), 1)),
             _ => None,
         };
         let m = &mut self.metrics;
@@ -146,13 +144,11 @@ impl Sim {
         }
         match decoded {
             Some(WirePacket::Data(d)) => {
-                self.answer_of.insert(
-                    key,
-                    (d.msg_id().0, u32::from_be_bytes(AckName::from(d.src_hop).0)),
-                );
+                self.answer_of
+                    .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => {
-                let k = (src, a.msg_id.0, u32::from_be_bytes(a.to.0));
+                let k = (src, a.msg_id.0, key(a.to));
                 if let Some((deadline, leaf)) = self.awaiting.remove(&k) {
                     let answer = if self.now > deadline {
                         2
@@ -178,7 +174,7 @@ impl Sim {
             } else {
                 1
             };
-            self.addressed.insert(key, (d.0, d.1, state));
+            self.addressed.insert(tx_key, (d.0, d.1, state));
         }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
@@ -188,7 +184,7 @@ impl Sim {
             let l = self.links.row(src)[i];
             let dbm = self.links.rx_dbm(&l, ch);
             let a = Arrival {
-                key,
+                key: tx_key,
                 channel: ch.index(),
                 dbm,
                 mw: phy::mw(dbm),
@@ -260,7 +256,7 @@ impl Sim {
                 .round()
                 .clamp(-128.0, 127.0) as i8;
             let heartbeat = match WirePacket::decode(&bytes[..len]) {
-                Ok(WirePacket::Heartbeat(h)) if b < self.relays() => Some(h.position),
+                Ok(WirePacket::Heartbeat(h)) if b < self.relays() => Some(h.id),
                 _ => None,
             };
             let before = heartbeat.map(|p| self.table_holds(b, p));

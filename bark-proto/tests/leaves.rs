@@ -5,7 +5,7 @@ mod common;
 
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
-    AppCommand, AppEvent, Config, DropReason, Duration, Instant, Leaf, LeafId, MsgId, Node,
+    AppCommand, AppEvent, Config, DropReason, Duration, Instant, Leaf, MsgId, Node, NodeId,
     Position, Relay, Trace, CHANNELS,
 };
 use common::{secs, Harness};
@@ -33,7 +33,7 @@ fn leaf(east: f64, id: u8, seed: u64) -> Node {
     Node::Leaf(Leaf::new(
         Config {
             position: pos(east, 0.0),
-            leaf_id: LeafId([id; 4]),
+            node_id: NodeId([id; 4]),
             ..Config::default()
         },
         seed,
@@ -64,16 +64,16 @@ fn attached(h: &Harness<Node>, l: usize, r: usize) -> bool {
 
 /// Leaf `from` sends `text` to leaf `to` at relay `at`.
 fn send(h: &mut Harness<Node>, from: usize, to: usize, at: usize, text: &[u8]) -> MsgId {
-    let (dst_pos, dst_leaf) = (position(h, at), the_leaf(h, to).id());
+    let (dst_pos, dst_id) = (position(h, at), the_leaf(h, to).id());
     h.command(
         from,
         AppCommand::Send {
             dst_pos,
-            dst_leaf,
+            dst_id,
             payload: text,
         },
     );
-    MsgId::of(dst_pos, dst_leaf, text)
+    MsgId::of(dst_pos, dst_id, text)
 }
 
 /// What node `i`'s application heard about message `id`.
@@ -160,7 +160,7 @@ fn leaf_to_leaf_across_two_relays() {
     assert!(h.nodes[r2].traces.iter().any(|(_, t)| *t
         == Trace::Delivered {
             msg_id: id,
-            leaf: LeafId([2; 4])
+            leaf: NodeId([2; 4])
         }));
 }
 
@@ -190,7 +190,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
             r1,
             AppCommand::Send {
                 dst_pos: p1,
-                dst_leaf: leaf3,
+                dst_id: leaf3,
                 payload: &[b'q', k],
             },
         );
@@ -273,7 +273,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
             r1,
             AppCommand::Send {
                 dst_pos: p2,
-                dst_leaf: leaf2,
+                dst_id: leaf2,
                 payload: &text,
             },
         );
@@ -444,7 +444,7 @@ fn line_of_three_loses_its_middle() {
             received(
                 &h,
                 lc,
-                MsgId::of(position(&h, cc), LeafId([2; 4]), &[b'n', k])
+                MsgId::of(position(&h, cc), NodeId([2; 4]), &[b'n', k])
             ),
             0
         );
@@ -548,17 +548,17 @@ fn a_message_waits_for_a_relay() {
     h.link(l, r);
     // Within the relay's boot listen: the leaf has heard nothing yet.
     h.run_until(Instant::ZERO + secs(10), |_| false);
-    let dst = position(&h, r);
+    let (dst, to) = (position(&h, r), the_relay(&h, r).id());
     let text = b"wait for me";
     h.command(
         l,
         AppCommand::Send {
             dst_pos: dst,
-            dst_leaf: LeafId::RELAY,
+            dst_id: to,
             payload: text,
         },
     );
-    let id = MsgId::of(dst, LeafId::RELAY, text);
+    let id = MsgId::of(dst, to, text);
     let taken = h.now;
     assert!(h.run_until(Instant::ZERO + secs(600), |h| received(h, r, id) == 1));
     h.run_for(secs(1));
@@ -594,11 +594,11 @@ fn a_message_without_a_relay_is_dropped_after_the_delivery_ttl() {
         0,
         AppCommand::Send {
             dst_pos: dst,
-            dst_leaf: LeafId([9; 4]),
+            dst_id: NodeId([9; 4]),
             payload: text,
         },
     );
-    let id = MsgId::of(dst, LeafId([9; 4]), text);
+    let id = MsgId::of(dst, NodeId([9; 4]), text);
     let last = secs(600) - bark_proto::wire::TTL_UNIT;
     h.run_for(last - secs(1));
     assert_eq!(the_leaf(&h, 0).holding(), Some(id));
@@ -645,7 +645,7 @@ fn a_leaf_switches_only_to_a_clearly_stronger_relay() {
         .iter()
         .filter(|(t, b)| {
             *t >= start
-                && matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.position == r3_position)
+                && matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.short == r3_position.short())
         })
         .count();
     assert!(heard >= 2, "switched after {heard} heartbeat(s)");
@@ -658,7 +658,7 @@ use bark_proto::wire::{Attach, Attached};
 
 /// The ATTACHEDs node `r` sent to leaf `id` from `from` on: when each went
 /// on air, and what it named.
-fn attacheds(h: &Harness<Node>, r: usize, id: LeafId, from: Instant) -> Vec<(Instant, Attached)> {
+fn attacheds(h: &Harness<Node>, r: usize, id: NodeId, from: Instant) -> Vec<(Instant, Attached)> {
     h.nodes[r]
         .sent
         .iter()
@@ -710,7 +710,7 @@ fn heartbeat_after(h: &Harness<Node>, l: usize, from: Instant) -> Option<Instant
         .map(|(t, _)| *t)
 }
 
-fn dropped_at(h: &Harness<Node>, r: usize, id: LeafId) -> Option<Instant> {
+fn dropped_at(h: &Harness<Node>, r: usize, id: NodeId) -> Option<Instant> {
     h.nodes[r].traces.iter().find_map(|(t, tr)| match tr {
         Trace::LeafDropped { leaf } if *leaf == id => Some(*t),
         _ => None,
@@ -982,7 +982,7 @@ fn a_leaf_whose_relay_dies_attaches_to_another() {
     assert!(moved >= heard && moved <= heard + c.leaf_retry + secs(1));
     let to_r1 = attaches(&h, l, missed)
         .iter()
-        .filter(|(_, a)| a.relay == position(&h, r1).short())
+        .filter(|(_, a)| a.relay == the_relay(&h, r1).id())
         .count();
     assert_eq!(to_r1, 0, "nothing sent to the dead relay");
 }

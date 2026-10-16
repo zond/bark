@@ -30,12 +30,12 @@
 //! frame, the role decides what follows (D27).
 
 use crate::event::Action;
-use crate::ids::LeafId;
+use crate::ids::NodeId;
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, AckName, Attach};
+use crate::wire::{Ack, Attach};
 
 /// Where a hand-over is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,8 +94,8 @@ impl Transfer {
             lbt_since: None,
             expect: Ack {
                 msg_id: crate::ids::MsgId(0),
-                from: AckName([0; 4]),
-                to: AckName([0; 4]),
+                from: NodeId([0; 4]),
+                to: NodeId([0; 4]),
                 refused: false,
             },
         }
@@ -288,7 +288,7 @@ pub(crate) enum Reply {
     Ack(Ack),
     /// A relay's ATTACHED to this leaf's ATTACH that attaches (spec "Attach and polls"). The
     /// relay builds it as it transmits, from the leaf's slot.
-    Attached(LeafId),
+    Attached(NodeId),
     /// A leaf's ATTACH that answers its relay's poll (spec "Attach and polls").
     Attach(Attach),
 }
@@ -488,8 +488,8 @@ mod tests {
     fn ack(id: u32) -> Ack {
         Ack {
             msg_id: MsgId(id),
-            from: AckName([1, 2, 3, 4]),
-            to: AckName([5, 6, 7, 8]),
+            from: NodeId([1, 2, 3, 4]),
+            to: NodeId([5, 6, 7, 8]),
             refused: false,
         }
     }
@@ -543,13 +543,13 @@ mod tests {
         assert!(!t.acked(ack(8)));
         assert!(
             !t.acked(Ack {
-                from: AckName([9; 4]),
+                from: NodeId([9; 4]),
                 ..ack(7)
             }),
             "same message, other receiver (D19)"
         );
         let to_another = Ack {
-            to: AckName([9; 4]),
+            to: NodeId([9; 4]),
             ..ack(7)
         };
         assert!(

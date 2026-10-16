@@ -1,22 +1,28 @@
 //! Encoding and decoding of every packet in spec "Packet formats".
 //!
-//! The first byte of every packet is `type:4 | aux:4`. Fields that locate
-//! a place (heartbeat `pos`, DATA `dst_pos`) are the 7-byte form of
-//! [`Position::encode`]; fields that only name a relay (ATTACH `relay`, DATA
-//! `dst_hop` and `src_hop`) are its 4-byte [`ShortName`] (roadmap D14).
-//! DATA carries no message ID: every node computes [`Data::msg_id`] (D15).
-//! Search state lives in the relays, not the packet (D16). Lengths, in
-//! bytes:
+//! The first byte of every packet is `type:4 | aux:4`. Every node has a
+//! 4-byte [`NodeId`], and fields that only name a node (ATTACH `relay`,
+//! DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
+//! `dst_pos` locates a place and is the 7-byte form of
+//! [`Position::encode`]; the heartbeat carries the sender's position in the
+//! 4-byte short form of [`ShortName`], which the receiver rebuilds from its
+//! own (roadmap D14). DATA carries no message ID: every node computes
+//! [`Data::msg_id`] (D15). Search state lives in the relays, not the
+//! packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x1/0x2  first pos                                      = 8
-//! ACK       0x3      first id from to                               = 13
+//! HEARTBEAT 0x1/0x2  first id pos                                   = 9
+//! ACK       0x3      first msg from to                              = 13
 //! ATTACH    0x4      first leaf_id relay                            = 9
-//! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
+//! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
-//! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
+//! DELIVER   0x6      first dst_leaf msg payload                     = 9 + payload
 //! ATTACHED  0x7      first leaf_id next_poll                        = 7
 //! ```
+//!
+//! A 9-byte heartbeat is as long on air as an 8-byte one, 20 payload
+//! symbols at SF5 (`radio::time_on_air`), so naming the sender costs it no
+//! airtime.
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
 //! refusal is for this hop only (spec "Receiving DATA"); the network still sends no
@@ -28,14 +34,13 @@
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
 //!
-//! - Short names and message IDs are big-endian; a leaf ID is four opaque
-//!   bytes in order. ACK `from` and `to` are either, so they are four
-//!   bytes compared whole.
+//! - Short positions and message IDs are big-endian; a node ID is four
+//!   opaque bytes in order.
 //! - The payload is at most [`MAX_PAYLOAD`] = 233 bytes, what a frame holds
 //!   after the DATA header. DELIVER only carries a DATA payload onward, so
 //!   it has the same cap although its header is shorter.
 //! - ACK `to` names the sender of what is answered: a DATA's `src_hop`,
-//!   zero from a leaf, whose ID DATA does not carry; for a DELIVER, the
+//!   zero from a leaf, whose DATA names no sender; for a DELIVER, the
 //!   relay the leaf is attached to. An ATTACH is answered by ATTACHED, not
 //!   by an ACK (roadmap D39).
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
@@ -51,17 +56,17 @@
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
-use crate::ids::{LeafId, MsgId};
+use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
-use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use crate::time::Duration;
 
 // Field widths.
 const FIRST_LEN: usize = 1;
 const POS_LEN: usize = Position::WIRE_LEN;
-const NAME_LEN: usize = 4;
+const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
-const LEAF_ID_LEN: usize = 4;
+const ID_LEN: usize = 4;
 const HOPS_LEN: usize = 1;
 const TIME_LEFT_LEN: usize = 1;
 
@@ -80,24 +85,25 @@ const T_DELIVER: u8 = 0x6;
 const T_ATTACHED: u8 = 0x7;
 
 // HEARTBEAT.
-const HEARTBEAT_POS: usize = FIRST + FIRST_LEN;
-/// HEARTBEAT length (spec "Packet formats": 8).
-pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + POS_LEN;
+const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
+const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
+/// HEARTBEAT length.
+pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
 
 // ACK.
 const ACK_ID: usize = FIRST + FIRST_LEN;
 const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
-const ACK_TO: usize = ACK_FROM + NAME_LEN;
+const ACK_TO: usize = ACK_FROM + ID_LEN;
 /// ACK length (spec "Packet formats": 13).
-pub const ACK_LEN: usize = ACK_TO + NAME_LEN;
+pub const ACK_LEN: usize = ACK_TO + ID_LEN;
 /// The `aux` bit of an ACK that refuses.
 const ACK_REFUSED: u8 = 0x1;
 
 // ATTACH.
 const ATTACH_LEAF: usize = FIRST + FIRST_LEN;
-const ATTACH_RELAY: usize = ATTACH_LEAF + LEAF_ID_LEN;
+const ATTACH_RELAY: usize = ATTACH_LEAF + ID_LEN;
 /// ATTACH length (spec "Packet formats": 9).
-pub const ATTACH_LEN: usize = ATTACH_RELAY + NAME_LEN;
+pub const ATTACH_LEN: usize = ATTACH_RELAY + ID_LEN;
 /// The `aux` bit of an ATTACH that answers a poll (spec "Attach and polls").
 const ATTACH_REPLY: u8 = 0x8;
 /// The `aux` bits of an ATTACH that hold the receive mode.
@@ -105,24 +111,24 @@ const ATTACH_MODE: u8 = 0x7;
 
 // ATTACHED.
 const ATTACHED_LEAF: usize = FIRST + FIRST_LEN;
-const ATTACHED_NEXT: usize = ATTACHED_LEAF + LEAF_ID_LEN;
+const ATTACHED_NEXT: usize = ATTACHED_LEAF + ID_LEN;
 const NEXT_POLL_LEN: usize = 2;
 /// ATTACHED length (spec "Packet formats": 7).
 pub const ATTACHED_LEN: usize = ATTACHED_NEXT + NEXT_POLL_LEN;
 
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
-const DATA_SRC_HOP: usize = DATA_DST_HOP + NAME_LEN;
-const DATA_DST_POS: usize = DATA_SRC_HOP + NAME_LEN;
-const DATA_DST_LEAF: usize = DATA_DST_POS + POS_LEN;
-const DATA_HOPS: usize = DATA_DST_LEAF + LEAF_ID_LEN;
+const DATA_SRC_HOP: usize = DATA_DST_HOP + ID_LEN;
+const DATA_DST_POS: usize = DATA_SRC_HOP + ID_LEN;
+const DATA_DST_ID: usize = DATA_DST_POS + POS_LEN;
+const DATA_HOPS: usize = DATA_DST_ID + ID_LEN;
 const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
 /// DATA header length (spec "Packet formats": 22).
 pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 
 // DELIVER.
 const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
-const DELIVER_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
+const DELIVER_ID: usize = DELIVER_LEAF + ID_LEN;
 /// DELIVER header length before the payload (spec "Packet formats": 9).
 pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
@@ -130,7 +136,12 @@ pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 /// 255 − 22 = 233 bytes. DATA and DELIVER carry at most this.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 13 && ATTACH_LEN == 9);
+const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13 && ATTACH_LEN == 9);
+const _: () = assert!(
+    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        == time_on_air(8, MIN_PREAMBLE_SYMBOLS).as_micros(),
+    "the node ID costs the heartbeat no airtime"
+);
 const _: () = assert!(ATTACHED_LEN == 7);
 const _: () = assert!(DATA_HEADER_LEN == 22 && DELIVER_HEADER_LEN == 9);
 const _: () = assert!(MAX_PAYLOAD == 233);
@@ -186,38 +197,30 @@ pub struct Heartbeat {
     pub surveyed: bool,
     /// The sender's home channel.
     pub home: Channel,
-    /// The sender's position, which is its identity.
-    pub position: Position,
+    /// The sender.
+    pub id: NodeId,
+    /// The sender's position in short form; [`Heartbeat::position`]
+    /// rebuilds it.
+    pub short: ShortName,
 }
 
-/// A party to an ACK: a relay's short name or a leaf's ID, in the 4 bytes
-/// of ACK `from` or `to` (roadmap D19, D32). The receiver knows which it
-/// expects.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct AckName(pub [u8; 4]);
-
-impl From<ShortName> for AckName {
-    fn from(relay: ShortName) -> AckName {
-        AckName(relay.0.to_be_bytes())
-    }
-}
-
-impl From<LeafId> for AckName {
-    fn from(leaf: LeafId) -> AckName {
-        AckName(leaf.0)
+impl Heartbeat {
+    /// The sender's position, rebuilt by a receiver at `near`:
+    /// unambiguous among everything a node hears ([`Position::from_short`]).
+    pub fn position(&self, near: Position) -> Position {
+        Position::from_short(self.short, near)
     }
 }
 
 /// ACK, type 0x3 (spec "The ACK"): the answer to an offer, taken or refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
-    /// The answered message; for an ATTACH, the leaf's ID read as a
-    /// big-endian number.
+    /// The answered message.
     pub msg_id: MsgId,
-    /// The answering relay or leaf.
-    pub from: AckName,
-    /// The answered relay or leaf.
-    pub to: AckName,
+    /// The answering node.
+    pub from: NodeId,
+    /// The answered node.
+    pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
 }
@@ -234,9 +237,9 @@ impl Ack {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attach {
     /// The attaching leaf.
-    pub leaf: LeafId,
+    pub leaf: NodeId,
     /// The relay attached to.
-    pub relay: ShortName,
+    pub relay: NodeId,
     /// The leaf's receive mode.
     pub mode: RxMode,
     /// It answers the relay's poll; otherwise it asks to attach.
@@ -273,7 +276,7 @@ pub const POLL_UNIT: Duration = Duration::from_millis(10);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attached {
     /// The leaf.
-    pub leaf: LeafId,
+    pub leaf: NodeId,
     /// From the end of this frame to the start of the leaf's next slot, in
     /// [`POLL_UNIT`]s. Not a period: each ATTACHED names the next slot
     /// afresh.
@@ -307,14 +310,14 @@ pub struct Data<'a> {
     /// The sender's home channel, where the ACK and anything sent straight
     /// back go (`aux`).
     pub sender_home: Channel,
-    /// The relay this transmission is addressed to.
-    pub dst_hop: ShortName,
-    /// The relay that sent this transmission; zero from a leaf.
-    pub src_hop: ShortName,
-    /// The destination relay's position.
+    /// The node this transmission is addressed to.
+    pub dst_hop: NodeId,
+    /// The node that sent this transmission; [`NodeId::NONE`] from a leaf.
+    pub src_hop: NodeId,
+    /// The destination position (spec "Addresses").
     pub dst_pos: Position,
-    /// The destination leaf, or [`LeafId::RELAY`].
-    pub dst_leaf: LeafId,
+    /// The destination node.
+    pub dst_id: NodeId,
     /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
     /// The time the message has left, in [`TTL_UNIT`]s (spec "Receiving DATA").
@@ -332,7 +335,7 @@ pub const TTL_UNIT: Duration = Duration::from_millis(2500);
 impl Data<'_> {
     /// The message's ID (roadmap D15), the same on every hop.
     pub fn msg_id(&self) -> MsgId {
-        MsgId::of(self.dst_pos, self.dst_leaf, self.payload)
+        MsgId::of(self.dst_pos, self.dst_id, self.payload)
     }
 
     /// The time the message has left.
@@ -356,7 +359,7 @@ impl Data<'_> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Deliver<'a> {
     /// The receiving leaf.
-    pub dst_leaf: LeafId,
+    pub dst_leaf: NodeId,
     /// The message, so the leaf can ACK it without hashing.
     pub msg_id: MsgId,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
@@ -424,7 +427,7 @@ fn get_pos(b: &[u8], at: usize) -> Position {
     Position::decode(&a)
 }
 
-fn get_name(b: &[u8], at: usize) -> ShortName {
+fn get_short(b: &[u8], at: usize) -> ShortName {
     ShortName(u32::from_be_bytes(get4(b, at)))
 }
 
@@ -466,7 +469,8 @@ impl Packet<'_> {
                     T_HEARTBEAT_GPS
                 };
                 buf[FIRST] = first(kind, h.home.index());
-                put(buf, HEARTBEAT_POS, &h.position.encode());
+                put(buf, HEARTBEAT_ID, &h.id.0);
+                put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
@@ -481,7 +485,7 @@ impl Packet<'_> {
                 let reply = if a.reply { ATTACH_REPLY } else { 0 };
                 buf[FIRST] = first(T_ATTACH, a.mode as u8 | reply);
                 put(buf, ATTACH_LEAF, &a.leaf.0);
-                put(buf, ATTACH_RELAY, &a.relay.0.to_be_bytes());
+                put(buf, ATTACH_RELAY, &a.relay.0);
                 Ok(ATTACH_LEN)
             }
             Packet::Data(d) => {
@@ -489,10 +493,10 @@ impl Packet<'_> {
                     return Err(EncodeError::PayloadTooLong);
                 }
                 buf[FIRST] = first(T_DATA, d.sender_home.index());
-                put(buf, DATA_DST_HOP, &d.dst_hop.0.to_be_bytes());
-                put(buf, DATA_SRC_HOP, &d.src_hop.0.to_be_bytes());
+                put(buf, DATA_DST_HOP, &d.dst_hop.0);
+                put(buf, DATA_SRC_HOP, &d.src_hop.0);
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
-                put(buf, DATA_DST_LEAF, &d.dst_leaf.0);
+                put(buf, DATA_DST_ID, &d.dst_id.0);
                 buf[DATA_HOPS] = d.hops;
                 buf[DATA_TIME_LEFT] = d.time_left;
                 put(buf, DATA_HEADER_LEN, d.payload);
@@ -533,23 +537,24 @@ impl<'a> Packet<'a> {
                 Ok(Packet::Heartbeat(Heartbeat {
                     surveyed: kind == T_HEARTBEAT_SURVEYED,
                     home: channel(aux)?,
-                    position: get_pos(b, HEARTBEAT_POS),
+                    id: NodeId(get4(b, HEARTBEAT_ID)),
+                    short: get_short(b, HEARTBEAT_POS),
                 }))
             }
             T_ACK => {
                 exact(b, ACK_LEN)?;
                 Ok(Packet::Ack(Ack {
                     msg_id: get_msg_id(b, ACK_ID),
-                    from: AckName(get4(b, ACK_FROM)),
-                    to: AckName(get4(b, ACK_TO)),
+                    from: NodeId(get4(b, ACK_FROM)),
+                    to: NodeId(get4(b, ACK_TO)),
                     refused: aux & ACK_REFUSED != 0,
                 }))
             }
             T_ATTACH => {
                 exact(b, ATTACH_LEN)?;
                 Ok(Packet::Attach(Attach {
-                    leaf: LeafId(get4(b, ATTACH_LEAF)),
-                    relay: get_name(b, ATTACH_RELAY),
+                    leaf: NodeId(get4(b, ATTACH_LEAF)),
+                    relay: NodeId(get4(b, ATTACH_RELAY)),
                     mode: RxMode::from_code(aux & ATTACH_MODE)
                         .ok_or(DecodeError::BadRxMode(aux & ATTACH_MODE))?,
                     reply: aux & ATTACH_REPLY != 0,
@@ -558,7 +563,7 @@ impl<'a> Packet<'a> {
             T_ATTACHED => {
                 exact(b, ATTACHED_LEN)?;
                 Ok(Packet::Attached(Attached {
-                    leaf: LeafId(get4(b, ATTACHED_LEAF)),
+                    leaf: NodeId(get4(b, ATTACHED_LEAF)),
                     next_poll: u16::from_be_bytes([b[ATTACHED_NEXT], b[ATTACHED_NEXT + 1]]),
                     waiting: aux,
                 }))
@@ -567,10 +572,10 @@ impl<'a> Packet<'a> {
                 let payload = payload(b, DATA_HEADER_LEN)?;
                 Ok(Packet::Data(Data {
                     sender_home: channel(aux)?,
-                    dst_hop: get_name(b, DATA_DST_HOP),
-                    src_hop: get_name(b, DATA_SRC_HOP),
+                    dst_hop: NodeId(get4(b, DATA_DST_HOP)),
+                    src_hop: NodeId(get4(b, DATA_SRC_HOP)),
                     dst_pos: get_pos(b, DATA_DST_POS),
-                    dst_leaf: LeafId(get4(b, DATA_DST_LEAF)),
+                    dst_id: NodeId(get4(b, DATA_DST_ID)),
                     hops: b[DATA_HOPS],
                     time_left: b[DATA_TIME_LEFT],
                     payload,
@@ -579,7 +584,7 @@ impl<'a> Packet<'a> {
             T_DELIVER => {
                 let payload = payload(b, DELIVER_HEADER_LEN)?;
                 Ok(Packet::Deliver(Deliver {
-                    dst_leaf: LeafId(get4(b, DELIVER_LEAF)),
+                    dst_leaf: NodeId(get4(b, DELIVER_LEAF)),
                     msg_id: get_msg_id(b, DELIVER_ID),
                     payload,
                 }))
@@ -604,12 +609,8 @@ mod tests {
         (0..CHANNELS).prop_map(|c| Channel::new(c).unwrap())
     }
 
-    fn leaf() -> impl Strategy<Value = LeafId> {
-        any::<[u8; 4]>().prop_map(LeafId)
-    }
-
-    fn name() -> impl Strategy<Value = ShortName> {
-        any::<u32>().prop_map(ShortName)
+    fn id() -> impl Strategy<Value = NodeId> {
+        any::<[u8; 4]>().prop_map(NodeId)
     }
 
     fn msg() -> impl Strategy<Value = MsgId> {
@@ -636,7 +637,7 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
-            Packet::Heartbeat(_) => 8,
+            Packet::Heartbeat(_) => 9,
             Packet::Ack(_) => 13,
             Packet::Attach(_) => 9,
             Packet::Data(d) => 22 + d.payload.len(),
@@ -649,27 +650,29 @@ mod tests {
 
     proptest! {
         #[test]
-        fn heartbeat_round_trips(surveyed: bool, home in chan(), position in position()) {
-            round_trip(&Packet::Heartbeat(Heartbeat { surveyed, home, position }));
+        fn heartbeat_round_trips(surveyed: bool, home in chan(), id in id(), position in position()) {
+            let hb = Heartbeat { surveyed, home, id, short: position.short() };
+            round_trip(&Packet::Heartbeat(hb));
+            prop_assert_eq!(hb.position(position), position);
         }
 
         #[test]
         fn ack_round_trips(msg_id in msg(), from: [u8; 4], to: [u8; 4], refused: bool) {
-            let ack = Ack { msg_id, from: AckName(from), to: AckName(to), refused };
+            let ack = Ack { msg_id, from: NodeId(from), to: NodeId(to), refused };
             round_trip(&Packet::Ack(ack));
             let flipped = Ack { refused: !refused, ..ack };
             prop_assert!(ack.answers(&flipped));
-            let other = Ack { to: AckName([!to[0], to[1], to[2], to[3]]), ..ack };
+            let other = Ack { to: NodeId([!to[0], to[1], to[2], to[3]]), ..ack };
             prop_assert!(!ack.answers(&other), "another sender's answer");
         }
 
         #[test]
-        fn attach_round_trips(leaf in leaf(), relay in name(), mode in rx_mode(), reply: bool) {
+        fn attach_round_trips(leaf in id(), relay in id(), mode in rx_mode(), reply: bool) {
             round_trip(&Packet::Attach(Attach { leaf, relay, mode, reply }));
         }
 
         #[test]
-        fn attached_round_trips(leaf in leaf(), next_poll: u16, waiting in 0..=WAITING_MAX) {
+        fn attached_round_trips(leaf in id(), next_poll: u16, waiting in 0..=WAITING_MAX) {
             let a = Attached { leaf, next_poll, waiting };
             round_trip(&Packet::Attached(a));
             prop_assert_eq!(Attached::units(a.next_poll()), next_poll);
@@ -678,25 +681,25 @@ mod tests {
         #[test]
         fn data_round_trips(
             sender_home in chan(),
-            dst_hop in name(),
-            src_hop in name(),
+            dst_hop in id(),
+            src_hop in id(),
             dst_pos in position(),
-            dst_leaf in leaf(),
+            dst_id in id(),
             hops: u8,
             time_left: u8,
             payload in payload(),
         ) {
-            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_leaf, hops, time_left, payload: &payload };
+            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, time_left, payload: &payload };
             round_trip(&Packet::Data(d));
             // The ID survives the trip: it depends only on fields every hop keeps.
             let mut buf = [0; MAX_FRAME];
             let len = Packet::Data(d).encode(&mut buf).unwrap();
             let Ok(Packet::Data(back)) = Packet::decode(&buf[..len]) else { panic!() };
-            prop_assert_eq!(back.msg_id(), MsgId::of(dst_pos, dst_leaf, &payload));
+            prop_assert_eq!(back.msg_id(), MsgId::of(dst_pos, dst_id, &payload));
         }
 
         #[test]
-        fn deliver_round_trips(dst_leaf in leaf(), msg_id in msg(), payload in payload()) {
+        fn deliver_round_trips(dst_leaf in id(), msg_id in msg(), payload in payload()) {
             round_trip(&Packet::Deliver(Deliver { dst_leaf, msg_id, payload: &payload }));
         }
 
@@ -731,10 +734,10 @@ mod tests {
         let payload = [0xa5; MAX_PAYLOAD];
         let d = Data {
             sender_home: Channel::new(3).unwrap(),
-            dst_hop: ShortName(1),
-            src_hop: ShortName(2),
+            dst_hop: NodeId([1; 4]),
+            src_hop: NodeId([2; 4]),
             dst_pos: Position::default(),
-            dst_leaf: LeafId::RELAY,
+            dst_id: NodeId([3; 4]),
             hops: 0,
             time_left: 0,
             payload: &payload,
@@ -751,7 +754,7 @@ mod tests {
             Err(EncodeError::PayloadTooLong)
         );
         let deliver = Deliver {
-            dst_leaf: LeafId::RELAY,
+            dst_leaf: NodeId::NONE,
             msg_id: MsgId(1),
             payload: &long,
         };
@@ -771,12 +774,12 @@ mod tests {
         assert_eq!(Packet::decode(&[0x80; 7]), Err(BadType(8)));
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(BadType(8)));
         assert_eq!(
-            Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(ChannelOutOfRange(13))
         );
-        assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0]), Err(Short));
+        assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
-            Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(BadLength)
         );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
@@ -819,25 +822,25 @@ mod tests {
         let hb = Heartbeat {
             surveyed: false,
             home: Channel::new(12).unwrap(),
-            position,
+            id: NodeId([1, 2, 3, 4]),
+            short: ShortName(0x0506_0708),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x2c);
-        assert_eq!(&buf[1..len], &position.encode());
+        assert_eq!(&buf[..len], &[0x2c, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(11_840),
+            "46.25 symbols at SF5, as for 8 bytes"
+        );
 
         let ack = Ack {
             msg_id: MsgId(0x0102_0304),
-            from: ShortName(0x0506_0708).into(),
-            to: LeafId([9, 10, 11, 12]).into(),
+            from: NodeId([5, 6, 7, 8]),
+            to: NodeId([9, 10, 11, 12]),
             refused: false,
         };
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x30, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        assert_eq!(
-            AckName::from(LeafId([5, 6, 7, 8])),
-            ack.from,
-            "a leaf ID is its bytes in order"
-        );
         let refused = Ack {
             refused: true,
             ..ack
@@ -851,8 +854,8 @@ mod tests {
         );
 
         let attach = Attach {
-            leaf: LeafId([1, 2, 3, 4]),
-            relay: ShortName(0x0506_0708),
+            leaf: NodeId([1, 2, 3, 4]),
+            relay: NodeId([5, 6, 7, 8]),
             mode: RxMode::Hybrid,
             reply: false,
         };
@@ -862,7 +865,7 @@ mod tests {
         assert_eq!(&buf[..len], &[0x4a, 1, 2, 3, 4, 5, 6, 7, 8]);
 
         let attached = Attached {
-            leaf: LeafId([1, 2, 3, 4]),
+            leaf: NodeId([1, 2, 3, 4]),
             next_poll: 0x0506,
             waiting: 7,
         };
@@ -891,10 +894,10 @@ mod tests {
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),
-            dst_hop: ShortName(0x0102_0304),
-            src_hop: ShortName(0x0506_0708),
+            dst_hop: NodeId([1, 2, 3, 4]),
+            src_hop: NodeId([5, 6, 7, 8]),
             dst_pos: position,
-            dst_leaf: LeafId([9, 10, 11, 12]),
+            dst_id: NodeId([9, 10, 11, 12]),
             hops: 13,
             time_left: 14,
             payload: &[15, 16],
@@ -917,7 +920,7 @@ mod tests {
         assert_eq!(Data::units(Duration::from_secs(1000)), u8::MAX);
 
         let deliver = Deliver {
-            dst_leaf: LeafId([1, 2, 3, 4]),
+            dst_leaf: NodeId([1, 2, 3, 4]),
             msg_id: MsgId(0x0506_0708),
             payload: &[9],
         };

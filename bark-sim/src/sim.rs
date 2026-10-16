@@ -26,7 +26,7 @@ use crate::trace::{Names, Tracer};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, Leaf,
-    LeafId, MsgId, Position, Relay, Trace, MAX_FRAME,
+    MsgId, NodeId, Position, Relay, Trace, MAX_FRAME,
 };
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -326,7 +326,7 @@ pub struct MessageRow {
 struct Offer {
     tag: u32,
     dst_pos: Position,
-    dst_leaf: LeafId,
+    dst_id: NodeId,
     len: u8,
 }
 
@@ -398,7 +398,9 @@ pub struct Sim {
     names: Vec<Option<String>>,
     xy: Vec<Xy>,
     sites: Vec<Site>,
-    /// Relay node by short name (spec "Relay identity").
+    /// Each node's ID: one per node, assigned here (spec "Addresses").
+    ids: Vec<NodeId>,
+    /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u32, u32>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
@@ -468,13 +470,23 @@ pub struct Sim {
     /// `to`) to the answer's deadline and whether a leaf sent it.
     pub(crate) awaiting: HashMap<(u32, u32, u32), (Instant, bool)>,
     /// The relay DATA a relay is being handed now: (relay, message,
-    /// sender's short name, count), for [`crate::metrics::HopPlaceRefusals`].
+    /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
     rx_data: Option<(u32, u32, u32, u8)>,
-    /// Relays by short name, filled as refusals name them.
-    by_short: HashMap<u32, u32>,
     /// Refused messages not yet sent again: (sender, message) to the
     /// refusal's time and whether a hop place was free for another.
     refused_at: HashMap<(u32, u32), (Instant, bool)>,
+}
+
+/// The ID the simulator gives node `i`: `i + 1` times an odd constant,
+/// a bijection on 32 bits, so every node has its own and none is zero,
+/// and the IDs spread over the range as random ones would.
+fn node_id(i: u32) -> NodeId {
+    NodeId((i + 1).wrapping_mul(0x9e37_79b1).to_be_bytes())
+}
+
+/// A node ID as a map key.
+pub(crate) fn key(id: NodeId) -> u32 {
+    u32::from_be_bytes(id.0)
 }
 
 /// The interval of the series, µs.
@@ -513,8 +525,10 @@ impl Sim {
             sc.seed,
         )?;
 
+        let ids: Vec<NodeId> = (0..n as u32).map(node_id).collect();
         let config_for = |i: usize| Config {
             position: positions[i],
+            node_id: ids[i],
             ..base
         };
         let core_seed = |i: usize| stream_seed(sc.seed, Purpose::CoreSeed, i as u64);
@@ -567,9 +581,8 @@ impl Sim {
             links,
             names,
             xy,
-            relay_index: (0..n_relays)
-                .map(|i| (positions[i as usize].short().0, i))
-                .collect(),
+            relay_index: (0..n_relays).map(|i| (key(ids[i as usize]), i)).collect(),
+            ids,
             positions,
             sites: site,
             was_booting: false,
@@ -621,7 +634,6 @@ impl Sim {
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
             rx_data: None,
-            by_short: HashMap::new(),
             refused_at: HashMap::new(),
         };
         sim.component = sim.components();
@@ -780,7 +792,7 @@ impl Sim {
                 let first = secs(r.exponential(a.mean_available_s));
                 self.avail_rng.push(r);
                 self.push(Instant::ZERO + first, Ev::Availability(i));
-                self.leaf_nodes.insert(self.leaf_id(i).0, i);
+                self.leaf_nodes.insert(self.node_id(i).0, i);
             }
             self.back_at = vec![None; self.avail_rng.len()];
         }
@@ -883,10 +895,7 @@ impl Sim {
         let n = self.nodes.len() as u32;
         let names = Names {
             labels: (0..n).map(|i| self.label(i)).collect(),
-            relays: (0..self.n_relays)
-                .map(|i| (self.positions[i as usize].short().0, i))
-                .collect(),
-            leaves: (self.n_relays..n).map(|i| (self.leaf_id(i).0, i)).collect(),
+            ids: (0..n).map(|i| (self.node_id(i).0, i)).collect(),
         };
         self.tracer = Some(Tracer::new(out, names));
     }
@@ -1079,7 +1088,7 @@ impl Sim {
             self.rx_data = match ev {
                 Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
                     Ok(bark_proto::wire::Packet::Data(d)) if d.hops > 0 => {
-                        Some((node, d.msg_id().0, d.src_hop.0, d.hops))
+                        Some((node, d.msg_id().0, key(d.src_hop), d.hops))
                     }
                     _ => None,
                 },
@@ -1132,7 +1141,7 @@ impl Sim {
         else {
             return;
         };
-        if a.relay != self.relays[relay as usize].config().position.short() {
+        if a.relay != self.relays[relay as usize].id() {
             return;
         }
         let Some(&leaf) = self.leaf_nodes.get(&a.leaf.0) else {
@@ -1206,10 +1215,10 @@ impl Sim {
         if at != node || id != msg_id.0 {
             return;
         }
-        let Some(sender) = self.relay_named(from) else {
+        let Some(&sender) = self.relay_index.get(&from) else {
             return;
         };
-        let me = self.relays[node as usize].config().position.short();
+        let me = self.relays[node as usize].id();
         let lowest = self.relays[node as usize].lowest_free_hop_place();
         let held = self.relays[sender as usize].highest_count_for(me, self.now);
         let with = matches!((lowest, held), (Some(k), Some(h)) if h >= k);
@@ -1217,17 +1226,6 @@ impl Sim {
         h.refusals += 1;
         h.with_place += u64::from(with);
         self.refused_at.insert((sender, id), (self.now, with));
-    }
-
-    /// The relay named `short`, if any.
-    fn relay_named(&mut self, short: u32) -> Option<u32> {
-        if let Some(&i) = self.by_short.get(&short) {
-            return Some(i);
-        }
-        let i = (0..self.n_relays)
-            .find(|&i| self.relays[i as usize].config().position.short().0 == short)?;
-        self.by_short.insert(short, i);
-        Some(i)
     }
 
     /// `node` sends `f`: if it is a DATA of a message refused to it, the
@@ -1550,11 +1548,11 @@ impl Sim {
         }
     }
 
-    /// Whether relay `r`'s neighbour table holds `p`, and how many entries
+    /// Whether relay `r`'s neighbour table holds `id`, and how many entries
     /// it has.
-    pub(crate) fn table_holds(&self, r: u32, p: Position) -> (bool, usize) {
+    pub(crate) fn table_holds(&self, r: u32, id: NodeId) -> (bool, usize) {
         let t = self.relays[r as usize].neighbours();
-        t.fold((false, 0), |(held, n), e| (held || e.position == p, n + 1))
+        t.fold((false, 0), |(held, n), e| (held || e.id == id, n + 1))
     }
 
     /// Fate of every originated message, in origination order.
@@ -1665,7 +1663,7 @@ impl Sim {
     /// The relay a leaf is attached to now, as a node index.
     pub fn attached_relay(&self, leaf: u32) -> Option<u32> {
         let p = self.leaves[(leaf - self.n_relays) as usize].relay()?;
-        self.relay_index.get(&p.short().0).copied()
+        (0..self.n_relays).find(|&r| self.positions[r as usize] == p)
     }
 
     /// Traffic tags of the messages some live core still holds, or its
@@ -1784,13 +1782,9 @@ impl Sim {
         self.address[node as usize]
     }
 
-    /// Leaf id of a node: the leaf core's own, `LeafId::RELAY` for a relay.
-    pub fn leaf_id(&self, node: u32) -> LeafId {
-        if node < self.n_relays {
-            LeafId::RELAY
-        } else {
-            self.leaves[(node - self.n_relays) as usize].id()
-        }
+    /// A node's ID.
+    pub fn node_id(&self, node: u32) -> NodeId {
+        self.ids[node as usize]
     }
 
     /// The traffic model has a message from `src` to `dst`. Its
@@ -1831,7 +1825,7 @@ impl Sim {
         self.offers[src as usize] = Some(Offer {
             tag,
             dst_pos,
-            dst_leaf: self.leaf_id(dst),
+            dst_id: self.node_id(dst),
             len,
         });
         self.offer(src);
@@ -1873,11 +1867,11 @@ impl Sim {
         let payload = &payload[..o.len as usize];
         // The ID the core gives it (core-interface §7), to follow its
         // traces and drops.
-        let id = MsgId::of(o.dst_pos, o.dst_leaf, payload);
+        let id = MsgId::of(o.dst_pos, o.dst_id, payload);
         self.msg_tags.insert(id.0, o.tag);
         let cmd = AppCommand::Send {
             dst_pos: o.dst_pos,
-            dst_leaf: o.dst_leaf,
+            dst_id: o.dst_id,
             payload,
         };
         self.deliver(src, Event::App(cmd));
@@ -1951,7 +1945,7 @@ impl Sim {
     }
 
     /// Power a node off and on again: it boots afresh with every table
-    /// lost and its identity kept, a relay's position or a leaf's ID. Its
+    /// lost and its ID and position kept. Its
     /// new core draws from a new random stream, as a board's hardware
     /// generator would after a reboot.
     pub fn restart(&mut self, node: u32) {
@@ -1969,11 +1963,7 @@ impl Sim {
             *r = Relay::new(*r.config(), seed);
         } else {
             let l = &mut self.leaves[(node - self.n_relays) as usize];
-            let config = Config {
-                leaf_id: l.id(),
-                ..*l.config()
-            };
-            *l = Leaf::new(config, seed);
+            *l = Leaf::new(*l.config(), seed);
         }
         // Power-on is delivered as a wakeup (docs/core-interface.md §2).
         self.deliver(node, Event::Wakeup);

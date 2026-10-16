@@ -1,5 +1,5 @@
 //! The leaf table (spec "Attach and polls"): leaves attached to this relay, keyed by
-//! [`LeafId`], each with its place in the relay's poll schedule.
+//! [`NodeId`], each with its place in the relay's poll schedule.
 //!
 //! The relay polls one leaf at a time, each every [`PERIOD`], and with L
 //! leaves the slots are at least the spacing S = P / L apart: each leaf's
@@ -17,7 +17,7 @@
 //! is not kept.
 
 use crate::event::MAX_FRAME;
-use crate::ids::LeafId;
+use crate::ids::NodeId;
 use crate::node::Config;
 use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::fixed::FixedVec;
@@ -117,7 +117,7 @@ impl Polls {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LeafEntry {
     /// The leaf.
-    pub leaf: LeafId,
+    pub leaf: NodeId,
     /// Its next slot, as the last ATTACHED to it named.
     pub next_poll: Instant,
     /// The slot of its last poll, sent or skipped.
@@ -158,7 +158,7 @@ impl Leaves {
     /// An empty table on the schedule of `config`.
     pub const fn from_config(config: &Config) -> Leaves {
         let fill = LeafEntry {
-            leaf: LeafId::RELAY,
+            leaf: NodeId::NONE,
             next_poll: Instant::ZERO,
             last_slot: Instant::ZERO,
             missing_since: Instant::ZERO,
@@ -202,11 +202,11 @@ impl Leaves {
     }
 
     /// The entry for `leaf`.
-    pub fn get(&self, leaf: LeafId) -> Option<&LeafEntry> {
+    pub fn get(&self, leaf: NodeId) -> Option<&LeafEntry> {
         self.iter().find(|e| e.leaf == leaf)
     }
 
-    fn get_mut(&mut self, leaf: LeafId) -> Option<&mut LeafEntry> {
+    fn get_mut(&mut self, leaf: NodeId) -> Option<&mut LeafEntry> {
         self.entries
             .as_mut_slice()
             .iter_mut()
@@ -220,7 +220,7 @@ impl Leaves {
     /// spacing.
     pub fn attached(
         &mut self,
-        leaf: LeafId,
+        leaf: NodeId,
         mode: RxMode,
         waiting: u8,
         now: Instant,
@@ -268,7 +268,7 @@ impl Leaves {
 
     /// The first instant at or after `target` at least a spacing from the
     /// next slot of every other leaf still polled.
-    fn free(&self, leaf: LeafId, target: Instant) -> Instant {
+    fn free(&self, leaf: NodeId, target: Instant) -> Instant {
         let spacing = self.spacing();
         let mut taken = [Instant::ZERO; LEAVES];
         let mut n = 0;
@@ -294,7 +294,7 @@ impl Leaves {
 
     /// `leaf` answered a poll at `now`, so it is listening. Returns whether
     /// it is in the table.
-    pub fn answered(&mut self, leaf: LeafId, mode: RxMode, now: Instant) -> bool {
+    pub fn answered(&mut self, leaf: NodeId, mode: RxMode, now: Instant) -> bool {
         match self.get_mut(leaf) {
             Some(e) => {
                 e.mode = mode;
@@ -310,7 +310,7 @@ impl Leaves {
 
     /// The leaf whose poll is due at `now`, the earliest slot first, and
     /// its slot.
-    pub fn poll_due(&self, now: Instant) -> Option<(LeafId, Instant)> {
+    pub fn poll_due(&self, now: Instant) -> Option<(NodeId, Instant)> {
         self.iter()
             .filter(|e| !e.done && e.next_poll <= now)
             .min_by_key(|e| e.next_poll)
@@ -319,7 +319,7 @@ impl Leaves {
 
     /// The poll of `leaf` at its slot was sent or skipped: it gets its next
     /// slot, and once its polls have gone unanswered for a TTL it is done.
-    pub fn polled(&mut self, leaf: LeafId) {
+    pub fn polled(&mut self, leaf: NodeId) {
         let Some(e) = self.get(leaf).copied() else {
             return;
         };
@@ -338,7 +338,7 @@ impl Leaves {
 
     /// An ATTACHED that says `waiting` messages wait goes to `leaf` at
     /// `now`.
-    pub fn told(&mut self, leaf: LeafId, waiting: u8, now: Instant) {
+    pub fn told(&mut self, leaf: NodeId, waiting: u8, now: Instant) {
         if let Some(e) = self.get_mut(leaf) {
             e.told = now;
             e.waiting = waiting;
@@ -349,7 +349,7 @@ impl Leaves {
     /// queued at `enqueued`: it answered the last ATTACHED, which counted
     /// the message, and its wait for those messages has not run out
     /// (spec "Leaf receive mode").
-    pub fn awake_for(&self, leaf: LeafId, enqueued: Instant, now: Instant) -> bool {
+    pub fn awake_for(&self, leaf: NodeId, enqueued: Instant, now: Instant) -> bool {
         self.get(leaf).is_some_and(|e| {
             e.heard >= e.told && enqueued <= e.told && now < e.heard + self.polls.listen(e.waiting)
         })
@@ -367,7 +367,7 @@ impl Leaves {
 
     /// Drop every leaf whose polls are done and whose last answer is
     /// overdue, and call `dropped` with each.
-    pub fn expire(&mut self, now: Instant, mut dropped: impl FnMut(LeafId)) {
+    pub fn expire(&mut self, now: Instant, mut dropped: impl FnMut(NodeId)) {
         loop {
             let gone = self
                 .iter()
@@ -395,14 +395,14 @@ impl Leaves {
     }
 
     /// Mark whether `leaf`, if present, left its last DELIVER unanswered.
-    pub fn set_missed(&mut self, leaf: LeafId, missed: bool) {
+    pub fn set_missed(&mut self, leaf: NodeId, missed: bool) {
         if let Some(e) = self.get_mut(leaf) {
             e.missed = missed;
         }
     }
 
     /// Forget `leaf`, if present.
-    pub fn remove(&mut self, leaf: LeafId) {
+    pub fn remove(&mut self, leaf: NodeId) {
         self.entries.retain(|e| e.leaf != leaf);
     }
 }
@@ -417,8 +417,8 @@ mod tests {
         Instant::from_micros(s * 1_000_000)
     }
 
-    fn id(i: u32) -> LeafId {
-        LeafId(i.to_be_bytes())
+    fn id(i: u32) -> NodeId {
+        NodeId(i.to_be_bytes())
     }
 
     #[test]

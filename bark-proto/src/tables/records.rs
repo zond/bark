@@ -38,7 +38,7 @@
 //!
 //! D17 defined the tried set as the parent, the last child, and every
 //! neighbour before the last child in the order of spec "Next hop" (distance to the
-//! destination, then short name), which is fixed for a message. The record
+//! destination, then ID), which is fixed for a message. The record
 //! keeps instead the neighbours that took the message from this relay,
 //! each by ACKing a hand-over of it, as a mask over neighbour-table slots
 //! ([`Record::handed`]). With the table unchanged and every hand-over
@@ -52,7 +52,7 @@
 //! neighbour that was handed the message.
 
 use crate::ids::MsgId;
-use crate::position::ShortName;
+use crate::ids::NodeId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{most_on_air, BAN};
 use crate::tables::neighbours::NEIGHBOURS;
@@ -104,10 +104,10 @@ const NO_HOME: Channel = match Channel::new(0) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
     id: MsgId,
-    parent: ShortName,
+    parent: NodeId,
     /// The sender of the last packet of the message received here, with
     /// `last_hops`: the same pair again is a retransmission (spec "Receiving DATA").
-    last_from: ShortName,
+    last_from: NodeId,
     /// The parent's home channel when the message arrived. A return goes
     /// to the parent's home as the neighbour table has it then, and to
     /// this one only if the parent has left the table (spec "Return to parent").
@@ -121,13 +121,13 @@ pub struct Record {
 
 impl Record {
     /// A record for a message first received at `now` with `hops`, from
-    /// `parent` (short name and home channel), or from a leaf or this
+    /// `parent` (ID and home channel), or from a leaf or this
     /// relay's application (`None`): this relay is the origin.
-    pub fn new(id: MsgId, parent: Option<(ShortName, Channel)>, hops: u8, now: Instant) -> Record {
+    pub fn new(id: MsgId, parent: Option<(NodeId, Channel)>, hops: u8, now: Instant) -> Record {
         let (name, home, flags) = match parent {
             Some((name, home)) => (name, home, HAS_PARENT),
             // A leaf's packet names no sender (spec "Packet formats").
-            None => (ShortName(0), NO_HOME, 0),
+            None => (NodeId::NONE, NO_HOME, 0),
         };
         Record {
             id,
@@ -149,7 +149,7 @@ impl Record {
 
     /// The relay the message first came from and its home channel when
     /// the message arrived; `None` at the origin.
-    pub fn parent(&self) -> Option<(ShortName, Channel)> {
+    pub fn parent(&self) -> Option<(NodeId, Channel)> {
         (self.flags & HAS_PARENT != 0).then_some((self.parent, self.parent_home))
     }
 
@@ -185,13 +185,13 @@ impl Record {
     /// the last one received: a retransmission whose ACK was lost
     /// (spec "Receiving DATA"). A sender sends a count only once but in retries
     /// (spec "Hop count"), so any other packet is another copy.
-    pub fn repeats(&self, from: ShortName, hops: u8) -> bool {
+    pub fn repeats(&self, from: NodeId, hops: u8) -> bool {
         (from, hops) == (self.last_from, self.last_hops)
     }
 
     /// A packet of the message from `from` with `hops` was received at
     /// `now`.
-    pub fn received(&mut self, from: ShortName, hops: u8, now: Instant) {
+    pub fn received(&mut self, from: NodeId, hops: u8, now: Instant) {
         self.last_active = now;
         self.last_from = from;
         self.last_hops = hops;
@@ -231,8 +231,8 @@ impl Records {
     pub const fn new() -> Records {
         let fill = Record {
             id: MsgId(0),
-            parent: ShortName(0),
-            last_from: ShortName(0),
+            parent: NodeId::NONE,
+            last_from: NodeId::NONE,
             parent_home: NO_HOME,
             highest_hops: 0,
             last_hops: 0,
@@ -345,19 +345,19 @@ mod tests {
 
     #[test]
     fn record_fields() {
-        let p = ShortName(0xabcd);
+        let p = NodeId([0, 0, 0xab, 0xcd]);
         let mut r = Record::new(MsgId(7), Some((p, ch(4))), 3, at(0));
         assert_eq!(r.parent(), Some((p, ch(4))));
         assert!(!r.arrived());
         assert!(r.repeats(p, 3), "the packet that created it, again");
-        assert!(!r.repeats(p, 2) && !r.repeats(ShortName(5), 3));
-        r.received(ShortName(5), 2, at(1));
+        assert!(!r.repeats(p, 2) && !r.repeats(NodeId([5; 4]), 3));
+        r.received(NodeId([5; 4]), 2, at(1));
         assert!(
-            r.repeats(ShortName(5), 2) && !r.repeats(p, 3),
+            r.repeats(NodeId([5; 4]), 2) && !r.repeats(p, 3),
             "the last only"
         );
         assert_eq!((r.highest_hops(), r.last_active()), (3, at(1)));
-        r.received(ShortName(5), 9, at(2));
+        r.received(NodeId([5; 4]), 9, at(2));
         assert_eq!(r.highest_hops(), 9);
         r.handed_over(12);
         r.handed_over(10);
@@ -373,7 +373,7 @@ mod tests {
 
         let origin = Record::new(MsgId(8), None, 0, at(0));
         assert_eq!(origin.parent(), None);
-        assert!(origin.repeats(ShortName(0), 0), "a leaf's packet, again");
+        assert!(origin.repeats(NodeId::NONE, 0), "a leaf's packet, again");
     }
 
     fn keep(t: &mut Records, r: Record) -> Option<Record> {
@@ -406,7 +406,9 @@ mod tests {
         assert!(t.get(MsgId(0)).is_some() && t.get(MsgId(1)).is_some());
         assert!(t.get(MsgId(10_000)).is_some() && t.get(MsgId(2)).is_none());
         // Received counts as touched too.
-        t.get_mut(MsgId(3)).unwrap().received(ShortName(1), 1, now);
+        t.get_mut(MsgId(3))
+            .unwrap()
+            .received(NodeId([1; 4]), 1, now);
         let i = t.place(|_| false).unwrap();
         assert_eq!(
             t.put(i, Record::new(MsgId(10_001), None, 0, now))
