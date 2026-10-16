@@ -233,7 +233,7 @@ Every relay sends a heartbeat. Leaves do not (§10).
 | channel | 4 | home channel index 0–12 |
 | lat | 25 | WGS-84 latitude, fixed point: 180° / 2²⁵ ≈ 0.6 m |
 | lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
-| spare | 5 | zero. A relay reads them as the sender's transmit power, a research prototype that is off (`power-research-2026-10-15.md`) |
+| spare | 5 | zero, ignored |
 
 8 bytes, 11.8 ms on air at SF5 (§4). There is no node ID: a relay's position
 **is** its identity (§8.1).
@@ -1434,7 +1434,6 @@ and its ACK (14.4 ms).
 | Single channel, 60 s heartbeats | 8% | 7 kB/s | 7 | 2 |
 | 7-colour fixed grid, heartbeats on all colours | 11–14% | 37 kB/s | 37 | 11 |
 | **13 channels, measured selection, rotating heartbeat (this design)** | **≈2.5%** | **≈85 kB/s** | **≈80** | **≈23** |
-| + per-packet power control (later) | | ≈160 kB/s | ≈150 | ≈45 |
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
@@ -1588,7 +1587,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule (§8.2) | simulator |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
 | O7 | Sending to an area (address = position + radius, leaf_id = broadcast) | later |
-| O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | later |
+| O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | resolved: measured 2026-10-15/16 (`power-research-2026-10-15.md`), not adopted (roadmap D40) |
 | O9 | Repository/crate layout | resolved: roadmap D7 |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |

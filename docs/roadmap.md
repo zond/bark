@@ -81,7 +81,7 @@ The bench list, with what each number is expected to be and where it goes. The c
 | Transmit and CAD overheads | console `tx` (`excess_us`, `rest_us`), `cad` (`cad_us`) | a few hundred µs; CAD ≈2.2 ms plus the oscillator start | §9.3 listen-before-talk timing, the simulator's CAD cost |
 | Sweep time | console sweep | 13 channels at retune plus 300 µs dwell, ≈5 ms | §6.1 |
 | Time away from the radio | relay build, `longest_away_us` in the 10 s log line, under load from a second board | under 3.6 ms (D37) | D37 |
-| Output power | power meter or a calibrated receiver at the connector, each setting from the lowest to 10 dBm | 10 dBm at the 10 dBm setting (§3) | §3, power control (O8) |
+| Output power | power meter or a calibrated receiver at the connector, each setting from the lowest to 10 dBm | 10 dBm at the 10 dBm setting (§3) | §3 |
 | Noise floor and RSSI calibration | RSSI with no transmitter, each channel, over a day; a known source through attenuators | ≈−118 dBm floor (§4); RSSI linear to the source | §6.1 busy threshold (O11) |
 | Sensitivity and the loss curve | one board through stepped attenuation, frames of 8, 64 and 255 bytes, 1 000 each per step | 1 % loss at ≈−119 dBm for 64 bytes (`reception-research-2026-10-15.md`); the length difference D38 derives | `bark-sim/src/phy.rs`, D38's margin |
 | Adjacent-channel rejection | two boards through attenuators, the second transmitting one channel over at stepped power | the datasheet's figure at 125 kHz spacing; fallback 11 × 150 kHz if it fails (O5) | §5 channel plan |
