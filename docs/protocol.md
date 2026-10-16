@@ -743,7 +743,7 @@ holds a message while it is in its send queue ([hand-over](#hand-over)), the han
 included, or set aside for a full delivery queue ([return to parent](#return-to-parent)). Without
 its record the message could not be routed when its turn comes, so a
 message is never lost for want of room (roadmap D31). The table holds
-1695 records ([bounds](#bounds)).
+1855 records ([bounds](#bounds)).
 
 #### Next hop
 
@@ -1048,7 +1048,7 @@ What breaks it:
   through a relay often, as one with no owner does, pays for it at every
   stay (roadmap D36). Within the hop cap a search can explore about 64 to
   128 links beyond the route that led into the gap.
-- **Message records:** at most 1695 per relay ([message records](#message-records)). A message
+- **Message records:** at most 1855 per relay ([message records](#message-records)). A message
   sent on can come back, returned by a child or offered by a split copy,
   and its record must still be here then. On its way it may wait at each
   relay as long as a full send queue takes to drain, each of the 294
@@ -1058,11 +1058,12 @@ What breaks it:
   held, and this bound covers the wait behind refusals only (roadmap
   D42). Every message a relay handles costs at least an ACK (13 bytes,
   14.4 ms) and one DATA packet with no payload (21 bytes, 18.2 ms),
-  together 32.6 ms; 10% of 457.3 s is 45.7 s of airtime, so a relay
-  handles at most 1401 messages in that time ([regulatory limits](#regulatory-limits)). The
+  together 32.6 ms. Any 457.3 s carries at most a full bucket and its
+  refill, 6 s + 9.83% × 457.3 s = 51.0 s of airtime ([duty cycle cap](#duty-cycle-cap)), so a
+  relay handles at most 1561 messages in that time. The
   records of held messages are never evicted and may be older, so the
-  table has room for the 294 a send queue holds on top: 1695.
-- **State per relay:** the records at 32 bytes each, 54 KB; a send queue
+  table has room for the 294 a send queue holds on top: 1855.
+- **State per relay:** the records at 32 bytes each, 59 KB; a send queue
   of 294 packets of up to 255 bytes, 75 KB ([hand-over](#hand-over)); the owner's
   delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
 
@@ -1556,10 +1557,10 @@ its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
 **RAM budget (256 KB):** neighbour table 64 × 48 B = 3.0 KB; leaf table
-256 × 16 B = 4 KB; delivery queue 41 × 256 B = 10.3 KB; message records
-([message records](#message-records)) 1695 × 32 B = 54 KB; send queue (40 + 254) × 272 B = 80 KB;
+256 × 56 B = 14 KB; delivery queue 41 × 256 B = 10.3 KB; message records
+([message records](#message-records)) 1855 × 32 B = 59 KB; send queue (40 + 254) × 272 B = 80 KB;
 delivered window 41 × 16 B = 0.7 KB; busy estimates and duty budget under
-1 KB; 154 KB in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
+1 KB; 168 KB in all, measured. BLE controller ≈5 KB; Embassy and stacks ≈16 KB. The
 application has 255 KB; 1 KB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 

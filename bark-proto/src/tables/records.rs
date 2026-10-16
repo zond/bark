@@ -26,11 +26,13 @@
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (spec "Regulatory limits"): each costs at least an ACK (13 bytes, 14.40 ms) and one
+//! cycle (spec "Duty cycle cap"): each costs at least an ACK (13 bytes, 14.40 ms) and one
 //! DATA packet with no payload (21 bytes, 18.24 ms), together 32.64 ms;
-//! 10 % of 457.3 s is 45.73 s of airtime, and ⌊45.73 s / 32.64 ms⌋ = 1401.
-//! The records of held messages are not evicted and may be older than
-//! that, so the table has room for them on top: 1401 + 294 = 1695.
+//! any 457.3 s carries at most a full bucket and its refill,
+//! 6 s + 9.83 % × 457.3 s = 50.97 s of airtime ([`most_on_air`]), and
+//! ⌊50.97 s / 32.64 ms⌋ = 1561. The records of held messages are not
+//! evicted and may be older than that, so the table has room for them on
+//! top: 1561 + 294 = 1855.
 //!
 //! # The tried set
 //!
@@ -51,8 +53,8 @@
 
 use crate::ids::MsgId;
 use crate::position::ShortName;
-use crate::radio::{time_on_air, Channel, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::BAN;
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::tables::budget::{most_on_air, BAN};
 use crate::tables::neighbours::NEIGHBOURS;
 use crate::tables::send_queue::{HOP_PLACES, SEND_QUEUE};
 use crate::time::{Duration, Instant};
@@ -73,7 +75,7 @@ pub const HELD: usize = SEND_QUEUE + HOP_PLACES;
 /// The most messages a relay can touch in `span`; see the module
 /// documentation.
 pub const fn records_for(span: Duration) -> usize {
-    let airtime = span.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100;
+    let airtime = most_on_air(span).as_micros();
     let per_message = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(DATA_HEADER_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
     (airtime / per_message) as usize
@@ -82,7 +84,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1695);
+const _: () = assert!(RECORDS == 1855);
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -337,7 +339,7 @@ mod tests {
         assert_eq!(DRAIN, BAN.mul(294));
         assert_eq!(DRAIN.as_millis(), 457_324);
         assert_eq!(HELD, 294);
-        assert_eq!(RECORDS, 1401 + 294);
+        assert_eq!(RECORDS, 1561 + 294);
         assert_eq!(core::mem::size_of::<Record>(), 32);
     }
 

@@ -123,34 +123,34 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-15, checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-16, checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
 | Neighbours (spec "Neighbour table") | 64 × 48 B | 3.0 KiB |
-| Leaves (spec "Attach and polls") | 256 × 16 B | 4.0 KiB |
+| Leaves (spec "Attach and polls") | 256 × 56 B | 14.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 256 B | 10.3 KiB |
-| Message records (spec "Message records") | 1695 × 32 B | 53.0 KiB |
+| Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
 | Send queue (spec "Hand-over") | (40 + 254) × 272 B | 78.1 KiB |
-| Delivered window (spec "Delivery queue") | 64 × 16 B | 1.0 KiB |
+| Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **149.8 KiB** |
+| **All** | | **164.4 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Hand-over", roadmap D31). The records hold the 1401 messages a relay can handle in the
+(spec "Hand-over", roadmap D31). The records hold the 1561 messages a relay can handle in the
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full leaf table (spec "Delivery queue"). A leaf entry is 56 B: its slots
 and the times it was told and heard, which the sleeping leaf's listening window needs (spec "Attach and polls",
-"Leaf receive mode"). The whole `Relay` is 164 048 B (160.2 KiB, measured 2026-10-16 with roadmap D41):
+"Leaf receive mode"). The whole `Relay` is 169 160 B (165.2 KiB, measured 2026-10-16):
 the tables and, in under 1 KiB around them, the medium access, the hand-over, the poll in
 progress, its one owed reply and its application's message while it waits. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 74 KiB more than the relay needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 69 KiB more than the relay needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by

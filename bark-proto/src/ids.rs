@@ -24,8 +24,8 @@ impl MsgId {
     /// `payload`, concatenated. FNV-1a because the phone app must compute
     /// it too, and it is a few lines in any language. The app keeps
     /// payloads unique (spec "Phone link"), so two IDs collide only by chance:
-    /// among the 1695 messages a relay remembers at most (spec "Message records"), with
-    /// probability about 3 × 10⁻⁴.
+    /// among the 1855 messages a relay remembers at most (spec "Message records"), with
+    /// probability about 4 × 10⁻⁴.
     pub fn of(dst_pos: Position, dst_leaf: LeafId, payload: &[u8]) -> MsgId {
         let mut h: u32 = 0x811c_9dc5;
         for part in [&dst_pos.encode()[..], &dst_leaf.0, payload] {

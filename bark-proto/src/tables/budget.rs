@@ -116,6 +116,13 @@ const fn refilled(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * RATE_NUM / RATE_DEN)
 }
 
+/// The most a node may have on air in any interval of length `span`,
+/// `DEPTH + r·span`: what a full bucket holds at its start and what flows
+/// in meanwhile; see the module documentation.
+pub const fn most_on_air(span: Duration) -> Duration {
+    Duration::from_micros(DEPTH.as_micros() + refilled(span).as_micros())
+}
+
 /// The time the bucket takes to refill `d`.
 const fn refill_time(d: Duration) -> Duration {
     Duration::from_micros((d.as_micros() * RATE_DEN).div_ceil(RATE_NUM))
@@ -274,10 +281,8 @@ mod tests {
         worst
     }
 
-    /// The most a node may have on air in any interval of `w` µs:
-    /// `DEPTH + r·w` (module documentation).
     fn bound(w: u64) -> u64 {
-        DEPTH.as_micros() + w * RATE_NUM / RATE_DEN
+        most_on_air(Duration::from_micros(w)).as_micros()
     }
 
     #[test]

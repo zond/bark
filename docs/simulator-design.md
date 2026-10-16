@@ -104,7 +104,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (spec "Packet formats") | 1695 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
+| message records | message ID (spec "Packet formats") | 1855 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
 | `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves, their poll slots and unanswered polls |
 | `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |
