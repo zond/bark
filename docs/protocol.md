@@ -1077,6 +1077,12 @@ A leaf is a carried node on battery. It **never sends heartbeats** (at
 household density that would be hundreds of percent of airtime on every
 channel) and never forwards.
 
+A leaf can go **dark** for a few minutes: a phone in a pocket, a
+basement or the metro. What the network keeps for a leaf that does not
+answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
+messages waiting for it at its relay ([delivery queue](#delivery-queue)), the leaf in its relay's
+table ([attach and polls](#attach-and-polls)), and a message the leaf cannot hand over.
+
 ### Relay choice
 
 Listening on any one channel, a leaf hears every relay in range once per
@@ -1159,7 +1165,7 @@ the new spacing; the round settles within a few periods.
 | Channel time at 80 leaves, polls and answers | 80 × 22.40 ms / 300 s = 0.60 % | |
 
 The period and the spacing follow from the duty budget and the
-delivery TTL ([delivery queue](#delivery-queue): 10 minutes). Polls cost the relay 10.56 ms per S.
+delivery TTL ([leaves](#leaves)). Polls cost the relay 10.56 ms per S.
 A full table must leave forwarding at least nine tenths of the budget,
 so S ≥ 10.56 ms / (10 % × 9.83 %) = 1.07 s, P ≥ 275 s. The period is
 half the TTL, the next period up that divides it, so that the relay
@@ -1292,7 +1298,7 @@ to the old address waits there as for a dark leaf ([delivery queue](#delivery-qu
 
 **A message without a relay.** A message the leaf cannot hand over,
 because it has no relay or its relay does not answer, is held and tried
-again as above, for up to the delivery TTL (10 minutes, [delivery queue](#delivery-queue)), the time
+again as above, for up to the delivery TTL ([leaves](#leaves)), the time
 the network itself would keep it. Only then is it dropped, and the app
 is not told ([addresses](#addresses)). The leaf holds one message at a time
 ([addresses](#addresses), roadmap D23). A relay that refuses the message, because it
@@ -1314,8 +1320,8 @@ and the relay's retry brings it again ([hand-over](#hand-over), roadmap D29).
 
 ### Delivery queue
 
-Bounded, not a mailbox: up to 41 messages per relay, kept for 10 minutes
-(the delivery TTL). On expiry the message is dropped. When the queue is
+Bounded, not a mailbox: up to 41 messages per relay, kept for the
+delivery TTL ([leaves](#leaves)). On expiry the message is dropped. When the queue is
 full, a message for one of the relay's leaves is refused ([receiving DATA](#receiving-data)): what
 is queued stays, and the sender learns at once.
 
@@ -1331,8 +1337,8 @@ up.
 A message stays long only for a leaf that does not answer. A leaf that
 listens takes its DELIVER at the first hand-over: a duty-cycled or
 hybrid one checks the channel every 500 ms, and the 512 ms preamble
-spans the check ([leaf receive mode](#leaf-receive-mode)). One that does not is a phone in a pocket, a
-basement or the metro for a few minutes, and its messages wait until the
+spans the check ([leaf receive mode](#leaf-receive-mode)). One that does not is dark ([leaves](#leaves)), and
+its messages wait until the
 first retry after it is back, at most 60 s later, or its answer to a
 poll ([attach and polls](#attach-and-polls)), or until the TTL. Leaves in one train or one basement go
 dark together, so the queue holds what arrives in a TTL for every leaf a

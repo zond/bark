@@ -66,7 +66,7 @@ pub struct Config {
     /// How long a leaf waits before it tries its relay again after a
     /// hand-over to it failed (spec "Attach and polls": 60 s, the length of a fade).
     pub leaf_retry: Duration,
-    /// Delivery-queue entry lifetime (spec "Delivery queue": 10 min).
+    /// Delivery-queue entry lifetime, the delivery TTL (spec "Leaves": 10 min).
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages, besides the
     /// retry on each answer to a poll (spec "Delivery queue": 60 s).

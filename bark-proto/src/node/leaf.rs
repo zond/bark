@@ -67,7 +67,7 @@
 //! when it holds none ([`Core::accepts_send`]); nothing about it is
 //! reported back. A message the leaf cannot hand over, because it has no
 //! relay or its relay does not answer, is held and tried again as above
-//! for up to the delivery TTL (spec "Delivery queue": 10 minutes), the time the network
+//! for up to the delivery TTL (spec "Leaves": 10 minutes), the time the network
 //! itself would keep it; then it is dropped with [`DropReason::NoRelay`].
 //! A relay that refuses the message (spec "Receiving DATA") is busy, not failing: the
 //! leaf holds the message and offers it again after one [`BAN`], the

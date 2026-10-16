@@ -1,7 +1,7 @@
 //! The delivery queue (spec "Delivery queue"): messages for attached leaves that
 //! could not be delivered yet, held for a while instead of failed at once.
 //!
-//! Each message lives the delivery TTL (spec "Delivery queue": 10 minutes); oldest first.
+//! Each message lives the delivery TTL (spec "Leaves": 10 minutes); oldest first.
 //! The relay hands a leaf's messages to the send queue in arrival order
 //! with [`DeliveryQueue::pop_for`], and drains
 //! [`DeliveryQueue::pop_expired`] to fail the expired ones.
