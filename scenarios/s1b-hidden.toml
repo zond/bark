@@ -18,8 +18,8 @@ name = "s1b-hidden"
 seed = 1
 duration_s = 1800.0
 # As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
-settle_s = 345.0
+# heartbeats at 15 s) after their 195 s boot listen (spec "Channel at boot", "Heartbeat").
+settle_s = 390.0
 
 [origin]
 lat = 50.45

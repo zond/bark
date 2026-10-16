@@ -145,7 +145,8 @@ fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
 fn heartbeat_rotates_through_every_channel_in_order() {
     let c = Config::default();
     let mut h = Harness::new(vec![relay(0.0, 7)]);
-    h.run_until(at(150) + rotation(&c).mul(2), |_| false);
+    let end = Instant::ZERO + c.boot_listen + rotation(&c).mul(2);
+    h.run_until(end, |_| false);
     let sent = &h.nodes[0].sent;
     assert!(
         sent.len() >= 2 * CHANNELS as usize,
@@ -184,13 +185,14 @@ fn boot_avoids_busy_channels_and_spreads_ties() {
     // other three. (With twelve jammed, fewer than a tenth of the readings
     // are quiet and the noise floor, a 10th percentile, rises to the
     // carrier: every channel then looks idle. `tables/busy.rs`.)
+    let chosen = Instant::ZERO + Config::default().boot_listen + secs(1);
     for first in [0u8, 1, 4] {
         let free = [first, first + 4, first + 8];
         let mut h = Harness::new(vec![relay(0.0, first as u64)]);
         for c in Channel::all().filter(|c| !free.contains(&c.index())) {
             h.jam(0, c);
         }
-        h.run_until(at(151), |_| false);
+        h.run_until(chosen, |_| false);
         assert!(
             free.contains(&h.nodes[0].core.home().index()),
             "{:?}",
@@ -203,7 +205,7 @@ fn boot_avoids_busy_channels_and_spreads_ties() {
             .map(|i| relay(i as f64 * 10_000.0, 100 + i))
             .collect(),
     );
-    h.run_until(at(151), |_| false);
+    h.run_until(chosen, |_| false);
     let homes: std::collections::HashSet<_> = h.nodes.iter().map(|n| n.core.home()).collect();
     assert!(homes.len() >= 8, "{} distinct homes among 26", homes.len());
 }
@@ -229,7 +231,7 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
     let c = Config::default();
     let mut h = Harness::new(vec![relay(0.0, 3), relay(400.0, 4)]);
     h.link(0, 1);
-    h.run_until(at(150), |_| false);
+    h.run_until(Instant::ZERO + c.boot_listen, |_| false);
     let old = h.nodes[0].core.home();
     let mut h = Harness::new(vec![
         relay(0.0, 3),
@@ -243,7 +245,7 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
         ),
     ]);
     h.link(0, 1);
-    let boot_end = at(150);
+    let boot_end = Instant::ZERO + c.boot_listen;
     h.run_until(boot_end + rotation(&c), |h| knows(h, 1, 0));
     assert!(knows(&h, 1, 0));
     // A foreign carrier appears on A's home, on 30 % of the time. (A

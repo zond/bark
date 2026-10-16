@@ -11,10 +11,10 @@ name = "s4-capacity"
 seed = 1
 # One settled hour after the settle time.
 duration_s = 4500.0
-# The relays choose a home channel after their 150 s boot listen
+# The relays choose a home channel after their 195 s boot listen
 # (spec "Channel at boot") and a leaf attaches within a worst-case rotation, 195 s,
 # of its first heartbeat (spec "Relay choice"); the move rule acts only on ten minutes
-# of measurement (spec "Channel moves"), so the first moves come after 750 s.
+# of measurement (spec "Channel moves"), so the first moves come after 795 s.
 settle_s = 900.0
 
 [origin]

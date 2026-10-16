@@ -12,17 +12,17 @@
 # seeds (5 among 1 to 10) a relay that nothing reaches, whose messages
 # are counted apart as unreachable. Every leaf i sends 60 bytes to leaf
 # i + 12 (mod 25) every 600 s, so the flows cross the whole mesh. The
-# first message waits until every leaf has attached: the relays' 150 s
+# first message waits until every leaf has attached: the relays' 195 s
 # boot listen, up to a worst-case rotation (195 s) for a leaf to hear its
 # first heartbeat, and a rotation more before it chooses (spec "Relay choice"),
-# 540 s.
+# 585 s.
 
 name = "mesh-spread"
 seed = 1
 duration_s = 2700.0
 # As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 150 s boot listen (spec "Channel at boot", "Heartbeat").
-settle_s = 345.0
+# heartbeats at 15 s) after their 195 s boot listen (spec "Channel at boot", "Heartbeat").
+settle_s = 390.0
 
 [origin]
 lat = 50.45
@@ -391,7 +391,7 @@ kind = "periodic"
 from = "L0"
 to = "L12"
 interval_s = 600.0
-start_s = 620.62
+start_s = 665.62
 payload_bytes = 60
 
 [[traffic]]
@@ -399,7 +399,7 @@ kind = "periodic"
 from = "L1"
 to = "L13"
 interval_s = 600.0
-start_s = 1048.46
+start_s = 1093.46
 payload_bytes = 60
 
 [[traffic]]
@@ -407,7 +407,7 @@ kind = "periodic"
 from = "L2"
 to = "L14"
 interval_s = 600.0
-start_s = 998.26
+start_s = 1043.26
 payload_bytes = 60
 
 [[traffic]]
@@ -415,7 +415,7 @@ kind = "periodic"
 from = "L3"
 to = "L15"
 interval_s = 600.0
-start_s = 693.04
+start_s = 738.04
 payload_bytes = 60
 
 [[traffic]]
@@ -423,7 +423,7 @@ kind = "periodic"
 from = "L4"
 to = "L16"
 interval_s = 600.0
-start_s = 837.26
+start_s = 882.26
 payload_bytes = 60
 
 [[traffic]]
@@ -431,7 +431,7 @@ kind = "periodic"
 from = "L5"
 to = "L17"
 interval_s = 600.0
-start_s = 809.69
+start_s = 854.69
 payload_bytes = 60
 
 [[traffic]]
@@ -439,7 +439,7 @@ kind = "periodic"
 from = "L6"
 to = "L18"
 interval_s = 600.0
-start_s = 930.96
+start_s = 975.96
 payload_bytes = 60
 
 [[traffic]]
@@ -447,7 +447,7 @@ kind = "periodic"
 from = "L7"
 to = "L19"
 interval_s = 600.0
-start_s = 1013.23
+start_s = 1058.23
 payload_bytes = 60
 
 [[traffic]]
@@ -455,7 +455,7 @@ kind = "periodic"
 from = "L8"
 to = "L20"
 interval_s = 600.0
-start_s = 596.32
+start_s = 641.32
 payload_bytes = 60
 
 [[traffic]]
@@ -463,7 +463,7 @@ kind = "periodic"
 from = "L9"
 to = "L21"
 interval_s = 600.0
-start_s = 557.01
+start_s = 602.01
 payload_bytes = 60
 
 [[traffic]]
@@ -471,7 +471,7 @@ kind = "periodic"
 from = "L10"
 to = "L22"
 interval_s = 600.0
-start_s = 1041.46
+start_s = 1086.46
 payload_bytes = 60
 
 [[traffic]]
@@ -479,7 +479,7 @@ kind = "periodic"
 from = "L11"
 to = "L23"
 interval_s = 600.0
-start_s = 799.66
+start_s = 844.66
 payload_bytes = 60
 
 [[traffic]]
@@ -487,7 +487,7 @@ kind = "periodic"
 from = "L12"
 to = "L24"
 interval_s = 600.0
-start_s = 997.37
+start_s = 1042.37
 payload_bytes = 60
 
 [[traffic]]
@@ -495,7 +495,7 @@ kind = "periodic"
 from = "L13"
 to = "L0"
 interval_s = 600.0
-start_s = 541.26
+start_s = 586.26
 payload_bytes = 60
 
 [[traffic]]
@@ -503,7 +503,7 @@ kind = "periodic"
 from = "L14"
 to = "L1"
 interval_s = 600.0
-start_s = 807.23
+start_s = 852.23
 payload_bytes = 60
 
 [[traffic]]
@@ -511,7 +511,7 @@ kind = "periodic"
 from = "L15"
 to = "L2"
 interval_s = 600.0
-start_s = 972.92
+start_s = 1017.92
 payload_bytes = 60
 
 [[traffic]]
@@ -519,7 +519,7 @@ kind = "periodic"
 from = "L16"
 to = "L3"
 interval_s = 600.0
-start_s = 677.26
+start_s = 722.26
 payload_bytes = 60
 
 [[traffic]]
@@ -527,7 +527,7 @@ kind = "periodic"
 from = "L17"
 to = "L4"
 interval_s = 600.0
-start_s = 1107.16
+start_s = 1152.16
 payload_bytes = 60
 
 [[traffic]]
@@ -535,7 +535,7 @@ kind = "periodic"
 from = "L18"
 to = "L5"
 interval_s = 600.0
-start_s = 1080.86
+start_s = 1125.86
 payload_bytes = 60
 
 [[traffic]]
@@ -543,7 +543,7 @@ kind = "periodic"
 from = "L19"
 to = "L6"
 interval_s = 600.0
-start_s = 558.35
+start_s = 603.35
 payload_bytes = 60
 
 [[traffic]]
@@ -551,7 +551,7 @@ kind = "periodic"
 from = "L20"
 to = "L7"
 interval_s = 600.0
-start_s = 555.27
+start_s = 600.27
 payload_bytes = 60
 
 [[traffic]]
@@ -559,7 +559,7 @@ kind = "periodic"
 from = "L21"
 to = "L8"
 interval_s = 600.0
-start_s = 864.85
+start_s = 909.85
 payload_bytes = 60
 
 [[traffic]]
@@ -567,7 +567,7 @@ kind = "periodic"
 from = "L22"
 to = "L9"
 interval_s = 600.0
-start_s = 1103.49
+start_s = 1148.49
 payload_bytes = 60
 
 [[traffic]]
@@ -575,7 +575,7 @@ kind = "periodic"
 from = "L23"
 to = "L10"
 interval_s = 600.0
-start_s = 768.72
+start_s = 813.72
 payload_bytes = 60
 
 [[traffic]]
@@ -583,7 +583,7 @@ kind = "periodic"
 from = "L24"
 to = "L11"
 interval_s = 600.0
-start_s = 669.96
+start_s = 714.96
 payload_bytes = 60
 
 [[events]]

@@ -57,7 +57,7 @@ relay on a roof.
 | Rooftop to rooftop | 21.4 dB less loss | 129 − 25.2 − 36 log10 3000: two rooftops hear each other at 3 km (spec "Physical layer", "Capacity and sizing"). A rooftop's link to anything below the roofs gets no bonus |
 | Shadowing | 6 dB, fixed per pair | the scenarios' figure since S2; not measured |
 | Fading | 4 dB per pair and channel, 60 s correlation | the scenarios' figure since S2; not measured |
-| Duration | 4500 s; the network settles by 900 s | boot listen 150 s (spec "Channel at boot"), leaf choice within 195 s (spec "Relay choice"), first moves after 10 minutes (spec "Channel moves") |
+| Duration | 4500 s; the network settles by 900 s | boot listen 150 s (195 s since 2026-10-16; spec "Channel at boot"), leaf choice within 195 s (spec "Relay choice"), first moves after 10 minutes (spec "Channel moves") |
 
 **Destinations.** Uniform over the domain gives a mean distance of
 2.8 km and a median of 3 to 5 hand-overs. A city's texts are more local

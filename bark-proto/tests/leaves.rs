@@ -6,7 +6,7 @@ mod common;
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, Leaf, LeafId, MsgId, Node,
-    Position, Relay, Trace,
+    Position, Relay, Trace, CHANNELS,
 };
 use common::{secs, Harness};
 
@@ -112,7 +112,9 @@ fn dropped(h: &Harness<Node>, i: usize, id: MsgId) -> Option<(Instant, DropReaso
 /// rotation of listening before it chooses (spec "Relay choice").
 fn settle(h: &mut Harness<Node>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
-    let deadline = Instant::ZERO + secs(150 + 2 * 195);
+    let c = Config::default();
+    let rotation = c.heartbeat_max.mul(CHANNELS as u64);
+    let deadline = Instant::ZERO + c.boot_listen + rotation.mul(2);
     assert!(
         h.run_until(deadline, |h| pairs.iter().all(|&(l, r)| attached(h, l, r))),
         "leaves did not attach"
@@ -312,8 +314,11 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
     );
     dark.set(false);
     let all = |h: &Harness<Node>| ids.iter().all(|&id| received(h, l2, id) == 1);
+    // R2's queue drains at its next retry; R1's message, refused until then,
+    // waits up to the longest hold before it is offered again (spec "Hand-over").
+    let longest_hold = bark_proto::tables::budget::hold(u8::MAX);
     assert!(
-        h.run_until(h.now + c.delivery_retry + secs(30), all),
+        h.run_until(h.now + c.delivery_retry + longest_hold + secs(30), all),
         "not all delivered"
     );
 }

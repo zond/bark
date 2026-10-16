@@ -205,7 +205,8 @@ two neighbours that hear each other share a channel cleanly.
 
 ### Channel at boot
 
-Listen on a random channel for one full rotation (≈150 s), collecting
+Listen on a random channel for a worst-case rotation, 195 s
+([heartbeat](#heartbeat)), so that every relay in range has certainly been heard once, collecting
 sweeps and heartbeats. Then set home to `argmin busy[c]`, breaking ties
 randomly (±0.01), so that nodes that hear nothing do not all pick
 channel 0. A config override exists for bench work.

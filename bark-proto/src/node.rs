@@ -8,7 +8,7 @@
 use crate::event::{Action, Event};
 use crate::ids::LeafId;
 use crate::position::Position;
-use crate::radio::Channel;
+use crate::radio::{Channel, CHANNELS};
 use crate::time::{Duration, Instant};
 
 mod leaf;
@@ -90,7 +90,7 @@ pub struct Config {
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
     /// Listen on one channel this long before choosing home (spec "Channel at boot":
-    /// one full rotation, ≈150 s).
+    /// the worst-case rotation, 13 × 15 s = 195 s, so every relay in range is heard).
     pub boot_listen: Duration,
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
@@ -103,6 +103,9 @@ impl Default for Config {
     }
 }
 
+/// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.
+const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
+
 impl Config {
     /// The design's values, as a constant.
     pub const DEFAULT: Config = Config {
@@ -111,7 +114,7 @@ impl Config {
         leaf_id: LeafId::RELAY,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
-        heartbeat_max: Duration::from_secs(15),
+        heartbeat_max: HEARTBEAT_MAX,
         ack_timeout: Duration::from_millis(100),
         hop_attempts: 3,
         hop_backoff_max: Duration::from_millis(50),
@@ -130,7 +133,7 @@ impl Config {
         move_wait_max: Duration::from_secs(300),
         lbt_attempts: 3,
         lbt_backoff_max: Duration::from_millis(200),
-        boot_listen: Duration::from_secs(150),
+        boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         home_override: None,
     };
 }
