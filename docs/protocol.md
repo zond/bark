@@ -1382,7 +1382,7 @@ fix, and off after 10 minutes without a fix (searching under jamming draws
 
 ## Phone link
 
-**Phone link.** BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
+BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
 D5): characteristics for send, receive-notify, node status, position set,
 role set. The app owns identity and end-to-end encryption; the node sees
 opaque payloads. The sender's address `(x, y, leaf_id)` travels inside the
@@ -1428,7 +1428,7 @@ Rationale, not specification.
 
 Kyiv model: ≈840 km², ≈400 km² built-up, ≈3 M people. Indoor coverage
 needs ≈9.6 relays/km² (≈3,800 relays); outdoor-only ≈1.9/km² (≈750).
-Rooftop relays hear ≈3 km, so a collision domain, the area within which
+Rooftop relays hear ≈3 km ([physical layer](#physical-layer)), so a collision domain, the area within which
 transmissions interfere, is ≈28 km² with ≈270 relays, ≈14 domains across
 the built-up city.
 
@@ -1447,13 +1447,10 @@ These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
 cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
 
-The relays' polls of their leaves ([attach and polls](#attach-and-polls)) cost a relay one ATTACHED,
-10.56 ms, per poll, and its channel the poll and the 11.84 ms answer,
-each leaf every 300 s. At the ≈70 leaves of a relay in the capacity
-domain polls take 0.25 % of the relay's time, 2.5 % of its budget, and
-0.52 % of its channel; at 80 leaves 0.28 %, 2.9 % and 0.60 %. A full
-table of 256 takes 0.90 % of the relay's time, 9.2 % of its budget.
-Summed over the domain, the 20 000 leaves are polled 67 times a second,
+The relays' polls of their leaves cost what [attach and polls](#attach-and-polls) lists. At
+the ≈70 leaves of a relay in the capacity domain they take 0.25 % of the
+relay's time, 2.5 % of its budget, and 0.52 % of its channel. Summed over
+the domain, the 20 000 leaves are polled 67 times a second,
 1.49 s of airtime a second, 11.5 % of one channel's time over the 13,
 where every relay hears every other.
 
@@ -1542,8 +1539,8 @@ after 5 bytes. `src_hop` names the relay that sent the packet, and `aux`
 its home channel, which is where the ACK goes; routing uses them to know
 where a message came from ([routing](#routing)). A leaf sending its own message sets
 `src_hop` to 0 and `hops` to 0. The payload is at most
-255 − 21 = 234 bytes. The sender's address is inside the encrypted
-payload, not in the header.
+255 − 21 = 234 bytes; the sender's address is inside it, encrypted
+([phone link](#phone-link)).
 
 ---
 
