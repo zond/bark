@@ -247,15 +247,21 @@ fn s1_parses_and_runs() {
 /// One run of S1. Once the relays know each other, a worst-case rotation
 /// after their boot listen (design §6.2, §7), every text with an address
 /// is delivered until B is removed at 20 minutes; after that every one is
-/// dropped at A for want of a route (design §9.2.5). Every message has a
-/// fate, except one sent as the run ends.
+/// dropped at A for want of a route (design §9.2.5). The first fails at
+/// B, which is banned for it (design §9.3, roadmap D42), and waits at A
+/// until A's entry for B expires; meanwhile A takes nothing from its
+/// leaf, which holds its text, and the leaf's application skips the
+/// texts due while it waits (roadmap D34). Every message has a fate,
+/// except one sent as the run ends.
 fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     let seed = sc.seed;
     let mut sim = Sim::new(sc).expect("S1 builds");
     sim.run();
     let s = sim.summary();
+    let skipped = s.app.offers.skipped;
+    assert!(skipped > 0, "seed {seed}: A took texts while B was banned");
     assert_eq!(
-        s.app.originated + s.app.unaddressed,
+        s.app.originated + s.app.unaddressed + skipped,
         60,
         "seed {seed}: one text every 30 s for 30 minutes"
     );
@@ -276,7 +282,7 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
         node: 0,
         reason: DropReason::NoRoute,
     };
-    assert_eq!(after.len(), 20, "seed {seed}");
+    assert_eq!(after.len() as u64, 20 - skipped, "seed {seed}");
     assert!(
         after.iter().all(|(_, f)| *f == a_no_route),
         "seed {seed}: {after:?}"
@@ -294,10 +300,13 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     );
     assert_eq!(
         (off.originated, off.delivered, off.unaccounted),
-        (20, 0, 0),
+        (20 - skipped, 0, 0),
         "seed {seed}"
     );
-    assert_eq!(off.lost_at.get("relay 0 (A): dropped NoRoute"), Some(&20));
+    assert_eq!(
+        off.lost_at.get("relay 0 (A): dropped NoRoute"),
+        Some(&(20 - skipped))
+    );
     assert_eq!(off.lost_at.len(), 1, "seed {seed}");
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());

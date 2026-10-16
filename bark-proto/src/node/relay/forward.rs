@@ -75,6 +75,12 @@
 //! to go: it waits in its place for the ban to end, and the refused
 //! transmission does not count as one of its attempts.
 //!
+//! A hand-over whose attempts all go unanswered bans its receiver too,
+//! longer after each failure in a row (`tables/neighbours.rs`, roadmap
+//! D42): silence says the channel or the receiver is full, and offering
+//! it the next message at once only adds frames there. The failed forward
+//! itself goes on to its next candidate at once, as after a refusal.
+//!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
 //! is not returned or dropped: overload makes a message wait, never end.

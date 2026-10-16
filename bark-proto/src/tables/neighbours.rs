@@ -44,7 +44,16 @@
 //! [`BAN`]: no next hop at all until then (§9.2.3, roadmap D29). A refusal
 //! is no failure: it says the neighbour hears us.
 //!
+//! A failed hand-over bans it too, for [`hold`] of its `fail_count`: one
+//! ban after the first failure in a row, doubling with each further one up
+//! to the bucket's refill (roadmap D42). A refusal measures what the
+//! receiver's bucket lacks; silence says only that the channel or the
+//! receiver is full, and not how full, so the sender backs off further
+//! each time. An ACK that takes a packet resets `fail_count`, and so the
+//! ladder.
+//!
 //! [`BAN`]: crate::tables::budget::BAN
+//! [`hold`]: crate::tables::budget::hold
 //!
 //! # Eviction (roadmap D12)
 //!
@@ -69,6 +78,7 @@ use crate::geo::{LocalPlane, Point};
 use crate::node::Config;
 use crate::position::{Position, ShortName};
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
+use crate::tables::budget::hold;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
 #[cfg(test)]
@@ -90,7 +100,8 @@ pub struct Neighbour {
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
     pub demoted_at: Instant,
-    /// Until when it is banned: it refused a hand-over.
+    /// Until when it is banned: it refused a hand-over, or its last ones
+    /// failed.
     pub banned_until: Instant,
     /// Averaged packet RSSI of the frames heard from it, dBm, as if each
     /// had been sent at the ERP limit: a heartbeat states its power, and
@@ -349,8 +360,9 @@ impl Neighbours {
         }
     }
 
-    /// A hand-over to `position` failed at `now`. Returns whether it is now
-    /// demoted, or `None` if it is not in the table.
+    /// A hand-over to `position` failed at `now`: it is banned, longer
+    /// after each failure in a row. Returns whether it is now demoted, or
+    /// `None` if it is not in the table.
     pub fn failed(&mut self, position: Position, now: Instant) -> Option<bool> {
         let params = self.params;
         let n = self.entry_mut(position)?;
@@ -361,6 +373,7 @@ impl Neighbours {
         if n.fail_count >= params.demote_after {
             n.demoted_at = now;
         }
+        n.banned_until = n.banned_until.max(now + hold(n.fail_count));
         Some(n.fail_count >= params.demote_after)
     }
 

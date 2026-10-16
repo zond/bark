@@ -349,8 +349,8 @@ fn a_repeated_deliver_is_acked_and_surfaced_once() {
 
 /// Three relays in a line with a leaf at each end (design §15 step 4).
 /// Messages are delivered; then the middle relay is unplugged, and every
-/// later message is accepted by A and dropped there for want of a route
-/// (§9.2.5), within the per-hop timeouts of §9.3.
+/// later message ends at A, dropped for want of a route (§9.2.5), once
+/// A's entry for the middle relay has expired.
 #[test]
 fn line_of_three_loses_its_middle() {
     let c = Config::default();
@@ -387,60 +387,53 @@ fn line_of_three_loses_its_middle() {
         h.run_until(start + interval, |_| false);
     }
     h.kill(b);
-    println!("B removed at {:.1} s", h.now.as_micros() as f64 / 1e6);
-    // A hand-over attempt is at most the 500 ms listen-before-talk give-up,
-    // a frame and the ACK timeout; three of them, with their backoffs, end
-    // in a failure (§9.3).
-    let attempts = bark_proto::tables::attempt_span(c.ack_timeout).mul(c.hop_attempts as u64);
-    let waits = bark_proto::tables::retry_waits(c.retry_backoff, c.hop_attempts);
-    let bound = Duration::from_micros(attempts.as_micros() + waits.as_micros());
-    let mut times = Vec::new();
+    let removed = h.now;
+    println!("B removed at {:.1} s", removed.as_micros() as f64 / 1e6);
+    // The first message after the removal fails at B, which is banned for
+    // longer after each failure (§9.3, roadmap D42), and waits at A. While
+    // B, A's only neighbour, is banned, A takes nothing from its leaf
+    // (§9.2.4, roadmap D34): the leaf holds its message and offers it
+    // again. B is demoted after two failures (§8.2) but stays A's last
+    // resort (§9.2.3, roadmap D25) until its entry expires, three rotations
+    // after its last heartbeat; from then on A has no neighbour, and every
+    // message it holds or is offered is dropped for want of a route.
+    let expiry = bark_proto::tables::neighbours::NeighbourParams::from_config(&c).expire_after;
+    let mut sent = Vec::new();
     for k in 0..20u8 {
-        let id = send(&mut h, la, lc, cc, &[b'n', k]);
-        let start = h.now;
-        let done = h.run_until(start + bound + secs(1), |h| dropped(h, a, id).is_some());
-        assert!(done, "message {k} after the removal was not dropped at A");
-        let (t, reason) = dropped(&h, a, id).unwrap();
-        assert_eq!(reason, DropReason::NoRoute);
-        times.push(t.since(start));
-        h.run_until(start + interval, |_| false);
-        assert!(handed_over(&h, la, id), "A took it");
+        if the_leaf(&h, la).holding().is_none() {
+            sent.push((h.now, send(&mut h, la, lc, cc, &[b'n', k])));
+        }
+        h.run_for(interval);
     }
-    let ms: Vec<u64> = times.iter().map(|d| d.as_millis()).collect();
-    println!(
-        "after: dropped at A after {ms:?} ms (bound {} ms)",
-        bound.as_millis()
-    );
-    assert!(
-        times
+    h.run_for(secs(60));
+    let a_refused = |reason| {
+        h.nodes[a]
+            .traces
             .iter()
-            .all(|t| *t < bound + Duration::from_millis(500)),
-        "each waits out at most three attempts: {ms:?}"
-    );
-    // B is demoted after two failed hand-overs (§8.2), but with no other
-    // neighbour A still tries it (§9.2.3, roadmap D25) until its entry
-    // expires, three rotations after its last heartbeat; from then on A
-    // has no neighbour and drops as soon as the leaf's message arrives.
+            .any(|(_, t)| matches!(t, Trace::Refused { reason: r, .. } if *r == reason))
+    };
+    assert!(a_refused(DropReason::Banned), "A took its leaf's messages");
     assert!(h.nodes[a]
         .traces
         .iter()
         .any(|(_, t)| matches!(t, Trace::Demoted { .. })));
-    let expiry = bark_proto::tables::neighbours::NeighbourParams::from_config(&c).expire_after;
-    let tried = times
-        .iter()
-        .take_while(|t| **t > Duration::from_millis(200))
-        .count();
+    // B's last heartbeat came at most one interval before its removal.
+    let gone = removed + (expiry - c.heartbeat_max);
+    let mut late = Vec::new();
+    for &(at, id) in &sent {
+        let (t, reason) = dropped(&h, a, id).expect("not dropped at A");
+        assert_eq!(reason, DropReason::NoRoute);
+        assert!(t >= gone, "dropped before B expired");
+        assert!(handed_over(&h, la, id), "A took it");
+        if at > removed + expiry {
+            late.push(t.since(at).as_millis());
+        }
+    }
+    println!("after B expired: dropped at A after {late:?} ms");
     assert!(
-        tried as u64 * interval.as_micros() <= expiry.as_micros() + interval.as_micros(),
-        "{ms:?}"
+        !late.is_empty() && late.iter().all(|ms| *ms < 200),
+        "{late:?}"
     );
-    assert!(
-        times[tried..]
-            .iter()
-            .all(|t| *t < Duration::from_millis(200)),
-        "{ms:?}"
-    );
-    assert!(tried < times.len(), "B never expired: {ms:?}");
     for k in 0..20u8 {
         assert_eq!(
             received(

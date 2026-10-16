@@ -313,7 +313,7 @@ Per node, up to 64 entries:
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it: heartbeats, its DATA and its ACKs; each new frame counts half. Says whether it has margin |
 | fail_count | consecutive ACK failures |
-| banned_until | when the ban of its last refusal ends (§9.3) |
+| banned_until | when its ban ends: the ban of its last refusal, or of its last failed hand-over, longer after each failure in a row (§9.3) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
   from it (§9.3).
@@ -475,7 +475,10 @@ is never lost for want of room (roadmap D31).
 back, returned by a child or offered by a split copy, and its record must
 still be here then. On its way it may wait at each relay as long as a
 full send queue takes to drain, each of the 294 places waiting out one
-ban of 1.56 s (§9.3): 457.3 s. Every message a relay handles costs at
+ban of 1.56 s (§9.3): 457.3 s. A ban after silence lasts up to 61 s
+(§9.3 step 6), so where every way on is silent a message can wait
+longer; its own record is kept while it is held, and this bound covers
+the wait behind refusals only (roadmap D42). Every message a relay handles costs at
 least an ACK (13 bytes, 14.4 ms) and one DATA packet with no payload (21
 bytes, 18.2 ms), together 32.6 ms; 10% of 457.3 s is 45.7 s of airtime,
 so a relay handles at most 1401 messages in that time (§3). The records
@@ -523,7 +526,9 @@ routed past it, until its entry expires (§8.2: 390 s after its last
 heartbeat) (roadmap D25, D36). A
 banned neighbour is not tried at all: it has just said it cannot take
 the message, and trying it again before its bucket has refilled would
-only cost it another reply (roadmap D29).
+only cost it another reply (roadmap D29); or it has left a hand-over
+unanswered, and trying it again at once would only add frames where
+frames are already being lost (roadmap D42).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -639,7 +644,8 @@ no other message (§9.1), nor one while every neighbour is banned
 (§9.2.4).
 
 If the hand-over to the parent fails (§9.3), the relay drops the message
-and the search ends early. A parent that refuses the return has not
+and the search ends early; the parent is banned like any neighbour that
+does not answer (§9.3 step 6). A parent that refuses the return has not
 failed: the return waits for the ban and goes again (§9.3).
 
 #### 9.2.6 The hop counter
@@ -737,15 +743,35 @@ waiting their turn are held in the relay's send queue.
    14.4 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: wait a random time, retry, up to 3 attempts. Then the
    hand-over has failed: count a failure against the neighbour (§8.2:
-   demoted after 2 consecutive failures) and choose the next hop again
-   (§9.2.3). The neighbour is set aside for this hand-over, as in step
-   2, but not counted as tried: in the simulated loaded corridor an
+   demoted after 2 consecutive failures), **ban** it as a refusal does,
+   for every message, and choose the next hop again (§9.2.3). The ban
+   after the k-th failure in a row is one refusal's ban doubled k − 1
+   times: 1.56 s, 3.11 s, 6.2 s and so on, up to the bucket's refill,
+   61 s, the ladder the relay's own message waits on below; an ACK from
+   the neighbour resets its failure count and so starts the ladder again
+   (roadmap D42). The neighbour is set aside for this hand-over, as in
+   step 2, but not counted as tried: in the simulated loaded corridor an
    attempt was lost to a collision at the receiver about four times as
    often as by its ACK going astray (roadmap D34), so the neighbour most
    likely does not have the message. It stays a candidate when the
-   message is next routed here. If it did take it, the next offer costs
-   one round trip: it holds the message and only ACKs, or has finished
-   with it and returns it (§9.2.4) (roadmap D36).
+   message is next routed here, once its ban has ended. If it did take
+   it, the next offer costs one round trip: it holds the message and
+   only ACKs, or has finished with it and returns it (§9.2.4) (roadmap
+   D36).
+
+**Silence is pushback.** A refusal measures one thing, what one
+hand-over takes from the receiver's bucket, and the bucket refills that
+in one ban. Silence says only that the channel or the receiver is full,
+or that the link is gone, and not how full; so its ban doubles with
+each silence in a row, as the hold of a refused message does, and ends
+at the longest anything waits for a bucket. Without it a neighbour that
+stops answering under load is offered every other message at once, each
+offer up to three more frames where frames are already being lost; in
+the simulated capacity domain at three times the §13 texting rate that
+loop is what breaks first (roadmap D42). The price is paid by messages
+whose every way on is silent: they wait, as for refusals, and a
+neighbour that is gone is tried again after each ban until its entry
+expires (§8.2).
 
 **Refusal.** An ACK that answers the outstanding hand-over and says
 refused means the receiver does not take the packet (§9.2.4). The
@@ -764,10 +790,11 @@ refused by its relay keeps the relay and the message, and offers the
 message again 1.56 s later (§10.2).
 
 **Overload makes a message wait, never ends it.** A message whose every
-remaining candidate is banned waits in its place in the send queue,
-with its airtime still counted (§9.2.4), until the earliest ban ends,
-and is routed again then, at the origin or anywhere else. A message
-ends only when it is delivered, when a hand-over's attempts all go
+remaining candidate is banned, by refusals or by silence, waits in its
+place in the send queue, with its airtime still counted (§9.2.4), until
+the earliest ban ends, and is routed again then, at the origin or
+anywhere else. A message ends only when it is delivered, when its
+search runs out of neighbours (§9.2.5), when a return's attempts all go
 unanswered (step 6), when its leaf never wakes (§10.4), at the hop cap
 (§9.2.6), or when a node holding it dies (roadmap D31).
 
@@ -919,7 +946,8 @@ or when its packet holds a hop place. A relay below the reserve sends nothing bu
 and replies until its bucket refills. Each sender it refuses bans it
 for 1.56 s (§9.3), so a sender costs it at most one reply per ban.
 Without budget even for a reply it stays silent, its neighbours'
-hand-overs to it fail, and they route around it (roadmap D27, D29).
+hand-overs to it fail, and they ban it, longer each time, and route
+around it (roadmap D27, D29, D42).
 
 ### 9.5 Why the search finds a path
 
@@ -977,10 +1005,13 @@ What breaks it:
 - **Hand-overs per message:** at most 256 that succeed (the first, at
   count 0, and 255 more, §9.2.6). A relay hands the message to each
   neighbour at most once per record, in at most 3 attempts. A neighbour
-  that does not answer costs 3 attempts each time the message is routed
-  past it: once per stay of the message at the relay, and once more
-  after each wait for a ban. After two such failures it is a last resort
-  (§8.2), and a dead one leaves the table within 390 s.
+  that does not answer costs 3 attempts each time it is offered a
+  message, and each failure bans it for every message, the ban doubling
+  up to 61 s (§9.3). So a dead neighbour costs a relay at most 11 failed
+  hand-overs, 33 frames, whatever the messages, before it leaves the
+  table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2, 12.5,
+  24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest. After two
+  failures it is a last resort (§8.2).
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
