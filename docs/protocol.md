@@ -1,6 +1,6 @@
 # bark protocol: Civilian 433 MHz Mesh
 
-**Status:** live specification, 2026-10-14. Decisions that refine it are in
+**Status:** live specification, 2026-10-16. Decisions that refine it are in
 `roadmap.md` with D-numbers; [open items](#open-items) lists what is still to be decided or
 measured. Where the code and this text disagree, one of them is wrong and
 the fix is a commit to both.
@@ -282,7 +282,7 @@ longitude keeps distance math trivial ([position and time](#position-and-time)).
 
 This is why no scanning is needed: every node sits on its home channel,
 every neighbour's heartbeat visits all channels, so each neighbour lands
-on its channel once per rotation. A newly started node, or a leaf,
+on each node's home channel once per rotation. A newly started node, or a leaf,
 listening on any one channel hears every relay in range within one
 rotation.
 
@@ -462,7 +462,9 @@ listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
 ([hand-over](#hand-over)), 2.39 s in all; the bucket refills 9.83 % × 2.39 s = 235.5 ms
 of it, ⌊235.5 / 14.4⌋ = 16 refusals, and with the heartbeat the reserve
 is 242 ms. A relay takes new work into the regular room of its send
-queue only with the reply reserve to spare ([receiving DATA](#receiving-data)), so a hand-over
+queue only if its bucket holds the reply reserve on top of the work's ACK
+and of everything it has queued to send, and otherwise into a hop place
+or not at all ([receiving DATA](#receiving-data)), so a hand-over
 waits for the bucket only when retries or replies have spent it since
 its packet was taken, or when its packet holds a hop place. A relay
 below the reserve sends nothing but heartbeats and replies until its
@@ -777,9 +779,9 @@ another route exists; it should not drop a message whose only route is
 that link. Two hand-overs lost to collisions demote a neighbour that
 works, and on a line it is the only route, so without the last resort
 every message is dropped until the demotion lapses, six and a half
-minutes. A neighbour that is really gone costs a message three attempts
-each time the message is routed past it, until its entry expires
-([neighbour table](#neighbour-table): 390 s after its last heartbeat) (roadmap D25, D36). A
+minutes. A neighbour that is really gone costs its relay at most 11 failed
+hand-overs, whatever the messages, until its entry expires
+([bounds](#bounds); [neighbour table](#neighbour-table): 390 s after its last heartbeat) (roadmap D25, D36, D42). A
 banned neighbour is not tried at all ([hand-over](#hand-over): refusal, silence).
 
 Nothing requires the next hop to be closer to the destination than the
@@ -900,9 +902,9 @@ does ([attach and polls](#attach-and-polls)). An application's message for one o
 leaves that finds the delivery queue full is kept aside until the queue
 has a place.
 
-If the hand-over to the parent fails twice in a row, the second time
-after waiting for the parent's ban ([hand-over](#hand-over) step 6), the relay drops
-the message and the search ends early. A parent that refuses the return
+If a failed hand-over to the parent demotes it, after the message has
+waited for the parent's ban and gone again ([hand-over](#hand-over) step 6), the
+relay drops the message and the search ends early. A parent that refuses the return
 has not failed: the return waits for the ban and goes again
 ([hand-over](#hand-over)).
 
@@ -957,7 +959,7 @@ delivered there without entering the search. The destination position
 alone decides who delivers: a relay that has the leaf in its leaf table
 but does not own the position routes the message on like any other. A
 leaf that has just moved to another relay stays in the old relay's table
-until it times out (180 s, [attach and polls](#attach-and-polls)), so the table disagrees with
+until a delivery TTL of its polls goes unanswered ([attach and polls](#attach-and-polls)), so the table disagrees with
 the address exactly when the address is new; delivering from the table
 would queue the message for a leaf that has gone (roadmap D21).
 
@@ -989,9 +991,9 @@ and no record is replaced. Then:
   up the parents, which lead to the origin without a loop. So each stay
   of the message at a relay ends with a hand-over that succeeds, or at
   the origin with a drop, and there are finitely many of those: the
-  search ends. A neighbour that does not answer is never tried; it costs
-  three attempts each time the message is routed past it, and the hop
-  cap bounds the stays ([hop count](#hop-count)).
+  search ends. A neighbour that does not answer is banned and then demoted
+  ([hand-over](#hand-over) step 6), so it costs its relay at most 11 failed hand-overs
+  ([bounds](#bounds)), and the hop cap bounds the stays ([hop count](#hop-count)).
 - A send to a relay that already has the message hands it the search
   ([receiving DATA](#receiving-data), case 5): it goes on with its own candidates. The sender
   is one of them unless the relay has tried it, so the search comes back
@@ -1291,7 +1293,7 @@ the network itself would keep it. Only then is it dropped, and the app
 is not told ([addresses](#addresses)). The leaf holds one message at a time
 ([addresses](#addresses), roadmap D23). A relay that refuses the message, because it
 has no room or every way on from it is banned ([receiving DATA](#receiving-data)), is busy,
-not failing: the leaf keeps it, counts no failed period, and offers it
+not failing: the leaf keeps it, counts no failure, and offers it
 again after the waits a relay's own message takes ([hand-over](#hand-over)), one ban,
 1.56 s, after the first refusal, doubling with each further one in a row
 up to the bucket's refill of 61 s, so that it does not probe an
@@ -1365,8 +1367,8 @@ Each ATTACHED also says how many messages the relay holds for the leaf,
 them stays listening with the ordinary receiver, unless it has them all
 sooner, for as long as the relay can take to bring them: the DELIVERs that may be
 ahead of them, a full send queue of full frames and their ACKs,
-40 × 152.96 ms = 6.12 s ([hand-over](#hand-over)), and each of the n with all its attempts,
-3.13 s ([attach and polls](#attach-and-polls)), so 6.12 s + n × 3.13 s, at most 53 s. While that
+40 × 152.96 ms = 6.12 s ([hand-over](#hand-over)), and each of the n with all its attempts
+and retry waits, 3.13 s ([duty cycle cap](#duty-cycle-cap)), so 6.12 s + n × 3.13 s, at most 53 s. While that
 lasts the relay sends those n with the 12-symbol preamble; a message that arrived after the
 poll, or one still queued after the wait, gets the long one. So the
 messages of a sleeping leaf that is in reach reach it at its next poll
