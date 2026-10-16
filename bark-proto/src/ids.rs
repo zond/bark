@@ -23,7 +23,7 @@ impl MsgId {
     /// 32-bit FNV-1a over `dst_pos` in its 7 wire bytes, `dst_leaf` and
     /// `payload`, concatenated. FNV-1a because the phone app must compute
     /// it too, and it is a few lines in any language. The app keeps
-    /// payloads unique (spec "Position, time, phone link"), so two IDs collide only by chance:
+    /// payloads unique (spec "Phone link"), so two IDs collide only by chance:
     /// among the 1695 messages a relay remembers at most (spec "Message records"), with
     /// probability about 3 × 10⁻⁴.
     pub fn of(dst_pos: Position, dst_leaf: LeafId, payload: &[u8]) -> MsgId {

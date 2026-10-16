@@ -27,7 +27,7 @@ behaviour is a function of its config, its seed and its event sequence.
 ## 2. Time
 
 `Instant` and `Duration` are integer microseconds; there is no other time unit to mix
-them up with. `now` never decreases across calls on one core. Different cores have unrelated clocks; the protocol has no network time (spec "Position, time, phone link").
+them up with. `now` never decreases across calls on one core. Different cores have unrelated clocks; the protocol has no network time (spec "Position and time").
 
 Wakeups: after every `handle` the driver reads `next_wakeup()`. When its clock reaches that
 instant it calls `handle(Event::Wakeup, now)`. Late is allowed; early is not. The core keeps
@@ -106,7 +106,7 @@ panic or never offer it.
 
 `AppCommand::SetPosition` updates own position (relay identity changes with it, so the
 driver does this rarely). `AppEvent::Message` delivers a payload to this node's application.
-The core never inspects a payload (spec "Position, time, phone link": the app owns identity and encryption).
+The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
 ## 5. What the driver must simulate or implement
 

@@ -116,7 +116,7 @@ use crate::wire::{Ack, AckName, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
 /// A relay within this distance of a destination that is not its own
 /// position, with no live, undemoted neighbour closer, owns it
-/// (spec "Owner"): 50 m is what spec "Position, time, phone link" allows between two GPS fixes of a relay that
+/// (spec "Owner"): 50 m is what spec "Position and time" allows between two GPS fixes of a relay that
 /// has not moved, so the addressed relay and this one are, for the radio,
 /// in the same place.
 pub const OWNER_RADIUS_M: f32 = 50.0;

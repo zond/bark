@@ -1,4 +1,4 @@
-//! Distances in a local tangent plane centred on this node (spec "Position, time, phone link").
+//! Distances in a local tangent plane centred on this node (spec "Position and time").
 //!
 //! Routing compares distances; it never needs global coordinates. Each node
 //! builds one [`LocalPlane`] from its own position and maps every position
@@ -28,7 +28,7 @@
 //! | 300 km | 1.1 % | 5.9 % |
 //!
 //! So the 0.1 % holds for a city-sized neighbourhood (a few km), not out to
-//! hundreds of km as spec "Position, time, phone link" says; a hop is never more than a few km,
+//! hundreds of km as spec "Position and time" says; a hop is never more than a few km,
 //! and for a distant destination the error is a smooth distortion that
 //! changes only near-tied greedy choices.
 //!

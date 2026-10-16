@@ -1315,7 +1315,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         );
         MsgId::of(pf, l, text)
     };
-    // Payloads are unique (spec "Position, time, phone link"): F remembers the messages of each fill.
+    // Payloads are unique (spec "Phone link"): F remembers the messages of each fill.
     let fill = |h: &mut Harness<Node>, round: u8, n: usize| {
         for k in 0..n as u8 {
             to_l(h, f, &[b'f', round, k]);

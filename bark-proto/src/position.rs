@@ -1,4 +1,4 @@
-//! Global WGS-84 position in the 7-byte fixed-point wire form (spec "Heartbeat", "Position, time, phone link").
+//! Global WGS-84 position in the 7-byte fixed-point wire form (spec "Heartbeat", "Position and time").
 //!
 //! Latitude is 25 bits and longitude 26 bits of two's-complement fixed point.
 //! Both use the same angular unit, 180° / 2²⁵ = 360° / 2²⁶ ≈ 5.36 µdeg,
