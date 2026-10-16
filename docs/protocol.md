@@ -70,11 +70,11 @@ Both regimes allow any modulation in this band.
 | Channel spacing | no requirement | no requirement |
 | Listen-before-talk | not required | not required |
 
-Implement: an airtime token bucket per node that keeps every hour within
-10% ([duty cycle cap](#duty-cycle-cap)); no single transmission longer than 1 s (SF5 packets are
-≤139 ms anyway).
-Transmit power such that ERP ≤ +10 dBm with the fitted antenna: with the
-stock antenna (≈0 dBd gain) that is +10 dBm at the connector.
+The protocol keeps to them with an airtime token bucket per node that
+holds every hour within 10% ([duty cycle cap](#duty-cycle-cap)), no transmission longer than
+1 s (an SF5 packet is at most 139 ms), and a transmit power that gives
+at most +10 dBm ERP with the fitted antenna: +10 dBm at the connector
+with the stock antenna (≈0 dBd gain).
 
 The 868 MHz band does not work for Ukraine (no 500 mW sub-band; 868.0–868.6
 MHz is 14 dBm at <1%), and 2.4 GHz has too little range. 433 MHz is the
@@ -84,8 +84,9 @@ only band with identical rules in both jurisdictions.
 
 ## Physical layer
 
-RSSI is the received power the radio reports; CAD is the radio's check for
-a LoRa preamble on the channel, and works below the noise floor.
+RSSI (received signal strength) is the received power the radio reports.
+CAD (channel activity detection) is the radio's check for a LoRa preamble
+on the channel; it works below the noise floor.
 
 | Parameter | Value | Note |
 |---|---|---|
@@ -98,7 +99,7 @@ a LoRa preamble on the channel, and works below the noise floor.
 | Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **no long preambles** except to duty-cycled leaves ([leaf receive mode](#leaf-receive-mode)) | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4) |
 | 255-byte packet | 138.6 ms at SF5 | ≈400 ms at SF7. Airtime from the datasheet formula (§6.1.4), `time_on_air` in `radio.rs` |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
-| Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: signal strength (RSSI) cannot see them, channel activity detection (CAD) can |
+| Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
 | Sync word | private (not the LoRaWAN 0x34) | other LoRa networks and this one ignore each other's packets |
 | CRC | on (LoRa hardware CRC) | |
 | Maximum packet (MTU) | 255 bytes | SX126x maximum LoRa payload |
@@ -109,7 +110,8 @@ a LoRa preamble on the channel, and works below the noise floor.
 SF5 carries about 3× the bytes per unit of airtime of SF7 (the common LoRa
 default) for a quarter less range. LoRa brings an existing driver, hardware
 error correction, CRC and whitening, CAD, and ~15 dB of processing gain
-against the key fobs and LPD433 handhelds that share the band. GFSK: [capacity and sizing](#capacity-and-sizing).
+against the key fobs and LPD433 handhelds that share the band. Why not
+GFSK: [capacity and sizing](#capacity-and-sizing).
 
 SF is network-wide because an SX1262 receives one SF at a time, so a
 mixed-SF network splits into parts that cannot hear each other. Starting
@@ -129,15 +131,15 @@ f_k = 433.170 MHz + k × 0.125 MHz,   k = 0..12
       434.045, 434.170, 434.295, 434.420, 434.545, 434.670 MHz
 ```
 
-Channel 6 is centred on 433.920 MHz, the busiest spot in the band (key
-fobs, sensors). The selection rule in [home channel selection](#home-channel-selection) avoids it wherever it is busy.
+Channels are not assigned by a fixed grid or derived from position: each
+node measures how busy each channel is and chooses
+([home channel selection](#home-channel-selection)); why not a grid: [capacity and sizing](#capacity-and-sizing). Channel 6 is
+centred on 433.920 MHz, the busiest spot in the band (key fobs, sensors);
+the choice avoids it wherever it is busy.
 
 **Bench item C1:** verify SX1262 adjacent-channel rejection at 125 kHz
 spacing with a neighbour at full power. If it is inadequate, fall back to
 11 channels at 150 kHz spacing (same end centres, 433.170–434.670 MHz).
-
-Channels are not assigned by a fixed grid or derived from position; each
-node measures and chooses ([home channel selection](#home-channel-selection)). Why not a grid: [capacity and sizing](#capacity-and-sizing).
 
 ---
 
@@ -189,7 +191,7 @@ reading:
   reading is held until the next, one second later, longer than any
   packet (roadmap D24). A home reading may fall inside a reception, since
   the radio keeps receiving while it reads its own channel
-  (`core-interface.md` rules 7 and 8): a reading inside a packet addressed
+  (`core-interface.md`, Radio, rules 7 and 8): a reading inside a packet addressed
   to the node is discarded, one inside any other packet counts. A packet
   for the node that fails its CRC cannot be told from someone else's and
   counts.
@@ -267,24 +269,25 @@ per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
 decimetre precision would need 58 bits. Plain fixed-point latitude and
 longitude keeps distance math trivial ([position and time](#position-and-time)).
 
-**Timing:** interval uniformly random in [5, 15] s, mean 10 s.
-**Channel:** steps `k ← (k + 1) mod 13` per heartbeat, from a random
-start. The time is random, the channel order is not: a fixed cycle
-reaches every neighbour once per 13 heartbeats (≈130 s), where a random
-channel per heartbeat would need ≈41 heartbeats on average to cover all
-13.
-**Procedure:** retune to channel k, listen-before-talk (CAD + RSSI,
-≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
-skip; send; retune home. The node is deaf for ≈15 ms per heartbeat, ≈0.2%.
+- **Timing:** interval uniformly random in [5, 15] s, mean 10 s.
+- **Channel:** steps `k ← (k + 1) mod 13` per heartbeat, from a random
+  start. The time is random, the channel order is not: a fixed cycle
+  reaches every neighbour once per 13 heartbeats (≈130 s), where a random
+  channel per heartbeat would need ≈41 heartbeats on average to cover all
+  13.
+- **Procedure:** retune to channel k, listen-before-talk (CAD + RSSI,
+  ≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
+  skip; send; retune home. The node is deaf for ≈15 ms per heartbeat,
+  ≈0.2%.
 
 This is why no scanning is needed: every node sits on its home channel,
 every neighbour's heartbeat visits all channels, so each neighbour lands
-on your channel once per rotation. A newly started node, or a leaf,
+on its channel once per rotation. A newly started node, or a leaf,
 listening on any one channel hears every relay in range within one
 rotation.
 
 Heartbeat load per channel among 270 rooftop relays that all hear each
-other: ≈2.5%.
+other: ≈2.5% ([capacity and sizing](#capacity-and-sizing)).
 
 ---
 
@@ -313,7 +316,7 @@ is also its address ([addresses](#addresses)). Consequences:
   longitude (25 km at 50° N). Two relays share a short name only if they
   are in the same 0.6 m cell, which is the same identity in the full form
   too, or at least 25 km apart along one axis, far beyond any hearing
-  radius (≈3 km, [capacity and sizing](#capacity-and-sizing)). So a short name is unambiguous among everything a
+  radius (≈3 km, [physical layer](#physical-layer)). So a short name is unambiguous among everything a
   node can hear, down to latitudes near 80° N or S, where the east-west
   period shrinks toward the hearing radius. A receiver rebuilds the full
   position from a short name and its own position, as the one candidate
@@ -369,10 +372,10 @@ Per node, up to 64 entries:
     and noise together (datasheet §13.5.3), so it reads
     10 log10(1 + 10^0.194) = 4.1 dB above the floor.
 - **Demote** on ACK failure: `fail_count += 1`; a neighbour with
-  `fail_count ≥ 2` is a next hop only when no other with margin is left
-  ([next hop](#next-hop)) until it ACKs a packet from this relay or three rotations (390 s)
-  pass. Its heartbeats keep it in
-  the table but do not clear the demotion: a heartbeat proves the
+  `fail_count ≥ 2` is demoted until it ACKs a packet from this relay or
+  three rotations (390 s) pass, and is a next hop only when no other with
+  margin is left ([next hop](#next-hop)). Its heartbeats keep it in the table but do not
+  clear the demotion: a heartbeat proves the
   neighbour is alive, not that it hears us, and a link that works one way
   only would otherwise cost every message the failed attempts again.
   Heartbeat expiry takes minutes; a failed forward must demote at once.
@@ -391,7 +394,8 @@ Per node, up to 64 entries:
   the relay, which would serve greedy routing better, is left to the
   simulator (open item O4).
 
-Leaves are not in the neighbour table; they are in the leaf table ([leaves](#leaves)).
+Leaves are not in the neighbour table; they are in the leaf table
+([attach and polls](#attach-and-polls)).
 
 ---
 
