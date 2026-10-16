@@ -27,7 +27,7 @@
 //!
 //! The most messages a relay can touch in that time within its duty
 //! cycle (spec "Duty cycle cap"): each costs at least an ACK (13 bytes, 14.40 ms) and one
-//! DATA packet with no payload (21 bytes, 18.24 ms), together 32.64 ms;
+//! DATA packet with no payload (22 bytes, 18.24 ms), together 32.64 ms;
 //! any 457.3 s carries at most a full bucket and its refill,
 //! 6 s + 9.83 % × 457.3 s = 50.97 s of airtime ([`most_on_air`]), and
 //! ⌊50.97 s / 32.64 ms⌋ = 1561. The records of held messages are not

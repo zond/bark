@@ -532,6 +532,7 @@ impl Leaf {
             dst_pos,
             dst_leaf,
             hops: 0,
+            time_left: Data::units(self.config.delivery_ttl),
             payload,
         };
         self.outgoing = Some(mac::frame(

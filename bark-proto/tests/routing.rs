@@ -1684,6 +1684,7 @@ fn replies_stay_within_the_reserve() {
                 dst_pos: pd,
                 dst_leaf: LeafId::RELAY,
                 hops: 1,
+                time_left: u8::MAX,
                 payload: &text,
             };
             let mut frame = Frame {

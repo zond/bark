@@ -13,7 +13,7 @@
 //! ACK       0x3      first id from to                               = 13
 //! ATTACH    0x4      first leaf_id relay                            = 9
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_leaf hops
-//!                    payload                                        = 21 + payload
+//!                    time_left payload                              = 22 + payload
 //! DELIVER   0x6      first dst_leaf id payload                      = 9 + payload
 //! ATTACHED  0x7      first leaf_id next_poll                        = 7
 //! ```
@@ -31,7 +31,7 @@
 //! - Short names and message IDs are big-endian; a leaf ID is four opaque
 //!   bytes in order. ACK `from` and `to` are either, so they are four
 //!   bytes compared whole.
-//! - The payload is at most [`MAX_PAYLOAD`] = 234 bytes, what a frame holds
+//! - The payload is at most [`MAX_PAYLOAD`] = 233 bytes, what a frame holds
 //!   after the DATA header. DELIVER only carries a DATA payload onward, so
 //!   it has the same cap although its header is shorter.
 //! - ACK `to` names the sender of what is answered: a DATA's `src_hop`,
@@ -46,6 +46,8 @@
 //! - ATTACHED `next_poll` is big-endian, in [`POLL_UNIT`]s: the delay from
 //!   the end of the frame to the leaf's next slot. Its `aux` is the count
 //!   of messages waiting for the leaf, saturating at [`WAITING_MAX`].
+//! - DATA `time_left` is the time the message has left, in whole
+//!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
@@ -61,6 +63,7 @@ const NAME_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
 const LEAF_ID_LEN: usize = 4;
 const HOPS_LEN: usize = 1;
+const TIME_LEFT_LEN: usize = 1;
 
 // First byte.
 const FIRST: usize = 0;
@@ -113,8 +116,9 @@ const DATA_SRC_HOP: usize = DATA_DST_HOP + NAME_LEN;
 const DATA_DST_POS: usize = DATA_SRC_HOP + NAME_LEN;
 const DATA_DST_LEAF: usize = DATA_DST_POS + POS_LEN;
 const DATA_HOPS: usize = DATA_DST_LEAF + LEAF_ID_LEN;
-/// DATA header length (spec "Packet formats": 21).
-pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
+const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
+/// DATA header length (spec "Packet formats": 22).
+pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 
 // DELIVER.
 const DELIVER_LEAF: usize = FIRST + FIRST_LEN;
@@ -123,13 +127,13 @@ const DELIVER_ID: usize = DELIVER_LEAF + LEAF_ID_LEN;
 pub const DELIVER_HEADER_LEN: usize = DELIVER_ID + MSG_ID_LEN;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
-/// 255 − 21 = 234 bytes. DATA and DELIVER carry at most this.
+/// 255 − 22 = 233 bytes. DATA and DELIVER carry at most this.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
 const _: () = assert!(HEARTBEAT_LEN == 8 && ACK_LEN == 13 && ATTACH_LEN == 9);
 const _: () = assert!(ATTACHED_LEN == 7);
-const _: () = assert!(DATA_HEADER_LEN == 21 && DELIVER_HEADER_LEN == 9);
-const _: () = assert!(MAX_PAYLOAD == 234);
+const _: () = assert!(DATA_HEADER_LEN == 22 && DELIVER_HEADER_LEN == 9);
+const _: () = assert!(MAX_PAYLOAD == 233);
 
 /// A leaf's receive mode, carried in ATTACH `aux` (spec "Leaf receive mode"). Sets the
 /// preamble of packets the relay sends to the leaf.
@@ -313,14 +317,38 @@ pub struct Data<'a> {
     pub dst_leaf: LeafId,
     /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
+    /// The time the message has left, in [`TTL_UNIT`]s (spec "Receiving DATA").
+    pub time_left: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
 }
+
+/// Unit of DATA's time left (spec "Packet formats"). Each node rounds the time
+/// down when it sends, so each hand-over loses up to one unit; 2.5 s is
+/// the finest unit at which one byte holds the delivery TTL, 600 s, as 240
+/// (spec "Receiving DATA").
+pub const TTL_UNIT: Duration = Duration::from_millis(2500);
 
 impl Data<'_> {
     /// The message's ID (roadmap D15), the same on every hop.
     pub fn msg_id(&self) -> MsgId {
         MsgId::of(self.dst_pos, self.dst_leaf, self.payload)
+    }
+
+    /// The time the message has left.
+    pub const fn time_left(&self) -> Duration {
+        TTL_UNIT.mul(self.time_left as u64)
+    }
+
+    /// `left` in whole [`TTL_UNIT`]s, rounded down, so that no node keeps
+    /// a message longer than it had, and capped at what the field holds.
+    pub const fn units(left: Duration) -> u8 {
+        let u = left.as_micros() / TTL_UNIT.as_micros();
+        if u > u8::MAX as u64 {
+            u8::MAX
+        } else {
+            u as u8
+        }
     }
 }
 
@@ -466,6 +494,7 @@ impl Packet<'_> {
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
                 put(buf, DATA_DST_LEAF, &d.dst_leaf.0);
                 buf[DATA_HOPS] = d.hops;
+                buf[DATA_TIME_LEFT] = d.time_left;
                 put(buf, DATA_HEADER_LEN, d.payload);
                 Ok(DATA_HEADER_LEN + d.payload.len())
             }
@@ -543,6 +572,7 @@ impl<'a> Packet<'a> {
                     dst_pos: get_pos(b, DATA_DST_POS),
                     dst_leaf: LeafId(get4(b, DATA_DST_LEAF)),
                     hops: b[DATA_HOPS],
+                    time_left: b[DATA_TIME_LEFT],
                     payload,
                 }))
             }
@@ -609,7 +639,7 @@ mod tests {
             Packet::Heartbeat(_) => 8,
             Packet::Ack(_) => 13,
             Packet::Attach(_) => 9,
-            Packet::Data(d) => 21 + d.payload.len(),
+            Packet::Data(d) => 22 + d.payload.len(),
             Packet::Deliver(d) => 9 + d.payload.len(),
             Packet::Attached(_) => 7,
         };
@@ -653,9 +683,10 @@ mod tests {
             dst_pos in position(),
             dst_leaf in leaf(),
             hops: u8,
+            time_left: u8,
             payload in payload(),
         ) {
-            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_leaf, hops, payload: &payload };
+            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_leaf, hops, time_left, payload: &payload };
             round_trip(&Packet::Data(d));
             // The ID survives the trip: it depends only on fields every hop keeps.
             let mut buf = [0; MAX_FRAME];
@@ -689,7 +720,7 @@ mod tests {
             let mut bytes = std::vec![first(kind, aux)];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 4, 5, 8, 9, 10, 20, 21, 22] {
+            for cut in [0, 1, 4, 5, 8, 9, 10, 20, 21, 22, 23] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
@@ -705,6 +736,7 @@ mod tests {
             dst_pos: Position::default(),
             dst_leaf: LeafId::RELAY,
             hops: 0,
+            time_left: 0,
             payload: &payload,
         };
         let mut buf = [0; MAX_FRAME];
@@ -864,13 +896,25 @@ mod tests {
             dst_pos: position,
             dst_leaf: LeafId([9, 10, 11, 12]),
             hops: 13,
-            payload: &[14, 15],
+            time_left: 14,
+            payload: &[15, 16],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();
         let mut want = std::vec![0x59, 1, 2, 3, 4, 5, 6, 7, 8];
         want.extend_from_slice(&position.encode());
-        want.extend_from_slice(&[9, 10, 11, 12, 13, 14, 15]);
+        want.extend_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
         assert_eq!(&buf[..len], &want[..]);
+        let header = Data { payload: &[], ..d };
+        let len = Packet::Data(header).encode(&mut buf).unwrap();
+        assert_eq!(
+            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(18_240),
+            "71.25 symbols at SF5, as for 21 bytes"
+        );
+        assert_eq!(d.time_left(), Duration::from_secs(35));
+        assert_eq!(Data::units(Duration::from_millis(600_000)), 240);
+        assert_eq!(Data::units(Duration::from_millis(2_499)), 0, "rounded down");
+        assert_eq!(Data::units(Duration::from_secs(1000)), u8::MAX);
 
         let deliver = Deliver {
             dst_leaf: LeafId([1, 2, 3, 4]),

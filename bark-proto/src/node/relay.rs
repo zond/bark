@@ -1302,6 +1302,7 @@ mod tests {
             dst_pos: r.config.position,
             dst_leaf: LeafId::RELAY,
             hops: 1,
+            time_left: u8::MAX,
             payload: text,
         };
         let (a, b) = (packet(a_home, 1, b"first"), packet(b_home, 2, b"second"));
@@ -1482,6 +1483,7 @@ mod tests {
                 dst_pos: far,
                 dst_leaf: LeafId::RELAY,
                 hops,
+                time_left: u8::MAX,
                 payload: &payload,
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1561,6 +1563,7 @@ mod tests {
                 dst_pos: far,
                 dst_leaf: LeafId::RELAY,
                 hops,
+                time_left: u8::MAX,
                 payload: &payload,
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1670,6 +1673,7 @@ mod tests {
                 dst_pos: far,
                 dst_leaf: LeafId::RELAY,
                 hops: 2,
+                time_left: u8::MAX,
                 payload: &payload,
             };
             let parent = Some((ShortName(7), Channel::new(6).unwrap()));
@@ -1797,6 +1801,7 @@ mod tests {
             dst_pos: far,
             dst_leaf: LeafId::RELAY,
             hops: 2,
+            time_left: u8::MAX,
             payload: b"one message, two senders",
         };
         let id = data.msg_id();
@@ -1929,6 +1934,7 @@ mod tests {
                 dst_pos: far,
                 dst_leaf: LeafId::RELAY,
                 hops: 2,
+                time_left: u8::MAX,
                 payload: &payload,
             };
             let id = data.msg_id();
@@ -2023,6 +2029,7 @@ mod tests {
             dst_pos: dst,
             dst_leaf: LeafId::RELAY,
             hops,
+            time_left: u8::MAX,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2104,6 +2111,7 @@ mod tests {
             dst_pos: far,
             dst_leaf: LeafId::RELAY,
             hops: 2,
+            time_left: u8::MAX,
             payload: b"count",
         };
         let id = data.msg_id();
@@ -2184,6 +2192,7 @@ mod tests {
                 dst_pos: far,
                 dst_leaf: LeafId::RELAY,
                 hops,
+                time_left: u8::MAX,
                 payload: b"again",
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2242,6 +2251,7 @@ mod tests {
             dst_pos: addressed,
             dst_leaf: LeafId::RELAY,
             hops: 2,
+            time_left: u8::MAX,
             payload: b"arrived",
         };
         let id = data.msg_id();
@@ -2285,6 +2295,7 @@ mod tests {
             dst_hop: r.me(),
             src_hop: ShortName(9),
             hops: 5,
+            time_left: u8::MAX,
             ..data
         };
         let sent = hear(&mut r, &mut now, &Packet::Data(copy));

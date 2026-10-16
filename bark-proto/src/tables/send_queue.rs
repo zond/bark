@@ -411,6 +411,7 @@ mod tests {
             dst_pos: crate::position::Position { lat: 0, lon: 0 },
             dst_leaf: LeafId::RELAY,
             hops,
+            time_left: 1,
             payload: &[tag],
         };
         let mut bytes = [0; MAX_FRAME];

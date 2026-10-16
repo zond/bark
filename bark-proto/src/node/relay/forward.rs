@@ -625,6 +625,7 @@ impl Relay {
             dst_pos,
             dst_leaf,
             hops: 0,
+            time_left: Data::units(self.config.delivery_ttl),
             payload,
         };
         if self.owns(dst_pos, now) {
