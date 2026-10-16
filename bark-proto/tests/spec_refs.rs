@@ -52,7 +52,7 @@ fn files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// The names cited after each `spec "`, with the list that may follow it.
 fn cited_names(text: &str) -> Vec<String> {
-    let lower = text.to_lowercase();
+    let lower = text.to_ascii_lowercase();
     let mut names = Vec::new();
     let mut from = 0;
     while let Some(i) = lower[from..].find("spec \"") {
@@ -62,18 +62,36 @@ fn cited_names(text: &str) -> Vec<String> {
             let Some(end) = rest.find('"') else { break };
             names.push(rest[..end].to_string());
             at += 1 + end + 1;
-            let next = &text[at..];
-            match SEPARATORS
-                .iter()
-                .find(|s| next.starts_with(**s) && next[s.len()..].starts_with('"'))
-            {
-                Some(s) => at += s.len(),
+            match continuation(&text[at..]) {
+                Some(skip) => at += skip,
                 None => break,
             }
         }
         from = at;
     }
     names
+}
+
+/// How far a list of cited names continues to its next quoted name, which
+/// may sit on the next line of a comment.
+fn continuation(next: &str) -> Option<usize> {
+    let sep = SEPARATORS.iter().find(|s| next.starts_with(s.trim_end()))?;
+    let mut rest = &next[sep.trim_end().len()..];
+    let blank = rest.len() - rest.trim_start().len();
+    if blank == 0 {
+        return None;
+    }
+    let broke = rest[..blank].contains('\n');
+    rest = rest.trim_start();
+    if broke {
+        for marker in ["//!", "///", "//", "#"] {
+            if let Some(r) = rest.strip_prefix(marker) {
+                rest = r.trim_start();
+                break;
+            }
+        }
+    }
+    rest.starts_with('"').then(|| next.len() - rest.len())
 }
 
 /// Section numbers a reader would take for the spec's.
@@ -128,12 +146,39 @@ fn spec_links_resolve() {
     }
 }
 
+/// The citations in `text` that name no heading of the spec.
+fn stale(rel: &str, text: &str, names: &HashSet<String>) -> Vec<String> {
+    let anchors: HashSet<String> = names.iter().map(|h| anchor(h)).collect();
+    let mut bad = Vec::new();
+    for name in cited_names(text) {
+        if !names.contains(&name) {
+            bad.push(format!("{rel}: spec \"{name}\""));
+        }
+    }
+    for (i, _) in text.match_indices("protocol.md#") {
+        let rest = &text[i + "protocol.md#".len()..];
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(rest.len());
+        if !anchors.contains(&rest[..end]) {
+            bad.push(format!("{rel}: protocol.md#{}", &rest[..end]));
+        }
+    }
+    for n in numbered_citations(text) {
+        bad.push(format!("{rel}: numbered citation {n:?}"));
+    }
+    bad
+}
+
+fn spec_names() -> HashSet<String> {
+    let spec = fs::read_to_string(root().join(SPEC)).expect("spec");
+    headings(&spec).into_iter().collect()
+}
+
 #[test]
 fn repository_citations_resolve() {
     let root = root();
-    let spec = fs::read_to_string(root.join(SPEC)).expect("spec");
-    let names: HashSet<String> = headings(&spec).into_iter().collect();
-    let anchors: HashSet<String> = names.iter().map(|h| anchor(h)).collect();
+    let names = spec_names();
     let mut paths = Vec::new();
     files(&root, &mut paths);
     let mut bad = Vec::new();
@@ -149,35 +194,40 @@ fn repository_citations_resolve() {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        for name in cited_names(&text) {
-            if !names.contains(&name) {
-                bad.push(format!("{rel}: spec \"{name}\""));
-            }
-        }
-        for (i, _) in text.match_indices("protocol.md#") {
-            let rest = &text[i + "protocol.md#".len()..];
-            let end = rest
-                .find(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
-                .unwrap_or(rest.len());
-            if !anchors.contains(&rest[..end]) {
-                bad.push(format!("{rel}: protocol.md#{}", &rest[..end]));
-            }
-        }
-        for n in numbered_citations(&text) {
-            bad.push(format!("{rel}: numbered citation {n:?}"));
-        }
+        bad.extend(stale(&rel, &text, &names));
     }
     assert!(bad.is_empty(), "stale spec citations:\n{}", bad.join("\n"));
 }
 
 #[test]
-fn a_stale_name_fails() {
-    let names =
-        cited_names(r#"as in spec "Owner", "Delivery queue" and "Hop count"; spec "Nope" step 6"#);
-    assert_eq!(names, ["Owner", "Delivery queue", "Hop count", "Nope"]);
-    assert_eq!(
-        anchor("Position, time, phone link"),
-        "position-time-phone-link"
+fn citations_parse() {
+    let names = cited_names(
+        "as in spec \"Owner\", \"Delivery queue\" and \"Hop count\"; spec \"Nope\" step 6,\n\
+         /// (spec \"Delivery\",\n/// \"Bounds\") and \"not cited\"",
     );
+    assert_eq!(
+        names,
+        [
+            "Owner",
+            "Delivery queue",
+            "Hop count",
+            "Nope",
+            "Delivery",
+            "Bounds"
+        ]
+    );
+    assert_eq!(anchor("Position and time"), "position-and-time");
     assert_eq!(anchor("Hand-over"), "hand-over");
+}
+
+#[test]
+fn a_stale_citation_fails() {
+    let names = spec_names();
+    assert!(stale("x", "(spec \"Owner\", \"Hand-over\")", &names).is_empty());
+    assert_eq!(stale("x", "(spec \"Owner\", \"Owners\")", &names).len(), 1);
+    assert_eq!(
+        stale("x", "see protocol.md#no-such-heading", &names).len(),
+        1
+    );
+    assert_eq!(stale("x", "as design §9.3 says", &names).len(), 1);
 }

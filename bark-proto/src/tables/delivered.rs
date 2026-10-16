@@ -1,6 +1,6 @@
 //! Message IDs this relay has delivered as owner, so that a later copy,
 //! from any neighbour, is ACKed and not delivered again (spec "Owner",
-//! Spec "Delivery queue").
+//! "Delivery queue").
 //!
 //! [`DELIVERED`] entries with no lifetime: when full, a new one takes the
 //! place of the least recently active, the one delivered or last offered
@@ -9,7 +9,7 @@
 //! delivers in one delivery TTL for a full leaf table, 256 leaves (spec "Attach and polls")
 //! at ≈23 texts a day each (spec "Capacity and sizing", the network at capacity), 41. Above that
 //! a late copy of one forgotten is delivered twice, which the app, whose
-//! payloads are unique (spec "Position, time, phone link"), can recognise.
+//! payloads are unique (spec "Phone link"), can recognise.
 
 use crate::ids::MsgId;
 use crate::tables::delivery::DELIVERY_QUEUE;
