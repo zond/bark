@@ -63,6 +63,9 @@ pub struct Config {
     pub neighbour_expiry_rotations: u8,
     /// Rotations a demotion lasts without an ACK (design §8.2: 3, 390 s).
     pub demotion_rotations: u8,
+    /// What a relay does with a message whose hand-over went unanswered
+    /// (design §9.3 step 6, roadmap D42).
+    pub after_failure: AfterFailure,
     /// How long a leaf waits before it tries its relay again after a
     /// hand-over to it failed (design §10.2: 60 s, the length of a fade).
     pub leaf_retry: Duration,
@@ -98,6 +101,17 @@ pub struct Config {
     /// Transmit power control: a research prototype, off by default
     /// (`docs/power-research-2026-10-15.md`).
     pub power: PowerControl,
+}
+
+/// What a relay does with a message after three unanswered attempts to a
+/// neighbour have banned that neighbour (design §9.3 step 6, roadmap D42).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterFailure {
+    /// Offer it to the next candidate at once.
+    Reroute,
+    /// Offer it to the same neighbour again when its ban ends; move on
+    /// only once the neighbour is demoted.
+    Wait,
 }
 
 /// Which frames a relay sends below `Config::tx_power_dbm`, and how low.
@@ -178,6 +192,7 @@ impl Config {
         demote_after_failures: 2,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
+        after_failure: AfterFailure::Reroute,
         leaf_retry: Duration::from_secs(60),
         delivery_ttl: Duration::from_secs(600),
         delivery_retry: Duration::from_secs(60),

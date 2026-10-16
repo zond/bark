@@ -78,8 +78,12 @@
 //! A hand-over whose attempts all go unanswered bans its receiver too,
 //! longer after each failure in a row (`tables/neighbours.rs`, roadmap
 //! D42): silence says the channel or the receiver is full, and offering
-//! it the next message at once only adds frames there. The failed forward
-//! itself goes on to its next candidate at once, as after a refusal.
+//! it the next message at once only adds frames there. By default the
+//! failed forward goes on to its next candidate at once
+//! ([`AfterFailure::Reroute`]). With [`AfterFailure::Wait`] it waits for
+//! the ban and goes to the same neighbour again, and moves on only once
+//! a failure has demoted it; a return waits the same way, and is dropped
+//! only then.
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
@@ -100,6 +104,7 @@ use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Step};
+use crate::node::AfterFailure;
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
@@ -1088,6 +1093,16 @@ impl Relay {
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
+                if let Some(t) = self.wait_for(d.dst_hop, now) {
+                    // The same neighbour again once its ban ends, with
+                    // fresh attempts (roadmap D42, W).
+                    self.skipped = 0;
+                    if let Some(current) = self.queue.current_mut() {
+                        current.not_before = t;
+                        current.tries = 0;
+                    }
+                    return;
+                }
             }
             if out.kind == Kind::Forward {
                 // Most likely the frame, not the ACK, was lost: the
@@ -1111,6 +1126,19 @@ impl Relay {
         if let Some(reason) = reason {
             self.drop_msg(id, reason, emit);
         }
+    }
+
+    /// When to offer a failed hand-over to `name` again, if this relay
+    /// waits for a silent neighbour rather than moving on (roadmap D42,
+    /// [`AfterFailure::Wait`]): when its ban ends, until a failure demotes
+    /// it. A demoted neighbour is likely gone or faded; a forward then
+    /// takes its next candidate, and a return is dropped.
+    fn wait_for(&self, name: ShortName, now: Instant) -> Option<Instant> {
+        if self.config.after_failure != AfterFailure::Wait {
+            return None;
+        }
+        let (_, n) = self.neighbours.by_short(name)?;
+        (!self.neighbours.is_demoted(n, now)).then_some(n.banned_until)
     }
 
     fn count_failure(&mut self, name: ShortName, now: Instant, emit: &mut dyn FnMut(Action)) {

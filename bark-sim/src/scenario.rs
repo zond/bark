@@ -14,7 +14,7 @@ use crate::geo::{Origin, Xy};
 use crate::links::{LinkParams, Site};
 use crate::phy::RadioParams;
 use crate::rng::{Purpose, Stream};
-use bark_proto::{Config, Duration, PowerRule};
+use bark_proto::{AfterFailure, Config, Duration, PowerRule};
 use serde::{Deserialize, Serialize};
 
 /// Node role in a scenario.
@@ -128,6 +128,9 @@ pub struct ProtocolOverrides {
     pub lbt_backoff_max_ms: Option<u64>,
     pub hop_backoff_max_ms: Option<u64>,
     pub retry_backoff_ms: Option<u64>,
+    /// After an unanswered hand-over: "reroute" or "wait" (roadmap D42).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after_failure: Option<String>,
     /// Power control rule: "fixed", "degree", "per_link" or "both".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power_rule: Option<String>,
@@ -185,6 +188,13 @@ impl ProtocolOverrides {
         set!(move_wait_max, move_wait_max_ms, ms);
         set!(lbt_attempts);
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
+        if let Some(a) = &self.after_failure {
+            c.after_failure = match a.as_str() {
+                "reroute" => AfterFailure::Reroute,
+                "wait" => AfterFailure::Wait,
+                other => panic!("unknown after_failure {other:?}"),
+            };
+        }
         let p = &mut c.power;
         if let Some(r) = &self.power_rule {
             p.rule = match r.as_str() {

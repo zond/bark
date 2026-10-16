@@ -8,8 +8,8 @@ use bark_proto::tables::budget::{hold, BAN};
 use bark_proto::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
-    AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node, Position,
-    Relay, Trace,
+    AfterFailure, AppCommand, AppEvent, Config, DropReason, Duration, Instant, LeafId, MsgId, Node,
+    Position, Relay, Trace,
 };
 use common::{ch, secs, Harness};
 
@@ -2302,4 +2302,85 @@ fn a_dead_neighbour_is_routed_around() {
         neighbour: position(&h, f1).short()
     }));
     no_drops(&h);
+}
+
+/// As above, but O waits for a silent neighbour (`AfterFailure::Wait`,
+/// roadmap D42): F1 drops every DATA from O, so the first three attempts
+/// ban it and the message waits for the ban and goes to F1 again, with
+/// three fresh attempts. Their failure demotes F1 (§8.2), and only then
+/// does the message go to F2, at once.
+#[test]
+fn waiting_for_a_silent_neighbour_moves_on_once_it_is_demoted() {
+    let (o, f1, f2, d) = (0, 1, 2, 3);
+    let wait = Config {
+        after_failure: AfterFailure::Wait,
+        ..Config::default()
+    };
+    let nodes = [
+        (0.0, 0.0, 241, wait),
+        (400.0, 50.0, 242, Config::default()),
+        (400.0, -100.0, 243, Config::default()),
+        (800.0, 0.0, 244, Config::default()),
+    ]
+    .into_iter()
+    .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(o, f1), (o, f2), (f1, d), (f2, d)]);
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (o, f1) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let id = send(&mut h, o, d, b"patient");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    let runs = handovers(&data_times(&h, o, f1, id));
+    assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 3]);
+    let gap = runs[1][0].since(runs[0][2]);
+    assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
+    let on = data_times(&h, o, f2, id)[0];
+    assert!(on > runs[1][2] && on.since(runs[1][2]) < secs(1));
+    assert!(traces(&h, o).contains(&Trace::Demoted {
+        neighbour: position(&h, f1).short()
+    }));
+    no_drops(&h);
+}
+
+/// P, C: C waits for a silent neighbour (`AfterFailure::Wait`), and is a
+/// dead end for P's message, so it returns it, but every DATA from C to P
+/// is lost. The return's three attempts ban P; the return waits for the
+/// ban and goes again with three fresh attempts, whose failure demotes P
+/// (§8.2), and only then is it dropped, as a failed return is (§9.2.5).
+#[test]
+fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
+    let (p, c) = (0, 1);
+    let wait = Config {
+        after_failure: AfterFailure::Wait,
+        ..Config::default()
+    };
+    let nodes = [(0.0, 0.0, 251, Config::default()), (400.0, 0.0, 252, wait)]
+        .into_iter()
+        .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
+    let mut h = build(nodes.collect(), &[(p, c)]);
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (c, p) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let (dst_pos, text) = (pos(5_000.0, 0.0), b"nowhere to go");
+    h.command(
+        p,
+        AppCommand::Send {
+            dst_pos,
+            dst_leaf: LeafId::RELAY,
+            payload: text,
+        },
+    );
+    let id = MsgId::of(dst_pos, LeafId::RELAY, text);
+    let failed = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::ReturnFailed,
+    };
+    assert!(h.run_until(h.now + secs(10), |h| traces(h, c).contains(&failed)));
+    let runs = handovers(&data_times(&h, c, p, id));
+    assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 3]);
+    let gap = runs[1][0].since(runs[0][2]);
+    assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
+    assert!(traces(&h, c).contains(&Trace::Demoted {
+        neighbour: position(&h, p).short()
+    }));
 }

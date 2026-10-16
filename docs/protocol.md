@@ -759,6 +759,15 @@ waiting their turn are held in the relay's send queue.
    only ACKs, or has finished with it and returns it (§9.2.4) (roadmap
    D36).
 
+   A relay may instead wait for a silent neighbour (`after_failure`
+   wait, roadmap D42): the message is not routed again at once but
+   waits in its place for that neighbour's ban, and is offered to it
+   again with three fresh attempts; only once a failure has demoted the
+   neighbour (§8.2) is it set aside and the next hop chosen. A return
+   waits for the parent the same way, and is dropped only when a failure
+   demotes the parent. A DELIVER is not affected: its leaf is not a
+   neighbour, and the delivery queue already keeps it (§10.4).
+
 **Silence is pushback.** A refusal measures one thing, what one
 hand-over takes from the receiver's bucket, and the bucket refills that
 in one ban. Silence says only that the channel or the receiver is full,
