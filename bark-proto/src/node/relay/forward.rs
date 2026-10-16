@@ -39,7 +39,7 @@
 //! queue remember it, and its record may have made way for newer ones
 //! (spec "Owner").
 //!
-//! # The send queue (spec "Hand-over")
+//! # The send queue (spec "Send queue")
 //!
 //! Every packet this relay sends for a message goes through the send
 //! queue, one hand-over at a time ([`Transfer`]). A forward is addressed
@@ -70,7 +70,7 @@
 //! attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
-//! [`BAN`], so no message takes it until then (spec "Hand-over", roadmap D27, D29,
+//! [`BAN`], so no message takes it until then (spec "Refusal", roadmap D27, D29,
 //! D32). A forward treats it as that give-up. A return has nowhere else
 //! to go: it waits in its place for the ban to end, and the refused
 //! transmission does not count as one of its attempts.
@@ -192,7 +192,7 @@ impl Relay {
     /// `hops`, after this relay spends `spend` (the ACK that takes the
     /// packet); 0 is the regular room. The regular room needs a place, and
     /// everything queued, the frame included, must fit in the bucket now
-    /// with the reply reserve left (spec "Receiving DATA", "Hand-over"). Failing that, the
+    /// with the reply reserve left (spec "Receiving DATA", "Send queue"). Failing that, the
     /// highest free hop place not above `hops` takes it, whatever the
     /// bucket holds (roadmap D31). `freed`: the current hand-over ends
     /// first, giving up its place.
@@ -355,7 +355,7 @@ impl Relay {
         };
         if !self.replies.can_owe(reply, d.sender_home, now) {
             // The packet could not be answered; its sender's retry
-            // brings it again (spec "Hand-over", roadmap D29).
+            // brings it again (spec "The ACK", roadmap D29).
             return;
         }
         if let Some(reason) = refusal {
@@ -986,7 +986,7 @@ impl Relay {
     }
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
-    /// took the packet, or refused it (spec "Hand-over"); see the module documentation.
+    /// took the packet, or refused it (spec "The ACK", "Refusal"); see the module documentation.
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
@@ -1142,7 +1142,7 @@ impl Relay {
         }
     }
 
-    // --- The owed reply (spec "Hand-over") ---
+    // --- The owed reply (spec "The ACK") ---
 
     /// Start sending the owed reply, if it is ready. Without budget
     /// for it the relay cannot reply (spec "Duty cycle cap"); the reply is abandoned.

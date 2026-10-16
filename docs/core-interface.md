@@ -92,11 +92,11 @@ node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
 Each role holds one message of its application's at a time, until its first hop takes it.
 A relay accepts a message while it is running, holds none, its send queue takes a full
-frame on top of what it holds (spec "Hand-over"), and not every neighbour is banned
+frame on top of what it holds (spec "Send queue"), and not every neighbour is banned
 (spec "Receiving DATA"). When only its bucket and bans keep it from accepting, its `next_wakeup()` includes
 the moment both allow it. A relay whose remaining neighbours are all banned once it holds
 the message keeps it and tries again when the first ban
-ends, or later after refusals in a row (spec "Hand-over"); one for its own leaf that finds the
+ends, or later after refusals in a row (spec "The relay's own message"); one for its own leaf that finds the
 delivery queue full waits for a place (spec "Return to parent"). A leaf accepts a message while it
 holds none (spec "Attach and polls").
 
@@ -132,14 +132,14 @@ test in `tables/mod.rs`:
 | Leaves (spec "Attach and polls") | 256 × 56 B | 14.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 256 B | 10.3 KiB |
 | Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
-| Send queue (spec "Hand-over") | (40 + 254) × 272 B | 78.1 KiB |
+| Send queue (spec "Send queue") | (40 + 254) × 272 B | 78.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
 | **All** | | **164.4 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Hand-over", roadmap D31). The records hold the 1561 messages a relay can handle in the
+(spec "Send queue", roadmap D31). The records hold the 1561 messages a relay can handle in the
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full leaf table (spec "Delivery queue"). A leaf entry is 56 B: its slots

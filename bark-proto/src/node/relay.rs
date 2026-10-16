@@ -14,7 +14,7 @@
 //! queue, and the sweep. The relay keeps at most one excursion outstanding
 //! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
 //! the first job that is ready, in that order: an owed reply is worth
-//! nothing once its sender stops waiting, 100 ms after the frame (spec "Hand-over"),
+//! nothing once its sender stops waiting, 100 ms after the frame (spec "The ACK"),
 //! and a poll is skipped once it is 500 ms late (spec "Attach and polls"). A job that has begun a sequence of excursions (CAD,
 //! RSSI, transmit) continues it from each completion event, so sequences
 //! never interleave; the hand-over alone lets an owed reply in before it
@@ -129,7 +129,7 @@ struct Mover {
 pub struct Load {
     /// Airtime in the duty-cycle bucket (spec "Duty cycle cap").
     pub bucket: Duration,
-    /// Frames in the send queue, hop places included (spec "Hand-over").
+    /// Frames in the send queue, hop places included (spec "Send queue").
     pub send_queue: usize,
     /// Messages waiting for a leaf (spec "Delivery queue").
     pub delivery_queue: usize,
@@ -378,7 +378,7 @@ impl Relay {
     }
 
     /// The lowest count a packet from a relay may carry to be taken into
-    /// a hop place now, if any is free (spec "Hand-over"). For a driver to sample;
+    /// a hop place now, if any is free (spec "Send queue"). For a driver to sample;
     /// reading it changes nothing.
     pub fn lowest_free_hop_place(&self) -> Option<u8> {
         self.queue.lowest_free_place()
@@ -1358,7 +1358,7 @@ mod tests {
         assert_eq!(acks(&sent, &a, a_home), 1);
         assert_eq!(sent.len(), 1, "B's packet was answered");
 
-        // B's retry, after the retry wait (spec "Hand-over").
+        // B's retry, after the retry wait (spec "Retry wait").
         now += Duration::from_millis(200);
         actions.clear();
         r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
@@ -1863,7 +1863,7 @@ mod tests {
 
     /// A neighbour whose heartbeats this relay stops hearing, but which
     /// answers its hand-overs, taking or refusing them, is alive and stays
-    /// in the table past the 390 s a heartbeat alone keeps it (spec "Neighbour table", "Hand-over").
+    /// in the table past the 390 s a heartbeat alone keeps it (spec "Neighbour table", "The ACK").
     /// Without this, a relay whose only neighbour's heartbeats were lost
     /// for a few rotations dropped it while it was carrying every message.
     #[test]
@@ -2068,7 +2068,7 @@ mod tests {
     /// A packet already in the network is taken under the same bans, into
     /// the regular room and, with the bucket spent, a hop place: the hop
     /// places' argument against gridlock needs every such packet to move
-    /// on (spec "Hand-over", roadmap D31, D34).
+    /// on (spec "Overload waits", roadmap D31, D34).
     #[test]
     fn a_packet_in_the_network_is_taken_whatever_the_bans() {
         let (mut r, mut now, far) = with_every_neighbour_banned();

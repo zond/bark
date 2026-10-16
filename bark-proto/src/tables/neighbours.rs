@@ -313,7 +313,7 @@ impl Neighbours {
 
     /// `position` answered a packet from this relay at `now`, taking or
     /// refusing it: it is alive, whether or not its heartbeats are heard
-    /// (spec "Hand-over").
+    /// (spec "The ACK").
     pub fn answered(&mut self, position: Position, now: Instant) {
         if let Some(n) = self.entry_mut(position) {
             n.last_heard = n.last_heard.max(now);

@@ -315,7 +315,7 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
 
 /// S1b: A and C, which cannot hear each other, hand to B at the same
 /// instant every 30 s, so every first hand-over collides at B. The retry
-/// wait (spec "Hand-over", roadmap D22) pulls them apart: over 100 seeds the
+/// wait (spec "Retry wait", roadmap D22) pulls them apart: over 100 seeds the
 /// settled phase delivers 0.961 on average, worst seed 0.900, against
 /// 0.136 with the old 0–50 ms over 20. What is lost is a message whose
 /// three attempts all collided. B demoted by A or C after two such

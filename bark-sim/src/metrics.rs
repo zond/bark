@@ -200,7 +200,7 @@ pub struct CoreCounts {
     pub heartbeats_deferred: u64,
     /// DATA packets this relay refused, by what it lacked (spec "Receiving DATA").
     pub refused: DropCounts,
-    /// Refusals this node received, each a ban on the refuser (spec "Hand-over").
+    /// Refusals this node received, each a ban on the refuser (spec "Refusal").
     pub turned_away: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
@@ -412,7 +412,7 @@ pub struct DropCounts {
     pub hop_cap: u64,
     /// No place for its record (spec "Message records").
     pub no_record: u64,
-    /// The send queue was full (spec "Hand-over").
+    /// The send queue was full (spec "Send queue").
     pub send_queue_full: u64,
     /// The duty-cycle budget (spec "Duty cycle cap").
     pub budget: u64,

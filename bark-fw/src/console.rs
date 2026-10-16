@@ -723,7 +723,7 @@ impl<'a> Console<'a> {
             return Ok(());
         };
         // Listen before talk as a receiver does before an ACK
-        // (spec "Hand-over"), CAD only.
+        // (spec "The ACK"), CAD only.
         let (busy, cad_prepare_us, cad_us) = self.radio.cad(reply).await?;
         self.count_cad(busy);
         if busy {

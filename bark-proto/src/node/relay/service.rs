@@ -22,7 +22,7 @@
 //! arrives, when the previous one is ACKed, on each answer to a poll,
 //! every `delivery_retry` (spec "Delivery queue": 60 s), and whenever a hand-over ends and
 //! frees room in the send queue. It needs room as a forward does: a place,
-//! and its airtime with everything queued in the bucket (spec "Hand-over"). One the
+//! and its airtime with everything queued in the bucket (spec "Send queue"). One the
 //! bucket cannot fit yet is offered again the moment it will, as a
 //! deferred hand-over is started then (`feed_at`). A DELIVER
 //! whose hand-over fails stays queued, and its leaf is marked as not
@@ -84,7 +84,7 @@ impl Relay {
             return;
         }
         let reply = Reply::Attached(a.leaf);
-        // Taken only if it can be answered, as a DATA packet is (spec "Hand-over").
+        // Taken only if it can be answered, as a DATA packet is (spec "The ACK").
         if !self.can_reply(POLL_AIRTIME, now) || !self.replies.can_owe(reply, self.home, now) {
             return;
         }

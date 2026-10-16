@@ -20,7 +20,7 @@
 //!    failed. The window is twice the time one hand-over holds its
 //!    receiver and doubles per attempt ([`retry_window`]), so that two
 //!    senders that cannot hear each other and have collided at the
-//!    receiver come apart (spec "Hand-over", roadmap D22).
+//!    receiver come apart (spec "Retry wait", roadmap D22).
 //!
 //! An ACK answers the hand-over only if it names the message, the
 //! receiver as `from` and this node as `to` (roadmap D19, D32): another
@@ -284,7 +284,7 @@ impl Transfer {
 /// What a node replies with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reply {
-    /// An ACK, taking or refusing (spec "Hand-over").
+    /// An ACK, taking or refusing (spec "The ACK").
     Ack(Ack),
     /// A relay's ATTACHED to this leaf's ATTACH that attaches (spec "Attach and polls"). The
     /// relay builds it as it transmits, from the leaf's slot.
@@ -321,7 +321,7 @@ enum ReplyStep {
 }
 
 /// The one reply this node can owe (roadmap D29). It is sent with
-/// listen-before-talk, as the receiver of spec "Hand-over" does, with the hand-over's
+/// listen-before-talk, as the receiver of spec "The ACK" does, with the hand-over's
 /// backoff, and abandoned once its sender has stopped waiting.
 ///
 /// One place, because a node that owes a reply has the radio's next

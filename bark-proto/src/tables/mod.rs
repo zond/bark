@@ -34,7 +34,7 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
 }
 
 /// The time one hand-over holds its receiver: a full frame and its ACK,
-/// 138.56 + 14.40 = 152.96 ms (spec "Hand-over").
+/// 138.56 + 14.40 = 152.96 ms (spec "Retry wait").
 ///
 /// It is the unit of the wait before a retry. Two senders that cannot hear
 /// each other and have collided at one receiver both miss the ACK and
@@ -105,7 +105,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), 272);
         // The send queue's regular room follows from the duty bucket, its
-        // hop places from the hop count (spec "Hand-over"), and the delivery queue's
+        // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full leaf table over one TTL (spec "Delivery queue").
         assert_eq!(send_queue::SEND_QUEUE, 40);
         assert_eq!(send_queue::HOP_PLACES, 254);

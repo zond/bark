@@ -123,7 +123,7 @@ pub enum DropReason {
     /// holds (spec "Message records"). Refused; the table outnumbers the send
     /// queue's places, so this does not happen.
     NoRecord,
-    /// The send queue had no place (spec "Hand-over").
+    /// The send queue had no place (spec "Send queue").
     SendQueueFull,
     /// The duty-cycle bucket could not fit it with everything queued
     /// (spec "Receiving DATA", "Duty cycle cap").
@@ -236,7 +236,7 @@ pub enum Trace {
         /// [`DropReason::DeliveryFull`].
         reason: DropReason,
     },
-    /// The receiver of a hand-over refused it (spec "Hand-over").
+    /// The receiver of a hand-over refused it (spec "Refusal").
     TurnedAway {
         /// The message, or for a DELIVER the delivered message.
         msg_id: MsgId,

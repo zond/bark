@@ -76,7 +76,7 @@ pub const BUDGET: Duration =
     Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
 /// The most airtime the bucket holds: one minute at the cap, 6 s, about
-/// forty full frames; the send queue's length follows from it (spec "Hand-over").
+/// forty full frames; the send queue's length follows from it (spec "Send queue").
 pub const DEPTH: Duration = Duration::from_micros(BUDGET.as_micros() / 60);
 
 /// Longest single transmission (spec "Regulatory limits": 1 s; SF5 frames are ≤140 ms).
@@ -140,7 +140,7 @@ pub const REPLIES: u64 = refilled(retrying_span(Duration::from_millis(100), 3, R
 pub const REPLY_RESERVE: Duration =
     Duration::from_micros(REPLIES * ACK_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
 
-/// How long a sender refused bans the relay (spec "Hand-over"); see the module
+/// How long a sender refused bans the relay (spec "Refusal"); see the module
 /// documentation.
 pub const BAN: Duration = refill_time(Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
@@ -149,7 +149,7 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
 const _: () = assert!(REPLIES == 16);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
-/// row before offering it again (spec "Hand-over", "Attach and polls"): one [`BAN`] after the
+/// row before offering it again (spec "The relay's own message", "Attach and polls"): one [`BAN`] after the
 /// first, doubling after each further one, up to the refill of the whole
 /// bucket, 61 s, the longest anything waits for a bucket. Offered once a
 /// ban, a full frame every 1.56 s would be a 9 % probe on the refuser's

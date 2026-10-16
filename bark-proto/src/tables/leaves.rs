@@ -68,7 +68,7 @@ pub struct Polls {
     /// frame and the ACK timeout, and the waits between (spec "Hand-over"), 3.13 s.
     pub span: Duration,
     /// How long the DELIVERs ahead of a leaf's can hold the relay: a full
-    /// send queue (spec "Hand-over") of full frames, each with its ACK, 6.12 s.
+    /// send queue (spec "Send queue") of full frames, each with its ACK, 6.12 s.
     pub queue_wait: Duration,
 }
 

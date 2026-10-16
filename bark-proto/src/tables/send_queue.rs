@@ -1,4 +1,4 @@
-//! The send queue (spec "Hand-over"): packets waiting for their hand-over, the
+//! The send queue (spec "Send queue"): packets waiting for their hand-over, the
 //! one being handed over included, in the order they arrived.
 //!
 //! **Regular room.** A relay takes a packet into it only if the airtime of
@@ -26,7 +26,7 @@
 //!
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"). An entry whose receivers
-//! are all banned waits in its place until a ban ends (spec "Hand-over"). The next
+//! are all banned waits in its place until a ban ends (spec "Overload waits"). The next
 //! hand-over goes to the first entry that is due, except that one that has
 //! waited goes first, the most travelled first: the place one higher is
 //! free only for the message that has come farthest, and a lower one

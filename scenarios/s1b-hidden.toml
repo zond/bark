@@ -9,7 +9,7 @@
 # transmission and the other way round, so B hears both at once. The two
 # flows start together, so every message pair reaches A and C at the same
 # moment and their first hand-overs to B always overlap; what this
-# scenario measures is whether the retries pull them apart (spec "Hand-over").
+# scenario measures is whether the retries pull them apart (spec "Retry wait").
 #
 # Unlike S1, each leaf reaches only its own relay, so both flows cross B
 # as relay-to-relay hand-overs. No relay is removed.

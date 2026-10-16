@@ -81,7 +81,7 @@
 //! A DELIVER for this leaf is ACKed with the leaf's ID as `from` and its
 //! relay's short name as `to` (spec "Packet formats"), and surfaced once. One that arrives
 //! while the leaf's one owed reply is another's is ignored, as a relay
-//! ignores DATA then (spec "Hand-over"). A relay re-sends the oldest message it holds
+//! ignores DATA then (spec "The ACK"). A relay re-sends the oldest message it holds
 //! for a leaf before any other (`relay/service.rs`), so a repeat follows
 //! its first copy with nothing from that relay in between; remembering
 //! the last [`SEEN`] messages covers the relay and the one the leaf has
@@ -843,7 +843,7 @@ impl Leaf {
             refused: false,
         };
         // Taken only if it can be answered, as a relay takes DATA: the
-        // relay's retry brings it again (spec "Hand-over", roadmap D29).
+        // relay's retry brings it again (spec "The ACK", roadmap D29).
         if !self.acks.can_owe(ack, self.home, now) {
             return;
         }

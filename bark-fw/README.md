@@ -181,7 +181,7 @@ retune times.
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
-home channel answers it like an ACK (spec "Hand-over"): CAD on the sender's
+home channel answers it like an ACK (spec "The ACK"): CAD on the sender's
 home channel (named in the ping), then a 13-byte pong, then back home; it
 prints the time of each part. It does not do the RSSI half of
 listen-before-talk.

@@ -204,7 +204,7 @@ impl From<LeafId> for AckName {
     }
 }
 
-/// ACK, type 0x3 (spec "Hand-over"): the answer to an offer, taken or refused.
+/// ACK, type 0x3 (spec "The ACK"): the answer to an offer, taken or refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
     /// The answered message; for an ATTACH, the leaf's ID read as a

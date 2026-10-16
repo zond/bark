@@ -540,7 +540,7 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
 /// A parent offers the message again to a child it forgot (roadmap D35,
 /// B). P's message is for L, a leaf of Q's that is not there, and Q's
 /// delivery queue is full of its own messages for L, so Q refuses it
-/// (spec "Delivery queue") and P waits for each ban to end (spec "Hand-over"). Meanwhile P has tried
+/// (spec "Delivery queue") and P waits for each ban to end (spec "Overload waits"). Meanwhile P has tried
 /// C, a dead end, which returned it. C is then out of P's hearing long
 /// enough for its entry to expire, and comes back into a new slot, which
 /// clears the mark that P handed it the message (spec "Message records"). When Q next
@@ -791,7 +791,7 @@ fn a_return_does_not_go_back_and_forth() {
 /// A split met by the search coming back (roadmap D36). X's message is
 /// for L, a leaf of P's that is not there, and P's delivery queue is full
 /// of its own messages for L, so P refuses it (spec "Delivery queue") and Y, P's only
-/// neighbour but its parent, waits for each ban to end (spec "Hand-over"). X's
+/// neighbour but its parent, waits for each ban to end (spec "Overload waits"). X's
 /// hand-over to Y was taken, but Y's ACKs were lost, so X counts it
 /// failed, twice, the second time once Y's ban has ended (roadmap D42),
 /// leaves Y untried and moves on to Z, a dead end, which returns
@@ -1105,7 +1105,7 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
 /// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
-/// against F1 (spec "Hand-over"). O bans F1: no message is offered to it until the
+/// against F1 (spec "Refusal"). O bans F1: no message is offered to it until the
 /// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
 ///
 /// ```text
@@ -1290,7 +1290,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
 /// refuses O's message for L (spec "Receiving DATA", "Delivery queue"). O holds the
 /// message rather than drop it, says it takes no other, and offers it
 /// again one ban after the first refusal, two after the second, four
-/// after the third, and so on up to the bucket's refill (spec "Hand-over",
+/// after the third, and so on up to the bucket's refill (spec "The relay's own message",
 /// `budget::hold`). Once F's messages expire F takes it, and O's
 /// application may send again; its next message starts from one ban
 /// (spec "Return to parent", roadmap D29).
@@ -1631,7 +1631,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// D29). No hour holds more than 360 s, replies included (the harness
 /// checks every transmission), and no heartbeat of F is held back. The
 /// senders' frames are put on the air past their cores, which hold their
-/// own application's message for longer after each refusal (spec "Hand-over").
+/// own application's message for longer after each refusal (spec "The relay's own message").
 #[test]
 fn replies_stay_within_the_reserve() {
     use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
@@ -1789,9 +1789,9 @@ fn a_relay_does_not_flee_its_own_traffic() {
 /// heartbeats are never held back. The harness panics if any hour holds
 /// more than 10 %, replies included.
 ///
-/// O, refused, bans F without counting a failure (spec "Hand-over"); F is its only
+/// O, refused, bans F without counting a failure (spec "Refusal"); F is its only
 /// neighbour, so O holds its application's message and offers it again
-/// after its hold, and its application waits (spec "Return to parent", "Hand-over"). O and D
+/// after its hold, and its application waits (spec "Return to parent", "The relay's own message"). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
 /// frames, all four of F's attempts go unanswered, and F returns the
 /// message to O as the search requires (spec "Return to parent"). O, its bucket spent on
@@ -2050,7 +2050,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     );
 }
 
-// --- Silence is pushback (spec "Hand-over" step 6, roadmap D42) ---
+// --- Silence is pushback (spec "Silence is pushback", roadmap D42) ---
 
 /// When relay `from` sent a DATA of `id` to relay `to`.
 fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
@@ -2066,7 +2066,7 @@ fn data_times(h: &Harness<Node>, from: usize, to: usize, id: MsgId) -> Vec<Insta
 }
 
 /// `times` split where two frames are a ban or more apart: the
-/// attempts of one hand-over each, as a retry waits less (spec "Hand-over").
+/// attempts of one hand-over each, as a retry waits less (spec "Retry wait").
 fn handovers(times: &[Instant]) -> Vec<Vec<Instant>> {
     let mut out: Vec<Vec<Instant>> = Vec::new();
     for &t in times {
@@ -2085,7 +2085,7 @@ fn entry(h: &Harness<Node>, at: usize, of: usize) -> Neighbour {
 
 /// O, with F1 and F2 both reaching D, F1 the nearer; P behind O. Every
 /// DATA from O to F1 is lost. O's message fails at F1, which bans F1 for
-/// one ban (spec "Hand-over", roadmap D42), and waits for the ban. P's message, which
+/// one ban (spec "Silence is pushback", roadmap D42), and waits for the ban. P's message, which
 /// reaches O within it, goes to F2 at once and is never offered to F1:
 /// the ban holds for every message. When the ban ends O's message goes
 /// to F1 again with three fresh attempts; that second failure demotes F1
@@ -2210,8 +2210,8 @@ fn the_ban_after_failures_in_a_row_doubles_up_to_the_bucket_s_refill() {
 /// R, P, O, M, D in a line. P's message reaches O first and R's, which
 /// has come one hand-over farther, after it. O's first three frames to M
 /// are lost, so M is banned, and both messages wait for it, M being O's
-/// only candidate for either (spec "Hand-over"). When the ban ends the most travelled
-/// goes first, R's, though it arrived second (spec "Hand-over", roadmap D31), and
+/// only candidate for either (spec "Overload waits"). When the ban ends the most travelled
+/// goes first, R's, though it arrived second (spec "Overload waits", roadmap D31), and
 /// then P's.
 #[test]
 fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {

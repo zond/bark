@@ -168,7 +168,7 @@ fn leaf_to_leaf_across_two_relays() {
 /// messages for L3, which is dark. R1 refuses L1's message for L3
 /// (spec "Receiving DATA", "Delivery queue"); L1 keeps its relay, holds the message and offers
 /// it again one ban after the first refusal, twice that after the second,
-/// and so on (spec "Hand-over", "Attach and polls", roadmap D27, D29), until L3 is back, R1 has
+/// and so on (spec "The relay's own message", "Attach and polls", roadmap D27, D29), until L3 is back, R1 has
 /// room, and it arrives.
 #[test]
 fn a_leaf_told_busy_holds_its_message_for_the_ban() {
@@ -240,7 +240,7 @@ fn a_leaf_told_busy_holds_its_message_for_the_ban() {
 /// delivery queue holds. R2 queues them until the queue is full and then
 /// refuses the next (spec "Receiving DATA", "Delivery queue"), keeping what it has. R1
 /// holds that one, its application's, and offers it again after each ban
-/// (spec "Hand-over"), so its application waits. R2's DELIVERs to L2 go unanswered,
+/// (spec "The relay's own message"), so its application waits. R2's DELIVERs to L2 go unanswered,
 /// and R2 does not hand L2 another each time its send queue frees up:
 /// until L2 is heard again only the 60 s retry tries it. Back, L2 gets
 /// every message, the held one too.
@@ -315,7 +315,7 @@ fn a_full_delivery_queue_refuses_and_a_dark_leaf_waits() {
     dark.set(false);
     let all = |h: &Harness<Node>| ids.iter().all(|&id| received(h, l2, id) == 1);
     // R2's queue drains at its next retry; R1's message, refused until then,
-    // waits up to the longest hold before it is offered again (spec "Hand-over").
+    // waits up to the longest hold before it is offered again (spec "The relay's own message").
     let longest_hold = bark_proto::tables::budget::hold(u8::MAX);
     assert!(
         h.run_until(h.now + c.delivery_retry + longest_hold + secs(30), all),
