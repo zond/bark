@@ -50,6 +50,11 @@ Documents other than comments (`README.md`, this file, `docs/`) use plain Englis
 phrasing, ordinary words for things, and no project jargon. Use the fewest words that say
 the thing clearly and without mystery.
 
+Order a document so that each section builds only on the sections before it, and refer
+back rather than forward wherever the order allows. Say each thing once, in the section
+it belongs to, and refer to it from elsewhere. Write as tersely as a software or radio
+engineer who has not seen the project can still read, and no terser.
+
 `README.md` is the project overview. This file is the contributor guide and ruleset.
 `docs/` holds design, research and decisions, each dated.
 
