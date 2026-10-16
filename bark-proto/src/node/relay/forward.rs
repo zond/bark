@@ -81,10 +81,9 @@
 //! it the next message at once only adds frames there. The failed
 //! forward waits for the ban and goes to the same neighbour again, and
 //! moves on only once a failure has demoted it; a return waits the same
-//! way, and is dropped only then ([`AfterFailure::Wait`]). Going to the
-//! next candidate at once instead ([`AfterFailure::Reroute`]) sends the
-//! message the long way round just when the channel is full, and
-//! measured, it undoes the ban's gain (roadmap D42).
+//! way, and is dropped only then. Going to the next candidate at once
+//! would send the message the long way round just when the channel is
+//! full; measured, it undoes the ban's gain (roadmap D42).
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
@@ -105,7 +104,6 @@ use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{LeafId, MsgId};
 use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Step};
-use crate::node::AfterFailure;
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
@@ -1129,15 +1127,11 @@ impl Relay {
         }
     }
 
-    /// When to offer a failed hand-over to `name` again, if this relay
-    /// waits for a silent neighbour rather than moving on (roadmap D42,
-    /// [`AfterFailure::Wait`]): when its ban ends, until a failure demotes
-    /// it. A demoted neighbour is likely gone or faded; a forward then
-    /// takes its next candidate, and a return is dropped.
+    /// When to offer a failed hand-over to `name` again (roadmap D42):
+    /// when its ban ends, until a failure demotes it. A demoted neighbour
+    /// is likely gone or faded; a forward then takes its next candidate,
+    /// and a return is dropped.
     fn wait_for(&self, name: ShortName, now: Instant) -> Option<Instant> {
-        if self.config.after_failure != AfterFailure::Wait {
-            return None;
-        }
         let (_, n) = self.neighbours.by_short(name)?;
         (!self.neighbours.is_demoted(n, now)).then_some(n.banned_until)
     }

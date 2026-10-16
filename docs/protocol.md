@@ -777,10 +777,9 @@ rate that loop is what breaks first. The message whose hand-over failed
 waits for the same neighbour rather than going to the next one: the
 next one is usually a longer way round, which costs more frames on the
 same full channels, and measured, going there at once undoes what the
-ban gains (roadmap D42; `after_failure` reroute keeps it for
-comparison). Silence twice in a row demotes the neighbour, and a link
-that is really gone then costs one ban and one more hand-over before
-the message moves on. Messages whose every way on is silent wait, as
+ban gains (roadmap D42). Silence twice in a row demotes the neighbour,
+and a link that is really gone then costs one ban and one more
+hand-over before the message moves on. Messages whose every way on is silent wait, as
 for refusals, and a neighbour that is gone is tried again after each
 ban until its entry expires (§8.2).
 
