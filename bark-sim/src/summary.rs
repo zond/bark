@@ -192,6 +192,12 @@ pub struct SleepSummary {
     /// The counters.
     #[serde(flatten)]
     pub m: SleepMetrics,
+    /// Sleepy nodes whose anchor the scenario removed or restarted, ones
+    /// an anchor heard again, median and 90th percentile of how long that
+    /// took (s), and the messages for them originated after it and a
+    /// delivery TTL before the end, and of those delivered
+    /// (`Sim::orphans`).
+    pub orphans: (u64, u64, Option<f64>, Option<f64>, u64, u64),
 }
 
 /// The run summary.
@@ -414,6 +420,7 @@ impl Sim {
         Some(SleepSummary {
             listen_s_per_h: [mean, at(50.0), at(90.0)],
             m: self.metrics.sleep,
+            orphans: self.orphans(),
         })
     }
 
@@ -603,6 +610,16 @@ impl Summary {
                 share(m.off_channel),
                 share(m.unheard)
             );
+            let (n, back, p50, p90, sent, got) = z.orphans;
+            if n > 0 {
+                let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));
+                let _ = writeln!(
+                    s,
+                    "sleepy nodes whose anchor went: {n}, heard again {back}, after p50 {} s p90 {} s; messages for them after it {got} / {sent} delivered",
+                    f(p50),
+                    f(p90)
+                );
+            }
         }
         let h = &self.hop_places;
         if h.refusals > 0 {

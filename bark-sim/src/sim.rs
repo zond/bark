@@ -476,6 +476,9 @@ pub struct Sim {
     /// DATA on air addressed to a sleepy node: key to the node and whether
     /// it was asleep when the frame started.
     pub(crate) to_sleepy: HashMap<u64, (u32, bool)>,
+    /// Sleepy nodes whose anchor the scenario removed or restarted, and
+    /// when; and, once an anchor hears them again, when that was.
+    pub(crate) orphans: HashMap<u32, (Instant, Option<Instant>)>,
     origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
@@ -631,6 +634,7 @@ impl Sim {
                 .map(|i| (key(ids[i as usize]), i))
                 .collect(),
             to_sleepy: HashMap::new(),
+            orphans: HashMap::new(),
             ids,
             positions,
             sites: site,
@@ -1175,6 +1179,31 @@ impl Sim {
         }
     }
 
+    /// Sleepy nodes whose anchor was removed or restarted: how many, how
+    /// many an anchor heard again and the median and 90th percentile of
+    /// how long that took, s; and the messages for them originated after
+    /// that, and of those delivered.
+    pub fn orphans(&self) -> (u64, u64, Option<f64>, Option<f64>, u64, u64) {
+        let mut back: Vec<u64> = self
+            .orphans
+            .values()
+            .filter_map(|&(t, b)| b.map(|b| b.since(t).as_micros()))
+            .collect();
+        back.sort_unstable();
+        let at = |p| crate::metrics::percentile(&back, p).map(|us| us as f64 / 1e6);
+        let (mut sent, mut got) = (0, 0);
+        for o in &self.origins {
+            if let Some(&(t, _)) = self.orphans.get(&o.dst) {
+                if o.t >= t && o.t + Duration::from_secs(600) <= self.end {
+                    sent += 1;
+                    got += u64::from(o.fate == Fate::Delivered);
+                }
+            }
+        }
+        let n = self.orphans.len() as u64;
+        (n, back.len() as u64, at(50.0), at(90.0), sent, got)
+    }
+
     /// The radio of `node` sleeps until `until`: anything it was receiving
     /// is lost, and it receives nothing until then.
     fn sleep(&mut self, node: u32, until: Instant) {
@@ -1221,8 +1250,16 @@ impl Sim {
             };
             let anchor = &self.relays[ai as usize];
             s.anchored += 1;
-            s.off_channel += u64::from(anchor.home() != leaf.home());
-            s.unheard += u64::from(anchor.heard_nodes().get(leaf.id()).is_none());
+            let off = anchor.home() != leaf.home();
+            let unheard = anchor.heard_nodes().get(leaf.id()).is_none();
+            s.off_channel += u64::from(off);
+            s.unheard += u64::from(unheard);
+            let hears = self.nodes[ai as usize].alive && !off && !unheard;
+            if let Some((_, back @ None)) = self.orphans.get_mut(&(n as u32)) {
+                if hears {
+                    *back = Some(self.now);
+                }
+            }
         }
     }
 
@@ -2029,6 +2066,14 @@ impl Sim {
         let e = &self.script[k as usize];
         let (node, action, channel, len, preamble) =
             (e.node, e.action, e.channel, e.len, e.preamble);
+        if matches!(action, ScriptAction::Remove | ScriptAction::Restart) && node < self.n_relays {
+            let id = self.relays[node as usize].id();
+            for n in self.n_relays..self.node_count() as u32 {
+                if self.relays[n as usize].anchor().is_some_and(|a| a.id == id) {
+                    self.orphans.entry(n).or_insert((self.now, None));
+                }
+            }
+        }
         match action {
             ScriptAction::Remove => self.remove(node),
             ScriptAction::Restart => self.restart(node),
