@@ -1325,12 +1325,7 @@ whose ACK was lost finds the node still listening. Nothing caps a burst
 but the holder's bucket ([duty cycle cap](#duty-cycle-cap)): once the bucket would keep the
 next message past the hand-over, the node sleeps and the rest wait for
 its next beat. A delivery that goes unanswered marks the node asleep,
-and its messages wait for its next beat. A bit in DATA saying that more
-wait, with the node sleeping at once after a DATA without it, saved
-4 s of listening an hour on average and 11 s at the median in the
-simulated capacity domain at the texting rate of [capacity and sizing](#capacity-and-sizing), and
-delivered 13 to 25 points less of flows of a text every 0.5 to 2 s to
-one node (roadmap D48).
+and its messages wait for its next beat.
 
 The DATA carries the hop count as any hand-over ([hop count](#hop-count)) and the
 time the message had left when it arrived: the delivery queue's wait
