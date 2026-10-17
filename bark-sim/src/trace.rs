@@ -140,6 +140,9 @@ impl Tracer {
             Action::Listen(c) => {
                 let _ = write!(what, "listen ch {}", c.index());
             }
+            Action::Sleep(until) => {
+                let _ = write!(what, "sleep to {:.3} s", until.as_micros() as f64 / 1e6);
+            }
             Action::Transmit(f) => {
                 let _ = write!(
                     what,

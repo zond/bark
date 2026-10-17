@@ -362,7 +362,7 @@ impl Relay {
     /// often a faint, far one, and at twice the spec "Capacity and sizing"
     /// rate the relays reached their cap and the domain collapsed
     /// (`docs/one-node-type-2026-10-16.md`).
-    fn first_hop(&self, now: Instant) -> Option<NodeId> {
+    pub(super) fn first_hop(&self, now: Instant) -> Option<NodeId> {
         let a = self.anchor.filter(|_| self.sleeps())?;
         self.neighbours
             .live(now)
@@ -435,6 +435,7 @@ impl Relay {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
                 self.replies.owe(reply, d.sender_home, deadline, now);
+                self.renew = false;
             }
             return;
         }
@@ -446,6 +447,8 @@ impl Relay {
             return;
         }
         self.replies.owe(reply, d.sender_home, deadline, now);
+        // A sleepy node listens on once it has answered (spec "Delivery").
+        self.renew = d.dst_id == self.me();
         if completes {
             self.handover_done(now, emit);
         }
@@ -1187,6 +1190,9 @@ impl Relay {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
                 if self.config.sleepy && d.hops == 0 {
+                    if self.anchor.is_some_and(|a| a.id == d.dst_hop) {
+                        self.check_anchor(now, emit);
+                    }
                     // A sleepy node's own message tries its anchor again a
                     // fade later (spec "A sleepy node's own message"):
                     // the ban's ladder would offer it every few seconds to
@@ -1265,6 +1271,7 @@ impl Relay {
         let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.replies.abandon();
+            self.renew = false;
             return true;
         }
         match self.replies.begin() {
@@ -1288,6 +1295,7 @@ impl Relay {
                     self.radio.start(Job::Reply, Action::Transmit(frame), emit);
                 } else {
                     self.replies.abandon();
+                    self.renew = false;
                 }
             }
             None => {}

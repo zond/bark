@@ -86,6 +86,13 @@
 //! sleepy entry's.
 //!
 //! [`beat_period`]: crate::tables::heard::beat_period
+//!
+//! # The anchor of a node that sleeps
+//!
+//! A sleeping node hears its anchor's heartbeat only when the rotation
+//! lands in one of its windows, so it keeps the anchor's entry
+//! ([`Neighbours::pin`]): the entry neither expires nor makes way for a
+//! newcomer while pinned (spec "Relay choice").
 
 use crate::geo::{LocalPlane, Point};
 use crate::ids::NodeId;
@@ -199,6 +206,8 @@ impl Heard {
 pub struct Neighbours {
     slots: [Option<Neighbour>; NEIGHBOURS],
     params: NeighbourParams,
+    /// The entry kept whatever its age (module documentation).
+    pinned: Option<NodeId>,
 }
 
 impl Neighbours {
@@ -207,6 +216,7 @@ impl Neighbours {
         Neighbours {
             slots: [None; NEIGHBOURS],
             params,
+            pinned: None,
         }
     }
 
@@ -282,7 +292,12 @@ impl Neighbours {
 
     /// Whether `n` has expired at `now`.
     pub fn is_expired(&self, n: &Neighbour, now: Instant) -> bool {
-        now.since(n.last_heard) >= self.expire_after(n)
+        Some(n.id) != self.pinned && now.since(n.last_heard) >= self.expire_after(n)
+    }
+
+    /// Keep the entry of `id`, if any, whatever its age; `None` keeps none.
+    pub fn pin(&mut self, id: Option<NodeId>) {
+        self.pinned = id;
     }
 
     fn expire_after(&self, n: &Neighbour) -> Duration {
@@ -429,6 +444,7 @@ impl Neighbours {
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()
+            .filter(|n| Some(n.id) != self.pinned)
             .map(|n| n.last_heard + self.expire_after(n))
             .min()
     }
@@ -457,7 +473,7 @@ pub fn victim(table: &Neighbours, sleepy: bool, now: Instant) -> Option<usize> {
     let oldest = |sleepy: bool, demoted: Option<bool>| {
         table
             .slots()
-            .filter(|(_, n)| n.sleepy == sleepy)
+            .filter(|(_, n)| n.sleepy == sleepy && Some(n.id) != table.pinned)
             .filter(|(_, n)| demoted.is_none_or(|d| table.is_demoted(n, now) == d))
             .min_by_key(|(_, n)| n.last_heard)
             .map(|(i, _)| i)

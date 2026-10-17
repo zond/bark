@@ -5,7 +5,7 @@
 
 use crate::links::{BuildStats, Site};
 use crate::metrics::{
-    percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, TypeAirtime,
+    percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, SleepMetrics, TypeAirtime,
 };
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
@@ -182,6 +182,18 @@ pub struct ReturnsSummary {
     pub max_s: Option<f64>,
 }
 
+/// What sleeping does, after the settle time (`metrics::SleepMetrics`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SleepSummary {
+    /// Listening time per sleepy node and hour, seconds: the time its
+    /// radio was not asleep, mean, median and 90th percentile over the
+    /// sleepy nodes.
+    pub listen_s_per_h: [f64; 3],
+    /// The counters.
+    #[serde(flatten)]
+    pub m: SleepMetrics,
+}
+
 /// The run summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Summary {
@@ -216,6 +228,9 @@ pub struct Summary {
     /// Dark leaves coming back, if any went dark.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub returns: Option<ReturnsSummary>,
+    /// Sleepy nodes, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep: Option<SleepSummary>,
     /// Refusals for room, and the hop places free at them.
     #[serde(skip_serializing_if = "hop_places_none")]
     pub hop_places: HopPlaceRefusals,
@@ -366,6 +381,7 @@ impl Sim {
                     max_s: s(100.0),
                 }
             }),
+            sleep: self.sleep_summary(),
             hop_places: m.hop_places,
             addressed: m.addressed,
             channels,
@@ -376,6 +392,31 @@ impl Sim {
 }
 
 impl Sim {
+    /// Listening time of the sleepy nodes after the settle time, and what
+    /// sleeping did.
+    fn sleep_summary(&self) -> Option<SleepSummary> {
+        let n = self.relays() as usize;
+        let window = self
+            .now()
+            .as_micros()
+            .saturating_sub(self.settle.as_micros());
+        if self.node_count() <= n || window == 0 {
+            return None;
+        }
+        let per_h = |asleep: u64| window.saturating_sub(asleep) as f64 / window as f64 * 3600.0;
+        let mut listen: Vec<u64> = self.metrics.nodes[n..]
+            .iter()
+            .map(|m| (per_h(m.asleep_us) * 1e3) as u64)
+            .collect();
+        listen.sort_unstable();
+        let mean = listen.iter().sum::<u64>() as f64 / listen.len() as f64 / 1e3;
+        let at = |p: f64| percentile(&listen, p).unwrap_or(0) as f64 / 1e3;
+        Some(SleepSummary {
+            listen_s_per_h: [mean, at(50.0), at(90.0)],
+            m: self.metrics.sleep,
+        })
+    }
+
     /// Where and why a lost message was lost; `None` unless it was.
     fn lost_label(&self, f: Fate) -> Option<String> {
         match f {
@@ -544,6 +585,25 @@ impl Summary {
             self.home_moves,
             self.relay_changes
         );
+        if let Some(z) = &self.sleep {
+            let m = &z.m;
+            let share = |x: u64| x as f64 / m.anchored.max(1) as f64;
+            let _ = writeln!(
+                s,
+                "sleepy nodes listen {:.1} s an hour (median {:.1}, p90 {:.1}); DATA to them received {}, lost asleep {}, lost otherwise {}; delivery TTL ran out at the anchor {} (node in reach) {} (dark), elsewhere {}; anchor on another channel {:.4}, anchor not hearing {:.4}",
+                z.listen_s_per_h[0],
+                z.listen_s_per_h[1],
+                z.listen_s_per_h[2],
+                m.to_sleepy[0],
+                m.to_sleepy[1],
+                m.to_sleepy[2],
+                m.queue_expired[0],
+                m.queue_expired[1],
+                m.queue_expired[2],
+                share(m.off_channel),
+                share(m.unheard)
+            );
+        }
         let h = &self.hop_places;
         if h.refusals > 0 {
             let _ = writeln!(

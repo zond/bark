@@ -133,8 +133,8 @@ fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
 
 /// A message for a sleepy node waits at its holder, the owner of its
 /// address, until the node beats, and goes to it in the window after the
-/// beat (`tables::heard`). With `sleepy_listens` the holder sends it at
-/// once. The wait is the delivery queue's and does not count against the
+/// beat (`tables::heard`). With `sleepy_listens` the node listens all the
+/// time and the holder sends it at once. The wait is the delivery queue's and does not count against the
 /// message's time left: the DATA carries the time it arrived with.
 #[test]
 fn a_message_for_a_sleepy_node_goes_on_its_beat() {
@@ -146,7 +146,7 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
         };
         let mut h = Harness::new(vec![
             node_with(0.0, false, 11, config),
-            node(50.0, true, 12),
+            node_with(50.0, true, 12, config),
         ]);
         h.link(r, s);
         h.start_at(s, at(10));
@@ -200,7 +200,10 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
 /// A sleepy neighbour is a next hop only where no node that is not sleepy
 /// is live: O hands a message for D to A although S is nearer D, and to S
 /// once A has gone from its table (spec "Next hop", extended). All share one channel: a
-/// sleepy node beats only on its home, and only nodes there hear it.
+/// sleepy node beats only on its home, and only nodes there hear it. S
+/// has an anchor and would sleep, taking the message only in its window
+/// after a beat; it listens here (`sleepy_listens`), so that the test is
+/// of the choice of next hop.
 ///
 /// ```text
 ///   O ---- A ---- D
@@ -217,7 +220,15 @@ fn a_sleepy_neighbour_is_the_last_resort() {
     let mut h = Harness::new(vec![
         node_with(0.0, false, 21, one),
         node_with(400.0, false, 22, one),
-        node(500.0, true, 23),
+        node_with(
+            500.0,
+            true,
+            23,
+            Config {
+                sleepy_listens: true,
+                ..Config::default()
+            },
+        ),
         node_with(800.0, false, 24, one),
     ]);
     for (x, y) in [(o, a), (a, d), (o, s), (s, d)] {
@@ -312,7 +323,9 @@ fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
 
 /// A sleepy node keeps its anchor against a node a little stronger and
 /// moves to one 8 dB stronger once it has heard it twice
-/// (spec "Relay choice"), beating at once on the new channel.
+/// (spec "Relay choice"), beating at once on the new channel. It listens
+/// here (`sleepy_listens`): asleep it would hear the other's heartbeats
+/// only in its windows.
 #[test]
 fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
     let (first, second, s) = (0, 1, 2);
@@ -323,7 +336,15 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
     let mut h = Harness::new(vec![
         node_with(0.0, false, 51, quiet(3)),
         node_with(300.0, false, 52, quiet(7)),
-        node(50.0, true, 53),
+        node_with(
+            50.0,
+            true,
+            53,
+            Config {
+                sleepy_listens: true,
+                ..Config::default()
+            },
+        ),
     ]);
     h.link(first, s);
     h.set_rssi(first, s, -95);
@@ -356,4 +377,76 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
             .any(|&(t, c, _)| t >= moved_at && Some(c) == bark_proto::Channel::new(7)),
         "a beat at once on the new channel"
     );
+}
+
+/// Time node `i`'s radio slept between `from` and `to`.
+fn slept(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> Duration {
+    h.nodes[i]
+        .asleep
+        .iter()
+        .map(|&(a, b)| (a.max(from), b.min(to)))
+        .filter(|(a, b)| b > a)
+        .fold(Duration::ZERO, |sum, (a, b)| sum + b.since(a))
+}
+
+/// A sleepy node with an anchor lets its radio sleep (`Action::Sleep`,
+/// core-interface §3 rule 10) except while it beats and through the
+/// window after each beat (spec "Delivery"), and a message for it still
+/// reaches it there.
+#[test]
+fn a_sleepy_node_sleeps_between_its_windows() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 61), node(50.0, true, 62)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert!(h.nodes[s].core.sleeps());
+    let id = send(&mut h, r, s, b"in the window");
+    h.run_until(at(3000), |_| false);
+    assert!(delivered_at(&h, s, id).is_some());
+    let window = HeardParams::from_config(&Config::default()).awake;
+    let b: Vec<_> = beats(&h, s)
+        .into_iter()
+        .map(|(t, _, _)| t)
+        .filter(|&t| t >= at(1000))
+        .collect();
+    assert!(b.len() >= 5, "{} beats", b.len());
+    for &t in &b {
+        assert_eq!(slept(&h, s, t, t + window), Duration::ZERO, "beat at {t:?}");
+    }
+    let (from, to) = (at(1000), at(3000));
+    let awake = to.since(from) - slept(&h, s, from, to);
+    // The windows, the delivery's, and nothing more: it keeps its anchor
+    // without hearing it (spec "Relay choice").
+    let most = window.mul(b.len() as u64 + 2);
+    assert!(awake <= most, "awake {awake:?} of {:?}", to.since(from));
+}
+
+/// A sleeping node wakes to hand its own message to its anchor and stays
+/// awake for the ACK, so one transmission is enough.
+#[test]
+fn a_sleeping_node_hears_the_ack_to_its_own_message() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 71), node(50.0, true, 72)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    // Asleep when the application sends.
+    let asleep = |h: &Harness<Relay>| {
+        h.nodes[s]
+            .asleep
+            .last()
+            .is_some_and(|&(a, b)| a <= h.now && b > h.now + secs(1))
+    };
+    assert!(h.run_until(h.now + secs(400), asleep));
+    let id = send(&mut h, s, r, b"to my anchor");
+    assert!(h.run_until(h.now + secs(5), |h| delivered_at(h, r, id).is_some()));
+    h.run_for(secs(1));
+    let data = h.nodes[s]
+        .sent
+        .iter()
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .count();
+    assert_eq!(data, 1, "answered at the first transmission");
+    assert!(h.nodes[s].core.holding().next().is_none());
 }

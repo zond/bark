@@ -179,6 +179,12 @@ pub enum Action {
     Rssi(Channel),
     /// Transmit a frame; report `Event::TxDone`.
     Transmit(Frame),
+    /// The radio may be off until this instant: the core needs to hear
+    /// nothing before then. The core's next `Listen`, `Cad`, `Rssi` or
+    /// `Transmit` ends the sleep sooner; once it ends the radio listens on
+    /// the resting channel again (`docs/core-interface.md` §3 rule 10).
+    /// Only a sleepy node with an anchor asks for it.
+    Sleep(Instant),
     /// Tell the application something.
     App(AppEvent),
     /// A protocol event for logs and the simulator's metrics. Carries no
@@ -272,6 +278,9 @@ pub enum Trace {
         /// The node.
         node: NodeId,
     },
+    /// A sleepy node that sleeps listens a rotation to check its anchor
+    /// (spec "Relay choice").
+    AnchorCheck,
     /// A message for another node entered the delivery queue (spec
     /// "Delivery queue").
     Queued {

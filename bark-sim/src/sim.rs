@@ -209,6 +209,16 @@ pub(crate) struct NodeState {
     pub restarts: u32,
     /// The last heartbeats to reach this node, for [`crate::metrics::Addressed`].
     pub beats: BeatRing,
+    /// The radio is asleep until then (`Action::Sleep`), since `asleep_since`.
+    pub asleep: Option<Instant>,
+    pub asleep_since: Instant,
+}
+
+impl NodeState {
+    /// Whether the radio is asleep at `t`.
+    pub(crate) fn asleep_at(&self, t: Instant) -> bool {
+        self.asleep.is_some_and(|u| t < u)
+    }
 }
 
 /// The last few heartbeats to reach a node: when each was on the air, its
@@ -461,6 +471,11 @@ pub struct Sim {
     back_at: Vec<Option<Instant>>,
     /// Leaf ID to node index, for the leaves that go dark.
     leaf_nodes: HashMap<[u8; 4], u32>,
+    /// Sleepy node by ID, as [`key`] gives it.
+    pub(crate) sleepy_index: HashMap<u32, u32>,
+    /// DATA on air addressed to a sleepy node: key to the node and whether
+    /// it was asleep when the frame started.
+    pub(crate) to_sleepy: HashMap<u64, (u32, bool)>,
     origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
@@ -585,6 +600,8 @@ impl Sim {
                 held_gen: 0,
                 restarts: 0,
                 beats: BeatRing::default(),
+                asleep: None,
+                asleep_since: Instant::ZERO,
             })
             .collect();
 
@@ -610,6 +627,10 @@ impl Sim {
             names,
             xy,
             relay_index: (0..n_relays).map(|i| (key(ids[i as usize]), i)).collect(),
+            sleepy_index: (n_relays..n as u32)
+                .map(|i| (key(ids[i as usize]), i))
+                .collect(),
+            to_sleepy: HashMap::new(),
             ids,
             positions,
             sites: site,
@@ -930,6 +951,9 @@ impl Sim {
     /// Run to the scenario end.
     pub fn run(&mut self) {
         self.run_until(self.end);
+        for n in 0..self.node_count() as u32 {
+            self.wake(n);
+        }
         if let Some(t) = &mut self.tracer {
             t.flush();
         }
@@ -994,6 +1018,7 @@ impl Sim {
                 self.sample_load();
                 if self.now.as_micros().is_multiple_of(SERIES_EVERY_US) {
                     self.series_rows();
+                    self.sample_anchors();
                 }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
@@ -1150,6 +1175,57 @@ impl Sim {
         }
     }
 
+    /// The radio of `node` sleeps until `until`: anything it was receiving
+    /// is lost, and it receives nothing until then.
+    fn sleep(&mut self, node: u32, until: Instant) {
+        self.wake(node);
+        if until <= self.now {
+            return;
+        }
+        self.abort_lock(node, Deaf::Asleep);
+        let st = &mut self.nodes[node as usize];
+        st.asleep = Some(until);
+        st.asleep_since = self.now;
+    }
+
+    /// The radio of `node` is awake from now: count the time it slept
+    /// after the settle time.
+    fn wake(&mut self, node: u32) {
+        let (now, settle) = (self.now, self.settle);
+        let st = &mut self.nodes[node as usize];
+        let Some(until) = st.asleep.take() else {
+            return;
+        };
+        let (from, to) = (st.asleep_since.max(settle), until.min(now));
+        if to > from {
+            self.metrics.nodes[node as usize].asleep_us += to.since(from).as_micros();
+        }
+    }
+
+    /// Once a minute after the settle time: sleepy nodes whose anchor would
+    /// not hear their beat, on another channel or not in its heard table.
+    fn sample_anchors(&mut self) {
+        if self.now < self.settle || self.n_relays == 0 {
+            return;
+        }
+        let s = &mut self.metrics.sleep;
+        s.samples += 1;
+        for n in self.n_relays as usize..self.relays.len() {
+            let (leaf, st) = (&self.relays[n], &self.nodes[n]);
+            let Some(a) = leaf.anchor() else { continue };
+            if !st.alive {
+                continue;
+            }
+            let Some(&ai) = self.relay_index.get(&key(a.id)) else {
+                continue;
+            };
+            let anchor = &self.relays[ai as usize];
+            s.anchored += 1;
+            s.off_channel += u64::from(anchor.home() != leaf.home());
+            s.unheard += u64::from(anchor.heard_nodes().get(leaf.id()).is_none());
+        }
+    }
+
     /// A node hears the beat of a sleepy node that came back into reach,
     /// and is its anchor, or any node if it has none: the network knows the
     /// sleepy node is back.
@@ -1183,7 +1259,15 @@ impl Sim {
     /// scenario rather than the core; their completions go to the log.
     fn apply(&mut self, node: u32, a: Action, scripted: bool) {
         let traced = (!scripted && self.tracer.is_some()).then_some(a);
+        if matches!(
+            a,
+            Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+        ) {
+            // Any use of the radio wakes it (core-interface §3 rule 10).
+            self.wake(node);
+        }
         match a {
+            Action::Sleep(until) => self.sleep(node, until),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
@@ -1208,6 +1292,7 @@ impl Sim {
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::AnchorCheck => c.anchor_checks += 1,
                     Trace::Forwarded { .. } => c.handed_over += 1,
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
@@ -1542,6 +1627,22 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
+        let dst = self
+            .msg_tags
+            .get(&msg_id.0)
+            .and_then(|&t| self.origins.get(t as usize))
+            .map(|o| o.dst);
+        if let (DropReason::QueueExpired, Some(dst), true) = (reason, dst, self.now >= self.settle)
+        {
+            let me = self.relays[node as usize].id();
+            let anchor = self.relays[dst as usize].anchor().map(|a| a.id);
+            let k = match (anchor == Some(me), self.nodes[dst as usize].present) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, _) => 2,
+            };
+            self.metrics.sleep.queue_expired[k] += 1;
+        }
         if let Some(o) = self
             .msg_tags
             .get(&msg_id.0)
@@ -1983,6 +2084,7 @@ impl Sim {
         }
         self.abort_lock(node, Deaf::Absent);
         self.clear_arrivals(node);
+        self.wake(node);
         let st = &mut self.nodes[node as usize];
         st.alive = false;
         st.resting = None;

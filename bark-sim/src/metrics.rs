@@ -52,6 +52,8 @@ pub struct DeafCounts {
     pub corrupt: u64,
     /// Out of radio reach (dark leaf).
     pub absent: u64,
+    /// The radio asleep (`Action::Sleep`).
+    pub asleep: u64,
 }
 
 impl DeafCounts {
@@ -63,13 +65,14 @@ impl DeafCounts {
             Deaf::Tx => self.tx += 1,
             Deaf::Corrupt => self.corrupt += 1,
             Deaf::Absent => self.absent += 1,
+            Deaf::Asleep => self.asleep += 1,
             Deaf::HalfDuplex => unreachable!("counted as half_duplex"),
         }
     }
 
     /// Total.
     pub fn total(&self) -> u64 {
-        self.retune + self.cad + self.rssi + self.tx + self.corrupt + self.absent
+        self.retune + self.cad + self.rssi + self.tx + self.corrupt + self.absent + self.asleep
     }
 
     fn merge(&mut self, o: &DeafCounts) {
@@ -79,6 +82,7 @@ impl DeafCounts {
         self.tx += o.tx;
         self.corrupt += o.corrupt;
         self.absent += o.absent;
+        self.asleep += o.asleep;
     }
 }
 
@@ -174,6 +178,9 @@ pub struct NodeMetrics {
     /// For a sleepy node: times it took an anchor other than the one it
     /// last had (spec "Relay choice").
     pub relay_changes: u64,
+    /// For a sleepy node: time its radio was asleep after the settle
+    /// time, µs.
+    pub asleep_us: u64,
     /// Messages originated here by the traffic model.
     pub originated: u64,
     /// `AppEvent::Message` at this node.
@@ -206,6 +213,9 @@ pub struct CoreCounts {
     pub handovers_deferred: u64,
     /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
+    /// Rotations a sleepy node listened to check its anchor
+    /// (spec "Relay choice").
+    pub anchor_checks: u64,
     /// Messages a sleepy node took from this node as their holder.
     pub delivered: u64,
     /// Messages a neighbour took: sent on (spec "Next hop") or returned to the
@@ -536,6 +546,28 @@ pub struct AppMetrics {
     pub latencies_us: Vec<u64>,
 }
 
+/// What sleeping does (`Action::Sleep`), counted after the settle time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SleepMetrics {
+    /// DATA addressed to a sleepy node: received, lost while it was
+    /// asleep, lost otherwise.
+    pub to_sleepy: [u64; 3],
+    /// Messages a holder dropped at the end of the delivery TTL: held by
+    /// the node's anchor while the node was in reach, by its anchor while
+    /// it was dark, by a node that was no longer its anchor.
+    pub queue_expired: [u64; 3],
+    /// Minutes sampled.
+    pub samples: u64,
+    /// Summed over the samples, sleepy nodes with an anchor; of those,
+    /// ones on another channel than their anchor's home, and ones their
+    /// anchor does not have in its heard table.
+    pub anchored: u64,
+    /// See `anchored`.
+    pub off_channel: u64,
+    /// See `anchored`.
+    pub unheard: u64,
+}
+
 /// How soon the network learns that a dark sleepy node is back (spec
 /// "Delivery queue"): from the moment it is in reach again to the first
 /// beat of it its anchor, or any node if it has none, receives.
@@ -623,6 +655,8 @@ pub struct Metrics {
     pub app: AppMetrics,
     /// Dark leaves coming back.
     pub returns: LeafReturns,
+    /// What sleeping does to sleepy nodes and their holders.
+    pub sleep: SleepMetrics,
     /// Frames addressed to a relay, by fate.
     pub addressed: Addressed,
     /// Refusals for room, and the hop places free at them.

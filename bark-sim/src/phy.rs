@@ -218,11 +218,13 @@ pub enum Deaf {
     Corrupt,
     /// The node went out of radio reach (dark leaf) mid-packet.
     Absent,
+    /// The radio was asleep (`Action::Sleep`).
+    Asleep,
 }
 
 impl Deaf {
     /// Number of variants, for counter arrays.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
     /// All variants in counter order.
     pub const ALL: [Deaf; Deaf::COUNT] = [
         Deaf::Retune,
@@ -232,6 +234,7 @@ impl Deaf {
         Deaf::HalfDuplex,
         Deaf::Corrupt,
         Deaf::Absent,
+        Deaf::Asleep,
     ];
     /// Counter index.
     pub fn index(self) -> usize {
@@ -247,6 +250,7 @@ impl Deaf {
             "half_duplex",
             "corrupt",
             "absent",
+            "asleep",
         ][self as usize]
     }
 }

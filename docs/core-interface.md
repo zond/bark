@@ -1,7 +1,8 @@
 # Core interface
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
-2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46. Roadmap decision D3. The types are in
+2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
+roadmap D47. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -16,9 +17,9 @@ fn accepts_send(&self, now: Instant) -> bool;
 ```
 
 One struct, `Relay`, for every node; `Config::sleepy` makes it a sleepy node
-(spec "Sleepy nodes"). `Relay::sleeps()` says whether the node may sleep its radio between
-the windows after its beats: only a sleepy node with an anchor does. The core itself
-always listens.
+(spec "Sleepy nodes"). `Relay::sleeps()` says whether the node sleeps its radio between
+the windows after its beats: only a sleepy node with an anchor does. When the radio may
+sleep, and until when, the core says with `Action::Sleep` (§3 rule 10).
 
 The core never blocks, never sleeps, never allocates, and never reads a clock: `now` is an
 argument. Every random choice comes from the `Rng` seeded at construction, so a core's
@@ -72,6 +73,15 @@ Rules:
 9. **`Action::Trace` carries no obligation.** It reports protocol events (a dropped message
    and why, a deferral, a forward, a backtrack, a demotion, a channel move) for the simulator's
    metrics and the firmware's log. A driver may ignore it.
+10. **`Action::Sleep(until)` lets the radio sleep.** The core needs to hear nothing before
+    `until`, so the driver may switch the receiver off; what arrives meanwhile is lost to
+    the node. The sleep ends at `until`, or sooner at the core's next `Listen`, `Cad`,
+    `Rssi` or `Transmit`, which the driver carries out as ever, waking the radio first; the
+    radio then listens on the resting channel again. `until` is when the core next needs
+    the radio of its own accord, so a driver can have the receiver ready by then. A driver
+    that keeps listening breaks nothing: the core handles whatever it receives. Only a
+    sleepy node with an anchor asks for it, outside the windows in which it listens
+    (spec "Delivery").
 
 The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated.
 
@@ -117,6 +127,7 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | Clock | event-heap time | embassy monotonic |
 | Wakeup when `now >= next_wakeup()` | heap entry per core, lazily invalidated | one embassy timer |
 | `Listen` | update the per-channel listener set | `rx_switch_channel` |
+| `Sleep` | deaf until then or the next radio action; the time asleep is counted | ignored for now: the radio keeps listening |
 | `Cad` | deaf for CAD duration, result from the reception model | `prepare_for_cad` + `cad` |
 | `Rssi` | deaf for retune + sample, dB-sum at the node | `get_rssi` after retune |
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |

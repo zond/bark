@@ -54,6 +54,17 @@
 //! relay: it heartbeats on the rotating channel, with the sleepy type so
 //! that no other sleepy node takes it as its anchor, and chooses and
 //! moves its home by the busy estimate (spec "Sleepy nodes alone").
+//!
+//! # Sleep (`docs/core-interface.md` §3 rule 10)
+//!
+//! A node that sleeps tells its driver when the radio may be off
+//! ([`Action::Sleep`]): outside the window after its beat and after each
+//! message it takes (spec "Delivery"), unless it is beating, owes a reply,
+//! has a hand-over under way, or has no live anchor and must listen to
+//! choose one. The sleep lasts until the node next needs the radio, for
+//! its next beat or the next offer of its own message, unless the core
+//! starts an excursion sooner. With [`Config::sleepy_listens`], a research
+//! switch, it never sleeps.
 
 mod delivery;
 mod forward;
@@ -76,6 +87,7 @@ use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{Duration, Instant};
 use crate::wire::{Heartbeat, Packet};
+use forward::OWNER_RADIUS_M;
 
 /// Who started the outstanding excursion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,6 +106,22 @@ enum Job {
 /// than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more than
 /// two standard deviations here.
 pub const SWITCH_MARGIN_DB: f32 = 8.0;
+
+/// The path-loss exponent of the scenarios, fitted to the ranges of spec
+/// "Physical layer" (`scenarios/s4-capacity.toml`).
+pub const PATH_LOSS_EXPONENT: f32 = 3.6;
+
+/// How far a node that sleeps may move from where it chose or confirmed
+/// its anchor, `reach_m` away then, before it listens a rotation to check
+/// it (spec "Relay choice"): as far as takes the anchor's signal down by
+/// [`SWITCH_MARGIN_DB`] when moving straight away from it,
+/// `reach × (10^(margin / 10n) − 1)`, 0.67 of the distance to it; and no
+/// less than two GPS fixes of a node that has not moved may differ by
+/// ([`OWNER_RADIUS_M`]).
+pub fn move_bound_m(reach_m: f32) -> f32 {
+    let ratio = libm::powf(10.0, SWITCH_MARGIN_DB / (10.0 * PATH_LOSS_EXPONENT));
+    (reach_m * (ratio - 1.0)).max(OWNER_RADIUS_M)
+}
 
 /// A sleepy node's anchor: the node that is not sleepy whose home channel
 /// it listens on and whose position is its address.
@@ -242,6 +270,24 @@ pub struct Relay {
     /// When the bucket will fit the DATA to a sleepy node the send queue last had no
     /// room for, as a hand-over the bucket cannot fit yet is deferred.
     feed_at: Option<Instant>,
+    /// Until when the driver was told the radio may sleep (module
+    /// documentation).
+    asleep: Option<Instant>,
+    /// Until when a sleepy node listens after its beat or a message it
+    /// took (spec "Delivery").
+    awake_until: Instant,
+    /// The owed reply takes a DATA for this node: once it is sent, the
+    /// node listens a window longer.
+    renew: bool,
+    /// Since when a node that sleeps listens a rotation to check its
+    /// anchor.
+    rescan: Option<Instant>,
+    /// When the window it listens in ends, while it is awake.
+    window_ends: Option<Instant>,
+    /// Where the node was when it chose or last confirmed its anchor, and
+    /// how far the anchor was then, metres.
+    chosen_from: Position,
+    reach_m: f32,
 }
 
 impl Relay {
@@ -303,6 +349,13 @@ impl Relay {
             held: None,
             feed_due: false,
             feed_at: None,
+            asleep: None,
+            awake_until: Instant::ZERO,
+            renew: false,
+            rescan: None,
+            window_ends: None,
+            chosen_from: Position { lat: 0, lon: 0 },
+            reach_m: 0.0,
             config,
             rng: Rng::new(0),
         }
@@ -361,6 +414,13 @@ impl Relay {
             held,
             feed_due,
             feed_at,
+            asleep,
+            awake_until,
+            renew,
+            rescan,
+            window_ends,
+            chosen_from,
+            reach_m,
         } = self;
         *id = node_id;
         *plane = LocalPlane::new(config.position);
@@ -405,6 +465,13 @@ impl Relay {
         *held = None;
         *feed_due = false;
         *feed_at = None;
+        *asleep = None;
+        *awake_until = Instant::ZERO;
+        *renew = false;
+        *rescan = None;
+        *window_ends = None;
+        *chosen_from = config.position;
+        *reach_m = 0.0;
         *c = config;
         *r = rng;
     }
@@ -441,10 +508,56 @@ impl Relay {
     /// Whether this node sleeps between the windows after its beats: a
     /// sleepy node with an anchor, which holds its messages. One without
     /// listens all the time and heartbeats as a relay, since nobody could
-    /// hold its messages (roadmap D46). The core itself
-    /// always listens; this says when the driver may sleep the radio.
+    /// hold its messages (roadmap D46). When the radio may sleep, the core
+    /// says with [`Action::Sleep`].
     pub fn sleeps(&self) -> bool {
         self.config.sleepy && self.anchor.is_some()
+    }
+
+    /// Whether the radio may sleep at `now` (module documentation).
+    fn may_sleep(&self, now: Instant) -> bool {
+        self.sleeps()
+            && !self.config.sleepy_listens
+            && self.stage == Stage::Running
+            && now >= self.awake_until
+            && self.radio.idle()
+            && self.handover.idle()
+            && !self.replies.pending()
+            && self.beacon.check == Check::Idle
+            && self.beacon.current.is_none()
+            && self.first_hop(now).is_some()
+            && self.rescan.is_none()
+    }
+
+    /// When a node that sleeps next needs its radio of its own accord: its
+    /// next beat, or the next offer of a message it waits to send.
+    fn radio_due(&self) -> Instant {
+        let beat = self.beacon.next_at.max(self.beacon.ready_at);
+        self.queue.earliest_due().map_or(beat, |t| t.min(beat))
+    }
+
+    /// Tell the driver the radio may sleep, if it may and has not been
+    /// told.
+    fn sleep(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.asleep.is_some_and(|t| t > now) {
+            return;
+        }
+        // The window's end needs the core, to say so.
+        self.window_ends = (self.sleeps() && self.awake_until > now).then_some(self.awake_until);
+        if !self.may_sleep(now) {
+            return;
+        }
+        let until = self.radio_due();
+        if until > now {
+            self.asleep = Some(until);
+            emit(Action::Sleep(until));
+        }
+    }
+
+    /// This node took a DATA addressed to it: it listens a window longer,
+    /// for the next (spec "Delivery").
+    fn took(&mut self, now: Instant) {
+        self.awake_until = self.awake_until.max(now + self.heard.params().awake);
     }
 
     /// The heard table.
@@ -640,6 +753,12 @@ impl Relay {
         let Some(to) = to else {
             return false;
         };
+        self.take_anchor(&to, now, emit);
+        true
+    }
+
+    /// Make `to` the anchor: listen on its home, and beat there at once.
+    fn take_anchor(&mut self, to: &Neighbour, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.anchor = Some(Anchor {
             id: to.id,
             position: to.position,
@@ -650,13 +769,74 @@ impl Relay {
         // Heard at once and again soon by the new holder.
         self.beacon.next_at = now;
         self.beacon.quick = 1;
-        true
+        self.anchored();
+    }
+
+    /// The anchor was chosen or confirmed: a node that sleeps keeps it
+    /// whether or not it hears it, and measures its moves from here
+    /// (module documentation).
+    fn anchored(&mut self) {
+        self.rescan = None;
+        self.chosen_from = self.config.position;
+        self.reach_m = self.anchor.map_or(0.0, |a| {
+            self.plane.point(a.position).distance_m(Default::default())
+        });
+        let keep = self.sleeps() && !self.config.sleepy_listens;
+        self.neighbours
+            .pin(self.anchor.filter(|_| keep).map(|a| a.id));
+    }
+
+    /// Listen a worst-case rotation, from `now`, to check the anchor of a
+    /// node that sleeps (module documentation).
+    pub(super) fn check_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if !self.sleeps() || self.config.sleepy_listens || self.rescan.is_some() {
+            return;
+        }
+        self.rescan = Some(now);
+        emit(Action::Trace(Trace::AnchorCheck));
+    }
+
+    /// The rotation that began at `since` is over: keep the anchor if it
+    /// was heard, else take the strongest node heard that is not sleepy,
+    /// else none (spec "Relay choice", "Sleepy nodes alone").
+    fn anchor_checked(&mut self, since: Instant, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let heard = |n: &&Neighbour| !n.sleepy && n.last_heard >= since;
+        let anchor = self.anchor.map(|a| a.id);
+        if self
+            .neighbours
+            .iter()
+            .filter(heard)
+            .any(|n| Some(n.id) == anchor)
+        {
+            self.anchored();
+            return;
+        }
+        let best = self
+            .neighbours
+            .iter()
+            .filter(heard)
+            .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
+            .copied();
+        match best {
+            Some(b) => self.take_anchor(&b, now, emit),
+            None => {
+                self.rescan = None;
+                self.anchor = None;
+                self.first_heard = None;
+                self.neighbours.pin(None);
+            }
+        }
     }
 
     fn timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if let Stage::Booting(until) = self.stage {
             if now >= until {
                 self.finish_boot(now, emit);
+            }
+        }
+        if let Some(since) = self.rescan {
+            if now >= since + self.config.boot_listen {
+                self.anchor_checked(since, now, emit);
             }
         }
         if !self.sleeps() && self.mover.move_at.is_some_and(|t| now >= t) {
@@ -875,6 +1055,10 @@ impl Relay {
         }
         if sent {
             self.beacon.rotation = self.beacon.rotation.next();
+            if self.sleeps() {
+                // The window after its beat (spec "Delivery").
+                self.awake_until = now + self.heard.params().awake;
+            }
         }
         self.beacon.next_at = now + self.heartbeat_interval();
         if self.config.sleepy {
@@ -976,6 +1160,13 @@ impl Relay {
             AppCommand::SetPosition { position, surveyed } => {
                 self.config.surveyed = surveyed;
                 self.set_position(position);
+                let moved = self
+                    .plane
+                    .point(self.chosen_from)
+                    .distance_m(Default::default());
+                if moved > move_bound_m(self.reach_m) {
+                    self.check_anchor(now, emit);
+                }
             }
         }
     }
@@ -988,6 +1179,17 @@ fn random_channel(rng: &mut Rng) -> Channel {
 
 impl Core for Relay {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
+        // Any use of the radio ends a sleep (core-interface §3 rule 10).
+        let woke = core::cell::Cell::new(false);
+        let mut wake = |a: Action| {
+            let radio = matches!(
+                a,
+                Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+            );
+            woke.set(woke.get() || radio);
+            emit(a)
+        };
+        let emit: &mut dyn FnMut(Action) = &mut wake;
         if self.stage == Stage::Off {
             self.start(now, emit);
         }
@@ -1016,7 +1218,12 @@ impl Core for Relay {
                 Some(Job::HandOver) if self.handover.step() == Step::Tx => {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
-                Some(Job::Reply) => self.replies.sent(),
+                Some(Job::Reply) => {
+                    self.replies.sent();
+                    if core::mem::take(&mut self.renew) {
+                        self.took(now);
+                    }
+                }
                 _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),
@@ -1026,6 +1233,10 @@ impl Core for Relay {
         self.delivery_timers(now, emit);
         self.pump(now, emit);
         self.app_ready_at = self.send_ready_at(now);
+        if woke.get() {
+            self.asleep = None;
+        }
+        self.sleep(now, emit);
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
@@ -1046,6 +1257,12 @@ impl Core for Relay {
             at(t);
         }
         if let Some(t) = self.delivery_wakeup() {
+            at(t);
+        }
+        if let Some(t) = self.rescan {
+            at(t + self.config.boot_listen);
+        }
+        if let Some(t) = self.window_ends {
             at(t);
         }
         // The application waits for the bucket (core-interface §4).

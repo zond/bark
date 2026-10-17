@@ -79,6 +79,9 @@ pub struct SimNode<C: Core> {
     pub traces: Vec<(Instant, Trace)>,
     pub sent: Vec<(Instant, Frame)>,
     pub received: Vec<(Instant, Vec<u8>)>,
+    /// When the radio was off (`Action::Sleep`, core-interface §3 rule 10):
+    /// from, until.
+    pub asleep: Vec<(Instant, Instant)>,
 }
 
 /// Decides whether a frame is lost: `(now, from, to, bytes)`.
@@ -120,6 +123,7 @@ impl<C: Core> Harness<C> {
                 traces: Vec::new(),
                 sent: Vec::new(),
                 received: Vec::new(),
+                asleep: Vec::new(),
             })
             .collect();
         Harness {
@@ -344,6 +348,7 @@ impl<C: Core> Harness<C> {
             && n.resting_since <= tx.start
             && n.deaf_until <= tx.start
             && n.ex.is_none_or(|e| !e.deaf)
+            && !n.asleep.iter().any(|&(a, b)| a < tx.end && b > tx.start)
             && !self.txs.iter().any(|o| {
                 o.from != tx.from
                     && o.channel == tx.channel
@@ -398,7 +403,20 @@ impl<C: Core> Harness<C> {
 
     fn apply(&mut self, i: usize, a: Action) {
         let now = self.now;
+        if matches!(
+            a,
+            Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+        ) {
+            // Any use of the radio wakes it.
+            if let Some(last) = self.nodes[i].asleep.last_mut() {
+                last.1 = last.1.min(now);
+            }
+        }
         match a {
+            Action::Sleep(until) => {
+                assert!(until > now, "core {i} asked to sleep until the past");
+                self.nodes[i].asleep.push((now, until));
+            }
             Action::Listen(c) => {
                 let n = &mut self.nodes[i];
                 if n.resting != Some(c) {

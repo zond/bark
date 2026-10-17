@@ -403,7 +403,7 @@ impl Replies {
         self.owed.map(|o| o.ready)
     }
 
-    #[cfg(test)]
+    /// Whether a reply is owed.
     pub(crate) fn pending(&self) -> bool {
         self.owed.is_some()
     }

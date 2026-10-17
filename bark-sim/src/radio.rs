@@ -132,6 +132,12 @@ impl Sim {
             Some(WirePacket::Heartbeat(h)) => Some(h.sleepy),
             _ => None,
         };
+        if let Some(WirePacket::Data(d)) = decoded {
+            if let Some(&n) = self.sleepy_index.get(&key(d.dst_hop)) {
+                let asleep = self.nodes[n as usize].asleep_at(self.now);
+                self.to_sleepy.insert(tx_key, (n, asleep));
+            }
+        }
         let m = &mut self.metrics;
         m.nodes[src as usize].tx_frames += 1;
         m.nodes[src as usize].airtime_us += air;
@@ -235,6 +241,18 @@ impl Sim {
                         got.push((b, r.mw, r.max_i_mw));
                     }
                 }
+            }
+        }
+        if let Some((n, asleep)) = self.to_sleepy.remove(&tx.key) {
+            let fate = if got.iter().any(|g| g.0 == n) {
+                0
+            } else if asleep {
+                1
+            } else {
+                2
+            };
+            if self.now >= self.settle {
+                self.metrics.sleep.to_sleepy[fate] += 1;
             }
         }
         let answer = self.answer_of.remove(&tx.key);
@@ -344,7 +362,9 @@ impl Sim {
         let mut locked = false;
         if let (Some(p), 0) = (packet, offset) {
             self.metrics.candidate(b, a.channel);
-            let outcome = if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
+            let outcome = if st.asleep_at(now) {
+                Some(Outcome::Deaf(Deaf::Asleep))
+            } else if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
                 Some(Outcome::Deaf(ex.reason_at(now)))
             } else if now < st.listen_from {
                 Some(Outcome::Deaf(Deaf::Retune))
