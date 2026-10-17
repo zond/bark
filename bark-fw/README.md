@@ -44,12 +44,12 @@ Verified on the host:
   with each of the three builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
   initial stack pointer is `0x20040000`. The node image, relay or
-  sleepy, is 301 KiB of flash (`llvm-size`), 162 KiB of it the node's
+  sleepy, is 306 KiB of flash (`llvm-size`), 162 KiB of it the node's
   empty tables, which start in flash and are copied to RAM at boot; it
-  uses 171 KiB of RAM before the stack, which leaves 85 KiB for the
-  stack, and its deepest single stack frame, the largest stack
-  adjustment in the disassembly (`llvm-objdump`), is 23 KiB, in the main
-  task (2026-10-17, one node type, roadmap D46). The same measure gives
+  uses 170 KiB of RAM before the stack, which leaves 86 KiB for the
+  stack (2026-10-17, roadmap D47). Its deepest single stack frame, the
+  largest stack adjustment in the disassembly (`llvm-objdump`), is 23 KiB,
+  in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
   28 KiB for the image before D46, where this file said 18 KiB.
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
   the host workspace).

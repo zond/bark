@@ -136,19 +136,19 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-17, checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-17 (roadmap D47), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 56 B | 3.5 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 64 B | 4.0 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
 | Send queue (spec "Send queue") | (40 + 254) × 280 B | 80.4 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **161.6 KiB** |
+| **All** | | **162.1 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -156,13 +156,13 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-166 192 B (162.3 KiB, measured 2026-10-17): the tables and, in under 1 KiB around them, the
+166 816 B (162.9 KiB, measured 2026-10-17): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
 waits. A sleepy node is the same size. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 72 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 71 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by

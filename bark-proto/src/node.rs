@@ -48,7 +48,8 @@ pub struct Config {
     pub sleepy_listens: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
-    /// Heartbeat interval bounds, uniform random in between (spec "Heartbeat": 5–15 s).
+    /// Heartbeat interval bounds: each node's fixed interval lies in between
+    /// ([`heartbeat_interval`], spec "Heartbeat": 5–15 s).
     pub heartbeat_min: Duration,
     /// See `heartbeat_min`.
     pub heartbeat_max: Duration,
