@@ -1,12 +1,12 @@
 # One node type, one setting: measured
 
-**Date:** 2026-10-16 to 17. Draft roadmap D46, awaiting the decision.
-Spec references are to `protocol.md`, which this prototype does not
-edit: this note describes the prototype, and the spec changes only if
-it is adopted. Branch `research/one-node-type`, based on main `8cd70a4`
-and measured against it. Main has since gained the time a message has
-left (D44, `994e1ce`); the branch is not rebased onto it (end of
-"What this does not show").
+**Date:** 2026-10-16 to 17. Roadmap D46, adopted 2026-10-17. Branch
+`research/one-node-type`, first based on main `8cd70a4` and measured
+against it; then rebased onto main `994e1ce`, which carries D44, and
+measured again ("After the rebase onto D44", at the end). The sections
+before that one describe the prototype as first measured, and cite the
+spec as it was then; the spec now describes one node type
+(`protocol.md` "Sleepy nodes").
 
 The question: if relays and leaves become one node type with one
 setting, sleepy, what does the network lose?
@@ -42,6 +42,13 @@ setting, sleepy, what does the network lose?
   leaves change relay. Each now does what a leaf did. The fourth, sleepy
   nodes as the last resort of the search, measured the same as the
   stricter rule the branch keeps.
+- **Awake sleepy nodes alone deliver where main delivers nothing**: a
+  village of 60 every text, a square kilometre of S4's 714 sleepy nodes
+  98 %. The simulator never sleeps a node, and a sleepy node without an
+  anchor does not sleep (adopted with D46), so these are awake sleepy
+  nodes; a mesh of sleepers without relays was not measured.
+- **After the rebase onto D44** the figures hold: at the rate 96.2 %
+  listening and 93.1 % on the beat against main's 96.6 %.
 - **What delivery does not show**: a sleepy node carries a full node's
   tables, 160 KiB of RAM against a leaf's 0.8 KiB; it listens 9.25 s
   after each beat, 0.24 mA on average against 11 µA for a sleeping
@@ -306,7 +313,10 @@ hop is DATA, 12 bytes longer than DELIVER, 6.4 ms more on a 40-byte text
 of about 190 ms of airtime, 3 %, which is what the rings at their cap
 carry less.
 
-**Sleepy nodes alone.** The village, 60 sleepy nodes outdoors over a
+**Awake sleepy nodes alone.** These nodes have no anchor and so, by the
+rule adopted with D46, do not sleep; the simulator never sleeps a node
+either. The results below show awake sleepy nodes routing among
+themselves, not a mesh of sleepers without relays. The village, 60 sleepy nodes outdoors over a
 square kilometre, texting at the spec "Capacity and sizing" rate, ten seeds: every text
 delivered in both variants, 1.34 hand-overs and 2.9 frames per text,
 25 s of airtime a run, mostly straight to the destination, which every
@@ -398,11 +408,8 @@ Two more, at the spec "Capacity and sizing" rate:
   the restart. The rejected forms at twice the rate were measured with
   the beat variant; the listening one where said.
 - Main moved meanwhile to `994e1ce`: DATA carries the time a message has
-  left, 22 bytes of header, and the leaf stamps it. Rebasing touches the
-  three files this prototype rewrites most (`wire.rs`, `relay.rs`,
-  `forward.rs`) and the leaf it removes, whose stamping would move to the
-  sleepy node; it was not cheap and is not done. By the rule decided
-  meanwhile, the holder's delivery queue keeps its own time, as here.
+  left. The branch was later rebased onto it ("After the rebase onto
+  D44").
 
 ## Recommendation
 
@@ -416,3 +423,121 @@ together with an answer to a beat, a frame from the holder that says
 whether anything waits and lets the node sleep at once, which brings the
 poll back in another form. Without it, keep the two roles. If it is
 adopted, the three rules above that did not hold as given are part of it.
+
+## After the rebase onto D44
+
+**2026-10-17.** D46 was adopted. The branch was rebased onto main
+`994e1ce`, which carries D44, the spec was rewritten for one node type,
+and the measurements above were repeated against `994e1ce`.
+
+What the rebase and the review changed:
+
+- **Time left.** A sleepy node's own message starts with the TTL when
+  its application gives it and, like any held message, carries what is
+  left at each transmission, so its waits for its anchor and the fade
+  retry count against it; one alone waits for a neighbour until its time
+  runs out (`Expired`), where it was kept a TTL and dropped as
+  `NoNeighbour`. The holder's delivery queue keeps its own 600 s, and the
+  DATA it finally sends to the node carries the time the message had
+  when it arrived. DATA's header is 22 bytes, as on main.
+- **A sleepy node sleeps only while it has an anchor.** One that hears
+  no relay has nobody to hold its messages, so it listens all the time
+  and acts as a relay: it heartbeats at a relay's interval on the
+  rotating channel, still with the sleepy type so that no other sleepy
+  node takes it as its anchor, sweeps, and chooses and moves its home
+  by the busy estimate (spec "Sleepy nodes alone"). Built first with the
+  home kept on the lowest quiet channel, as sleepy nodes alone had it,
+  the village's sixty nodes heartbeating as relays on one channel
+  overloaded it: split copies of messages circulated until their time
+  ran out, 1 300 frames per text against 3. Spread over the channels as
+  relays are, the village delivers every text again.
+- **Position.** A node's position is its GPS fix unless the fix fails
+  the plausibility checks or the app sets a map point; a relay's no
+  longer freezes at its first fix (spec "Position and time").
+
+Measured as before, three simulators paired by seed: **main**
+(`994e1ce`, with the same count of lost frames that had a presence frame
+on the air), **beat** and **listen**.
+
+**S4**, seeds 1 and 2:
+
+| | main | beat | listen |
+|---|---|---|---|
+| ×1, delivered, seeds 1, 2 | 96.7, 96.5 % | 93.3, 92.8 % | 96.2, 96.2 % |
+| ×1, − main, points | | −3.5 ± 0.1 | −0.4 ± 0.1 |
+| ×1, latency p50, p90 | 1.0 s, 65 s | 129 s, 323 s | 1.0 s, 122 s |
+| ×1, airtime a run | 24 449 s | 26 944 s | 28 909 s |
+| ×1, frames per text | 17.1 | 15.3 | 17.0 |
+| ×1, not delivered | QueueExpired 892, NoRelay 94 | QueueExpired 1924, Expired 77 | QueueExpired 1025, Expired 72 |
+| ×2, delivered, seeds 1, 2 | 95.8, 95.7 % | 90.5, 89.2 % | 94.1, 90.6 % |
+| ×2, − main, points | | −5.9 ± 0.6 | −3.4 ± 1.7 |
+| ×2, latency p50, p90 | 2.9 s, 95 s | 143 s, 384 s | 4.8 s, 215 s |
+| ×2, not delivered | QueueExpired 2069, NoRelay 335, Expired 20 | QueueExpired 5588, Expired 222 | QueueExpired 3293, Expired 966 |
+| Back from the dark, ×1, p50, p90 | 58 s, 219 s | 104 s, 248 s | 103 s, 249 s |
+| Lost DATA with a presence frame on the air, ×1 | 15.0 % | 8.9 % | 8.6 % |
+| Presence airtime per sleepy node or leaf, ×1 | 292 ms/h | 467 ms/h | 467 ms/h |
+
+At the spec "Capacity and sizing" rate the figures are those measured on `8cd70a4`
+within a tenth of a point. At twice the rate the listening variant's
+seed 2 falls further, 90.6 %, with 966 messages whose time ran out on
+the way: past the cliff the messages that wander end by time, as D44
+intends. The presence airtime has more than doubled, and so has the
+run's airtime against main's: every sleepy node now heartbeats as a
+relay from its boot until it has an anchor, a boot listen and a
+rotation, and all 20 000 boot together in S4. After that its beats cost
+what they did. A city's phones do not start at once, so the steady
+figure, 212 ms an hour, is the one that matters; a mass start, after a
+blackout for example, costs a few minutes of heavy heartbeat load.
+
+**The suites**, delivered of the window, prototype − main paired by
+seed, and latency at the 90th percentile:
+
+| Scenario | Seeds | main | beat − main | listen − main | p90 main, beat, listen |
+|---|---|---|---|---|---|
+| S1 | 10 | 100 % | 0 | 0 | 0.2, 215, 0.2 s |
+| S1b | 60 | 100 % | 0 | 0 | 1.2, 218, 1.3 s |
+| S2 | 60 | 96.0 % | −4.7 ± 0.7 | −0.8 ± 0.6 | 117, 325, 155 s |
+| Corridor | 60 | 100 % | 0 | 0 | 1.5, 217, 1.4 s |
+| Mesh, burst | 10 | 100 % | 0 | 0 | 4.6, 201, 4.8 s |
+| Mesh, spread | 10 | 100 % | −0.5 ± 0.3 | −0.2 ± 0.2 | 1.1, 212, 1.2 s |
+| Ring | 10 | 100 % | −9.7 ± 2.6 | 0 | 5.4, 393, 5.7 s |
+| Corridor at 1 s | 30 | 100 % | −0.4 ± 0.4 | 0 | 7.4, 139, 7.1 s |
+| Corridor at 0.5 s | 30 | 100 % | 0 | 0 | 22, 166, 19 s |
+| Ring at 1 s | 30 | 100 % | −10.1 ± 1.3 | 0 | 19, 513, 19 s |
+| Ring at 2 s | 30 | 100 % | −7.6 ± 1.3 | 0 | 5.8, 385, 5.9 s |
+| Mesh, burst ×64 | 30 | 95.3 % | −17.4 ± 1.8 | −0.9 ± 0.7 | 46, 339, 51 s |
+
+What the loaded scenarios carry once every sleepy node has its anchor,
+texts a second, against main:
+
+| Scenario | main | beat | listen |
+|---|---|---|---|
+| Ring | 2.83 | −42.5 % | −2.1 ± 0.5 % |
+| Ring at 1 s | 2.59 | −54.6 % | −1.0 ± 0.7 % |
+| Ring at 2 s | 2.83 | −35.6 % | −0.6 ± 0.4 % |
+| Corridor at 1 s | 1.42 | −9.5 % | +2.8 ± 0.8 % |
+| Corridor at 0.5 s | 1.40 | −18.8 % | +2.9 ± 1.3 % |
+| Mesh, burst ×64 | 2.33 | −31.4 % | −2.5 ± 1.3 % |
+
+As before: listening, the suites deliver what main does; on the beat,
+flows to one node faster than its window after a beat carries lose a
+third to a half of what they carry.
+
+**Awake sleepy nodes alone.** The village, 60 sleepy nodes with no
+relay, ten seeds, delivers every text in both variants, 2.3 hand-overs
+and 3.1 frames a text, 316 s of airtime a run; a square kilometre of
+S4's indoor sleepy nodes alone, 714 of them, three seeds, delivers 98.0 %
+on the beat and 98.2 % listening. These are awake sleepy nodes: none of
+them has an anchor, so by the rule above none sleeps, and the simulator
+never sleeps a node anyway. They show that sleepy nodes without relays
+route among themselves when awake, not that a mesh of sleepers without
+relays works; that was not measured.
+
+**Firmware.** The image, relay or sleepy, is 301 KiB of flash and uses
+171 KiB of RAM before the stack, a 162.3 KiB node; its deepest stack
+frame is 23 KiB (`bark-fw/README.md`).
+
+**Decided 2026-10-17: adopted** (roadmap D46). The next step is a bit in
+DATA that says more follows, so that a node after its beat listens only
+briefly unless told more is coming, and holders that send a node that
+has just beaten its messages first.
