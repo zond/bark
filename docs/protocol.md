@@ -1332,11 +1332,7 @@ hand-over of a DATA that goes first to complete. That is the attempt the
 holder may have under way, a full frame and the ACK timeout, 238.6 ms,
 and the DATA's hand-over with all its attempts and retry waits, 3.13 s
 ([hand-over](#hand-over), [retry wait](#retry-wait)): 3.37 s. A hand-over cut short by the window
-would leave its message to wait a beat period: in the simulated
-capacity domain, a window of one attempt, 477 ms, cut short a tenth to a
-quarter of the deliveries that waited for a later beat, and delivered
-0.4 points fewer messages; most of the rest met a link too weak for all
-their attempts (roadmap D50). A node whose beat brought nothing sleeps
+would leave its message to wait a beat period (roadmap D50). A node whose beat brought nothing sleeps
 after that.
 
 Having answered a DATA for it, the node listens one hand-over, 3.13 s,
