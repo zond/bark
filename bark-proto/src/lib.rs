@@ -20,6 +20,7 @@ pub mod ids;
 pub mod node;
 pub mod position;
 pub mod radio;
+pub mod sniff;
 pub mod tables;
 pub mod time;
 pub mod wire;
