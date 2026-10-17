@@ -1327,16 +1327,21 @@ of the queue: a hand-over waiting between its attempts, for the channel,
 a retry or the bucket, steps aside for it and keeps its place, a return
 with the attempts it has made. Admission is unchanged: the last hop is
 not fresh work ([receiving DATA](#receiving-data)). It goes only while the node listens:
-for a **window** from each beat the holder hears, long enough for the
-first attempt of a DATA that goes first. That is the attempt the holder
-may have under way, a full frame and the ACK timeout, and the DATA's
-first attempt, a full frame and the ACK timeout's allowance for the
-turn-around and listen-before-talk: 2 × (138.6 + 100) = 477.1 ms. A node
-whose beat brought nothing sleeps after that.
+for a **window** from each beat the holder hears, long enough for one
+hand-over of a DATA that goes first to complete. That is the attempt the
+holder may have under way, a full frame and the ACK timeout, 238.6 ms,
+and the DATA's hand-over with all its attempts and retry waits, 3.13 s
+([hand-over](#hand-over), [retry wait](#retry-wait)): 3.37 s. A hand-over cut short by the window
+would leave its message to wait a beat period: in the simulated
+capacity domain, a window of one attempt, 477 ms, cut short a tenth to a
+quarter of the deliveries that waited for a later beat, and delivered
+0.4 points fewer messages; most of the rest met a link too weak for all
+their attempts (roadmap D50). A node whose beat brought nothing sleeps
+after that.
 
-Having answered a DATA for it, the node listens one hand-over longer,
-with all its attempts and retry waits, 3.13 s ([hand-over](#hand-over), [retry wait](#retry-wait)), and
-its holder knows it does: the next message for it goes then, first. The
+Having answered a DATA for it, the node listens one hand-over, 3.13 s,
+and its holder knows it does: nothing is under way ahead of the next
+message for it, which goes then, first. The
 node sleeps once a hand-over passes with no DATA for it. So the holder
 sends what it holds one after the other on one beat, a message that
 arrives meanwhile goes at once, and a flow of messages to the node less
@@ -1352,13 +1357,13 @@ time the message had left when it arrived: the delivery queue's wait
 does not count against it ([receiving DATA](#receiving-data)).
 
 So a message waits for its node a mean of about two minutes, at most a
-beat period. A node listens 477 ms after each beat, 7.6 s an hour, 3.13 s
+beat period. A node listens 3.37 s after each beat, 54 s an hour, 3.13 s
 after each message it takes, and for its anchor's heartbeat, under a
 second a rotation; measured in the simulated capacity domain, where a
 node is out of reach five minutes in an hour, a sleepy node listened
-117 s an hour at the median and 175 s on average, most of it checking
-its anchor after the dark: 0.28 mA on average at the 5.8 mA of listening
-(roadmap D47, D48).
+156 s an hour at the median and 218 s on average, most of it checking
+its anchor after the dark and listening after its beats: 0.35 mA on
+average at the 5.8 mA of listening (roadmap D47, D48, D50).
 
 ### Delivery queue
 
