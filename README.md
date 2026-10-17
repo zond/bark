@@ -20,7 +20,7 @@ Until they arrive the work is the simulator.
 Read, in order:
 
 1. `docs/protocol.md`: the specification. Radio, channels, neighbour
-   discovery, routing, leaves, packet formats, capacity, open items.
+   discovery, routing, sleepy nodes, packet formats, capacity, open items.
 2. `docs/roadmap.md`: phases, decisions taken, open questions.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
@@ -47,9 +47,12 @@ bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
 docs/         design notes, research, decisions.
 ```
 
-Each relay forwards a message to the neighbour closest to the destination's
-position, backtracks around gaps, and expects an acknowledgement from every
-hop. The protocol core has no external routing dependency (roadmap D1).
+Every node runs the same protocol with one setting, sleepy. A relay, fixed
+and powered, forwards a message to the neighbour closest to the
+destination's position, backtracks around gaps, and expects an
+acknowledgement from every hop. A sleepy node, carried on battery,
+heartbeats rarely to the relay it has chosen, which holds its messages
+until it listens. The protocol core has no external routing dependency (roadmap D1).
 
 ## Building
 
