@@ -476,6 +476,8 @@ pub struct Sim {
     address: Vec<Option<Position>>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
+    /// When each text the application skipped was due.
+    skipped_at: Vec<Instant>,
     /// Once a minute from the start: the time, s, the mean and the most
     /// anchorless entries in a relay's neighbour table, and the sleepy
     /// nodes without an anchor.
@@ -672,6 +674,7 @@ impl Sim {
             leaf_xy: Vec::new(),
             address: vec![None; n],
             first_anchor: vec![None; n],
+            skipped_at: Vec::new(),
             anchorless: Vec::new(),
             availability: None,
             avail_rng: Vec::new(),
@@ -1289,6 +1292,12 @@ impl Sim {
             p(90.0),
             at.last().map(|&us| us as f64 / 1e6),
         )
+    }
+
+    /// Texts the application skipped from `t` on, while its node still
+    /// held one ([`Sim::originate`]).
+    pub fn skipped_since(&self, t: Instant) -> u64 {
+        self.skipped_at.iter().filter(|&&at| at >= t).count() as u64
     }
 
     /// See `anchorless`.
@@ -2022,6 +2031,7 @@ impl Sim {
         }
         if self.offers[src as usize].is_some() {
             self.metrics.app.skipped += 1;
+            self.skipped_at.push(self.now);
             return;
         }
         let Some(dst_pos) = self.address_of(dst) else {

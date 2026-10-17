@@ -287,7 +287,7 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     };
     // Texts skipped while LA held one fall before the removal or after it.
     let after_n = after.len() as u64;
-    assert!(after_n <= 20 && after_n + skipped >= 20, "seed {seed}");
+    assert_eq!(after_n, 20 - sim.skipped_since(removal), "seed {seed}");
     assert!(
         after.iter().all(|(_, f)| *f == a_no_route),
         "seed {seed}: {after:?}"
