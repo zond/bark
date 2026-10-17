@@ -746,6 +746,14 @@ impl Relay {
                     Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) => {
                         Routed::To(out, self.expect(d.msg_id(), d.dst_hop))
                     }
+                    Ok(Packet::Data(d)) => {
+                        emit(Action::Trace(Trace::DeliveryWaits {
+                            msg_id: d.msg_id(),
+                            node: d.dst_hop,
+                            tried: false,
+                        }));
+                        Routed::Done
+                    }
                     _ => Routed::Done,
                 },
             };
@@ -1237,6 +1245,11 @@ impl Relay {
         if let (Ok(Packet::Data(d)), Kind::Deliver) = (data, out.kind) {
             // Asleep: its messages wait for its next beat.
             self.heard.missed(d.dst_hop);
+            emit(Action::Trace(Trace::DeliveryWaits {
+                msg_id: id,
+                node: d.dst_hop,
+                tried: true,
+            }));
         }
         self.queue.take_current();
         self.skipped = 0;

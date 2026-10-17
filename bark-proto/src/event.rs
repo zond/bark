@@ -286,4 +286,15 @@ pub enum Trace {
         /// The node.
         node: NodeId,
     },
+    /// A delivery left the send queue to wait in the delivery queue for
+    /// its node's next beat (spec "Delivery queue").
+    DeliveryWaits {
+        /// The message.
+        msg_id: MsgId,
+        /// The node.
+        node: NodeId,
+        /// Its hand-over started and every attempt went unanswered;
+        /// otherwise the node had stopped listening before it started.
+        tried: bool,
+    },
 }

@@ -586,7 +586,44 @@ pub struct SleepMetrics {
     pub off_channel: u64,
     /// See `anchored`.
     pub unheard: u64,
+    /// Deliveries that left their holder's send queue to wait for the
+    /// node's next beat (`Trace::DeliveryWaits`), by the window they went
+    /// in, [`AFTER_BEAT`] or [`AFTER_TAKE`], and by what became of the
+    /// first DATA of their hand-over, a [`FirstTry`].
+    pub waited: [[u64; FIRST_TRIES]; 2],
 }
+
+/// `SleepMetrics::waited`: the window after the node's beat.
+pub const AFTER_BEAT: usize = 0;
+/// `SleepMetrics::waited`: the window after a message the node took.
+pub const AFTER_TAKE: usize = 1;
+
+/// What became of the first DATA of a delivery's hand-over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FirstTry {
+    /// The node stopped listening before the hand-over started.
+    NotStarted,
+    /// It started, but no DATA went on the air: the channel stayed busy.
+    NotSent,
+    /// It reached the node asleep.
+    Asleep,
+    /// The node was out of reach (dark or gone).
+    Absent,
+    /// It reached the node below sensitivity.
+    Weak,
+    /// Another frame at the node took the receiver or broke it.
+    Collided,
+    /// The node's radio was busy: retuning, checking a channel or sending.
+    Busy,
+    /// It did not reach the node where it listened: another channel, or
+    /// out of range.
+    Unheard,
+    /// The node received it; its answers were lost.
+    Received,
+}
+
+/// The number of [`FirstTry`] cases.
+pub const FIRST_TRIES: usize = 9;
 
 /// How soon the network learns that a dark sleepy node is back (spec
 /// "Delivery queue"): from the moment it is in reach again to the first

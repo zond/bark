@@ -733,3 +733,41 @@ fn a_node_out_of_reach_keeps_its_anchor() {
     let awake = secs(600) - slept(&h, s, back + secs(600), back + secs(1200));
     assert!(awake < secs(30), "awake {awake:?} in ten minutes once back");
 }
+
+/// A delivery whose every attempt goes unanswered marks the node asleep:
+/// the holder says the message waits for the next beat
+/// (`Trace::DeliveryWaits`), and it goes then (spec "Delivery").
+#[test]
+fn an_unanswered_delivery_waits_for_the_next_beat() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 141), node(50.0, true, 142)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let id = send(&mut h, r, s, b"lost thrice");
+    let attempts = Config::default().hop_attempts as usize;
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, _, to, bytes| {
+        let data = to == s && matches!(Packet::decode(bytes), Ok(Packet::Data(_)));
+        let lose = data && lost < attempts;
+        lost += usize::from(lose);
+        lose
+    }));
+    let waits = |h: &Harness<Relay>| {
+        h.nodes[r].traces.iter().find_map(|(t, e)| match e {
+            Trace::DeliveryWaits { msg_id, tried, .. } if *msg_id == id => Some((*t, *tried)),
+            _ => None,
+        })
+    };
+    assert!(h.run_until(h.now + secs(400), |h| waits(h).is_some()));
+    let (waited, tried) = waits(&h).unwrap();
+    assert!(tried, "its hand-over was tried");
+    assert!(h.run_until(h.now + secs(400), |h| delivered_at(h, s, id).is_some()));
+    let got = delivered_at(&h, s, id).unwrap();
+    let beat = beats(&h, s)
+        .into_iter()
+        .map(|(t, _, _)| t)
+        .rfind(|&t| t <= got)
+        .unwrap();
+    assert!(beat > waited, "delivered on a later beat");
+}

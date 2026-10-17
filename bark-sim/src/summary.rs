@@ -6,6 +6,7 @@
 use crate::links::{BuildStats, Site};
 use crate::metrics::{
     percentile, DropCounts, HopPlaceRefusals, NodeMetrics, RxCounts, SleepMetrics, TypeAirtime,
+    AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
 };
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
@@ -662,6 +663,13 @@ impl Summary {
                 s,
                 "DATA to sleepy nodes asleep: from the anchor {} within 5 s of sleeping, {} later; from others {}, {}",
                 m.to_asleep[0][0], m.to_asleep[0][1], m.to_asleep[1][0], m.to_asleep[1][1]
+            );
+            let w = |r: &[u64; FIRST_TRIES]| r.map(|x| x.to_string()).join(" ");
+            let _ = writeln!(
+                s,
+                "deliveries waiting for the next beat, by first DATA (not started, not sent, asleep, absent, weak, collided, busy, other channel, received): after a beat {}; after a message taken {}",
+                w(&m.waited[AFTER_BEAT]),
+                w(&m.waited[AFTER_TAKE])
             );
             let (n, back, p50, p90, sent, got) = z.orphans;
             if n > 0 {

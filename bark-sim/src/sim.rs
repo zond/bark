@@ -16,7 +16,7 @@
 
 use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio, Site};
-use crate::metrics::{DropReason, Metrics, Observer, Outcome};
+use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEAT, AFTER_TAKE};
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
@@ -256,6 +256,25 @@ impl BeatRing {
     }
 }
 
+/// A DATA on the air to a sleepy node (`Sim::to_sleepy`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ToSleepy {
+    /// The node.
+    pub node: u32,
+    /// It was asleep when the frame started.
+    pub asleep: bool,
+    /// It was dark or removed then.
+    pub absent: bool,
+    /// The sender, its holder.
+    pub holder: u32,
+    /// The message.
+    pub msg: u32,
+    /// The window it went in (`Sim::window_of`).
+    pub window: usize,
+    /// Why it was lost at the node, if it was.
+    pub lost: Option<Outcome>,
+}
+
 /// A transmission, from excursion start until it leaves the air.
 pub(crate) struct AirTx {
     pub src: u32,
@@ -490,9 +509,16 @@ pub struct Sim {
     leaf_nodes: HashMap<[u8; 4], u32>,
     /// Sleepy node by ID, as [`key`] gives it.
     pub(crate) sleepy_index: HashMap<u32, u32>,
-    /// DATA on air addressed to a sleepy node: key to the node and whether
-    /// it was asleep when the frame started.
-    pub(crate) to_sleepy: HashMap<u64, (u32, bool)>,
+    /// DATA on air addressed to a sleepy node: key to the node, what the
+    /// frame found at its start, and the message and its holder.
+    pub(crate) to_sleepy: HashMap<u64, ToSleepy>,
+    /// Per sleepy node by index less the relays: the start of its last
+    /// beat and the end of the last DATA for it that it received.
+    pub(crate) beat_took: Vec<(Instant, Instant)>,
+    /// A delivery's hand-over under way, by holder and message: the window
+    /// it went in and what became of its first DATA
+    /// (`SleepMetrics::waited`).
+    pub(crate) first_try: HashMap<(u32, u32), (usize, FirstTry)>,
     /// Sleepy nodes whose anchor the scenario removed or restarted, and
     /// when; and, once an anchor hears them again, when that was.
     pub(crate) orphans: HashMap<u32, (Instant, Option<Instant>)>,
@@ -651,6 +677,8 @@ impl Sim {
                 .map(|i| (key(ids[i as usize]), i))
                 .collect(),
             to_sleepy: HashMap::new(),
+            beat_took: vec![(Instant::ZERO, Instant::ZERO); n - n_relays as usize],
+            first_try: HashMap::new(),
             orphans: HashMap::new(),
             ids,
             positions,
@@ -1404,6 +1432,14 @@ impl Sim {
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::AnchorCheck => c.anchor_checks += 1,
+                    Trace::Delivered { msg_id, .. } => {
+                        self.first_try.remove(&(node, msg_id.0));
+                    }
+                    Trace::DeliveryWaits {
+                        msg_id,
+                        node: to,
+                        tried,
+                    } => self.delivery_waits(node, msg_id.0, key(to), tried),
                     Trace::Forwarded { .. } => c.handed_over += 1,
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
@@ -1415,6 +1451,41 @@ impl Sim {
         }
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
+        }
+    }
+
+    /// A delivery by `holder` of `msg` to the node `to` waits for its next
+    /// beat: count it by its window and its first DATA.
+    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u32, tried: bool) {
+        let first = self.first_try.remove(&(holder, msg));
+        let Some(&n) = self.sleepy_index.get(&to) else {
+            return;
+        };
+        if self.now < self.settle {
+            return;
+        }
+        let (window, how) = match (first, tried) {
+            (Some(f), _) => f,
+            (None, t) => {
+                let how = if t {
+                    FirstTry::NotSent
+                } else {
+                    FirstTry::NotStarted
+                };
+                (self.window_of(n), how)
+            }
+        };
+        self.metrics.sleep.waited[window][how as usize] += 1;
+    }
+
+    /// The window the sleepy node `n` listens in now: after its beat, or
+    /// after a message it took since.
+    pub(crate) fn window_of(&self, n: u32) -> usize {
+        let (beat, took) = self.beat_took[(n - self.n_relays) as usize];
+        if took > beat {
+            AFTER_TAKE
+        } else {
+            AFTER_BEAT
         }
     }
 
