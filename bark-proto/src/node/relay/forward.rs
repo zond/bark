@@ -1057,9 +1057,7 @@ impl Relay {
         match self.records.get(id) {
             // A sleepy node hands its own message over as fresh work: the
             // node that takes it is its origin (module documentation).
-            Some(r) if self.config.sleepy && self.own == Some(id) && r.parent().is_none() => {
-                Some(0)
-            }
+            Some(r) if self.sleeps() && self.own == Some(id) && r.parent().is_none() => Some(0),
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }

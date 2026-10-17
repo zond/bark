@@ -103,6 +103,7 @@ fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
     h.run_until(at(2000), |_| false);
     let sleepy = &h.nodes[s].core;
     let anchor = sleepy.anchor().expect("an anchor");
+    assert!(sleepy.sleeps());
     assert_eq!(anchor.id, h.nodes[strong].core.id());
     assert_eq!(sleepy.address(), h.nodes[strong].core.config().position);
     let home = h.nodes[strong].core.home();
@@ -241,8 +242,10 @@ fn a_sleepy_neighbour_is_the_last_resort() {
     assert_eq!(first_hop(&h, id), Some(h.nodes[s].core.id()));
 }
 
-/// Sleepy nodes that hear no other kind meet on the lowest quiet channel,
-/// and route among themselves: S1 reaches S3 through S2.
+/// Sleepy nodes that hear no other kind route among themselves: S1
+/// reaches S3 through S2. Without an anchor none sleeps: each heartbeats
+/// as a relay does, every 5 to 15 s on the rotating channel, with the
+/// sleepy type (spec "Sleepy nodes alone").
 #[test]
 fn sleepy_nodes_alone_meet_and_route() {
     let mut h = Harness::new(vec![
@@ -253,13 +256,18 @@ fn sleepy_nodes_alone_meet_and_route() {
     h.link(0, 1);
     h.link(1, 2);
     h.run_until(at(1000), |_| false);
-    let home = h.resting(0);
-    assert!(home.is_some() && h.resting(1) == home && h.resting(2) == home);
     assert_eq!(
         h.nodes[2].core.address(),
         pos(800.0, 0.0),
         "its own position"
     );
+    assert!(!h.nodes[1].core.sleeps());
+    let b: Vec<_> = beats(&h, 1).into_iter().filter(|b| b.0 >= at(400)).collect();
+    let c = Config::default();
+    assert!(b.iter().all(|&(_, _, sleepy)| sleepy));
+    assert!(b.windows(2).all(|w| w[1].0.since(w[0].0) <= c.heartbeat_max + secs(1)));
+    let channels: std::collections::HashSet<_> = b.iter().map(|&(_, ch, _)| ch).collect();
+    assert_eq!(channels.len(), bark_proto::radio::CHANNELS as usize);
     let id = send(&mut h, 0, 2, b"among ourselves");
     assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, 2, id).is_some()));
 }
@@ -316,7 +324,8 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
     h.link(first, s);
     h.set_rssi(first, s, -95);
     h.start_at(s, at(10));
-    h.run_until(at(400), |_| false);
+    // A boot listen, a rotation to first hear the relay, and another.
+    h.run_until(at(700), |_| false);
     let id_of = |h: &Harness<Relay>, i: usize| h.nodes[i].core.id();
     assert_eq!(
         h.nodes[s].core.anchor().map(|a| a.id),

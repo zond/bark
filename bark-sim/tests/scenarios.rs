@@ -439,9 +439,14 @@ fn trace_follows_a_message_and_changes_nothing() {
 /// every relay of a line of five. Seeds 1 to 3 deliver at least 0.93 of
 /// the settled phase on `main` as of roadmap D28; the bound leaves room
 /// for the spread between seeds.
+///
+/// Its sleepy nodes take what is held for them at once here
+/// (`sleepy_listens`), so that what is measured is the corridor, not the
+/// wait for a beat at the end of the run.
 #[test]
 fn corridor_carries_crossing_flows() {
-    let sc = scenario("corridor.toml");
+    let mut sc = scenario("corridor.toml");
+    sc.protocol.sleepy_listens = Some(true);
     for seed in 1..=3 {
         let mut sc = sc.clone();
         sc.seed = seed;

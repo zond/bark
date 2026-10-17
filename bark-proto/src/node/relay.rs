@@ -26,9 +26,8 @@
 //! where the ACK arrives (spec "Hand-over"). Jobs that are not ready say when
 //! they will be, and the earliest of those is `next_wakeup`.
 //!
-//! # A sleepy node's home and beat
+//! # A sleepy node's home and beat (spec "Sleepy nodes")
 //!
-//! A sleepy node does not choose its channel by how busy channels are.
 //! A worst-case rotation after it first hears a node that is not sleepy,
 //! by when every such node in range has visited its channel, it takes the
 //! strongest of those as its anchor and listens on the anchor's home
@@ -37,19 +36,24 @@
 //! over two heartbeats and is [`SWITCH_MARGIN_DB`] stronger, and once its
 //! anchor has left the neighbour table, to the strongest heard a rotation
 //! after it first hears any again, unless its anchor is heard meanwhile
-//! (spec "Relay choice"): back from the dark, it keeps its anchor. It follows its anchor to a new home channel at the
-//! anchor's next heartbeat it hears. One that hears no such node keeps the
-//! quietest channel, ties to the lowest, so that the sleepy nodes of a
-//! place without one meet on one channel and route among themselves.
+//! (spec "Relay choice"): back from the dark, it keeps its anchor. It
+//! follows its anchor to a new home channel at the anchor's next heartbeat
+//! it hears, and does not move by the busy estimate.
 //!
-//! It heartbeats on its home channel only, at a random time in the second
+//! With an anchor it heartbeats on its home channel only, at a random time in the second
 //! half of each beat period (`tables::heard::beat_period`, 300 s): at most
 //! a period apart, so that two beats missed are a delivery TTL; spread, so
 //! that two nodes that met once do not meet again. After it chooses or
 //! changes its anchor it beats at once and once more within a heartbeat
 //! interval, so that one lost beat does not hide it from its new holder for
-//! a period. It sweeps the channels only while it boots, for its noise
-//! floor and the quietest channel: asleep it could not.
+//! a period. It sweeps the channels only while it has no anchor: asleep
+//! it could not.
+//!
+//! It sleeps only while it has an anchor, which holds its messages
+//! ([`Relay::sleeps`]). Without one it listens all the time and acts as a
+//! relay: it heartbeats on the rotating channel, with the sleepy type so
+//! that no other sleepy node takes it as its anchor, and chooses and
+//! moves its home by the busy estimate (spec "Sleepy nodes alone").
 
 mod delivery;
 mod forward;
@@ -434,6 +438,15 @@ impl Relay {
         self.anchor
     }
 
+    /// Whether this node sleeps between the windows after its beats: a
+    /// sleepy node with an anchor, which holds its messages. One without
+    /// listens all the time and heartbeats as a relay, since nobody could
+    /// hold its messages (roadmap D46). The core itself
+    /// always listens; this says when the driver may sleep the radio.
+    pub fn sleeps(&self) -> bool {
+        self.config.sleepy && self.anchor.is_some()
+    }
+
     /// The heard table.
     pub fn heard_nodes(&self) -> &Heard {
         &self.heard
@@ -553,9 +566,7 @@ impl Relay {
     }
 
     /// `argmin busy[c]`, ties within 0.01 broken at random (spec "Channel at boot"),
-    /// so relays that hear nothing do not all pick channel 0. A sleepy node
-    /// takes the lowest of the ties instead, so that sleepy nodes that hear
-    /// no other kind meet.
+    /// so nodes that hear nothing do not all pick channel 0.
     fn quietest(&mut self) -> Channel {
         let min = Channel::all()
             .map(|c| self.busy.fraction(c))
@@ -564,16 +575,12 @@ impl Relay {
         let busy = &self.busy;
         let near = |c: &Channel| busy.fraction(*c) <= min.saturating_add(percent(1));
         let count = Channel::all().filter(near).count() as u64;
-        let pick = if self.config.sleepy {
-            0
-        } else {
-            self.rng.range(0, count.saturating_sub(1)) as usize
-        };
+        let pick = self.rng.range(0, count.saturating_sub(1)) as usize;
         Channel::all().filter(near).nth(pick).unwrap_or(self.home)
     }
 
     fn heartbeat_interval(&mut self) -> Duration {
-        if self.config.sleepy && self.beacon.quick == 0 {
+        if self.sleeps() && self.beacon.quick == 0 {
             let period = beat_period(self.config.delivery_ttl);
             return self.rng.duration(period.div(2), period);
         }
@@ -652,7 +659,7 @@ impl Relay {
                 self.finish_boot(now, emit);
             }
         }
-        if !self.config.sleepy && self.mover.move_at.is_some_and(|t| now >= t) {
+        if !self.sleeps() && self.mover.move_at.is_some_and(|t| now >= t) {
             self.mover = Mover::default();
             // Re-check after the random wait (spec "Channel moves").
             if self.excess() {
@@ -691,10 +698,10 @@ impl Relay {
         self.sweeping() && now >= self.sweep.next_at
     }
 
-    /// Whether the node sweeps the channels: always, or a sleepy node while
-    /// it boots (module documentation).
+    /// Whether the node sweeps the channels: unless it sleeps (module
+    /// documentation).
     fn sweeping(&self) -> bool {
-        !self.config.sleepy || self.stage != Stage::Running
+        !self.sleeps()
     }
 
     /// Each channel once per sweep interval, one reading at a time (spec "Busy estimate",
@@ -743,10 +750,7 @@ impl Relay {
         }
         // Once per round of the channels.
         self.neighbours.expire(now);
-        if self.stage == Stage::Running
-            && self.config.home_override.is_none()
-            && !self.config.sleepy
-        {
+        if self.stage == Stage::Running && self.config.home_override.is_none() && !self.sleeps() {
             self.move_rule(now);
         }
     }
@@ -788,11 +792,7 @@ impl Relay {
     /// sent, so a move during its backoff still announces the new channel.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
-        let channel = if self.config.sleepy {
-            self.home
-        } else {
-            channel
-        };
+        let channel = if self.sleeps() { self.home } else { channel };
         let hb = Heartbeat {
             surveyed: self.config.surveyed && !self.config.sleepy,
             sleepy: self.config.sleepy,
@@ -1037,7 +1037,7 @@ impl Core for Relay {
             Stage::Booting(until) => at(until),
             Stage::Running => {}
         }
-        if let (Some(t), false) = (self.mover.move_at, self.config.sleepy) {
+        if let (Some(t), false) = (self.mover.move_at, self.sleeps()) {
             at(t);
         }
         if let Some(t) = self.forward_wakeup() {
