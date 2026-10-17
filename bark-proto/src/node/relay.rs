@@ -314,6 +314,9 @@ pub struct Relay {
     watch_at: Option<Instant>,
     watch_base: Instant,
     misses: u8,
+    /// Its last check heard nothing at all: it is out of reach, and checks
+    /// again only once it hears something.
+    dark: bool,
     /// Where the node was when it chose or last confirmed its anchor, and
     /// how far the anchor was then, metres.
     chosen_from: Position,
@@ -387,6 +390,7 @@ impl Relay {
             watch_at: None,
             watch_base: Instant::ZERO,
             misses: 0,
+            dark: false,
             chosen_from: Position { lat: 0, lon: 0 },
             reach_m: 0.0,
             config,
@@ -455,6 +459,7 @@ impl Relay {
             watch_at,
             watch_base,
             misses,
+            dark,
             chosen_from,
             reach_m,
         } = self;
@@ -509,6 +514,7 @@ impl Relay {
         *watch_at = None;
         *watch_base = Instant::ZERO;
         *misses = 0;
+        *dark = false;
         *chosen_from = config.position;
         *reach_m = 0.0;
         *c = config;
@@ -618,7 +624,7 @@ impl Relay {
         }
         while self.watch().is_some_and(|(_, to)| now >= to) {
             self.misses = self.misses.saturating_add(1);
-            if self.misses >= 2 {
+            if self.misses >= 2 && !self.dark {
                 self.watch_at = None;
                 self.check_anchor(now, emit);
                 return;
@@ -960,8 +966,12 @@ impl Relay {
         match best {
             Some(b) => self.take_anchor(&b, now, emit),
             // Nothing at all heard: the node is out of reach, in a pocket or
-            // a basement, not its anchor gone; it keeps it.
-            None => self.anchored(),
+            // a basement, not its anchor gone; it keeps it, and checks again
+            // only once it hears anything again.
+            None => {
+                self.anchored();
+                self.dark = true;
+            }
         }
     }
 
@@ -1224,6 +1234,10 @@ impl Relay {
 
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.count_busy(bytes, now);
+        if core::mem::take(&mut self.dark) {
+            // Back in reach: its anchor's rotations count from here.
+            self.misses = 0;
+        }
         // A booting relay has no home channel yet to be reached on, nor
         // neighbours to forward to: it takes no traffic (spec "Channel at boot").
         let running = self.stage == Stage::Running;

@@ -642,8 +642,9 @@ fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
 }
 
 /// A node out of reach of everything, in a basement, misses its anchor's
-/// heartbeat, checks, hears nothing at all, and keeps its anchor; back in
-/// reach it hears it again and sleeps as before (spec "Relay choice").
+/// heartbeat, checks, hears nothing at all, and keeps its anchor without
+/// checking again while it hears nothing; back in reach it hears it again
+/// and sleeps as before (spec "Relay choice").
 #[test]
 fn a_node_out_of_reach_keeps_its_anchor() {
     let (r, s) = (0, 1);
@@ -654,11 +655,14 @@ fn a_node_out_of_reach_keeps_its_anchor() {
     let anchor = h.nodes[s].core.anchor();
     assert!(anchor.is_some());
     h.unlink(r, s);
-    h.run_for(secs(900));
-    assert!(h.nodes[s]
+    h.run_for(secs(1800));
+    // One check, which hears nothing; none after it while it hears nothing.
+    let checks = h.nodes[s]
         .traces
         .iter()
-        .any(|(_, t)| *t == Trace::AnchorCheck));
+        .filter(|(_, t)| *t == Trace::AnchorCheck)
+        .count();
+    assert_eq!(checks, 1);
     assert_eq!(h.nodes[s].core.anchor(), anchor);
     h.link(r, s);
     let back = h.now;
