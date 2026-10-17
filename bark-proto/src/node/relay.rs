@@ -276,9 +276,9 @@ pub struct Relay {
     /// Until when a sleepy node listens after its beat or a message it
     /// took (spec "Delivery").
     awake_until: Instant,
-    /// The owed reply takes a DATA for this node: once it is sent, the
-    /// node listens a window longer.
-    renew: bool,
+    /// The owed reply takes a DATA for this node, which said whether more
+    /// follow: once it is sent, the node listens for the next or sleeps.
+    renew: Option<bool>,
     /// Since when a node that sleeps listens a rotation to check its
     /// anchor.
     rescan: Option<Instant>,
@@ -351,7 +351,7 @@ impl Relay {
             feed_at: None,
             asleep: None,
             awake_until: Instant::ZERO,
-            renew: false,
+            renew: None,
             rescan: None,
             window_ends: None,
             chosen_from: Position { lat: 0, lon: 0 },
@@ -467,7 +467,7 @@ impl Relay {
         *feed_at = None;
         *asleep = None;
         *awake_until = Instant::ZERO;
-        *renew = false;
+        *renew = None;
         *rescan = None;
         *window_ends = None;
         *chosen_from = config.position;
@@ -554,10 +554,15 @@ impl Relay {
         }
     }
 
-    /// This node took a DATA addressed to it: it listens a window longer,
-    /// for the next (spec "Delivery").
-    fn took(&mut self, now: Instant) {
-        self.awake_until = self.awake_until.max(now + self.heard.params().awake);
+    /// This node has answered a DATA addressed to it: it listens one
+    /// hand-over longer if the DATA said `more` follow, else it sleeps
+    /// (spec "Delivery").
+    fn took(&mut self, more: bool, now: Instant) {
+        self.awake_until = if more {
+            now + self.heard.params().more
+        } else {
+            now
+        };
     }
 
     /// The heard table.
@@ -1220,8 +1225,8 @@ impl Core for Relay {
                 }
                 Some(Job::Reply) => {
                     self.replies.sent();
-                    if core::mem::take(&mut self.renew) {
-                        self.took(now);
+                    if let Some(more) = self.renew.take() {
+                        self.took(more, now);
                     }
                 }
                 _ => {}
@@ -1456,6 +1461,7 @@ mod tests {
             dst_id: node,
             hops: 1,
             time_left: u8::MAX,
+            more: false,
             payload: b"later",
         };
         let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1518,6 +1524,7 @@ mod tests {
             dst_id: r.me(),
             hops: 1,
             time_left: u8::MAX,
+            more: false,
             payload: text,
         };
         let (a, b) = (packet(a_home, 1, b"first"), packet(b_home, 2, b"second"));
@@ -1697,6 +1704,7 @@ mod tests {
                 dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
+                more: false,
                 payload: &payload,
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1776,6 +1784,7 @@ mod tests {
                 dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
+                more: false,
                 payload: &payload,
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1887,6 +1896,7 @@ mod tests {
                 dst_id: NOBODY,
                 hops: 2,
                 time_left: u8::MAX,
+                more: false,
                 payload: &payload,
             };
             let parent = Some((name(7), Channel::new(6).unwrap()));
@@ -2015,6 +2025,7 @@ mod tests {
             dst_id: NOBODY,
             hops: 2,
             time_left: u8::MAX,
+            more: false,
             payload: b"one message, two senders",
         };
         let id = data.msg_id();
@@ -2148,6 +2159,7 @@ mod tests {
                 dst_id: NOBODY,
                 hops: 2,
                 time_left: u8::MAX,
+                more: false,
                 payload: &payload,
             };
             let id = data.msg_id();
@@ -2262,6 +2274,7 @@ mod tests {
             dst_id: NOBODY,
             hops,
             time_left,
+            more: false,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2388,6 +2401,7 @@ mod tests {
             dst_id: NOBODY,
             hops: 2,
             time_left: u8::MAX,
+            more: false,
             payload: b"count",
         };
         let id = data.msg_id();
@@ -2461,6 +2475,7 @@ mod tests {
                 dst_id: NOBODY,
                 hops,
                 time_left: u8::MAX,
+                more: false,
                 payload: b"again",
             };
             let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2518,6 +2533,7 @@ mod tests {
             dst_id: id_of(addressed),
             hops: 2,
             time_left: u8::MAX,
+            more: false,
             payload: b"arrived",
         };
         let id = data.msg_id();

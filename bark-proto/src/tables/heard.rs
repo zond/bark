@@ -3,8 +3,9 @@
 //!
 //! A sleepy node heartbeats only on its home channel, at a random time in
 //! the second half of each [`beat_period`], and listens for a while after
-//! each beat ([`HeardParams::awake`]). A holder of a message for it sends
-//! the message then. The table keeps what that needs: the node's home
+//! each beat ([`HeardParams::awake`]), and after each message it takes
+//! that says more follow ([`HeardParams::more`]). A holder of a message
+//! for it sends the message then. The table keeps what that needs: the node's home
 //! channel, until when it listens, and whether a delivery to it went
 //! unanswered since its last beat.
 //!
@@ -20,10 +21,8 @@ use crate::ids::NodeId;
 use crate::node::Config;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::fixed::FixedVec;
-use crate::tables::send_queue::SEND_QUEUE;
 use crate::tables::{attempt_span, retry_waits};
 use crate::time::{Duration, Instant};
-use crate::wire::ACK_LEN;
 
 /// Table capacity (spec "Heard table": ≈80 sleepy nodes per relay expected
 /// at indoor density with 10 % adoption, 400 at 50 %).
@@ -43,15 +42,19 @@ pub const fn beat_period(delivery_ttl: Duration) -> Duration {
 pub struct HeardParams {
     /// How long an entry is kept after its last beat: two beat periods.
     pub keep: Duration,
-    /// How long a sleepy node listens after its beat or a message it
-    /// took, and so how long a holder may send to it then: the hand-overs
-    /// that may be ahead of the next message, a full send queue (spec
-    /// "Send queue") of full frames each with its ACK, 6.12 s, and the
-    /// message with all its attempts and their waits (spec "Hand-over"),
-    /// 3.13 s: 9.25 s (spec "Delivery"). It is the window for one
-    /// message; a node that is not told how many wait listens again as long
-    /// after each it takes.
+    /// How long a sleepy node listens after its beat, and so how long a
+    /// holder may start sending to it then: the time its holder needs to
+    /// bring it one message that goes first (spec "Delivery"). That is the
+    /// attempt the holder may have under way, a full frame and the ACK
+    /// timeout, 238.56 ms, and the message's hand-over with all its
+    /// attempts and retry waits (spec "Hand-over", "Retry wait"),
+    /// 3133.44 ms: 3372.00 ms.
     pub awake: Duration,
+    /// How long it listens after it has answered a message that says more
+    /// follow: one hand-over with all its attempts and retry waits,
+    /// 3133.44 ms. Nothing is under way ahead of the next message then: the
+    /// holder has just had the answer.
+    pub more: Duration,
 }
 
 impl HeardParams {
@@ -60,11 +63,12 @@ impl HeardParams {
         let attempt = attempt_span(config.ack_timeout).as_micros();
         let span = attempt * config.hop_attempts as u64
             + retry_waits(config.retry_backoff, config.hop_attempts).as_micros();
-        let full = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-            + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
+        let under_way = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+            + config.ack_timeout.as_micros();
         HeardParams {
             keep: beat_period(config.delivery_ttl).mul(2),
-            awake: Duration::from_micros(SEND_QUEUE as u64 * full + span),
+            awake: Duration::from_micros(under_way + span),
+            more: Duration::from_micros(span),
         }
     }
 }
@@ -195,12 +199,12 @@ impl Heard {
             .is_some_and(|n| now < n.awake_until && !n.missed)
     }
 
-    /// `id` took a message at `now`: it listens a window longer, for the
-    /// next.
-    pub fn took(&mut self, id: NodeId, now: Instant) {
-        let awake = now + self.params.awake;
+    /// `id` took a message at `now`: it listens one hand-over longer if
+    /// the message said `more` follow, else it sleeps.
+    pub fn took(&mut self, id: NodeId, more: bool, now: Instant) {
+        let awake = if more { now + self.params.more } else { now };
         if let Some(n) = self.get_mut(id) {
-            n.awake_until = n.awake_until.max(awake);
+            n.awake_until = awake;
             n.missed = false;
         }
     }
@@ -248,8 +252,9 @@ mod tests {
             Duration::from_secs(300)
         );
         assert_eq!(p.keep, Duration::from_secs(600));
-        // 40 × 152.96 ms, and 3 × 738.56 ms + 305.92 + 611.84 ms.
-        assert_eq!(p.awake, Duration::from_micros(6_118_400 + 3_133_440));
+        // 138.56 + 100 ms, and 3 × 738.56 ms + 305.92 + 611.84 ms.
+        assert_eq!(p.awake, Duration::from_micros(238_560 + 3_133_440));
+        assert_eq!(p.more, Duration::from_micros(3_133_440));
     }
 
     #[test]
@@ -259,8 +264,13 @@ mod tests {
         assert!(t.heard(id(1), ch(3), -90, at(10)));
         assert!(t.awake(id(1), at(10) + (awake - Duration::from_micros(1))));
         assert!(!t.awake(id(1), at(10) + awake));
-        t.took(id(1), at(15));
-        assert!(t.awake(id(1), at(15) + (awake - Duration::from_micros(1))));
+        t.took(id(1), true, at(15));
+        let more = t.params().more;
+        assert!(t.awake(id(1), at(15) + (more - Duration::from_micros(1))));
+        assert!(!t.awake(id(1), at(15) + more));
+        t.took(id(1), false, at(16));
+        assert!(!t.awake(id(1), at(16)), "nothing more: asleep");
+        t.took(id(1), true, at(15));
         t.missed(id(1));
         assert!(!t.awake(id(1), at(16)), "a missed delivery: asleep");
         assert!(t.heard(id(1), ch(4), -80, at(300)));

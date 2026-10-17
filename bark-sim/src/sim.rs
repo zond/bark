@@ -212,6 +212,8 @@ pub(crate) struct NodeState {
     /// The radio is asleep until then (`Action::Sleep`), since `asleep_since`.
     pub asleep: Option<Instant>,
     pub asleep_since: Instant,
+    /// The last DATA this sleepy node received said more follow.
+    pub more: bool,
 }
 
 impl NodeState {
@@ -605,6 +607,7 @@ impl Sim {
                 beats: BeatRing::default(),
                 asleep: None,
                 asleep_since: Instant::ZERO,
+                more: false,
             })
             .collect();
 
@@ -1140,6 +1143,20 @@ impl Sim {
             t.event(now, node, &ev, &self.msg_tags);
         }
         self.note_beat(node, &ev);
+        if node >= self.n_relays {
+            if let Event::Received { bytes, .. } = ev {
+                if let Ok(bark_proto::wire::Packet::Data(d)) =
+                    bark_proto::wire::Packet::decode(bytes)
+                {
+                    if d.dst_hop == self.relays[node as usize].id() {
+                        self.nodes[node as usize].more = d.more;
+                        if d.more && self.now >= self.settle {
+                            self.metrics.sleep.more[0] += 1;
+                        }
+                    }
+                }
+            }
+        }
         if node < self.n_relays {
             self.rx_data = match ev {
                 Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
@@ -1208,6 +1225,9 @@ impl Sim {
     /// is lost, and it receives nothing until then.
     fn sleep(&mut self, node: u32, until: Instant) {
         self.wake(node);
+        if std::mem::take(&mut self.nodes[node as usize].more) && self.now >= self.settle {
+            self.metrics.sleep.more[1] += 1;
+        }
         if until <= self.now {
             return;
         }

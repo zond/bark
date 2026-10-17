@@ -43,6 +43,9 @@
 //!   from its GPS (0x2).
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
+//! - DATA's "more follows" bit is the lowest of the five spare bits of
+//!   `dst_pos`; `aux` has no spare bit. The message ID covers `dst_pos`
+//!   with its spare bits zero, so the bit does not change it.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
 
 use crate::event::MAX_FRAME;
@@ -96,6 +99,12 @@ const DATA_HOPS: usize = DATA_DST_ID + ID_LEN;
 const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
 /// DATA header length (spec "Packet formats": 22).
 pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
+/// The byte of DATA that holds the "more follows" bit: the last of
+/// `dst_pos`, whose low five bits are spare (`Position::encode`).
+const DATA_MORE_AT: usize = DATA_DST_POS + POS_LEN - 1;
+/// The "more follows" bit: the lowest spare bit of `dst_pos`. DATA `aux`
+/// holds the sender's home channel, 0 to 12, in all four of its bits.
+const DATA_MORE: u8 = 0x01;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
 /// 255 − 22 = 233 bytes.
@@ -176,6 +185,9 @@ pub struct Data<'a> {
     pub hops: u8,
     /// The time the message has left, in [`TTL_UNIT`]s (spec "Receiving DATA").
     pub time_left: u8,
+    /// More messages for the node it is addressed to wait at the sender
+    /// (spec "Delivery"); set only on a DATA to a sleepy node.
+    pub more: bool,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
 }
@@ -324,6 +336,9 @@ impl Packet<'_> {
                 put(buf, DATA_DST_HOP, &d.dst_hop.0);
                 put(buf, DATA_SRC_HOP, &d.src_hop.0);
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
+                if d.more {
+                    buf[DATA_MORE_AT] |= DATA_MORE;
+                }
                 put(buf, DATA_DST_ID, &d.dst_id.0);
                 buf[DATA_HOPS] = d.hops;
                 buf[DATA_TIME_LEFT] = d.time_left;
@@ -373,6 +388,7 @@ impl<'a> Packet<'a> {
                     dst_id: NodeId(get4(b, DATA_DST_ID)),
                     hops: b[DATA_HOPS],
                     time_left: b[DATA_TIME_LEFT],
+                    more: b[DATA_MORE_AT] & DATA_MORE != 0,
                     payload,
                 }))
             }
@@ -458,11 +474,13 @@ mod tests {
             dst_id in id(),
             hops: u8,
             time_left: u8,
+            more: bool,
             payload in payload(),
         ) {
-            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, time_left, payload: &payload };
+            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, more, time_left, payload: &payload };
             round_trip(&Packet::Data(d));
-            // The ID survives the trip: it depends only on fields every hop keeps.
+            // The ID survives the trip: it depends only on fields every hop
+            // keeps, and the "more follows" bit leaves the position alone.
             let mut buf = [0; MAX_FRAME];
             let len = Packet::Data(d).encode(&mut buf).unwrap();
             let Ok(Packet::Data(back)) = Packet::decode(&buf[..len]) else { panic!() };
@@ -473,7 +491,7 @@ mod tests {
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
             // the same, apart from bits the decoder ignores (unused aux bits
-            // of an ACK, spare position bits).
+            // of an ACK, spare position bits but DATA's "more follows").
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -506,6 +524,7 @@ mod tests {
             dst_id: NodeId([3; 4]),
             hops: 0,
             time_left: 0,
+            more: false,
             payload: &payload,
         };
         let mut buf = [0; MAX_FRAME];
@@ -610,6 +629,7 @@ mod tests {
             dst_id: NodeId([9, 10, 11, 12]),
             hops: 13,
             time_left: 14,
+            more: false,
             payload: &[15, 16],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();

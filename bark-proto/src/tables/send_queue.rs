@@ -27,7 +27,9 @@
 //! Each entry is a frame and what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"). An entry whose receivers
 //! are all banned waits in its place until a ban ends (spec "Overload waits"). The next
-//! hand-over goes to the first entry that is due, except that one that has
+//! hand-over goes to a DATA to a sleepy node if one is due, since its node
+//! listens only briefly (spec "Delivery"); else to the first entry that is
+//! due, except that one that has
 //! waited goes first, the most travelled first: the place one higher is
 //! free only for the message that has come farthest, and a lower one
 //! offered first would be refused and ban the neighbour again. Choosing an
@@ -247,17 +249,26 @@ impl SendQueue {
         Some(self.frames.remove(i))
     }
 
-    /// The entry the next hand-over goes to: of those that have waited and
-    /// are due, the most travelled, the earliest of equals; else the first
-    /// that is due.
+    /// The entry the next hand-over goes to: a DATA to a sleepy node that
+    /// is due, the first; else of those that have waited and are due, the
+    /// most travelled, the earliest of equals; else the first that is due.
     pub fn next_due(&self, now: Instant) -> Option<usize> {
         let due = |o: &Outgoing| o.not_before <= now;
+        if let Some(i) = self.delivery_due(now) {
+            return Some(i);
+        }
         self.iter()
             .enumerate()
             .filter(|(_, o)| due(o) && o.waited())
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
             .or_else(|| self.iter().position(due))
+    }
+
+    /// The first DATA to a sleepy node that is due.
+    pub fn delivery_due(&self, now: Instant) -> Option<usize> {
+        self.iter()
+            .position(|o| o.kind == Kind::Deliver && o.not_before <= now)
     }
 
     /// When the earliest waiting entry is due.
@@ -414,6 +425,7 @@ mod tests {
             dst_id: NodeId([3; 4]),
             hops,
             time_left: 1,
+            more: false,
             payload: &[tag],
         };
         let mut bytes = [0; MAX_FRAME];

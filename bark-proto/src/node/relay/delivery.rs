@@ -89,6 +89,7 @@ impl Relay {
             dst_id: node,
             hops: 0,
             time_left: q.time_left,
+            more: false,
             payload: q.payload(),
         };
         let frame = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
@@ -139,17 +140,18 @@ impl Relay {
     }
 
     /// `node` ACKed the message `msg_id` handed to it: it listens a while
-    /// longer, for the next.
+    /// longer for the next if the DATA said `more` follow, else it sleeps.
     pub(super) fn delivered_to(
         &mut self,
         msg_id: MsgId,
         node: NodeId,
+        more: bool,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
         self.delivery.remove(msg_id);
         self.delivered.insert(msg_id, now);
-        self.heard.took(node, now);
+        self.heard.took(node, more, now);
         emit(Action::Trace(Trace::Delivered { msg_id, node }));
         self.deliver_now(node, now);
     }

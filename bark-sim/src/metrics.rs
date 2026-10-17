@@ -566,6 +566,9 @@ pub struct SleepMetrics {
     pub off_channel: u64,
     /// See `anchored`.
     pub unheard: u64,
+    /// DATA a sleepy node received that said more follow; of those, ones
+    /// after which it slept before the next came.
+    pub more: [u64; 2],
 }
 
 /// How soon the network learns that a dark sleepy node is back (spec

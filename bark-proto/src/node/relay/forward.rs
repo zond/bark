@@ -435,7 +435,7 @@ impl Relay {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
                 self.replies.owe(reply, d.sender_home, deadline, now);
-                self.renew = false;
+                self.renew = None;
             }
             return;
         }
@@ -447,8 +447,9 @@ impl Relay {
             return;
         }
         self.replies.owe(reply, d.sender_home, deadline, now);
-        // A sleepy node listens on once it has answered (spec "Delivery").
-        self.renew = d.dst_id == self.me();
+        // A sleepy node listens on once it has answered if more follow,
+        // else it sleeps (spec "Delivery").
+        self.renew = (d.dst_id == self.me()).then_some(d.more);
         if completes {
             self.handover_done(now, emit);
         }
@@ -707,6 +708,7 @@ impl Relay {
             dst_id,
             hops: 0,
             time_left: Data::units(ttl),
+            more: false,
             payload,
         };
         if dst_id == self.me() || self.owns(dst_pos, now) {
@@ -733,6 +735,7 @@ impl Relay {
     /// a forward, or drop what cannot be sent. The entry stays where it is
     /// in the queue.
     pub(super) fn prepare(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.make_way(now);
         while self.handover.idle() {
             let Some(i) = self.queue.next_due(now) else {
                 return;
@@ -786,6 +789,30 @@ impl Relay {
                 }
             }
         }
+    }
+
+    /// A DATA to a sleepy node goes first (spec "Delivery"): a hand-over
+    /// that waits between its attempts, for the channel, a retry or the
+    /// bucket, steps aside for it and keeps its place. A return keeps its
+    /// unanswered attempts; a forward is addressed again when its turn
+    /// comes, so it starts afresh.
+    fn make_way(&mut self, now: Instant) {
+        let waiting = matches!(self.handover.step(), Step::Wait(_)) && self.radio.idle();
+        let Some(current) = self.queue.current().copied() else {
+            return;
+        };
+        if !waiting || current.kind == Kind::Deliver || self.queue.delivery_due(now).is_none() {
+            return;
+        }
+        let tries = match current.kind {
+            Kind::Forward => 0,
+            _ => self.handover.attempts(),
+        };
+        if let Some(c) = self.queue.current_mut() {
+            c.tries = tries;
+        }
+        self.handover.cancel();
+        self.skipped = 0;
     }
 
     /// Address the forward `out` (spec "Next hop"), or let it wait for a ban to
@@ -1001,6 +1028,12 @@ impl Relay {
                 Instant::MAX => d.time_left,
                 ends => Data::units(ends.since(now)),
             };
+            // More messages for a sleepy node wait here (spec "Delivery").
+            let more = out.kind == Kind::Deliver
+                && self
+                    .delivery
+                    .iter()
+                    .any(|q| q.node == d.dst_hop && q.msg_id != id);
             let (Some(hops), false) = (self.count(&d, id), gone(&out, now)) else {
                 let reason = match gone(&out, now) {
                     true => DropReason::Expired,
@@ -1020,6 +1053,7 @@ impl Relay {
                     sender_home: self.home,
                     hops,
                     time_left,
+                    more,
                     ..d
                 },
                 out.frame.channel,
@@ -1143,7 +1177,7 @@ impl Relay {
         let (id, to) = (d.msg_id(), d.dst_hop);
         if out.kind == Kind::Deliver {
             self.neighbours.answered(to, now);
-            return self.delivered_to(id, to, now, emit);
+            return self.delivered_to(id, to, d.more, now, emit);
         }
         let slot = self.neighbours.slot_of(to);
         if slot.is_some() {
@@ -1271,7 +1305,7 @@ impl Relay {
         let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.replies.abandon();
-            self.renew = false;
+            self.renew = None;
             return true;
         }
         match self.replies.begin() {
@@ -1295,7 +1329,7 @@ impl Relay {
                     self.radio.start(Job::Reply, Action::Transmit(frame), emit);
                 } else {
                     self.replies.abandon();
-                    self.renew = false;
+                    self.renew = None;
                 }
             }
             None => {}

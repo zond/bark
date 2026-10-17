@@ -108,6 +108,11 @@ impl Transfer {
         self.step == Step::Idle
     }
 
+    /// Transmissions so far.
+    pub(crate) fn attempts(&self) -> u8 {
+        self.attempts
+    }
+
     /// Whether the frame has been on air at least once.
     pub(crate) fn transmitted(&self) -> bool {
         self.attempts > 0
