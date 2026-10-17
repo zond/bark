@@ -43,12 +43,12 @@ pub struct HeardParams {
     /// How long an entry is kept after its last beat: two beat periods.
     pub keep: Duration,
     /// How long a sleepy node listens after its beat, and so how long a
-    /// holder may start sending to it then: long enough for the first
-    /// attempt of a message that goes first (spec "Delivery"). That is
-    /// the attempt the holder may have under way, a full frame and the ACK
-    /// timeout, and the message's first attempt, a full frame and the ACK
-    /// timeout's allowance for the turn-around and listen-before-talk:
-    /// 2 × (138.56 + 100) = 477.12 ms.
+    /// holder may start sending to it then: long enough for one hand-over
+    /// of a message that goes first to complete (spec "Delivery"), since
+    /// one cut short waits a beat period. That is the attempt the holder
+    /// may have under way, a full frame and the ACK timeout, 238.56 ms,
+    /// and the message's hand-over, as [`linger`](Self::linger):
+    /// 3372.00 ms.
     pub awake: Duration,
     /// How long it listens after it has answered a message: one hand-over
     /// with all its attempts and retry waits, 3133.44 ms. Nothing is under
@@ -67,7 +67,7 @@ impl HeardParams {
             + config.ack_timeout.as_micros();
         HeardParams {
             keep: beat_period(config.delivery_ttl).mul(2),
-            awake: Duration::from_micros(2 * under_way),
+            awake: Duration::from_micros(under_way + span),
             linger: Duration::from_micros(span),
         }
     }
@@ -251,9 +251,9 @@ mod tests {
             Duration::from_secs(300)
         );
         assert_eq!(p.keep, Duration::from_secs(600));
-        // Twice 138.56 + 100 ms; 3 × 738.56 ms + 305.92 + 611.84 ms.
-        assert_eq!(p.awake, Duration::from_micros(2 * 238_560));
+        // 3 × 738.56 ms + 305.92 + 611.84 ms, after 138.56 + 100 ms.
         assert_eq!(p.linger, Duration::from_micros(3_133_440));
+        assert_eq!(p.awake, Duration::from_micros(238_560 + 3_133_440));
     }
 
     #[test]

@@ -488,7 +488,12 @@ fn a_sleepy_node_sleeps_between_its_windows() {
         .map(|(t, _)| *t)
         .collect();
     for &t in &b {
-        assert_eq!(slept(&h, s, t, t + window), Duration::ZERO, "beat at {t:?}");
+        // An answer in the window starts the hand-over after it instead.
+        let end = answered
+            .iter()
+            .find(|&&a| a >= t && a < t + window)
+            .map_or(t + window, |&a| a + linger);
+        assert_eq!(slept(&h, s, t, end), Duration::ZERO, "beat at {t:?}");
     }
     for &a in &answered {
         assert_eq!(
