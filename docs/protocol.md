@@ -25,7 +25,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and for its anchor's heartbeat, and forwards only where no relay is in reach |
+| Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, and forwards only where no relay is in reach |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -1179,8 +1179,8 @@ What breaks it:
 
 A sleepy node is a carried node on battery: a node with the sleepy
 setting ([hardware](#hardware)). It heartbeats rarely and on one channel, listens for a
-short window after each heartbeat and for its anchor's heartbeat once a
-rotation, and the messages for it wait at a
+short window after each heartbeat and after each message it takes, and
+for its anchor's heartbeat once a rotation, and the messages for it wait at a
 relay it chooses, its **anchor**. It sleeps only while it has an anchor: one
 that hears no relay listens all the time and acts as a relay, since no
 one could hold its messages ([sleepy nodes alone](#sleepy-nodes-alone)). Everything else it does as
@@ -1314,27 +1314,36 @@ first attempt, a full frame and the ACK timeout's allowance for the
 turn-around and listen-before-talk: 2 × (138.6 + 100) = 477.1 ms. A node
 whose beat brought nothing sleeps after that.
 
-A DATA to a sleepy node says whether **more follows**: whether more
-messages for the node wait at the holder ([packet formats](#packet-formats)). Having answered
-one that says so, the node listens one hand-over longer, with all its
-attempts and retry waits, 3.13 s ([hand-over](#hand-over), [retry wait](#retry-wait)), for the next,
-which goes first; having answered one that does not, it sleeps. Nothing
-caps a burst but the holder's bucket ([duty cycle cap](#duty-cycle-cap)): once the bucket would
-keep the next message past the window, the node sleeps and the rest wait
-for its next beat. A delivery that goes unanswered marks the node
-asleep, and its messages wait for its next beat.
+Having answered a DATA for it, the node listens one hand-over longer,
+with all its attempts and retry waits, 3.13 s ([hand-over](#hand-over), [retry wait](#retry-wait)), and
+its holder knows it does: the next message for it goes then, first. The
+node sleeps once a hand-over passes with no DATA for it. So the holder
+sends what it holds one after the other on one beat, a message that
+arrives meanwhile goes at once, and a flow of messages to the node less
+than a hand-over apart keeps it awake while it lasts. A repeat of a DATA
+whose ACK was lost finds the node still listening. Nothing caps a burst
+but the holder's bucket ([duty cycle cap](#duty-cycle-cap)): once the bucket would keep the
+next message past the hand-over, the node sleeps and the rest wait for
+its next beat. A delivery that goes unanswered marks the node asleep,
+and its messages wait for its next beat. A bit in DATA saying that more
+wait, with the node sleeping at once after a DATA without it, saved
+4 s of listening an hour on average and 11 s at the median in the
+simulated capacity domain at the texting rate of [capacity and sizing](#capacity-and-sizing), and
+delivered 13 to 25 points less of flows of a text every 0.5 to 2 s to
+one node (roadmap D48).
 
 The DATA carries the hop count as any hand-over ([hop count](#hop-count)) and the
 time the message had left when it arrived: the delivery queue's wait
 does not count against it ([receiving DATA](#receiving-data)).
 
 So a message waits for its node a mean of about two minutes, at most a
-beat period. A node listens 477 ms after each beat, 7.6 s an hour, and
-for its anchor's heartbeat, under a second a rotation; measured in the
-simulated capacity domain, where a node is out of reach five minutes in
-an hour, a sleepy node listened 106 s an hour at the median and 171 s on
-average, most of it checking its anchor after the dark: 0.28 mA on
-average at the 5.8 mA of listening (roadmap D47).
+beat period. A node listens 477 ms after each beat, 7.6 s an hour, 3.13 s
+after each message it takes, and for its anchor's heartbeat, under a
+second a rotation; measured in the simulated capacity domain, where a
+node is out of reach five minutes in an hour, a sleepy node listened
+117 s an hour at the median and 175 s on average, most of it checking
+its anchor after the dark: 0.28 mA on average at the 5.8 mA of listening
+(roadmap D47, D48).
 
 ### Delivery queue
 
@@ -1360,8 +1369,9 @@ what arrives in a TTL for every node a holder can keep, its heard
 table's 256 ([heard table](#heard-table)), at the 23 texts a day each that the network
 carries ([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute TTLs in a day
 = 40.9, so 41 messages, 10.6 KiB. A node takes what its holder holds
-when it beats, at most 41 messages a period: a flow of more to one node
-waits, and loses what does not fit.
+when it beats, and what comes for it while it listens ([delivery](#delivery)); a flow
+to one node that pauses longer than a hand-over waits for the next beat,
+at most 41 messages a period, and loses what does not fit.
 
 The owner remembers 41 delivered message IDs ([packet formats](#packet-formats)) and ACKs
 a repeat without delivering it twice. When it needs the place, it
@@ -1542,9 +1552,7 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
-          stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL;
-          the lowest spare bit of dst_pos = more follows, set by a holder
-          on a DATA to a sleepy node ([delivery](#delivery)); aux has no spare bit
+          stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
 Types 0x4, 0x6 and 0x7 are unused; nodes reject them like any unknown type.
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
@@ -1552,7 +1560,7 @@ unknown type.
 ```
 
 The **message ID** is a 32-bit FNV-1a hash of
-`dst_pos || dst_id || payload`, `dst_pos` with its spare bits zero, computed
+`dst_pos || dst_id || payload`, computed
 by every node that handles the message; it is the same on every hop
 because none of these fields changes. DATA does not carry it; the ACK
 does, to name what it acknowledges. The app must keep payloads unique
