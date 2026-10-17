@@ -546,6 +546,20 @@ pub struct AppMetrics {
     pub latencies_us: Vec<u64>,
 }
 
+/// Heartbeats of nodes that are not sleepy, after the settle time, at the
+/// nodes listening on their channel: how many arrived, and how many were
+/// lost with another heartbeat on the air there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct HeartbeatFates {
+    /// Receivers alive, in reach, awake, resting on the heartbeat's channel, and
+    /// reached above sensitivity on average.
+    pub candidates: u64,
+    /// Of those, ones that received it.
+    pub received: u64,
+    /// Of the others, ones with another heartbeat on the air there.
+    pub lost_with_heartbeat: u64,
+}
+
 /// What sleeping does (`Action::Sleep`), counted after the settle time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SleepMetrics {
@@ -660,6 +674,8 @@ pub struct Metrics {
     pub returns: LeafReturns,
     /// What sleeping does to sleepy nodes and their holders.
     pub sleep: SleepMetrics,
+    /// Heartbeats at their receivers.
+    pub heartbeats: HeartbeatFates,
     /// Frames addressed to a relay, by fate.
     pub addressed: Addressed,
     /// Refusals for room, and the hop places free at them.

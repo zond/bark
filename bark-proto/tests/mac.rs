@@ -165,10 +165,13 @@ fn heartbeat_rotates_through_every_channel_in_order() {
             r#"k ← k + 1 (spec "Heartbeat")"#
         );
         let gap = t1.since(t0);
-        // The interval plus the listen-before-talk checks on an idle channel.
+        // Its own fixed interval, from its ID; the listen-before-talk
+        // checks on an idle channel take about the same time each.
+        let interval = bark_proto::node::heartbeat_interval(h.nodes[0].core.id(), &c);
+        assert!(interval >= c.heartbeat_min && interval < c.heartbeat_max);
         assert!(
-            gap >= c.heartbeat_min && gap <= c.heartbeat_max + Duration::from_millis(5),
-            "{gap:?}"
+            gap.as_micros().abs_diff(interval.as_micros()) <= 1000,
+            "{gap:?} against {interval:?}"
         );
         let Ok(Packet::Heartbeat(hb)) = Packet::decode(f0.payload()) else {
             panic!("not a heartbeat")

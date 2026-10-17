@@ -1548,6 +1548,16 @@ fn the_time_left_travels_with_the_message_and_its_return() {
     let ttl = secs(600);
     let mut h = line(ttl);
     let start = h.now;
+    // When R last heard C: its entry expires 390 s after (spec "Neighbour table").
+    let heard_c = |h: &Harness<Relay>| {
+        let c_id = core(h, c).id();
+        core(h, r)
+            .neighbours()
+            .find(|n| n.id == c_id)
+            .map(|n| n.last_heard)
+            .unwrap()
+    };
+    let c_heard = heard_c(&h);
     let id = send(&mut h, p, d, b"timed");
     let returned = |h: &Harness<Relay>| {
         traces(h, r)
@@ -1558,7 +1568,7 @@ fn the_time_left_travels_with_the_message_and_its_return() {
     let (sent_p, sent_r) = (datas(&h, p, id), datas(&h, r, id));
     let (last, left) = *sent_r.last().unwrap();
     assert!(
-        last.since(start) > secs(390),
+        last.since(c_heard) > secs(390),
         "returned once C's entry expired"
     );
     for (t, left) in sent_p.iter().chain(&sent_r) {

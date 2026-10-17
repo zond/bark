@@ -112,6 +112,25 @@ impl Default for Config {
     }
 }
 
+/// The heartbeat intervals a node can have: 256, one ID byte's worth, over
+/// the range of spec "Heartbeat", 39.06 ms apart (spec "Heartbeat"). Two
+/// nodes whose intervals differ by at least two heartbeats' airtime,
+/// 2 × 11.84 ms, slide past each other by more than an overlap at every
+/// heartbeat, so that two heartbeats of theirs meet at most once in a row;
+/// 10 s / 23.68 ms = 422 intervals would do, and the largest power of two
+/// below it is 256.
+pub const INTERVALS: u64 = 256;
+
+/// Node `id`'s heartbeat interval: fixed, from the last byte of its ID,
+/// one of [`INTERVALS`] steps over `heartbeat_min` to `heartbeat_max`
+/// (spec "Heartbeat"). A neighbour that hears one heartbeat of it knows
+/// when the next comes to its channel.
+pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
+    let min = config.heartbeat_min.as_micros();
+    let span = config.heartbeat_max.as_micros().saturating_sub(min);
+    Duration::from_micros(min + span * id.0[3] as u64 / INTERVALS)
+}
+
 /// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 

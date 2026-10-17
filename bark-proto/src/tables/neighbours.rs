@@ -136,6 +136,12 @@ pub struct Neighbour {
     pub sleepy: bool,
     /// Heartbeats heard from it, up to [`BEATS`].
     pub beats: u8,
+    /// When its last heartbeat was heard, and on which channel: with its
+    /// fixed interval, when its next comes to any channel
+    /// ([`Neighbours::next_beat`]).
+    pub beat_at: Instant,
+    /// See `beat_at`.
+    pub beat_on: Channel,
 }
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
@@ -359,6 +365,8 @@ impl Neighbours {
             surveyed: hb.surveyed,
             sleepy: hb.sleepy,
             beats: 1,
+            beat_at: now,
+            beat_on: hb.home,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -371,6 +379,23 @@ impl Neighbours {
             },
             None => Heard::Rejected,
         }
+    }
+
+    /// A heartbeat of `id` was heard on channel `on` at `now`.
+    pub fn beat_heard(&mut self, id: NodeId, on: Channel, now: Instant) {
+        if let Some(n) = self.entry_mut(id) {
+            n.beat_at = now;
+            n.beat_on = on;
+        }
+    }
+
+    /// When the next heartbeat of `n`, which steps through the channels
+    /// one a heartbeat at its fixed `interval` (spec "Heartbeat"), comes to
+    /// channel `ch`, after the last one heard.
+    pub fn next_beat(n: &Neighbour, interval: Duration, ch: Channel) -> Instant {
+        let steps = (ch.index() + CHANNELS - n.beat_on.index()) % CHANNELS;
+        let steps = if steps == 0 { CHANNELS } else { steps };
+        n.beat_at + interval.mul(steps as u64)
     }
 
     /// `id` took a packet from this relay at `now`: its failures are
@@ -525,6 +550,23 @@ mod tests {
             ..hb
         };
         t.heard(&hb, p, rssi, &plane(), now)
+    }
+
+    /// A neighbour heard on channel 3 is next on channel 5 two intervals
+    /// later, and on channel 3 itself a whole rotation later.
+    #[test]
+    fn the_next_heartbeat_follows_the_rotation() {
+        let mut t = Neighbours::new(params());
+        let (hb, p) = hb(1, 0);
+        t.heard(&hb, p, -90, &plane(), Instant::ZERO);
+        let at = Instant::from_micros(7_000_000);
+        t.beat_heard(id(1), Channel::new(3).unwrap(), at);
+        let n = *t.get(id(1)).unwrap();
+        let interval = Duration::from_secs(10);
+        let next = |c| Neighbours::next_beat(&n, interval, Channel::new(c).unwrap());
+        assert_eq!(next(5), at + interval.mul(2));
+        assert_eq!(next(3), at + interval.mul(CHANNELS as u64));
+        assert_eq!(next(2), at + interval.mul(CHANNELS as u64 - 1));
     }
 
     fn id(i: i32) -> NodeId {

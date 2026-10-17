@@ -74,7 +74,7 @@ use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer};
-use crate::node::{Config, Core, Rng};
+use crate::node::{heartbeat_interval, Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::Budget;
@@ -666,7 +666,11 @@ impl Relay {
             let home = self.quietest();
             self.retune(home, emit);
         }
-        self.beacon.next_at = now + self.heartbeat_interval();
+        // At a random phase of its interval: nodes that boot together, after
+        // a power cut, would otherwise heartbeat in step whenever their
+        // intervals have a small common multiple.
+        let interval = heartbeat_interval(self.id, &self.config);
+        self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
     }
 
     fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
@@ -697,6 +701,8 @@ impl Relay {
         Channel::all().filter(near).nth(pick).unwrap_or(self.home)
     }
 
+    /// The time to a sleeping node's next beat. One that does not sleep
+    /// heartbeats on its fixed interval instead (`heartbeat_done`).
     fn heartbeat_interval(&mut self) -> Duration {
         if self.sleeps() && self.beacon.quick == 0 {
             let period = beat_period(self.config.delivery_ttl);
@@ -1058,14 +1064,28 @@ impl Relay {
             }
             return;
         }
-        if sent {
-            self.beacon.rotation = self.beacon.rotation.next();
-            if self.sleeps() {
-                // The window after its beat (spec "Delivery").
-                self.awake_until = now + self.heard.params().awake;
-            }
+        if sent && self.sleeps() {
+            // The window after its beat (spec "Delivery").
+            self.awake_until = now + self.heard.params().awake;
         }
-        self.beacon.next_at = now + self.heartbeat_interval();
+        if self.sleeps() || self.beacon.quick > 0 {
+            if sent {
+                self.beacon.rotation = self.beacon.rotation.next();
+            }
+            self.beacon.next_at = now + self.heartbeat_interval();
+        } else {
+            // On its fixed interval, a channel a slot whether or not the
+            // heartbeat went, so that a neighbour that heard one knows when
+            // the next comes to its channel (spec "Heartbeat").
+            let interval = heartbeat_interval(self.id, &self.config);
+            let mut next = self.beacon.next_at + interval;
+            self.beacon.rotation = self.beacon.rotation.next();
+            while next <= now {
+                next += interval;
+                self.beacon.rotation = self.beacon.rotation.next();
+            }
+            self.beacon.next_at = next;
+        }
         if self.config.sleepy {
             // Its own beat stands in for the sweep's round of the tables.
             self.neighbours.expire(now);
@@ -1135,6 +1155,7 @@ impl Relay {
         }
         let position = hb.position(self.config.position);
         let heard = self.neighbours.heard(&hb, position, rssi, &self.plane, now);
+        self.neighbours.beat_heard(hb.id, self.home, now);
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);

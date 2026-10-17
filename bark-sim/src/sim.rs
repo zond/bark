@@ -240,6 +240,15 @@ impl BeatRing {
         self.next = (self.next + 1) % self.beats.len();
     }
 
+    /// How many heartbeats, sleepy or not, were on the air on `channel`
+    /// during `[start, end)`.
+    pub(crate) fn count(&self, start: Instant, end: Instant, channel: u8) -> usize {
+        self.beats
+            .iter()
+            .filter(|&&(s, e, c, _)| c == channel && s < end && e > start)
+            .count()
+    }
+
     /// Whether a heartbeat, a sleepy node's or another's, was on the air
     /// on `channel` during `[start, end)`.
     pub(crate) fn during(&self, start: Instant, end: Instant, channel: u8, sleepy: bool) -> bool {

@@ -237,6 +237,12 @@ pub struct Summary {
     /// Sleepy nodes, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<SleepSummary>,
+    /// Heartbeats at their receivers.
+    pub heartbeats: crate::metrics::HeartbeatFates,
+    /// Pairs of nodes that are not sleepy and are in reach of each other,
+    /// and of those, ones with the same heartbeat interval
+    /// (`bark_proto::node::heartbeat_interval`).
+    pub interval_pairs: (u64, u64),
     /// Refusals for room, and the hop places free at them.
     #[serde(skip_serializing_if = "hop_places_none")]
     pub hop_places: HopPlaceRefusals,
@@ -388,6 +394,8 @@ impl Sim {
                 }
             }),
             sleep: self.sleep_summary(),
+            heartbeats: m.heartbeats,
+            interval_pairs: self.interval_pairs(),
             hop_places: m.hop_places,
             addressed: m.addressed,
             channels,
@@ -398,6 +406,26 @@ impl Sim {
 }
 
 impl Sim {
+    /// Pairs of nodes that are not sleepy and hear each other, and of those
+    /// with the same heartbeat interval.
+    fn interval_pairs(&self) -> (u64, u64) {
+        let n = self.relays();
+        let interval = |i: u32| {
+            let r = self.relay(i);
+            bark_proto::node::heartbeat_interval(r.id(), r.config())
+        };
+        let (mut pairs, mut same) = (0, 0);
+        for a in 0..n {
+            for l in self.links().row(a) {
+                if l.rx > a && l.rx < n {
+                    pairs += 1;
+                    same += u64::from(interval(a) == interval(l.rx));
+                }
+            }
+        }
+        (pairs, same)
+    }
+
     /// Listening time of the sleepy nodes after the settle time, and what
     /// sleeping did.
     fn sleep_summary(&self) -> Option<SleepSummary> {
@@ -628,6 +656,12 @@ impl Summary {
                 );
             }
         }
+        let b = &self.heartbeats;
+        let _ = writeln!(
+            s,
+            "heartbeats: {} at their receivers, {} received, {} lost with another heartbeat on the air; {} pairs in reach, {} with the same interval",
+            b.candidates, b.received, b.lost_with_heartbeat, self.interval_pairs.0, self.interval_pairs.1
+        );
         let h = &self.hop_places;
         if h.refusals > 0 {
             let _ = writeln!(

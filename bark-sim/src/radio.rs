@@ -255,6 +255,31 @@ impl Sim {
                 self.metrics.sleep.to_sleepy[fate] += 1;
             }
         }
+        let heartbeat = matches!(
+            WirePacket::decode(tx.frame.payload()),
+            Ok(WirePacket::Heartbeat(h)) if !h.sleepy
+        );
+        if heartbeat && self.now >= self.settle {
+            let (start, end, c) = (tx.start, tx.end, ch.index());
+            for i in 0..self.links.row(tx.src).len() {
+                let l = self.links.row(tx.src)[i];
+                let b = l.rx;
+                let st = &self.nodes[b as usize];
+                // Only where it arrives above sensitivity on average.
+                let audible = l.base_dbm as f64 >= self.sens_dbm;
+                let off = !st.alive || !st.present || st.asleep_at(start);
+                if !audible || off || st.resting != Some(ch) {
+                    continue;
+                }
+                let h = &mut self.metrics.heartbeats;
+                h.candidates += 1;
+                if got.iter().any(|g| g.0 == b) {
+                    h.received += 1;
+                } else if st.beats.count(start, end, c) > 1 {
+                    h.lost_with_heartbeat += 1;
+                }
+            }
+        }
         let answer = self.answer_of.remove(&tx.key);
         if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
             let fate = if got.iter().any(|g| g.0 == d) {
