@@ -73,19 +73,19 @@
 //! around the relay routes better is open item O4; [`victim`] is the one
 //! function to replace if so.
 //!
-//! # Sleepy neighbours
+//! # Sleepy and anchorless neighbours
 //!
-//! A sleepy node's heartbeat says so. It beats only on its home channel,
-//! at most every [`beat_period`] (300 s), so its entry expires after two
-//! periods without a beat, not three rotations, and is stale after one.
-//! It is a next hop only where no node that is not sleepy is live
-//! (`relay/forward.rs`), so it may hold a slot only while no such node
-//! wants one: a newcomer that is not sleepy takes the place of the least
-//! recently heard sleepy entry before any other, and a sleepy newcomer
-//! takes only a free slot or, by the rule above, a demoted or stale
-//! sleepy entry's.
-//!
-//! [`beat_period`]: crate::tables::heard::beat_period
+//! A sleepy node's beat keeps it out of the table (`node/relay.rs`): it
+//! sleeps, and is never a next hop. A sleepy node without an anchor is
+//! awake and heartbeats as a relay, with the anchorless bit; it is no
+//! anchor, and a next hop only where no other kind is live
+//! (`relay/forward.rs`). It holds a slot only while no other kind wants
+//! one: at boot every sleepy node in reach is anchorless until
+//! it has heard the relays for a rotation, and would otherwise fill the
+//! table and keep out the relays it is waiting to hear. A newcomer that is
+//! not anchorless takes the place of the least recently heard anchorless
+//! entry before any other, and an anchorless newcomer takes only a free
+//! slot or, by the rule above, a demoted or stale anchorless entry's.
 //!
 //! # The anchor of a node that sleeps
 //!
@@ -100,7 +100,6 @@ use crate::node::Config;
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::tables::budget::hold;
-use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
 
@@ -129,9 +128,9 @@ pub struct Neighbour {
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
-    /// Whether it is a sleepy node: a next hop only where no other kind is
-    /// live.
-    pub sleepy: bool,
+    /// Whether it knows no node that is not sleepy (heartbeat 0xA): no
+    /// anchor for a sleepy node.
+    pub anchorless: bool,
     /// Heartbeats heard from it, up to [`BEATS`].
     pub beats: u8,
     /// When its last heartbeat heard started, and on which channel: with its
@@ -158,11 +157,6 @@ pub struct NeighbourParams {
     pub expire_after: Duration,
     /// Age at which an entry may be evicted for a newcomer.
     pub stale_after: Duration,
-    /// Age at which a sleepy entry expires: two beat periods.
-    pub sleepy_expire_after: Duration,
-    /// Age at which a sleepy entry may be evicted for a sleepy newcomer:
-    /// one beat period, so it has certainly missed a beat.
-    pub sleepy_stale_after: Duration,
 }
 
 impl NeighbourParams {
@@ -176,8 +170,6 @@ impl NeighbourParams {
             demotion: mean_rotation.mul(c.demotion_rotations as u64),
             expire_after: mean_rotation.mul(c.neighbour_expiry_rotations as u64),
             stale_after: c.heartbeat_max.mul(CHANNELS as u64),
-            sleepy_expire_after: beat_period(c.delivery_ttl).mul(2),
-            sleepy_stale_after: beat_period(c.delivery_ttl),
         }
     }
 }
@@ -296,20 +288,12 @@ impl Neighbours {
 
     /// Whether `n` has expired at `now`.
     pub fn is_expired(&self, n: &Neighbour, now: Instant) -> bool {
-        Some(n.id) != self.pinned && now.since(n.last_heard) >= self.expire_after(n)
+        Some(n.id) != self.pinned && now.since(n.last_heard) >= self.params.expire_after
     }
 
     /// Keep the entry of `id`, if any, whatever its age; `None` keeps none.
     pub fn pin(&mut self, id: Option<NodeId>) {
         self.pinned = id;
-    }
-
-    fn expire_after(&self, n: &Neighbour) -> Duration {
-        if n.sleepy {
-            self.params.sleepy_expire_after
-        } else {
-            self.params.expire_after
-        }
     }
 
     /// Neighbours that work at `now`, with their slots: live and not
@@ -342,7 +326,7 @@ impl Neighbours {
                     n.local = plane.point(position);
                 }
                 n.home = hb.home;
-                n.sleepy = hb.sleepy;
+                n.anchorless = hb.anchorless;
                 n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
@@ -359,7 +343,7 @@ impl Neighbours {
             banned_until: Instant::ZERO,
             rssi: rssi as f32,
             fail_count: 0,
-            sleepy: hb.sleepy,
+            anchorless: hb.anchorless,
             beats: 1,
             beat_at: now,
             beat_on: hb.home,
@@ -368,7 +352,7 @@ impl Neighbours {
             self.slots[i] = Some(new);
             return Heard::Added(i);
         }
-        match victim(self, hb.sleepy, now) {
+        match victim(self, hb.anchorless, now) {
             Some(i) => match self.slots[i].replace(new) {
                 Some(old) => Heard::Replaced(i, old),
                 None => Heard::Added(i),
@@ -453,6 +437,13 @@ impl Neighbours {
         Some(n.fail_count >= params.demote_after)
     }
 
+    /// Remove the entry of `id`, if any.
+    pub fn forget(&mut self, id: NodeId) {
+        if let Some(i) = self.slot_of(id) {
+            self.slots[i] = None;
+        }
+    }
+
     /// Remove every entry expired at `now`.
     pub fn expire(&mut self, now: Instant) {
         for i in 0..NEIGHBOURS {
@@ -466,7 +457,7 @@ impl Neighbours {
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()
             .filter(|n| Some(n.id) != self.pinned)
-            .map(|n| n.last_heard + self.expire_after(n))
+            .map(|n| n.last_heard + self.params.expire_after)
             .min()
     }
 
@@ -488,33 +479,28 @@ fn average(avg: f32, dbm: i16) -> f32 {
 }
 
 /// The eviction policy (roadmap D12): which slot of a full table a
-/// newcomer, `sleepy` or not, takes at `now`, if any. See the module
+/// newcomer, `anchorless` or not, takes at `now`, if any. See the module
 /// documentation.
-pub fn victim(table: &Neighbours, sleepy: bool, now: Instant) -> Option<usize> {
-    let oldest = |sleepy: bool, demoted: Option<bool>| {
+pub fn victim(table: &Neighbours, anchorless: bool, now: Instant) -> Option<usize> {
+    let oldest = |anchorless: bool, demoted: Option<bool>| {
         table
             .slots()
-            .filter(|(_, n)| n.sleepy == sleepy && Some(n.id) != table.pinned)
+            .filter(|(_, n)| n.anchorless == anchorless && Some(n.id) != table.pinned)
             .filter(|(_, n)| demoted.is_none_or(|d| table.is_demoted(n, now) == d))
             .min_by_key(|(_, n)| n.last_heard)
             .map(|(i, _)| i)
     };
-    if !sleepy {
+    if !anchorless {
         if let Some(i) = oldest(true, None) {
             return Some(i);
         }
     }
-    let stale_after = if sleepy {
-        table.params.sleepy_stale_after
-    } else {
-        table.params.stale_after
-    };
     let stale = |i: &usize| {
         table
             .slot(*i)
-            .is_some_and(|n| now.since(n.last_heard) >= stale_after)
+            .is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after)
     };
-    oldest(sleepy, Some(true)).or_else(|| oldest(sleepy, Some(false)).filter(stale))
+    oldest(anchorless, Some(true)).or_else(|| oldest(anchorless, Some(false)).filter(stale))
 }
 
 #[cfg(test)]
@@ -529,6 +515,7 @@ mod tests {
     fn hb(i: i32, home: u8) -> (Heartbeat, Position) {
         let hb = Heartbeat {
             sleepy: false,
+            anchorless: false,
             home: Channel::new(home).unwrap(),
             id: id(i),
             short: pos(i).short(),
@@ -536,10 +523,13 @@ mod tests {
         (hb, pos(i))
     }
 
-    /// Hear sleepy node `i`'s heartbeat.
-    fn hear_sleepy(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
+    /// Hear anchorless node `i`'s heartbeat.
+    fn hear_anchorless(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
         let (hb, p) = hb(i, 0);
-        let hb = Heartbeat { sleepy: true, ..hb };
+        let hb = Heartbeat {
+            anchorless: true,
+            ..hb
+        };
         t.heard(&hb, p, rssi, &plane(), now)
     }
 
@@ -597,42 +587,39 @@ mod tests {
             "3 × 13 × 10 s ≈ the design's 400 s"
         );
         assert_eq!(p.stale_after, Duration::from_secs(195));
-        assert_eq!(p.sleepy_expire_after, Duration::from_secs(600));
-        assert_eq!(p.sleepy_stale_after, Duration::from_secs(300));
     }
 
-    /// A sleepy entry lives two beat periods; it holds a slot only while
-    /// no node that is not sleepy wants one, and takes only a free or a
-    /// stale sleepy entry's slot.
+    /// An anchorless entry lives as long as any other; it holds a slot
+    /// only while no other kind wants one, and takes only a free or a
+    /// stale anchorless entry's slot.
     #[test]
-    fn sleepy_entries_are_kept_longer_and_give_way() {
+    fn anchorless_entries_give_way() {
         let mut t = Neighbours::new(params());
-        assert_eq!(hear_sleepy(&mut t, 0, -80, at(0)), Heard::Added(0));
-        assert!(t.get(id(0)).unwrap().sleepy);
-        assert_eq!(t.live(at(599)).count(), 1);
-        assert_eq!(t.live(at(600)).count(), 0);
-        assert_eq!(t.next_expiry(), Some(at(600)));
+        assert_eq!(hear_anchorless(&mut t, 0, -80, at(0)), Heard::Added(0));
+        assert!(t.get(id(0)).unwrap().anchorless);
+        assert_eq!(t.live(at(389)).count(), 1);
+        assert_eq!(t.live(at(390)).count(), 0);
         for i in 1..NEIGHBOURS as i32 {
             hear(&mut t, i, 0, -80, at(10));
         }
         assert_eq!(
-            hear_sleepy(&mut t, 100, -80, at(20)),
+            hear_anchorless(&mut t, 100, -80, at(20)),
             Heard::Rejected,
-            "not in place of a node that is not sleepy"
+            "not in place of a node that is not anchorless"
         );
         match hear(&mut t, 101, 0, -80, at(20)) {
-            Heard::Replaced(0, old) => assert!(old.sleepy),
+            Heard::Replaced(0, old) => assert!(old.anchorless),
             other => panic!("{other:?}"),
         }
-        // Sleepy entries make way for each other only once stale.
+        // Anchorless entries make way for each other only once stale.
         let mut t = Neighbours::new(params());
         for i in 0..NEIGHBOURS as i32 {
-            hear_sleepy(&mut t, i, -80, at(i as u64));
+            hear_anchorless(&mut t, i, -80, at(i as u64));
         }
-        assert_eq!(hear_sleepy(&mut t, 100, -80, at(299)), Heard::Rejected);
+        assert_eq!(hear_anchorless(&mut t, 100, -80, at(194)), Heard::Rejected);
         let first = *t.get(id(0)).unwrap();
         assert_eq!(
-            hear_sleepy(&mut t, 100, -80, at(300)),
+            hear_anchorless(&mut t, 100, -80, at(195)),
             Heard::Replaced(0, first)
         );
     }

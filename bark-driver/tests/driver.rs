@@ -558,6 +558,7 @@ fn a_relay_runs_through_the_loop() {
     let other = Position::from_degrees(50.46, 30.52);
     let hb = Packet::Heartbeat(Heartbeat {
         sleepy: false,
+        anchorless: false,
         home: ch(6),
         id: bark_proto::NodeId([6; 4]),
         short: other.short(),

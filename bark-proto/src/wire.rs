@@ -1,5 +1,5 @@
 //! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x1, 0x2, 0x4, 0x6, 0x7 and 0xA to 0xE are unused (roadmap D46,
+//! codes 0x1, 0x2, 0x4, 0x6, 0x7 and 0xB to 0xE are unused (roadmap D46,
 //! D49).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
@@ -12,7 +12,7 @@
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x8/0x9 first id pos                                    = 9
+//! HEARTBEAT 0x8/0x9/0xA first id pos                               = 9
 //! ACK       0x3      first msg from to                              = 13
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
@@ -40,7 +40,8 @@
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK are sent as zero and ignored on receipt.
 //! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
-//!   sleepy (0x9). `aux` holds the home channel, 0 to 12, in all four of
+//!   sleepy (0x9), and 0x2, anchorless (0xA), never both (0xB is
+//!   rejected): a node that sleeps has an anchor. `aux` holds the home channel, 0 to 12, in all four of
 //!   its bits, so the flags are in the type. 0x8 is the one base with both
 //!   low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0 would
 //!   give 0x3, the ACK, 0x4 would give 0x5, DATA, and 0xC would give 0xF,
@@ -79,6 +80,8 @@ const T_HEARTBEAT: u8 = 0x8;
 // The heartbeat's flags, in the type's two low bits.
 const HEARTBEAT_FLAGS: u8 = 0x3;
 const HEARTBEAT_SLEEPY: u8 = 0x1;
+const HEARTBEAT_ANCHORLESS: u8 = 0x2;
+const _: () = assert!(HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS == HEARTBEAT_FLAGS);
 const _: () = assert!(
     T_HEARTBEAT & HEARTBEAT_FLAGS == 0
         && T_ACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
@@ -128,9 +131,13 @@ const _: () = assert!(MAX_PAYLOAD == 233);
 /// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// From a sleepy node (0x9): one that beats only on its home channel,
-    /// slowly, and is a next hop only where no other kind is in reach.
+    /// The sender sleeps (0x9): it may be sent to only in the window after
+    /// its beat, by its anchor, so it is never a next hop. Clear, it may be
+    /// sent to at any time, as any relay.
     pub sleepy: bool,
+    /// The sender knows no node that is not sleepy (0xA): it is no anchor
+    /// for a sleepy node. Never with `sleepy`.
+    pub anchorless: bool,
     /// The sender's home channel.
     pub home: Channel,
     /// The sender.
@@ -310,7 +317,9 @@ impl Packet<'_> {
         match self {
             Packet::Heartbeat(h) => {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
-                let kind = T_HEARTBEAT | flag(h.sleepy, HEARTBEAT_SLEEPY);
+                let kind = T_HEARTBEAT
+                    | flag(h.sleepy, HEARTBEAT_SLEEPY)
+                    | flag(h.anchorless && !h.sleepy, HEARTBEAT_ANCHORLESS);
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
@@ -352,12 +361,11 @@ impl<'a> Packet<'a> {
         let kind = first >> TYPE_SHIFT;
         let aux = first & AUX_MASK;
         match kind {
-            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT
-                && k & HEARTBEAT_FLAGS & !HEARTBEAT_SLEEPY == 0 =>
-            {
+            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT && k & HEARTBEAT_FLAGS != HEARTBEAT_FLAGS => {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
                     sleepy: kind & HEARTBEAT_SLEEPY != 0,
+                    anchorless: kind & HEARTBEAT_ANCHORLESS != 0,
                     home: channel(aux)?,
                     id: NodeId(get4(b, HEARTBEAT_ID)),
                     short: get_short(b, HEARTBEAT_POS),
@@ -437,11 +445,13 @@ mod tests {
         #[test]
         fn heartbeat_round_trips(
             sleepy: bool,
+            anchorless: bool,
             home in chan(),
             id in id(),
             position in position(),
         ) {
-            let hb = Heartbeat { sleepy, home, id, short: position.short() };
+            let anchorless = anchorless && !sleepy;
+            let hb = Heartbeat { sleepy, anchorless, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -533,11 +543,11 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xa0, 0xb0] {
+        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xb0] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
-                "unused: the old heartbeat kinds and the packets D46 removed"
+                "unused, or sleepy and anchorless at once"
             );
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
@@ -572,6 +582,7 @@ mod tests {
         let position = Position::from_degrees(50.45, 30.52);
         let hb = Heartbeat {
             sleepy: false,
+            anchorless: false,
             home: Channel::new(12).unwrap(),
             id: NodeId([1, 2, 3, 4]),
             short: ShortName(0x0506_0708),
@@ -581,6 +592,12 @@ mod tests {
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x9c);
+        let anchorless = Heartbeat {
+            anchorless: true,
+            ..hb
+        };
+        Packet::Heartbeat(anchorless).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0xac);
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),

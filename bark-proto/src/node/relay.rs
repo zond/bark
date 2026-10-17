@@ -40,7 +40,8 @@
 //! follows its anchor to a new home channel at the anchor's next heartbeat
 //! it hears, and does not move by the busy estimate.
 //!
-//! With an anchor it heartbeats on its home channel only, at a random time in the second
+//! With an anchor it heartbeats on its home channel only, with the sleepy
+//! bit, at a random time in the second
 //! half of each beat period (`tables::heard::beat_period`, 300 s): at most
 //! a period apart, so that two beats missed are a delivery TTL; spread, so
 //! that two nodes that met once do not meet again. After it chooses or
@@ -51,8 +52,9 @@
 //!
 //! It sleeps only while it has an anchor, which holds its messages
 //! ([`Relay::sleeps`]). Without one it listens all the time and acts as a
-//! relay: it heartbeats on the rotating channel, with the sleepy type so
-//! that no other sleepy node takes it as its anchor, and chooses and
+//! relay: it heartbeats on the rotating channel with the sleepy bit clear
+//! and the anchorless bit set, so that no other sleepy node takes it as
+//! its anchor, and chooses and
 //! moves its home by the busy estimate (spec "Sleepy nodes alone").
 //!
 //! # Sleep (`docs/core-interface.md` §3 rule 10)
@@ -871,7 +873,7 @@ impl Relay {
             self.neighbours
                 .live(now)
                 .map(|(_, n)| n)
-                .filter(|n| !n.sleepy && Some(n.id) != except && n.beats >= beats)
+                .filter(|n| !n.anchorless && Some(n.id) != except && n.beats >= beats)
                 .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
                 .copied()
         };
@@ -941,7 +943,7 @@ impl Relay {
     /// it: take the strongest node heard that is not sleepy, or keep the
     /// anchor if none was (spec "Relay choice").
     fn anchor_checked(&mut self, since: Instant, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let heard = |n: &&Neighbour| !n.sleepy && n.last_heard >= since;
+        let heard = |n: &&Neighbour| !n.anchorless && n.last_heard >= since;
         let anchor = self.anchor.map(|a| a.id);
         if self
             .neighbours
@@ -1117,7 +1119,8 @@ impl Relay {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
         let channel = if self.sleeps() { self.home } else { channel };
         let hb = Heartbeat {
-            sleepy: self.config.sleepy,
+            sleepy: self.sleeps(),
+            anchorless: self.config.sleepy && self.anchor.is_none(),
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
@@ -1281,12 +1284,20 @@ impl Relay {
         }
     }
 
-    /// A heartbeat: it fills the neighbour table, and a sleepy node's the
-    /// heard table too; the sleepy node is awake now, and gets what is
-    /// held for it. A sleepy node's anchor follows heartbeats of nodes that
-    /// are not sleepy.
+    /// A heartbeat. A sleepy node's beat fills the heard table: the node is
+    /// awake now, and gets what is held for it. It is never a next hop, so
+    /// it leaves the neighbour table (spec "Neighbour table"). Any other
+    /// heartbeat fills the neighbour table, and a sleepy node's anchor
+    /// follows those of nodes that are not anchorless (spec "Relay choice").
     fn heard(&mut self, hb: Heartbeat, rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         if hb.id == self.id {
+            return;
+        }
+        if hb.sleepy {
+            self.neighbours.forget(hb.id);
+            if self.heard.heard(hb.id, hb.home, rssi, now) {
+                self.deliver_now(hb.id, now);
+            }
             return;
         }
         let position = hb.position(self.config.position);
@@ -1299,11 +1310,7 @@ impl Relay {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
         }
-        if hb.sleepy {
-            if self.heard.heard(hb.id, hb.home, rssi, now) {
-                self.deliver_now(hb.id, now);
-            }
-        } else {
+        if !hb.anchorless {
             self.first_heard.get_or_insert(now);
             self.reconsider_anchor(now, emit);
             if self.anchor.is_some_and(|a| a.id == hb.id) {
@@ -2041,6 +2048,7 @@ mod tests {
         };
         let hb = Heartbeat {
             sleepy: false,
+            anchorless: false,
             home: b_home,
             id: id_of(b),
             short: b.short(),
@@ -2172,6 +2180,7 @@ mod tests {
         };
         let hb = Heartbeat {
             sleepy: false,
+            anchorless: false,
             home: Channel::new(5).unwrap(),
             id: id_of(d_pos),
             short: d_pos.short(),
@@ -2297,6 +2306,7 @@ mod tests {
             now,
             &Packet::Heartbeat(Heartbeat {
                 sleepy: false,
+                anchorless: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(d_pos),
                 short: d_pos.short(),
@@ -2378,6 +2388,7 @@ mod tests {
             };
             let hb = Heartbeat {
                 sleepy: false,
+                anchorless: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(at),
                 short: at.short(),

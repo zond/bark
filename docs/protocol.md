@@ -282,7 +282,7 @@ node's are rarer and stay on its home channel ([beats](#beats)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x8, with its flags in the two low bits ([packet formats](#packet-formats)): 0x9 from a sleepy node |
+| type | 4 | 0x8, with two flags in its low bits ([packet formats](#packet-formats)): 0x9 from a node that is sleepy ([beats](#beats)), 0xA from one that is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
 | channel | 4 | home channel index 0–12 |
 | id | 32 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([position and time](#position-and-time)) |
@@ -368,7 +368,7 @@ Per node, up to 64 entries, by node ID:
 |---|---|
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([position and time](#position-and-time)), and its local form for distances |
-| sleepy | from its heartbeat's type |
+| anchorless | from its heartbeat's type: no anchor for a sleepy node ([relay choice](#relay-choice)) |
 | channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it: heartbeats, its DATA and its ACKs; each new frame counts half. Says whether it has margin |
@@ -377,8 +377,7 @@ Per node, up to 64 entries, by node ID:
 | last_beat | when its last heartbeat heard started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
-  from it ([the ACK](#the-ack)); a sleepy node's entry after two beat periods, 600 s,
-  as it beats at most every 300 s ([beats](#beats)). A sleeping node keeps its
+  from it ([the ACK](#the-ack)). A sleeping node keeps its
   anchor's entry whatever its age, and evicts it for no newcomer
   ([relay choice](#relay-choice)).
 - **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
@@ -430,13 +429,20 @@ Per node, up to 64 entries, by node ID:
   equally arbitrary 64, keeps their failure counts, and replaces exactly
   the entries that are failing or silent. Choosing a set spread around
   the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4). A sleepy newcomer takes only a free entry or
-  a stale or demoted sleepy one; a relay newcomer replaces the least
-  recently heard sleepy entry before applying the rule above, since
-  sleepy nodes are next hops only where no relay is ([next hop](#next-hop)).
+  simulator (open item O4). An anchorless newcomer ([sleepy nodes alone](#sleepy-nodes-alone)) takes only
+  a free entry or a stale or demoted anchorless one, and any other
+  newcomer replaces the least recently heard anchorless entry before
+  applying the rule above: at boot every sleepy node in reach is
+  anchorless until it has heard the relays for a rotation, and without
+  this they fill the table and keep out the relays they wait to hear
+  (roadmap D49).
 
-A sleepy node's heartbeat also fills the heard table, which holders use
-to deliver to it ([heard table](#heard-table)).
+A heartbeat with the sleepy bit, a beat ([beats](#beats)), fills the heard table,
+which holders use to deliver ([heard table](#heard-table)), and not the neighbour table:
+its sender may be sent to only in the window after its beat, by its
+anchor, so it is never a next hop. A beat removes its sender's entry if
+there is one, left from before it had an anchor
+([sleepy nodes alone](#sleepy-nodes-alone)).
 
 ---
 
@@ -803,12 +809,19 @@ after the message comes back, and after a failed hand-over
 ([hand-over](#hand-over)). The **candidates** are the neighbour-table entries that are
 live ([neighbour table](#neighbour-table)), except those in the tried set ([message records](#message-records)), those
 banned ([refusal](#refusal), [silence is pushback](#silence-is-pushback)), and those set aside for the current hand-over because
-they did not take it ([hand-over](#hand-over) steps 2 and 6, [refusal](#refusal)). Sleepy neighbours
-are candidates only where no relay neighbour is live, and then only
-they: a node routes through sleepy nodes only where no relay is in
-reach. Measured, trying them after every relay instead delivered the
-same; this rule needs no rule for a relay that is only banned (roadmap
-D46). The first hop of a sleepy node's own message is its anchor while
+they did not take it ([hand-over](#hand-over) steps 2 and 6, [refusal](#refusal)). A node whose
+last heartbeat had the sleepy bit is never a candidate: it is not in
+the table ([neighbour table](#neighbour-table)). A message that would have gone to it waits
+in place or goes another way, as for any neighbour that cannot take it
+now ([overload waits](#overload-waits)): a hop through it could go only in its window after a
+beat, once a beat period. Anchorless neighbours ([sleepy nodes alone](#sleepy-nodes-alone)) are
+candidates only where no other neighbour is live, and then only they.
+An anchorless node sleeps as soon as it has heard a relay for a
+rotation, and its entry outlives that by up to three rotations wherever
+its first beat is not heard; routed through like any other, such entries
+drew four times the DATA that went to sleeping nodes otherwise. Trying
+them after every other instead measured the same in D46, and this rule
+needs no rule for a neighbour that is only banned (roadmap D46, D49). The first hop of a sleepy node's own message is its anchor while
 the anchor is live ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
@@ -1202,7 +1215,10 @@ its neighbour table with the averaged RSSI of what it heard from it
 
 **First choice.** A sleepy node takes as its anchor the strongest relay
 it has heard a worst-case rotation, 195 s, after it first heard one; by
-then every relay in range has visited its channel. It listens on the
+then every relay in range has visited its channel. A node whose last
+heartbeat had the anchorless bit is no relay here, and does not start the
+rotation: it is a sleepy node awake for want of an anchor, and would
+sleep as soon as it found one ([sleepy nodes alone](#sleepy-nodes-alone)). It listens on the
 anchor's home channel, and its address is the anchor's position and its
 own ID ([addresses](#addresses)). It follows the anchor to a new home channel at the
 anchor's next heartbeat it hears ([channel moves](#channel-moves)).
@@ -1259,8 +1275,9 @@ them without one at the end of the run (roadmap D47).
 ### Beats
 
 A sleepy node heartbeats only on its home channel, the anchor's, where
-its holder listens: a **beat**. The heartbeat has the sleepy type
-([heartbeat](#heartbeat)). It beats at a random time in the second half of each
+its holder listens: a **beat**. The heartbeat has the sleepy bit
+([packet formats](#packet-formats)), so that no one but its holder offers it a message, and
+only in its window ([neighbour table](#neighbour-table)). It beats at a random time in the second half of each
 **beat period**, P = 300 s: half the delivery TTL, so that a holder
 keeps it for two periods, a TTL, and one lost beat does not lose it,
 while a node that has gone is kept no longer than its messages
@@ -1410,12 +1427,17 @@ and finds them again. The application is not told ([addresses](#addresses)).
 
 A sleepy node that hears no relay has no anchor, so it does not sleep:
 it listens all the time and acts as a relay. It heartbeats at a relay's
-interval on the rotating channel ([heartbeat](#heartbeat)), with the sleepy type so
-that no other sleepy node takes it as its anchor, sweeps, chooses and
+interval on the rotating channel ([heartbeat](#heartbeat)), with the sleepy bit clear, so
+that any node may hand it a message at any time, as to any relay, and
+with the anchorless bit set, so that no sleepy node takes it as its
+anchor ([relay choice](#relay-choice), [packet formats](#packet-formats)). It sweeps, chooses and
 moves its home channel by the busy estimate, and forwards. Its address
-is its own position, and it owns it. Nodes route through sleepy
-neighbours only where no relay is live ([next hop](#next-hop)), so those of a place
-without relays route among themselves. Kept on one channel, the lowest
+is its own position, and it owns it. Those of a place without relays
+route among themselves; elsewhere others route through it only where
+no other neighbour is live ([next hop](#next-hop)). Once it has an anchor it sleeps and beats with
+the sleepy bit: the nodes that hear a beat drop it from their neighbour
+tables ([neighbour table](#neighbour-table)), and the others when its entry expires, three
+rotations after its last heartbeat. Kept on one channel, the lowest
 of the quiet ones, sixty of them over a square kilometre with relay
 heartbeats overloaded it: split copies of messages circulated until
 their time ran out, thousands of frames for each text (roadmap D46).
@@ -1535,8 +1557,9 @@ carries the 4-byte short position ([position and time](#position-and-time)). A n
 bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything.
 
 ```
-HEARTBEAT 0x8/0x9: first(1) id(4) short_pos(4)                             = 9
-          type bit 0 = sleepy (0x9); aux = home channel, 0 to 12
+HEARTBEAT 0x8/0x9/0xA: first(1) id(4) short_pos(4)                         = 9
+          type bit 0 = sleepy (0x9); bit 1 = anchorless (0xA); never both;
+          aux = home channel, 0 to 12, in all four bits
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
           the answer to a DATA, taken or refused; sent on the channel in
           the answered packet's aux; aux bit 0 = refused
@@ -1547,18 +1570,30 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
           stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
-Types 0x1, 0x2, 0x4, 0x6, 0x7 and 0xA to 0xE are unused; nodes reject them like any unknown type.
+Types 0x1, 0x2, 0x4, 0x6, 0x7 and 0xB to 0xE are unused; nodes reject them like any unknown type.
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
 ```
 
-The heartbeat's flags are in its type, since `aux` holds the home channel
-in all four of its bits. Its type is 0x8 because that is the one base
-with both low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0
-would give 0x3, the ACK, 0x4 would give DATA's 0x5, and 0xC would give
-0xF, the bench frames. A heartbeat does not say where its sender's
-position came from: no receiver needs to know.
+The heartbeat's two flags tell others how to treat its sender. They are
+in its type, since `aux` holds the home channel in all four of its bits,
+and the type is 0x8 because that is the one base with both low bits clear
+whose four codes, 0x8 to 0xB, are all free: 0x0 would give 0x3, the ACK,
+0x4 would give DATA's 0x5, and 0xC would give 0xF, the bench frames.
+0xB, both flags, is never sent: a node that sleeps has an anchor. A
+heartbeat does not say where its sender's position came from: no
+receiver needs to know.
+
+- **Sleepy** says when others can send to the sender. Set: only in the
+  window after its beat, and only its anchor, so it is never a next hop
+  ([neighbour table](#neighbour-table), [next hop](#next-hop), [delivery](#delivery)). Clear: at any time, as to any relay.
+  Only a sleepy node with an anchor sets it ([beats](#beats)).
+- **Anchorless** says that the sender knows no node that is not sleepy:
+  a sleepy node without an anchor, awake and acting as a relay
+  ([sleepy nodes alone](#sleepy-nodes-alone)). Today it only keeps relay choice from taking it as
+  an anchor ([relay choice](#relay-choice)). A node that is not sleepy and hears it could
+  tell it that it exists; that is not decided.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed
