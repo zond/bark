@@ -570,6 +570,8 @@ pub struct SleepMetrics {
     /// by any other node; and how long it had been asleep, under 5 s or
     /// more.
     pub to_asleep: [[u64; 2]; 2],
+    /// Changes of a sleepy node's anchor.
+    pub anchor_changes: u64,
     /// Messages a holder dropped at the end of the delivery TTL: held by
     /// the node's anchor while the node was in reach, by its anchor while
     /// it was dark, by a node that was no longer its anchor.

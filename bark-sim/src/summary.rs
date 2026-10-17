@@ -198,6 +198,14 @@ pub struct SleepSummary {
     /// delivery TTL before the end, and of those delivered
     /// (`Sim::orphans`).
     pub orphans: (u64, u64, Option<f64>, Option<f64>, u64, u64),
+    /// When the sleepy nodes first took an anchor, from the start of the
+    /// run: those that never did, and the median, 90th percentile and
+    /// latest of the others, s (`Sim::first_anchors`).
+    pub first_anchor: (u64, Option<f64>, Option<f64>, Option<f64>),
+    /// Once a minute from the start: the time, s, the mean and the most
+    /// anchorless entries in a relay's neighbour table, and the sleepy
+    /// nodes without an anchor.
+    pub anchorless: Vec<(u64, f64, u32, u32)>,
 }
 
 /// The run summary.
@@ -449,6 +457,8 @@ impl Sim {
             listen_s_per_h: [mean, at(50.0), at(90.0)],
             m: self.metrics.sleep,
             orphans: self.orphans(),
+            first_anchor: self.first_anchors(),
+            anchorless: self.anchorless_series().to_vec(),
         })
     }
 
@@ -637,6 +647,16 @@ impl Summary {
                 m.queue_expired[2],
                 share(m.off_channel),
                 share(m.unheard)
+            );
+            let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));
+            let (never, p50, p90, last) = z.first_anchor;
+            let _ = writeln!(
+                s,
+                "first anchor after p50 {} s, p90 {} s, last {} s; never {never}; anchor changes after the settle time {}",
+                f(p50),
+                f(p90),
+                f(last),
+                m.anchor_changes
             );
             let _ = writeln!(
                 s,

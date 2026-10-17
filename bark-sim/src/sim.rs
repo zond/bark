@@ -474,6 +474,12 @@ pub struct Sim {
     /// Each node's address as a sender last learned it: a relay's
     /// position, or the relay a leaf was last attached to.
     address: Vec<Option<Position>>,
+    /// When each sleepy node first took an anchor.
+    first_anchor: Vec<Option<Instant>>,
+    /// Once a minute from the start: the time, s, the mean and the most
+    /// anchorless entries in a relay's neighbour table, and the sleepy
+    /// nodes without an anchor.
+    anchorless: Vec<(u64, f64, u32, u32)>,
     availability: Option<(f64, f64)>,
     avail_rng: Vec<Stream>,
     /// Per leaf, when it came back into reach, until a relay hears it.
@@ -665,6 +671,8 @@ impl Sim {
             leaf_grid: None,
             leaf_xy: Vec::new(),
             address: vec![None; n],
+            first_anchor: vec![None; n],
+            anchorless: Vec::new(),
             availability: None,
             avail_rng: Vec::new(),
             back_at: Vec::new(),
@@ -1032,6 +1040,7 @@ impl Sim {
                 if self.now.as_micros().is_multiple_of(SERIES_EVERY_US) {
                     self.series_rows();
                     self.sample_anchors();
+                    self.sample_anchorless();
                 }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
@@ -1238,6 +1247,53 @@ impl Sim {
         if to > from {
             self.metrics.nodes[node as usize].asleep_us += to.since(from).as_micros();
         }
+    }
+
+    /// Once a minute: anchorless entries in the relays' neighbour tables,
+    /// and the sleepy nodes without an anchor.
+    fn sample_anchorless(&mut self) {
+        let n = self.n_relays as usize;
+        if n == 0 {
+            return;
+        }
+        let counts: Vec<u32> = self.relays[..n]
+            .iter()
+            .map(|r| r.neighbours().filter(|e| e.anchorless).count() as u32)
+            .collect();
+        let mean = counts.iter().sum::<u32>() as f64 / n as f64;
+        let most = counts.iter().copied().max().unwrap_or(0);
+        let alone = self.relays[n..]
+            .iter()
+            .filter(|r| r.anchor().is_none())
+            .count() as u32;
+        self.anchorless
+            .push((self.now.as_micros() / 1_000_000, mean, most, alone));
+    }
+
+    /// When the sleepy nodes first took an anchor, s from the start: those
+    /// that never did, and the median, 90th percentile and latest of the
+    /// others.
+    pub fn first_anchors(&self) -> (u64, Option<f64>, Option<f64>, Option<f64>) {
+        let n = self.n_relays as usize;
+        let mut at: Vec<u64> = self.first_anchor[n..]
+            .iter()
+            .flatten()
+            .map(|t| t.as_micros())
+            .collect();
+        at.sort_unstable();
+        let never = (self.first_anchor.len() - n - at.len()) as u64;
+        let p = |p| crate::metrics::percentile(&at, p).map(|us| us as f64 / 1e6);
+        (
+            never,
+            p(50.0),
+            p(90.0),
+            at.last().map(|&us| us as f64 / 1e6),
+        )
+    }
+
+    /// See `anchorless`.
+    pub fn anchorless_series(&self) -> &[(u64, f64, u32, u32)] {
+        &self.anchorless
     }
 
     /// Once a minute after the settle time: sleepy nodes whose anchor would
@@ -1919,6 +1975,11 @@ impl Sim {
         if *last != Some(p) {
             if last.is_some() {
                 self.metrics.nodes[node as usize].relay_changes += 1;
+                if self.now >= self.settle {
+                    self.metrics.sleep.anchor_changes += 1;
+                }
+            } else {
+                self.first_anchor[node as usize] = Some(self.now);
             }
             *last = Some(p);
         }
