@@ -39,7 +39,8 @@
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK are sent as zero and ignored on receipt.
 //! - A heartbeat's type says whether the sender is sleepy (0x8), and if it
-//!   is not, whether its position is surveyed (0x1) or GPS-derived (0x2).
+//!   is not, whether its position is a map point set in the app (0x1) or
+//!   from its GPS (0x2).
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.

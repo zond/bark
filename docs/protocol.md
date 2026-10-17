@@ -27,7 +27,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat, and forwards only where no relay is in reach |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
-| Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; GPS when available, else entered by the user; relays use surveyed coordinates; never used for timing |
+| Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
 | Time | No network time synchronisation of any kind |
 
 ---
@@ -232,11 +232,16 @@ of the same interference sees the same ranking and they all jump together.
 
 ## Position and time
 
-**Position.** GPS (L76K) is used for position only and is not trusted
-blindly: accept a fix only if plausible (within 50 m of the last accepted
-position for a stationary relay, consistent with neighbours, satellite
-signal-to-noise C/N0 sane). Rooftop and windowsill relays use surveyed or
-user-entered coordinates from the app, which override GPS. Positions on
+**Position.** A node's position comes from its GPS (L76K), which is
+used for position only, unless the fix is judged unreliable or the app
+sets a fixed map point. A fix is unreliable when it fails a plausibility
+check: it jumps farther than the node can have moved since the last
+accepted one (50 m for a node that does not move), it is inconsistent
+with the neighbours heard, or the satellite signal-to-noise C/N0 is not
+sane; these are the signs of jamming or spoofing. An unreliable fix is
+not used. A map point set in the app wins over GPS; a rooftop relay
+without a sky view of its own uses one. A node whose position changes
+heartbeats the new one ([node identity](#node-identity)). Positions on
 the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
 7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
 converts every position it handles into metres on a flat plane centred on
@@ -277,7 +282,7 @@ node's are rarer and stay on its home channel ([beats](#beats)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x1 from a relay with a surveyed position, 0x2 from a relay with a GPS-derived position, 0x8 from a sleepy node |
+| type | 4 | 0x1 from a relay whose position is a map point set in the app, 0x2 from a relay whose position is from its GPS, 0x8 from a sleepy node |
 | channel | 4 | home channel index 0–12 |
 | id | 32 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([position and time](#position-and-time)) |
@@ -320,11 +325,10 @@ nodes share an ID with probability about n² / 2³³ among n nodes; it
 matters only among the nodes one node keeps in its tables, 64 neighbours
 and 256 sleepy nodes ([heard table](#heard-table)), 1.2 × 10⁻⁵.
 
-A relay **freezes** its position once accepted: a surveyed position from
-the app, or the first plausible GPS fix. Later GPS readings never update
-it. A changed position is a new address ([addresses](#addresses)), its own and that of
-every sleepy node anchored to it, and needs an explicit reset from the
-app. Two nodes at one position are two nodes.
+The ID, not the position, is a node's identity: a node whose position
+changes keeps its ID and heartbeats the new position. Its address changes
+with it ([addresses](#addresses)), and so does that of every sleepy node anchored to it.
+Two nodes at one position are two nodes.
 
 ### Neighbour table
 
@@ -1009,7 +1013,7 @@ A node **owns** a message's destination when:
 - it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
   closer to it than itself. The relay at that position has then probably
   died or moved; 50 m is the distance [position and time](#position-and-time) allows between
-  two GPS fixes of a relay that has not moved, so a relay this close is,
+  two GPS fixes of a node that has not moved, so a relay this close is,
   for the radio, in the same place.
 
 A node farther than 50 m with no closer neighbour is at a gap, not the
@@ -1200,6 +1204,10 @@ meeting again. After it chooses or changes its anchor it beats at once
 and once more within a heartbeat interval, 5–15 s, so that one lost
 beat does not hide it from its new holder for a period.
 
+A sleepy node may have moved since its last beat, so it refreshes its
+GPS fix before each beat. GPS goes off after a fix, and off after 10
+minutes without one (searching under jamming draws ≈27 mA, ≈1.3 days).
+
 At a mean interval of 225 s a node beats 16 times an hour, 189 ms of
 airtime; measured with the beats after anchor changes, 212 ms an hour.
 
@@ -1246,9 +1254,7 @@ does not count against it ([receiving DATA](#receiving-data)).
 So a message waits for its node a mean of about two minutes, at most a
 beat period. Listening 9.25 s after each beat is 148 s an hour, 4 % of
 the time: 0.24 mA on average at the 5.8 mA of listening, about five
-months of the 850 mAh battery for the listening alone. GPS goes off after a fix, and
-off after 10 minutes without one (searching under jamming draws
-≈27 mA, ≈1.3 days).
+months of the 850 mAh battery for the listening alone.
 
 ### Delivery queue
 
@@ -1365,7 +1371,7 @@ Common mesh mechanisms left out, and why.
 | Neighbour lists in heartbeats and a network-wide node table | 9-byte heartbeat of ID, short position and channel; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
 | Sequence numbers in heartbeats | none | they exist to age shared tables; without those they carry nothing |
 | Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
-| Cooperative position estimation | every relay knows its position from GPS or survey | [position and time](#position-and-time) |
+| Cooperative position estimation | every node knows its position from GPS or a map point set in the app | [position and time](#position-and-time) |
 | Heartbeats on one fixed channel | rotating channel, random 5–15 s interval | [heartbeat](#heartbeat) |
 | Addressing by ID with a lookup | position + node ID; the owner resolves the ID locally | [forwarding](#forwarding) |
 
@@ -1444,7 +1450,7 @@ bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything
 
 ```
 HEARTBEAT 0x1/0x2/0x8: first(1) id(4) short_pos(4)                         = 9
-          0x1 relay, surveyed position; 0x2 relay, GPS-derived position;
+          0x1 relay, position set in the app; 0x2 relay, position from GPS;
           0x8 sleepy node; aux = home channel
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
           the answer to a DATA, taken or refused; sent on the channel in

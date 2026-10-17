@@ -100,11 +100,13 @@ pub enum AppCommand<'a> {
         /// Opaque payload; the core never looks inside.
         payload: &'a [u8],
     },
-    /// Set or update own position (surveyed from the app, or an accepted GPS fix).
+    /// Set or update own position: a map point set in the app, or a GPS fix
+    /// that passed the plausibility checks (spec "Position and time").
     SetPosition {
         /// New position.
         position: Position,
-        /// `true` if surveyed or user-entered, `false` if GPS-derived (heartbeat type 0x1 vs 0x2).
+        /// `true` for a map point set in the app, `false` for a GPS fix
+        /// (heartbeat type 0x1 against 0x2).
         surveyed: bool,
     },
 }

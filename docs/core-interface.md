@@ -105,8 +105,9 @@ A `Send` while `accepts_send` is false, or with a longer payload, breaks the con
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
 panic or never offer it.
 
-`AppCommand::SetPosition` updates own position (a relay's address changes with it, and its
-sleepy nodes', so the driver does this rarely; spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
+`AppCommand::SetPosition` updates own position, from a GPS fix that passed the plausibility
+checks or a map point set in the app (spec "Position and time"); a relay's address changes
+with it, and its sleepy nodes' (spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
 ## 5. What the driver must simulate or implement
