@@ -638,6 +638,11 @@ impl Summary {
                 share(m.off_channel),
                 share(m.unheard)
             );
+            let _ = writeln!(
+                s,
+                "DATA to sleepy nodes asleep: from the anchor {} within 5 s of sleeping, {} later; from others {}, {}",
+                m.to_asleep[0][0], m.to_asleep[0][1], m.to_asleep[1][0], m.to_asleep[1][1]
+            );
             let (n, back, p50, p90, sent, got) = z.orphans;
             if n > 0 {
                 let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));

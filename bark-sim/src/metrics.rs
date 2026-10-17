@@ -566,6 +566,10 @@ pub struct SleepMetrics {
     /// DATA addressed to a sleepy node: received, lost while it was
     /// asleep, lost otherwise.
     pub to_sleepy: [u64; 3],
+    /// DATA sent to a sleepy node while it was asleep: by its anchor, and
+    /// by any other node; and how long it had been asleep, under 5 s or
+    /// more.
+    pub to_asleep: [[u64; 2]; 2],
     /// Messages a holder dropped at the end of the delivery TTL: held by
     /// the node's anchor while the node was in reach, by its anchor while
     /// it was dark, by a node that was no longer its anchor.
