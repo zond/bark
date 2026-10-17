@@ -22,6 +22,7 @@ use core::fmt::Debug;
 use core::future::pending;
 
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position,
@@ -29,9 +30,9 @@ use bark_proto::{
 };
 use embassy_futures::select::{select3, Either3};
 
-/// Airtime of the longest frame with the shortest preamble: the longest a
+/// Airtime of the longest frame with the long preamble: the longest a
 /// check may be held for a reception in progress (core-interface §3 rule 8).
-pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
+pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
 
 /// Wait between retuning to another channel and reading its RSSI
 /// (spec "Busy estimate": read about 0.3 ms after the retune). The datasheet gives no
@@ -372,9 +373,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::App(e) => app.message(&e),
             Action::Trace(t) => log::info!("{:?}", t),
             // The radio keeps listening: the contract allows it, and the
-            // firmware does not sleep the radio yet
+            // firmware does not sleep the radio or receive duty-cycled yet
             // (spec "Implementation notes", bring-up step 5).
-            Action::Sleep(_) => {}
+            Action::Sleep(_) | Action::Sniff(_) => {}
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
@@ -441,7 +442,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
-            Action::Listen(_) | Action::Sleep(_) | Action::App(_) | Action::Trace(_) => {
+            Action::Listen(_)
+            | Action::Sleep(_)
+            | Action::Sniff(_)
+            | Action::App(_)
+            | Action::Trace(_) => {
                 unreachable!("only excursions are kept")
             }
         };

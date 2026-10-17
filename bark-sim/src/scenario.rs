@@ -277,6 +277,12 @@ pub enum ScriptAction {
     Cad,
     /// Driver-level RSSI sample; the result is logged, not given to the core.
     Rssi,
+    /// Driver-level `Sniff` on the resting channel until the run ends, as
+    /// if the core had asked; a test of duty-cycled receive.
+    Sniff,
+    /// Power on a node that is off: a node with a `start` event is off
+    /// until it, and then boots, as a relay planted during the run does.
+    Start,
 }
 
 /// A scripted event.

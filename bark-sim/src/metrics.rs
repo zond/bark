@@ -54,6 +54,8 @@ pub struct DeafCounts {
     pub absent: u64,
     /// The radio asleep (`Action::Sleep`).
     pub asleep: u64,
+    /// No window of the duty-cycled receive detected it (`Action::Sniff`).
+    pub sniff: u64,
 }
 
 impl DeafCounts {
@@ -66,13 +68,21 @@ impl DeafCounts {
             Deaf::Corrupt => self.corrupt += 1,
             Deaf::Absent => self.absent += 1,
             Deaf::Asleep => self.asleep += 1,
+            Deaf::Sniff => self.sniff += 1,
             Deaf::HalfDuplex => unreachable!("counted as half_duplex"),
         }
     }
 
     /// Total.
     pub fn total(&self) -> u64 {
-        self.retune + self.cad + self.rssi + self.tx + self.corrupt + self.absent + self.asleep
+        self.retune
+            + self.cad
+            + self.rssi
+            + self.tx
+            + self.corrupt
+            + self.absent
+            + self.asleep
+            + self.sniff
     }
 
     fn merge(&mut self, o: &DeafCounts) {
@@ -83,6 +93,7 @@ impl DeafCounts {
         self.corrupt += o.corrupt;
         self.absent += o.absent;
         self.asleep += o.asleep;
+        self.sniff += o.sniff;
     }
 }
 
@@ -181,6 +192,17 @@ pub struct NodeMetrics {
     /// For a sleepy node: time its radio was asleep after the settle
     /// time, µs.
     pub asleep_us: u64,
+    /// For a sleepy node: time its radio received duty-cycled after the
+    /// settle time, µs, a frame it caught included.
+    pub sniff_us: u64,
+    /// Of `sniff_us`, the time from detecting the preamble of a frame it
+    /// caught to the frame's end, when the radio receives in full.
+    pub sniff_rx_us: u64,
+    /// Time on air after the settle time, µs.
+    pub settled_airtime_us: u64,
+    /// For a sleepy node: when it took an anchor after a spell without
+    /// one past its boot listen, and when the spell began, s.
+    pub anchored_s: Vec<(f64, f64)>,
     /// Messages originated here by the traffic model.
     pub originated: u64,
     /// `AppEvent::Message` at this node.
@@ -312,6 +334,9 @@ impl LeafSums {
         let (a, b) = (&mut self.airtime_by_type, &m.airtime_by_type);
         a.heartbeat_us += b.heartbeat_us;
         a.beat_us += b.beat_us;
+        a.anchorless_us += b.anchorless_us;
+        a.answer_us += b.answer_us;
+        a.long_data_us += b.long_data_us;
         a.ack_us += b.ack_us;
         a.data_us += b.data_us;
         a.other_us += b.other_us;
@@ -486,27 +511,43 @@ pub struct ChannelMetrics {
 /// Time on air by packet type (spec "Packet formats"), µs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TypeAirtime {
-    /// HEARTBEAT of a node that is not sleepy.
+    /// HEARTBEAT of a node that is not sleepy, in its slot.
     pub heartbeat_us: u64,
     /// HEARTBEAT of a sleepy node.
     pub beat_us: u64,
+    /// HEARTBEAT of a sleepy node without an anchor, with the long
+    /// preamble.
+    pub anchorless_us: u64,
+    /// HEARTBEAT of a relay answering one, with the long preamble.
+    pub answer_us: u64,
     /// ACK.
     pub ack_us: u64,
     /// DATA.
     pub data_us: u64,
+    /// Of `data_us`, DATA with the long preamble, to a node without an
+    /// anchor.
+    pub long_data_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
 }
 
 impl TypeAirtime {
-    /// Count `us` against the type of `p`.
-    pub fn add(&mut self, p: Option<&bark_proto::wire::Packet<'_>>, us: u64) {
+    /// Count `us` against the type of `p`, sent with `preamble` symbols.
+    pub fn add(&mut self, p: Option<&bark_proto::wire::Packet<'_>>, preamble: u16, us: u64) {
         use bark_proto::wire::Packet;
+        let long = preamble >= bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
         let c = match p {
             Some(Packet::Heartbeat(h)) if h.sleepy => &mut self.beat_us,
+            Some(Packet::Heartbeat(h)) if h.anchorless => &mut self.anchorless_us,
+            Some(Packet::Heartbeat(_)) if long => &mut self.answer_us,
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
-            Some(Packet::Data(_)) => &mut self.data_us,
+            Some(Packet::Data(_)) => {
+                if long {
+                    self.long_data_us += us;
+                }
+                &mut self.data_us
+            }
             None => &mut self.other_us,
         };
         *c += us;

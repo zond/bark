@@ -34,6 +34,7 @@ use crate::metrics::{FirstTry, Outcome};
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{key, Arrival, ExKind, Lock, Rx, Sim, ToSleepy};
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::sniff;
 use bark_proto::wire::Packet as WirePacket;
 use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 
@@ -164,13 +165,16 @@ impl Sim {
         let m = &mut self.metrics;
         m.nodes[src as usize].tx_frames += 1;
         m.nodes[src as usize].airtime_us += air;
+        if self.now >= self.settle {
+            m.nodes[src as usize].settled_airtime_us += air;
+        }
         m.nodes[src as usize]
             .airtime_by_type
-            .add(decoded.as_ref(), air);
+            .add(decoded.as_ref(), preamble, air);
         let chm = &mut m.channels[ch.index() as usize];
         chm.tx_frames += 1;
         chm.airtime_us += air;
-        chm.airtime_by_type.add(decoded.as_ref(), air);
+        chm.airtime_by_type.add(decoded.as_ref(), preamble, air);
         if let Some((id, hops)) = msg {
             self.message_frame(id, hops, air);
         }
@@ -260,6 +264,16 @@ impl Sim {
                         self.metrics.outcome(b, r.channel, Outcome::Delivered);
                         if !r.threshold_ok {
                             self.metrics.disagreement(b, r.channel, true);
+                        }
+                        if let (Some(at), Some((_, until))) = (r.caught, st.sniff) {
+                            // The radio received in full from the detection,
+                            // and its cycle starts again now.
+                            let from = at.max(self.settle);
+                            if self.now > from {
+                                let m = &mut self.metrics.nodes[b as usize];
+                                m.sniff_rx_us += self.now.since(from).as_micros();
+                            }
+                            st.sniff = Some((self.now, until));
                         }
                         got.push((b, r.mw, r.max_i_mw));
                     }
@@ -429,8 +443,15 @@ impl Sim {
         let mut locked = false;
         if let (Some(p), 0) = (packet, offset) {
             self.metrics.candidate(b, a.channel);
+            // A duty-cycled receiver takes the packet only once a window
+            // has detected its preamble.
+            let caught = st.sniffing_at(now).map(|t0| {
+                sniff::detects(t0.as_micros(), now.as_micros(), p.preamble_end.since(now))
+            });
             let outcome = if st.asleep_at(now) {
                 Some(Outcome::Deaf(Deaf::Asleep))
+            } else if caught == Some(None) {
+                Some(Outcome::Deaf(Deaf::Sniff))
             } else if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
                 Some(Outcome::Deaf(ex.reason_at(now)))
             } else if now < st.listen_from {
@@ -467,6 +488,7 @@ impl Sim {
                     preamble_end: p.preamble_end,
                     header_end: p.header_end,
                     end: a.end,
+                    caught: caught.flatten().map(Instant::from_micros),
                     preamble_weight: p.preamble_weight,
                     max_i_mw: 0.0,
                     spent: 0.0,

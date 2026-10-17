@@ -477,3 +477,43 @@ fn a_weak_packet_frees_the_receiver_and_a_late_loss_deafens_it() {
         (0, 1, 1, 1)
     );
 }
+
+/// A receiver in duty-cycled receive (`Action::Sniff`) takes every frame
+/// with the long preamble, and a frame with the shortest only when it
+/// starts within a window: from two detections less than the preamble
+/// before one opens to a detection before it closes, 1.9 % of the cycle.
+/// The rest it misses, counted as such.
+#[test]
+fn a_sniffing_receiver_takes_long_preambles_and_misses_most_short_ones() {
+    use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS, SNIFF_CYCLE, SNIFF_RX};
+    // Frames half a second apart and a part of a cycle more, spread by
+    // the fractional parts of multiples of the golden ratio: the radio
+    // starts its cycle again after each frame it takes, so a train at a
+    // fixed step would fall in step with it.
+    let step = 0.5;
+    let (short, long) = (2000, 50);
+    let mut sc = trio(-100.0, -130.0).script(0.5, "R", ScriptAction::Sniff, None);
+    sc.duration_s = 1.0 + step * (short + long) as f64 + 1.0;
+    let cycle_s = SNIFF_CYCLE.as_micros() as f64 / 1e6;
+    for i in 0..short + long {
+        let preamble = if i < short {
+            MIN_PREAMBLE_SYMBOLS
+        } else {
+            LONG_PREAMBLE_SYMBOLS
+        };
+        let spread = (i as f64 * 0.618_033_988_7).fract() * cycle_s;
+        sc = sc.script_tx(1.0 + step * i as f64 + spread / 2.0, "T1", 3, 8, preamble);
+    }
+    let sim = run(&sc);
+    let r = rx(&sim, 2);
+    assert_eq!(r.candidates, short + long);
+    let caught = r.delivered - long;
+    let window = SNIFF_RX.as_micros() + SYMBOL_TIME.mul(MIN_PREAMBLE_SYMBOLS as u64).as_micros()
+        - 2 * SYMBOL_TIME.mul(DETECT_SYMBOLS).as_micros();
+    let expected = short as f64 * window as f64 / SNIFF_CYCLE.as_micros() as f64;
+    assert!(
+        (caught as f64 - expected).abs() < expected * 0.25,
+        "{caught} short frames caught, about {expected:.0} expected: {r:?}"
+    );
+    assert_eq!(r.deaf.sniff, short - caught, "{r:?}");
+}

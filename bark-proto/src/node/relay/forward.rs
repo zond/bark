@@ -138,6 +138,7 @@ use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Owed, Reply, Step};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
@@ -189,20 +190,26 @@ pub(super) struct Held {
     pub(super) out: Outgoing,
 }
 
-fn data_airtime(payload: usize) -> Duration {
-    time_on_air((DATA_HEADER_LEN + payload) as u8, MIN_PREAMBLE_SYMBOLS)
-}
-
-/// The frame of the owed reply.
+/// The frame of the owed reply. Its receiver is listening for it.
 fn reply_frame(o: Owed) -> Frame {
     match o.reply {
         Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
     }
 }
 
-/// `d` as a frame on `channel`.
-fn data_frame(d: &Data<'_>, channel: Channel) -> Frame {
-    mac::frame(&Packet::Data(*d), channel, MIN_PREAMBLE_SYMBOLS)
+/// `d` as a frame on `channel` with `preamble` symbols.
+fn data_frame(d: &Data<'_>, channel: Channel, preamble: u16) -> Frame {
+    mac::frame(&Packet::Data(*d), channel, preamble)
+}
+
+/// The preamble a DATA to `n` needs: the long one to an anchorless node,
+/// which receives duty-cycled (spec "Sleepy nodes alone").
+fn preamble(n: &Neighbour) -> u16 {
+    if n.anchorless {
+        LONG_PREAMBLE_SYMBOLS
+    } else {
+        MIN_PREAMBLE_SYMBOLS
+    }
 }
 
 impl Relay {
@@ -378,7 +385,7 @@ impl Relay {
         let sends = case != Case::AckOnly && !owner;
         // The time left was stamped as the frame went on air. Gone, the
         // packet is no work, and the message ends here.
-        let expires = now + d.time_left() - data_airtime(d.payload.len());
+        let expires = now + d.time_left() - self.data_airtime(d.payload.len());
         let expired = sends && now >= expires - TTL_UNIT;
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_id != self.me();
@@ -392,7 +399,7 @@ impl Relay {
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
         } else if sends {
-            let air = data_airtime(d.payload.len());
+            let air = self.data_airtime(d.payload.len());
             match self.admit(air, ACK_AIRTIME, d.hops, completes, now) {
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(k) => {
@@ -555,7 +562,10 @@ impl Relay {
         let out = Outgoing {
             place,
             expires,
-            ..Outgoing::new(data_frame(&out, self.home), Kind::Forward)
+            ..Outgoing::new(
+                data_frame(&out, self.home, self.forward_preamble()),
+                Kind::Forward,
+            )
         };
         if self.queue.push(out).is_err() {
             self.drop_msg(id, DropReason::SendQueueFull, emit);
@@ -610,7 +620,7 @@ impl Relay {
         !self.booting()
             && self.own.is_none()
             && self
-                .no_room(data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
+                .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
             && self.bans_end(now).is_none()
     }
@@ -621,8 +631,10 @@ impl Relay {
         if self.booting() || self.own.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
-        let need =
-            self.queue.airtime() + self.held_airtime() + data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
+        let need = self.queue.airtime()
+            + self.held_airtime()
+            + self.data_airtime(MAX_PAYLOAD)
+            + REPLY_RESERVE;
         let bucket = self
             .budget
             .allowed_at(Duration::ZERO, need, now)
@@ -705,7 +717,10 @@ impl Relay {
             if dst_id != self.me() && self.delivery.is_full() {
                 // At its owner: the delivery queue's TTL, not its time
                 // left, ends it from here (spec "Delivery queue").
-                let out = Outgoing::new(data_frame(&d, self.home), Kind::Forward);
+                let out = Outgoing::new(
+                    data_frame(&d, self.home, self.forward_preamble()),
+                    Kind::Forward,
+                );
                 self.held = Some(Held { out });
             } else {
                 self.arrive(id, &d, now, emit);
@@ -840,7 +855,7 @@ impl Relay {
         }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
             let to = n.id;
-            let frame = data_frame(&Data { dst_hop: to, ..d }, n.home);
+            let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
             return Routed::To(Outgoing { frame, ..out }, self.expect(id, to));
         }
         if let Some(t) = self.ban_ends(&record, now) {
@@ -865,6 +880,7 @@ impl Relay {
                         ..d
                     },
                     home,
+                    self.preamble_to(parent),
                 );
                 Routed::To(
                     Outgoing {
@@ -926,17 +942,52 @@ impl Relay {
             .or_else(|| self.heard.get(id).map(|n| n.home))
     }
 
+    /// The preamble of a DATA to `id`: the long one while the neighbour
+    /// table has it anchorless, else the shortest.
+    fn preamble_to(&self, id: NodeId) -> u16 {
+        self.neighbours
+            .get(id)
+            .map_or(MIN_PREAMBLE_SYMBOLS, preamble)
+    }
+
+    /// The airtime of a DATA with `payload` bytes as this node's next hops
+    /// need it, or as it came to this node: with the long preamble at an
+    /// anchorless node, else the shortest.
+    pub(super) fn data_airtime(&self, payload: usize) -> Duration {
+        time_on_air((DATA_HEADER_LEN + payload) as u8, self.forward_preamble())
+    }
+
+    /// The unit of the retry wait of the current hand-over: one hand-over
+    /// of a full frame with its preamble, so a hand-over with the long one
+    /// waits by as much more as its frame is longer (spec "Retry wait").
+    fn retry_unit(&self) -> Duration {
+        let preamble = self
+            .queue
+            .current()
+            .map_or(MIN_PREAMBLE_SYMBOLS, |o| o.frame.preamble_symbols);
+        let longer = time_on_air(MAX_FRAME as u8, preamble)
+            .as_micros()
+            .saturating_sub(time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
+        self.config.retry_backoff + Duration::from_micros(longer)
+    }
+
     /// Address the current frame as its receiver is now, before each attempt
     /// (spec "Hand-over"): a neighbour that moved home since the frame was queued, or
-    /// since the last attempt, listens elsewhere. A receiver no longer in
+    /// since the last attempt, listens elsewhere, and one that has found an
+    /// anchor no longer needs the long preamble. A receiver no longer in
     /// its table keeps the address it had.
     fn readdress(&mut self) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
-        let channel = match Packet::decode(out.frame.payload()) {
-            Ok(Packet::Data(d)) => self.home_of(d.dst_hop),
-            _ => None,
+        let (channel, preamble) = match Packet::decode(out.frame.payload()) {
+            Ok(Packet::Data(d)) if out.kind != Kind::Deliver => (
+                self.home_of(d.dst_hop),
+                self.neighbours.get(d.dst_hop).map(preamble),
+            ),
+            Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
+            _ => (None, None),
         };
         out.frame.channel = channel.unwrap_or(out.frame.channel);
+        out.frame.preamble_symbols = preamble.unwrap_or(out.frame.preamble_symbols);
         if let Some(current) = self.queue.current_mut() {
             *current = out;
         }
@@ -1039,6 +1090,7 @@ impl Relay {
                     ..d
                 },
                 out.frame.channel,
+                out.frame.preamble_symbols,
             );
             if let Some(r) = self.records.get_mut(id) {
                 r.sent(now);
@@ -1093,7 +1145,7 @@ impl Relay {
                 }
             }
             Kind::Return | Kind::Deliver => {
-                let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+                let (max, retry) = (self.config.hop_attempts, self.retry_unit());
                 if self.handover.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
                 }
@@ -1323,7 +1375,7 @@ impl Relay {
     // --- Timers ---
 
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let (max, retry) = (self.config.hop_attempts, self.config.retry_backoff);
+        let (max, retry) = (self.config.hop_attempts, self.retry_unit());
         if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
             if let Some(out) = self.queue.current().copied() {
                 self.handover_failed(out, true, now, emit);

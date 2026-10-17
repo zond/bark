@@ -23,7 +23,8 @@ use crate::scenario::{
     resolve, Destination, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
-use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
+use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
+use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, MsgId,
     NodeId, Position, Relay, Trace, MAX_FRAME,
@@ -165,6 +166,8 @@ pub(crate) struct Rx {
     /// yet told it the packet's length.
     pub header_end: Instant,
     pub end: Instant,
+    /// When a duty-cycled receiver detected its preamble, if it was one.
+    pub caught: Option<Instant>,
     /// Weight of a preamble symbol in the hazard (`radio::Packet`).
     pub preamble_weight: f64,
     /// Worst instantaneous interference so far, mW.
@@ -212,12 +215,22 @@ pub(crate) struct NodeState {
     /// The radio is asleep until then (`Action::Sleep`), since `asleep_since`.
     pub asleep: Option<Instant>,
     pub asleep_since: Instant,
+    /// The radio receives duty-cycled (`Action::Sniff`): its cycle began
+    /// then, with a receive window, and it ends then.
+    pub sniff: Option<(Instant, Instant)>,
+    /// Since when it has, for the count of that time.
+    pub sniff_since: Instant,
 }
 
 impl NodeState {
     /// Whether the radio is asleep at `t`.
     pub(crate) fn asleep_at(&self, t: Instant) -> bool {
         self.asleep.is_some_and(|u| t < u)
+    }
+
+    /// When the duty cycle of a radio receiving duty-cycled at `t` began.
+    pub(crate) fn sniffing_at(&self, t: Instant) -> Option<Instant> {
+        self.sniff.filter(|&(_, u)| t < u).map(|(t0, _)| t0)
     }
 }
 
@@ -495,6 +508,11 @@ pub struct Sim {
     address: Vec<Option<Position>>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
+    /// Since when each sleepy node has been without an anchor, past its
+    /// boot listen; and every such spell that ended with an anchor, from
+    /// when to when.
+    anchorless_since: Vec<Option<Instant>>,
+    spells: Vec<(Instant, Instant)>,
     /// When each text the application skipped was due.
     skipped_at: Vec<Instant>,
     /// Once a minute from the start: the time, s, the mean and the most
@@ -648,6 +666,8 @@ impl Sim {
                 beats: BeatRing::default(),
                 asleep: None,
                 asleep_since: Instant::ZERO,
+                sniff: None,
+                sniff_since: Instant::ZERO,
             })
             .collect();
 
@@ -702,6 +722,8 @@ impl Sim {
             leaf_xy: Vec::new(),
             address: vec![None; n],
             first_anchor: vec![None; n],
+            anchorless_since: vec![None; n],
+            spells: Vec::new(),
             skipped_at: Vec::new(),
             anchorless: Vec::new(),
             availability: None,
@@ -914,6 +936,10 @@ impl Sim {
             ) && channel.is_none()
             {
                 return Err(format!("event {k}: {:?} needs a channel", e.action));
+            }
+            if e.action == ScriptAction::Start {
+                // Off until then: its boot finds it so and does nothing.
+                self.nodes[node as usize].alive = false;
             }
             self.script.push(ScriptEntry {
                 node,
@@ -1206,6 +1232,22 @@ impl Sim {
         let wake = c.next_wakeup();
         if node >= self.n_relays {
             let anchor = c.anchor().map(|a| a.position);
+            let alone = c.anchorless();
+            let since = &mut self.anchorless_since[node as usize];
+            match (*since, alone) {
+                (None, true) => *since = Some(now),
+                (Some(t), false) => {
+                    if anchor.is_some() {
+                        self.spells.push((t, now));
+                        let s = |t: Instant| t.as_micros() as f64 / 1e6;
+                        self.metrics.nodes[node as usize]
+                            .anchored_s
+                            .push((s(now), s(t)));
+                    }
+                    *since = None;
+                }
+                _ => {}
+            }
             self.attached(node, anchor);
         }
         for a in buf.drain(..) {
@@ -1266,17 +1308,42 @@ impl Sim {
         st.asleep_since = self.now;
     }
 
-    /// The radio of `node` is awake from now: count the time it slept
-    /// after the settle time.
+    /// The radio of `node` receives duty-cycled until `until`, its cycle
+    /// starting now. A packet it was receiving is lost unless enough of
+    /// its preamble is left for the first window to detect it.
+    fn sniff(&mut self, node: u32, until: Instant) {
+        self.wake(node);
+        if until <= self.now {
+            return;
+        }
+        let detect = SYMBOL_TIME.mul(DETECT_SYMBOLS);
+        let st = &self.nodes[node as usize];
+        let keeps = matches!(st.lock, Lock::Rx(r) if r.preamble_end >= self.now + detect);
+        if !keeps {
+            self.abort_lock(node, Deaf::Sniff);
+        }
+        let st = &mut self.nodes[node as usize];
+        st.sniff = Some((self.now, until));
+        st.sniff_since = self.now;
+    }
+
+    /// The radio of `node` is awake from now: count the time it slept or
+    /// received duty-cycled after the settle time.
     fn wake(&mut self, node: u32) {
         let (now, settle) = (self.now, self.settle);
         let st = &mut self.nodes[node as usize];
-        let Some(until) = st.asleep.take() else {
-            return;
-        };
-        let (from, to) = (st.asleep_since.max(settle), until.min(now));
-        if to > from {
-            self.metrics.nodes[node as usize].asleep_us += to.since(from).as_micros();
+        let m = &mut self.metrics.nodes[node as usize];
+        if let Some(until) = st.asleep.take() {
+            let (from, to) = (st.asleep_since.max(settle), until.min(now));
+            if to > from {
+                m.asleep_us += to.since(from).as_micros();
+            }
+        }
+        if let Some((_, until)) = st.sniff.take() {
+            let (from, to) = (st.sniff_since.max(settle), until.min(now));
+            if to > from {
+                m.sniff_us += to.since(from).as_micros();
+            }
         }
     }
 
@@ -1299,6 +1366,28 @@ impl Sim {
             .count() as u32;
         self.anchorless
             .push((self.now.as_micros() / 1_000_000, mean, most, alone));
+    }
+
+    /// The spells sleepy nodes spent without an anchor past their boot
+    /// listen and that began from `from` on: how many ended with an
+    /// anchor, how many were still open at the end, and the median and
+    /// 90th percentile of the length of those that ended, s.
+    pub fn anchorless_spells(&self, from: Instant) -> (u64, u64, Option<f64>, Option<f64>) {
+        let mut len: Vec<u64> = self
+            .spells
+            .iter()
+            .filter(|(t, _)| *t >= from)
+            .map(|(t, u)| u.since(*t).as_micros())
+            .collect();
+        len.sort_unstable();
+        let open = self
+            .anchorless_since
+            .iter()
+            .flatten()
+            .filter(|&&t| t >= from)
+            .count() as u64;
+        let p = |p| crate::metrics::percentile(&len, p).map(|us| us as f64 / 1e6);
+        (len.len() as u64, open, p(50.0), p(90.0))
     }
 
     /// When the sleepy nodes first took an anchor, s from the start: those
@@ -1402,11 +1491,12 @@ impl Sim {
             a,
             Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
         ) {
-            // Any use of the radio wakes it (core-interface §3 rule 10).
+            // Any use of the radio wakes it (core-interface §3 rules 10, 11).
             self.wake(node);
         }
         match a {
             Action::Sleep(until) => self.sleep(node, until),
+            Action::Sniff(until) => self.sniff(node, until),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
@@ -1567,7 +1657,7 @@ impl Sim {
         let deaf = !(kind == ExKind::Rssi && st.resting == Some(c));
         if let (false, true, Lock::Rx(r)) = (scripted, deaf, st.lock) {
             if st.alive && st.ex.is_none() && st.held.is_none() {
-                let longest = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
+                let longest = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
                 st.held = Some((kind, c));
                 st.held_gen = st.held_gen.wrapping_add(1);
                 let g = st.held_gen;
@@ -2068,8 +2158,9 @@ impl Sim {
     /// The address of `node` as a sender knows it (spec "Addresses"): a
     /// relay's own position; for a leaf, the relay it is attached to, or
     /// the one it was last attached to, as the sender would have learnt
-    /// it from an earlier message. `None` for a leaf that never attached:
-    /// nobody can have its address.
+    /// it from an earlier message; for a leaf without an anchor past its
+    /// boot listen, its own position. `None` for a leaf that has had
+    /// neither: nobody can have its address.
     fn address_of(&mut self, node: u32) -> Option<Position> {
         if node < self.n_relays {
             return Some(self.positions[node as usize]);
@@ -2077,6 +2168,9 @@ impl Sim {
         let leaf = &self.relays[node as usize];
         if self.n_relays == 0 {
             // No node that is not sleepy: a sleepy node's own position.
+            return Some(leaf.address());
+        }
+        if leaf.anchorless() {
             return Some(leaf.address());
         }
         if let Some(a) = leaf.anchor() {
@@ -2228,6 +2322,8 @@ impl Sim {
         match action {
             ScriptAction::Remove => self.remove(node),
             ScriptAction::Restart => self.restart(node),
+            ScriptAction::Start => self.start(node),
+            ScriptAction::Sniff => self.apply(node, Action::Sniff(self.end), true),
             ScriptAction::Listen => self.listen(node, channel.expect("validated")),
             ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
             ScriptAction::Rssi => self.apply(node, Action::Rssi(channel.expect("validated")), true),
@@ -2249,6 +2345,16 @@ impl Sim {
     /// and timers end now.
     pub fn remove(&mut self, node: u32) {
         self.power_off(node, "removed");
+    }
+
+    /// Power on a node that has been off since the start: it boots.
+    pub fn start(&mut self, node: u32) {
+        if self.nodes[node as usize].alive {
+            return;
+        }
+        self.nodes[node as usize].alive = true;
+        // Power-on is delivered as a wakeup (docs/core-interface.md §2).
+        self.deliver(node, Event::Wakeup);
     }
 
     /// Power a node off and on again: it boots afresh with every table

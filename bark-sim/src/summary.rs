@@ -10,6 +10,7 @@ use crate::metrics::{
 };
 use crate::sim::{Fate, Sim};
 use bark_proto::radio::CHANNELS;
+use bark_proto::sniff::{RX_CURRENT_UA, SNIFF_CURRENT_NA, TX_CURRENT_UA};
 use bark_proto::Instant;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -190,6 +191,21 @@ pub struct SleepSummary {
     /// radio was not asleep, mean, median and 90th percentile over the
     /// sleepy nodes.
     pub listen_s_per_h: [f64; 3],
+    /// Of that time, the time it received duty-cycled (`Action::Sniff`),
+    /// less what it spent receiving a frame it caught, which counts as
+    /// listening: mean, median and 90th percentile, seconds an hour.
+    pub sniff_s_per_h: [f64; 3],
+    /// The radio's mean current per sleepy node after the settle time,
+    /// mA: listening at `sniff::RX_CURRENT_UA`, receiving duty-cycled at
+    /// `sniff::SNIFF_CURRENT_NA`, transmitting at `sniff::TX_CURRENT_UA`;
+    /// mean, median and 90th percentile over the sleepy nodes.
+    pub current_ma: [f64; 3],
+    /// The mean of each part of `current_ma`: listening, receiving
+    /// duty-cycled, transmitting.
+    pub current_parts_ma: [f64; 3],
+    /// Spells without an anchor past the boot listen, all and those that
+    /// began after the first scripted removal (`Sim::anchorless_spells`).
+    pub anchorless_spells: [(u64, u64, Option<f64>, Option<f64>); 2],
     /// The counters.
     #[serde(flatten)]
     pub m: SleepMetrics,
@@ -236,6 +252,9 @@ pub struct Summary {
     pub airtime_s: f64,
     /// Largest per-node airtime fraction.
     pub max_airtime_fraction: f64,
+    /// Largest per-node airtime fraction after the settle time: the duty
+    /// cycle the busiest node used (spec "Regulatory limits").
+    pub max_settled_airtime_fraction: f64,
     /// Resting-channel changes.
     pub home_moves: u64,
     /// Leaves attaching to a relay other than their last (spec "Relay choice").
@@ -388,6 +407,14 @@ impl Sim {
             tx_frames: m.channels.iter().map(|c| c.tx_frames).sum(),
             airtime_s: airtime_us as f64 / 1e6,
             max_airtime_fraction: max_air as f64 / dur_us as f64,
+            max_settled_airtime_fraction: {
+                let settled = m.nodes.iter().map(|n| n.settled_airtime_us).max();
+                let window = self
+                    .end()
+                    .as_micros()
+                    .saturating_sub(self.settle.as_micros());
+                settled.unwrap_or(0) as f64 / window.max(1) as f64
+            },
             home_moves: m.nodes.iter().map(|n| n.home_moves).sum(),
             relay_changes: m.nodes.iter().map(|n| n.relay_changes).sum(),
             returns: (m.returns.returned > 0).then(|| {
@@ -446,16 +473,39 @@ impl Sim {
         if self.node_count() <= n || window == 0 {
             return None;
         }
-        let per_h = |asleep: u64| window.saturating_sub(asleep) as f64 / window as f64 * 3600.0;
-        let mut listen: Vec<u64> = self.metrics.nodes[n..]
-            .iter()
-            .map(|m| (per_h(m.asleep_us) * 1e3) as u64)
-            .collect();
-        listen.sort_unstable();
-        let mean = listen.iter().sum::<u64>() as f64 / listen.len() as f64 / 1e3;
-        let at = |p: f64| percentile(&listen, p).unwrap_or(0) as f64 / 1e3;
+        let nodes = &self.metrics.nodes[n..];
+        let hour = |us: u64| us as f64 / window as f64 * 3600.0;
+        // Listening: neither asleep nor receiving duty-cycled, or taking a
+        // frame it caught then.
+        let listen_us =
+            |m: &NodeMetrics| (window + m.sniff_rx_us).saturating_sub(m.asleep_us + m.sniff_us);
+        let sniff_us = |m: &NodeMetrics| m.sniff_us.saturating_sub(m.sniff_rx_us);
+        let parts = |m: &NodeMetrics| {
+            let ua = |us: u64, ua: f64| us as f64 * ua / window as f64 / 1e3;
+            [
+                ua(listen_us(m), RX_CURRENT_UA as f64),
+                ua(sniff_us(m), SNIFF_CURRENT_NA as f64 / 1e3),
+                ua(m.settled_airtime_us, TX_CURRENT_UA as f64),
+            ]
+        };
+        // Mean, median and 90th percentile, kept in thousandths.
+        let stats = |f: &dyn Fn(&NodeMetrics) -> f64| {
+            let mut v: Vec<u64> = nodes.iter().map(|m| (f(m) * 1e3) as u64).collect();
+            v.sort_unstable();
+            let mean = v.iter().sum::<u64>() as f64 / v.len() as f64 / 1e3;
+            let at = |p: f64| percentile(&v, p).unwrap_or(0) as f64 / 1e3;
+            [mean, at(50.0), at(90.0)]
+        };
+        let part = |i: usize| nodes.iter().map(|m| parts(m)[i]).sum::<f64>() / nodes.len() as f64;
         Some(SleepSummary {
-            listen_s_per_h: [mean, at(50.0), at(90.0)],
+            listen_s_per_h: stats(&|m| hour(listen_us(m))),
+            sniff_s_per_h: stats(&|m| hour(sniff_us(m))),
+            current_ma: stats(&|m| parts(m).iter().sum()),
+            current_parts_ma: [part(0), part(1), part(2)],
+            anchorless_spells: [
+                self.anchorless_spells(Instant::ZERO),
+                self.anchorless_spells(self.removal.unwrap_or(Instant::MAX)),
+            ],
             m: self.metrics.sleep,
             orphans: self.orphans(),
             first_anchor: self.first_anchors(),
@@ -624,10 +674,11 @@ impl Summary {
         }
         let _ = writeln!(
             s,
-            "radio: {} frames, {:.1} s airtime (max node {:.2}%), {} home moves, {} leaf relay changes",
+            "radio: {} frames, {:.1} s airtime (max node {:.2}%, {:.2}% after the settle time), {} home moves, {} leaf relay changes",
             self.tx_frames,
             self.airtime_s,
             100.0 * self.max_airtime_fraction,
+            100.0 * self.max_settled_airtime_fraction,
             self.home_moves,
             self.relay_changes
         );
@@ -649,6 +700,18 @@ impl Summary {
                 share(m.off_channel),
                 share(m.unheard)
             );
+            let _ = writeln!(
+                s,
+                "sleepy nodes receive duty-cycled {:.1} s an hour (median {:.1}); radio current {:.3} mA (median {:.3}, p90 {:.3}): listening {:.3}, duty-cycled {:.3}, transmitting {:.3}",
+                z.sniff_s_per_h[0],
+                z.sniff_s_per_h[1],
+                z.current_ma[0],
+                z.current_ma[1],
+                z.current_ma[2],
+                z.current_parts_ma[0],
+                z.current_parts_ma[1],
+                z.current_parts_ma[2]
+            );
             let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));
             let (never, p50, p90, last) = z.first_anchor;
             let _ = writeln!(
@@ -659,6 +722,17 @@ impl Summary {
                 f(last),
                 m.anchor_changes
             );
+            for (what, (ended, open, p50, p90)) in ["", " begun after the removal"]
+                .iter()
+                .zip(z.anchorless_spells)
+            {
+                let _ = writeln!(
+                    s,
+                    "spells without an anchor{what}: {ended} ended with one, after p50 {} s, p90 {} s; {open} open at the end",
+                    f(p50),
+                    f(p90)
+                );
+            }
             let _ = writeln!(
                 s,
                 "DATA to sleepy nodes asleep: from the anchor {} within 5 s of sleeping, {} later; from others {}, {}",
@@ -757,8 +831,16 @@ impl Summary {
         let d = &self.rx.deaf;
         let _ = writeln!(
             s,
-            "deaf by reason: retune {}, cad {}, rssi {}, tx {}, corrupt {}, absent {}; sinr of which adjacent {}",
-            d.retune, d.cad, d.rssi, d.tx, d.corrupt, d.absent, self.rx.sinr_fail_adjacent
+            "deaf by reason: retune {}, cad {}, rssi {}, tx {}, corrupt {}, absent {}, asleep {}, duty-cycled {}; sinr of which adjacent {}",
+            d.retune,
+            d.cad,
+            d.rssi,
+            d.tx,
+            d.corrupt,
+            d.absent,
+            d.asleep,
+            d.sniff,
+            self.rx.sinr_fail_adjacent
         );
         let _ = writeln!(
             s,

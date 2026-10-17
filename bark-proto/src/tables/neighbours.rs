@@ -76,14 +76,20 @@
 //! # Sleepy and anchorless neighbours
 //!
 //! A sleepy node's beat keeps it out of the table (`node/relay.rs`): it
-//! sleeps, and is never a next hop. A sleepy node without an anchor is
-//! awake and heartbeats as a relay, with the anchorless bit: no anchor,
-//! and otherwise an entry like any other, except that it expires a
-//! worst-case rotation and a heartbeat's lag after its last heartbeat. It
-//! heartbeats on every channel once a rotation, so a rotation without its
-//! heartbeat here means that it has found an anchor and sleeps, more
-//! likely than a lost heartbeat; one live but expired is back at its
-//! next heartbeat.
+//! sleeps, and is never a next hop. A sleepy node without an anchor beats
+//! with the anchorless bit, once a beat period on the next channel each
+//! time, and receives duty-cycled in between: no anchor, sent to with the
+//! long preamble, and otherwise an entry like any other, except that it
+//! expires two of its worst-case rotations and a beat's lag after its last
+//! beat. A rotation of its beats is 13 minutes; with one lost beat in ten
+//! an expiry after one would drop a live neighbour every tenth rotation,
+//! for a rotation, where it may be the only way on. Two lose it one time
+//! in a hundred; a stale entry costs a hand-over's attempts and a ban.
+//!
+//! A relay answers each beat of an anchorless neighbour with its own
+//! heartbeat on the neighbour's channel, with the long preamble, so that
+//! the neighbour hears it and takes it as its anchor: at once and every
+//! fade after, for two beat periods ([`Neighbours::answer_due`]).
 //!
 //! # The anchor of a node that sleeps
 //!
@@ -97,6 +103,7 @@ use crate::ids::NodeId;
 use crate::node::{heartbeat_lag, Config};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
+use crate::sniff::ANCHORLESS_BEAT_PERIOD;
 use crate::tables::budget::hold;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
@@ -137,6 +144,9 @@ pub struct Neighbour {
     pub beat_at: Instant,
     /// See `beat_at`.
     pub beat_on: Channel,
+    /// Of an anchorless neighbour, the answers sent since its last beat
+    /// ([`Neighbours::answer_due`]).
+    pub answered: u8,
 }
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
@@ -171,7 +181,9 @@ impl NeighbourParams {
             expire_after: mean_rotation.mul(c.neighbour_expiry_rotations as u64),
             stale_after: c.heartbeat_max.mul(CHANNELS as u64),
             anchorless_expire_after: Duration::from_micros(
-                c.heartbeat_max.as_micros() * CHANNELS as u64 + heartbeat_lag(c).as_micros(),
+                ANCHORLESS_BEAT_PERIOD.as_micros() * (2 * CHANNELS as u64)
+                    + ANCHORLESS_BEAT_PERIOD.as_micros() / 2
+                    + heartbeat_lag(c).as_micros(),
             ),
         }
     }
@@ -338,6 +350,7 @@ impl Neighbours {
                 }
                 n.home = hb.home;
                 n.anchorless = hb.anchorless;
+                n.answered = 0;
                 n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
@@ -358,6 +371,7 @@ impl Neighbours {
             beats: 1,
             beat_at: now,
             beat_on: hb.home,
+            answered: 0,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -387,6 +401,28 @@ impl Neighbours {
         let steps = (ch.index() + CHANNELS - n.beat_on.index()) % CHANNELS;
         let steps = if steps == 0 { CHANNELS } else { steps };
         n.beat_at + interval.mul(steps as u64)
+    }
+
+    /// The next answer due to an anchorless neighbour (spec "Sleepy nodes alone"):
+    /// the `k`-th, counted from 0, `k` × `every` after the start of its last
+    /// beat, for the first `answers`. Its ID, its home, where it listens,
+    /// and when. The answers end long before the entry expires, so expiry
+    /// is not checked.
+    pub fn answer_due(&self, every: Duration, answers: u8) -> Option<(NodeId, Channel, Instant)> {
+        self.iter()
+            .filter(|n| n.anchorless && n.answered < answers)
+            .map(|n| (n.id, n.home, n.beat_at + every.mul(n.answered as u64)))
+            .min_by_key(|&(_, _, at)| at)
+    }
+
+    /// An answer to `id` went at `now`, or was given up: the next is due
+    /// `every` after the start of its beat for each sent, and never before
+    /// one `every` from now.
+    pub fn answer_sent(&mut self, id: NodeId, now: Instant, every: Duration) {
+        if let Some(n) = self.entry_mut(id) {
+            let past = now.since(n.beat_at).as_micros() / every.as_micros().max(1);
+            n.answered = n.answered.saturating_add(1).max(past.min(254) as u8 + 1);
+        }
     }
 
     /// `id` took a packet from this relay at `now`: its failures are
@@ -593,24 +629,46 @@ mod tests {
         assert_eq!(p.stale_after, Duration::from_secs(195));
     }
 
-    /// An anchorless entry expires a worst-case rotation and a heartbeat's
-    /// lag after its last heartbeat, 195.64 s.
+    /// An anchorless entry expires two of its sender's worst-case
+    /// rotations and a beat's lag after its last heartbeat: 26.5 beat
+    /// periods, and a long full frame, the ACK timeout and two backoffs,
+    /// 0.99 s.
     #[test]
-    fn anchorless_entries_expire_after_a_rotation() {
+    fn anchorless_entries_expire_after_two_rotations() {
         let mut t = Neighbours::new(params());
         assert_eq!(
             params().anchorless_expire_after,
-            Duration::from_micros(195_638_560)
+            Duration::from_micros(1_590_992_864)
         );
         hear_anchorless(&mut t, 0, -80, at(0));
-        hear(&mut t, 1, 0, -80, at(0));
+        hear(&mut t, 1, 0, -80, at(1300));
         assert!(t.get(id(0)).unwrap().anchorless);
-        assert_eq!(t.live(at(195)).count(), 2);
-        assert_eq!(t.live(at(196)).count(), 1);
+        assert_eq!(t.live(at(1590)).count(), 2);
+        assert_eq!(t.live(at(1591)).count(), 1);
         assert_eq!(
             t.next_expiry(),
             Some(Instant::ZERO + params().anchorless_expire_after)
         );
+    }
+
+    /// A relay answers an anchorless neighbour's beat at once and a fade
+    /// later, and starts again at its next beat.
+    #[test]
+    fn answers_follow_each_anchorless_beat() {
+        let mut t = Neighbours::new(params());
+        let fade = Duration::from_secs(60);
+        hear_anchorless(&mut t, 0, -80, at(0));
+        t.beat_heard(id(0), Channel::new(0).unwrap(), at(0));
+        let due = |t: &Neighbours| t.answer_due(fade, 2).map(|a| a.2);
+        assert_eq!(due(&t), Some(at(0)));
+        t.answer_sent(id(0), at(1), fade);
+        assert_eq!(due(&t), Some(at(60)));
+        // Late, it never sends two at once.
+        t.answer_sent(id(0), at(130), fade);
+        assert_eq!(due(&t), None);
+        hear_anchorless(&mut t, 0, -80, at(780));
+        t.beat_heard(id(0), Channel::new(0).unwrap(), at(780));
+        assert_eq!(due(&t), Some(at(780)));
     }
 
     #[test]

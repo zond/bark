@@ -143,6 +143,9 @@ impl Tracer {
             Action::Sleep(until) => {
                 let _ = write!(what, "sleep to {:.3} s", until.as_micros() as f64 / 1e6);
             }
+            Action::Sniff(until) => {
+                let _ = write!(what, "sniff to {:.3} s", until.as_micros() as f64 / 1e6);
+            }
             Action::Transmit(f) => {
                 let _ = write!(
                     what,

@@ -10,7 +10,8 @@
 use crate::event::{Action, Event, MAX_FRAME};
 use crate::ids::NodeId;
 use crate::position::Position;
-use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::{time_on_air, Channel, CHANNELS};
+use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::time::{Duration, Instant};
 
 mod mac;
@@ -131,11 +132,13 @@ pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
 }
 
 /// The longest a heartbeat waits behind its slot: a hand-over attempt it
-/// may find under way, a full frame and the ACK timeout, 238.56 ms, and two
-/// listen-before-talk backoffs before its last check, 400 ms (spec
-/// "Heartbeat", "Hand-over"): 638.56 ms.
+/// may find under way, a full frame with the long preamble, to a node
+/// without an anchor, and the ACK timeout, 592.86 ms, which is longer than
+/// a reception its check waits for, and two listen-before-talk backoffs
+/// before its last check, 400 ms (spec "Heartbeat", "Hand-over"):
+/// 992.86 ms.
 pub const fn heartbeat_lag(config: &Config) -> Duration {
-    let attempt = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+    let attempt = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS).as_micros()
         + config.ack_timeout.as_micros();
     let backoffs =
         config.lbt_backoff_max.as_micros() * config.lbt_attempts.saturating_sub(1) as u64;

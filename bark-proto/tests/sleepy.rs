@@ -4,6 +4,7 @@
 
 mod common;
 
+use bark_proto::sniff::{ANCHORLESS_BEAT_PERIOD, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::tables::heard::{beat_period, HeardParams};
 use bark_proto::wire::{Data, Packet, TTL_UNIT};
 use bark_proto::{
@@ -292,9 +293,11 @@ fn a_sleeping_node_is_no_next_hop() {
 }
 
 /// Sleepy nodes that hear no other kind route among themselves: S1
-/// reaches S3 through S2. Without an anchor none sleeps: each heartbeats
-/// as a relay does, every 5 to 15 s on the rotating channel, awake and
-/// anchorless (spec "Sleepy nodes alone").
+/// reaches S3 through S2. Without an anchor each beats with the
+/// anchorless bit and the long preamble, at most a beat period and a half
+/// apart and on the next channel each time, and receives duty-cycled in
+/// between; every DATA to one has the long preamble
+/// (spec "Sleepy nodes alone").
 #[test]
 fn sleepy_nodes_alone_meet_and_route() {
     let mut h = Harness::new(vec![
@@ -304,34 +307,54 @@ fn sleepy_nodes_alone_meet_and_route() {
     ]);
     h.link(0, 1);
     h.link(1, 2);
-    h.run_until(at(1000), |_| false);
+    // Two rotations of their beats, by when each has heard the other's.
+    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    h.run_until(at(195) + rotation.mul(2), |_| false);
     assert_eq!(
         h.nodes[2].core.address(),
         pos(800.0, 0.0),
         "its own position"
     );
     assert!(!h.nodes[1].core.sleeps());
+    assert!(h.nodes[1].core.anchorless());
     let b: Vec<_> = beats(&h, 1)
         .into_iter()
         .filter(|b| b.0 >= at(400))
         .collect();
-    let c = Config::default();
     assert!(b.iter().all(|&(_, _, sleepy)| !sleepy));
+    let long = |f: &bark_proto::Frame| f.preamble_symbols == LONG_PREAMBLE_SYMBOLS;
     let anchorless = h.nodes[1]
         .sent
         .iter()
         .all(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Heartbeat(hb)) => hb.anchorless,
+            Ok(Packet::Heartbeat(hb)) => hb.anchorless && long(f),
             _ => true,
         });
     assert!(anchorless);
-    assert!(b
-        .windows(2)
-        .all(|w| w[1].0.since(w[0].0) <= c.heartbeat_max + secs(1)));
-    let channels: std::collections::HashSet<_> = b.iter().map(|&(_, ch, _)| ch).collect();
-    assert_eq!(channels.len(), bark_proto::radio::CHANNELS as usize);
+    let longest = ANCHORLESS_BEAT_PERIOD.mul(3).div(2) + secs(1);
+    assert!(b.windows(2).all(|w| w[1].0.since(w[0].0) <= longest));
+    assert!(b.windows(2).all(|w| w[1].1 == w[0].1.next()));
+    // Its radio receives duty-cycled nearly all the time.
+    let span = h.now.since(at(400));
+    let sniffed: u64 = h.nodes[1]
+        .sniffed
+        .iter()
+        .map(|&(a, z)| z.min(h.now).since(a.max(at(400))).as_micros())
+        .sum();
+    assert!(
+        sniffed * 100 > span.as_micros() * 98,
+        "{sniffed} of {span:?}"
+    );
     let id = send(&mut h, 0, 2, b"among ourselves");
     assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, 2, id).is_some()));
+    for i in 0..2 {
+        let data = h.nodes[i]
+            .sent
+            .iter()
+            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))));
+        assert!(data.clone().count() > 0);
+        assert!(data.clone().all(|(_, f)| long(f)), "node {i}");
+    }
 }
 
 /// An anchorless node is no anchor: S1 hears only S2, which is awake and
@@ -354,12 +377,70 @@ fn an_anchorless_node_is_no_anchor() {
     assert_eq!(anchor, Some(h.nodes[r].core.id()));
 }
 
+/// A relay that comes into reach of a sleepy node without an anchor hears
+/// its beat when the beat comes to the relay's channel and answers it on
+/// the node's channel with the long preamble, at once and a fade later; the
+/// node, receiving duty-cycled, hears the answer and takes the relay as its
+/// anchor (spec "Sleepy nodes alone").
+#[test]
+fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
+    let (s, r) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, true, 37), node(400.0, false, 38)]);
+    h.link(s, r);
+    h.start_at(r, at(600));
+    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    let limit = at(600) + rotation.mul(2);
+    assert!(h.run_until(limit, |h| h.nodes[s].core.anchor().is_some()));
+    let anchored = h.now;
+    assert_eq!(
+        h.nodes[s].core.anchor().map(|a| a.id),
+        Some(h.nodes[r].core.id())
+    );
+    // What took it was an answer: a heartbeat of R's on S's channel with
+    // the long preamble, after a beat of S's.
+    let answers: Vec<_> = h.nodes[r]
+        .sent
+        .iter()
+        .filter(|(_, f)| {
+            f.preamble_symbols == LONG_PREAMBLE_SYMBOLS
+                && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
+        })
+        .map(|(t, f)| (*t, f.channel))
+        .collect();
+    assert!(!answers.is_empty());
+    let (first, ch) = answers[0];
+    assert!(
+        anchored.since(first) < secs(1),
+        "{:?}",
+        anchored.since(first)
+    );
+    let s_beats = beats(&h, s);
+    let beat = s_beats.iter().rev().find(|b| b.0 < first).expect("a beat");
+    assert!(first.since(beat.0) < secs(2));
+    let home = h.nodes[s]
+        .sent
+        .iter()
+        .find_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Heartbeat(hb)) => Some(hb.home),
+            _ => None,
+        });
+    assert_eq!(Some(ch), home, "on the channel its beat names");
+    // Once anchored the node beats with the sleepy bit, and R answers no more.
+    h.run_for(secs(300));
+    let after = h.nodes[r]
+        .sent
+        .iter()
+        .filter(|(t, f)| *t > anchored && f.preamble_symbols == LONG_PREAMBLE_SYMBOLS)
+        .count();
+    assert_eq!(after, 0);
+}
+
 /// A sleepy node's own message with no live neighbour waits for one
 /// until its time runs out (spec "Receiving DATA").
 #[test]
 fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
     let mut h = Harness::new(vec![node(0.0, true, 41)]);
-    h.run_until(at(200), |_| false);
+    h.run_until(at(400), |_| false);
     let text = b"nobody there";
     let (dst_pos, dst_id) = (pos(500.0, 0.0), NodeId([9; 4]));
     h.command(

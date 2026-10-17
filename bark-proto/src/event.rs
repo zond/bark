@@ -182,6 +182,16 @@ pub enum Action {
     /// the resting channel again (`docs/core-interface.md` §3 rule 10).
     /// Only a sleepy node with an anchor asks for it.
     Sleep(Instant),
+    /// The radio may receive duty-cycled on the resting channel until this
+    /// instant: in windows of [`crate::sniff::SNIFF_RX`] every
+    /// [`crate::sniff::SNIFF_CYCLE`], so that it catches every frame with
+    /// the long preamble ([`crate::sniff::LONG_PREAMBLE_SYMBOLS`]) and may
+    /// miss any other. What it catches is `Event::Received` as ever. The
+    /// core's next `Listen`, `Cad`, `Rssi`, `Transmit` or `Sleep` ends it
+    /// sooner; once it ends the radio listens on the resting channel again
+    /// (`docs/core-interface.md` §3 rule 11). Only a sleepy node without an
+    /// anchor asks for it.
+    Sniff(Instant),
     /// Tell the application something.
     App(AppEvent),
     /// A protocol event for logs and the simulator's metrics. Carries no

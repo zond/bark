@@ -220,11 +220,14 @@ pub enum Deaf {
     Absent,
     /// The radio was asleep (`Action::Sleep`).
     Asleep,
+    /// The radio received duty-cycled (`Action::Sniff`) and no window
+    /// detected the preamble.
+    Sniff,
 }
 
 impl Deaf {
     /// Number of variants, for counter arrays.
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
     /// All variants in counter order.
     pub const ALL: [Deaf; Deaf::COUNT] = [
         Deaf::Retune,
@@ -235,6 +238,7 @@ impl Deaf {
         Deaf::Corrupt,
         Deaf::Absent,
         Deaf::Asleep,
+        Deaf::Sniff,
     ];
     /// Counter index.
     pub fn index(self) -> usize {
@@ -251,6 +255,7 @@ impl Deaf {
             "corrupt",
             "absent",
             "asleep",
+            "sniff",
         ][self as usize]
     }
 }
