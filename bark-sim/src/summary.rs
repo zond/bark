@@ -638,13 +638,6 @@ impl Summary {
                 share(m.off_channel),
                 share(m.unheard)
             );
-            if m.more[0] > 0 {
-                let _ = writeln!(
-                    s,
-                    "DATA to sleepy nodes saying more follow: {}, of which the next did not come before the node slept: {}",
-                    m.more[0], m.more[1]
-                );
-            }
             let (n, back, p50, p90, sent, got) = z.orphans;
             if n > 0 {
                 let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));

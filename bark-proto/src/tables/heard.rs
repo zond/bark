@@ -3,8 +3,8 @@
 //!
 //! A sleepy node heartbeats only on its home channel, at a random time in
 //! the second half of each [`beat_period`], and listens for a while after
-//! each beat ([`HeardParams::awake`]), and after each message it takes
-//! that says more follow ([`HeardParams::more`]). A holder of a message
+//! each beat ([`HeardParams::awake`]) and after each message it takes
+//! ([`HeardParams::linger`]). A holder of a message
 //! for it sends the message then. The table keeps what that needs: the node's home
 //! channel, until when it listens, and whether a delivery to it went
 //! unanswered since its last beat.
@@ -50,11 +50,11 @@ pub struct HeardParams {
     /// timeout's allowance for the turn-around and listen-before-talk:
     /// 2 × (138.56 + 100) = 477.12 ms.
     pub awake: Duration,
-    /// How long it listens after it has answered a message that says more
-    /// follow: one hand-over with all its attempts and retry waits,
-    /// 3133.44 ms. Nothing is under way ahead of the next message then: the
-    /// holder has just had the answer.
-    pub more: Duration,
+    /// How long it listens after it has answered a message: one hand-over
+    /// with all its attempts and retry waits, 3133.44 ms. Nothing is under
+    /// way ahead of the next message then: the holder has just had the
+    /// answer.
+    pub linger: Duration,
 }
 
 impl HeardParams {
@@ -68,7 +68,7 @@ impl HeardParams {
         HeardParams {
             keep: beat_period(config.delivery_ttl).mul(2),
             awake: Duration::from_micros(2 * under_way),
-            more: Duration::from_micros(span),
+            linger: Duration::from_micros(span),
         }
     }
 }
@@ -199,10 +199,9 @@ impl Heard {
             .is_some_and(|n| now < n.awake_until && !n.missed)
     }
 
-    /// `id` took a message at `now`: it listens one hand-over longer if
-    /// the message said `more` follow, else it sleeps.
-    pub fn took(&mut self, id: NodeId, more: bool, now: Instant) {
-        let awake = if more { now + self.params.more } else { now };
+    /// `id` took a message at `now`: it listens one hand-over for the next.
+    pub fn took(&mut self, id: NodeId, now: Instant) {
+        let awake = now + self.params.linger;
         if let Some(n) = self.get_mut(id) {
             n.awake_until = awake;
             n.missed = false;
@@ -254,7 +253,7 @@ mod tests {
         assert_eq!(p.keep, Duration::from_secs(600));
         // Twice 138.56 + 100 ms; 3 × 738.56 ms + 305.92 + 611.84 ms.
         assert_eq!(p.awake, Duration::from_micros(2 * 238_560));
-        assert_eq!(p.more, Duration::from_micros(3_133_440));
+        assert_eq!(p.linger, Duration::from_micros(3_133_440));
     }
 
     #[test]
@@ -264,13 +263,11 @@ mod tests {
         assert!(t.heard(id(1), ch(3), -90, at(10)));
         assert!(t.awake(id(1), at(10) + (awake - Duration::from_micros(1))));
         assert!(!t.awake(id(1), at(10) + awake));
-        t.took(id(1), true, at(15));
-        let more = t.params().more;
-        assert!(t.awake(id(1), at(15) + (more - Duration::from_micros(1))));
-        assert!(!t.awake(id(1), at(15) + more));
-        t.took(id(1), false, at(16));
-        assert!(!t.awake(id(1), at(16)), "nothing more: asleep");
-        t.took(id(1), true, at(15));
+        t.took(id(1), at(15));
+        let linger = t.params().linger;
+        assert!(t.awake(id(1), at(15) + (linger - Duration::from_micros(1))));
+        assert!(!t.awake(id(1), at(15) + linger));
+        t.took(id(1), at(15));
         t.missed(id(1));
         assert!(!t.awake(id(1), at(16)), "a missed delivery: asleep");
         assert!(t.heard(id(1), ch(4), -80, at(300)));

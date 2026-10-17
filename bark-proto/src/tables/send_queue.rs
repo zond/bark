@@ -425,7 +425,6 @@ mod tests {
             dst_id: NodeId([3; 4]),
             hops,
             time_left: 1,
-            more: false,
             payload: &[tag],
         };
         let mut bytes = [0; MAX_FRAME];

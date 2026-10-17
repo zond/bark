@@ -411,8 +411,9 @@ fn a_sleepy_node_sleeps_between_its_windows() {
         .filter(|&t| t >= at(1000))
         .collect();
     assert!(b.len() >= 5, "{} beats", b.len());
-    // Awake from each beat through its window, or until it has answered a
-    // message that said nothing more follows.
+    // Awake from each beat through its window, and a hand-over after each
+    // message it answers.
+    let linger = HeardParams::from_config(&Config::default()).linger;
     let answered: Vec<Instant> = h.nodes[s]
         .sent
         .iter()
@@ -420,12 +421,14 @@ fn a_sleepy_node_sleeps_between_its_windows() {
         .map(|(t, _)| *t)
         .collect();
     for &t in &b {
-        let end = answered
-            .iter()
-            .copied()
-            .find(|&a| a > t && a < t + window)
-            .unwrap_or(t + window);
-        assert_eq!(slept(&h, s, t, end), Duration::ZERO, "beat at {t:?}");
+        assert_eq!(slept(&h, s, t, t + window), Duration::ZERO, "beat at {t:?}");
+    }
+    for &a in &answered {
+        assert_eq!(
+            slept(&h, s, a, a + linger),
+            Duration::ZERO,
+            "answer at {a:?}"
+        );
     }
     let (from, to) = (at(1000), at(3000));
     let awake = to.since(from) - slept(&h, s, from, to);
@@ -437,7 +440,8 @@ fn a_sleepy_node_sleeps_between_its_windows() {
     let rotation = bark_proto::node::heartbeat_interval(anchor, &c).mul(13);
     let watches = to.since(from).as_micros() / rotation.as_micros() + 1;
     let watch = Duration::from_millis(860);
-    let most = window.mul(b.len() as u64 + 2) + watch.mul(watches);
+    let most =
+        window.mul(b.len() as u64 + 2) + linger.mul(answered.len() as u64) + watch.mul(watches);
     assert!(awake <= most, "awake {awake:?} of {:?}", to.since(from));
 }
 
@@ -471,11 +475,11 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
 }
 
 /// Messages waiting for a sleepy node go one after the other in the
-/// window after its beat: each DATA but the last says more follow, the
-/// node listens one hand-over longer after each such, and sleeps once it
-/// has answered the last (spec "Delivery").
+/// window after its beat: the node listens one hand-over after each it
+/// answers, and sleeps once a hand-over has passed after the last (spec
+/// "Delivery").
 #[test]
-fn a_burst_goes_on_one_beat_and_the_node_sleeps_after_the_last() {
+fn a_burst_goes_on_one_beat_and_the_node_sleeps_a_hand_over_after_the_last() {
     let (r, s) = (0, 1);
     let mut h = Harness::new(vec![node(0.0, false, 81), node(50.0, true, 82)]);
     h.link(r, s);
@@ -504,18 +508,8 @@ fn a_burst_goes_on_one_beat_and_the_node_sleeps_after_the_last() {
         .rfind(|&t| t <= got[0])
         .unwrap();
     let p = HeardParams::from_config(&Config::default());
-    assert!(got[2].since(beat) < p.awake + p.more.mul(2), "one beat");
-    let to_node: Vec<bool> = h.nodes[r]
-        .sent
-        .iter()
-        .filter(|(t, _)| *t >= beat)
-        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Data(d)) if d.dst_hop == h.nodes[s].core.id() => Some(d.more),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(to_node, [true, true, false]);
-    h.run_for(secs(1));
+    assert!(got[2].since(beat) < p.awake + p.linger.mul(2), "one beat");
+    h.run_for(p.linger + secs(1));
     let last_ack = h.nodes[s]
         .sent
         .iter()
@@ -524,8 +518,9 @@ fn a_burst_goes_on_one_beat_and_the_node_sleeps_after_the_last() {
         .next_back()
         .unwrap();
     let sleeps_at = h.nodes[s].asleep.last().unwrap().0;
+    assert_eq!(slept(&h, s, last_ack, last_ack + p.linger), Duration::ZERO);
     assert!(
-        sleeps_at.since(last_ack) < Duration::from_millis(50),
+        sleeps_at.since(last_ack) < p.linger + Duration::from_millis(50),
         "asleep {:?} after its last answer",
         sleeps_at.since(last_ack)
     );

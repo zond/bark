@@ -112,7 +112,6 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     dst_id: NodeId([9; 4]),
                     hops: 1 + (seq % 20) as u8,
                     time_left: u8::MAX,
-                    more: false,
                     payload: &payload,
                 }),
             };

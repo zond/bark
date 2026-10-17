@@ -1796,7 +1796,6 @@ fn replies_stay_within_the_reserve() {
                 dst_id: nd,
                 hops: 1,
                 time_left: u8::MAX,
-                more: false,
                 payload: &text,
             };
             let mut frame = Frame {
