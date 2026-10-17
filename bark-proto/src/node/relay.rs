@@ -69,7 +69,7 @@
 mod delivery;
 mod forward;
 
-use crate::event::{Action, AppCommand, Event, Frame, Trace};
+use crate::event::{Action, AppCommand, Event, Frame, Trace, MAX_FRAME};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
@@ -112,6 +112,24 @@ pub const SWITCH_MARGIN_DB: f32 = 8.0;
 /// low-frequency clock runs from (nRF52840 product specification, LFXO).
 /// To be measured on the boards.
 pub const CLOCK_DRIFT_PPM: u64 = 50;
+
+/// How far two clocks, each off by up to [`CLOCK_DRIFT_PPM`], drift apart
+/// over `d`.
+fn drift(d: Duration) -> Duration {
+    Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
+}
+
+/// The longest a heartbeat waits behind its slot: a hand-over attempt it
+/// may find under way, a full frame and the ACK timeout, 238.56 ms, and two
+/// listen-before-talk backoffs before its last check, 400 ms (spec
+/// "Heartbeat", "Hand-over"): 638.56 ms.
+fn heartbeat_lag(config: &Config) -> Duration {
+    let attempt = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + config.ack_timeout;
+    let backoffs = config
+        .lbt_backoff_max
+        .mul(config.lbt_attempts.saturating_sub(1) as u64);
+    attempt + backoffs
+}
 
 /// The path-loss exponent of the scenarios, fitted to the ranges of spec
 /// "Physical layer" (`scenarios/s4-capacity.toml`).
@@ -291,8 +309,10 @@ pub struct Relay {
     /// When the window it listens in ends, while it is awake.
     window_ends: Option<Instant>,
     /// When a node that sleeps expects its anchor's next heartbeat on its
-    /// channel, and the rotations since it last heard one there.
+    /// channel, from when it expected the last, and the rotations since it
+    /// last heard one there.
     watch_at: Option<Instant>,
+    watch_base: Instant,
     misses: u8,
     /// Where the node was when it chose or last confirmed its anchor, and
     /// how far the anchor was then, metres.
@@ -365,6 +385,7 @@ impl Relay {
             rescan: None,
             window_ends: None,
             watch_at: None,
+            watch_base: Instant::ZERO,
             misses: 0,
             chosen_from: Position { lat: 0, lon: 0 },
             reach_m: 0.0,
@@ -432,6 +453,7 @@ impl Relay {
             rescan,
             window_ends,
             watch_at,
+            watch_base,
             misses,
             chosen_from,
             reach_m,
@@ -485,6 +507,7 @@ impl Relay {
         *rescan = None;
         *window_ends = None;
         *watch_at = None;
+        *watch_base = Instant::ZERO;
         *misses = 0;
         *chosen_from = config.position;
         *reach_m = 0.0;
@@ -558,24 +581,20 @@ impl Relay {
 
     /// When a node that sleeps listens for its anchor's next heartbeat on
     /// its channel, if it does (module documentation): from as early as it
-    /// can come to as late as it can, around the time the anchor's fixed
-    /// interval gives (`Neighbours::next_beat`). The last one heard may
-    /// have waited for the channel behind its slot as long as the next
-    /// may, two backoffs before the last check (spec "Heartbeat"), and two
-    /// clocks may drift apart by [`CLOCK_DRIFT_PPM`] each since then.
+    /// can come to as late as it can. `watch_at` is when it comes if it
+    /// starts in its slot, from the earliest the anchor's heartbeats have come
+    /// (`anchor_heard`), so it comes no earlier than the two clocks drift
+    /// apart, [`CLOCK_DRIFT_PPM`] each, since. It may come later by as
+    /// much again, and by what keeps a heartbeat behind its slot
+    /// ([`heartbeat_lag`]).
     fn watch(&self) -> Option<(Instant, Instant)> {
         let at = self.watch_at?;
-        let anchor = self.anchor?;
-        let (_, n) = self.neighbours.by_id(anchor.id)?;
-        let lag = self
-            .config
-            .lbt_backoff_max
-            .mul(self.config.lbt_attempts.saturating_sub(1) as u64);
-        let drift = Duration::from_micros(
-            at.since(n.beat_at).as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000,
-        );
+        let drift = drift(at.since(self.watch_base));
         let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
-        Some((at - (lag + drift), at + lag + drift + airtime))
+        Some((
+            at - drift,
+            at + drift + heartbeat_lag(&self.config) + airtime,
+        ))
     }
 
     /// Follow the anchor's heartbeat: a node that sleeps expects it on its
@@ -592,10 +611,10 @@ impl Relay {
         let interval = heartbeat_interval(a.id, &self.config);
         if self.watch_at.is_none() {
             self.misses = 0;
-            self.watch_at = self
-                .neighbours
-                .by_id(a.id)
-                .map(|(_, n)| Neighbours::next_beat(n, interval, self.home));
+            if let Some((_, n)) = self.neighbours.by_id(a.id) {
+                self.watch_base = n.beat_at;
+                self.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
+            }
         }
         while self.watch().is_some_and(|(_, to)| now >= to) {
             self.misses = self.misses.saturating_add(1);
@@ -608,20 +627,33 @@ impl Relay {
         }
     }
 
-    /// The anchor's heartbeat was heard: it is alive, and its next comes a
-    /// rotation later.
-    fn anchor_heard(&mut self) {
+    /// The anchor's heartbeat that started at `now` was heard: it is alive, and its next
+    /// comes to this node's channel when the rotation brings it there. A
+    /// heartbeat may come late behind its slot, never early, so the time
+    /// expected is kept from the earliest heard, moved later only by as
+    /// much as the clocks may drift apart.
+    fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor else { return };
         if self.rescan.is_some() {
             // Heard while checking: it is there (spec "Relay choice").
             self.anchored();
         }
         self.misses = 0;
+        let base = match (self.watch_at, self.watch()) {
+            (Some(at), Some((from, to))) if now >= from && now < to => {
+                now.min(at + drift(at.since(self.watch_base)))
+            }
+            _ => now,
+        };
         let interval = heartbeat_interval(a.id, &self.config);
-        self.watch_at = self
-            .neighbours
-            .by_id(a.id)
-            .map(|(_, n)| Neighbours::next_beat(n, interval, self.home));
+        if let Some((_, n)) = self.neighbours.by_id(a.id) {
+            let n = Neighbour {
+                beat_at: base,
+                ..*n
+            };
+            self.watch_base = base;
+            self.watch_at = Some(Neighbours::next_beat(&n, interval, self.home));
+        }
     }
 
     /// Tell the driver the radio may sleep, if it may and has not been
@@ -1146,9 +1178,10 @@ impl Relay {
         }
     }
 
-    /// The heartbeat went out, or was skipped (spec "Heartbeat"). A skipped one
-    /// keeps its channel, so the neighbours parked there are not left out
-    /// for a whole rotation.
+    /// The heartbeat went out, or was skipped (spec "Heartbeat"). On a fixed
+    /// interval a skipped one gives up its channel for the rotation, so
+    /// that the next comes where and when its neighbours expect it; a
+    /// sleeping node's beat, always on its home, has no rotation to keep.
     fn heartbeat_done(&mut self, now: Instant, sent: bool) {
         self.beacon.check = Check::Idle;
         self.beacon.busy_checks = 0;
@@ -1250,7 +1283,10 @@ impl Relay {
         }
         let position = hb.position(self.config.position);
         let heard = self.neighbours.heard(&hb, position, rssi, &self.plane, now);
-        self.neighbours.beat_heard(hb.id, self.home, now);
+        // When it started: a heartbeat's slot is its start, give or take
+        // the listen-before-talk.
+        let started = now - time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        self.neighbours.beat_heard(hb.id, self.home, started);
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
@@ -1263,7 +1299,7 @@ impl Relay {
             self.first_heard.get_or_insert(now);
             self.reconsider_anchor(now, emit);
             if self.anchor.is_some_and(|a| a.id == hb.id) {
-                self.anchor_heard();
+                self.anchor_heard(started);
             }
         }
     }

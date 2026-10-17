@@ -136,7 +136,7 @@ pub struct Neighbour {
     pub sleepy: bool,
     /// Heartbeats heard from it, up to [`BEATS`].
     pub beats: u8,
-    /// When its last heartbeat was heard, and on which channel: with its
+    /// When its last heartbeat heard started, and on which channel: with its
     /// fixed interval, when its next comes to any channel
     /// ([`Neighbours::next_beat`]).
     pub beat_at: Instant,
