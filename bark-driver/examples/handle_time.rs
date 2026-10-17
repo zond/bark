@@ -98,7 +98,6 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
             payload[..4].copy_from_slice(&seq.to_be_bytes());
             let packet = match beat {
                 true => Packet::Heartbeat(Heartbeat {
-                    surveyed: true,
                     sleepy: false,
                     home: nhome,
                     id: NodeId(pos.short().0.to_be_bytes()),

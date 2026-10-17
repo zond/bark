@@ -129,8 +129,6 @@ pub struct Neighbour {
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
-    /// Whether its position is surveyed (heartbeat 0x1) rather than GPS (0x2).
-    pub surveyed: bool,
     /// Whether it is a sleepy node: a next hop only where no other kind is
     /// live.
     pub sleepy: bool,
@@ -344,7 +342,6 @@ impl Neighbours {
                     n.local = plane.point(position);
                 }
                 n.home = hb.home;
-                n.surveyed = hb.surveyed;
                 n.sleepy = hb.sleepy;
                 n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
@@ -362,7 +359,6 @@ impl Neighbours {
             banned_until: Instant::ZERO,
             rssi: rssi as f32,
             fail_count: 0,
-            surveyed: hb.surveyed,
             sleepy: hb.sleepy,
             beats: 1,
             beat_at: now,
@@ -532,7 +528,6 @@ mod tests {
     /// Neighbour `i`'s heartbeat, its position and ID following from `i`.
     fn hb(i: i32, home: u8) -> (Heartbeat, Position) {
         let hb = Heartbeat {
-            surveyed: true,
             sleepy: false,
             home: Channel::new(home).unwrap(),
             id: id(i),
@@ -544,11 +539,7 @@ mod tests {
     /// Hear sleepy node `i`'s heartbeat.
     fn hear_sleepy(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
         let (hb, p) = hb(i, 0);
-        let hb = Heartbeat {
-            sleepy: true,
-            surveyed: false,
-            ..hb
-        };
+        let hb = Heartbeat { sleepy: true, ..hb };
         t.heard(&hb, p, rssi, &plane(), now)
     }
 

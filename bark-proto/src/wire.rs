@@ -1,5 +1,6 @@
 //! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x4, 0x6 and 0x7 are unused (roadmap D46).
+//! codes 0x1, 0x2, 0x4, 0x6, 0x7 and 0xA to 0xE are unused (roadmap D46,
+//! D49).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
 //! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
@@ -11,7 +12,7 @@
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x1/0x2/0x8 first id pos                                = 9
+//! HEARTBEAT 0x8/0x9 first id pos                                    = 9
 //! ACK       0x3      first msg from to                              = 13
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
@@ -38,9 +39,13 @@
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK are sent as zero and ignored on receipt.
-//! - A heartbeat's type says whether the sender is sleepy (0x8), and if it
-//!   is not, whether its position is a map point set in the app (0x1) or
-//!   from its GPS (0x2).
+//! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
+//!   sleepy (0x9). `aux` holds the home channel, 0 to 12, in all four of
+//!   its bits, so the flags are in the type. 0x8 is the one base with both
+//!   low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0 would
+//!   give 0x3, the ACK, 0x4 would give 0x5, DATA, and 0xC would give 0xF,
+//!   the firmware's bench frames. A heartbeat says nothing of where its
+//!   position came from: no receiver needs to know.
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
@@ -66,11 +71,21 @@ const TYPE_SHIFT: u32 = 4;
 const AUX_MASK: u8 = 0x0f;
 
 // Type codes (spec "Packet formats").
-const T_HEARTBEAT_SURVEYED: u8 = 0x1;
-const T_HEARTBEAT_GPS: u8 = 0x2;
 const T_ACK: u8 = 0x3;
 const T_DATA: u8 = 0x5;
-const T_HEARTBEAT_SLEEPY: u8 = 0x8;
+// Reserved for the firmware's bench frames (spec "Packet formats").
+const T_BENCH: u8 = 0xF;
+const T_HEARTBEAT: u8 = 0x8;
+// The heartbeat's flags, in the type's two low bits.
+const HEARTBEAT_FLAGS: u8 = 0x3;
+const HEARTBEAT_SLEEPY: u8 = 0x1;
+const _: () = assert!(
+    T_HEARTBEAT & HEARTBEAT_FLAGS == 0
+        && T_ACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
+        && T_DATA & !HEARTBEAT_FLAGS != T_HEARTBEAT
+        && T_BENCH & !HEARTBEAT_FLAGS != T_HEARTBEAT,
+    "every heartbeat code is free"
+);
 
 // HEARTBEAT.
 const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
@@ -110,14 +125,10 @@ const _: () = assert!(
 const _: () = assert!(DATA_HEADER_LEN == 22);
 const _: () = assert!(MAX_PAYLOAD == 233);
 
-/// HEARTBEAT, types 0x1 and 0x2 from a node that is not sleepy, 0x8
-/// from a sleepy one (spec "Heartbeat").
+/// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// Surveyed (0x1) or GPS-derived (0x2) position; a sleepy node's
-    /// heartbeat does not say, and reads as not surveyed.
-    pub surveyed: bool,
-    /// From a sleepy node (0x8): one that beats only on its home channel,
+    /// From a sleepy node (0x9): one that beats only on its home channel,
     /// slowly, and is a next hop only where no other kind is in reach.
     pub sleepy: bool,
     /// The sender's home channel.
@@ -298,11 +309,8 @@ impl Packet<'_> {
     pub fn encode(&self, buf: &mut [u8; MAX_FRAME]) -> Result<usize, EncodeError> {
         match self {
             Packet::Heartbeat(h) => {
-                let kind = match (h.sleepy, h.surveyed) {
-                    (true, _) => T_HEARTBEAT_SLEEPY,
-                    (false, true) => T_HEARTBEAT_SURVEYED,
-                    (false, false) => T_HEARTBEAT_GPS,
-                };
+                let flag = |set: bool, bit: u8| if set { bit } else { 0 };
+                let kind = T_HEARTBEAT | flag(h.sleepy, HEARTBEAT_SLEEPY);
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
@@ -344,11 +352,12 @@ impl<'a> Packet<'a> {
         let kind = first >> TYPE_SHIFT;
         let aux = first & AUX_MASK;
         match kind {
-            T_HEARTBEAT_SURVEYED | T_HEARTBEAT_GPS | T_HEARTBEAT_SLEEPY => {
+            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT
+                && k & HEARTBEAT_FLAGS & !HEARTBEAT_SLEEPY == 0 =>
+            {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
-                    surveyed: kind == T_HEARTBEAT_SURVEYED,
-                    sleepy: kind == T_HEARTBEAT_SLEEPY,
+                    sleepy: kind & HEARTBEAT_SLEEPY != 0,
                     home: channel(aux)?,
                     id: NodeId(get4(b, HEARTBEAT_ID)),
                     short: get_short(b, HEARTBEAT_POS),
@@ -427,14 +436,12 @@ mod tests {
     proptest! {
         #[test]
         fn heartbeat_round_trips(
-            surveyed: bool,
             sleepy: bool,
             home in chan(),
             id in id(),
             position in position(),
         ) {
-            let surveyed = surveyed && !sleepy;
-            let hb = Heartbeat { surveyed, sleepy, home, id, short: position.short() };
+            let hb = Heartbeat { sleepy, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -526,22 +533,21 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x40, 0x60, 0x70] {
+        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xa0, 0xb0] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
-                "ATTACH, DELIVER and ATTACHED are gone"
+                "unused: the old heartbeat kinds and the packets D46 removed"
             );
         }
-        assert_eq!(Packet::decode(&[0x90; 7]), Err(BadType(9)));
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
-            Packet::decode(&[0x1d, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x8d, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(ChannelOutOfRange(13))
         );
-        assert_eq!(Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
+        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
-            Packet::decode(&[0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(BadLength)
         );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
@@ -565,17 +571,16 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let position = Position::from_degrees(50.45, 30.52);
         let hb = Heartbeat {
-            surveyed: false,
             sleepy: false,
             home: Channel::new(12).unwrap(),
             id: NodeId([1, 2, 3, 4]),
             short: ShortName(0x0506_0708),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x2c, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8]);
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x8c);
+        assert_eq!(buf[0], 0x9c);
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),

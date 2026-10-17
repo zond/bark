@@ -105,9 +105,6 @@ pub enum AppCommand<'a> {
     SetPosition {
         /// New position.
         position: Position,
-        /// `true` for a map point set in the app, `false` for a GPS fix
-        /// (heartbeat type 0x1 against 0x2).
-        surveyed: bool,
     },
 }
 

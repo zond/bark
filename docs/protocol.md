@@ -282,7 +282,7 @@ node's are rarer and stay on its home channel ([beats](#beats)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x1 from a relay whose position is a map point set in the app, 0x2 from a relay whose position is from its GPS, 0x8 from a sleepy node |
+| type | 4 | 0x8, with its flags in the two low bits ([packet formats](#packet-formats)): 0x9 from a sleepy node |
 | channel | 4 | home channel index 0–12 |
 | id | 32 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([position and time](#position-and-time)) |
@@ -1535,9 +1535,8 @@ carries the 4-byte short position ([position and time](#position-and-time)). A n
 bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything.
 
 ```
-HEARTBEAT 0x1/0x2/0x8: first(1) id(4) short_pos(4)                         = 9
-          0x1 relay, position set in the app; 0x2 relay, position from GPS;
-          0x8 sleepy node; aux = home channel
+HEARTBEAT 0x8/0x9: first(1) id(4) short_pos(4)                             = 9
+          type bit 0 = sleepy (0x9); aux = home channel, 0 to 12
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
           the answer to a DATA, taken or refused; sent on the channel in
           the answered packet's aux; aux bit 0 = refused
@@ -1548,11 +1547,18 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
           stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
-Types 0x4, 0x6 and 0x7 are unused; nodes reject them like any unknown type.
+Types 0x1, 0x2, 0x4, 0x6, 0x7 and 0xA to 0xE are unused; nodes reject them like any unknown type.
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
 ```
+
+The heartbeat's flags are in its type, since `aux` holds the home channel
+in all four of its bits. Its type is 0x8 because that is the one base
+with both low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0
+would give 0x3, the ACK, 0x4 would give DATA's 0x5, and 0xC would give
+0xF, the bench frames. A heartbeat does not say where its sender's
+position came from: no receiver needs to know.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed

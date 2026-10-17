@@ -1117,7 +1117,6 @@ impl Relay {
         let (channel, _) = self.beacon.current.unwrap_or((self.beacon.rotation, false));
         let channel = if self.sleeps() { self.home } else { channel };
         let hb = Heartbeat {
-            surveyed: self.config.surveyed && !self.config.sleepy,
             sleepy: self.config.sleepy,
             home: self.home,
             id: self.id,
@@ -1326,8 +1325,7 @@ impl Relay {
                 dst_id,
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
-            AppCommand::SetPosition { position, surveyed } => {
-                self.config.surveyed = surveyed;
+            AppCommand::SetPosition { position } => {
                 self.set_position(position);
                 let moved = self
                     .plane
@@ -2042,7 +2040,6 @@ mod tests {
             pending
         };
         let hb = Heartbeat {
-            surveyed: true,
             sleepy: false,
             home: b_home,
             id: id_of(b),
@@ -2174,7 +2171,6 @@ mod tests {
             actions
         };
         let hb = Heartbeat {
-            surveyed: true,
             sleepy: false,
             home: Channel::new(5).unwrap(),
             id: id_of(d_pos),
@@ -2300,7 +2296,6 @@ mod tests {
             &mut r,
             now,
             &Packet::Heartbeat(Heartbeat {
-                surveyed: true,
                 sleepy: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(d_pos),
@@ -2382,7 +2377,6 @@ mod tests {
                 ..me
             };
             let hb = Heartbeat {
-                surveyed: true,
                 sleepy: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(at),

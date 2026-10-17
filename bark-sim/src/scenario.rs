@@ -109,7 +109,6 @@ pub enum Placement {
 #[allow(missing_docs)]
 pub struct ProtocolOverrides {
     pub tx_power_dbm: Option<i8>,
-    pub surveyed: Option<bool>,
     pub heartbeat_min_ms: Option<u64>,
     pub heartbeat_max_ms: Option<u64>,
     pub ack_timeout_ms: Option<u64>,
@@ -155,7 +154,6 @@ impl ProtocolOverrides {
             };
         }
         set!(tx_power_dbm);
-        set!(surveyed);
         set!(heartbeat_min, heartbeat_min_ms, ms);
         set!(heartbeat_max, heartbeat_max_ms, ms);
         set!(ack_timeout, ack_timeout_ms, ms);

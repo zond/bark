@@ -202,7 +202,7 @@ action at a time, and the core never allocates.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - Types 0x4, 0x6 and 0x7 are unused and rejected.
+  - Types 0x1, 0x2, 0x4, 0x6, 0x7 and 0xA to 0xE are unused and rejected.
   - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK are
     sent as zero and ignored on receipt. A fixed-size packet with trailing bytes is
     rejected.

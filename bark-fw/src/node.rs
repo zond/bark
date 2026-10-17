@@ -85,7 +85,6 @@ pub fn config() -> Config {
     });
     Config {
         position,
-        surveyed: true,
         node_id: NodeId(embassy_nrf::pac::FICR.deviceid(0).read().to_be_bytes()),
         sleepy: cfg!(feature = "sleepy"),
         tx_power_dbm: MAX_TX_DBM,

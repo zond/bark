@@ -178,8 +178,8 @@ fn heartbeat_rotates_through_every_channel_in_order() {
         };
         let me = h.nodes[0].core.config().position;
         assert_eq!(
-            (hb.home, hb.id, hb.position(me), hb.surveyed),
-            (h.nodes[0].core.home(), h.nodes[0].core.id(), me, true)
+            (hb.home, hb.id, hb.position(me), hb.sleepy),
+            (h.nodes[0].core.home(), h.nodes[0].core.id(), me, false)
         );
         assert_eq!(f0.len as usize, HEARTBEAT_LEN);
     }
