@@ -20,12 +20,12 @@ deliberate jamming; it is designed for infrastructure loss.
 | Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
-| Medium access | Always listening on the home channel, leaving it only to transmit; acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
-| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's on a fixed interval of 5–15 s set by its ID, on a channel that steps through all 13 in order; a sleepy node's every 150–300 s, on its home channel only |
+| Medium access | Always listening on the home channel, leaving it only to transmit (a sleepy node sleeps between its windows, or receives duty-cycled without an anchor); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
+| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's on a fixed interval of 5–15 s set by its ID, on a channel that steps through all 13 in order; a sleepy node's every 150–300 s, on its home channel only; one without an anchor once a minute with a long preamble, on the next channel each time |
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, and forwards only where no relay is in reach |
+| Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, and forwards only where no relay is in reach; without an anchor it holds and forwards as a relay does but receives duty-cycled, reached with a long preamble |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -73,7 +73,8 @@ Both regimes allow any modulation in this band.
 
 The protocol keeps to them with an airtime token bucket per node that
 holds every hour within 10% ([duty cycle cap](#duty-cycle-cap)), no transmission longer than
-1 s (an SF5 packet is at most 139 ms), and a transmit power that gives
+1 s (an SF5 packet is at most 139 ms, 493 ms with the long preamble of
+[physical layer](#physical-layer)), and a transmit power that gives
 at most +10 dBm ERP with the fitted antenna: +10 dBm at the connector
 with the stock antenna (≈0 dBd gain).
 
@@ -97,7 +98,7 @@ on the channel; it works below the noise floor.
 | Coding rate | 4/5 | |
 | Raw bit rate | 15.6 kbps at SF5 | 5.5 kbps at SF7 |
 | Symbol time | 0.256 ms at SF5 | |
-| Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **no long preambles** | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4) |
+| Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **long only to and from a node that receives duty-cycled**: 1396 symbols (357.4 ms) | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4); the long one is derived below |
 | 255-byte packet | 138.6 ms at SF5 | ≈400 ms at SF7. Airtime from the datasheet formula (§6.1.4), `time_on_air` in `radio.rs` |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
 | Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
@@ -119,6 +120,53 @@ mixed-SF network splits into parts that cannot hear each other. Starting
 at SF7 would force a network-wide switch later; the deployment is expected
 to start at a density where SF5 range suffices (indoor coverage at ≈9.6
 relays/km², [capacity and sizing](#capacity-and-sizing)).
+
+### Duty-cycled receive and the long preamble
+
+Every frame has the shortest preamble but those to and from a sleepy
+node without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)), whose radio receives
+duty-cycled. The SX1262 does this on its own (datasheet §13.1.7,
+SetRxDutyCycle): it receives for a window `rx`, takes about 1 ms to save
+and restore its state, sleeps for `sleep`, starts its oscillator (the
+TCXO, 5 ms as the firmware sets it), and receives again; a cycle of
+`C = rx + sleep + wake`, with `wake` = 6 ms. It catches a preamble only if
+a window holds `D` of it, 4 symbols, the time the modem takes to lock
+([busy estimate](#busy-estimate)). A preamble starting just too late for one window must
+reach `D` into the next, so it is caught wherever it starts if it is at
+least `sleep + wake + 2D` long. Once it has detected one, the radio waits
+`2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble + Theader ≤ 2 ×
+rxPeriod + sleepPeriod"), 14.25 symbols after the preamble, so the window
+must be at least `(wake + 2D + header) / 2`, and half a symbol more to
+round the preamble up to whole symbols: `rx` = 6.0 ms, in the radio's
+steps of 15.625 µs.
+
+The sleep follows from the current. The node pays `I_rx (rx + wake) / C`
+for its windows, at the 5.8 mA of listening, and `I_tx C / P` for its own
+beats, each a preamble about `C` long once a beat period `P` = 60 s, at
+32 mA (datasheet Table 3-6, the least listed for the SX1262 at 434 MHz).
+The sum is least where the two are equal, `C = √(I_rx (rx + wake) P / I_tx)`
+= 361.1 ms, and within 7 % of that from 250 to 520 ms. So:
+
+| Quantity | Value |
+|---|---|
+| Window `rx` | 6.0 ms (384 steps) |
+| Sleep | 349.1 ms (22 344 steps) |
+| Cycle | 361.1 ms |
+| Long preamble | 1396 symbols, 357.4 ms |
+| Mean current while receiving duty-cycled | 0.194 mA (the sleep at 1.2 µA, Table 3-5) |
+| Heartbeat with the long preamble | 366.1 ms |
+| 255-byte frame with the long preamble | 492.9 ms, under the 1 s of [regulatory limits](#regulatory-limits) |
+
+A long frame costs its sender and its channel 30 times a heartbeat's
+airtime and 3.6 times a full frame's. The ordinary traffic keeps the
+shortest preamble for that reason: every node on a relay's channel would
+pay it, every frame, and a relay forwards at the 10 % cap long before its
+channel fills ([duty cycle cap](#duty-cycle-cap)). Long frames go only where the receiver
+cannot be reached otherwise: DATA to a node that receives duty-cycled,
+its own beats, and a relay's answer to them. A node without an anchor
+beating once a minute spends 22 s an hour on its beats, 6 % of its
+budget; a relay's answer is a long heartbeat, two for each such beat it
+hears.
 
 ---
 
@@ -213,7 +261,13 @@ busy value is within 0.01 of the lowest count as tied, and the choice
 among them is random, so that nodes that hear nothing do not all pick
 channel 0. A sleepy node ends the listen at the first relay it hears, which
 it takes as its anchor, and moves to the anchor's channel; one that hears
-none homes as a relay does ([relay choice](#relay-choice), [sleepy nodes alone](#sleepy-nodes-alone)). A config override exists for bench work.
+none homes as a relay does and keeps that channel ([relay choice](#relay-choice), [sleepy nodes alone](#sleepy-nodes-alone)).
+A sleepy node listens two rotations, 390 s: a relay switched on with it
+heartbeats only after a boot listen of its own, and once the node
+receives duty-cycled it hears relays only by their answers. Booted
+together with its relays and listening one rotation, 3 % of the sleepy
+nodes of the simulated capacity domain heard none and went without an
+anchor (roadmap D51). A config override exists for bench work.
 
 ### Channel moves
 
@@ -279,7 +333,8 @@ clock.
 ## Heartbeat
 
 Every node sends heartbeats. This section describes a relay's; a sleepy
-node's are rarer and stay on its home channel ([beats](#beats)).
+node's are rarer and stay on its home channel ([beats](#beats)), and one in
+anchorless mode beats once a minute with a long preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 | Field | Bits | Content |
 |---|---|---|
@@ -310,9 +365,15 @@ interval from its ID, and so when its next comes to any channel: on
 channel c at time t, on channel c + j at t + j × T, and on c again at
 t + 13 × T. A sleeping node uses this to wake for its anchor's
 ([relay choice](#relay-choice)). A heartbeat comes no earlier than its slot, and later by
-at most a hand-over attempt it finds under way, a full frame and the ACK
-timeout ([hand-over](#hand-over)), and two backoffs before its last check: 138.6 +
-100 + 2 × 200 = 638.6 ms.
+at most a hand-over attempt it finds under way, a full frame with the long
+preamble, to a node without an anchor, and the ACK timeout ([hand-over](#hand-over)),
+and two backoffs before its last check: 492.9 + 100 + 2 × 200 = 992.9 ms. A
+check held for a reception in progress waits less, at most that frame.
+
+A relay also sends a heartbeat outside its slots, with the long
+preamble, to answer a node without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). A
+receiver cannot tell an answer from a heartbeat in its slot; one that
+takes it for its anchor's slot at worst checks its anchor once.
 
 The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
 2 × 11.8 = 23.7 ms: two nodes whose intervals differ slide past each other
@@ -369,7 +430,7 @@ Per node, up to 64 entries, by node ID:
 |---|---|
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([position and time](#position-and-time)), and its local form for distances |
-| anchorless | from its heartbeat's type: no anchor for a sleepy node ([relay choice](#relay-choice)) |
+| anchorless | from its heartbeat's type: no anchor for a sleepy node ([relay choice](#relay-choice)), and sent to with the long preamble ([sleepy nodes alone](#sleepy-nodes-alone)) |
 | channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it: heartbeats, its DATA and its ACKs; each new frame counts half. Says whether it has margin |
@@ -378,14 +439,16 @@ Per node, up to 64 entries, by node ID:
 | last_beat | when its last heartbeat heard started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
-  from it ([the ACK](#the-ack)). An anchorless entry ([sleepy nodes alone](#sleepy-nodes-alone)) expires after one
-  worst-case rotation and a heartbeat's lag, 195 + 0.64 s ([heartbeat](#heartbeat)): the
-  node heartbeats on every channel once a rotation, so a rotation without
-  it means it has found an anchor and sleeps more likely than that its
-  heartbeat was lost, one time in ten at a listening receiver; one
-  expired while awake is back at its next heartbeat. Kept three
-  rotations, its entry drew half again as much of the DATA sent to sleeping
-  nodes (roadmap D49). A sleeping node keeps its
+  from it ([the ACK](#the-ack)). An anchorless entry ([sleepy nodes alone](#sleepy-nodes-alone)) expires after two
+  of its sender's worst-case rotations and a heartbeat's lag: its beats
+  come at most a beat period and a half apart, so 13 beats of 60 s, one on
+  each channel, take at most 13.5 periods, and two rotations 26.5
+  periods, 1590 s, and 1.0 s ([heartbeat](#heartbeat)). A beat is lost at a listening
+  receiver about one time in ten; with one rotation a live neighbour,
+  perhaps the only way on where there is no relay, would drop out every
+  tenth rotation, for 13 minutes. With two it drops one time in a hundred,
+  and a stale entry, of a node that has since found an anchor, costs the
+  attempts of a hand-over and a ban (roadmap D51). A sleeping node keeps its
   anchor's entry whatever its age, and evicts it for no newcomer
   ([relay choice](#relay-choice)).
 - **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
@@ -441,8 +504,8 @@ Per node, up to 64 entries, by node ID:
 
 A heartbeat with the sleepy bit, a beat ([beats](#beats)), fills the heard table,
 which holders use to deliver ([heard table](#heard-table)), and not the neighbour table:
-its sender may be sent to only in the window after its beat, by its
-anchor, so it is never a next hop. A beat removes its sender's entry if
+its sender may be sent to only in the window after its beat, so it is
+never a next hop. A beat removes its sender's entry if
 there is one, left from before it had an anchor
 ([sleepy nodes alone](#sleepy-nodes-alone)).
 
@@ -541,7 +604,9 @@ names the message and both nodes ([the ACK](#the-ack)).
    sleepy node ([delivery](#delivery)), which have no other candidate, a give-up
    counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
-   ([packet formats](#packet-formats)).
+   ([packet formats](#packet-formats)). Its preamble is the shortest, or the long one to a
+   neighbour without an anchor, as the neighbour table has it then
+   ([sleepy nodes alone](#sleepy-nodes-alone)).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
    14.4 ms plus the receiver's retune and listen-before-talk).
@@ -582,7 +647,9 @@ units happens with probability (1 − 1/W)²: never with one unit, 1/4 with
 two, 9/16 with four. Doubling per attempt also spreads more than two such
 senders. The listen-before-talk backoff of step 2 stays short: it waits
 for a channel the sender can hear to clear, and checks again (roadmap
-D22).
+D22). A hand-over whose frame has the long preamble holds its receiver
+longer by as much as its frame is longer, and its unit grows by that,
+354.3 ms, to 507.3 ms ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 
 #### The ACK
 
@@ -817,7 +884,7 @@ the table ([neighbour table](#neighbour-table)). A message that would have gone 
 in place or goes another way, as for any neighbour that cannot take it
 now ([overload waits](#overload-waits)): a hop through it could go only in its window after a
 beat, once a beat period (roadmap D49). An anchorless neighbour is a
-candidate like any other. The first hop of a sleepy node's own message is its anchor while
+candidate like any other, sent to with the long preamble. The first hop of a sleepy node's own message is its anchor while
 the anchor is live ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
@@ -1189,11 +1256,16 @@ What breaks it:
 A sleepy node is a carried node on battery: a node with the sleepy
 setting ([hardware](#hardware)). It heartbeats rarely and on one channel, listens for a
 short window after each heartbeat and after each message it takes, and
-for its anchor's heartbeat once a rotation, and the messages for it wait at a
-relay it chooses, its **anchor**. It sleeps only while it has an anchor: one
-that hears no relay listens all the time and acts as a relay, since no
-one could hold its messages ([sleepy nodes alone](#sleepy-nodes-alone)). Everything else it does as
-any node.
+for its anchor's heartbeat once a rotation. Its **anchor** is a relay it
+chooses, and is three things: the position in its address
+([addresses](#addresses)), so the messages for it travel there; the channel it listens
+and beats on; and the heartbeat it watches to know it is still in reach.
+Who delivers to it follows from hearing: any node that holds a message for
+it and hears its beat is its **holder** ([heard table](#heard-table), [delivery](#delivery)), most
+often the anchor, where its address sends its mail, but not only. It
+sleeps between its windows only while it has an anchor; one that hears no
+relay is anchorless and receives duty-cycled ([sleepy nodes alone](#sleepy-nodes-alone)). Everything
+else it does as any node.
 
 A sleepy node can go **dark** for a few minutes: a phone in a pocket, a
 basement or the metro. What the network keeps for a node that does not
@@ -1210,11 +1282,12 @@ its neighbour table with the averaged RSSI of what it heard from it
 ([neighbour table](#neighbour-table)).
 
 **First choice.** A sleepy node takes as its anchor the first relay it
-hears, at once: any node that is neither sleepy nor anchorless can hold
-its messages, so a sleepy node is anchorless only while it hears none.
-A node whose last heartbeat had the anchorless bit is no relay here: it
-is a sleepy node awake for want of an anchor, and would sleep as soon as
-it found one ([sleepy nodes alone](#sleepy-nodes-alone)). It then stays awake a worst-case
+hears, at once: any node that is neither sleepy nor anchorless can be
+an anchor, so a sleepy node is anchorless only while it hears none. A
+node whose last heartbeat had the anchorless bit is no anchor: it holds
+and forwards messages, but leaves that mode and sleeps at the first relay
+it hears, so an address pointing at it would soon point at a node that
+sleeps ([sleepy nodes alone](#sleepy-nodes-alone)). It then stays awake a worst-case
 rotation, 195 s, by when every relay in range has visited its channel,
 and takes the strongest it heard, without the margin below: few can
 have its address yet, so the move costs little. Asleep, it would
@@ -1246,7 +1319,7 @@ anchor's next heartbeat on its channel, at the time the anchor's
 interval gives ([heartbeat](#heartbeat)). It listens from as early as the heartbeat can
 come, which is its slot less the drift of two clocks, ±50 ppm each,
 since the earliest it heard, at most 20 ms over a rotation, to as late,
-638.6 ms more and the heartbeat's airtime, and goes back to sleep as soon
+992.9 ms more and the heartbeat's airtime, and goes back to sleep as soon
 as it hears it. It keeps the time it expects from the earliest heartbeat
 heard, moved later only by the drift, since a late one says only that
 the anchor was busy. Hearing it is how the node knows the anchor is
@@ -1260,7 +1333,11 @@ every relay in range has visited its channel. It keeps the anchor as soon as it 
 strongest relay it heard. One that heard nothing at all is out of reach,
 in a pocket, a basement or the metro, not without its anchor: it keeps
 the anchor, watches for it as before, and checks again only once it has
-heard any frame again. It also checks after moving farther from where
+heard any frame again. One that heard frames but no relay keeps it too:
+giving it up and going without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)) made
+nodes at the edge of a relay's reach switch to and fro, and cost the
+simulated capacity domain 1.8 points of delivery and half again its
+airtime on the seed tried (roadmap D51). It also checks after moving farther from where
 it last chose than takes the anchor's signal down by the switching
 margin, `r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
 scenarios' path-loss exponent of 3.6, and no less than 50 m, what two GPS
@@ -1277,10 +1354,12 @@ them without one at the end of the run (roadmap D47).
 
 ### Beats
 
-A sleepy node heartbeats only on its home channel, the anchor's, where
-its holder listens: a **beat**. The heartbeat has the sleepy bit
-([packet formats](#packet-formats)), so that no one but its holder offers it a message, and
-only in its window ([neighbour table](#neighbour-table)). It beats at a random time in the second half of each
+A sleepy node with an anchor heartbeats only on its home channel, the
+anchor's, where the anchor and any other node on that channel hear it: a
+**beat**. The heartbeat has the sleepy bit ([packet formats](#packet-formats)): reach the
+sender only in its window after its beat, so it is no next hop
+([neighbour table](#neighbour-table)), and only a node that holds a message for it, its
+holder, sends to it. It beats at a random time in the second half of each
 **beat period**, P = 300 s: half the delivery TTL, so that a holder
 keeps it for two periods, a TTL, and one lost beat does not lose it,
 while a node that has gone is kept no longer than its messages
@@ -1310,7 +1389,10 @@ last beat, and the mean RSSI of its last two beats. An entry is kept for
 two beat periods after the last beat, the delivery TTL. When the table
 is full a newcomer takes the place of an expired entry, else of the
 weakest if the newcomer is heard stronger: the strongest are the nodes
-most likely to have chosen this relay as their anchor. 256 covers ≈80
+most likely to have chosen this relay as their anchor. Hearing the beat
+is what makes a node able to deliver: a node that holds a message for a
+sleepy node in its table is that node's holder, whether or not it is the
+anchor. 256 covers ≈80
 sleepy nodes per relay expected at indoor density in Kyiv with 10 %
 adoption, 400 at 50 % ([capacity and sizing](#capacity-and-sizing)).
 
@@ -1318,7 +1400,10 @@ adoption, 400 at 50 % ([capacity and sizing](#capacity-and-sizing)).
 
 A message that reaches the owner of its position ([owner](#owner)) and is
 for another node waits in the owner's delivery queue
-([delivery queue](#delivery-queue)): the owner is that node's **holder**. It goes to the node
+([delivery queue](#delivery-queue)): while the owner hears that node beat, it is the node's
+**holder**. The address points at the anchor, so the owner is mostly the
+anchor, but holding is a matter of the message and the beat, not of the
+anchor's role. It goes to the node
 as DATA addressed to the node's ID, `dst_hop` and `dst_id` alike, on the
 node's home channel from the heard table, with the ordinary preamble,
 and the node answers with an ordinary ACK ([the ACK](#the-ack)). It goes through
@@ -1429,22 +1514,61 @@ and finds them again. The application is not told ([addresses](#addresses)).
 
 ### Sleepy nodes alone
 
-A sleepy node that hears no relay has no anchor, so it does not sleep:
-it listens all the time and acts as a relay. It heartbeats at a relay's
-interval on the rotating channel ([heartbeat](#heartbeat)), with the sleepy bit clear, so
-that any node may hand it a message at any time, as to any relay, and
-with the anchorless bit set, so that no sleepy node takes it as its
-anchor ([relay choice](#relay-choice), [packet formats](#packet-formats)). It sweeps, chooses and
-moves its home channel by the busy estimate, and forwards. Its address
-is its own position, and it owns it. Those of a place without relays
-route among themselves, and others route through it as through any
-relay ([next hop](#next-hop)). Once it has an anchor it sleeps and beats with
-the sleepy bit: the nodes that hear a beat drop it from their neighbour
-tables ([neighbour table](#neighbour-table)), and the others when its entry expires, a
-rotation after its last heartbeat. Kept on one channel, the lowest
-of the quiet ones, sixty of them over a square kilometre with relay
-heartbeats overloaded it: split copies of messages circulated until
-their time ran out, thousands of frames for each text (roadmap D46).
+A sleepy node that hears no relay at the end of its boot listen
+([channel at boot](#channel-at-boot)) has no anchor: it is in **anchorless mode**. It knows no
+node that is not sleepy, so nobody's address can point at a node that
+holds its mail and hears its beat. Instead it is a relay of a place
+without relays: it holds and forwards messages with the ordinary time to
+live, its address is its own position and it owns it, and a DATA for it
+does not wait for a beat. What it cannot do is listen all the time and
+still be carried for days, so it receives duty-cycled between its beats
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), 0.194 mA,
+where listening costs 5.8 mA, and every frame to it carries the long
+preamble: it can be reached at any time, at the cost of a long frame.
+It keeps the home channel it chose at boot; it does not sweep or move.
+
+It beats with the anchorless bit and the long preamble at a random time
+in the second half of each anchorless beat period, 60 s, on the next
+channel of the rotation each time ([heartbeat](#heartbeat)), naming its own channel in
+`aux`. Any node on the channel a beat goes to hears it, whether it
+listens or receives duty-cycled, so a relay in reach on any channel hears
+it within a rotation of its beats, 13 minutes, and two nodes in
+anchorless mode find each other within one. The beats cost it 22 s an
+hour of airtime and 0.20 mA at 32 mA of transmit current, about what its
+receive windows cost, which is what sets the cycle, 0.39 mA for the two.
+With the cycle set the same way for another period the two cost in
+proportion to one over its square root: a period of 46 s would bring a
+rotation within a delivery TTL for 0.45 mA, and one of 300 s, a sleepy
+node's, 0.17 mA with a rotation of an hour. Nothing in the radio fixes
+the period; it is how long a node may go unheard.
+
+Nodes in anchorless mode route among themselves and are a next hop like
+any other ([next hop](#next-hop)), each DATA to one with the long preamble. A relay
+that hears an anchorless beat answers: it sends a heartbeat of its own
+on the channel the beat names, with the long preamble, at once and again
+a fade later, 60 s ([a sleepy node's own message](#a-sleepy-nodes-own-message)), for two of the node's beat
+periods, so that one lost answer does not cost a rotation. The node
+takes the first relay it hears as its anchor ([relay choice](#relay-choice)), listens a
+rotation to choose the strongest, and from then on beats with the sleepy
+bit and sleeps between its windows. The nodes on its anchor's channel
+that hear a beat of it drop its entry ([neighbour table](#neighbour-table)), and the others when
+it expires.
+
+Nobody anchors to a node in anchorless mode: it leaves the mode and
+sleeps the moment it hears a relay, and an address pointing at it would
+then point at a node whose mail waits nowhere. Kept on one channel, the
+lowest of the quiet ones, sixty such nodes awake over a square kilometre
+overloaded it (roadmap D46); on the channels they chose at boot, spread
+by the random choice among quiet ones, they do not.
+
+Measured in the simulator (roadmap D51), sixty sleepy nodes over a square
+kilometre with no relay delivered every text, as when they listened all
+the time, at 0.59 mA a node instead of 5.85 mA, half a second at the
+median instead of a tenth, and 2 154 s of airtime a run instead of 344
+s, the busiest node at 1 % of its duty cycle. Two relays switched on at
+the edge of such a village brought its nodes in 215 s after they were
+switched on at the median, their 195 s boot listen included, and 686 s at
+the 90th percentile.
 
 ---
 
@@ -1519,6 +1643,14 @@ relays nothing for them. Summed over the domain's 20 000 sleepy nodes
 they take 1.18 s of airtime a second, 9 % of one channel's time over the
 13, where every relay hears every other.
 
+A sleepy node in anchorless mode costs more: 22 s an hour of beats, a
+relay's answers, and every DATA to it 357 ms longer
+([sleepy nodes alone](#sleepy-nodes-alone)). In the simulated domain, booted together with its
+relays, about one sleepy node in thirty heard no relay in its boot listen
+and spent a median of seven minutes in that mode; the domain carried
+1.3 points less and spent half again as much airtime as when such nodes
+listened until they heard one (roadmap D51).
+
 Common proposals that do not fit:
 
 - **GFSK at 50 kbps:** 3× more per channel than SF5, at 40% of the range,
@@ -1589,15 +1721,21 @@ whose four codes, 0x8 to 0xB, are all free: 0x0 would give 0x3, the ACK,
 heartbeat does not say where its sender's position came from: no
 receiver needs to know.
 
-- **Sleepy** says when others can send to the sender. Set: only in the
-  window after its beat, and only its anchor, so it is never a next hop
-  ([neighbour table](#neighbour-table), [next hop](#next-hop), [delivery](#delivery)). Clear: at any time, as to any relay.
-  Only a sleepy node with an anchor sets it ([beats](#beats)).
-- **Anchorless** says that the sender knows no node that is not sleepy:
-  a sleepy node without an anchor, awake and acting as a relay
-  ([sleepy nodes alone](#sleepy-nodes-alone)). Today it only keeps relay choice from taking it as
-  an anchor ([relay choice](#relay-choice)). A node that is not sleepy and hears it could
-  tell it that it exists; that is not decided.
+- **Sleepy**: "reach me only in my window after my beat." So the sender
+  is never a next hop ([neighbour table](#neighbour-table), [next hop](#next-hop)), and is sent to only
+  by a node that holds a message for it and hears its beat ([delivery](#delivery)).
+  That this is mostly its anchor follows from its address, which points
+  at the anchor, so its mail waits there. Only a sleepy node with an
+  anchor sets it ([beats](#beats)). Clear: it may be sent to at any time.
+- **Anchorless**: "I am sleepy and know no node that is not sleepy, so I
+  am in anchorless mode: I send with long preambles, and I can be reached
+  at any time with one. If you are like me, you have no anchor to send my
+  mail to, so send it to me directly. If you are not sleepy, wake me with
+  a long preamble so I can leave this mode." The sender holds and forwards
+  mail as a relay does, with the ordinary time to live, and a DATA for it
+  does not wait for a beat; it is no mailbox to anchor to, since it leaves
+  the mode and sleeps the moment it hears a relay
+  ([sleepy nodes alone](#sleepy-nodes-alone), [relay choice](#relay-choice)).
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed
@@ -1647,7 +1785,10 @@ the panic message (`bark-fw/memory.x`).
    relay is powered off.
 5. Sleepy node: anchor, beats, delivery in the window, queue, the watch
    for the anchor's heartbeat, and the radio asleep between windows,
-   which the firmware does not do yet (`Action::Sleep`, `core-interface.md`).
+   which the firmware does not do yet (`Action::Sleep`, `core-interface.md`);
+   duty-cycled receive and the long preamble for a node without an anchor
+   (`Action::Sniff`), with a long-preamble frame sent to a board checking
+   every 361 ms, 100 times, caught every time.
    **This is the loop every user feels; prototype it before anything
    clever.**
 6. BLE GATT + minimal phone app.

@@ -62,7 +62,7 @@ Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead,
 
 ### 3.7 Sleepy nodes and phones
 
-Scenario files place relays and leaves; a leaf runs as a sleepy node (spec "Sleepy nodes"): it chooses an anchor, beats on its channel and takes deliveries in the window after each beat. It listens all the time in the simulator, so its tables fill as an always-listening node's would. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
+Scenario files place relays and leaves; a leaf runs as a sleepy node (spec "Sleepy nodes"): it chooses an anchor, beats on its channel and takes deliveries in the window after each beat. Its radio sleeps when its core says it may (`Action::Sleep`) and hears nothing then; without an anchor it receives duty-cycled (`Action::Sniff`), and takes a frame only if a window of its cycle, started at the sniff and again after each frame it takes, holds four symbols of the preamble (spec "Duty-cycled receive and the long preamble"). The time asleep, the time receiving duty-cycled and the time on air give its radio current. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
 
 ## 4. Metrics
 

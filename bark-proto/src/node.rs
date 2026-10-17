@@ -36,8 +36,11 @@ pub struct Config {
     /// channel of the strongest node that is not sleepy it hears, and its
     /// address that node's position; it is no next hop, and a node holding
     /// a message for it sends it while it listens after a beat. Without
-    /// such a node it listens and acts as a relay. It does not choose its channel by how busy
-    /// channels are, and sweeps them only while it boots.
+    /// such a node it is anchorless: it holds and forwards as a relay does,
+    /// beats once a minute on the rotating channel with the long preamble,
+    /// and receives duty-cycled between beats (spec "Sleepy nodes alone").
+    /// It does not choose its channel by how busy channels are, and sweeps
+    /// them only while it boots.
     pub sleepy: bool,
     /// Research switch: holders send to a sleepy node whenever they hold a
     /// message for it, as if it listened all the time, instead of only

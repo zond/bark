@@ -45,17 +45,25 @@
 //! that two nodes that met once do not meet again. After it chooses or
 //! changes its anchor it beats at once and once more within a heartbeat
 //! interval, so that one lost beat does not hide it from its new holder for
-//! a period. It sweeps the channels only while it has no anchor: asleep
-//! it could not.
+//! a period. It sweeps the channels only while it boots: asleep or
+//! receiving duty-cycled it could not.
 //!
-//! It sleeps only while it has an anchor, which holds its messages
-//! ([`Relay::sleeps`]). Without one it listens all the time and acts as a
-//! relay: it heartbeats on the rotating channel with the sleepy bit clear
-//! and the anchorless bit set, so that no other sleepy node takes it as
-//! its anchor, and chooses and
-//! moves its home by the busy estimate (spec "Sleepy nodes alone").
+//! It sleeps between its windows only while it has an anchor, which holds
+//! its messages ([`Relay::sleeps`]). Without one it is anchorless
+//! ([`Relay::anchorless`], spec "Sleepy nodes alone"): it holds and
+//! forwards messages as a relay does, but receives duty-cycled between its
+//! beats, so every frame to it carries the long preamble
+//! (`crate::sniff`). It beats with the anchorless bit and the long
+//! preamble at a random time in the second half of each anchorless beat
+//! period, a minute, on the next channel each time, so that a relay on any
+//! channel hears it within a rotation; nobody takes it as an anchor, since
+//! it leaves the mode at the first relay it hears. A relay answers each
+//! such beat it hears with a heartbeat on the node's channel with the long
+//! preamble, at once and a fade later, which the node takes as the first
+//! relay heard. Its home is the quietest channel at the end of its boot
+//! listen, kept.
 //!
-//! # Sleep (`docs/core-interface.md` §3 rule 10)
+//! # Sleep (`docs/core-interface.md` §3 rules 10 and 11)
 //!
 //! A node that sleeps tells its driver when the radio may be off
 //! ([`Action::Sleep`]): outside the window after its beat and after each
@@ -63,8 +71,11 @@
 //! has a hand-over under way, or has no live anchor and must listen to
 //! choose one. The sleep lasts until the node next needs the radio, for
 //! its next beat or the next offer of its own message, unless the core
-//! starts an excursion sooner. With [`Config::sleepy_listens`], a research
-//! switch, it never sleeps.
+//! starts an excursion sooner. An anchorless node tells its driver the
+//! radio may receive duty-cycled ([`Action::Sniff`]) whenever it has
+//! nothing under way, until it next needs the radio. With
+//! [`Config::sleepy_listens`], a research switch, it never sleeps or
+//! receives duty-cycled.
 
 mod delivery;
 mod forward;

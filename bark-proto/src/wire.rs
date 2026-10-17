@@ -131,12 +131,17 @@ const _: () = assert!(MAX_PAYLOAD == 233);
 /// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// The sender sleeps (0x9): it may be sent to only in the window after
-    /// its beat, by its anchor, so it is never a next hop. Clear, it may be
-    /// sent to at any time, as any relay.
+    /// Sleepy (0x9): reach the sender only in its window after its beat.
+    /// Its address points at its anchor, where its mail waits, so only the
+    /// anchor sends to it, and it is never a next hop. Clear, it may be
+    /// sent to at any time.
     pub sleepy: bool,
-    /// The sender knows no node that is not sleepy (0xA): it is no anchor
-    /// for a sleepy node. Never with `sleepy`.
+    /// Anchorless (0xA): the sender is sleepy and knows no node that is not:
+    /// it holds and forwards mail as a relay does, sends with the long
+    /// preamble, and is reached at any time with it. It is no mailbox to
+    /// anchor to, since it leaves the mode at the first relay it hears; a
+    /// node that is not sleepy wakes it with an answer. Never with
+    /// `sleepy`.
     pub anchorless: bool,
     /// The sender's home channel.
     pub home: Channel,
