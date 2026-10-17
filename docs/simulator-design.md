@@ -7,17 +7,17 @@ Spec references are to `protocol.md`.
 
 Answer, before and after hardware exists:
 
-1. Does the protocol work as specified: discovery within one rotation, greedy forwarding with depth-first search (DFS) around gaps, leaf attach and delivery, channel selection that converges and does not oscillate?
+1. Does the protocol work as specified: discovery within one rotation, greedy forwarding with depth-first search (DFS) around gaps, a sleepy node's anchor and delivery, channel selection that converges and does not oscillate?
 2. What is the capacity in a realistic city deployment, and where does it bind first: channel busy fraction, per-relay 10% duty cycle, delivery queue, neighbour table?
 3. Which values for the open thresholds (O3, O4) and which unknown radio parameters (adjacent-channel rejection, hearing radius, SF5 sensitivity) change the answer?
 
-Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. Leaf power modes (spec "Leaf receive mode") are modelled only as receive-window behaviour and preamble length.
+Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. A sleepy node's sleep is modelled only by when its holder sends to it (spec "Delivery"); the simulated radio always listens.
 
 ## 2. What the user supplies
 
 A **scenario**:
 
-- **Nodes.** Each has a position (metres on a local grid; the simulator converts to the 51-bit WGS-84 wire form around a chosen origin so the real codec runs), a role (relay or leaf), and for relays whether it is rooftop or windowsill (affects nothing in the protocol, only the link generator). Nodes can be placed one by one, on a lattice with jitter, or by density per km².
+- **Nodes.** Each has a position (metres on a local grid; the simulator converts to the 51-bit WGS-84 wire form around a chosen origin so the real codec runs), the sleepy setting (a relay or a sleepy node), and for relays whether it is rooftop or windowsill (affects nothing in the protocol, only the link generator). Nodes can be placed one by one, on a lattice with jitter, or by density per km².
 - **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured transmit power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below sensitivity minus an interference margin (a parameter; a signal too weak to decode still adds to the noise) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k leaves would otherwise mean 4×10⁸ entries). A table can also be loaded from a file so field measurements replace the model later; absent pairs are out of range.
 - **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (spec "Channel moves"), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
 - **Interferers.** Per channel, foreign busy sources (key fobs, LPD433 handhelds): a position, a power, and an on/off process. Signal strength readings (RSSI) always see them; channel activity detection (CAD) sees them only if they are LoRa (a flag).
@@ -60,16 +60,16 @@ The once-per-second 13-channel sweep (spec "Busy estimate") is modelled explicit
 
 Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead, 12-symbol minimum preamble), computed from the actual encoded packet length. The protocol core's duty-cycle token bucket is the real code; the simulator records when it blocks forwarding.
 
-### 3.7 Leaves and phones
+### 3.7 Sleepy nodes and phones
 
-A leaf is a node whose protocol core is in leaf role: camps on its relay's channel, attaches, keeps alive, receives deliveries. Its receive mode (spec "Leaf receive mode") sets whether it hears heartbeats continuously or only during awake rotations, and sets the preamble length on packets to it. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
+Scenario files place relays and leaves; a leaf runs as a sleepy node (spec "Sleepy nodes"): it chooses an anchor, beats on its channel and takes deliveries in the window after each beat. It listens all the time in the simulator, so its tables fill as an always-listening node's would. The phone behind it is only an availability process and a traffic source. Movement re-evaluates the leaf's link row and column when its position changes (regenerated for that node from the generator within its cut-off distance, using a spatial index over node positions; a loaded table cannot move).
 
 ## 4. Metrics
 
 Logged per run as CSV/JSON, with the scenario and seed embedded:
 
 - Delivery ratio and where undelivered messages were dropped, by distance bucket and hop count.
-- End-to-end latency distribution (origination to leaf ACK), split into per-hop wait, listen-before-talk backoff, retransmits, queue dwell.
+- End-to-end latency distribution (origination to the destination's ACK), split into per-hop wait, listen-before-talk backoff, retransmits, queue dwell.
 - Per-channel busy fraction over time, at a chosen set of observer nodes.
 - Per-relay airtime per hour, forwarded bytes, duty-cycle blocks, delivery queue depth and expiries.
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
@@ -105,9 +105,9 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | module | keyed by | bound | purpose |
 |---|---|---|---|
 | message records | message ID (spec "Packet formats") | 1855 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
-| `tables::neighbours` | 7-byte position | 64 entries | channel, last-heard, `fail_count`; expire after three rotations |
-| `tables::leaves` | 4-byte leaf ID | 256 entries | attached leaves, their poll slots and unanswered polls |
-| `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a dark leaf |
+| `tables::neighbours` | 4-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
+| `tables::heard` | 4-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
+| `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a sleepy node |
 
 `routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec "Next hop", and applies the owner rule of spec "Owner". Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
 
@@ -116,7 +116,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | # | Scenario | Checks | Bench twin |
 |---|---|---|---|
 | S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, drop after B dies | design step 4 |
-| S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | attach, polls, delivery, queue, dark phones | step 5 |
+| S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | anchors, beats, delivery, queue, dark phones | step 5 |
 | S3 | S2 plus an interferer on channel 6 and three rooftop relays that all hear each other | avoidance, move hysteresis, no joint jumps | step 3 |
 | S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, spec "Capacity and sizing" rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
 | S5 | S4 with the central relay removed / with a 2× hearing radius / with ACR_1 from 20 to 60 dB | sensitivity of S4 to the unknowns | C1 |
@@ -131,7 +131,7 @@ measurements use. Each file says in its header what it is for.
 |---|---|---|
 | `s1-line.toml` | S1: three relays in a line, a leaf at each end, one sending to the other every 30 s; the middle relay is removed at 20 minutes | forwarding, ACK, delivery; every message dropped at the first relay after the removal |
 | `s1b-hidden.toml` | S1 with both leaves sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
-| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | attach, polls, delivery queue, dark phones |
+| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | anchors, beats, delivery queue, dark phones |
 | `corridor.toml` | five relays in a line, a leaf at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
 | `ring.toml` | eight relays on an octagon, a leaf at each, every leaf sending to the leaf three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
 | `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
@@ -143,7 +143,7 @@ seed, so each seed is a different mesh: some have holes, and some leave
 a relay that no other reaches.
 
 **Restart.** A scripted `restart` powers a node off and on at once. The
-node keeps its identity, a relay its position and a leaf its ID, and
+node keeps its ID and position, and
 loses everything else, as a solar relay does after a night. Its core is
 built afresh with a new random seed and boots: a relay listens before
 choosing a home channel (spec "Channel at boot") and takes no traffic until then,
@@ -164,18 +164,17 @@ which it computes as the core does (`MsgId::of`), to follow its traces.
 these:
 
 - **delivered** to the destination's application;
-- **lost**, where a core reported it in a `Dropped` trace: by a relay,
-  or by a leaf that could not hand it over, with the node and the
-  reason;
+- **lost**, where a core reported it in a `Dropped` trace, with the node
+  and the reason;
 - **in flight**: it is still held when the run ends, by its origin's
-  application waiting to hand it over, in a send queue, a delivery
-  queue, or a leaf waiting to hand it over;
+  application waiting to hand it over, in a send queue or a delivery
+  queue;
 - **unaccounted**: none of these. It was lost without a trace.
 
 A message is also marked **unreachable** when, at the start of the run,
 no chain of relays that hear each other above sensitivity joins its
-origin relay (the sender itself, or the relay the sending leaf is
-attached to) to the destination's relay. Such a message is lost whatever
+origin relay (the sender itself, or the sending sleepy node's anchor) to
+the destination's relay. Such a message is lost whatever
 the protocol does, unless links just below sensitivity carry some of its
 packets (§3.3); the summary counts it apart and gives the delivery ratio
 over the reachable ones too.
@@ -188,7 +187,7 @@ other.
 
 ## 7. Performance target
 
-S4 for one simulated hour in a few minutes on the dev machine. Leaves are idle except for one answer to a poll every five minutes (at the capacity domain's 70 leaves a relay) and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
+S4 for one simulated hour in a few minutes on the dev machine. Sleepy nodes are idle except for one beat every 150 to 300 s and occasional texts, so the event count is dominated by relay heartbeats (270 × 6/min) and sweeps (270 × 60/min × 13 samples). Reception evaluation is the hot path: keep, per channel, the set of nodes currently listening and the set of active transmissions, and iterate only the transmitter's stored link row (§2: pairs out of range have no entry, so a transmission touches its hearers and nobody else).
 
 ## 8. Validation of the simulator itself
 

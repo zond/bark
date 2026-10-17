@@ -1,9 +1,9 @@
 //! Forwarding (spec "Forwarding"): the node's part of the depth-first search, the
 //! owner rule, and the per-hop transfer of its send queue.
 //!
-//! In the one-node-type prototype a node owns a message addressed to its
-//! own ID wherever it is, and a sleepy neighbour is a next hop only after
-//! every neighbour that is not sleepy (`docs/one-node-type-2026-10-16.md`).
+//! A node owns a message addressed to its own ID wherever it is (spec
+//! "Owner"), and a sleepy neighbour is a next hop only where no relay is
+//! live (spec "Next hop").
 //! A message that reaches the owner of its position and is for another
 //! node waits in the delivery queue until that node, a sleepy one this
 //! node hears, listens (`relay/delivery.rs`); it goes to it as DATA in the
@@ -106,16 +106,15 @@
 //! the queue has a place (spec "Return to parent"). Either way the application is given no
 //! other meanwhile.
 //!
-//! A sleepy node hands its own message over as a leaf did
-//! (spec "Attach and polls", "Packet sender"): with count 0, so that the node that takes
-//! it is the origin of its search, takes it only into its regular room and
-//! only while not every neighbour of its is banned. Overload then stops a
-//! new message where it enters (roadmap D31, D34), and the search never
-//! returns to a node that sleeps. A sleepy node chooses that first hop as
-//! any next hop (spec "Next hop"). A sleepy node's own message that finds no live
-//! neighbour at all waits for one, routed again every `fade_retry`, until
-//! its time runs out (below), as a leaf's did (spec "Attach and polls"): a carried node
-//! loses its neighbours by going dark and finds them again.
+//! A sleepy node with an anchor hands its own message to the anchor
+//! (spec "A sleepy node's own message", "Packet sender") with count 0, so
+//! that the node that takes it is the origin of its search, takes it only
+//! into its regular room and only while not every neighbour of its is
+//! banned. Overload then stops a new message where it enters (roadmap D31,
+//! D34), and the search never returns to a node that sleeps. A sleepy
+//! node's own message that finds no live neighbour at all waits for one,
+//! routed again every `fade_retry`, until its time runs out (below): a
+//! carried node loses its neighbours by going dark and finds them again.
 //!
 //! # Time left (spec "Receiving DATA")
 //!
@@ -350,23 +349,21 @@ impl Relay {
     }
 
     /// Whether this node routes through sleepy neighbours: only where no
-    /// neighbour that is not sleepy is live. Measured as the last resort
-    /// after every other, the search of a message that found no way on
-    /// among the nodes that are not sleepy went on through the sleepy ones,
-    /// thousands of them in a city, and the capacity domain collapsed at
-    /// twice the spec "Capacity and sizing" rate (`docs/one-node-type-2026-10-16.md`).
+    /// neighbour that is not sleepy is live (spec "Next hop"). Trying them
+    /// after every other instead measured the same, and would need a rule
+    /// for a relay that is only banned (`docs/one-node-type-2026-10-16.md`).
     fn sleepy_route(&self, now: Instant) -> bool {
         !self.neighbours.live(now).any(|(_, n)| !n.sleepy)
     }
 
     /// Where a sleepy node hands its own message: its anchor while that is
-    /// live, as a leaf handed its to its relay (spec "Attach and polls"). Sent to
+    /// live (spec "A sleepy node's own message"). Sent to
     /// the neighbour nearest the destination instead, the first hop was
-    /// often a faint, far one: at twice the spec "Capacity and sizing" rate in S4 sleepy nodes
-    /// sent ten times the frames of main's leaves, most of them lost at a
-    /// receiver that was listening (`docs/one-node-type-2026-10-16.md`).
+    /// often a faint, far one, and at twice the spec "Capacity and sizing"
+    /// rate the relays reached their cap and the domain collapsed
+    /// (`docs/one-node-type-2026-10-16.md`).
     fn first_hop(&self, now: Instant) -> Option<NodeId> {
-        let a = self.anchor.filter(|_| self.config.sleepy)?;
+        let a = self.anchor.filter(|_| self.sleeps())?;
         self.neighbours
             .live(now)
             .any(|(_, n)| n.id == a.id)
@@ -614,8 +611,9 @@ impl Relay {
 
     /// Whether the application may send now (roadmap D29 rule 6, D34): the
     /// relay is running, holds no message of the application's, its send
-    /// queue takes a full frame on top of what it holds, as a leaf's would
-    /// be taken but without the ACK, and not every neighbour is banned.
+    /// queue takes a full frame on top of what it holds, as a sleepy node's
+    /// would be taken but without the ACK, and not every neighbour is
+    /// banned; for a sleepy node with a live anchor, not the anchor.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         !self.booting()
             && self.own.is_none()
@@ -667,10 +665,12 @@ impl Relay {
     /// ignored. The message is the application's until its first hop
     /// takes it (`own`).
     ///
-    /// The application is the first sender and sends count 0 (spec "Hop count"), as
-    /// a leaf does; this relay then sends 1, what it received plus one. It
-    /// cannot put 0 on the air itself: a relay receiving count 0 takes the
-    /// sender for a leaf and itself for the origin (spec "Packet sender"). A message the
+    /// The application is the first sender and sends count 0 (spec "Hop count");
+    /// this node then sends 1, what it received plus one. It cannot put 0
+    /// on the air itself: a node receiving count 0 takes the sender for a
+    /// sleepy node handing over its own and itself for the origin
+    /// (spec "Packet sender"). A sleepy node with an anchor does exactly that
+    /// (`count`). A message the
     /// relay already has a record of is in the network already, as is one
     /// delivered or queued here (spec "Owner").
     pub(super) fn originate(
@@ -1188,7 +1188,7 @@ impl Relay {
                 self.count_failure(d.dst_hop, now, emit);
                 if self.config.sleepy && d.hops == 0 {
                     // A sleepy node's own message tries its anchor again a
-                    // fade later, as a leaf tried its relay (spec "Attach and polls"):
+                    // fade later (spec "A sleepy node's own message"):
                     // the ban's ladder would offer it every few seconds to
                     // a node whose channel is full.
                     let ban = self.wait_for(d.dst_hop, now).unwrap_or(now);

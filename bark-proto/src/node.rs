@@ -1,9 +1,9 @@
 //! The protocol core: configuration, the node, and the `Core` trait that
 //! the driver programs against.
 //!
-//! In the one-node-type prototype (`docs/one-node-type-2026-10-16.md`)
-//! there is one node, [`Relay`], in `node/relay.rs` and `node/relay/`, and
-//! one setting that changes what it does: [`Config::sleepy`]. It uses the
+//! There is one node, [`Relay`], in `node/relay.rs` and `node/relay/`, and
+//! one setting that changes what it does: [`Config::sleepy`]
+//! (spec "Sleepy nodes", roadmap D46). It uses the
 //! radio discipline of `node/mac.rs` and the per-hop transfer of
 //! `node/transfer.rs`.
 
@@ -70,10 +70,11 @@ pub struct Config {
     /// Rotations a demotion lasts without an ACK (spec "Neighbour table": 3, 390 s).
     pub demotion_rotations: u8,
     /// How long a sleepy node's own message waits before it is routed
-    /// again while the node has no live neighbour (the leaf's retry of spec
-    /// "Attach and polls": 60 s, the length of a fade).
+    /// again while the node has no live neighbour, and after its anchor did
+    /// not answer (spec "A sleepy node's own message": 60 s, the length of
+    /// a fade).
     pub fade_retry: Duration,
-    /// Delivery-queue entry lifetime, the delivery TTL (spec "Leaves": 10 min).
+    /// Delivery-queue entry lifetime, the delivery TTL (spec "Sleepy nodes": 10 min).
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages to a sleepy node
     /// that listens all the time (`sleepy_listens`), besides the retry on

@@ -85,7 +85,7 @@ A node that is not sleepy does what a relay does today. A sleepy node:
   deviations.
 - **Beat.** On its home channel only, at a random time in the second
   half of each beat period. The period is half the delivery TTL, 300 s,
-  as the poll period of spec "Attach and polls": a holder keeps a sleepy
+  as the poll period of spec section "Attach and polls" (before D46): a holder keeps a sleepy
   node it has heard for two periods, a TTL, so one lost beat does not
   lose it and a node that has gone is kept no longer than its messages.
   The spread keeps two nodes whose beats met once from meeting again.
@@ -96,7 +96,7 @@ A node that is not sleepy does what a relay does today. A sleepy node:
   "Owner") and is for another node waits in the delivery queue and goes
   to that node as DATA to its ID, answered by the ordinary ACK, while
   the node listens: 9.25 s from each beat, renewed by each message it
-  takes. The window is the one of spec "Leaf receive mode" for one
+  takes. The window is the one of spec section "Leaf receive mode" (before D46) for one
   message, a full send queue of full frames with their ACKs (6.12 s) and
   one hand-over with all its attempts (3.13 s); the node is not told how
   many messages wait, so it listens as long again after each. The hold
@@ -390,7 +390,7 @@ Two more, at the spec "Capacity and sizing" rate:
 - A sleepy node's tables in truth fill only while it listens; here it
   hears every heartbeat on its channel. A sleeping one would need a
   listening rotation now and then, as the hybrid leaf of
-  spec "Leaf receive mode".
+  spec section "Leaf receive mode" (before D46).
 - Main's leaves listen all the time and take a DELIVER at once, which a
   sleeping leaf would not: main's figures are those of the listening
   variant's kind, and its latency is not what a sleeping leaf would see.

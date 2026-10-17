@@ -207,7 +207,7 @@ at the median and 48 minutes at the 90th percentile, `QueueExpired` 12
 and 32 minutes, `NoRoute` 7 and 33 minutes.
 
 Leaves refused or unanswered hold their text, offer it again after the
-hold (spec "Attach and polls") and drop it at the TTL. Their offers are full DATA frames:
+hold (spec section "Attach and polls" (before D46)) and drop it at the TTL. Their offers are full DATA frames:
 12 to 14 s of airtime a second in the collapse, a third of the total.
 Making them wait the longest hold, 61 s, after the first refusal cut that
 to 8 to 9 s a second and changed nothing else: delivery 15.8 % against
@@ -320,7 +320,7 @@ on the other branch:
 
 **An unanswered hand-over is pushback, and a message's life in the
 network ends with its TTL.** (Spec "Neighbour table", "Next hop", "Receiving DATA", "Hand-over", "Duty cycle cap",
-"Attach and polls", "Packet formats".)
+spec section "Attach and polls" (before D46), "Packet formats".)
 
 (1) *Failure backs the sender off.* After the k-th hand-over in a row that
 fails, three attempts unanswered (spec "Hand-over" step 6), forward or return, the
@@ -337,12 +337,12 @@ sends the message the long way at once.
 delivery TTL, in units of 10 s (one byte holds 600 s at that unit), set
 by the origin and lowered by each relay by the time the message spent
 there; a relay drops a message whose time is gone, as the delivery queue
-and the leaf already do (spec "Attach and polls", "Delivery queue"). Today a message admitted to the
+and the leaf already do (spec section "Attach and polls" (before D46), "Delivery queue"). Today a message admitted to the
 network lives as long as hand-overs to somebody succeed, measured up to
 53 minutes, and keeps the relays at the cap long after its sender and
 its destination's queue would have given up on it. This adds an end to
 the list of D31; the time is the one the spec already gives the network
-(spec "Attach and polls": "the time the network itself would keep it").
+(spec section "Attach and polls" (before D46): "the time the network itself would keep it").
 
 (3) *Polls and keepalives are spread over their period by the leaf's ID,*
 whatever the time it attached (see above).

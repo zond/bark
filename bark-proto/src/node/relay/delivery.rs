@@ -1,6 +1,5 @@
-//! Delivery to the sleepy nodes a node hears, as the one-node-type
-//! prototype has it (spec "Delivery", "Delivery queue";
-//! `docs/one-node-type-2026-10-16.md`).
+//! Delivery to the sleepy nodes a node hears
+//! (spec "Delivery", "Delivery queue").
 //!
 //! A message that reaches the owner of its position and is for another
 //! node waits in the delivery queue, whether or not that node is heard,

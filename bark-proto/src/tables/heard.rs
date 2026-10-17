@@ -1,7 +1,5 @@
 //! The heard table: the sleepy nodes a node has heard beat on its home
-//! channel, by ID, for delivery. Research prototype of one node type
-//! (`docs/one-node-type-2026-10-16.md`); it takes the place of the leaf
-//! table of spec "Attach and polls".
+//! channel, by ID, for delivery (spec "Heard table").
 //!
 //! A sleepy node heartbeats only on its home channel, at a random time in
 //! the second half of each [`beat_period`], and listens for a while after
@@ -12,7 +10,7 @@
 //!
 //! An entry is kept for two beat periods, the delivery TTL, after its last
 //! beat: one lost beat does not lose it, and a node that has gone is kept
-//! no longer than the messages held for it (spec "Leaves"). When the table
+//! no longer than the messages held for it (spec "Sleepy nodes"). When the table
 //! is full a newcomer takes the place of an expired entry, else of the
 //! weakest if it is heard stronger: the strongest are the nodes most
 //! likely to have chosen this one (spec "Relay choice").
@@ -27,12 +25,12 @@ use crate::tables::{attempt_span, retry_waits};
 use crate::time::{Duration, Instant};
 use crate::wire::ACK_LEN;
 
-/// Table capacity: the leaf table's (spec "Attach and polls": ≈80 leaves
-/// per relay expected at indoor density with 10 % adoption, 400 at 50 %).
+/// Table capacity (spec "Heard table": ≈80 sleepy nodes per relay expected
+/// at indoor density with 10 % adoption, 400 at 50 %).
 pub const HEARD: usize = 256;
 
 /// The longest interval between two heartbeats of a sleepy node: half the
-/// delivery TTL, 300 s, as the poll period of spec "Attach and polls". A
+/// delivery TTL, 300 s (spec "Beats"). A
 /// holder keeps a node for two periods, a TTL, so one lost beat does not
 /// lose it and a node that has gone is kept no longer than its messages;
 /// a message waits at most a period for its node to wake.
@@ -50,7 +48,7 @@ pub struct HeardParams {
     /// that may be ahead of the next message, a full send queue (spec
     /// "Send queue") of full frames each with its ACK, 6.12 s, and the
     /// message with all its attempts and their waits (spec "Hand-over"),
-    /// 3.13 s: 9.25 s. It is the window of spec "Leaf receive mode" for one
+    /// 3.13 s: 9.25 s (spec "Delivery"). It is the window for one
     /// message; a node that is not told how many wait listens again as long
     /// after each it takes.
     pub awake: Duration,

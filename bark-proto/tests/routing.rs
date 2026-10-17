@@ -1300,7 +1300,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
 /// refuses O's message for L (spec "Receiving DATA", "Delivery queue"). O holds the
 /// message rather than drop it, says it takes no other, and offers it
 /// again one ban after the first refusal, two after the second, four
-/// after the third, and so on up to the bucket's refill (spec "The relay's own message",
+/// after the third, and so on up to the bucket's refill (spec "A node's own message",
 /// `budget::hold`). Once F's messages expire F takes it, and O's
 /// application may send again; its next message starts from one ban
 /// (spec "Return to parent", roadmap D29).
@@ -1732,7 +1732,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// D29). No hour holds more than 360 s, replies included (the harness
 /// checks every transmission), and no heartbeat of F is held back. The
 /// senders' frames are put on the air past their cores, which hold their
-/// own application's message for longer after each refusal (spec "The relay's own message").
+/// own application's message for longer after each refusal (spec "A node's own message").
 #[test]
 fn replies_stay_within_the_reserve() {
     use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
@@ -1893,7 +1893,7 @@ fn a_relay_does_not_flee_its_own_traffic() {
 ///
 /// O, refused, bans F without counting a failure (spec "Refusal"); F is its only
 /// neighbour, so O holds its application's message and offers it again
-/// after its hold, and its application waits (spec "Return to parent", "The relay's own message"). O and D
+/// after its hold, and its application waits (spec "Return to parent", "A node's own message"). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
 /// frames, all four of F's attempts go unanswered, and F returns the
 /// message to O as the search requires (spec "Return to parent"). O, its bucket spent on

@@ -1,12 +1,12 @@
-//! The protocol core on the board, the one node type of the prototype
-//! (`docs/one-node-type-2026-10-16.md`), sleepy with the `sleepy` feature,
+//! The protocol core on the board, a relay, or a sleepy node with the
+//! `sleepy` feature (spec "Sleepy nodes"),
 //! driven by `bark_driver::Driver` against the SX1262. Its node ID is the
 //! low word of the chip's factory device ID (nRF52840 Product
 //! Specification, FICR DEVICEID), the same at every boot.
 //!
 //! The node's position comes from `BARK_LAT` and `BARK_LON` (degrees) at
 //! build time until the phone app or the GPS can set it
-//! (spec "Relay identity", "Position and time"). Its seed comes from the
+//! (spec "Node identity", "Position and time"). Its seed comes from the
 //! chip's random number generator (`docs/core-interface.md` §5).
 
 use bark_driver::{App, Clock, Driver, Outgoing};

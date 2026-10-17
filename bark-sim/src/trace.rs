@@ -22,11 +22,10 @@ pub(crate) struct Names {
 }
 
 impl Names {
-    /// The node `id` names. Zero is a leaf's DATA, which names no sender.
+    /// The node `id` names.
     fn node(&self, id: NodeId) -> String {
         match self.ids.get(&id.0) {
             Some(&n) => self.labels[n as usize].clone(),
-            None if id == NodeId::NONE => "a leaf".into(),
             None => format!("id {:02x?}", id.0),
         }
     }

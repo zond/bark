@@ -104,7 +104,7 @@ const SHORT_MASK: u32 = 0xffff;
 pub const SHORT_PERIOD: i32 = 1 << 16;
 
 /// A position's 4-byte short form, which the heartbeat carries (spec
-/// "Relay identity", roadmap D14): the low 16 bits of its latitude count,
+/// "Position and time", roadmap D14): the low 16 bits of its latitude count,
 /// then the low 16 bits of its longitude count, big-endian.
 ///
 /// One count is 180° / 2²⁵ ≈ 0.6 m, so the short form repeats every 2¹⁶

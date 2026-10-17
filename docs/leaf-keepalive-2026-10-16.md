@@ -7,7 +7,7 @@ a fixed grid of 256 slots (D39). D41 keeps the relay polling and the
 leaf answering right behind the poll, and the 300 s period; the slots
 keep a spacing, ATTACHED counts the messages waiting, a leaf keeps its
 relay while it is dark, and the relay listens for the answer to each
-poll (spec "Attach and polls"). It was first built (`7227a62`) with a period that
+poll (spec section "Attach and polls" (before D46)). It was first built (`7227a62`) with a period that
 followed the table, L × 4 s within 10 s and 300 s while the relay's
 channel read quiet; that version is "D41 with shortening" below, and
 D41 without it is the decided design, run as that commit with the
@@ -117,13 +117,13 @@ and 94.0 %, the last bin of seed 2 down to 58 %; D41 with 8 bytes
 delivered 92.9 and 81.0 %, with 7 bytes 95.4 and 92.1 %. So the count
 went into the first byte's four `aux` bits, which held nothing. A
 sleeping leaf told 15 messages wait listens for 6.12 + 15 × 3.13 = 53 s
-(spec "Leaf receive mode") and gets any more at its next poll.
+(spec section "Leaf receive mode" (before D46)) and gets any more at its next poll.
 
 The room bit, an ATTACHED that says the relay would take a leaf's DATA,
 does not fit. The room a relay has when it polls is the room of that
 instant: a relay at its cap refills continuously, so "room now" holds at
 most polls, and a refused leaf told so offers at once instead of waiting
-out its doubling hold (spec "Attach and polls"), which is what spaces refused offers.
+out its doubling hold (spec section "Attach and polls" (before D46)), which is what spaces refused offers.
 Built as decided, a poll with room ending the hold, it cost the ring at
 its cap 0.9 ± 0.6 points and 5 % of its carried texts. The form that
 only saves offers, a poll without room counted as one more refusal,

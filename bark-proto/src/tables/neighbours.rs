@@ -32,8 +32,7 @@
 //! for a full-length frame to get through a fade of [`FADE_DEPTH_DB`]
 //! (spec "Next hop"). The average takes in every frame heard from the neighbour:
 //! heartbeats, its DATA, and its ACKs, which are the best evidence that
-//! its link carries frames. Each new frame counts half, as the leaf's mean
-//! of two heartbeats does (spec "Relay choice"). A neighbour without margin stays in the
+//! its link carries frames. Each new frame counts half (spec "Relay choice"). A neighbour without margin stays in the
 //! table: it is alive.
 //!
 //! [`FADE_DEPTH_DB`]: crate::radio::FADE_DEPTH_DB

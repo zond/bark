@@ -5,7 +5,7 @@ A is commit `df9f248`: leaves send a keepalive ATTACH every 60 s and the relay
 ACKs it, the design of `capacity-research-2026-10-15.md`, with that note's
 measurements added to the simulator. B is commit `2b88ff0`: the relay polls
 each leaf every 300 s, at most one leaf every 1.17 s, and the leaf answers
-(spec "Attach and polls"). Nothing else differs.
+(spec section "Attach and polls" (before D46)). Nothing else differs.
 
 ## Summary
 
@@ -13,7 +13,7 @@ Keepalives were the largest load in the domain and the main cause of lost
 texts, more than the note on capacity found. Taking them off the leaves:
 
 - cuts the relays' cost of keeping their leaves from 14 % of the duty budget
-  to the 2.9 % spec "Attach and polls" predicts for 70 leaves;
+  to the 2.9 % spec section "Attach and polls" (before D46) predicts for 70 leaves;
 - cuts the channel time of keeping leaves from 77 to 83 % of a channel,
   summed over the domain, to 13 %;
 - leaves 400 leaves without a relay at the end instead of 6000, and changes
@@ -38,7 +38,7 @@ What is worse:
   Polls then cannot find the channel clear within 500 ms of their slot:
   45 823 were skipped and 42 419 leaves dropped and attached again.
 - A relay drops a leaf that left it later, up to 15 minutes after its last
-  answer instead of 3, and a leaf notices a dead relay as late (spec "Attach and polls").
+  answer instead of 3, and a leaf notices a dead relay as late (spec section "Attach and polls" (before D46)).
   Not measured here.
 
 ## Setup
@@ -126,7 +126,7 @@ the ACKs were most of the airtime.
 ## What this does not show
 
 - Every simulated leaf listens all the time. The window a sleeping leaf
-  listens in (spec "Attach and polls") is built and checked against the relay in the core's
+  listens in (spec section "Attach and polls" (before D46)) is built and checked against the relay in the core's
   tests, but no simulated leaf sleeps, and the simulator's clocks do not
   drift.
 - A dead relay is not simulated; how long its leaves stay unreachable,

@@ -19,7 +19,7 @@ queue or the bucket (D29), or while every live neighbour is banned
 (D34). Three further gates were built behind a switch in a scratch copy
 of the core, each refusing fresh work with the refused ACK of today; a
 refused leaf holds its text and offers it again after the ladder of
-spec "Attach and polls", one ban doubling up to 61 s, and drops it
+spec section "Attach and polls" (before D46), one ban doubling up to 61 s, and drops it
 after 600 s (`NoRelay`). Forwarding is unchanged in G1 and G2.
 
 - **G1, backlog gate:** no fresh work while a forward or a return in the

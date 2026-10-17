@@ -4,15 +4,15 @@ use crate::position::Position;
 
 /// A node's 4-byte identifier, four opaque bytes in order. Every node
 /// has one; it names the node in the packet fields that only name a node
-/// (DATA `dst_hop` and `src_hop`, ACK `from` and `to`, ATTACH `relay`)
-/// and with a position makes a destination address (spec "Addresses").
+/// (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) and with a
+/// position makes a destination address (spec "Node identity", "Addresses").
 /// Zero names no node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct NodeId(pub [u8; 4]);
 
 impl NodeId {
-    /// No node: a leaf's DATA names no sender, and a node configured with
-    /// it draws its own.
+    /// No node: a record with no parent, and a node configured with it
+    /// draws its own.
     pub const NONE: NodeId = NodeId([0; 4]);
 }
 

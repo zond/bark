@@ -131,7 +131,7 @@ Its centre relays spend 19 % and 66 % of the time at the cap.
 2. **Then the leaves.** A relay at the cap refuses its leaves' texts
    with BUSY, and below its reply reserve it does not answer at all
    (spec "Duty cycle cap"). A refused leaf holds its text and offers it again, waiting up
-   to 61 s between offers (spec "Attach and polls"). A leaf whose relay does not answer
+   to 61 s between offers (spec section "Attach and polls" (before D46)). A leaf whose relay does not answer
    gives it up and looks for another. Either way the text waits at the
    sending leaf until the 10-minute TTL ends it. This is the main loss
    at and above the spec "Capacity and sizing" rate: 3742 of 6172 losses at ×1, 20 191 of
@@ -197,7 +197,7 @@ part of them; its own channel was 1.7 % busy on average at this rate.
 Heartbeats match spec "Heartbeat" and "Capacity and sizing": 2.4 % of each channel if every relay
 hears every other. Keepalives cost more than heartbeats at every relay.
 Acknowledging 66 leaves on average takes 1.5 % of a relay's airtime,
-15 % of its duty budget, before it forwards a single text. Spec "Attach and polls" counts
+15 % of its duty budget, before it forwards a single text. Spec section "Attach and polls" (before D46) counts
 this load against the channel, about 2 %, but not against the relay's
 budget.
 
@@ -256,7 +256,7 @@ light load 56 % of texts arrive within 5 s and 79 % within a minute.
 | Texts/s at 90 % delivery | ≈ 80 city-wide | ≈ 2.2 | ≈ 31 |
 | Texts per user per day | ≈ 23 | ≈ 9 at 20 000 users | ≈ 9 at 300 000 users |
 | Heartbeat load per channel | ≈ 2.5 % | 2.4 % summed over the domain | |
-| Keepalive load | 2 % of a channel at 80 leaves (spec "Attach and polls") | 1.5 % of each relay's airtime; 37 % of a channel when all relays hear each other | |
+| Keepalive load | 2 % of a channel at 80 leaves (spec section "Attach and polls" (before D46)) | 1.5 % of each relay's airtime; 37 % of a channel when all relays hear each other | |
 
 Where spec "Capacity and sizing" is wrong, and why:
 

@@ -2,7 +2,7 @@
 //! their owner and are for another node, a sleepy one it hears, held until
 //! that node wakes instead of failed at once.
 //!
-//! Each message lives the delivery TTL (spec "Leaves": 10 minutes); oldest first.
+//! Each message lives the delivery TTL (spec "Sleepy nodes": 10 minutes); oldest first.
 //! The node hands a sleepy node's messages to the send queue in arrival
 //! order while that node listens, after each of its beats
 //! (`tables/heard.rs`), and drains [`DeliveryQueue::pop_expired`] to fail
@@ -33,11 +33,11 @@ use crate::wire::MAX_PAYLOAD;
 /// (spec "Capacity and sizing": ≈23 at 300 000 users).
 pub const TEXTS_PER_DAY: u64 = 23;
 
-/// Queue capacity for `leaves` leaves and messages that live `ttl`; see
-/// the module documentation.
-pub const fn queue_for(leaves: usize, ttl: Duration) -> usize {
+/// Queue capacity for `nodes` sleepy nodes and messages that live `ttl`;
+/// see the module documentation.
+pub const fn queue_for(nodes: usize, ttl: Duration) -> usize {
     const DAY: u64 = 86_400_000_000;
-    (leaves as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
+    (nodes as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
 }
 
 /// Queue capacity for the heard table and the 10-minute TTL (spec "Delivery queue").

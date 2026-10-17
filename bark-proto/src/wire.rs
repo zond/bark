@@ -1,14 +1,12 @@
-//! Encoding and decoding of every packet in spec "Packet formats", as the
-//! one-node-type prototype has them (`docs/one-node-type-2026-10-16.md`):
-//! ATTACH, ATTACHED and DELIVER are gone, and their type codes 0x4, 0x6 and
-//! 0x7 are unused.
+//! Encoding and decoding of every packet in spec "Packet formats". Type
+//! codes 0x4, 0x6 and 0x7 are unused (roadmap D46).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
 //! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
 //! `src_hop`, ACK `from` and `to`) carry it. DATA `dst_pos` locates a place
 //! and is the 7-byte form of [`Position::encode`]; the heartbeat carries
 //! the sender's position in the 4-byte short form of [`ShortName`], which
-//! the receiver rebuilds from its own (roadmap D14). DATA carries no
+//! the receiver rebuilds from its own (spec "Position and time", roadmap D14). DATA carries no
 //! message ID: every node computes [`Data::msg_id`] (D15). Search state
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!

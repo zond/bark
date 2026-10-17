@@ -1,6 +1,6 @@
 # bark protocol: Civilian 433 MHz Mesh
 
-**Status:** live specification, 2026-10-16. Decisions that refine it are in
+**Status:** live specification, 2026-10-17. Decisions that refine it are in
 `roadmap.md` with D-numbers; [open items](#open-items) lists what is still to be decided or
 measured. Where the code and this text disagree, one of them is wrong and
 the fix is a commit to both.
@@ -16,16 +16,16 @@ deliberate jamming; it is designed for infrastructure loss.
 
 | Item | Decision |
 |---|---|
-| Hardware | LILYGO T-Echo, 433 MHz variant (nRF52840 + SX1262 + L76K GPS + e-ink + BLE 5.0 + 850 mAh), one firmware for all roles |
+| Hardware | LILYGO T-Echo, 433 MHz variant (nRF52840 + SX1262 + L76K GPS + e-ink + BLE 5.0 + 850 mAh), one firmware for every node |
 | Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
 | Medium access | Always listening on the home channel, leaving it only to transmit; acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
-| Heartbeat | A relay's periodic 8-byte broadcast of its home channel and position, every 5–15 s at random, on a channel that steps through all 13 in order |
+| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's every 5–15 s at random, on a channel that steps through all 13 in order; a sleepy node's every 150–300 s, on its home channel only |
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
-| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort |
-| Addressing | A relay position plus a 4-byte leaf ID; a relay's position is its only identity; no registration, no network-wide tables |
-| Roles | **Relay**: a fixed node on mains, USB or solar that sends heartbeats, forwards, and holds messages for its leaves. **Leaf**: a carried node on battery that attaches to one relay, answers its polls, and otherwise stays silent |
+| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
+| Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
+| Nodes | One kind, with one setting. **Relay**: a node that is not sleepy, fixed, on mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a carried node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat, and forwards only where no relay is in reach |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; GPS when available, else entered by the user; relays use surveyed coordinates; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -53,8 +53,9 @@ integration off the shelf at this price, and the premise is that anyone can
 buy and plant a node. ST's STM32WL55 is the European fallback but has no
 BLE.
 
-The role is a runtime setting. Carried on battery: leaf. Plugged into USB
-on a windowsill, or in a solar box on a roof: relay.
+Every node runs the same protocol with one runtime setting, **sleepy**.
+Carried on battery: sleepy ([sleepy nodes](#sleepy-nodes)). Plugged into USB on a
+windowsill, or in a solar box on a roof: not sleepy, a **relay**.
 
 ---
 
@@ -96,7 +97,7 @@ on the channel; it works below the noise floor.
 | Coding rate | 4/5 | |
 | Raw bit rate | 15.6 kbps at SF5 | 5.5 kbps at SF7 |
 | Symbol time | 0.256 ms at SF5 | |
-| Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **no long preambles** except to duty-cycled leaves ([leaf receive mode](#leaf-receive-mode)) | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4) |
+| Preamble | 12 symbols (3.1 ms) + 6.25 symbols of sync; **no long preambles** | 12 is the SX1262 minimum at SF5 and SF6 (datasheet §6.1.4) |
 | 255-byte packet | 138.6 ms at SF5 | ≈400 ms at SF7. Airtime from the datasheet formula (§6.1.4), `time_on_air` in `radio.rs` |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
 | Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
@@ -179,7 +180,7 @@ reading:
   per window, ±4 points on a 10% channel, as large as the differences the
   rule acts on.
 - **Home channel:** count only what would stay behind if the node moved.
-  Packets addressed to the node (DATA, ATTACH), the ACKs of its own
+  Packets addressed to the node (DATA), the ACKs of its own
   hand-overs, and its own transmissions and ACKs go wherever it goes:
   counting them would make a busy relay leave its channel for its own
   traffic and take that traffic along. So a home reading is 1 if RSSI is
@@ -210,7 +211,8 @@ Listen on a random channel for a worst-case rotation, 195 s
 sweeps and heartbeats. Then set home to `argmin busy[c]`. Channels whose
 busy value is within 0.01 of the lowest count as tied, and the choice
 among them is random, so that nodes that hear nothing do not all pick
-channel 0. A config override exists for bench work.
+channel 0; a sleepy node moves to its anchor's channel once it has one
+([relay choice](#relay-choice)). A config override exists for bench work.
 
 ### Channel moves
 
@@ -218,7 +220,8 @@ Move only when `busy[home] − min_c busy[c] > 0.05` continuously for
 10 minutes; then wait a random 0–5 minutes, re-check, and move to
 `argmin` with random tie-break. Immediately after retuning, send **one
 heartbeat on the old channel** (it carries the new channel): that retunes
-the node's leaves and any neighbour parked on the old channel at once.
+the sleepy nodes anchored to it and any neighbour parked on the old
+channel at once.
 No other announcement. Neighbours that miss it learn the new channel from
 the next rotation (≤130 s) or from ACK failure ([hand-over](#hand-over)).
 
@@ -240,9 +243,26 @@ converts every position it handles into metres on a flat plane centred on
 itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
 `cos(lat_self)` a per-node constant. The error grows with
 Δlat · tan(lat): at 50° N it is 0.1% at 5 km and 0.4% at 20 km, enough to
-reorder only near-ties between candidate hops. Neighbour-table entries
-store both the wire form (identity) and the local form (distance). Every
-relay knows its own position; nothing is estimated cooperatively.
+reorder only near-ties between candidate hops. Every node knows its own
+position; nothing is estimated cooperatively.
+
+The position is global: one firmware and one app everywhere, no
+per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
+49 bits, so 51 bits in 7 bytes is within 2 bits of the minimum;
+decimetre precision would need 56 bits. Plain fixed-point latitude and
+longitude keeps distance math trivial.
+
+**Short position.** The heartbeat carries a node's position in 4 bytes:
+the low 16 bits of its latitude count followed by the low 16 bits of its
+longitude count, big-endian. One count is 180° / 2²⁵ ≈ 0.6 m, and the
+low 16 bits repeat every 65 536 counts: 39 km of latitude, and
+39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
+hearing radius (≈3 km, [physical layer](#physical-layer)). A receiver rebuilds the full
+position as the one candidate within half a period of its own on each
+axis. That holds down to latitudes near 80° N or S, where the east-west
+period shrinks toward the hearing radius. DATA `dst_pos` stays 7 bytes
+because in a large city a node may be more than half a period from the
+destination (roadmap D14).
 
 **Time.** No network time. GPS time is never used. All timers are local
 monotonic. Nothing in the protocol depends on two nodes agreeing on a
@@ -252,24 +272,19 @@ clock.
 
 ## Heartbeat
 
-Every relay sends a heartbeat. Leaves do not ([leaves](#leaves)).
+Every node sends heartbeats. This section describes a relay's; a sleepy
+node's are rarer and stay on its home channel ([beats](#beats)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x1 heartbeat with surveyed position, 0x2 heartbeat with GPS-derived position |
+| type | 4 | 0x1 from a relay with a surveyed position, 0x2 from a relay with a GPS-derived position, 0x8 from a sleepy node |
 | channel | 4 | home channel index 0–12 |
-| lat | 25 | WGS-84 latitude, fixed point: 180° / 2²⁵ ≈ 0.6 m |
-| lon | 26 | WGS-84 longitude, fixed point: 360° / 2²⁶ ≈ 0.6 m at the equator, 0.4 m at 50° N |
-| spare | 5 | zero, ignored |
+| id | 32 | the node's ID ([node identity](#node-identity)) |
+| position | 32 | the node's short position ([position and time](#position-and-time)) |
 
-8 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)). There is no node ID: a relay's position
-**is** its identity ([relay identity](#relay-identity)).
-
-The position is global: one firmware and one app everywhere, no
-per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
-49 bits, so 51 bits in 7 bytes is within 2 bits of the minimum;
-decimetre precision would need 56 bits. Plain fixed-point latitude and
-longitude keeps distance math trivial ([position and time](#position-and-time)).
+9 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)): at coding rate 4/5 the ninth
+byte fits in the eighth's block of symbols, so 9 bytes take the 20
+payload symbols of 8, and naming the sender costs no airtime.
 
 - **Timing:** interval uniformly random in [5, 15] s, mean 10 s.
 - **Channel:** steps `k ← (k + 1) mod 13` per heartbeat, from a random
@@ -284,9 +299,9 @@ longitude keeps distance math trivial ([position and time](#position-and-time)).
 
 This is why no scanning is needed: every node sits on its home channel,
 every neighbour's heartbeat visits all channels, so each neighbour lands
-on each node's home channel once per rotation. A newly started node, or a leaf,
-listening on any one channel hears every relay in range within one
-rotation.
+on each node's home channel once per rotation. A newly started node, or a
+sleepy node, listening on any one channel hears every relay in range
+within one rotation.
 
 Heartbeat load per channel among 270 rooftop relays that all hear each
 other: ≈2.5% ([capacity and sizing](#capacity-and-sizing)).
@@ -295,48 +310,31 @@ other: ≈2.5% ([capacity and sizing](#capacity-and-sizing)).
 
 ## Neighbours
 
-### Relay identity
+### Node identity
 
-A relay has no node ID. Its identity is `(x, y)` from its heartbeat, which
-is also its address ([addresses](#addresses)). Consequences:
+Every node has a 4-byte **node ID**: the low word of its chip's factory
+device ID (nRF52840 FICR DEVICEID), the same at every boot, with no
+setup step. It names the node wherever a packet names one: DATA
+`dst_hop`, `src_hop` and `dst_id`, ACK `from` and `to` ([packet formats](#packet-formats)). Two
+nodes share an ID with probability about n² / 2³³ among n nodes; it
+matters only among the nodes one node keeps in its tables, 64 neighbours
+and 256 sleepy nodes ([heard table](#heard-table)), 1.2 × 10⁻⁵.
 
-- A relay **freezes** its position once accepted: a surveyed position from
-  the app, or the first plausible GPS fix. Later GPS readings never update
-  it. A changed position is a new identity and needs an explicit reset
-  from the app.
-- At boot, during the one-rotation listen ([channel at boot](#channel-at-boot)), a relay that hears its
-  own exact position in another relay's heartbeat moves itself by 1 m
-  and listens again. This is tidiness, not correctness: two relays at one
-  position behave like one relay with two radios (both ACK, both forward,
-  and duplicates are dropped downstream).
-- A packet field that only names a relay carries the relay's **short
-  name**: the low 16 bits of its latitude count followed by the low
-  16 bits of its longitude count, 4 bytes, big-endian, in that order.
-  These fields are ATTACH `relay` and DATA `dst_hop` and `src_hop` ([packet formats](#packet-formats)).
-  One count is 180° / 2²⁵ ≈ 0.6 m, and the low 16 bits repeat every
-  65 536 counts: 39 km of latitude, and 39 km × cos(latitude) of
-  longitude (25 km at 50° N). Two relays share a short name only if they
-  are in the same 0.6 m cell, which is the same identity in the full form
-  too, or at least 25 km apart along one axis, far beyond any hearing
-  radius (≈3 km, [physical layer](#physical-layer)). So a short name is unambiguous among everything a
-  node can hear, down to latitudes near 80° N or S, where the east-west
-  period shrinks toward the hearing radius. A receiver rebuilds the full
-  position from a short name and its own position, as the one candidate
-  within half a period on each axis, and looks tables up by it; a short
-  name that rebuilds to a position nowhere near is garbage. DATA
-  `dst_pos` stays 7 bytes because in a large city a relay may be more
-  than half a period from the destination (roadmap D14).
-- Leaves keep a 4-byte ID because they move. The app generates it at
-  random; a collision matters only between leaves attached to the same
-  relay (≈2 × 10⁻⁵ at 400 leaves). Neither role needs a setup step.
+A relay **freezes** its position once accepted: a surveyed position from
+the app, or the first plausible GPS fix. Later GPS readings never update
+it. A changed position is a new address ([addresses](#addresses)), its own and that of
+every sleepy node anchored to it, and needs an explicit reset from the
+app. Two nodes at one position are two nodes.
 
 ### Neighbour table
 
-Per node, up to 64 entries:
+Per node, up to 64 entries, by node ID:
 
 | Field | Content |
 |---|---|
-| x, y | from heartbeat; the entry key and the neighbour's identity |
+| id | from its heartbeat; the entry key |
+| position | from its heartbeat, rebuilt from the short position ([position and time](#position-and-time)), and its local form for distances |
+| sleepy | from its heartbeat's type |
 | channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it: heartbeats, its DATA and its ACKs; each new frame counts half. Says whether it has margin |
@@ -344,7 +342,8 @@ Per node, up to 64 entries:
 | banned_until | when its ban ends: the ban of its last refusal, or of its last failed hand-over, longer after each failure in a row ([refusal](#refusal), [hand-over](#hand-over) step 6) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
-  from it ([the ACK](#the-ack)).
+  from it ([the ACK](#the-ack)); a sleepy node's entry after two beat periods, 600 s,
+  as it beats at most every 300 s ([beats](#beats)).
 - **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
   above the noise floor ([busy estimate](#busy-estimate)). A 255-byte frame is then still lost no
   more than one time in a hundred, the standard the datasheet sets for
@@ -394,10 +393,13 @@ Per node, up to 64 entries:
   equally arbitrary 64, keeps their failure counts, and replaces exactly
   the entries that are failing or silent. Choosing a set spread around
   the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4).
+  simulator (open item O4). A sleepy newcomer takes only a free entry or
+  a stale or demoted sleepy one; a relay newcomer replaces the least
+  recently heard sleepy entry before applying the rule above, since
+  sleepy nodes are next hops only where no relay is ([next hop](#next-hop)).
 
-Leaves are not in the neighbour table; they are in the leaf table
-([attach and polls](#attach-and-polls)).
+A sleepy node's heartbeat also fills the heard table, which holders use
+to deliver to it ([heard table](#heard-table)).
 
 ---
 
@@ -405,10 +407,9 @@ Leaves are not in the neighbour table; they are in the leaf table
 
 ### Addresses
 
-A destination address is `(x, y, leaf_id)`: the position of the relay the
-recipient is attached to, plus the recipient's 4-byte ID. Relays have
-`leaf_id = 0`, meaning the relay itself, so a relay's address is its
-identity ([relay identity](#relay-identity)). A sender learns an address from a previous
+A destination address is a position and a node ID ([node identity](#node-identity)):
+a relay's own position, or a sleepy node's anchor's ([relay choice](#relay-choice)),
+and the recipient's ID. A sender learns an address from a previous
 message (the sender's address is carried in the encrypted payload), from
 a QR code, or from a directory; the network provides no lookup. Sending
 to an area is open item O7.
@@ -423,14 +424,14 @@ The app hands a node a message only when the node says it will take one,
 and hears nothing about it afterwards: not the first hop's ACK, which a
 user could take for delivery, and not a drop. From then on the node is
 either sending the message or waiting to. Each node holds one message
-of its app's at a time, until its first hop takes it. A relay takes one
+of its app's at a time, until its first hop takes it. A node takes one
 while it is running, holds none, its send queue and bucket have room
 for a full frame on top of what they hold ([send queue](#send-queue)), and not every
-neighbour is banned ([receiving DATA](#receiving-data)); a leaf takes one while it holds none
-([attach and polls](#attach-and-polls)). A node whose neighbours are busy keeps the message and
-offers it again ([the relay's own message](#the-relays-own-message), [attach and polls](#attach-and-polls)), so a busy network makes its
-users wait rather than lose their messages at the first step (roadmap
-D29).
+neighbour is banned ([receiving DATA](#receiving-data)); for a sleepy node with a live anchor,
+the anchor is not banned ([a sleepy node's own message](#a-sleepy-nodes-own-message)). A node whose neighbours are
+busy keeps the message and offers it again ([a node's own message](#a-nodes-own-message)), so a
+busy network makes its users wait rather than lose their messages at the
+first step (roadmap D29).
 
 ### Duty cycle cap
 
@@ -453,7 +454,7 @@ than 6 s / 9.83% = 61 s (roadmap D26).
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
 it is not dropped for that. Two reserves stay in the bucket. Replies (ACKs that
-take or refuse, and ATTACHED, polls included, [attach and polls](#attach-and-polls)) leave one
+take or refuse) leave one
 heartbeat's airtime, 11.8 ms, which the bucket refills in 120 ms, far
 less than the 5 s between heartbeats ([heartbeat](#heartbeat)), so heartbeats always
 go. Forwarding, and the ACK that takes on a packet, leave the **reply
@@ -486,15 +487,14 @@ names the message and both nodes ([the ACK](#the-ack)).
 1. Retune to the next hop's home channel. Addresses and channels are
    read at the moment of sending, before each attempt, from the latest
    heartbeats (and DATA `aux`, [neighbour table](#neighbour-table)): a retry goes to a
-   neighbour's new home if it has moved since the last attempt, and a
-   DELIVER takes the leaf's receive mode as the leaf table has it then
-   ([leaf receive mode](#leaf-receive-mode)).
+   neighbour's new home if it has moved since the last attempt.
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
    retry; give up after 500 ms and choose the next hop again
    ([next hop](#next-hop)), without counting a failure against the neighbour. The
    neighbour is set aside for this hand-over only, so the next choice is
-   a different one. For a return to the parent or a DELIVER, which have
-   no other candidate, a give-up counts as one attempt.
+   a different one. For a return to the parent or a delivery to a
+   sleepy node ([delivery](#delivery)), which have no other candidate, a give-up
+   counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
    ([packet formats](#packet-formats)).
 4. Retune home immediately.
@@ -520,8 +520,8 @@ names the message and both nodes ([the ACK](#the-ack)).
    holds the message and only ACKs, or has finished with it and returns
    it ([receiving DATA](#receiving-data)) (roadmap D36). A return waits for its parent the
    same way and is dropped when a failure demotes the parent
-   ([return to parent](#return-to-parent)). A DELIVER is not affected: its leaf is not a
-   neighbour, and the delivery queue keeps it ([delivery queue](#delivery-queue)).
+   ([return to parent](#return-to-parent)). A delivery is not affected: the delivery queue
+   keeps it ([delivery queue](#delivery-queue)).
 
 #### Retry wait
 
@@ -544,38 +544,34 @@ D22).
 The receiver retunes to the sender's channel, listens
 before talking, sends the ACK, and retunes home. The ACK is the first
 byte, whose `aux` says whether the packet is refused, the message ID,
-and the names of the answering and the answered node, each a relay's
-short name or a leaf's ID (13 bytes, 14.4 ms, [packet formats](#packet-formats)). The sender
+and the IDs of the answering and the answered node (13 bytes, 14.4 ms,
+[packet formats](#packet-formats)). The sender
 matches the ID and both names against its outstanding hand-over.
 
 An ACK resets the neighbour's failure count and refreshes its last-heard
 time ([neighbour table](#neighbour-table)): a neighbour that answers is alive whether or not
 its heartbeats are heard.
 
-The answering node's name is needed because relays share home channels:
+The answering node's ID is needed because nodes share home channels:
 without it, an ACK for the same message from a different relay on the
 same channel, which the depth-first search can produce, would end the
-wrong hand-over and strand the message. The answered node's name is
-needed because two senders can offer the same message to the same relay
+wrong hand-over and strand the message. The answered node's ID is
+needed because two senders can offer the same message to the same node
 at once: one retrying a hand-over whose ACK was lost while another
 returns the message there, or the two copies of a split message
 ([why the search finds a path](#why-the-search-finds-a-path)). If the ACK named only the message and the relay,
 each sender would take the answer to the other as its own. A taken one
 would end a hand-over the relay never took, and the message would be
 lost; a refused one would send a sender on from a relay that took its
-packet, and the message would have a second copy (roadmap D32). A leaf's
-DATA names no sender (`src_hop` 0, [packet formats](#packet-formats)), so an ACK to a leaf
-names none either; two leaves do not offer the same message, whose ID
-covers the payload.
+packet, and the message would have a second copy (roadmap D32).
 
-A relay ACKs a packet as soon as it has received it, even while waiting
+A node ACKs a packet as soon as it has received it, even while waiting
 for an ACK of its own; if that makes it miss its own ACK, its next
 attempt covers it.
 
-A relay owes at most one reply at a time, an ACK or an ATTACHED
-([attach and polls](#attach-and-polls)). A packet, DATA or ATTACH, that arrives while its reply
-to another packet is still waiting for the channel is neither taken nor
-refused: the relay says nothing and changes nothing, and the sender
+A node owes at most one reply at a time. A DATA that arrives while its
+reply to another packet is still waiting for the channel is neither
+taken nor refused: the node says nothing and changes nothing, and the sender
 retries as for a lost ACK. A second reply would go out only after the
 first, which may wait for its channel until its own sender gives up,
 100 ms; taking a packet it may not be able to answer in time would let
@@ -584,8 +580,8 @@ packet the owed reply answers, sent again because that reply is late,
 is answered by it (roadmap D29).
 
 So: **a node receives everything, ACKs included, on its home channel, and
-leaves it only to transmit.** A leaf's home channel is its relay's, so
-leaf ↔ relay traffic and its ACKs never retune. A relay is deaf for
+leaves it only to transmit.** A sleepy node's home channel is its
+anchor's, so traffic between them never retunes. A node is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
 That is the cost of having one radio.
 
@@ -604,9 +600,7 @@ packet to send on when the frame and the ACK that takes it, at most
 and no hop place takes it ([receiving DATA](#receiving-data)), and its bucket refills that
 much in 153.0 ms / 9.83 % = 1.56 s ([duty cycle cap](#duty-cycle-cap)). Until then it is no
 candidate for any message ([next hop](#next-hop)): trying it again before its bucket
-has refilled would only cost it another reply (roadmap D29). A leaf
-refused by its relay keeps the relay and the message and offers the
-message again later ([attach and polls](#attach-and-polls)).
+has refilled would only cost it another reply (roadmap D29).
 
 #### Silence is pushback
 
@@ -615,7 +609,7 @@ hand-over takes from the receiver's bucket, and the bucket refills that
 in one ban. Silence says only that the channel or the receiver is full,
 or that the link is gone, and not how full; so its ban doubles with
 each silence in a row (step 6), as the wait of a refused message does
-([the relay's own message](#the-relays-own-message)), and ends at the longest anything waits for a bucket. Without
+([a node's own message](#a-nodes-own-message)), and ends at the longest anything waits for a bucket. Without
 the ban a neighbour that stops answering under load is offered every
 other message at once, each offer up to three more frames where frames
 are already being lost; in the simulated capacity domain at three times
@@ -629,9 +623,9 @@ and one more hand-over before the message moves on; a neighbour that is
 gone is tried again after each ban until its entry expires
 ([neighbour table](#neighbour-table)).
 
-#### The relay's own message
+#### A node's own message
 
-The relay's own application's message,
+A node's own application's message,
 offered once a ban, would be a full frame every 1.56 s on the channel of
 the neighbour that refused it, 9 %, hiding its ACKs, and would spend the
 holder's bucket as fast as it refills; so after the k-th refusal in a row it waits on the
@@ -656,9 +650,10 @@ seconds.
 A packet received with count h that the regular room refuses takes the
 highest free hop place numbered h or lower, and keeps it until it leaves
 the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A packet from a leaf or from the
-relay's own application has count 0 and no hop place, so overload stops
-new messages where they enter, at the application ([addresses](#addresses)). A
+bucket still decides when it is sent. A sleepy node's own message, with
+count 0, and a node's own application's message take no hop place, so
+overload stops new messages where they enter, at the application
+([addresses](#addresses)). A
 packet received at 255 ends at the cap ([hop count](#hop-count)), so 254 hop places
 are enough. Packets are handed over in the order they arrived, except
 that, when bans end, the packets that waited for them go first ([overload waits](#overload-waits)).
@@ -672,7 +667,8 @@ counted, until the earliest ban ends, and is routed again then, at the
 origin or anywhere else. A message ends only when it is delivered, when
 its search runs out of neighbours ([return to parent](#return-to-parent)), when a return goes
 unanswered twice in a row (step 6), when its time runs out on the way
-([receiving DATA](#receiving-data)), when its leaf never wakes ([delivery queue](#delivery-queue)), at the hop cap
+([receiving DATA](#receiving-data)), when its sleepy node does not take it within the
+delivery queue's TTL ([delivery queue](#delivery-queue)), at the hop cap
 ([hop count](#hop-count)), or when a node holding it dies (roadmap D31, D44).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
@@ -701,30 +697,30 @@ left to try returns the message to the relay it first got it from, which
 tries its next neighbour. The search is shared out among the relays: each
 keeps a small record per message ([message records](#message-records)), and the packet carries
 nothing for it but the name of the relay that sent it and a hop count.
-DFS only routes around gaps; it never searches for an ID.
+DFS only routes around gaps; it never searches for an ID. A sleepy node
+forwards as a relay does wherever it is a next hop ([next hop](#next-hop)), and what
+this section says of a relay holds for it then.
 
-The **origin** of a message is the relay that first sends it into the
-network: the relay a leaf handed it to, or a relay sending for its own
-application. The search starts and, if it finds nothing, ends there.
+The **origin** of a message is the node that first sends it into the
+network: the node a sleepy node handed its own message to, or a node
+sending for its own application. The search starts and, if it finds
+nothing, ends there.
 
 The rules below are roadmap D11, D16 and D17.
 
 #### Packet sender
 
-A relay acts on a DATA packet whose `dst_hop` is its own short name
-([relay identity](#relay-identity)) and ignores the rest. The packet names its sender by
-`src_hop`, the sender's short name, and gives the sender's home channel
+A node acts on a DATA packet whose `dst_hop` is its own ID
+([node identity](#node-identity)) and ignores the rest. The packet names its sender by
+`src_hop`, the sender's ID, and gives the sender's home channel
 in `aux` ([packet formats](#packet-formats)). Those two are all a relay needs to send something
 back: `dst_hop` set to `src_hop`, on the channel in `aux`. It needs no
 neighbour-table entry for the sender; if it has one, `aux` becomes its
 channel there, as a heartbeat's would ([neighbour table](#neighbour-table)).
 
-A packet with `hops = 0` comes from a leaf ([hop count](#hop-count)): the receiving
-relay is the origin, and the message has no parent.
-
-Where a relay needs the sender's full position, to place it in the order
-of [next hop](#next-hop), it rebuilds it from the short name and its own position
-([relay identity](#relay-identity)).
+A packet with `hops = 0` is a sleepy node's own message ([hop count](#hop-count)):
+the receiving node is the origin, the message has no parent, and the
+sender counts as tried ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 #### Message records
 
@@ -734,15 +730,16 @@ originated:
 | Field | Content |
 |---|---|
 | ID | the message ID ([packet formats](#packet-formats)) |
-| parent | `src_hop` and `aux` of the packet that created the record: the short name and home channel of the relay the message first came from; none at the origin. The channel is used only if that relay is no longer in the neighbour table ([return to parent](#return-to-parent)) |
+| parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
 | handed | the neighbours that took the message from this relay, each by ACKing a hand-over of it ([hand-over](#hand-over)), as one bit per neighbour-table slot |
-| last packet | `src_hop` and `hops` of the last DATA of the message it received (0 and 0 from a leaf): the same pair again is a retransmission ([receiving DATA](#receiving-data)) |
+| last packet | `src_hop` and `hops` of the last DATA of the message it received: the same pair again is a retransmission ([receiving DATA](#receiving-data)) |
 | highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that succeeded |
-| arrived | whether the message has reached its owner: this relay owns the destination ([owner](#owner)), or the relay it is addressed to took it from this one |
+| arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
-The relay's **tried set** for the message is the parent and the
-neighbours in `handed`: those known to have the message. A neighbour that
+The relay's **tried set** for the message is the parent, the
+neighbours in `handed`, and a sleepy node that handed over its own
+message: those known to have the message. A neighbour that
 has not ACKed it is not tried, whether it was passed over, because it was
 demoted, expired or not in the table at the time, or was offered the
 message and refused it or never answered ([hand-over](#hand-over)): it stays a
@@ -768,13 +765,19 @@ after the message comes back, and after a failed hand-over
 ([hand-over](#hand-over)). The **candidates** are the neighbour-table entries that are
 live ([neighbour table](#neighbour-table)), except those in the tried set ([message records](#message-records)), those
 banned ([refusal](#refusal), [silence is pushback](#silence-is-pushback)), and those set aside for the current hand-over because
-they did not take it ([hand-over](#hand-over) steps 2 and 6, [refusal](#refusal)).
+they did not take it ([hand-over](#hand-over) steps 2 and 6, [refusal](#refusal)). Sleepy neighbours
+are candidates only where no relay neighbour is live, and then only
+they: a node routes through sleepy nodes only where no relay is in
+reach. Measured, trying them after every relay instead delivered the
+same; this rule needs no rule for a relay that is only banned (roadmap
+D46). The first hop of a sleepy node's own message is its anchor while
+the anchor is live ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
 without; within each, neighbours that are not demoted before demoted
 ones; within each, distance to the destination position in the local
 plane ([position and time](#position-and-time)), nearest first; equal distances are ordered by
-short name. The relay sends to the first candidate. If there is none but
+ID. The relay sends to the first candidate. If there is none but
 neighbours that are only banned, the message waits until the earliest
 ban ends and is routed again then ([overload waits](#overload-waits)). If there is none at all,
 the relay returns the message to its parent ([return to parent](#return-to-parent)).
@@ -830,18 +833,19 @@ Whether it takes the packet depends on what the packet gives it to do:
   ([send queue](#send-queue)), whatever the bucket holds. So it refuses a message already in
   the network only when the hop places it may use are taken too, whatever
   its bans: [overload waits](#overload-waits) needs every such message to move on (roadmap D34).
-- **A message entering the network here**, a packet from a leaf or the
-  relay's own application's message, also needs a neighbour the relay
+- **A message entering the network here**, a sleepy node's own message
+  (count 0) or the node's own application's message, also needs a
+  neighbour the relay
   could hand it to now: a live one that is not banned ([next hop](#next-hop)), demoted
   or not, since the message has tried none. A relay whose neighbours are
   all banned would only hold the message until a ban ends, and its offer
   could be refused again; refused here, the message waits at its origin,
   where the application sees it. A relay with no live neighbour at all
   takes it, and the search ends as in [return to parent](#return-to-parent). So a relay takes
-  from its leaves and its own application no more than it can start
+  from sleepy nodes and its own application no more than it can start
   sending now (roadmap D34).
 - **Something to deliver.** It takes the packet only if its bucket holds
-  the reply reserve and an ACK and, for one of its leaves, its delivery
+  the reply reserve and an ACK and, for another node, its delivery
   queue has room ([delivery queue](#delivery-queue)).
 - **No work**, cases 1, 3 and 4 below. It takes the packet even when it
   would refuse work: a refusal would send its sender on with a second
@@ -856,7 +860,7 @@ even the reply stays silent, and its sender retries as for a lost ACK
 The packet is one of the following, tested in this order:
 
 1. **Arrived:** the relay has delivered the message or holds it for a
-   leaf ([delivery queue](#delivery-queue)), or its record says the message has arrived
+   sleepy node ([delivery queue](#delivery-queue)), or its record says the message has arrived
    ([message records](#message-records)). ACK only.
 2. **New:** the relay has no record for the message. It creates one, with
    the sender as parent (none if `hops = 0`). If it owns the destination
@@ -895,11 +899,11 @@ message cannot go back and forth between two relays that hold none of
 it (roadmap D35).
 
 **Time left.** A message lives in the network for at most the delivery
-TTL, 600 s ([leaves](#leaves)), from when its leaf, or the relay sending for
-its own application, took it from the application. Every DATA carries the time the message has left,
-`time_left`, in whole units of 2.5 s, rounded down ([packet formats](#packet-formats)). A leaf
-sends the TTL less the time it has held the message; a relay sending
-for its own application starts it at the TTL. A relay that takes a
+TTL, 600 s ([sleepy nodes](#sleepy-nodes)), from when a node took it from its application.
+Every DATA carries the time the message has left, `time_left`, in whole
+units of 2.5 s, rounded down ([packet formats](#packet-formats)). That node starts it at
+the TTL and, like any holder, sends what is left at each transmission,
+so a sleepy node's waits for its anchor count against it. A relay that takes a
 packet to send on counts the message's time from the packet: what it
 carries less the frame's time on air, since the sender stamps the time
 as the frame goes out. Each transmission, retries included, carries
@@ -911,17 +915,18 @@ hop place or as a return, and one whose frame is on air at its next
 attempt. A packet that arrives with its time gone is no work: the relay
 takes it, as in cases 1, 3 and 4, and the message ends there. A message
 to deliver is not affected: at its owner the delivery queue keeps it for
-its own TTL, whatever was left. A return or a copy carries the time like
+its own TTL, whatever was left, and the DATA that takes it to its sleepy
+node carries the time it arrived with ([delivery](#delivery)). A return or a copy carries the time like
 any DATA, so the parent's copy (case 5) ends by the same clock.
 
 Without an end by time, a message the network has taken lives as long
 as hand-overs to someone succeed. In the simulated capacity domain at
 three times the texting rate of [capacity and sizing](#capacity-and-sizing), past the point where
 it collapses, messages lived up to an hour and cost about 1500 frames
-each, long after their leaf and their destination's queue would have
+each, long after their sender and their destination's queue would have
 given them up, and they kept the relays at their duty cap (roadmap D42,
-D44). The TTL is the one the leaf and the delivery queue already keep:
-the time the network keeps a message ([attach and polls](#attach-and-polls)).
+D44). The TTL is the one the delivery queue keeps: the time the network
+keeps a message ([sleepy nodes](#sleepy-nodes)).
 
 Rounding down loses up to a unit at each hand-over, a whole one at a
 hand-over that follows at once. 2.5 s is the finest unit at which one
@@ -936,7 +941,7 @@ relay would lose no time at all.
 
 When [next hop](#next-hop) finds no candidate, because every neighbour has been
 tried or set aside, the relay sends the message back to its parent: a
-DATA packet with `dst_hop` the parent's short name, from the record, on
+DATA packet with `dst_hop` the parent's ID, from the record, on
 the parent's home channel as the neighbour table has it at the moment of
 sending, so a return follows a parent that has moved home
 ([channel moves](#channel-moves)) since it handed the message over. Only a parent no longer
@@ -952,11 +957,10 @@ end-to-end acknowledgement.
 
 A message whose neighbours left are only banned is neither returned nor
 dropped: it waits ([overload waits](#overload-waits)), at the origin or anywhere else,
-until its time is gone ([receiving DATA](#receiving-data)); the
-relay's own application's message waits as in [the relay's own message](#the-relays-own-message), as a leaf's
-does ([attach and polls](#attach-and-polls)). An application's message for one of the relay's own
-leaves that finds the delivery queue full is kept aside until the queue
-has a place.
+until its time is gone ([receiving DATA](#receiving-data)); a node's own application's
+message waits as in [a node's own message](#a-nodes-own-message). An application's message for a
+sleepy node this relay holds for that finds the delivery queue full is
+kept aside until the queue has a place.
 
 If a failed hand-over to the parent demotes it, after the message has
 waited for the parent's ban and gone again ([hand-over](#hand-over) step 6), the
@@ -966,9 +970,10 @@ has not failed: the return waits for the ban and goes again
 
 #### Hop count
 
-`hops` in the DATA header counts hand-overs. A leaf sends 0; a relay
-sending for its own application sends 1, as if it had received the
-message at 0, since 0 means "from a leaf" ([packet sender](#packet-sender)). A relay
+`hops` in the DATA header counts hand-overs. A sleepy node with an
+anchor sends its own message with 0; a relay sending for its own application sends 1, as if
+it had received the message at 0, since 0 means "a sleepy node's own,
+start the search here" ([packet sender](#packet-sender)). A relay
 sends its record's highest count plus one ([message records](#message-records)), whether it
 is forwarding or returning to its parent. The count is set when a
 hand-over's first frame goes out, and its retries repeat it
@@ -997,39 +1002,39 @@ about 200 for routing around gaps.
 
 #### Owner
 
-A relay **owns** the destination `(x, y)` when:
+A node **owns** a message's destination when:
 
-- its own position is `(x, y)`, that is, `dst_pos`: it is the addressed
-  relay; or
-- it is within 50 m of `(x, y)` and no live, non-demoted neighbour is
-  closer to `(x, y)` than itself. The addressed relay has then probably
+- `dst_id` is its own ID: it is the addressed node, wherever it is; or
+- its own position is `dst_pos`; or
+- it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
+  closer to it than itself. The relay at that position has then probably
   died or moved; 50 m is the distance [position and time](#position-and-time) allows between
   two GPS fixes of a relay that has not moved, so a relay this close is,
   for the radio, in the same place.
 
-A relay farther than 50 m with no closer neighbour is at a gap, not the
+A node farther than 50 m with no closer neighbour is at a gap, not the
 owner, and the search goes on ([next hop](#next-hop)).
 
 A message whose destination is the sending node's own address is
-delivered there without entering the search. The destination position
-alone decides who delivers: a relay that has the leaf in its leaf table
-but does not own the position routes the message on like any other. A
-leaf that has just moved to another relay stays in the old relay's table
-until a delivery TTL of its polls goes unanswered ([attach and polls](#attach-and-polls)), so the table disagrees with
-the address exactly when the address is new; delivering from the table
-would queue the message for a leaf that has gone (roadmap D21).
+delivered there without entering the search. Otherwise the destination
+position decides who holds it: a relay that hears the sleepy node but
+does not own the position routes the message on like any other. A sleepy
+node that has just moved to another anchor stays in the old relay's heard
+table for a delivery TTL ([heard table](#heard-table)), so the table disagrees with the
+address exactly when the address is new; delivering from the table would
+queue the message for a node that has gone (roadmap D21).
 
-The owner looks `leaf_id` up in its leaf table and delivers
-([delivery](#delivery)), or queues ([delivery queue](#delivery-queue)); a later copy of a message it has
-delivered is only ACKed ([receiving DATA](#receiving-data), case 1). If `leaf_id = 0` the
-message is for the relay itself: the addressed relay delivers it to its
-own application; an owner within 50 m drops it, since the relay it was
-for is gone.
+The addressed node delivers the message to its application. Any other
+owner queues it for the addressed node ([delivery queue](#delivery-queue)) and sends it when
+the node listens ([delivery](#delivery)), whether or not it hears the node now; a
+later copy of a message it has delivered is only ACKed
+([receiving DATA](#receiving-data), case 1). A message for a relay that is gone waits there
+for the queue's TTL and ends.
 
-An owner that is not the addressed relay and does not know `leaf_id` may
-ask its direct neighbours once whether they hold it (one hop, one round;
-the packet is open item O13); if none does, it queues. Nothing wider: a
-wider search is a flood.
+An owner that does not hear the addressed node may ask its direct
+neighbours once whether they hear it (one hop, one round; the packet is
+open item O13); if none does, it queues. Nothing wider: a wider search is
+a flood.
 
 ### Why the search finds a path
 
@@ -1095,8 +1100,8 @@ What breaks it:
   the table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2,
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
-- **Life:** at most the delivery TTL, 600 s, from its leaf or its origin
-  taking it from the application to its owner ([receiving DATA](#receiving-data)), whatever
+- **Life:** at most the delivery TTL, 600 s, from a node taking it from
+  the application to its owner ([receiving DATA](#receiving-data)), whatever
   its search and however long it waits; then up to a TTL more in the
   owner's delivery queue. So a message costs the network at most 600 s
   of waiting and handing over, and holds a place in a send queue no
@@ -1132,329 +1137,196 @@ What breaks it:
 
 ---
 
-## Leaves
+## Sleepy nodes
 
-A leaf is a carried node on battery. It **never sends heartbeats** (at
-household density that would be hundreds of percent of airtime on every
-channel) and never forwards.
+A sleepy node is a carried node on battery: a node with the sleepy
+setting ([hardware](#hardware)). It heartbeats rarely and on one channel, listens for a
+short window after each heartbeat, and the messages for it wait at a
+relay it chooses, its **anchor**. It sleeps only while it has an anchor: one
+that hears no relay listens all the time and acts as a relay, since no
+one could hold its messages ([sleepy nodes alone](#sleepy-nodes-alone)). Everything else it does as
+any node.
 
-A leaf can go **dark** for a few minutes: a phone in a pocket, a
-basement or the metro. What the network keeps for a leaf that does not
+A sleepy node can go **dark** for a few minutes: a phone in a pocket, a
+basement or the metro. What the network keeps for a node that does not
 answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
-messages waiting for it at its relay ([delivery queue](#delivery-queue)), the leaf in its relay's
-table ([attach and polls](#attach-and-polls)), and a message the leaf cannot hand over. The
-network keeps a message on its way for the same time ([receiving DATA](#receiving-data)).
+messages waiting for it ([delivery queue](#delivery-queue)) and the node in its holder's
+table ([heard table](#heard-table)). The network keeps a message on its way for the
+same time ([receiving DATA](#receiving-data)).
 
 ### Relay choice
 
-Listening on any one channel, a leaf hears every relay in range once per
-rotation (≈130 s, at most 13 × 15 s = 195 s; [heartbeat](#heartbeat)). It keeps, for its relay and
-the four strongest others it hears, the mean RSSI of the last two
-heartbeats. Four covers the relays an indoor leaf reaches at the design
-density: π × (300 m)² × 9.6 relays/km² ≈ 2.7 ([physical layer](#physical-layer), [capacity and sizing](#capacity-and-sizing)).
+Listening on any one channel, a node hears every relay in range once per
+rotation (≈130 s, at most 13 × 15 s = 195 s; [heartbeat](#heartbeat)), and keeps it in
+its neighbour table with the averaged RSSI of what it heard from it
+([neighbour table](#neighbour-table)).
 
-**First choice.** A leaf without a relay attaches to the strongest it has
-heard once it has listened for a worst-case rotation, 195 s, from the
-first heartbeat it heard; by then every relay in range has visited its
-channel. A leaf with a message to send does not wait: it attaches to the
-strongest heard so far.
+**First choice.** A sleepy node takes as its anchor the strongest relay
+it has heard a worst-case rotation, 195 s, after it first heard one; by
+then every relay in range has visited its channel. It listens on the
+anchor's home channel, and its address is the anchor's position and its
+own ID ([addresses](#addresses)). It follows the anchor to a new home channel at the
+anchor's next heartbeat it hears ([channel moves](#channel-moves)).
 
-**Switching.** An attached leaf moves to another relay only when that
-relay has been heard over at least two heartbeats and its mean is at
-least 8 dB above its own relay's. The margin is two standard deviations
-of the difference of two such means under fading of σ = 4 dB (the
-scenarios' figure): a relay's heartbeats reach the leaf's channel about
-130 s apart, longer than the 60 s the fading lasts, so they are nearly
-independent, a mean of two has σ/√2, and the difference of two means
-σ√(1/2 + 1/2) = 4 dB. A relay that is no better takes the leaf on 2.3 %
-of comparisons. The leaf attaches to the new relay before leaving the old
-one. Vehicles cannot keep up and rely on the delivery queue plus
-re-attaching on arrival.
+**Switching.** It moves to another relay only when that relay has been
+heard over at least two heartbeats and its averaged RSSI is at least
+8 dB above the anchor's. A relay's heartbeats reach the node's channel
+about 130 s apart, longer than the 60 s the fading lasts, so they are
+nearly independent. Under fading of σ = 4 dB (the scenarios' figure) a
+mean of two heartbeats has σ/√2, and the difference of two such means
+σ√(1/2 + 1/2) = 4 dB; 8 dB is two of those standard deviations, and a
+relay that is no better takes the node on 2.3 % of comparisons. The
+neighbour table's average lets each new frame count half, which varies
+less than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more
+than two standard deviations there. Vehicles cannot keep up and rely on
+the delivery queue and a new anchor on arrival.
 
-A leaf that hears no relay for 3 rotations stays on any channel and
-waits; every relay in range will appear within one rotation.
+**Back from the dark.** A node whose anchor has left its neighbour table
+chooses again as at first: a rotation after it next hears a relay. If it
+hears its anchor meanwhile, it keeps it. Taking the first relay heard
+instead changed anchors two and a half times as often, and the messages
+sent to the old address waited out their TTL (roadmap D46).
 
-### Attach and polls
+### Beats
 
-**Attaching.** `ATTACH {type, leaf_id, relay, flags}` (`relay` is the
-relay's short name, [relay identity](#relay-identity)) is sent to the relay on its home channel with
-listen-before-talk and the retries of [hand-over](#hand-over). The flags carry the leaf's
-receive mode ([leaf receive mode](#leaf-receive-mode)). The relay answers at once with `ATTACHED {type,
-leaf_id, next_poll, waiting}`, as it would with an ACK; that is what
-tells the leaf it is attached. `waiting`, in the first byte's spare
-bits, counts the messages the relay holds for the leaf ([leaf receive mode](#leaf-receive-mode)). A leaf
-sends an ATTACH that attaches at the start, after it chooses another
-relay ([relay choice](#relay-choice)), and after its polls stop (below), and at no other time.
-The relay's **leaf table** (`leaf_id`, its next slot, the slot of its
-last poll and of the first it left unanswered, when it was last told and
-last heard, `rx_mode`, and a few counts) is separate from the neighbour
-table. Leaf table size: 256 entries per relay (≈80 leaves per relay
-expected at indoor density in Kyiv with 10% adoption; 400 at 50%). A
-relay whose table is full does not answer, and the leaf attaches
-elsewhere.
+A sleepy node heartbeats only on its home channel, the anchor's, where
+its holder listens: a **beat**. The heartbeat has the sleepy type
+([heartbeat](#heartbeat)). It beats at a random time in the second half of each
+**beat period**, P = 300 s: half the delivery TTL, so that a holder
+keeps it for two periods, a TTL, and one lost beat does not lose it,
+while a node that has gone is kept no longer than its messages
+([heard table](#heard-table)). The spread keeps two nodes whose beats met once from
+meeting again. After it chooses or changes its anchor it beats at once
+and once more within a heartbeat interval, 5–15 s, so that one lost
+beat does not hide it from its new holder for a period.
 
-**Polls.** From then on the relay checks that the leaf is there, not the
-leaf that the relay is. It polls one leaf at a time: at each poll it
-sends the leaf an ATTACHED, and the leaf answers with one ATTACH marked
-as a reply, which the relay does not answer. The poll is sent by the
-relay after its own channel check, so every neighbour of the relay hears
-it, and the answer follows right behind it. Keeping its relay, a leaf
-never speaks at a time it chose itself, where its frame would meet DATA
-it cannot hear (roadmap D41); it does so only to attach. `next_poll` in
-every ATTACHED is the delay from the end of that frame to the start of
-the leaf's next slot. It is not a period: the leaf knows only when its
-next poll comes, and each ATTACHED names the next one afresh, so the
-relay may move a slot without telling anyone.
+At a mean interval of 225 s a node beats 16 times an hour, 189 ms of
+airtime; measured with the beats after anchor changes, 212 ms an hour.
 
-**The period.** Each leaf is polled once a period, **P = 300 s**, and
-with L leaves no two slots are closer than the spacing S = P / L, never
-under P / 256 = 1.17 s, a full table's. Each poll, sent or skipped,
-gives the leaf the first time at least one period after its slot that
-lies S from every other leaf's next slot; a new leaf gets the first
-such time a period after it attached. So the relay never polls two
-leaves closer than S, and with the table steady the round settles to
-one poll every S, each leaf every P: every slot of the round is used,
-so the polls are spread evenly over it however the leaves attached,
-together after a mass start or a restart or one by one. When L
-changes, the slots already named hold, and each leaf's next slot keeps
-the new spacing; the round settles within a few periods.
+A sleepy node with an anchor does not move its home channel by the busy
+estimate ([channel moves](#channel-moves)), and does not sweep the channels ([busy estimate](#busy-estimate)): asleep it
+could not.
 
-| | Value | From |
-|---|---|---|
-| ATTACHED, ATTACH | 7 and 9 bytes, 10.56 and 11.84 ms | [packet formats](#packet-formats) |
-| Relay airtime for polls, full table of 256 | 10.56 ms / 1.17 s = 0.90 %, 9.2 % of the duty budget | the bucket fills at 9.83 % ([duty cycle cap](#duty-cycle-cap)) |
-| The same at 80 leaves | 80 × 10.56 ms / 300 s = 0.28 %, 2.9 % of the budget | |
-| Channel time at 80 leaves, polls and answers | 80 × 22.40 ms / 300 s = 0.60 % | |
+### Heard table
 
-The period and the spacing follow from the duty budget and the
-delivery TTL ([leaves](#leaves)). Polls cost the relay 10.56 ms per S.
-A full table must leave forwarding at least nine tenths of the budget,
-so S ≥ 10.56 ms / (10 % × 9.83 %) = 1.07 s, P ≥ 275 s. The period is
-half the TTL, the next period up that divides it, so that the relay
-keeps a leaf through any dark spell shorter than a TTL (below) and
-keeps a gone leaf at most one period past the life of the messages it
-held for it. A shorter period for a small cell, where a relay has few
-leaves and its channel is quiet, would make a returning phone known
-sooner; it was built and measured and gained nothing that the leaf's
-own return (below) does not already give, while tripling a small
-cell's airtime (roadmap D41). Such a period waits for sleeping leaves,
-whose messages wait for their poll, and for a measurement of the latency
-they need.
-
-**Lateness and the window.** A poll goes before the heartbeat and the
-hand-over, after an owed reply, and not while the relay waits for an ACK.
-So it waits at most for a hand-over already under way, a full frame and
-its ACK timeout, 238.6 ms, then for an owed ACK, 114.4 ms, and checks the
-channel with what is left of **500 ms**, listen-before-talk's give-up time
-([hand-over](#hand-over)); a poll that cannot go out within 500 ms of its slot is skipped,
-and counts as unanswered. A leaf that sleeps ([leaf receive mode](#leaf-receive-mode)) hears only a long
-preamble, and 512 ms of preamble would make each poll 49 times longer.
-Instead it wakes for its slot and listens with the ordinary receiver:
-from the slot less the drift of two crystal clocks of ±50 ppm each over
-the time since the last ATTACHED (30 ms after a 300 s period) and half
-the 10 ms unit of `next_poll`, to 500 ms plus the poll's 10.56 ms after
-the slot, plus the same margin: about 0.58 s a period, 11 µA on average
-at the 5.8 mA of listening at 300 s. A 32.768 kHz tuning-fork crystal is
-±20 ppm at 25 °C and −0.034 ppm/°C² away from it, so ±50 ppm holds from
-−5 to +55 °C. The nRF52840's internal RC oscillator (±500 ppm, Product
-Specification, CLOCK), which the firmware's clock runs on today, would
-widen the window to 1.1 s; a sleeping leaf should time its slot from a
-crystal. An always-listening leaf keeps the same window: it takes a
-poll only there, so that a poll from a relay it has left, on the same
-channel and for the same leaf ID, is not taken for its own relay's.
-
-**The answer.** After a poll the relay listens for the answer as it
-does for the ACK of a hand-over ([hand-over](#hand-over)): until the answer comes or the
-ACK timeout, 100 ms, has passed, it sends nothing but an owed reply.
-Otherwise its next frame, a hand-over queued behind the poll, starts a
-few milliseconds after the poll ends and makes it deaf to the answer.
-On a relay at its cap whose traffic repeats in step with its period,
-that happened at every poll of one leaf and the relay dropped a leaf
-that was there (roadmap D41).
-
-**Lost frames.** A lost ATTACHED that answers an ATTACH is a lost ACK:
-the leaf retries its ATTACH ([hand-over](#hand-over)), and the relay, which has the leaf
-already, answers with the same slot. A leaf whose window passes empty,
-because the poll or its answer was lost, the relay skipped it, or the
-leaf was out of reach, no longer knows when its next poll comes. It
-takes the next poll whenever it comes, and if none has come by then,
-attaches again as below.
-
-**Keeping the leaf.** The relay drops a leaf whose polls have gone
-unanswered for a delivery TTL: at the first slot at least 600 s after
-the first poll it left unanswered, once the answer to that one is
-overdue, 0.6 s after its slot. So a phone dark for less than a TTL,
-the five minutes of a metro ride or a basement ([delivery queue](#delivery-queue)), is still in the
-table when it is back, and its messages are still here; a gone leaf is
-kept at most a TTL and a period, 15 minutes, after its last answer, a
-period past the life of the messages held for it. Queued messages of a
-dropped leaf stay in the delivery queue until their TTL, as for any
-leaf not in the table, and go to it if it attaches again within it.
-
-**Keeping the relay.** A leaf does not give its relay up on a clock: a
-phone in a pocket or the metro is out of reach of every relay, and
-should find its relay when it is back. A leaf whose window has passed
-empty stays silent until it hears a heartbeat, from any relay, and then
-sends an ATTACH that attaches after a random wait of 0 to 60 s, unless
-a poll comes first. Only heartbeats count, not other leaves' frames, so
-that phones dark together in one train do not wake each other. A leaf
-that hears no heartbeat tries once a rotation after the window,
-13 × 15 s = 195 s, the longest any relay in reach can stay unheard ([heartbeat](#heartbeat)),
-and after each ATTACH unanswered at all its attempts waits again for a
-heartbeat or a rotation. The ATTACH goes to the leaf's own relay if it
-has heard that relay since the polls stopped; if it has not, but has
-heard another, its relay is dead or out of reach, and it attaches to
-the strongest of those it has heard since ([relay choice](#relay-choice)). A relay that still
-has the leaf answers with its slot unchanged; one that dropped it takes
-it as new. A message the relay did not take at any attempt ([hand-over](#hand-over)) is
-tried again 60 s later. A fade lasts about a minute (the scenarios'
-correlation time), so one fade costs a wait, not the relay: the three
-attempts of one hand-over, a few hundred milliseconds apart, all fall
-inside it. The leaf gives the relay up when hand-overs have failed in
-two retries in a row and it has heard another relay since the first
-failure, and then chooses as in [relay choice](#relay-choice). Having heard none, it may be out
-of reach of every relay, and keeps the relay.
-
-What this costs and gains:
-
-- A dark phone sends at most one ATTACH, three frames, per rotation.
-- A phone back in reach before its window is polled at its next slot.
-  One that missed a window is heard at its first heartbeat and 0 to
-  60 s later, or at the next poll if that is sooner. With r relays in
-  earshot, a heartbeat reaches the leaf's channel every 130 s / r on
-  average ([heartbeat](#heartbeat)); at the design density's 2.7 relays indoors ([relay choice](#relay-choice)) that
-  is every 48 s, so the phone is heard 78 s after its return on
-  average, and at most 195 + 60 = 255 s.
-- A train of n phones surfacing by one relay offers it n / 60 ATTACHes a
-  second. For 300 phones that is 5 a second, 53 ms of ATTACHED in each
-  second, within the 98 ms a second the bucket refills ([duty cycle cap](#duty-cycle-cap)), rather
-  than hundreds at once. The relay gives them slots a period on, spread
-  by the spacing like any others.
-- A leaf whose relay has died and that hears another moves at its next
-  window, a heartbeat from the other relay and up to 60 s: at most
-  P + 0.6 s + 195 s + 60 s after its last poll, 556 s.
-- A leaf that hears no other relay keeps trying its own once a rotation
-  for ever.
-
-**When each side knows.**
-
-| | Known to | After |
-|---|---|---|
-| A leaf goes dark, or away | its relay, which counts its poll unanswered | its next slot: within P |
-| | its relay, which drops it | 600 s after its first unanswered poll, and at most one period more |
-| A dark leaf comes back | its relay, still its relay | its next slot if it missed none; else its first heartbeat and 0 to 60 s, at most 255 s |
-| A leaf moves to another relay | the new relay | at once, its first ATTACH |
-| | the old relay | a TTL and up to a period after its last answer there |
-| A relay dies | its leaves, which move | their next window, a heartbeat from another relay and 0 to 60 s: at most P + 256 s |
-
-**Moves.** A relay that moves home channel ([channel moves](#channel-moves)) keeps its leaves and
-their slots and polls them on the new channel. An always-listening leaf
-follows at once on the heartbeat the relay sends on the old channel, or
-at the relay's next heartbeat on its channel if it missed that one,
-within a rotation (≤195 s); a hybrid leaf follows in its next awake
-rotation (≤10 minutes, [leaf receive mode](#leaf-receive-mode)). A leaf that misses its window meanwhile
-attaches again as above, on whichever channel its relay's heartbeat
-names by then. A leaf that moves to another relay stops answering the
-old one's polls, which drops it a TTL later; until then a message sent
-to the old address waits there as for a dark leaf ([delivery queue](#delivery-queue)).
-
-**A message without a relay.** A message the leaf cannot hand over,
-because it has no relay or its relay does not answer, is held and tried
-again as above, for up to the delivery TTL ([leaves](#leaves)), the time
-the network itself would keep it, and each DATA of it carries what is
-left of that time ([receiving DATA](#receiving-data)). Once no more than one unit of 2.5 s is
-left it is dropped, and the app is not told ([addresses](#addresses)). The leaf holds one message at a time
-([addresses](#addresses), roadmap D23). A relay that refuses the message, because it
-has no room or every way on from it is banned ([receiving DATA](#receiving-data)), is busy,
-not failing: the leaf keeps it, counts no failure, and offers it
-again after the waits a relay's own message takes ([the relay's own message](#the-relays-own-message)), one ban,
-1.56 s, after the first refusal, doubling with each further one in a row
-up to the bucket's refill of 61 s, so that it does not probe an
-overloaded relay with a full frame every 1.56 s (roadmap D27, D29).
+A node keeps the sleepy nodes it hears beat in its **heard table**,
+256 entries, by ID: the node's home channel, until when it listens
+([delivery](#delivery)), whether a delivery to it went unanswered since its
+last beat, and the mean RSSI of its last two beats. An entry is kept for
+two beat periods after the last beat, the delivery TTL. When the table
+is full a newcomer takes the place of an expired entry, else of the
+weakest if the newcomer is heard stronger: the strongest are the nodes
+most likely to have chosen this relay as their anchor. 256 covers ≈80
+sleepy nodes per relay expected at indoor density in Kyiv with 10 %
+adoption, 400 at 50 % ([capacity and sizing](#capacity-and-sizing)).
 
 ### Delivery
 
-The owning relay sends the message to the leaf on the relay's own home
-channel (the leaf listens there), listen-before-talk first, and waits for
-the leaf's ACK. Preamble length per the leaf's receive mode ([leaf receive mode](#leaf-receive-mode)).
-A leaf, like a relay, owes one reply at a time: a DELIVER that arrives
-while its ACK of another is still waiting for the channel is ignored,
-and the relay's retry brings it again ([the ACK](#the-ack), roadmap D29).
+A message that reaches the owner of its position ([owner](#owner)) and is
+for another node waits in the owner's delivery queue
+([delivery queue](#delivery-queue)): the owner is that node's **holder**. It goes to the node
+as DATA addressed to the node's ID, `dst_hop` and `dst_id` alike, on the
+node's home channel from the heard table, with the ordinary preamble,
+and the node answers with an ordinary ACK ([the ACK](#the-ack)). It goes through
+the send queue as any hand-over ([hand-over](#hand-over)), but only while the node
+listens: for a **window** of 9.25 s from each beat the holder hears,
+renewed by each message the node takes. The window is what the holder
+may need to bring one message: the hand-overs that may be ahead of it,
+a full send queue of full frames each with its ACK,
+40 × 152.96 ms = 6.12 s ([send queue](#send-queue)), and the message with all its
+attempts and retry waits, 3.13 s ([hand-over](#hand-over)). The node is not told
+how many messages wait, so it listens as long again after each it
+takes. A delivery that goes unanswered marks the node asleep, and its
+messages wait for its next beat.
+
+The DATA carries the hop count as any hand-over ([hop count](#hop-count)) and the
+time the message had left when it arrived: the delivery queue's wait
+does not count against it ([receiving DATA](#receiving-data)).
+
+So a message waits for its node a mean of about two minutes, at most a
+beat period. Listening 9.25 s after each beat is 148 s an hour, 4 % of
+the time: 0.24 mA on average at the 5.8 mA of listening, about five
+months of the 850 mAh battery for the listening alone. GPS goes off after a fix, and
+off after 10 minutes without one (searching under jamming draws
+≈27 mA, ≈1.3 days).
 
 ### Delivery queue
 
-Bounded, not a mailbox: up to 41 messages per relay, kept for the
-delivery TTL ([leaves](#leaves)). On expiry the message is dropped. The same TTL
-bounds a message's way through the network ([receiving DATA](#receiving-data)); the queue's
-starts afresh when the message arrives, since it is the wait for a dark
-leaf. When the queue is
-full, a message for one of the relay's leaves is refused ([receiving DATA](#receiving-data)): what
-is queued stays, and the sender learns at once.
+Bounded, not a mailbox: up to 41 messages per node, kept for the
+delivery TTL ([sleepy nodes](#sleepy-nodes)). On expiry the message is dropped. The
+same TTL bounds a message's way through the network ([receiving DATA](#receiving-data));
+the queue's starts afresh when the message arrives, since it is the wait
+for a node that sleeps or is dark. When the queue is full, a message for
+another node is refused ([receiving DATA](#receiving-data)): what is queued stays, and
+the sender learns at once.
 
-A queued message goes to the send queue ([send queue](#send-queue)) as a DELIVER, one per
-leaf at a time and oldest first, when it arrives, when the leaf's
-previous one is ACKed, and whenever a hand-over ends and leaves room in
-the send queue. It needs room as any packet does ([send queue](#send-queue)); one the bucket
-cannot fit yet goes the moment the bucket will. A leaf whose DELIVER
-went unanswered is not listening: its messages wait for its next answer
-to a poll ([attach and polls](#attach-and-polls)) and are retried every 60 s, not each time room frees
-up.
+A queued message goes to the send queue one per node at a time and
+oldest first: when it arrives, when the node beats, when the node takes
+the one before, and whenever a hand-over ends and leaves room in the send
+queue. It needs room as any packet does ([send queue](#send-queue)); one the bucket
+cannot fit yet goes the moment the bucket will. One whose node has
+stopped listening by the time its hand-over would start waits for the
+next beat. A failed delivery counts no failure against anyone: the
+node is not a neighbour it routes through.
 
-A message stays long only for a leaf that does not answer. A leaf that
-listens takes its DELIVER at the first hand-over: a duty-cycled or
-hybrid one checks the channel every 500 ms, and the 512 ms preamble
-spans the check ([leaf receive mode](#leaf-receive-mode)). One that does not is dark ([leaves](#leaves)), and
-its messages wait until the
-first retry after it is back, at most 60 s later, or its answer to a
-poll ([attach and polls](#attach-and-polls)), or until the TTL. Leaves in one train or one basement go
-dark together, so the queue holds what arrives in a TTL for every leaf a
-relay can serve, its leaf table's 256 ([attach and polls](#attach-and-polls)), at the 23 texts a day
-each that the network carries ([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute TTLs in a
-day = 40.9, so 41 messages, 10.3 KiB.
+Nodes in one train or one basement go dark together, so the queue holds
+what arrives in a TTL for every node a holder can keep, its heard
+table's 256 ([heard table](#heard-table)), at the 23 texts a day each that the network
+carries ([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute TTLs in a day
+= 40.9, so 41 messages, 10.6 KiB. A node takes at most what its holder
+holds in one window, so on its beats at most 41 messages a period.
 
-The owner remembers 41 delivered message IDs ([packet formats](#packet-formats)) and ACKs a repeat
-without delivering it twice. When it needs the place, it forgets the one
-delivered or last repeated longest ago; time alone forgets nothing. 41
-is the delivery queue's size: what a relay delivers in one TTL for a
-full leaf table. A queued
-message costs no airtime; a failed delivery costs a retry across the
-city.
+The owner remembers 41 delivered message IDs ([packet formats](#packet-formats)) and ACKs
+a repeat without delivering it twice. When it needs the place, it
+forgets the one delivered or last repeated longest ago; time alone
+forgets nothing. 41 is the delivery queue's size: what a holder delivers
+in one TTL for a full heard table.
 
-The queue plus the sender's own retry covers a leaf that has moved to
-another relay; the old relay does not forward to the new one. Neighbouring
-relays cannot overhear deliveries, because they are on different channels.
+The queue plus the sender's own retry covers a node that has moved to
+another anchor; the old holder does not forward to the new one.
 
-### Leaf receive mode
+### A sleepy node's own message
 
-| Mode | Leaf current | 850 mAh | Preamble on packets to the leaf | Hears heartbeats |
-|---|---|---|---|---|
-| Always listening | ≈5.8 mA | ≈6 days | 12 symbols ([physical layer](#physical-layer)) | yes |
-| Duty-cycled (sleep, CAD every 500 ms) | ≈0.3 mA + sleep | months | ≥512 ms | no: blind to relay changes |
-| Hybrid: full listen one rotation every 10 min, CAD between | ≈1.3 mA | ≈25 days | ≥512 ms | during the awake rotation |
+A sleepy node with an anchor hands its own message to the anchor while
+the anchor is live, with count 0 ([hop count](#hop-count)), and otherwise to its next hop
+as any node does ([next hop](#next-hop)); one without an anchor sends as a relay does
+([sleepy nodes alone](#sleepy-nodes-alone)). The node that takes a message with count 0 is
+its origin ([routing](#routing)): it takes it only as fresh work, into its
+regular room and only while not every neighbour of its is banned
+([receiving DATA](#receiving-data)), and counts the sender as tried, so the search never
+returns to a node that sleeps. Overload then stops a new message where
+it enters (roadmap D31, D34). Handed to the neighbour nearest its
+destination instead, the first hop was often a faint, far relay: in the
+simulated capacity domain at twice the texting rate of
+[capacity and sizing](#capacity-and-sizing) the relays reached their duty cap and 62 and 36 % of
+texts were delivered, against 90 % with the anchor (roadmap D46). Sent
+with count 1, as a relay's own message is, it could take hop place 1 at
+its first hop, which overload must not give to fresh work.
 
-The leaf declares its mode in ATTACH; the relay sets the preamble of
-DELIVER to match. Long preambles cost little airtime because deliveries
-are rare (≈0.5% of a channel per day at 80 leaves × 10 messages). Polls
-keep the short preamble: a sleeping leaf listens for its poll at the
-time the last one named ([attach and polls](#attach-and-polls)).
+A refused message waits as a relay's own does ([a node's own message](#a-nodes-own-message)).
+One whose hand-over goes unanswered is tried again a fade later, 60 s,
+or when the anchor's ban ends if that is later: a fade lasts about a
+minute (the scenarios' correlation time), and the three attempts of one
+hand-over, a few hundred milliseconds apart, all fall inside it, where
+the ban's ladder would offer it every few seconds to a node whose
+channel is full. A message that finds no live neighbour at all waits
+for one, routed again every 60 s, until its time runs out
+([receiving DATA](#receiving-data)): a carried node loses its neighbours by going dark
+and finds them again. The application is not told ([addresses](#addresses)).
 
-Each ATTACHED also says how many messages the relay holds for the leaf,
-`waiting`, up to 15. A sleeping leaf that answers a poll counting n of
-them stays listening with the ordinary receiver, unless it has them all
-sooner, for as long as the relay can take to bring them: the DELIVERs that may be
-ahead of them, a full send queue of full frames and their ACKs,
-40 × 152.96 ms = 6.12 s ([send queue](#send-queue)), and each of the n with all its attempts
-and retry waits, 3.13 s ([duty cycle cap](#duty-cycle-cap)), so 6.12 s + n × 3.13 s, at most 53 s. While that
-lasts the relay sends those n with the 12-symbol preamble; a message that arrived after the
-poll, or one still queued after the wait, gets the long one. So the
-messages of a sleeping leaf that is in reach reach it at its next poll
-at the latest, at the short preamble's airtime, and the long preamble
-is kept for messages between polls. The leaf core runs only the
-always-listening mode today; the relay side of this is built and
-tested. Default: always listening while on USB or charging, hybrid on
-battery. GPS off after a
-fix, and off after 10 minutes without a fix (searching under jamming draws
-≈27 mA, ≈1.3 days).
+### Sleepy nodes alone
+
+A sleepy node that hears no relay has no anchor, so it does not sleep:
+it listens all the time and acts as a relay. It heartbeats at a relay's
+interval on the rotating channel ([heartbeat](#heartbeat)), with the sleepy type so
+that no other sleepy node takes it as its anchor, sweeps, chooses and
+moves its home channel by the busy estimate, and forwards. Its address
+is its own position, and it owns it. Nodes route through sleepy
+neighbours only where no relay is live ([next hop](#next-hop)), so those of a place
+without relays route among themselves. Kept on one channel, the lowest
+of the quiet ones, sixty of them over a square kilometre with relay
+heartbeats overloaded it: split copies of messages circulated until
+their time ran out, thousands of frames for each text (roadmap D46).
 
 ---
 
@@ -1462,8 +1334,8 @@ fix, and off after 10 minutes without a fix (searching under jamming draws
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
 D5): characteristics for send, receive-notify, node status, position set,
-role set. The app owns identity and end-to-end encryption; the node sees
-opaque payloads. The sender's address `(x, y, leaf_id)` travels inside the
+sleepy set. The app owns identity and end-to-end encryption; the node sees
+opaque payloads. The sender's address, position and node ID, travels inside the
 encrypted payload so that only the recipient learns where the sender is.
 Encryption scheme: open item O1.
 
@@ -1477,7 +1349,7 @@ end-to-end encryption with a fresh nonce per message does that.
 **What the network does not defend against.** Nothing on the air is
 authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
 any position, attract traffic to it and drop it, send packets in another
-relay's name, or replay what it has heard. The app's end-to-end
+node's name, or replay what it has heard. The app's end-to-end
 encryption keeps payloads private and authentic; it does nothing for
 routing. This is the scope stated at the top: infrastructure loss, not an
 adversary on the air.
@@ -1490,13 +1362,12 @@ Common mesh mechanisms left out, and why.
 
 | Omitted | Instead | Why |
 |---|---|---|
-| Neighbour lists in heartbeats and a network-wide node table | 8-byte position-only heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Neighbour lists in heartbeats and a network-wide node table | 9-byte heartbeat of ID, short position and channel; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
 | Sequence numbers in heartbeats | none | they exist to age shared tables; without those they carry nothing |
-| A node ID on every node | relays are identified by position; only leaves carry a 4-byte ID, generated by the app | relays do not move, and an ID would duplicate the address |
 | Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
 | Cooperative position estimation | every relay knows its position from GPS or survey | [position and time](#position-and-time) |
 | Heartbeats on one fixed channel | rotating channel, random 5–15 s interval | [heartbeat](#heartbeat) |
-| Addressing by ID with a lookup | position + leaf ID; the owning relay resolves the ID locally | [forwarding](#forwarding) |
+| Addressing by ID with a lookup | position + node ID; the owner resolves the ID locally | [forwarding](#forwarding) |
 
 ---
 
@@ -1525,12 +1396,10 @@ These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
 cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
 
-The relays' polls of their leaves cost what [attach and polls](#attach-and-polls) lists. At
-the ≈70 leaves of a relay in the capacity domain they take 0.25 % of the
-relay's time, 2.5 % of its budget, and 0.52 % of its channel. Summed over
-the domain, the 20 000 leaves are polled 67 times a second,
-1.49 s of airtime a second, 11.5 % of one channel's time over the 13,
-where every relay hears every other.
+Sleepy nodes' beats cost what [beats](#beats) lists, 212 ms an hour each, and
+relays nothing for them. Summed over the domain's 20 000 sleepy nodes
+they take 1.18 s of airtime a second, 9 % of one channel's time over the
+13, where every relay hears every other.
 
 Common proposals that do not fit:
 
@@ -1557,8 +1426,9 @@ Common proposals that do not fit:
   interference.
 - **Home-relay registration (Mobile IP style):** registration traffic
   grows with users; position addressing needs none.
-- **Leaf heartbeats every 10 s:** collisions happen at the shared relay
-  whatever the leaf's range; 72% of a channel at 400 leaves per relay.
+- **Sleepy nodes heartbeating as relays do, every 10 s:** collisions
+  happen at the shared relay whatever the sleepy node's range; 72% of a
+  channel at 400 sleepy nodes per relay.
 
 ---
 
@@ -1568,57 +1438,41 @@ A proposal, to be finalised in open item O2.
 
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
 channel in heartbeats and type-specific flags elsewhere. Positions are
-7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits ([heartbeat](#heartbeat)). A relay's
-short name is 4 bytes cut from its position ([relay identity](#relay-identity)). The LoRa hardware
-CRC covers everything.
+7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits; the heartbeat
+carries the 4-byte short position ([position and time](#position-and-time)). A node ID is 4
+bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything.
 
 ```
-HEARTBEAT 0x1/0x2: first(1) pos(7)                                          = 8
-          0x1 surveyed position, 0x2 GPS-derived position; aux = home channel
+HEARTBEAT 0x1/0x2/0x8: first(1) id(4) short_pos(4)                         = 9
+          0x1 relay, surveyed position; 0x2 relay, GPS-derived position;
+          0x8 sleepy node; aux = home channel
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
-          the answer to a DATA or DELIVER, taken or refused; sent on
-          the channel in the answered packet's aux; aux bit 0 = refused
-          from = the answering relay's short name, or the leaf's ID
-          to = the answered relay's short name, or the leaf's ID; for a
-          leaf's DATA, which names no sender, 0
-ATTACH    0x4: first(1) leaf_id(4) relay(4)                                 = 9
-          relay = short name of the relay attached to; aux bits 0-2 = leaf
-          receive mode ([leaf receive mode](#leaf-receive-mode)), aux bit 3 = answers a poll; one that attaches
-          is answered with ATTACHED, one that answers a poll is not answered
-DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_leaf(4) hops(1)
+          the answer to a DATA, taken or refused; sent on the channel in
+          the answered packet's aux; aux bit 0 = refused
+          from, to = the IDs of the answering and the answered node
+DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
                time_left(1) payload                                         = 22 + payload
-          dst_hop, src_hop = short names of the receiving and the sending relay;
+          dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
           stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
-DELIVER   0x6: first(1) dst_leaf(4) id(4) payload                           = 9 + payload
-          relay → leaf on the relay's own channel; leaf ACKs on the same channel,
-          to = the short name of the relay it is attached to
-ATTACHED  0x7: first(1) leaf_id(4) next_poll(2)                             = 7
-          relay → leaf on the relay's own channel: the answer to an ATTACH
-          that attaches, or a poll ([attach and polls](#attach-and-polls)); next_poll = the delay from the
-          end of this frame to the leaf's next slot, big-endian, in 10 ms,
-          not a period: each ATTACHED names the next slot afresh; 16 bits
-          reach 655 s, more than the 600 s TTL that bounds the period;
-          aux = messages the relay holds for the leaf ([delivery queue](#delivery-queue), [leaf receive mode](#leaf-receive-mode)), 15
-          for 15 or more
+Types 0x4, 0x6 and 0x7 are unused; nodes reject them like any unknown type.
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.
 ```
 
 The **message ID** is a 32-bit FNV-1a hash of
-`dst_pos || dst_leaf || payload`, computed
+`dst_pos || dst_id || payload`, computed
 by every node that handles the message; it is the same on every hop
-because none of these fields changes. DATA does not carry it; ACK and
-DELIVER do, ACK to name what it acknowledges and DELIVER so the leaf can
-ACK it. The app must keep payloads unique ([phone link](#phone-link)).
+because none of these fields changes. DATA does not carry it; the ACK
+does, to name what it acknowledges. The app must keep payloads unique
+([phone link](#phone-link)).
 
 `dst_hop` lets every node on a channel discard packets not addressed to it
-after 5 bytes. `src_hop` names the relay that sent the packet, and `aux`
+after 5 bytes. `src_hop` names the node that sent the packet, and `aux`
 its home channel, which is where the ACK goes; routing uses them to know
-where a message came from ([routing](#routing)). A leaf sending its own message sets
-`src_hop` to 0 and `hops` to 0. The payload is at most
+where a message came from ([routing](#routing)). The payload is at most
 255 − 22 = 233 bytes; the sender's address is inside it, encrypted
 ([phone link](#phone-link)).
 
@@ -1632,11 +1486,11 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM budget (256 KiB):** neighbour table 64 × 48 B = 3.0 KiB; leaf table
-256 × 56 B = 14.0 KiB; delivery queue 41 × 256 B = 10.3 KiB; message records
+**RAM budget (256 KiB):** neighbour table 64 × 56 B = 3.5 KiB; heard table
+256 × 32 B = 8.0 KiB; delivery queue 41 × 264 B = 10.6 KiB; message records
 ([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 280 B = 80.4 KiB;
 delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
-1 KiB; 166.7 KiB in all, measured. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
+1 KiB; 162.3 KiB in all, measured, for every node, sleepy or not. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
 application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 
@@ -1654,8 +1508,10 @@ the panic message (`bark-fw/memory.x`).
 4. Greedy forwarding + per-hop ACK across three relays in a line, with
    attenuators or distance so A cannot hear C. Demotion when the middle
    relay is powered off.
-5. Leaf attach, polls, delivery, queue. **This is the loop every
-   user feels; prototype it before anything clever.**
+5. Sleepy node: anchor, beats, delivery in the window, queue, and the
+   radio asleep between windows, which the firmware does not do yet.
+   **This is the loop every user feels; prototype it before anything
+   clever.**
 6. BLE GATT + minimal phone app.
 7. Field test: a dozen relays on windowsills across a few blocks.
 
@@ -1673,12 +1529,12 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
 | O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule ([neighbour table](#neighbour-table)) | simulator |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
-| O7 | Sending to an area (address = position + radius, leaf_id = broadcast) | later |
+| O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | resolved: measured 2026-10-15/16 (`power-research-2026-10-15.md`), not adopted (roadmap D40) |
 | O9 | Repository/crate layout | resolved: roadmap D7 |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O13 | Packet for the owner's one-round question to its neighbours: do you hold this `leaf_id`? ([owner](#owner)) | step 5 |
+| O13 | Packet for the owner's one-round question to its neighbours: do you hear this node ID? ([owner](#owner)) | step 5 |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, [retry wait](#retry-wait) |
 | O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | resolved: roadmap D29 rule 1, [receiving DATA](#receiving-data), [send queue](#send-queue) |
 

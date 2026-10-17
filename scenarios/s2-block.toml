@@ -1,10 +1,10 @@
 # S2: a city block (docs/simulator-design.md §6). One square kilometre,
-# ten relays on windowsills, eighty phones indoors with their leaves, ten
-# texts per leaf per day to any other leaf in the block, for one hour.
+# ten relays on windowsills, eighty phones indoors with their sleepy nodes,
+# ten texts per node per day to any other in the block, for one hour.
 #
-# Checks attach and polls (spec "Attach and polls": 0.6 % of a channel at 80
-# leaves per relay, here 8), delivery and the delivery queue (spec "Delivery",
-# "Delivery queue"), and phones that go dark for minutes. Bench twin: spec "Implementation notes"
+# Checks anchors and beats (spec "Relay choice", "Beats"), delivery and the
+# delivery queue (spec "Delivery", "Delivery queue"), and phones that go
+# dark for minutes. Bench twin: spec "Implementation notes"
 # step 5, then the windowsill field test of step 7.
 
 name = "s2-block"

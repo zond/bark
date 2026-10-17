@@ -121,12 +121,11 @@ pub struct Record {
 
 impl Record {
     /// A record for a message first received at `now` with `hops`, from
-    /// `parent` (ID and home channel), or from a leaf or this
-    /// relay's application (`None`): this relay is the origin.
+    /// `parent` (ID and home channel), or from a sleepy node's own message
+    /// or this node's application (`None`): this node is the origin.
     pub fn new(id: MsgId, parent: Option<(NodeId, Channel)>, hops: u8, now: Instant) -> Record {
         let (name, home, flags) = match parent {
             Some((name, home)) => (name, home, HAS_PARENT),
-            // A leaf's packet names no sender (spec "Packet formats").
             None => (NodeId::NONE, NO_HOME, 0),
         };
         Record {
@@ -373,7 +372,10 @@ mod tests {
 
         let origin = Record::new(MsgId(8), None, 0, at(0));
         assert_eq!(origin.parent(), None);
-        assert!(origin.repeats(NodeId::NONE, 0), "a leaf's packet, again");
+        assert!(
+            origin.repeats(NodeId::NONE, 0),
+            "the origin's packet, again"
+        );
     }
 
     fn keep(t: &mut Records, r: Record) -> Option<Record> {

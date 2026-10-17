@@ -1,7 +1,7 @@
 # Core interface
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
-2026-10-15, roadmap D29. Roadmap decision D3. The types are in
+2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -15,10 +15,10 @@ fn next_wakeup(&self) -> Option<Instant>;
 fn accepts_send(&self, now: Instant) -> bool;
 ```
 
-Two roles, two structs: `Relay` and `Leaf`. `Node` is an enum over both for a driver that
-switches role at run time (the firmware). The simulator holds `Vec<Relay>` and `Vec<Leaf>`
-directly, so twenty thousand leaves cost twenty thousand `Leaf`s, not twenty thousand
-relay-sized enums.
+One struct, `Relay`, for every node; `Config::sleepy` makes it a sleepy node
+(spec "Sleepy nodes"). `Relay::sleeps()` says whether the node may sleep its radio between
+the windows after its beats: only a sleepy node with an anchor does. The core itself
+always listens.
 
 The core never blocks, never sleeps, never allocates, and never reads a clock: `now` is an
 argument. Every random choice comes from the `Rng` seeded at construction, so a core's
@@ -77,11 +77,11 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 ## 4. Application
 
-Leaf and relay have the same application interface: the readiness query
+Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send` and `AppCommand::SetPosition`, and the
 one event `AppEvent::Message`.
 
-`AppCommand::Send` originates a message to `(dst_pos, dst_leaf)` with an opaque payload of
+`AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message, not even the first hop's
@@ -90,22 +90,23 @@ sending it or waiting to. The protocol has no end-to-end acknowledgement (spec "
 whether the message arrived is for the app to find out inside its payload. A message the
 node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
-Each role holds one message of its application's at a time, until its first hop takes it.
-A relay accepts a message while it is running, holds none, its send queue takes a full
-frame on top of what it holds (spec "Send queue"), and not every neighbour is banned
-(spec "Receiving DATA"). When only its bucket and bans keep it from accepting, its `next_wakeup()` includes
-the moment both allow it. A relay whose remaining neighbours are all banned once it holds
-the message keeps it and tries again when the first ban
-ends, or later after refusals in a row (spec "The relay's own message"); one for its own leaf that finds the
-delivery queue full waits for a place (spec "Return to parent"). A leaf accepts a message while it
-holds none (spec "Attach and polls").
+A node holds one message of its application's at a time, until its first hop takes it.
+It accepts a message while it is running, holds none, its send queue takes a full
+frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
+for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
+bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
+it. A node whose remaining neighbours are all banned once it holds the message keeps it and
+tries again when the first ban ends, or later after refusals in a row
+(spec "A node's own message"); one for a sleepy node it holds for that finds the delivery
+queue full waits for a place (spec "Return to parent"). A sleepy node's own message waits
+as in spec "A sleepy node's own message".
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
 panic or never offer it.
 
-`AppCommand::SetPosition` updates own position (relay identity changes with it, so the
-driver does this rarely). `AppEvent::Message` delivers a payload to this node's application.
+`AppCommand::SetPosition` updates own position (a relay's address changes with it, and its
+sleepy nodes', so the driver does this rarely; spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
 ## 5. What the driver must simulate or implement
@@ -123,46 +124,43 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-16, checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-17, checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 48 B | 3.0 KiB |
-| Leaves (spec "Attach and polls") | 256 × 56 B | 14.0 KiB |
-| Delivery queue (spec "Delivery queue") | 41 × 256 B | 10.3 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 56 B | 3.5 KiB |
+| Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
+| Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
 | Send queue (spec "Send queue") | (40 + 254) × 280 B | 80.4 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **166.7 KiB** |
+| **All** | | **161.6 KiB** |
 
 The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
 (spec "Send queue", roadmap D31). The records hold the 1561 messages a relay can handle in the
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
-arrives in one delivery TTL for a full leaf table (spec "Delivery queue"). A leaf entry is 56 B: its slots
-and the times it was told and heard, which the sleeping leaf's listening window needs (spec "Attach and polls",
-"Leaf receive mode"). The whole `Relay` is 171 520 B (167.5 KiB, measured 2026-10-16 with roadmap D44):
-the tables and, in under 1 KiB around them, the medium access, the hand-over, the poll in
-progress, its one owed reply and its application's message while it waits. There is no fixed target;
+arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
+166 192 B (162.3 KiB, measured 2026-10-17): the tables and, in under 1 KiB around them, the
+medium access, the hand-over, its one owed reply and its application's message while it
+waits. A sleepy node is the same size. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 66 KiB more than the relay needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 72 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target it takes 174 KiB of stack to build one (measured
-2026-10-15 in the firmware's release build), more than the 97 KiB left beside a
+2026-10-15 in the firmware's release build), more than the 93 KiB left beside a
 relay in static memory. So `Relay::UNSET`, a relay with empty tables, is a constant a driver
 can keep in a static, built at compile time, and `Relay::reset(config, seed)` sets it up in
 place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
 `Relay::new`.
 
-`Leaf` is 776 B, under the 1 KiB target, because the capacity scenario holds twenty
-thousand of them (test in `node/leaf.rs`).
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
@@ -170,37 +168,29 @@ action at a time, and the core never allocates.
 
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
-- Relay short name (spec "Relay identity", roadmap D14): the low 16 bits of the latitude count, then
+- Short position (spec "Position and time", roadmap D14): the low 16 bits of the latitude count, then
   the low 16 bits of the longitude count, big-endian (`ShortName` in `position.rs`). The
   receiver rebuilds the full position from its own as the one candidate within half a
   period (32 768 counts) on each axis; both axes wrap as their wire fields do.
-- Message ID (spec "Packet formats", D15): 32-bit FNV-1a over `dst_pos || dst_leaf || payload`,
+- Node ID (spec "Node identity"): four opaque bytes; the firmware takes the low word of the
+  chip's FICR DEVICEID, the simulator gives node `i` the ID `(i + 1) × 0x9E3779B1`.
+- Message ID (spec "Packet formats", D15): 32-bit FNV-1a over `dst_pos || dst_id || payload`,
   `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`; `Data::msg_id` on a decoded
   DATA).
 - Everything else in spec "Packet formats" is encoded by the codecs in `wire.rs`. Choices made
   there, 2026-10-14:
-  - Multi-byte integers (short names, message IDs) are big-endian; `leaf_id` is four
-    opaque bytes in order. ACK `from` and `to` are each a short name or a leaf ID, four
-    bytes either way, compared whole.
-  - An ATTACH is answered by ATTACHED, not by an ACK (roadmap D39). ATTACHED `next_poll`
-    is big-endian in 10 ms units, the delay to the leaf's next slot; its `aux` is the count
-    of messages waiting for the leaf, 15 for 15 or more.
-  - ACK `to` of a DATA is its `src_hop`, zero from a leaf: DATA does not carry the
-    leaf's ID. A leaf's ACK of a DELIVER has the short name of the relay it is attached
-    to as `to`: DELIVER does not name its sender.
-  - A leaf's own DATA has `src_hop` zero and `hops` zero. A relay sending for its own
-    application sends `hops` 1, as if it had received the message from the
-    application at 0: a receiver takes `hops` 0 for a leaf's packet (spec "Packet sender").
-  - A DELIVER to a duty-cycled or hybrid leaf has a 2000-symbol preamble, the 512 ms
-    of spec "Leaf receive mode" (`RxMode::preamble_symbols`).
+  - Multi-byte integers (short positions, message IDs) are big-endian; a node ID is four
+    opaque bytes in order, compared whole.
+  - ACK `to` of a DATA is its `src_hop`.
+  - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
+    sends `hops` 1, as if it had received the message from the application at 0: a
+    receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
   - Application payload at most 233 bytes, what remains of 255 after the 22-byte DATA
     header; the decoder rejects anything longer.
-  - DELIVER carries at most the same 233-byte payload: it only ever carries a DATA
-    payload onward.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
-    transmission (spec "Receiving DATA").
-  - ATTACH `aux`: receive mode 0 always listening, 1 duty-cycled, 2 hybrid (spec "Leaf receive mode"), in
-    bits 0 to 2; bit 3 set when the ATTACH answers a poll (spec "Attach and polls").
-  - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK,
-    and all of a DELIVER's, are sent as zero and ignored on receipt. A fixed-size packet
-    with trailing bytes is rejected.
+    transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
+    had when it reached the holder.
+  - Types 0x4, 0x6 and 0x7 are unused and rejected.
+  - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK are
+    sent as zero and ignored on receipt. A fixed-size packet with trailing bytes is
+    rejected.

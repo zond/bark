@@ -1,6 +1,6 @@
 //! The node: medium access, forwarding and delivery to the sleepy nodes
-//! it hears. In the one-node-type prototype every node is a `Relay`;
-//! [`Config::sleepy`] changes what it does (`docs/one-node-type-2026-10-16.md`).
+//! it hears. Every node is a `Relay`; [`Config::sleepy`] changes what it
+//! does (spec "Sleepy nodes").
 //!
 //! This file holds the medium access: boot listen and home channel
 //! (spec "Home channel selection"), the busy sweep (spec "Busy estimate"), the heartbeat (spec "Heartbeat"), the neighbour
@@ -89,7 +89,7 @@ enum Job {
 /// How much stronger, in the averaged RSSI of the neighbour table, another
 /// node must be to take a sleepy node from its anchor
 /// (spec "Relay choice"): two standard deviations of the difference of two means of
-/// two heartbeats each under the scenarios' 4 dB fading, as the leaf's.
+/// two heartbeats each under the scenarios' 4 dB fading.
 /// The table's average lets each new frame count half, which varies less
 /// than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more than
 /// two standard deviations here.
@@ -233,7 +233,7 @@ pub struct Relay {
     /// Refusals in a row of `own` by banned neighbours: each doubles the
     /// hold before it is offered again (`budget::hold`).
     own_refusals: u8,
-    /// The application's message for a leaf of this relay, set aside
+    /// The application's message for a sleepy node this relay holds for, set aside
     /// while the delivery queue is full.
     held: Option<forward::Held>,
     /// The send queue may have room for the delivery queue: a hand-over
@@ -468,7 +468,7 @@ impl Relay {
     }
 
     /// The messages this relay holds: queued to send, or waiting for
-    /// their leaf. A driver uses it to tell a message still in the
+    /// their sleepy node. A driver uses it to tell a message still in the
     /// network from one lost without a trace.
     pub fn holding(&self) -> impl Iterator<Item = MsgId> + '_ {
         self.queue
@@ -609,7 +609,7 @@ impl Relay {
         // the first heartbeat heard since, by which time every node in range
         // that is not sleepy has visited this channel (spec "Relay choice"):
         // the anchor of a node back from the dark is heard again in it, and
-        // one that has gone is not (spec "Attach and polls").
+        // one that has gone is not.
         let choosing = current.is_none()
             && self
                 .first_heard
@@ -891,9 +891,8 @@ impl Relay {
         // neighbours to forward to: it takes no traffic (spec "Channel at boot").
         let running = self.stage == Stage::Running;
         let decoded = Packet::decode(bytes);
-        // A relay's DATA says where it listens now (spec "Packet sender"); a leaf's
-        // (`hops` 0) names no relay. Its DATA and ACKs show how well it is
-        // heard (spec "Neighbour table").
+        // A node's DATA says where it listens now (spec "Packet sender"). Its
+        // DATA and ACKs show how well it is heard (spec "Neighbour table").
         match decoded {
             Ok(Packet::Data(d)) => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
@@ -1372,9 +1371,9 @@ mod tests {
     /// (roadmap D29 rule 6): not while it boots, not while it holds one of
     /// the application's, and not while its bucket cannot hold a full
     /// frame on top of what it has queued; then the relay wakes when it
-    /// can. A send offered anyway is ignored. A message for a leaf of this
-    /// relay that finds the delivery queue full is held until it has a
-    /// place.
+    /// can. A send offered anyway is ignored. A message for a sleepy node
+    /// this relay holds for that finds the delivery queue full is held
+    /// until it has a place.
     #[test]
     fn the_application_waits_for_room() {
         use crate::ids::NodeId;
@@ -1396,8 +1395,8 @@ mod tests {
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         assert!(r.accepts_send(now));
 
-        // Messages for a leaf of this relay that is not attached fill the
-        // delivery queue.
+        // Messages for a sleepy node at this relay's position that is not
+        // heard fill the delivery queue.
         let me = r.config.position;
         let send = |r: &mut Relay, k: u8, now| {
             let cmd = AppCommand::Send {
@@ -1443,8 +1442,8 @@ mod tests {
     }
 
     /// With the regular room closed by the bucket, a packet that has come
-    /// two hops takes hop place 2, then 1, whatever the bucket holds; one
-    /// from a leaf, or a third from two hops out, is refused. A place frees
+    /// two hops takes hop place 2, then 1, whatever the bucket holds; a
+    /// sleepy node's own, or a third from two hops out, is refused. A place frees
     /// when its frame leaves (roadmap D31).
     #[test]
     fn a_packet_that_has_travelled_takes_a_hop_place() {
@@ -2008,8 +2007,8 @@ mod tests {
         (r, now, far)
     }
 
-    /// Offer `r` a full DATA to `dst` received with `hops`, from a leaf at
-    /// 0, and send its reply. Returns the place it took and why it was
+    /// Offer `r` a full DATA to `dst` received with `hops`, a sleepy node's
+    /// own at 0, and send its reply. Returns the place it took and why it was
     /// refused, if it was.
     fn offer_data(
         r: &mut Relay,

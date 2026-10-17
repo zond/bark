@@ -149,7 +149,7 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
 const _: () = assert!(REPLIES == 16);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
-/// row before offering it again (spec "The relay's own message", "Attach and polls"): one [`BAN`] after the
+/// row before offering it again (spec "A node's own message"): one [`BAN`] after the
 /// first, doubling after each further one, up to the refill of the whole
 /// bucket, 61 s, the longest anything waits for a bucket. Offered once a
 /// ban, a full frame every 1.56 s would be a 9 % probe on the refuser's

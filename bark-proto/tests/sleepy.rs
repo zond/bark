@@ -1,5 +1,4 @@
-//! Sleepy nodes, in the one-node-type prototype
-//! (`docs/one-node-type-2026-10-16.md`): their home and beat, delivery to
+//! Sleepy nodes (spec "Sleepy nodes"): their home and beat, delivery to
 //! them on the beat, their place in routing where nothing else is, and sleepy
 //! nodes on their own.
 
@@ -262,10 +261,15 @@ fn sleepy_nodes_alone_meet_and_route() {
         "its own position"
     );
     assert!(!h.nodes[1].core.sleeps());
-    let b: Vec<_> = beats(&h, 1).into_iter().filter(|b| b.0 >= at(400)).collect();
+    let b: Vec<_> = beats(&h, 1)
+        .into_iter()
+        .filter(|b| b.0 >= at(400))
+        .collect();
     let c = Config::default();
     assert!(b.iter().all(|&(_, _, sleepy)| sleepy));
-    assert!(b.windows(2).all(|w| w[1].0.since(w[0].0) <= c.heartbeat_max + secs(1)));
+    assert!(b
+        .windows(2)
+        .all(|w| w[1].0.since(w[0].0) <= c.heartbeat_max + secs(1)));
     let channels: std::collections::HashSet<_> = b.iter().map(|&(_, ch, _)| ch).collect();
     assert_eq!(channels.len(), bark_proto::radio::CHANNELS as usize);
     let id = send(&mut h, 0, 2, b"among ourselves");
