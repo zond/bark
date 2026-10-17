@@ -285,7 +285,9 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
         node: 0,
         reason: DropReason::NoRoute,
     };
-    assert_eq!(after.len() as u64, 20 - skipped, "seed {seed}");
+    // Texts skipped while LA held one fall before the removal or after it.
+    let after_n = after.len() as u64;
+    assert!(after_n <= 20 && after_n + skipped >= 20, "seed {seed}");
     assert!(
         after.iter().all(|(_, f)| *f == a_no_route),
         "seed {seed}: {after:?}"
@@ -303,12 +305,12 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     );
     assert_eq!(
         (off.originated, off.delivered, off.unaccounted),
-        (20 - skipped, 0, 0),
+        (after_n, 0, 0),
         "seed {seed}"
     );
     assert_eq!(
         off.lost_at.get("relay 0 (A): dropped NoRoute"),
-        Some(&(20 - skipped))
+        Some(&after_n)
     );
     assert_eq!(off.lost_at.len(), 1, "seed {seed}");
     // B was removed at 20 minutes and its relay core stopped.
@@ -474,10 +476,20 @@ fn corridor_carries_crossing_flows() {
 /// (`sleepy_listens`): on the beat a node can take only what its holder's
 /// delivery queue held at the beat, 41 messages, against the 150 a beat
 /// period of this flow brings (`docs/one-node-type-2026-10-16.md`).
+///
+/// The flows start at 800 s, once every sleepy node has its anchor under
+/// either way of choosing it, by 727 s in the runs measured: when a ring at its cap
+/// starts its flows decides on which seeds it jams later on, and a node
+/// that anchors sooner starts them sooner (`docs/sleepy-next-hop-2026-10-17.md`).
 #[test]
 fn ring_carries_flows_that_wait_for_each_other() {
     let mut sc = scenario("ring.toml");
     sc.protocol.sleepy_listens = Some(true);
+    for t in &mut sc.traffic {
+        if let TrafficSpec::Periodic { start_s, .. } = t {
+            *start_s = Some(800.0);
+        }
+    }
     for seed in 1..=3 {
         let mut sc = sc.clone();
         sc.seed = seed;

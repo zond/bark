@@ -211,8 +211,9 @@ Listen on a random channel for a worst-case rotation, 195 s
 sweeps and heartbeats. Then set home to `argmin busy[c]`. Channels whose
 busy value is within 0.01 of the lowest count as tied, and the choice
 among them is random, so that nodes that hear nothing do not all pick
-channel 0; a sleepy node moves to its anchor's channel once it has one
-([relay choice](#relay-choice)). A config override exists for bench work.
+channel 0. A sleepy node ends the listen at the first relay it hears, which
+it takes as its anchor, and moves to the anchor's channel; one that hears
+none homes as a relay does ([relay choice](#relay-choice), [sleepy nodes alone](#sleepy-nodes-alone)). A config override exists for bench work.
 
 ### Channel moves
 
@@ -1213,12 +1214,19 @@ rotation (≈130 s, at most 13 × 15 s = 195 s; [heartbeat](#heartbeat)), and ke
 its neighbour table with the averaged RSSI of what it heard from it
 ([neighbour table](#neighbour-table)).
 
-**First choice.** A sleepy node takes as its anchor the strongest relay
-it has heard a worst-case rotation, 195 s, after it first heard one; by
-then every relay in range has visited its channel. A node whose last
-heartbeat had the anchorless bit is no relay here, and does not start the
-rotation: it is a sleepy node awake for want of an anchor, and would
-sleep as soon as it found one ([sleepy nodes alone](#sleepy-nodes-alone)). It listens on the
+**First choice.** A sleepy node takes as its anchor the first relay it
+hears, at once: any node that is neither sleepy nor anchorless can hold
+its messages, so a sleepy node is anchorless only while it hears none.
+A node whose last heartbeat had the anchorless bit is no relay here: it
+is a sleepy node awake for want of an anchor, and would sleep as soon as
+it found one ([sleepy nodes alone](#sleepy-nodes-alone)). It then stays awake a worst-case
+rotation, 195 s, by when every relay in range has visited its channel,
+and takes the strongest it heard, without the margin below: few can
+have its address yet, so the move costs little. Asleep, it would
+hear the others only by chance, and the first relay heard would stay its
+anchor however faint. Moving to each stronger relay as it is heard
+instead chases the fading: one heartbeat of a relay no better is above
+the anchor's average half the time (roadmap D49). It listens on the
 anchor's home channel, and its address is the anchor's position and its
 own ID ([addresses](#addresses)). It follows the anchor to a new home channel at the
 anchor's next heartbeat it hears ([channel moves](#channel-moves)).
@@ -1252,8 +1260,8 @@ heartbeat names the anchor's home, and the next on the new channel comes
 when the rotation brings it there.
 
 **Checking the anchor.** Two rotations without the anchor's heartbeat
-mean it is gone: the node listens a worst-case rotation, 195 s, as at its
-first choice. It keeps the anchor as soon as it hears it, else takes the
+mean it is gone: the node listens a worst-case rotation, 195 s, by when
+every relay in range has visited its channel. It keeps the anchor as soon as it hears it, else takes the
 strongest relay it heard. One that heard nothing at all is out of reach,
 in a pocket, a basement or the metro, not without its anchor: it keeps
 the anchor, watches for it as before, and checks again only once it has

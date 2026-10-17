@@ -28,15 +28,13 @@
 //!
 //! # A sleepy node's home and beat (spec "Sleepy nodes")
 //!
-//! A worst-case rotation after it first hears a node that is not sleepy,
-//! by when every such node in range has visited its channel, it takes the
-//! strongest of those as its anchor and listens on the anchor's home
-//! channel; its address is the anchor's position and its own ID (spec
-//! "Addresses"). It moves to another only when that one has been heard
-//! over two heartbeats and is [`SWITCH_MARGIN_DB`] stronger, and once its
-//! anchor has left the neighbour table, to the strongest heard a rotation
-//! after it first hears any again, unless its anchor is heard meanwhile
-//! (spec "Relay choice"): back from the dark, it keeps its anchor. It
+//! It takes as its anchor the first node it hears that is neither sleepy
+//! nor anchorless, at once, and listens on the anchor's home channel; its
+//! address is the anchor's position and its own ID (spec "Addresses").
+//! It stays awake for a worst-case rotation after that and then takes the
+//! strongest node it heard, without a margin; after that it moves only to
+//! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
+//! "Relay choice"). Back from the dark, it keeps its anchor. It
 //! follows its anchor to a new home channel at the anchor's next heartbeat
 //! it hears, and does not move by the busy estimate.
 //!
@@ -272,9 +270,6 @@ pub struct Relay {
     heard: Heard,
     /// A sleepy node's anchor, kept while it hears no better one.
     anchor: Option<Anchor>,
-    /// When a sleepy node without a live anchor first heard a node that is
-    /// not sleepy.
-    first_heard: Option<Instant>,
     delivery: DeliveryQueue,
     delivered: Delivered,
     /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
@@ -302,6 +297,10 @@ pub struct Relay {
     /// Until when a sleepy node listens after its beat or a message it
     /// took (spec "Delivery").
     awake_until: Instant,
+    /// Until when a sleepy node that has just taken its first anchor
+    /// listens, a worst-case rotation, to take the strongest node it heard
+    /// at its end (spec "Relay choice").
+    choosing: Option<Instant>,
     /// The owed reply takes a DATA for this node: once it is sent, the
     /// node listens one hand-over for the next.
     renew: bool,
@@ -374,7 +373,6 @@ impl Relay {
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             anchor: None,
-            first_heard: None,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -386,6 +384,7 @@ impl Relay {
             feed_at: None,
             asleep: None,
             awake_until: Instant::ZERO,
+            choosing: None,
             renew: false,
             rescan: None,
             window_ends: None,
@@ -443,7 +442,6 @@ impl Relay {
             replies,
             heard,
             anchor,
-            first_heard,
             delivery,
             delivered,
             delivery_retry_at,
@@ -455,6 +453,7 @@ impl Relay {
             feed_at,
             asleep,
             awake_until,
+            choosing,
             renew,
             rescan,
             window_ends,
@@ -498,7 +497,6 @@ impl Relay {
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *anchor = None;
-        *first_heard = None;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -510,6 +508,7 @@ impl Relay {
         *feed_at = None;
         *asleep = None;
         *awake_until = Instant::ZERO;
+        *choosing = None;
         *renew = false;
         *rescan = None;
         *window_ends = None;
@@ -567,6 +566,7 @@ impl Relay {
             && !self.config.sleepy_listens
             && self.stage == Stage::Running
             && now >= self.awake_until
+            && self.choosing.is_none()
             && self.radio.idle()
             && self.handover.idle()
             && !self.replies.pending()
@@ -675,7 +675,7 @@ impl Relay {
         let watch = self
             .watch()
             .map_or([None, None], |(from, to)| [Some(from), Some(to)]);
-        self.window_ends = [Some(self.awake_until), watch[0], watch[1]]
+        self.window_ends = [Some(self.awake_until), self.choosing, watch[0], watch[1]]
             .into_iter()
             .flatten()
             .filter(|&t| self.sleeps() && t > now)
@@ -857,18 +857,9 @@ impl Relay {
             .anchor
             .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
             .map(|(_, n)| *n);
-        if current.is_some() {
-            self.first_heard = None;
-        }
-        // Without a live anchor, a choice waits a worst-case rotation from
-        // the first heartbeat heard since, by which time every node in range
-        // that is not sleepy has visited this channel (spec "Relay choice"):
-        // the anchor of a node back from the dark is heard again in it, and
-        // one that has gone is not.
-        let choosing = current.is_none()
-            && self
-                .first_heard
-                .is_none_or(|t| now < t + self.config.boot_listen);
+        // Any node that is not sleepy or anchorless can hold a sleepy node's
+        // messages: without an anchor it takes the first it hears
+        // (spec "Relay choice").
         let strongest = |except: Option<NodeId>, beats: u8| {
             self.neighbours
                 .live(now)
@@ -877,9 +868,16 @@ impl Relay {
                 .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
                 .copied()
         };
+        let first = self.anchor.is_none();
         let to = match current {
-            None if choosing => None,
             None => strongest(None, 0),
+            // A rotation after its first anchor, by when every node in range
+            // has visited its channel, and while few can have its address:
+            // the strongest heard, without the margin.
+            Some(a) if self.choosing.is_some_and(|t| now >= t) => {
+                self.choosing = None;
+                strongest(Some(a.id), 0).filter(|b| b.rssi > a.rssi)
+            }
             Some(a) => strongest(Some(a.id), BEATS).filter(|b| b.rssi >= a.rssi + SWITCH_MARGIN_DB),
         };
         if let (Some(a), None) = (current, to) {
@@ -895,6 +893,9 @@ impl Relay {
         let Some(to) = to else {
             return false;
         };
+        if first && !self.config.sleepy_listens {
+            self.choosing = Some(now + self.config.boot_listen);
+        }
         self.take_anchor(&to, now, emit);
         true
     }
@@ -982,6 +983,9 @@ impl Relay {
             if now >= since + self.config.boot_listen {
                 self.anchor_checked(since, now, emit);
             }
+        }
+        if self.choosing.is_some_and(|t| now >= t) {
+            self.reconsider_anchor(now, emit);
         }
         self.watch_anchor(now, emit);
         if !self.sleeps() && self.mover.move_at.is_some_and(|t| now >= t) {
@@ -1311,7 +1315,11 @@ impl Relay {
             self.skipped &= !(1 << slot);
         }
         if !hb.anchorless {
-            self.first_heard.get_or_insert(now);
+            if self.config.sleepy && self.booting() {
+                // An anchor ends the boot listen, which chooses a home
+                // for a node that hears none (spec "Channel at boot").
+                self.finish_boot(now, emit);
+            }
             self.reconsider_anchor(now, emit);
             if self.anchor.is_some_and(|a| a.id == hb.id) {
                 self.anchor_heard(started);
@@ -1435,6 +1443,9 @@ impl Core for Relay {
         }
         if let Some(t) = self.rescan {
             at(t + self.config.boot_listen);
+        }
+        if let Some(t) = self.choosing {
+            at(t);
         }
         if let Some(t) = self.window_ends {
             at(t);

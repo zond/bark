@@ -143,6 +143,11 @@ impl<C: Core> Harness<C> {
         self.links.insert((b, a));
     }
 
+    /// Frames from `from` reach `to`, and not the other way.
+    pub fn link_one_way(&mut self, from: usize, to: usize) {
+        self.links.insert((from, to));
+    }
+
     /// Frames between `a` and `b` arrive at `dbm`, both ways.
     pub fn set_rssi(&mut self, a: usize, b: usize, dbm: i16) {
         self.rssi.insert((a, b), dbm);
