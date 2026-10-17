@@ -7,10 +7,10 @@
 //! radio discipline of `node/mac.rs` and the per-hop transfer of
 //! `node/transfer.rs`.
 
-use crate::event::{Action, Event};
+use crate::event::{Action, Event, MAX_FRAME};
 use crate::ids::NodeId;
 use crate::position::Position;
-use crate::radio::{Channel, CHANNELS};
+use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::time::{Duration, Instant};
 
 mod mac;
@@ -128,6 +128,18 @@ pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
     let min = config.heartbeat_min.as_micros();
     let span = config.heartbeat_max.as_micros().saturating_sub(min);
     Duration::from_micros(min + span * id.0[3] as u64 / INTERVALS)
+}
+
+/// The longest a heartbeat waits behind its slot: a hand-over attempt it
+/// may find under way, a full frame and the ACK timeout, 238.56 ms, and two
+/// listen-before-talk backoffs before its last check, 400 ms (spec
+/// "Heartbeat", "Hand-over"): 638.56 ms.
+pub const fn heartbeat_lag(config: &Config) -> Duration {
+    let attempt = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        + config.ack_timeout.as_micros();
+    let backoffs =
+        config.lbt_backoff_max.as_micros() * config.lbt_attempts.saturating_sub(1) as u64;
+    Duration::from_micros(attempt + backoffs)
 }
 
 /// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.

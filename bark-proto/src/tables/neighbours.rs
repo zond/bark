@@ -77,15 +77,13 @@
 //!
 //! A sleepy node's beat keeps it out of the table (`node/relay.rs`): it
 //! sleeps, and is never a next hop. A sleepy node without an anchor is
-//! awake and heartbeats as a relay, with the anchorless bit; it is no
-//! anchor, and a next hop only where no other kind is live
-//! (`relay/forward.rs`). It holds a slot only while no other kind wants
-//! one: at boot every sleepy node in reach is anchorless until
-//! it has heard the relays for a rotation, and would otherwise fill the
-//! table and keep out the relays it is waiting to hear. A newcomer that is
-//! not anchorless takes the place of the least recently heard anchorless
-//! entry before any other, and an anchorless newcomer takes only a free
-//! slot or, by the rule above, a demoted or stale anchorless entry's.
+//! awake and heartbeats as a relay, with the anchorless bit: no anchor,
+//! and otherwise an entry like any other, except that it expires a
+//! worst-case rotation and a heartbeat's lag after its last heartbeat. It
+//! heartbeats on every channel once a rotation, so a rotation without its
+//! heartbeat here means that it has found an anchor and sleeps, more
+//! likely than a lost heartbeat; one live but expired is back at its
+//! next heartbeat.
 //!
 //! # The anchor of a node that sleeps
 //!
@@ -96,7 +94,7 @@
 
 use crate::geo::{LocalPlane, Point};
 use crate::ids::NodeId;
-use crate::node::Config;
+use crate::node::{heartbeat_lag, Config};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::tables::budget::hold;
@@ -157,6 +155,8 @@ pub struct NeighbourParams {
     pub expire_after: Duration,
     /// Age at which an entry may be evicted for a newcomer.
     pub stale_after: Duration,
+    /// Age at which an anchorless entry expires.
+    pub anchorless_expire_after: Duration,
 }
 
 impl NeighbourParams {
@@ -170,6 +170,9 @@ impl NeighbourParams {
             demotion: mean_rotation.mul(c.demotion_rotations as u64),
             expire_after: mean_rotation.mul(c.neighbour_expiry_rotations as u64),
             stale_after: c.heartbeat_max.mul(CHANNELS as u64),
+            anchorless_expire_after: Duration::from_micros(
+                c.heartbeat_max.as_micros() * CHANNELS as u64 + heartbeat_lag(c).as_micros(),
+            ),
         }
     }
 }
@@ -288,7 +291,15 @@ impl Neighbours {
 
     /// Whether `n` has expired at `now`.
     pub fn is_expired(&self, n: &Neighbour, now: Instant) -> bool {
-        Some(n.id) != self.pinned && now.since(n.last_heard) >= self.params.expire_after
+        Some(n.id) != self.pinned && now.since(n.last_heard) >= self.expire_after(n)
+    }
+
+    fn expire_after(&self, n: &Neighbour) -> Duration {
+        if n.anchorless {
+            self.params.anchorless_expire_after
+        } else {
+            self.params.expire_after
+        }
     }
 
     /// Keep the entry of `id`, if any, whatever its age; `None` keeps none.
@@ -352,7 +363,7 @@ impl Neighbours {
             self.slots[i] = Some(new);
             return Heard::Added(i);
         }
-        match victim(self, hb.anchorless, now) {
+        match victim(self, now) {
             Some(i) => match self.slots[i].replace(new) {
                 Some(old) => Heard::Replaced(i, old),
                 None => Heard::Added(i),
@@ -457,7 +468,7 @@ impl Neighbours {
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()
             .filter(|n| Some(n.id) != self.pinned)
-            .map(|n| n.last_heard + self.params.expire_after)
+            .map(|n| n.last_heard + self.expire_after(n))
             .min()
     }
 
@@ -479,28 +490,21 @@ fn average(avg: f32, dbm: i16) -> f32 {
 }
 
 /// The eviction policy (roadmap D12): which slot of a full table a
-/// newcomer, `anchorless` or not, takes at `now`, if any. See the module
-/// documentation.
-pub fn victim(table: &Neighbours, anchorless: bool, now: Instant) -> Option<usize> {
-    let oldest = |anchorless: bool, demoted: Option<bool>| {
+/// newcomer takes at `now`, if any. See the module documentation.
+pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
+    let oldest = |demoted: bool| {
         table
             .slots()
-            .filter(|(_, n)| n.anchorless == anchorless && Some(n.id) != table.pinned)
-            .filter(|(_, n)| demoted.is_none_or(|d| table.is_demoted(n, now) == d))
+            .filter(|(_, n)| Some(n.id) != table.pinned && table.is_demoted(n, now) == demoted)
             .min_by_key(|(_, n)| n.last_heard)
             .map(|(i, _)| i)
     };
-    if !anchorless {
-        if let Some(i) = oldest(true, None) {
-            return Some(i);
-        }
-    }
     let stale = |i: &usize| {
         table
             .slot(*i)
             .is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after)
     };
-    oldest(anchorless, Some(true)).or_else(|| oldest(anchorless, Some(false)).filter(stale))
+    oldest(true).or_else(|| oldest(false).filter(stale))
 }
 
 #[cfg(test)]
@@ -589,38 +593,23 @@ mod tests {
         assert_eq!(p.stale_after, Duration::from_secs(195));
     }
 
-    /// An anchorless entry lives as long as any other; it holds a slot
-    /// only while no other kind wants one, and takes only a free or a
-    /// stale anchorless entry's slot.
+    /// An anchorless entry expires a worst-case rotation and a heartbeat's
+    /// lag after its last heartbeat, 195.64 s.
     #[test]
-    fn anchorless_entries_give_way() {
+    fn anchorless_entries_expire_after_a_rotation() {
         let mut t = Neighbours::new(params());
-        assert_eq!(hear_anchorless(&mut t, 0, -80, at(0)), Heard::Added(0));
-        assert!(t.get(id(0)).unwrap().anchorless);
-        assert_eq!(t.live(at(389)).count(), 1);
-        assert_eq!(t.live(at(390)).count(), 0);
-        for i in 1..NEIGHBOURS as i32 {
-            hear(&mut t, i, 0, -80, at(10));
-        }
         assert_eq!(
-            hear_anchorless(&mut t, 100, -80, at(20)),
-            Heard::Rejected,
-            "not in place of a node that is not anchorless"
+            params().anchorless_expire_after,
+            Duration::from_micros(195_638_560)
         );
-        match hear(&mut t, 101, 0, -80, at(20)) {
-            Heard::Replaced(0, old) => assert!(old.anchorless),
-            other => panic!("{other:?}"),
-        }
-        // Anchorless entries make way for each other only once stale.
-        let mut t = Neighbours::new(params());
-        for i in 0..NEIGHBOURS as i32 {
-            hear_anchorless(&mut t, i, -80, at(i as u64));
-        }
-        assert_eq!(hear_anchorless(&mut t, 100, -80, at(194)), Heard::Rejected);
-        let first = *t.get(id(0)).unwrap();
+        hear_anchorless(&mut t, 0, -80, at(0));
+        hear(&mut t, 1, 0, -80, at(0));
+        assert!(t.get(id(0)).unwrap().anchorless);
+        assert_eq!(t.live(at(195)).count(), 2);
+        assert_eq!(t.live(at(196)).count(), 1);
         assert_eq!(
-            hear_anchorless(&mut t, 100, -80, at(195)),
-            Heard::Replaced(0, first)
+            t.next_expiry(),
+            Some(Instant::ZERO + params().anchorless_expire_after)
         );
     }
 

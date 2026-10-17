@@ -69,12 +69,12 @@
 mod delivery;
 mod forward;
 
-use crate::event::{Action, AppCommand, Event, Frame, Trace, MAX_FRAME};
+use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer};
-use crate::node::{heartbeat_interval, Config, Core, Rng};
+use crate::node::{heartbeat_interval, heartbeat_lag, Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::Budget;
@@ -117,18 +117,6 @@ pub const CLOCK_DRIFT_PPM: u64 = 50;
 /// over `d`.
 fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
-}
-
-/// The longest a heartbeat waits behind its slot: a hand-over attempt it
-/// may find under way, a full frame and the ACK timeout, 238.56 ms, and two
-/// listen-before-talk backoffs before its last check, 400 ms (spec
-/// "Heartbeat", "Hand-over"): 638.56 ms.
-fn heartbeat_lag(config: &Config) -> Duration {
-    let attempt = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + config.ack_timeout;
-    let backoffs = config
-        .lbt_backoff_max
-        .mul(config.lbt_attempts.saturating_sub(1) as u64);
-    attempt + backoffs
 }
 
 /// The path-loss exponent of the scenarios, fitted to the ranges of spec

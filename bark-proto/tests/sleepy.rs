@@ -334,50 +334,6 @@ fn sleepy_nodes_alone_meet_and_route() {
     assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, 2, id).is_some()));
 }
 
-/// An anchorless neighbour is a next hop only where no other is live: O
-/// hands a message for D to A although S, which hears no relay and so is
-/// anchorless, is nearer D (spec "Next hop"). O hears S; S hears nobody.
-///
-/// ```text
-///   O ---- A ---- D
-///    <-- S
-/// ```
-#[test]
-fn an_anchorless_neighbour_is_the_last_resort() {
-    let (o, a, s, d) = (0, 1, 2, 3);
-    let one = Config {
-        home_override: bark_proto::Channel::new(4),
-        ..Config::default()
-    };
-    let mut h = Harness::new(vec![
-        node_with(0.0, false, 25, one),
-        node_with(400.0, false, 26, one),
-        node(500.0, true, 27),
-        node_with(800.0, false, 28, one),
-    ]);
-    for (x, y) in [(o, a), (a, d)] {
-        h.link(x, y);
-    }
-    h.link_one_way(s, o);
-    let sid = h.nodes[s].core.id();
-    let heard_s = |h: &Harness<Relay>| {
-        h.nodes[o]
-            .core
-            .neighbours()
-            .any(|n| n.id == sid && n.anchorless)
-            && h.nodes[o].core.neighbours().count() >= 2
-    };
-    assert!(h.run_until(at(1000), heard_s));
-    assert!(h.nodes[s].core.anchor().is_none());
-    let id = send(&mut h, o, d, b"via A");
-    assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, d, id).is_some()));
-    let first = h.nodes[o].traces.iter().find_map(|(_, t)| match t {
-        Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some(*to),
-        _ => None,
-    });
-    assert_eq!(first, Some(h.nodes[a].core.id()));
-}
-
 /// An anchorless node is no anchor: S1 hears only S2, which is awake and
 /// acts as a relay until it finds R, and S1 never takes it, since S2 would
 /// sleep as soon as it had an anchor of its own (spec "Relay choice").

@@ -3,8 +3,7 @@
 //!
 //! A node owns a message addressed to its own ID wherever it is (spec
 //! "Owner"). A sleepy node is never a next hop: it is not in the
-//! neighbour table (spec "Neighbour table", "Next hop"). An anchorless
-//! one is a next hop only where no other is live.
+//! neighbour table (spec "Neighbour table", "Next hop").
 //! A message that reaches the owner of its position and is for another
 //! node waits in the delivery queue until that node, a sleepy one this
 //! node hears, listens (`relay/delivery.rs`); it goes to it as DATA in the
@@ -315,8 +314,7 @@ impl Relay {
     /// live neighbour nearest `dst` that is not in the tried set, not set
     /// aside and not banned, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
-    /// no other at all (roadmap D25, D29, D38). An anchorless neighbour is
-    /// a candidate only where no other is live ([`Self::anchorless_route`]).
+    /// no other at all (roadmap D25, D29, D38).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
@@ -325,13 +323,11 @@ impl Relay {
         let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
-        let anchorless_route = self.anchorless_route(now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
-                n.anchorless == anchorless_route
-                    && first.is_none_or(|a| n.id == a)
+                first.is_none_or(|a| n.id == a)
                     && !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
@@ -346,16 +342,6 @@ impl Relay {
                     .then(a.id.0.cmp(&b.id.0))
             })
             .map(|(slot, n)| (slot, *n))
-    }
-
-    /// Whether this node routes through anchorless neighbours: only where
-    /// no other is live (spec "Next hop"). An anchorless node is a sleepy
-    /// node that sleeps once it hears a relay, and its entry outlives that
-    /// by up to three rotations wherever its beat is not heard; routed
-    /// through like any other, it drew four times the DATA a sleeping
-    /// node gets otherwise (`docs/sleepy-next-hop-2026-10-17.md`).
-    fn anchorless_route(&self, now: Instant) -> bool {
-        !self.neighbours.live(now).any(|(_, n)| !n.anchorless)
     }
 
     /// Where a sleepy node hands its own message: its anchor while that is
@@ -896,19 +882,12 @@ impl Relay {
     /// at its origin meanwhile, where its application sees it, rather than
     /// here for a ban, to be refused again (roadmap D34). With no live
     /// neighbour at all it is no ban: the search ends as before.
-    /// Anchorless neighbours count only where there are no others
-    /// ([`Self::next_hop`]).
     fn bans_end(&self, now: Instant) -> Option<Instant> {
         if let Some((_, a)) = self.first_hop(now).and_then(|a| self.neighbours.by_id(a)) {
             return self.neighbours.is_banned(a, now).then_some(a.banned_until);
         }
         let mut until: Option<Instant> = None;
-        let anchorless_route = self.anchorless_route(now);
-        for (_, n) in self
-            .neighbours
-            .live(now)
-            .filter(|(_, n)| n.anchorless == anchorless_route)
-        {
+        for (_, n) in self.neighbours.live(now) {
             if !self.neighbours.is_banned(n, now) {
                 return None;
             }

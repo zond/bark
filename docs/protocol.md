@@ -378,7 +378,14 @@ Per node, up to 64 entries, by node ID:
 | last_beat | when its last heartbeat heard started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 - **Expire** after 3 rotations (390 s) without a heartbeat or an ACK
-  from it ([the ACK](#the-ack)). A sleeping node keeps its
+  from it ([the ACK](#the-ack)). An anchorless entry ([sleepy nodes alone](#sleepy-nodes-alone)) expires after one
+  worst-case rotation and a heartbeat's lag, 195 + 0.64 s ([heartbeat](#heartbeat)): the
+  node heartbeats on every channel once a rotation, so a rotation without
+  it means it has found an anchor and sleeps more likely than that its
+  heartbeat was lost, one time in ten at a listening receiver; one
+  expired while awake is back at its next heartbeat. Kept three
+  rotations, its entry drew half again as much of the DATA sent to sleeping
+  nodes (roadmap D49). A sleeping node keeps its
   anchor's entry whatever its age, and evicts it for no newcomer
   ([relay choice](#relay-choice)).
 - **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
@@ -430,13 +437,7 @@ Per node, up to 64 entries, by node ID:
   equally arbitrary 64, keeps their failure counts, and replaces exactly
   the entries that are failing or silent. Choosing a set spread around
   the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4). An anchorless newcomer ([sleepy nodes alone](#sleepy-nodes-alone)) takes only
-  a free entry or a stale or demoted anchorless one, and any other
-  newcomer replaces the least recently heard anchorless entry before
-  applying the rule above: at boot every sleepy node in reach is
-  anchorless until it has heard the relays for a rotation, and without
-  this they fill the table and keep out the relays they wait to hear
-  (roadmap D49).
+  simulator (open item O4).
 
 A heartbeat with the sleepy bit, a beat ([beats](#beats)), fills the heard table,
 which holders use to deliver ([heard table](#heard-table)), and not the neighbour table:
@@ -815,14 +816,8 @@ last heartbeat had the sleepy bit is never a candidate: it is not in
 the table ([neighbour table](#neighbour-table)). A message that would have gone to it waits
 in place or goes another way, as for any neighbour that cannot take it
 now ([overload waits](#overload-waits)): a hop through it could go only in its window after a
-beat, once a beat period. Anchorless neighbours ([sleepy nodes alone](#sleepy-nodes-alone)) are
-candidates only where no other neighbour is live, and then only they.
-An anchorless node sleeps as soon as it has heard a relay for a
-rotation, and its entry outlives that by up to three rotations wherever
-its first beat is not heard; routed through like any other, such entries
-drew four times the DATA that went to sleeping nodes otherwise. Trying
-them after every other instead measured the same in D46, and this rule
-needs no rule for a neighbour that is only banned (roadmap D46, D49). The first hop of a sleepy node's own message is its anchor while
+beat, once a beat period (roadmap D49). An anchorless neighbour is a
+candidate like any other. The first hop of a sleepy node's own message is its anchor while
 the anchor is live ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
@@ -1441,11 +1436,11 @@ with the anchorless bit set, so that no sleepy node takes it as its
 anchor ([relay choice](#relay-choice), [packet formats](#packet-formats)). It sweeps, chooses and
 moves its home channel by the busy estimate, and forwards. Its address
 is its own position, and it owns it. Those of a place without relays
-route among themselves; elsewhere others route through it only where
-no other neighbour is live ([next hop](#next-hop)). Once it has an anchor it sleeps and beats with
+route among themselves, and others route through it as through any
+relay ([next hop](#next-hop)). Once it has an anchor it sleeps and beats with
 the sleepy bit: the nodes that hear a beat drop it from their neighbour
-tables ([neighbour table](#neighbour-table)), and the others when its entry expires, three
-rotations after its last heartbeat. Kept on one channel, the lowest
+tables ([neighbour table](#neighbour-table)), and the others when its entry expires, a
+rotation after its last heartbeat. Kept on one channel, the lowest
 of the quiet ones, sixty of them over a square kilometre with relay
 heartbeats overloaded it: split copies of messages circulated until
 their time ran out, thousands of frames for each text (roadmap D46).
