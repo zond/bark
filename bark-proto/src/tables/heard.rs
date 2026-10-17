@@ -43,12 +43,12 @@ pub struct HeardParams {
     /// How long an entry is kept after its last beat: two beat periods.
     pub keep: Duration,
     /// How long a sleepy node listens after its beat, and so how long a
-    /// holder may start sending to it then: the time its holder needs to
-    /// bring it one message that goes first (spec "Delivery"). That is the
-    /// attempt the holder may have under way, a full frame and the ACK
-    /// timeout, 238.56 ms, and the message's hand-over with all its
-    /// attempts and retry waits (spec "Hand-over", "Retry wait"),
-    /// 3133.44 ms: 3372.00 ms.
+    /// holder may start sending to it then: long enough for the first
+    /// attempt of a message that goes first (spec "Delivery"). That is
+    /// the attempt the holder may have under way, a full frame and the ACK
+    /// timeout, and the message's first attempt, a full frame and the ACK
+    /// timeout's allowance for the turn-around and listen-before-talk:
+    /// 2 × (138.56 + 100) = 477.12 ms.
     pub awake: Duration,
     /// How long it listens after it has answered a message that says more
     /// follow: one hand-over with all its attempts and retry waits,
@@ -67,7 +67,7 @@ impl HeardParams {
             + config.ack_timeout.as_micros();
         HeardParams {
             keep: beat_period(config.delivery_ttl).mul(2),
-            awake: Duration::from_micros(under_way + span),
+            awake: Duration::from_micros(2 * under_way),
             more: Duration::from_micros(span),
         }
     }
@@ -252,8 +252,8 @@ mod tests {
             Duration::from_secs(300)
         );
         assert_eq!(p.keep, Duration::from_secs(600));
-        // 138.56 + 100 ms, and 3 × 738.56 ms + 305.92 + 611.84 ms.
-        assert_eq!(p.awake, Duration::from_micros(238_560 + 3_133_440));
+        // Twice 138.56 + 100 ms; 3 × 738.56 ms + 305.92 + 611.84 ms.
+        assert_eq!(p.awake, Duration::from_micros(2 * 238_560));
         assert_eq!(p.more, Duration::from_micros(3_133_440));
     }
 

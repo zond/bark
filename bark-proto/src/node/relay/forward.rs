@@ -1224,9 +1224,6 @@ impl Relay {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
                 if self.config.sleepy && d.hops == 0 {
-                    if self.anchor.is_some_and(|a| a.id == d.dst_hop) {
-                        self.check_anchor(now, emit);
-                    }
                     // A sleepy node's own message tries its anchor again a
                     // fade later (spec "A sleepy node's own message"):
                     // the ban's ladder would offer it every few seconds to

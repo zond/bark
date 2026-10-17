@@ -86,7 +86,7 @@ use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours, BEATS};
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{Duration, Instant};
-use crate::wire::{Heartbeat, Packet};
+use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 use forward::OWNER_RADIUS_M;
 
 /// Who started the outstanding excursion.
@@ -106,6 +106,12 @@ enum Job {
 /// than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more than
 /// two standard deviations here.
 pub const SWITCH_MARGIN_DB: f32 = 8.0;
+
+/// The most a node's clock may run fast or slow, parts per million: the
+/// tolerance of a common 32.768 kHz watch crystal, which the board's
+/// low-frequency clock runs from (nRF52840 product specification, LFXO).
+/// To be measured on the boards.
+pub const CLOCK_DRIFT_PPM: u64 = 50;
 
 /// The path-loss exponent of the scenarios, fitted to the ranges of spec
 /// "Physical layer" (`scenarios/s4-capacity.toml`).
@@ -284,6 +290,10 @@ pub struct Relay {
     rescan: Option<Instant>,
     /// When the window it listens in ends, while it is awake.
     window_ends: Option<Instant>,
+    /// When a node that sleeps expects its anchor's next heartbeat on its
+    /// channel, and the rotations since it last heard one there.
+    watch_at: Option<Instant>,
+    misses: u8,
     /// Where the node was when it chose or last confirmed its anchor, and
     /// how far the anchor was then, metres.
     chosen_from: Position,
@@ -354,6 +364,8 @@ impl Relay {
             renew: None,
             rescan: None,
             window_ends: None,
+            watch_at: None,
+            misses: 0,
             chosen_from: Position { lat: 0, lon: 0 },
             reach_m: 0.0,
             config,
@@ -419,6 +431,8 @@ impl Relay {
             renew,
             rescan,
             window_ends,
+            watch_at,
+            misses,
             chosen_from,
             reach_m,
         } = self;
@@ -470,6 +484,8 @@ impl Relay {
         *renew = None;
         *rescan = None;
         *window_ends = None;
+        *watch_at = None;
+        *misses = 0;
         *chosen_from = config.position;
         *reach_m = 0.0;
         *c = config;
@@ -527,13 +543,81 @@ impl Relay {
             && self.beacon.current.is_none()
             && self.first_hop(now).is_some()
             && self.rescan.is_none()
+            && !self
+                .watch()
+                .is_some_and(|(from, to)| now >= from && now < to)
     }
 
     /// When a node that sleeps next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     fn radio_due(&self) -> Instant {
         let beat = self.beacon.next_at.max(self.beacon.ready_at);
-        self.queue.earliest_due().map_or(beat, |t| t.min(beat))
+        let due = self.queue.earliest_due().map_or(beat, |t| t.min(beat));
+        self.watch().map_or(due, |(from, _)| due.min(from))
+    }
+
+    /// When a node that sleeps listens for its anchor's next heartbeat on
+    /// its channel, if it does (module documentation): from as early as it
+    /// can come to as late as it can, around the time the anchor's fixed
+    /// interval gives (`Neighbours::next_beat`). The last one heard may
+    /// have waited for the channel behind its slot as long as the next
+    /// may, two backoffs before the last check (spec "Heartbeat"), and two
+    /// clocks may drift apart by [`CLOCK_DRIFT_PPM`] each since then.
+    fn watch(&self) -> Option<(Instant, Instant)> {
+        let at = self.watch_at?;
+        let anchor = self.anchor?;
+        let (_, n) = self.neighbours.by_id(anchor.id)?;
+        let lag = self
+            .config
+            .lbt_backoff_max
+            .mul(self.config.lbt_attempts.saturating_sub(1) as u64);
+        let drift = Duration::from_micros(
+            at.since(n.beat_at).as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000,
+        );
+        let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        Some((at - (lag + drift), at + lag + drift + airtime))
+    }
+
+    /// Follow the anchor's heartbeat: a node that sleeps expects it on its
+    /// channel a rotation of the anchor's interval after the last
+    /// (module documentation); once two rotations have passed without it,
+    /// the anchor is gone, and the node listens a rotation to choose again
+    /// (spec "Relay choice").
+    fn watch_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let keeps = self.sleeps() && !self.config.sleepy_listens && self.rescan.is_none();
+        let Some(a) = self.anchor.filter(|_| keeps) else {
+            self.watch_at = None;
+            return;
+        };
+        let interval = heartbeat_interval(a.id, &self.config);
+        if self.watch_at.is_none() {
+            self.misses = 0;
+            self.watch_at = self
+                .neighbours
+                .by_id(a.id)
+                .map(|(_, n)| Neighbours::next_beat(n, interval, self.home));
+        }
+        while self.watch().is_some_and(|(_, to)| now >= to) {
+            self.misses = self.misses.saturating_add(1);
+            if self.misses >= 2 {
+                self.watch_at = None;
+                self.check_anchor(now, emit);
+                return;
+            }
+            self.watch_at = self.watch_at.map(|t| t + interval.mul(CHANNELS as u64));
+        }
+    }
+
+    /// The anchor's heartbeat was heard: it is alive, and its next comes a
+    /// rotation later.
+    fn anchor_heard(&mut self) {
+        let Some(a) = self.anchor else { return };
+        self.misses = 0;
+        let interval = heartbeat_interval(a.id, &self.config);
+        self.watch_at = self
+            .neighbours
+            .by_id(a.id)
+            .map(|(_, n)| Neighbours::next_beat(n, interval, self.home));
     }
 
     /// Tell the driver the radio may sleep, if it may and has not been
@@ -542,8 +626,16 @@ impl Relay {
         if self.asleep.is_some_and(|t| t > now) {
             return;
         }
-        // The window's end needs the core, to say so.
-        self.window_ends = (self.sleeps() && self.awake_until > now).then_some(self.awake_until);
+        // The ends of the windows it listens in, and the start of the next
+        // for its anchor's heartbeat, need the core, to say so.
+        let watch = self
+            .watch()
+            .map_or([None, None], |(from, to)| [Some(from), Some(to)]);
+        self.window_ends = [Some(self.awake_until), watch[0], watch[1]]
+            .into_iter()
+            .flatten()
+            .filter(|&t| self.sleeps() && t > now)
+            .min();
         if !self.may_sleep(now) {
             return;
         }
@@ -788,6 +880,7 @@ impl Relay {
     /// (module documentation).
     fn anchored(&mut self) {
         self.rescan = None;
+        self.watch_at = None;
         self.chosen_from = self.config.position;
         self.reach_m = self.anchor.map_or(0.0, |a| {
             self.plane.point(a.position).distance_m(Default::default())
@@ -850,6 +943,7 @@ impl Relay {
                 self.anchor_checked(since, now, emit);
             }
         }
+        self.watch_anchor(now, emit);
         if !self.sleeps() && self.mover.move_at.is_some_and(|t| now >= t) {
             self.mover = Mover::default();
             // Re-check after the random wait (spec "Channel moves").
@@ -1167,6 +1261,9 @@ impl Relay {
         } else {
             self.first_heard.get_or_insert(now);
             self.reconsider_anchor(now, emit);
+            if self.anchor.is_some_and(|a| a.id == hb.id) {
+                self.anchor_heard();
+            }
         }
     }
 
@@ -1291,6 +1388,7 @@ impl Core for Relay {
         if let Some(t) = self.window_ends {
             at(t);
         }
+
         // The application waits for the bucket (core-interface §4).
         if let Some(t) = self.app_ready_at {
             at(t);
@@ -1435,10 +1533,10 @@ mod tests {
         assert_eq!(used.home(), fresh.home());
     }
 
-    /// A node whose bucket is spent holds one message for a sleepy node
-    /// that has just beaten, and nothing else happens: it wakes when its
-    /// bucket will fit the DATA with the reply reserve, within the node's
-    /// window, and sends it then. The node never answers, and its message
+    /// A node whose bucket is nearly spent holds one message for a sleepy
+    /// node that has just beaten, and nothing else happens: it wakes when
+    /// its bucket will fit the DATA with the reply reserve, within the
+    /// node's window, and sends it then. The node never answers, and its message
     /// waits for its next beat (`relay/delivery.rs`).
     #[test]
     fn a_delivery_waits_for_the_bucket_within_the_window() {
@@ -1462,18 +1560,10 @@ mod tests {
         now = Instant::ZERO + Duration::from_secs(10);
         let node = NodeId([7; 4]);
         r.heard.heard(node, r.home, -80, now);
-        r.budget.record(r.budget.available(now), now);
+        // Short of the DATA and the reply reserve by what the bucket refills
+        // well within the window.
         let dst = r.config.position;
-        let id = MsgId::of(dst, node, b"later");
-        let mut record = crate::tables::records::Record::new(id, None, 0, now);
-        record.set_arrived();
-        let at = r.record_place().unwrap();
-        r.records.put(at, record);
-        let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
-        r.delivery.push(q);
-        r.feed_due = true;
-        r.handle(Event::Wakeup, now, &mut |_| {});
-        assert!(r.queue.is_empty(), "taken with a spent bucket");
+        let short = Duration::from_millis(20);
         let data = Data {
             sender_home: r.home,
             dst_hop: node,
@@ -1486,6 +1576,18 @@ mod tests {
             payload: b"later",
         };
         let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+        let need = mac::airtime(&frame) + REPLY_RESERVE - short;
+        r.budget.record(r.budget.available(now) - need, now);
+        let id = MsgId::of(dst, node, b"later");
+        let mut record = crate::tables::records::Record::new(id, None, 0, now);
+        record.set_arrived();
+        let at = r.record_place().unwrap();
+        r.records.put(at, record);
+        let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
+        r.delivery.push(q);
+        r.feed_due = true;
+        r.handle(Event::Wakeup, now, &mut |_| {});
+        assert!(r.queue.is_empty(), "taken with a spent bucket");
         let fits = r
             .budget
             .allowed_at(mac::airtime(&frame), REPLY_RESERVE, now)

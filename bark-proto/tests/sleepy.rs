@@ -429,9 +429,15 @@ fn a_sleepy_node_sleeps_between_its_windows() {
     }
     let (from, to) = (at(1000), at(3000));
     let awake = to.since(from) - slept(&h, s, from, to);
-    // The windows, the delivery's, and nothing more: it keeps its anchor
-    // without hearing it (spec "Relay choice").
-    let most = window.mul(b.len() as u64 + 2);
+    // The windows, the delivery's, and once a rotation of its anchor's
+    // heartbeat a watch for it, from 420 ms before to 431 ms after the
+    // time its interval gives (spec "Relay choice").
+    let c = Config::default();
+    let anchor = h.nodes[s].core.anchor().unwrap().id;
+    let rotation = bark_proto::node::heartbeat_interval(anchor, &c).mul(13);
+    let watches = to.since(from).as_micros() / rotation.as_micros() + 1;
+    let watch = Duration::from_millis(860);
+    let most = window.mul(b.len() as u64 + 2) + watch.mul(watches);
     assert!(awake <= most, "awake {awake:?} of {:?}", to.since(from));
 }
 
@@ -522,5 +528,115 @@ fn a_burst_goes_on_one_beat_and_the_node_sleeps_after_the_last() {
         sleeps_at.since(last_ack) < Duration::from_millis(50),
         "asleep {:?} after its last answer",
         sleeps_at.since(last_ack)
+    );
+}
+
+/// A node that sleeps wakes for its anchor's heartbeat each time the
+/// anchor's rotation brings it to its channel, and hears it
+/// (spec "Relay choice").
+#[test]
+fn a_sleeping_node_hears_its_anchor_every_rotation() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 111), node(50.0, true, 112)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(3000), |_| false);
+    let home = h.resting(s).unwrap();
+    let to_s: Vec<Instant> = h.nodes[r]
+        .sent
+        .iter()
+        .filter(|(t, f)| *t >= at(1000) && f.channel == home)
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+        .map(|(t, _)| *t)
+        .collect();
+    let heard = to_s
+        .iter()
+        .filter(|&&t| {
+            h.nodes[s]
+                .received
+                .iter()
+                .any(|(at, _)| *at > t && at.since(t) < secs(1))
+        })
+        .count();
+    assert!(to_s.len() >= 10, "{} heartbeats on its channel", to_s.len());
+    assert_eq!(heard, to_s.len(), "heard every one");
+}
+
+/// A node whose anchor is gone notices when two of the anchor's rotations
+/// pass without its heartbeat, listens a rotation, and takes the other node
+/// it hears (spec "Relay choice").
+#[test]
+fn a_node_whose_anchor_is_gone_chooses_again() {
+    let (first, second, s) = (0, 1, 2);
+    let mut h = Harness::new(vec![
+        node(0.0, false, 101),
+        node(300.0, false, 102),
+        node(50.0, true, 103),
+    ]);
+    h.link(first, s);
+    h.link(second, s);
+    h.set_rssi(first, s, -80);
+    h.set_rssi(second, s, -100);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let id_of = |h: &Harness<Relay>, i: usize| h.nodes[i].core.id();
+    assert_eq!(
+        h.nodes[s].core.anchor().map(|a| a.id),
+        Some(id_of(&h, first))
+    );
+    h.kill(first);
+    let gone = h.now;
+    let moved =
+        |h: &Harness<Relay>| h.nodes[s].core.anchor().map(|a| a.id) == Some(id_of(h, second));
+    assert!(h.run_until(gone + secs(1000), moved));
+    // Two rotations at the longest interval, and the rotation it listens.
+    let c = Config::default();
+    let most = c.heartbeat_max.mul(13 * 3) + secs(1);
+    assert!(h.now.since(gone) <= most, "{:?}", h.now.since(gone));
+    assert!(h.nodes[s]
+        .traces
+        .iter()
+        .any(|(_, t)| *t == Trace::AnchorCheck));
+}
+
+/// A node that sleeps follows its anchor to a new home channel: it hears
+/// the anchor's next heartbeat on its old channel, which names the new
+/// home, and knows from the anchor's interval when it comes to the new.
+#[test]
+fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 121), node(50.0, true, 122)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let old = h.resting(r).unwrap();
+    assert_eq!(h.resting(s), Some(old));
+    // A carrier on the anchor's home a third of the time: it moves after
+    // the dwell and wait of spec "Channel moves", and its heartbeats still
+    // get through on the old channel. One there all the time would keep them
+    // off it, and the node would lose its anchor (`a_node_whose_anchor_is_gone`).
+    // Its period shares no factor with the sweep's (as in the move test of
+    // `tests/mac.rs`).
+    h.jam_part(
+        r,
+        old,
+        Duration::from_millis(32),
+        Duration::from_millis(107),
+    );
+    let moved = |h: &Harness<Relay>| h.resting(r) != Some(old);
+    assert!(h.run_until(h.now + secs(1500), moved));
+    let at_move = h.now;
+    let new = h.resting(r).unwrap();
+    let follows = |h: &Harness<Relay>| h.resting(s) == Some(new);
+    assert!(h.run_until(at_move + secs(600), follows));
+    let c = Config::default();
+    assert!(
+        h.now.since(at_move) <= c.heartbeat_max.mul(13) + secs(1),
+        "{:?}",
+        h.now.since(at_move)
+    );
+    assert_eq!(
+        h.nodes[s].core.anchor().map(|a| a.id),
+        Some(h.nodes[r].core.id())
     );
 }
