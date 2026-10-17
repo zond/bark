@@ -265,9 +265,10 @@ none homes as a relay does and keeps that channel ([relay choice](#relay-choice)
 A sleepy node listens two rotations, 390 s: a relay switched on with it
 heartbeats only after a boot listen of its own, and once the node
 receives duty-cycled it hears relays only by their answers. Booted
-together with its relays and listening one rotation, 3 % of the sleepy
-nodes of the simulated capacity domain heard none and went without an
-anchor (roadmap D51). A config override exists for bench work.
+together with their relays, 3 % of the sleepy nodes of the simulated
+capacity domain still heard none in that time and went without an anchor
+for seven minutes at the median (roadmap D51). A config override exists
+for bench work.
 
 ### Channel moves
 
