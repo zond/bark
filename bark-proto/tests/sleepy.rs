@@ -640,3 +640,30 @@ fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
         Some(h.nodes[r].core.id())
     );
 }
+
+/// A node out of reach of everything, in a basement, misses its anchor's
+/// heartbeat, checks, hears nothing at all, and keeps its anchor; back in
+/// reach it hears it again and sleeps as before (spec "Relay choice").
+#[test]
+fn a_node_out_of_reach_keeps_its_anchor() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 131), node(50.0, true, 132)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let anchor = h.nodes[s].core.anchor();
+    assert!(anchor.is_some());
+    h.unlink(r, s);
+    h.run_for(secs(900));
+    assert!(h.nodes[s]
+        .traces
+        .iter()
+        .any(|(_, t)| *t == Trace::AnchorCheck));
+    assert_eq!(h.nodes[s].core.anchor(), anchor);
+    h.link(r, s);
+    let back = h.now;
+    h.run_for(secs(1200));
+    assert_eq!(h.nodes[s].core.anchor(), anchor);
+    let awake = secs(600) - slept(&h, s, back + secs(600), back + secs(1200));
+    assert!(awake < secs(30), "awake {awake:?} in ten minutes once back");
+}

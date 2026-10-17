@@ -612,6 +612,10 @@ impl Relay {
     /// rotation later.
     fn anchor_heard(&mut self) {
         let Some(a) = self.anchor else { return };
+        if self.rescan.is_some() {
+            // Heard while checking: it is there (spec "Relay choice").
+            self.anchored();
+        }
         self.misses = 0;
         let interval = heartbeat_interval(a.id, &self.config);
         self.watch_at = self
@@ -900,9 +904,9 @@ impl Relay {
         emit(Action::Trace(Trace::AnchorCheck));
     }
 
-    /// The rotation that began at `since` is over: keep the anchor if it
-    /// was heard, else take the strongest node heard that is not sleepy,
-    /// else none (spec "Relay choice", "Sleepy nodes alone").
+    /// The rotation that began at `since` is over, the anchor not heard in
+    /// it: take the strongest node heard that is not sleepy, or keep the
+    /// anchor if none was (spec "Relay choice").
     fn anchor_checked(&mut self, since: Instant, now: Instant, emit: &mut dyn FnMut(Action)) {
         let heard = |n: &&Neighbour| !n.sleepy && n.last_heard >= since;
         let anchor = self.anchor.map(|a| a.id);
@@ -923,12 +927,9 @@ impl Relay {
             .copied();
         match best {
             Some(b) => self.take_anchor(&b, now, emit),
-            None => {
-                self.rescan = None;
-                self.anchor = None;
-                self.first_heard = None;
-                self.neighbours.pin(None);
-            }
+            // Nothing at all heard: the node is out of reach, in a pocket or
+            // a basement, not its anchor gone; it keeps it.
+            None => self.anchored(),
         }
     }
 
