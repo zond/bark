@@ -692,7 +692,7 @@ impl Summary {
             let share = |x: u64| x as f64 / m.anchored.max(1) as f64;
             let _ = writeln!(
                 s,
-                "sleepy nodes listen {:.1} s an hour (median {:.1}, p90 {:.1}); DATA to them received {}, lost asleep {}, lost otherwise {}; delivery TTL ran out at the anchor {} (node in reach) {} (dark), elsewhere {}; anchor on another channel {:.4}, anchor not hearing {:.4}",
+                "sleepy nodes listen {:.1} s an hour (median {:.1}, p90 {:.1}); DATA to them received {}, sent where they could not hear it {}, lost otherwise {}; delivery TTL ran out at the anchor {} (node in reach) {} (dark), elsewhere {}; anchor on another channel {:.4}, anchor not hearing {:.4}",
                 z.listen_s_per_h[0],
                 z.listen_s_per_h[1],
                 z.listen_s_per_h[2],
@@ -740,13 +740,13 @@ impl Summary {
             }
             let _ = writeln!(
                 s,
-                "DATA to sleepy nodes asleep: from the anchor {} within 5 s of sleeping, {} later; from others {}, {}",
-                m.to_asleep[0][0], m.to_asleep[0][1], m.to_asleep[1][0], m.to_asleep[1][1]
+                "DATA to sleepy nodes that could not hear it: from the anchor {} within 5 s of the node stopping listening, {} later; from others {}, {}",
+                m.to_deaf[0][0], m.to_deaf[0][1], m.to_deaf[1][0], m.to_deaf[1][1]
             );
             let w = |r: &[u64; FIRST_TRIES]| r.map(|x| x.to_string()).join(" ");
             let _ = writeln!(
                 s,
-                "deliveries waiting for the next beat, by first DATA (not started, not sent, asleep, absent, weak, collided, busy, other channel, received): after a beat {}; after a message taken {}",
+                "deliveries waiting for the next beat, by first DATA (not started, not sent, could not hear, absent, weak, collided, busy, other channel, received): after a beat {}; after a message taken {}",
                 w(&m.waited[AFTER_BEAT]),
                 w(&m.waited[AFTER_TAKE])
             );

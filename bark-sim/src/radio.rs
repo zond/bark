@@ -137,10 +137,18 @@ impl Sim {
         if let Some(WirePacket::Data(d)) = decoded {
             if let Some(&n) = self.sleepy_index.get(&key(d.dst_hop)) {
                 let st = &self.nodes[n as usize];
-                let asleep = st.asleep_at(self.now);
+                // Receiving duty-cycled, it catches the long preamble only.
+                let short = preamble < sniff::LONG_PREAMBLE_SYMBOLS;
+                let sniffing = st.sniffing_at(self.now).is_some();
+                let deaf = st.asleep_at(self.now) || (sniffing && short);
+                let since = if sniffing {
+                    st.sniff_since
+                } else {
+                    st.asleep_since
+                };
                 let to = ToSleepy {
                     node: n,
-                    asleep,
+                    deaf,
                     absent: !st.alive || !st.present,
                     holder: src,
                     msg: d.msg_id().0,
@@ -148,14 +156,13 @@ impl Sim {
                     lost: None,
                 };
                 self.to_sleepy.insert(tx_key, to);
-                if asleep && self.now >= self.settle {
+                if deaf && self.now >= self.settle {
                     let anchor = self.relay(n).anchor().map(|a| a.id);
                     let by = usize::from(anchor != Some(d.src_hop));
                     // The anchor's retry after the node slept on an ACK
                     // that was lost: three attempts and their waits.
-                    let late =
-                        usize::from(self.now.since(st.asleep_since) >= Duration::from_secs(5));
-                    self.metrics.sleep.to_asleep[by][late] += 1;
+                    let late = usize::from(self.now.since(since) >= Duration::from_secs(5));
+                    self.metrics.sleep.to_deaf[by][late] += 1;
                 }
             }
         }
@@ -326,8 +333,8 @@ impl Sim {
                 let i = (t.node - self.relays()) as usize;
                 self.beat_took[i].1 = self.now;
                 (0, FirstTry::Received)
-            } else if t.asleep {
-                (1, FirstTry::Asleep)
+            } else if t.deaf {
+                (1, FirstTry::Deaf)
             } else if t.absent {
                 (2, FirstTry::Absent)
             } else {
@@ -338,7 +345,7 @@ impl Sim {
                         | Outcome::SinrFail { .. }
                         | Outcome::Deaf(Deaf::Corrupt),
                     ) => FirstTry::Collided,
-                    Some(Outcome::Deaf(Deaf::Asleep)) => FirstTry::Asleep,
+                    Some(Outcome::Deaf(Deaf::Asleep | Deaf::Sniff)) => FirstTry::Deaf,
                     Some(Outcome::Deaf(_)) => FirstTry::Busy,
                     _ => FirstTry::Unheard,
                 };

@@ -604,13 +604,14 @@ pub struct HeartbeatFates {
 /// What sleeping does (`Action::Sleep`), counted after the settle time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SleepMetrics {
-    /// DATA addressed to a sleepy node: received, lost while it was
-    /// asleep, lost otherwise.
+    /// DATA addressed to a sleepy node: received, sent while it could not
+    /// hear it, lost otherwise.
     pub to_sleepy: [u64; 3],
-    /// DATA sent to a sleepy node while it was asleep: by its anchor, and
-    /// by any other node; and how long it had been asleep, under 5 s or
-    /// more.
-    pub to_asleep: [[u64; 2]; 2],
+    /// DATA sent to a sleepy node that could not hear it: asleep, or
+    /// receiving duty-cycled and the frame's preamble short. By its
+    /// anchor, and by any other node; and how long it had been so, under
+    /// 5 s or more.
+    pub to_deaf: [[u64; 2]; 2],
     /// Changes of a sleepy node's anchor.
     pub anchor_changes: u64,
     /// Messages a holder dropped at the end of the delivery TTL: held by
@@ -665,8 +666,9 @@ pub enum FirstTry {
     NotStarted,
     /// It started, but no DATA went on the air: the channel stayed busy.
     NotSent,
-    /// It reached the node asleep.
-    Asleep,
+    /// It reached the node when it could not hear it: asleep, or
+    /// receiving duty-cycled with a short preamble.
+    Deaf,
     /// The node was out of reach (dark or gone).
     Absent,
     /// It reached the node below sensitivity.

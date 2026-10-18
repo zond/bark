@@ -279,8 +279,9 @@ impl BeatRing {
 pub(crate) struct ToSleepy {
     /// The node.
     pub node: u32,
-    /// It was asleep when the frame started.
-    pub asleep: bool,
+    /// It could not hear the frame when it started: asleep, or receiving
+    /// duty-cycled and the frame's preamble short.
+    pub deaf: bool,
     /// It was dark or removed then.
     pub absent: bool,
     /// The sender, its holder.
