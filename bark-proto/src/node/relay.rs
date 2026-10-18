@@ -631,17 +631,19 @@ impl Relay {
     /// When a node that sleeps listens for its anchor's next heartbeat on
     /// its channel, if it does (module documentation): from as early as it
     /// can come to as late as it can. `watch_at` is when it comes if it
-    /// starts in its slot, from the earliest the anchor's heartbeats have come
-    /// (`anchor_heard`), so it comes no earlier than the two clocks drift
-    /// apart, [`CLOCK_DRIFT_PPM`] each, since. It may come later by as
-    /// much again, and by what keeps a heartbeat behind its slot
-    /// ([`heartbeat_lag`]).
+    /// starts in its slot, from the time expected of the last one heard
+    /// (`anchor_heard`). It comes earlier by as much as the two clocks
+    /// drift apart, [`CLOCK_DRIFT_PPM`] each, since; and by twice as much
+    /// again, since the last one may have been late by what keeps a
+    /// heartbeat behind its slot ([`heartbeat_lag`]) and moved the time
+    /// expected later by the drift when its slot was as early as the
+    /// drift allowed. It may come later by the drift, and by that lag.
     fn watch(&self) -> Option<(Instant, Instant)> {
         let at = self.watch_at?;
         let drift = drift(at.since(self.watch_base));
         let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         Some((
-            at - drift,
+            at - drift.mul(3),
             at + drift + heartbeat_lag(&self.config) + airtime,
         ))
     }

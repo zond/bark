@@ -1326,13 +1326,18 @@ the delivery queue and a new anchor on arrival.
 if it listens when the rotation brings it to its channel, so it does: it
 keeps the anchor's neighbour entry whatever its age, and wakes for the
 anchor's next heartbeat on its channel, at the time the anchor's
-interval gives ([heartbeat](#heartbeat)). It listens from as early as the heartbeat can
-come, which is its slot less the drift of two clocks, ±50 ppm each,
-since the earliest it heard, at most 20 ms over a rotation, to as late,
-992.9 ms more and the heartbeat's airtime, and goes back to sleep as soon
-as it hears it. It keeps the time it expects from the earliest heartbeat
-heard, moved later only by the drift, since a late one says only that
-the anchor was busy. Hearing it is how the node knows the anchor is
+interval gives ([heartbeat](#heartbeat)). It keeps the time it expects from the earliest
+heartbeat heard, moved later only by the drift of two clocks, ±50 ppm
+each, since a late one says only that the anchor was busy. It listens
+from as early as the heartbeat can come to as late, and goes back to
+sleep as soon as it hears it. As early is the time expected less three
+times the drift since the last heartbeat heard, at most 59 ms over a
+rotation: once for the drift itself, and twice because a heartbeat held
+up by a busy anchor may have moved the time expected a drift later
+while its slot was a drift early. With one drift, clocks drifting within
+their tolerance in the simulated capacity domain missed a fifth more
+watches, 18.8 % against 15.0 %, and drew 0.40 mA against 0.33 (roadmap
+D52). As late is the drift, 992.9 ms more and the heartbeat's airtime. Hearing it is how the node knows the anchor is
 alive, and how it follows it to a new home channel ([channel moves](#channel-moves)): the
 heartbeat names the anchor's home, and the next on the new channel comes
 when the rotation brings it there.
