@@ -1628,10 +1628,7 @@ channels ([beats](#beats)) and from the frames they exchange with it.
 
 Nobody anchors to a node in anchorless mode: it leaves the mode the
 moment it hears a relay, and an address pointing at it would then point
-at a node that holds nothing. Kept on one channel, the
-lowest of the quiet ones, sixty such nodes awake over a square kilometre
-overloaded it (roadmap D46); on the channels they chose at boot, spread
-by the random choice among quiet ones, they do not.
+at a node that holds nothing.
 
 Measured in the simulator (roadmap D51), sixty sleepy nodes over a square
 kilometre with no relay delivered every text, as when they listened all
