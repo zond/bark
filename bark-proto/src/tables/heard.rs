@@ -14,9 +14,10 @@
 //! beat does not lose it, a node that answers is not lost for its beats
 //! going unheard, and a node that has gone is kept no longer than the
 //! messages held for it (spec "Sleepy nodes", "Heard table"). When the table
-//! is full a newcomer takes the place of an expired entry, else of the
-//! weakest if it is heard stronger: the strongest are the nodes most
-//! likely to have chosen this one (spec "Relay choice").
+//! is full a newcomer takes the place of an expired entry, else of the one
+//! heard longest ago: a node that beats now listens now, so a holder for
+//! more nodes than the table keeps still sends each its mail after each
+//! beat (roadmap D61).
 
 use crate::event::MAX_FRAME;
 use crate::ids::NodeId;
@@ -184,11 +185,11 @@ impl<const N: usize> Heard<N> {
         let keep = self.params.keep;
         let slots = self.nodes.as_mut_slice();
         let expired = slots.iter().position(|n| now.since(n.last_heard) >= keep);
-        let weakest = || {
-            let (i, n) = slots.iter().enumerate().min_by_key(|(_, n)| n.rssi)?;
-            (n.rssi < rssi).then_some(i)
+        let oldest = || {
+            let (i, _) = slots.iter().enumerate().min_by_key(|(_, n)| n.last_heard)?;
+            Some(i)
         };
-        match expired.or_else(weakest) {
+        match expired.or_else(oldest) {
             Some(i) => {
                 slots[i] = new;
                 true
@@ -317,19 +318,22 @@ mod tests {
         assert!(t.is_empty(), "DATA alone does not make a node sleepy");
     }
 
+    /// A full table makes way for every newcomer, weak or strong, in the
+    /// place of the node heard longest ago, which listens no longer.
     #[test]
-    fn entries_last_two_periods_and_the_weakest_makes_way() {
+    fn entries_last_two_periods_and_the_longest_unheard_makes_way() {
         let mut t = Heard::<HEARD>::from_config(&Config::default());
         for i in 0..HEARD as u32 {
-            assert!(t.heard(id(i), ch(0), -100 + (i % 20) as i16, at(0)));
+            assert!(t.heard(id(i), ch(0), -60 - (i % 20) as i16, at(i as u64)));
         }
-        assert!(!t.heard(id(1000), ch(0), -100, at(1)), "no weaker one");
-        assert!(t.heard(id(1001), ch(0), -99, at(1)));
-        assert!(t.get(id(0)).is_none(), "the weakest went");
-        assert_eq!(t.next_expiry(), Some(at(600)));
-        t.expire(at(599));
-        assert_eq!(t.len(), HEARD);
-        t.expire(at(600));
-        assert_eq!(t.len(), 1);
+        assert!(t.heard(id(1000), ch(0), -110, at(300)), "a weak newcomer");
+        assert!(t.get(id(0)).is_none(), "the longest unheard went");
+        assert!(t.awake(id(1000), at(300)));
+        assert!(t.heard(id(1), ch(0), -60, at(301)), "a beat renews");
+        assert!(t.heard(id(1001), ch(0), -110, at(302)));
+        assert!(t.get(id(2)).is_none() && t.get(id(1)).is_some());
+        assert_eq!(t.next_expiry(), Some(at(603)));
+        t.expire(at(855));
+        assert_eq!(t.len(), HEARD - 255 + 2);
     }
 }

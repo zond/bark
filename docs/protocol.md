@@ -1424,9 +1424,11 @@ whether or not its beats are heard, and a busy holder misses beats, while
 it transmits or when another frame meets the beat there. A node reached
 only in the windows its beats open renews its entry with each of them,
 but one kept awake by a flow longer than a TTL does not (roadmap D53). When the table
-is full a newcomer takes the place of an expired entry, else of the
-weakest if the newcomer is heard stronger: the strongest are the nodes
-most likely to have chosen this relay as their anchor. 256 covers ≈80
+is full a newcomer takes the place of an expired entry, else of the one
+heard longest ago: a node that beats now listens now, so a holder for
+more nodes than its table keeps still sends each its mail after each
+beat, and a full table does not leave the nodes it has no place for
+without their mail until it expires (roadmap D61). 256 covers ≈80
 sleepy nodes per relay expected at indoor density in Kyiv with 10 %
 adoption, 400 at 50 % ([capacity and sizing](#capacity-and-sizing)).
 
