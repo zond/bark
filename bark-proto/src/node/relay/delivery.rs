@@ -11,9 +11,10 @@
 //! node that sleeps between beats needs. A queued message is handed to
 //! the send queue one per node at a time and oldest first: when it
 //! arrives, when the node beats, when the node takes the one before, and
-//! whenever a hand-over ends and frees room in the send queue. It needs
-//! room as a forward does: a place, and its airtime with everything queued
-//! in the bucket (spec "Send queue"). One the bucket cannot fit yet is
+//! whenever a hand-over ends and frees room in the send queue. In its
+//! node's window it needs a place in the regular room and its own frame in
+//! the bucket with the reply reserve left, not the airtime of everything
+//! queued, which it goes ahead of (spec "Delivery queue"). One the bucket cannot fit yet is
 //! offered again the moment it will, as a deferred hand-over is started
 //! then (`feed_at`). One whose node has stopped listening by the time its
 //! hand-over would start leaves the send queue and waits for the next
@@ -126,15 +127,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return Ok(());
         }
-        match self.no_room(airtime, Duration::ZERO, now) {
+        // In its window it goes ahead of everything queued, and needs room
+        // for itself only: held back by the forwards behind it, a capped
+        // holder's deliveries missed their windows (roadmap D55).
+        match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            // With what is queued in the bucket too; `None` if that is more
-            // than the bucket holds, and then the queue must drain first.
-            Some(_) => {
-                let queued = self.queue.airtime() + REPLY_RESERVE;
-                return Err(self.budget.allowed_at(airtime, queued, now));
-            }
+            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
         let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())

@@ -282,6 +282,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.admit(airtime, spend, 0, false, now).err()
     }
 
+    /// Why a DATA to a sleepy node in its window, of `airtime`, cannot enter
+    /// the regular room now, if it cannot (spec "Delivery queue"). It goes
+    /// ahead of everything queued (spec "Delivery"), so it needs a place and
+    /// its own frame in the bucket with the reply reserve left, not the
+    /// airtime of what it goes ahead of.
+    pub(super) fn no_room_to_deliver(&self, airtime: Duration, now: Instant) -> Option<DropReason> {
+        if self.regular() >= SEND_QUEUE {
+            Some(DropReason::SendQueueFull)
+        } else if !self.affordable(airtime, now) {
+            Some(DropReason::Budget)
+        } else {
+            None
+        }
+    }
+
     /// Entries in the regular room, the held message counting as one.
     fn regular(&self) -> usize {
         self.queue.regular() + usize::from(self.held.is_some())

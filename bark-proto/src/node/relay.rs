@@ -2123,6 +2123,95 @@ mod tests {
         assert_eq!(r.delivery.len(), 1, "it waits for the next beat");
     }
 
+    /// A DATA to a sleepy node goes ahead of everything in the send queue
+    /// (spec "Delivery"), so it needs only its own frame and the reply
+    /// reserve in the bucket, not the airtime of the forwards it goes ahead
+    /// of: a holder at its cap whose queued forwards outweigh its bucket
+    /// still delivers in the window (spec "Delivery queue", roadmap D55).
+    #[test]
+    fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
+        use crate::ids::MsgId;
+        use crate::tables::budget::REPLY_RESERVE;
+        use crate::tables::delivery::Queued;
+        use crate::tables::send_queue::{Kind, Outgoing};
+        use crate::wire::{Data, MAX_PAYLOAD};
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        now = Instant::ZERO + Duration::from_secs(10);
+        let node = NodeId([7; 4]);
+        r.heard.heard(node, r.home, -80, now);
+        let dst = r.config.position;
+        // Forwards waiting for a ban, a quarter of the bucket's depth.
+        let mut queued = Duration::ZERO;
+        for k in 0..10u8 {
+            let mut payload = [0u8; MAX_PAYLOAD];
+            payload[0] = k;
+            let d = Data {
+                sender_home: r.home,
+                dst_hop: NodeId::NONE,
+                src_hop: r.me(),
+                dst_pos: dst,
+                dst_id: name(99),
+                hops: 2,
+                time_left: u8::MAX,
+                payload: &payload,
+            };
+            let frame = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+            queued = queued + mac::airtime(&frame);
+            let out = Outgoing {
+                not_before: now + hour,
+                expires: now + hour,
+                ..Outgoing::new(frame, Kind::Forward)
+            };
+            r.queue.push(out).unwrap();
+        }
+        let data = Data {
+            sender_home: r.home,
+            dst_hop: node,
+            src_hop: r.me(),
+            dst_pos: dst,
+            dst_id: node,
+            hops: 0,
+            time_left: u8::MAX,
+            payload: b"ahead",
+        };
+        let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+        // The bucket holds the delivery and the reply reserve, but not the
+        // forwards as well.
+        let need = mac::airtime(&frame) + REPLY_RESERVE + Duration::from_millis(1);
+        assert!(need < queued);
+        r.budget.record(r.budget.available(now) - need, now);
+        let id = MsgId::of(dst, node, b"ahead");
+        let mut record = crate::tables::records::Record::new(id, None, 0, now);
+        record.set_arrived();
+        let at = r.record_place().unwrap();
+        r.records.put(at, record);
+        let q = Queued::new(id, dst, node, b"ahead", u8::MAX, now).unwrap();
+        r.delivery.push(q);
+        r.feed_due = true;
+        let mut checked = None;
+        r.handle(Event::Wakeup, now, &mut |a| {
+            if let Action::Cad(c) = a {
+                checked = Some(c);
+            }
+        });
+        assert!(
+            r.queue.iter().any(|o| o.kind == Kind::Deliver),
+            "held back by the forwards behind it"
+        );
+        assert_eq!(checked, Some(r.home), "its hand-over starts at once");
+    }
+
     /// Two packets arrive within one reply time. The second finds the one
     /// owed-reply place holding the first one's ACK, which waits out a
     /// busy channel: it is neither taken nor refused, and gets no answer.

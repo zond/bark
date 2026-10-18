@@ -595,8 +595,9 @@ is 242 ms. A relay takes new work into the regular room of its send
 queue only if its bucket holds the reply reserve on top of the work's ACK
 and of everything it has queued to send, and otherwise into a hop place
 or not at all ([receiving DATA](#receiving-data)), so a hand-over
-waits for the bucket only when retries or replies have spent it since
-its packet was taken, or when its packet holds a hop place. A relay
+waits for the bucket only when retries, replies or a delivery that goes
+first ([delivery queue](#delivery-queue)) have spent it since its packet
+was taken, or when its packet holds a hop place. A relay
 below the reserve sends nothing but heartbeats and replies until its
 bucket refills. Each sender it refuses bans it ([refusal](#refusal)), so
 a sender costs it at most one reply per ban. Without budget even for a
@@ -766,9 +767,11 @@ the message is taken or dropped.
 
 The send queue has a regular room of 40 places and one hop place for
 each count from 1 to 254; the packet being handed over keeps its place. A
-packet enters the regular room only if it fits in the bucket with
-everything queued ([receiving DATA](#receiving-data)), so it waits for the hand-overs ahead
-of it, not for the bucket to refill. The number of places follows: the
+packet to send on enters the regular room only if it fits in the bucket
+with everything queued ([receiving DATA](#receiving-data)), so it waits for the hand-overs ahead
+of it, not for the bucket to refill; a DATA to a sleepy node in its
+window, which goes ahead of them all, needs only its own frame there
+([delivery queue](#delivery-queue)). The number of places follows: the
 bucket holds at most 6 s ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK
 that took it on cost 138.6 + 14.4 = 153.0 ms, so ⌈6 s / 153.0 ms⌉ = 40.
 With the reply reserve left in, a full bucket takes at most 37 full
@@ -1510,8 +1513,13 @@ the sender learns at once.
 A queued message goes to the send queue one per node at a time and
 oldest first: when it arrives, when the node beats, when the node takes
 the one before, and whenever a hand-over ends and leaves room in the send
-queue; there it goes first ([delivery](#delivery)). It needs room as any packet does ([send queue](#send-queue)); one the bucket
-cannot fit yet goes the moment the bucket will. One whose node has
+queue; there it goes first ([delivery](#delivery)). In the node's window it
+needs a place in the regular room ([send queue](#send-queue)), and in the
+bucket its own frame and the reply reserve, not the airtime of everything
+queued, which it goes ahead of: counted behind the forwards, a holder at
+its cap kept it out while the node listened, and it waited a beat period
+or expired (roadmap D55). One the bucket cannot fit yet goes the moment
+the bucket will. One whose node has
 stopped listening by the time its hand-over would start waits for the
 next beat. A failed delivery counts no failure against anyone: the
 node is not a neighbour it routes through.
