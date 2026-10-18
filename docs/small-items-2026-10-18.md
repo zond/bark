@@ -19,6 +19,18 @@ Research note, 2026-10-18, roadmap D57. Measured against main `8704790`
   district whose relays come on later, but loses 2.3 points of its
   delivery: the entry is often the only way out of the village. In S4 it
   saves 2.4 % of the airtime and loses 0.19 ± 0.22 points. Not built.
+- **A beat after following the anchor (G) gains nothing in S4 as it now
+  is**, −0.04 ± 0.06 points over four seeds, for 53 s more beat airtime a
+  run (+0.16 %). D53's gain of half a point came from the simultaneous
+  boot, whose relays choose their first channels badly and move often in
+  the measured hour: there G gains +0.32 ± 0.13 now. Switched on over a
+  window, relays choose among relays already running and move a third as
+  often, 75 and 85 times in the measured hour against 216 and 355. With a
+  tenth of the relays removed, which sets their neighbours moving, 353
+  times, it gains +1.01 ± 0.39 points (four seeds, every one), and
+  +0.88 ± 0.42 with the removal later (two seeds), for 0.3 to 0.4 % more
+  airtime. The D42 suites deliver as main within their spread. Built, as
+  its own commits.
 
 ## 1. Random IDs and DATA to sleeping nodes
 
@@ -137,6 +149,83 @@ the long preamble halves (−765 and −1 280 s) and all airtime falls by
 spread but on both seeds. Not built: it saves airtime at the edge and
 loses texts there.
 
+## 2. A beat after following the anchor to a new channel
+
+### The rule
+
+A sleeping node follows its anchor to a new home channel at the anchor's
+next heartbeat it wakes for (spec "Relay choice"), and its holder learns
+of it from its next regular beat, 150 to 300 s later; until then the holder
+has no window to send in. D53 measured two ways to shorten that and built
+neither: F, beat at once and again soon; G, beat once on the new channel at
+a random time within a heartbeat interval, 0 to 15 s, since every node of
+the anchor follows on the same heartbeat. G is five lines in
+`reconsider_anchor`: when it follows the anchor to a new channel it brings
+its next beat forward to a random time in the next 15 s if that is sooner.
+F was not measured again: it gained the same as G in D53 for five times
+the airtime, with all of a relay's nodes beating in the same instant.
+
+### What was built
+
+| Commit | Story |
+|---|---|
+| `5cbf2cf` | When a node follows its anchor to a new home channel it brings its next beat forward to a random time within a heartbeat interval, `heartbeat_max`, if that is sooner. The follow test in `tests/sleepy.rs` now also checks that the holder learns the new channel within that interval; it fails without the rule. |
+| `e2a7d56` | The spec says so ("Channel moves", "Beats"). |
+
+No wire change and no new constant.
+
+### Results
+
+S4 as it now is (switch-on over a window, random IDs, drifting clocks,
+walkers), delivered of the reachable texts sent from the settle time to a
+delivery TTL before the end, paired by seed:
+
+| | Main | G | G − main |
+|---|---|---|---|
+| ×1 delivered, seeds 1–4 | 90.75 % | 90.71 % | −0.04 ± 0.06 points |
+| ×1 latency p50, p90 | 138.5, 345.1 s | 137.3, 340.5 s | −1.2 ± 0.6, −4.7 ± 3.6 s |
+| ×1 airtime of sleepy beats | 6 419 s | 6 472 s | +53 ± 6 s (+0.16 % of all airtime) |
+| ×1 airtime, all | 33 139 s | 33 200 s | +61 ± 289 s |
+| ×1 DATA to sleeping nodes, anchor / others | 14 / 603 | 17 / 647 | +2.5 ± 3.2 / +44 ± 104 |
+| ×1 sleepy node's radio current | 0.397 mA | 0.398 mA | +0.001 mA |
+| A tenth of the relays removed at 1800 s, delivered, seeds 1–4 | 84.43 % | 85.45 % | +1.01 ± 0.39 points, every seed |
+| ... latency p50, p90 | 155.7, 410.3 s | 151.0, 396.9 s | −4.7 ± 1.5, −13.4 ± 5.2 s |
+| ... mail of the removed relays' sleepy nodes | 72.7 % | 73.8 % | +1.1 ± 0.9 points |
+| ... airtime of sleepy beats | | | +187 ± 11 s (+0.37 % of all airtime) |
+| ... sleepy node's radio current | 0.433 mA | 0.434 mA | +0.001 mA |
+| A tenth removed at 3600 s, delivered, seeds 1–2 | 84.79 % | 85.68 % | +0.88 ± 0.42 points |
+| ... mail of the removed relays' sleepy nodes | 59.5 % | 60.6 % | +1.1 ± 0.3 points |
+| ... those nodes heard by a new anchor, p50 | 510 s | 510 s | |
+| ... airtime of sleepy beats | | | +142 ± 3 s (+0.30 %) |
+| ... sleepy node's radio current | 0.462 mA | 0.465 mA | +0.003 mA |
+| Simultaneous boot, ID sequence, true clocks, nobody walking (S4 before D52), seeds 1–2 | 91.52 % | 91.84 % | +0.32 ± 0.13 points |
+
+The D42 suites, the standard ones (S1 and the two meshes 10 seeds, S1b,
+S2 and the corridor 60, the ring 10) and the loaded ones (the corridor at
+1 s and 0.5 s, the ring at 1 s and 2 s, the burst mesh at 64 times its
+rate, 30 seeds each), deliver as main within their spread: identical in
+S1, S1b, S2, the corridor and the burst mesh; the ring at 2 s +0.60 ±
+0.43 points, at 1 s +1.07 ± 1.19, the burst mesh ×64 +0.26 ± 0.28, the
+corridors at 1 s and 0.5 s +0.00.
+
+### Why D53's gain is gone
+
+G acts only when a relay moves its home by the busy estimate (spec
+"Channel moves"). Switched on together, as before D52, the relays choose
+their first channels in the same second from the same few heartbeats and
+correct them by moving from 795 s on: 216 and 355 moves in seeds 1 and 2,
+all of them in the measured hour from 900 s, each relay holding about 115
+sleepy nodes. Switched on over ten minutes, each relay chooses among
+relays already running, and the domain moves less: 90 and 105 moves in
+the whole run, 75 and 85 in the measured hour from 2700 s, about one a
+minute across 269 relays, with 123 sleepy nodes each. With a third of the
+moves G has a third of the work, and what it gains is within the spread.
+Removing a tenth of the relays changes what their neighbours hear, and
+ten minutes later they move: 353 moves after the settle time with the
+removal at 1800 s, 130 of them in the ten minutes from 2400 s, and 264
+with it at 3600 s, 126 of them from 4200 s (seed 1), against 75 without.
+There G gains a point.
+
 ## What was run
 
 - S4 with an extra line per DATA to a sleeping node from a node that is
@@ -147,16 +236,28 @@ loses texts there.
   time a sleepy node enters or leaves anchorless mode.
 - X on the village and the village beside a district of D51, 10 seeds
   each, the D42 suites and S4 ×1 seeds 1 and 2.
+- G against main: S4 ×1, seeds 1 to 4; with a tenth of the relays (every
+  tenth) removed at 1800 s, seeds 1 to 4, and at 3600 s, seeds 1 and 2;
+  S4 as it was before D52, seeds 1 and 2, with a line per relay move to
+  count them, as in S4 now; the D42 suites.
 
 No more than two S4 runs at once. Scripts and runs are in the scratchpad
 (`d57/`): `runall.py`, `an.py`, `toasleep.py`, `bi.py`, `refresh.py`,
-the edit `ed_x.py` and the instrument's patches.
+`beats.py`, `moves.py`, the edits `ed_g.py`, `ed_x.py` and the
+instrument's patches.
 
 ## What it does not show
 
 - Which nodes end in pockets without a relay is set by placement and by
   who hears whom at boot; six seeds a configuration show the count's
   spread, not its mean to better than a fifth.
+- The removals happen before the settle time when at 1800 s, since S4 now
+  settles at 2700 s; the time for the removed relays' sleepy nodes to be
+  heard again is sampled from the settle time only and reads 900 s for
+  every one of them. Their mail is counted from the removal.
+- G was measured against relay moves at the rate S4 makes them; a channel
+  that becomes busy at once, from an interferer, moves every relay that
+  hears it together, and there G would act on every sleepy node at once.
 
 ## Recommendation
 
@@ -168,3 +269,9 @@ spread of a count that a few edge pockets make. What X showed on the way
 deserves its own look: DATA with the long preamble takes 5 to 7 % of S4's
 airtime, half of it to anchorless neighbours that failed twice in a row,
 spent by the few nodes at the edge that can least afford it.
+
+Item 2: adopt G. It acts only when relays move, costs 0.16 % of airtime
+where they move little and changes nothing measurable there, and gains a
+point of delivery where they move a lot, after relays are lost; nowhere
+did it lose. The gain D53 measured in steady running was the simultaneous
+boot's wave of channel moves.
