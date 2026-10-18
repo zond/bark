@@ -749,7 +749,8 @@ fn a_node_whose_anchor_is_gone_chooses_again() {
 
 /// A node that sleeps follows its anchor to a new home channel: it hears
 /// the anchor's next heartbeat on its old channel, which names the new
-/// home, and knows from the anchor's interval when it comes to the new.
+/// home, and knows from the anchor's interval when it comes to the new. It
+/// beats there soon after, so its holder knows where it listens.
 #[test]
 fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
     let (r, s) = (0, 1);
@@ -787,6 +788,16 @@ fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
         h.nodes[s].core.anchor().map(|a| a.id),
         Some(h.nodes[r].core.id())
     );
+    // It beats on the new channel within a heartbeat interval, give or take
+    // the listen-before-talk, and its holder learns where it listens.
+    let followed = h.now;
+    let id = h.nodes[s].core.id();
+    let known =
+        |h: &Harness<Relay>| h.nodes[r].core.heard_nodes().get(id).map(|n| n.home) == Some(new);
+    assert!(h.run_until(followed + c.heartbeat_max + secs(1), known));
+    assert!(beats(&h, s)
+        .iter()
+        .any(|&(t, on, sleepy)| t >= followed && on == new && sleepy));
 }
 
 /// A holder that moves its home takes along the sleepy nodes that listen

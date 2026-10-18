@@ -36,7 +36,8 @@
 //! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
 //! "Relay choice"). Back from the dark, it keeps its anchor. It
 //! follows its anchor to a new home channel at the anchor's next heartbeat
-//! it hears, and does not move by the busy estimate.
+//! it hears, and beats there within a heartbeat interval; it does not move
+//! by the busy estimate.
 //!
 //! With an anchor it heartbeats on its home channel only, with the sleepy
 //! bit, at a random time in the second
@@ -954,6 +955,12 @@ impl Relay {
             });
             if a.home != self.home && self.config.home_override.is_none() {
                 self.retune(a.home, emit);
+                // Its holder learns the new channel only from a beat there,
+                // and every node of the anchor follows on the same
+                // heartbeat: each beats at a random time within a heartbeat
+                // interval (spec "Beats").
+                let soon = now + self.rng.duration(Duration::ZERO, self.config.heartbeat_max);
+                self.beacon.next_at = self.beacon.next_at.min(soon);
             }
         }
         let Some(to) = to else {
