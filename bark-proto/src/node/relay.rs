@@ -266,6 +266,12 @@ pub struct Load {
     pub heard: usize,
     /// Neighbour table entries, expired ones not yet removed included (spec "Neighbour table").
     pub neighbours: usize,
+    /// Of `send_queue`, the frames in hop places (spec "Send queue").
+    pub hop_places: usize,
+    /// Of `send_queue`, the frames waiting for a ban to end (spec "Overload waits").
+    pub waiting: usize,
+    /// Of `send_queue`, returns to the parent (spec "Return to parent").
+    pub returns: usize,
 }
 
 /// A node that is not sleepy: its heard table and delivery queue at the
@@ -859,6 +865,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivery_queue: self.delivery.len(),
             heard: self.heard.len(),
             neighbours: self.neighbours.len(),
+            hop_places: self.queue.iter().filter(|o| o.place > 0).count(),
+            waiting: self.queue.iter().filter(|o| o.not_before > now).count(),
+            returns: self
+                .queue
+                .iter()
+                .filter(|o| o.kind == crate::tables::send_queue::Kind::Return)
+                .count(),
         }
     }
 

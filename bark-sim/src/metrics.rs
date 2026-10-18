@@ -231,6 +231,12 @@ pub struct CoreCounts {
     pub handed_over: u64,
     /// Of those, returned to the parent (spec "Return to parent").
     pub returned: u64,
+    /// Of the forwards, the first hand-over at the message's origin, count 1
+    /// (spec "Hop count").
+    pub originated_out: u64,
+    /// Hand-overs to a neighbour whose every attempt went unanswered (spec
+    /// "Hand-over" step 6).
+    pub failed: u64,
     /// Heartbeats from a relay not in the table that took the place of
     /// one that was (D12).
     pub evictions: u64,
@@ -1012,6 +1018,9 @@ mod tests {
                 delivery_queue: 1,
                 heard: 70,
                 neighbours: 64,
+                hop_places: 0,
+                waiting: 0,
+                returns: 0,
             };
             l.add(&load, ms(380), ms(242), 64);
         }

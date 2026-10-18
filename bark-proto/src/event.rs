@@ -266,6 +266,14 @@ pub enum Trace {
         /// The parent.
         to: NodeId,
     },
+    /// Every attempt of a hand-over to a neighbour went unanswered, and a
+    /// failure was counted against it (spec "Hand-over" step 6).
+    HandOverFailed {
+        /// The message.
+        msg_id: MsgId,
+        /// The neighbour.
+        to: NodeId,
+    },
     /// A neighbour reached the demotion threshold and is no longer a next
     /// hop (spec "Neighbour table").
     Demoted {

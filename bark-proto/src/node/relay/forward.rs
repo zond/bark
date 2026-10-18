@@ -1321,6 +1321,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let data = Packet::decode(out.frame.payload());
         if let (Ok(Packet::Data(d)), true) = (data, out.kind != Kind::Deliver) {
             if counted {
+                emit(Action::Trace(Trace::HandOverFailed {
+                    msg_id: id,
+                    to: d.dst_hop,
+                }));
                 self.count_failure(d.dst_hop, now, emit);
                 if self.config.sleepy && d.hops == 0 {
                     // A sleepy node's own message tries its anchor again a

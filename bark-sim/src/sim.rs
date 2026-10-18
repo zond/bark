@@ -1540,7 +1540,7 @@ impl Sim {
             let l = r.load(self.clocks[i].local(self.now));
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
-                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"m\":{m}}}\n",
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"m\":{m}}}\n",
                 self.nodes[i].alive,
                 r.booting(),
                 r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64,
@@ -1548,7 +1548,10 @@ impl Sim {
                 l.send_queue,
                 l.delivery_queue,
                 l.heard,
-                l.neighbours
+                l.neighbours,
+                l.hop_places,
+                l.waiting,
+                l.returns
             ));
         }
         let now = self.now;
@@ -1973,7 +1976,11 @@ impl Sim {
                         node: to,
                         tried,
                     } => self.delivery_waits(node, msg_id.0, key(to), tried),
-                    Trace::Forwarded { .. } => c.handed_over += 1,
+                    Trace::Forwarded { hops, .. } => {
+                        c.handed_over += 1;
+                        c.originated_out += u64::from(hops == 1);
+                    }
+                    Trace::HandOverFailed { .. } => c.failed += 1,
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
                         c.returned += 1;
