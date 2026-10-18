@@ -896,8 +896,8 @@ neighbours that are only banned, the message waits until the earliest
 ban ends and is routed again then ([overload waits](#overload-waits)). If there is none at all,
 the relay returns the message to its parent ([return to parent](#return-to-parent)).
 
-A neighbour without margin is tried only after every neighbour with
-margin, demoted ones included. Fading lets a relay hear the 8-byte
+Neighbours without margin come after every neighbour with margin,
+demoted ones included, because fading lets a relay hear the 8-byte
 heartbeat of a neighbour whose link usually cannot carry a full DATA
 frame. Such a neighbour is often the farthest, so the nearest to the
 destination, and without this rule every message would try it first and
@@ -913,10 +913,9 @@ another route exists; it should not drop a message whose only route is
 that link. Two hand-overs lost to collisions demote a neighbour that
 works, and on a line it is the only route, so without the last resort
 every message is dropped until the demotion lapses, six and a half
-minutes. A neighbour that is really gone costs its relay at most 11 failed
-hand-overs, whatever the messages, until its entry expires
-([bounds](#bounds); [neighbour table](#neighbour-table): 390 s after its last heartbeat) (roadmap D25, D36, D42). A
-banned neighbour is not tried at all ([refusal](#refusal), [silence is pushback](#silence-is-pushback)).
+minutes. A neighbour that is really gone costs its relay a bounded number of
+failed hand-overs, whatever the messages, until its entry expires
+([bounds](#bounds)) (roadmap D25, D36, D42).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -1015,29 +1014,26 @@ it (roadmap D35).
 **Time left.** A message lives in the network for at most the delivery
 TTL, 600 s ([sleepy nodes](#sleepy-nodes)), from when a node took it from its application.
 Every DATA carries the time the message has left, `time_left`, in whole
-units of 2.5 s, rounded down ([packet formats](#packet-formats)). That node starts it at
-the TTL and, like any holder, sends what is left at each transmission,
-so a sleepy node's waits for its anchor count against it. A relay that takes a
+units of 2.5 s ([packet formats](#packet-formats)). That node starts it at the TTL. Each
+transmission, retries included, carries what is left at that moment,
+rounded down, so no node claims more than the message has, and a sleepy
+node's waits for its anchor count against it. A relay that takes a
 packet to send on counts the message's time from the packet: what it
 carries less the frame's time on air, since the sender stamps the time
-as the frame goes out. Each transmission, retries included, carries
-what is left at that moment, rounded down, so no node claims more than
-the message has. With one unit or less left a message can no longer be
+as the frame goes out. With one unit or less left a message can no longer be
 sent with any, and its time is gone: the relay drops it wherever it
 waits in the send queue, for its turn, for the bucket, for a ban, in a
 hop place or as a return, and one whose frame is on air at its next
 attempt. A packet that arrives with its time gone is no work: the relay
 takes it, as in cases 1, 3 and 4, and the message ends there. A message
 to deliver is not affected: at its owner the delivery queue keeps it for
-its own TTL, whatever was left, and the DATA that takes it to its sleepy
-node carries the time it arrived with ([delivery](#delivery)). A return or a copy carries the time like
+its own TTL, whatever was left ([delivery queue](#delivery-queue)). A return or a copy carries the time like
 any DATA, so the parent's copy (case 5) ends by the same clock.
 
 Without an end by time, a message the network has taken lives as long
 as hand-overs to someone succeed: past the cap, long after its sender
 and its destination's queue would have given it up, keeping the relays
-at their duty cap (roadmap D42, D44). The TTL is the one the delivery
-queue keeps: the time the network keeps a message ([sleepy nodes](#sleepy-nodes)).
+at their duty cap (roadmap D42, D44).
 
 Rounding down loses up to a unit at each hand-over, a whole one at a
 hand-over that follows at once. 2.5 s is the finest unit at which one
@@ -1067,8 +1063,7 @@ origin's own application included: that is the cost of having no
 end-to-end acknowledgement.
 
 A message whose neighbours left are only banned is neither returned nor
-dropped: it waits ([overload waits](#overload-waits)), at the origin or anywhere else,
-until its time is gone ([receiving DATA](#receiving-data)); a node's own application's
+dropped: it waits ([overload waits](#overload-waits)); a node's own application's
 message waits as in [a node's own message](#a-nodes-own-message). An application's message for a
 sleepy node this relay holds for that finds the delivery queue full is
 kept aside until the queue has a place.
@@ -1076,8 +1071,7 @@ kept aside until the queue has a place.
 If a failed hand-over to the parent demotes it, after the message has
 waited for the parent's ban and gone again ([hand-over](#hand-over) step 6), the
 relay drops the message and the search ends early. A parent that refuses the return
-has not failed: the return waits for the ban and goes again
-([refusal](#refusal)).
+has not failed ([refusal](#refusal)).
 
 #### Hop count
 
@@ -1088,8 +1082,7 @@ start the search here" ([packet sender](#packet-sender)). A relay
 sends its record's highest count plus one ([message records](#message-records)), whether it
 is forwarding or returning to its parent. The count is set when a
 hand-over's first frame goes out, and its retries repeat it
-([hand-over](#hand-over)). The highest count is the largest the relay has received for
-the message or sent in a hand-over that succeeded. So along the path of
+([hand-over](#hand-over)). So along the path of
 a message the count only grows, and a relay sends a count for a message
 once, but in retries: to send another packet of it, it must have
 received one since its last hand-over that succeeded, or that hand-over
@@ -1164,7 +1157,7 @@ and no record is replaced. Then:
   of the message at a relay ends with a hand-over that succeeds, or at
   the origin with a drop, and there are finitely many of those: the
   search ends. A neighbour that does not answer is banned and then demoted
-  ([hand-over](#hand-over) step 6), so it costs its relay at most 11 failed hand-overs
+  ([hand-over](#hand-over) step 6), so it costs its relay a bounded number of failed hand-overs
   ([bounds](#bounds)), and the hop cap bounds the stays ([hop count](#hop-count)).
 - A send to a relay that already has the message hands it the search
   ([receiving DATA](#receiving-data), case 5): it goes on with its own candidates. The sender
@@ -1211,12 +1204,11 @@ What breaks it:
   the table 390 s after its last heartbeat: the bans 1.56, 3.11, 6.2,
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
-- **Life:** at most the delivery TTL, 600 s, from a node taking it from
-  the application to its owner ([receiving DATA](#receiving-data)), whatever
-  its search and however long it waits; then up to a TTL more in the
-  owner's delivery queue. So a message costs the network at most 600 s
-  of waiting and handing over, and holds a place in a send queue no
-  longer than that.
+- **Life:** at most the delivery TTL from a node taking it from the
+  application to its owner ([receiving DATA](#receiving-data)), whatever its search and
+  however long it waits, then up to a TTL more in the owner's delivery
+  queue ([delivery queue](#delivery-queue)). So it holds a place in a send queue no longer
+  than a TTL.
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
@@ -1241,10 +1233,7 @@ What breaks it:
   relay handles at most 1561 messages in that time. The
   records of held messages are never evicted and may be older, so the
   table has room for the 294 a send queue holds on top: 1855.
-- **State per relay:** the records at 32 bytes each, 58.0 KiB; a send queue
-  of 294 places of 280 bytes, each a frame of up to 255 bytes and its
-  bookkeeping, 80.4 KiB ([send queue](#send-queue)); the owner's
-  delivered IDs, kept with the delivery queue ([delivery queue](#delivery-queue)).
+- **State per relay:** the RAM budget of [implementation notes](#implementation-notes).
 
 ---
 
@@ -1789,7 +1778,7 @@ Crate layout is D7.
 
 **RAM budget (256 KiB):** neighbour table 64 × 64 B = 4.0 KiB; heard table
 256 × 32 B = 8.0 KiB; delivery queue 41 × 264 B = 10.6 KiB; message records
-([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 280 B = 80.4 KiB;
+([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 280 B = 80.4 KiB, a place holding a frame of up to 255 bytes and its bookkeeping;
 delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
 1 KiB; 162.9 KiB in all, measured, for every node, sleepy or not. BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
 application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
