@@ -959,6 +959,22 @@ impl Relay {
         true
     }
 
+    /// This node has moved its home from `old`: the sleepy nodes there that
+    /// listen now hear the heartbeat it sends on `old` and follow it, so it
+    /// sends to them on its new home. The others still sleep there and
+    /// say where they are with their next beat (spec "Channel moves").
+    fn take_listeners(&mut self, old: Channel, now: Instant) {
+        let home = self.home;
+        for i in 0..self.heard.len() {
+            let Some(n) = self.heard.iter().nth(i).copied() else {
+                break;
+            };
+            if n.home == old && self.listening(n.id, now) {
+                self.heard.moved(n.id, home);
+            }
+        }
+    }
+
     /// Make `to` the anchor: listen on its home, and beat there at once.
     fn take_anchor(&mut self, to: &Neighbour, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.anchor = Some(Anchor {
@@ -1060,6 +1076,7 @@ impl Relay {
                 self.retune(to, emit);
                 if self.home != old {
                     self.beacon.announce = Some(old);
+                    self.take_listeners(old, now);
                 }
             }
         }

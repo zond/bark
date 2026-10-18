@@ -277,7 +277,13 @@ Move only when `busy[home] − min_c busy[c] > 0.05` continuously for
 `argmin` with random tie-break. Immediately after retuning, send **one
 heartbeat on the old channel** (it carries the new channel): that retunes
 any neighbour parked on the old channel at once. A sleeping node anchored
-to it follows at the next heartbeat it wakes for ([relay choice](#relay-choice)).
+to it follows at the next heartbeat it wakes for ([relay choice](#relay-choice)). A sleepy node
+listening at the time, in a window ([delivery](#delivery)), hears the heartbeat on the old
+channel and follows at once, so the moving node sends to the sleepy nodes
+of its heard table on the old channel that listen now on the new one
+([heard table](#heard-table)); the others say where they listen with their next beat.
+Sent on the old channel instead, a delivery to a node that had followed
+went unanswered until that beat (roadmap D53).
 No other announcement. Neighbours that miss it learn the new channel from
 the next rotation (≤130 s) or from ACK failure ([hand-over](#hand-over)).
 

@@ -789,6 +789,49 @@ fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
     );
 }
 
+/// A holder that moves its home takes along the sleepy nodes that listen
+/// now: they hear the heartbeat it sends on the old channel and follow at
+/// once, so it sends to them on the new channel without waiting for their
+/// next beat (spec "Channel moves"). Here the node listens all the time
+/// (`sleepy_listens`).
+#[test]
+fn a_holder_that_moves_sends_on_its_new_channel_to_who_listens() {
+    let (r, s) = (0, 1);
+    let config = Config {
+        sleepy_listens: true,
+        ..Config::default()
+    };
+    let mut h = Harness::new(vec![
+        node_with(0.0, false, 121, config),
+        node_with(50.0, true, 122, config),
+    ]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let old = h.resting(r).unwrap();
+    assert_eq!(h.resting(s), Some(old));
+    // As in the follow test above.
+    h.jam_part(
+        r,
+        old,
+        Duration::from_millis(32),
+        Duration::from_millis(107),
+    );
+    let moved = |h: &Harness<Relay>| h.resting(r) != Some(old);
+    assert!(h.run_until(h.now + secs(1500), moved));
+    let new = h.resting(r).unwrap();
+    let id = h.nodes[s].core.id();
+    assert_eq!(
+        h.nodes[r].core.heard_nodes().get(id).map(|n| n.home),
+        Some(new)
+    );
+    let follows = |h: &Harness<Relay>| h.resting(s) == Some(new);
+    assert!(h.run_until(h.now + secs(1), follows));
+    let sent_at = h.now;
+    let msg = send(&mut h, r, s, b"after the move");
+    assert!(h.run_until(sent_at + secs(1), |h| delivered_at(h, s, msg).is_some()));
+}
+
 /// A node out of reach of everything, in a basement, misses its anchor's
 /// heartbeat, checks, hears nothing at all, and keeps its anchor without
 /// checking again while it hears nothing; back in reach it hears it again

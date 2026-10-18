@@ -222,6 +222,13 @@ impl Heard {
         }
     }
 
+    /// `id` now listens on `home`.
+    pub fn moved(&mut self, id: NodeId, home: Channel) {
+        if let Some(n) = self.get_mut(id) {
+            n.home = home;
+        }
+    }
+
     /// A delivery to `id` went unanswered: it is not listening.
     pub fn missed(&mut self, id: NodeId) {
         if let Some(n) = self.get_mut(id) {
