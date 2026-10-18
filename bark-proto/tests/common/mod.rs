@@ -312,11 +312,14 @@ impl<C: Core> Harness<C> {
                     busy: self.on_air(i, ex.channel, ex.start, ex.end),
                 },
                 Kind::Rssi => {
-                    let busy = self.on_air(i, ex.channel, ex.end, ex.end)
-                        || self.jammed_at(i, ex.channel, ex.end);
+                    let dbm = if self.jammed_at(i, ex.channel, ex.end) {
+                        SIGNAL_DBM
+                    } else {
+                        self.strongest(i, ex.channel, ex.end).unwrap_or(NOISE_DBM)
+                    };
                     Event::RssiSample {
                         channel: ex.channel,
-                        dbm: if busy { SIGNAL_DBM } else { NOISE_DBM },
+                        dbm,
                     }
                 }
                 Kind::Tx => Event::TxDone,
@@ -370,6 +373,16 @@ impl<C: Core> Harness<C> {
         self.txs
             .iter()
             .any(|t| t.channel == channel && self.linked(t.from, i) && t.start <= b && t.end > a)
+    }
+
+    /// The strongest frame on `channel` at `i` at `t`, as an RSSI reading
+    /// reads it.
+    fn strongest(&self, i: usize, channel: Channel, t: Instant) -> Option<i16> {
+        self.txs
+            .iter()
+            .filter(|x| x.channel == channel && self.linked(x.from, i) && x.start <= t && x.end > t)
+            .map(|x| self.rssi.get(&(x.from, i)).copied().unwrap_or(SIGNAL_DBM))
+            .max()
     }
 
     /// A frame on `i`'s resting channel that `i` is in the middle of receiving.
