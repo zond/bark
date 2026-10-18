@@ -16,11 +16,13 @@ fn next_wakeup(&self) -> Option<Instant>;
 fn accepts_send(&self, now: Instant) -> bool;
 ```
 
-One struct, `Relay`, for every node; `Config::sleepy` makes it a sleepy node
-(spec "Sleepy nodes"). A sleepy node's radio receives duty-cycled whenever the node is not
-in a window or listening for its anchor's heartbeat; when and until when, the core says
-with `Action::Sniff` (§3 rule 10). `Relay::anchorless()` says whether it is a sleepy node
-without an anchor (spec "Sleepy nodes alone").
+One struct, `Node`, for every node; `Config::sleepy` makes it a sleepy node
+(spec "Sleepy nodes"). `Relay` is the node with its heard table and delivery queue, and
+`SleepyNode` the node without them, which a sleepy node does not keep; a `Relay` set up
+sleepy keeps them empty and behaves the same (§6). A sleepy node's radio receives
+duty-cycled whenever the node is not in a window or listening for its anchor's heartbeat;
+when and until when, the core says with `Action::Sniff` (§3 rule 10). `Node::anchorless()`
+says whether it is a sleepy node without an anchor (spec "Sleepy nodes alone").
 
 The core never blocks, never sleeps, never allocates, and never reads a clock: `now` is an
 argument. Every random choice comes from the `Rng` seeded at construction, so a core's
@@ -167,9 +169,10 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-166 816 B (162.9 KiB, measured 2026-10-17): the tables and, in under 1 KiB around them, the
+166 840 B (162.9 KiB, measured 2026-10-18): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
-waits. A sleepy node is the same size. There is no fixed target;
+waits. A `SleepyNode` is 147 824 B (144.4 KiB), without the heard table and the delivery
+queue, 18.6 KiB (roadmap D58). There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB

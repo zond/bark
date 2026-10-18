@@ -504,12 +504,17 @@ Per node, up to 64 entries, by node ID:
   equally arbitrary 64, keeps their failure counts, and replaces exactly
   the entries that are failing or silent. Choosing a set spread around
   the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4).
+  simulator (open item O4). A sleepy node with an anchor heard when the
+  table is full replaces no entry: it is a last resort ([next hop](#next-hop)), and a
+  relay hears the beats of every sleepy node on its channel, often more
+  than 64, so making way for them would push out the neighbours it routes
+  through.
 
 A heartbeat with the sleepy bit, a beat ([beats](#beats)), fills the neighbour
 table like any heartbeat, the entry marked sleepy, and at a node that is
-not sleepy the heard table too, which holders use to deliver
-([heard table](#heard-table)).
+not sleepy the heard table too if the sleepy bit is alone, which holders
+use to deliver ([heard table](#heard-table)); a node without an anchor has no window to
+deliver in ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 ---
 
@@ -1125,7 +1130,10 @@ A node **owns** a message's destination when:
   for the radio, in the same place.
 
 A node farther than 50 m with no closer neighbour is at a gap, not the
-owner, and the search goes on ([next hop](#next-hop)).
+owner, and the search goes on ([next hop](#next-hop)). A sleepy node owns only
+what is addressed to its ID: it holds mail for nobody ([sleepy nodes](#sleepy-nodes)),
+so it sends anything else on, and a sleepy neighbour closer to `dst_pos`
+does not keep a node from owning it.
 
 A message whose destination is the sending node's own address is
 delivered there without entering the search. Otherwise the destination
@@ -1394,8 +1402,8 @@ them, and a holder hears them as it listens.
 
 ### Heard table
 
-A node that is not sleepy keeps the sleepy nodes it hears beat in its
-**heard table** ([sleepy nodes](#sleepy-nodes)). It has
+A node that is not sleepy keeps the sleepy nodes with an anchor it hears
+beat in its **heard table** ([sleepy nodes](#sleepy-nodes)). It has
 256 entries, by ID: the node's home channel, until when it listens
 ([delivery](#delivery)), whether a delivery to it went unanswered since its
 last beat, and the mean RSSI of its last two beats. An entry is kept for
