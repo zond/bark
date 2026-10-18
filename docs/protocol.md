@@ -267,8 +267,11 @@ heartbeats only after a boot listen of its own, and once the node
 receives duty-cycled it hears relays only by their answers. Booted
 together with their relays, 3 % of the sleepy nodes of the simulated
 capacity domain still heard none in that time and went without an anchor
-for seven minutes at the median (roadmap D51). A config override exists
-for bench work.
+for seven minutes at the median (roadmap D51). Switched on over half an
+hour among relays switched on over ten minutes, 2.4 % did, nearly all of
+them switched on before most relays had sent a heartbeat; of those
+switched on among running relays, one in 300 (roadmap D52). A config
+override exists for bench work.
 
 ### Channel moves
 
@@ -1667,7 +1670,18 @@ relay's answers, and every DATA to it 357 ms longer
 relays, about one sleepy node in thirty heard no relay in its boot listen
 and spent a median of seven minutes in that mode; the domain carried
 1.3 points less and spent half again as much airtime as when such nodes
-listened until they heard one (roadmap D51).
+listened until they heard one (roadmap D51). Switched on over half an hour
+among relays switched on over ten minutes, one in forty did, nearly all
+in the first minutes, and the domain carried 1.2 points more than booted
+together (roadmap D52).
+
+The table assumes a text crosses the city. Simulated so, three domains
+side by side, a centre of twice the people in the middle one and texts
+to anyone in the three, carried half the table's rate, 91 % at every
+distance, and collapsed at the rate itself within half an hour, the
+middle domain's relays at their duty cap (roadmap D52). One domain with
+texts kept inside it carries the rate (92.5 %) and slides into collapse
+within an hour at twice it.
 
 Common proposals that do not fit:
 
