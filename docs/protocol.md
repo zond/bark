@@ -576,7 +576,7 @@ or not at all ([receiving DATA](#receiving-data)), so a hand-over
 waits for the bucket only when retries or replies have spent it since
 its packet was taken, or when its packet holds a hop place. A relay
 below the reserve sends nothing but heartbeats and replies until its
-bucket refills. Each sender it refuses bans it for 1.56 s ([refusal](#refusal)), so
+bucket refills. Each sender it refuses bans it ([refusal](#refusal)), so
 a sender costs it at most one reply per ban. Without budget even for a
 reply it stays silent, its neighbours' hand-overs to it fail, and they
 ban it, longer each time, and route around it (roadmap D27, D29, D42).
@@ -688,9 +688,9 @@ its sender hand the message to someone else as well. A copy of the
 packet the owed reply answers, sent again because that reply is late,
 is answered by it (roadmap D29).
 
-So: **a node receives everything, ACKs included, on its home channel, and
-leaves it only to transmit.** A sleepy node's home channel is its
-anchor's, so traffic between them never retunes. A node is deaf for
+So ACKs too arrive on the home channel, which a node leaves only to
+transmit ([home channel selection](#home-channel-selection)). A sleepy node's home channel is its
+anchor's ([relay choice](#relay-choice)), so traffic between them never retunes. A node is deaf for
 ≈15 ms per packet it forwards or ACKs; a sender that gets no ACK retries.
 That is the cost of having one radio.
 
@@ -738,9 +738,8 @@ A node's own application's message,
 offered once a ban, would be a full frame every 1.56 s on the channel of
 the neighbour that refused it, 9 %, hiding its ACKs, and would spend the
 holder's bucket as fast as it refills; so after the k-th refusal in a row it waits on the
-ladder of step 6, one ban times 2^(k−1), up to the bucket's whole refill,
-61 s, the longest anything waits for a bucket ([duty cycle cap](#duty-cycle-cap)), and the
-wait starts again from one ban once the message is taken or dropped.
+ladder of [hand-over](#hand-over) step 6, and the wait starts again from one ban once
+the message is taken or dropped.
 
 #### Send queue
 
