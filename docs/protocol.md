@@ -253,7 +253,7 @@ two neighbours that hear each other share a channel cleanly.
 
 ### Channel at boot
 
-Listen on a random channel for a worst-case rotation, 195 s
+Listen on a random channel for a worst-case rotation
 ([heartbeat](#heartbeat)), so that every relay in range has certainly been heard once, collecting
 sweeps and heartbeats. Then set home to `argmin busy[c]`. Channels whose
 busy value is within 0.01 of the lowest count as tied, and the choice
@@ -336,7 +336,7 @@ clock.
 
 Every node sends heartbeats. This section describes a relay's; a sleepy
 node's are rarer and stay on its home channel ([beats](#beats)), and one in
-anchorless mode beats once a minute with a long preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
+anchorless mode beats with the long preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 | Field | Bits | Content |
 |---|---|---|
@@ -355,7 +355,8 @@ payload symbols of 8, and naming the sender costs no airtime.
   after it T later.
 - **Channel:** steps `k ← (k + 1) mod 13` every slot, from a random
   start, whether the heartbeat went or not. A fixed cycle reaches every
-  neighbour once per 13 heartbeats (≈130 s), where a random channel per
+  neighbour once per 13 heartbeats, a **rotation** (≈130 s, at most
+  13 × 15 s = 195 s), where a random channel per
   heartbeat would need ≈41 heartbeats on average to cover all 13.
 - **Procedure:** retune to channel k, listen-before-talk (CAD + RSSI,
   ≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
@@ -393,14 +394,10 @@ minutes, at that drift, longer for clocks that drift alike. Nodes that
 boot together, after a power cut, would start in step but for the random
 first phase (roadmap D47).
 
-This is why no scanning is needed: every node sits on its home channel,
-every neighbour's heartbeat visits all channels, so each neighbour lands
-on each node's home channel once per rotation. A newly started node, or a
-sleepy node, listening on any one channel hears every relay in range
-within one rotation.
-
-Heartbeat load per channel among 270 rooftop relays that all hear each
-other: ≈2.5% ([capacity and sizing](#capacity-and-sizing)).
+No scanning is needed: every neighbour's heartbeat visits all channels,
+so a node listening on any one channel, its home or another, hears every
+relay in range within one rotation. The heartbeat load per channel is in
+[capacity and sizing](#capacity-and-sizing).
 
 ---
 
