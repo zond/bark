@@ -1565,12 +1565,10 @@ few hundred milliseconds apart, all fall inside it, where the ban's
 ladder would offer it every few seconds to a node whose channel is full.
 Silence says no more than that the channel or the anchor is full
 ([silence is pushback](#silence-is-pushback)), so the wait doubles as
-the ban does. Tried again every fade instead, in the simulated capacity
-domain at three times the texting rate of
-[capacity and sizing](#capacity-and-sizing) a text that its anchor never
-took cost its sender 27 frames over its TTL, such texts took a quarter
-of the airtime that texts took, and 63 % of the texts were delivered;
-with the doubling, 79 % (roadmap D54). A message that finds no live neighbour at all waits
+the ban does: tried again every fade instead, a text its anchor never
+takes costs its sender three frames a minute on the anchor's channel for
+its whole TTL, where the anchor hears its other nodes' beats
+(roadmap D54). A message that finds no live neighbour at all waits
 for one, routed again every 60 s, until its time runs out
 ([receiving DATA](#receiving-data)): a carried node loses its neighbours by going dark
 and finds them again. The application is not told ([addresses](#addresses)).
