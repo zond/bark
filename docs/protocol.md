@@ -1553,7 +1553,7 @@ within a TTL, so a relay in reach on any channel hears the node, and two
 nodes in anchorless mode find each other, before anything the network
 holds for them runs out ([sleepy nodes](#sleepy-nodes)). At the mean interval of
 34.6 s the beats cost 38 s an hour of airtime, 11 % of its budget, and
-0.33 mA at 32 mA of transmit current.
+0.34 mA at 32 mA of transmit current.
 
 Nodes in anchorless mode route among themselves and are a next hop like
 any other ([next hop](#next-hop)), each DATA to one with the long preamble. A relay
