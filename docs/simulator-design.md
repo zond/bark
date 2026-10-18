@@ -142,6 +142,17 @@ The meshes' links follow S2's model with shadowing drawn from the run's
 seed, so each seed is a different mesh: some have holes, and some leave
 a relay that no other reaches.
 
+**Switch-on.** Every node is off until it is switched on, at a time
+drawn from the run's seed, uniformly within a window from the start
+that the scenario gives for each kind: `[boot] relays_s` for nodes that
+are not sleepy and `sleepy_s` for sleepy ones. Off, a node hears
+nothing, sends nothing and originates nothing; its dark spells start
+at its switch-on. The run has settled `settle_s` after the last
+switch-on: `settle_s` is how long one node takes to settle after its
+own. S4 switches its relays on over 10 minutes and its sleepy nodes over
+30 (the file argues it); both windows 0, the default, switch every node
+on at once, as every measurement before roadmap D52 did.
+
 **Restart.** A scripted `restart` powers a node off and on at once. The
 node keeps its ID and position, and
 loses everything else, as a solar relay does after a night. Its core is

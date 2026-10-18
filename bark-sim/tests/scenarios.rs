@@ -162,6 +162,8 @@ fn capacity_scenario_runs_a_minute_quickly() {
     // 28 km² with 269 relays, a fifth of them on roofs, and 20 000 leaves.
     let mut sc = scenario("s4-capacity.toml");
     sc.duration_s = 60.0;
+    // Every node switched on at once, so that the minute holds all of them.
+    sc.boot = Default::default();
     let t0 = Wall::now();
     let mut sim = Sim::new(&sc).expect("builds");
     let built = t0.elapsed();
@@ -556,4 +558,43 @@ fn a_restarted_relay_boots_again_with_its_identity() {
     assert!(!sim.relay(0).booting());
     assert_eq!(sim.relay(0).neighbours().count(), 1);
     assert!(sim.resting(0).is_some());
+}
+
+/// Staggered switch-on: each node comes on within its kind's window and
+/// is deaf and silent until then, and the run settles the settle time
+/// after the last switch-on.
+#[test]
+fn nodes_switch_on_within_their_windows() {
+    use bark_proto::Instant;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s2-block.toml");
+    let mut sc = Scenario::load(&path).expect("S2 parses");
+    sc.boot.relays_s = 300.0;
+    sc.boot.sleepy_s = 900.0;
+    sc.duration_s = 1200.0;
+    assert_eq!(sc.settled_s(), sc.settle_s + 900.0);
+    let mut sim = Sim::new(&sc).unwrap();
+    let at = |s: f64| Instant::from_micros((s * 1e6) as u64);
+    sim.run_until(at(150.0));
+    let relays = sim.relays();
+    let on = |sim: &Sim, from: u32, to: u32| {
+        (from..to).filter(|&n| sim.switched_on(n).is_some()).count()
+    };
+    let n = sim.node_count() as u32;
+    let (r, l) = (on(&sim, 0, relays), on(&sim, relays, n));
+    assert!(r > 0 && r < relays as usize, "{r} relays on at 150 s");
+    assert!(
+        l > 0 && l < (n - relays) as usize / 2,
+        "{l} sleepy nodes on at 150 s"
+    );
+    for k in 0..n {
+        if sim.switched_on(k).is_none() {
+            assert!(sim.resting(k).is_none(), "node {k} listens before it is on");
+        }
+    }
+    sim.run_until(at(1200.0));
+    for k in 0..n {
+        let t = sim.switched_on(k).expect("all on by the end");
+        let window = if k < relays { 300.0 } else { 900.0 };
+        assert!(t <= at(window), "node {k} on at {t:?}");
+    }
 }

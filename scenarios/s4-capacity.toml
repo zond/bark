@@ -9,13 +9,28 @@
 
 name = "s4-capacity"
 seed = 1
-# One settled hour after the settle time.
-duration_s = 4500.0
-# The relays choose a home channel after their 195 s boot listen
-# (spec "Channel at boot") and a leaf attaches within a worst-case rotation, 195 s,
-# of its first heartbeat (spec "Relay choice"); the move rule acts only on ten minutes
-# of measurement (spec "Channel moves"), so the first moves come after 795 s.
+# One settled hour after the settle time: 2700 + 3600 s.
+duration_s = 6300.0
+# After it is switched on, a relay chooses a home channel after its 195 s
+# boot listen (spec "Channel at boot") and a sleepy node takes an anchor
+# within its two-rotation boot listen and chooses within a rotation more
+# (spec "Relay choice"); the move rule acts only on ten minutes of
+# measurement (spec "Channel moves"), so a relay's first moves come 795 s
+# after it is switched on. The run has settled this long after the last
+# switch-on, 1800 + 900 s.
 settle_s = 900.0
+
+# Nobody switches a city's nodes on in the same second. The network comes
+# up when a power cut ends or in the morning: relays on the mains come back
+# as their district's supply is restored, feeder by feeder, and solar ones
+# as the light reaches their panels; people switch theirs on when an alert
+# or the morning reaches them. Ten minutes for the relays and half an hour
+# for the people are the short end of that, the hardest boot short of all
+# at once. `relays_s = 0` and `sleepy_s = 0` switch everything on at once,
+# as the measurements before roadmap D52 did.
+[boot]
+relays_s = 600.0
+sleepy_s = 1800.0
 
 [origin]
 lat = 50.45

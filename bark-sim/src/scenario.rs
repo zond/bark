@@ -318,6 +318,25 @@ pub struct MetricsParams {
     pub per_node: bool,
 }
 
+/// When nodes are switched on: each at a time drawn uniformly from its
+/// kind's window from the start of the run. Both windows 0 switch every
+/// node on at once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Boot {
+    /// The window for nodes that are not sleepy, seconds.
+    pub relays_s: f64,
+    /// The window for sleepy nodes, seconds.
+    pub sleepy_s: f64,
+}
+
+impl Boot {
+    /// The latest a node is switched on, seconds.
+    pub fn last_s(&self) -> f64 {
+        self.relays_s.max(self.sleepy_s)
+    }
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -328,11 +347,13 @@ pub struct Scenario {
     pub seed: u64,
     /// Simulated duration, seconds.
     pub duration_s: f64,
-    /// Nodes boot uniformly at random in `[0, boot_spread_s]`.
-    pub boot_spread_s: f64,
-    /// When the network should have settled, seconds: messages originated
-    /// before it are summarised apart, so start-up losses do not mask the
-    /// steady state. 0 for no start-up phase.
+    /// When nodes are switched on.
+    pub boot: Boot,
+    /// How long a node takes to settle after it is switched on, seconds:
+    /// the run has settled this long after the last switch-on
+    /// ([`Scenario::settled_s`]), and messages originated before then are
+    /// summarised apart, so start-up losses do not mask the steady state.
+    /// 0 for no start-up phase.
     pub settle_s: f64,
     /// Origin of the local grid.
     pub origin: Origin,
@@ -362,7 +383,7 @@ impl Default for Scenario {
             name: "unnamed".into(),
             seed: 1,
             duration_s: 60.0,
-            boot_spread_s: 0.0,
+            boot: Boot::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),
@@ -417,6 +438,12 @@ impl Scenario {
     pub fn load(path: &std::path::Path) -> Result<Scenario, String> {
         let s = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Scenario::from_toml(&s).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// When the run has settled, seconds: [`Scenario::settle_s`] after the
+    /// last node is switched on.
+    pub fn settled_s(&self) -> f64 {
+        self.settle_s.max(0.0) + self.boot.last_s()
     }
 
     /// Builder: a named scenario with a seed and duration.

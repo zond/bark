@@ -215,8 +215,8 @@ pub struct SleepSummary {
     /// delivery TTL before the end, and of those delivered
     /// (`Sim::orphans`).
     pub orphans: (u64, u64, Option<f64>, Option<f64>, u64, u64),
-    /// When the sleepy nodes first took an anchor, from the start of the
-    /// run: those that never did, and the median, 90th percentile and
+    /// When the sleepy nodes first took an anchor, from each one's
+    /// switch-on: those that never did, and the median, 90th percentile and
     /// latest of the others, s (`Sim::first_anchors`).
     pub first_anchor: (u64, Option<f64>, Option<f64>, Option<f64>),
     /// Once a minute from the start: the time, s, the mean and the most

@@ -506,6 +506,9 @@ pub struct Sim {
     /// Each node's address as a sender last learned it: a relay's
     /// position, or the relay a leaf was last attached to.
     address: Vec<Option<Position>>,
+    /// When each node is switched on, and whether it is still to be.
+    boot_at: Vec<Instant>,
+    pending_boot: Vec<bool>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
     /// Since when each sleepy node has been without an anchor, past its
@@ -721,6 +724,8 @@ impl Sim {
             leaf_grid: None,
             leaf_xy: Vec::new(),
             address: vec![None; n],
+            boot_at: vec![Instant::ZERO; n],
+            pending_boot: vec![true; n],
             first_anchor: vec![None; n],
             anchorless_since: vec![None; n],
             spells: Vec::new(),
@@ -742,7 +747,7 @@ impl Sim {
             scenario_name: sc.name.clone(),
             seed: sc.seed,
             per_node_summary: sc.metrics.per_node,
-            settle: Instant::ZERO + secs(sc.settle_s.max(0.0)),
+            settle: Instant::ZERO + secs(sc.settled_s()),
             removal: sc
                 .events
                 .iter()
@@ -765,15 +770,22 @@ impl Sim {
 
     fn setup(&mut self, sc: &Scenario, placed: &[PlacedNode]) -> Result<(), String> {
         let n = placed.len();
-        // Boots.
+        // Switch-on: every node is off until its boot.
         for i in 0..n {
-            let at = if sc.boot_spread_s > 0.0 {
-                let mut r = Stream::new(sc.seed, Purpose::Boot, i as u64);
-                secs(r.uniform() * sc.boot_spread_s)
+            let window = if (i as u32) < self.n_relays {
+                sc.boot.relays_s
             } else {
-                Duration::ZERO
+                sc.boot.sleepy_s
             };
-            self.push(Instant::ZERO + at, Ev::Boot(i as u32));
+            let at = if window > 0.0 {
+                let mut r = Stream::new(sc.seed, Purpose::Boot, i as u64);
+                Instant::ZERO + secs(r.uniform() * window)
+            } else {
+                Instant::ZERO
+            };
+            self.boot_at[i] = at;
+            self.nodes[i].alive = false;
+            self.push(at, Ev::Boot(i as u32));
         }
         // Observers.
         let all_relays: Vec<String> = (0..self.n_relays).map(|i| format!("relay:{i}")).collect();
@@ -909,11 +921,10 @@ impl Sim {
                 return Err("availability periods must be positive".into());
             }
             self.availability = Some((a.mean_available_s, a.mean_dark_s));
+            // Each sleepy node's process starts at its switch-on.
             for i in self.n_relays..n as u32 {
-                let mut r = Stream::new(sc.seed, Purpose::Availability, i as u64);
-                let first = secs(r.exponential(a.mean_available_s));
+                let r = Stream::new(sc.seed, Purpose::Availability, i as u64);
                 self.avail_rng.push(r);
-                self.push(Instant::ZERO + first, Ev::Availability(i));
                 self.leaf_nodes.insert(self.node_id(i).0, i);
             }
             self.back_at = vec![None; self.avail_rng.len()];
@@ -938,8 +949,8 @@ impl Sim {
                 return Err(format!("event {k}: {:?} needs a channel", e.action));
             }
             if e.action == ScriptAction::Start {
-                // Off until then: its boot finds it so and does nothing.
-                self.nodes[node as usize].alive = false;
+                // Off until then, whatever its switch-on time.
+                self.pending_boot[node as usize] = false;
             }
             self.script.push(ScriptEntry {
                 node,
@@ -1051,10 +1062,8 @@ impl Sim {
     fn dispatch(&mut self, ev: Ev) {
         match ev {
             Ev::Boot(n) => {
-                if self.nodes[n as usize].alive {
-                    // The contract has no boot event; power-on is delivered
-                    // as a wakeup (see docs/core-interface.md §2).
-                    self.deliver(n, Event::Wakeup);
+                if std::mem::take(&mut self.pending_boot[n as usize]) {
+                    self.start(n);
                 }
             }
             Ev::Wakeup(n, g) => {
@@ -1390,15 +1399,15 @@ impl Sim {
         (len.len() as u64, open, p(50.0), p(90.0))
     }
 
-    /// When the sleepy nodes first took an anchor, s from the start: those
-    /// that never did, and the median, 90th percentile and latest of the
+    /// When the sleepy nodes first took an anchor, s from each one's
+    /// switch-on: those that never did, and the median, 90th percentile and latest of the
     /// others.
     pub fn first_anchors(&self) -> (u64, Option<f64>, Option<f64>, Option<f64>) {
         let n = self.n_relays as usize;
         let mut at: Vec<u64> = self.first_anchor[n..]
             .iter()
-            .flatten()
-            .map(|t| t.as_micros())
+            .zip(&self.boot_at[n..])
+            .filter_map(|(t, b)| t.map(|t| t.since(*b).as_micros()))
             .collect();
         at.sort_unstable();
         let never = (self.first_anchor.len() - n - at.len()) as u64;
@@ -2179,6 +2188,12 @@ impl Sim {
         self.address[node as usize]
     }
 
+    /// When a node was switched on, if it has been.
+    pub fn switched_on(&self, node: u32) -> Option<Instant> {
+        let i = node as usize;
+        (!self.pending_boot[i] && self.nodes[i].alive).then_some(self.boot_at[i])
+    }
+
     /// A node's ID.
     pub fn node_id(&self, node: u32) -> NodeId {
         self.ids[node as usize]
@@ -2353,6 +2368,14 @@ impl Sim {
             return;
         }
         self.nodes[node as usize].alive = true;
+        self.boot_at[node as usize] = self.now;
+        if let Some(mean_up) = self.availability.map(|a| a.0) {
+            if node >= self.n_relays {
+                let li = (node - self.n_relays) as usize;
+                let first = secs(self.avail_rng[li].exponential(mean_up));
+                self.push(self.now + first, Ev::Availability(node));
+            }
+        }
         // Power-on is delivered as a wakeup (docs/core-interface.md §2).
         self.deliver(node, Event::Wakeup);
     }
