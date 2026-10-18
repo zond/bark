@@ -97,10 +97,11 @@ pub struct HeardNode {
     pub missed: bool,
 }
 
-/// The heard table.
+/// The heard table, of up to `N` nodes: a sleepy node keeps none (spec
+/// "Heard table").
 #[derive(Clone)]
-pub struct Heard {
-    nodes: FixedVec<HeardNode, HEARD>,
+pub struct Heard<const N: usize = HEARD> {
+    nodes: FixedVec<HeardNode, N>,
     params: HeardParams,
 }
 
@@ -117,9 +118,9 @@ const EMPTY: HeardNode = HeardNode {
     missed: false,
 };
 
-impl Heard {
+impl<const N: usize> Heard<N> {
     /// An empty table.
-    pub const fn from_config(config: &Config) -> Heard {
+    pub const fn from_config(config: &Config) -> Heard<N> {
         Heard {
             nodes: FixedVec::new(EMPTY),
             params: HeardParams::from_config(config),
@@ -279,7 +280,7 @@ mod tests {
 
     #[test]
     fn a_beat_wakes_the_node_for_a_window() {
-        let mut t = Heard::from_config(&Config::default());
+        let mut t = Heard::<HEARD>::from_config(&Config::default());
         let awake = t.params().awake;
         assert!(t.heard(id(1), ch(3), -90, at(10)));
         assert!(t.awake(id(1), at(10) + (awake - Duration::from_micros(1))));
@@ -301,7 +302,7 @@ mod tests {
     /// a beat, and its DATA names the channel it listens on.
     #[test]
     fn any_frame_from_a_node_keeps_it() {
-        let mut t = Heard::from_config(&Config::default());
+        let mut t = Heard::<HEARD>::from_config(&Config::default());
         assert!(t.heard(id(1), ch(3), -90, at(0)));
         t.sent(id(1), ch(5), at(500));
         assert!(!t.awake(id(1), at(500)), "sending is not listening");
@@ -318,7 +319,7 @@ mod tests {
 
     #[test]
     fn entries_last_two_periods_and_the_weakest_makes_way() {
-        let mut t = Heard::from_config(&Config::default());
+        let mut t = Heard::<HEARD>::from_config(&Config::default());
         for i in 0..HEARD as u32 {
             assert!(t.heard(id(i), ch(0), -100 + (i % 20) as i16, at(0)));
         }

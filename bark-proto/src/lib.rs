@@ -27,7 +27,7 @@ pub mod wire;
 
 pub use event::{Action, AppCommand, AppEvent, DropReason, Event, Frame, Trace, MAX_FRAME};
 pub use ids::{MsgId, NodeId};
-pub use node::{Config, Core, Load, Relay};
+pub use node::{Config, Core, Load, Node, Relay, SleepyNode};
 pub use position::{Position, ShortName};
 pub use radio::{Channel, CHANNELS};
 pub use time::{Duration, Instant};

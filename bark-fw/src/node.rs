@@ -16,8 +16,14 @@ use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
 
-/// The node this image runs.
+/// The node this image runs: a relay.
+#[cfg(not(feature = "sleepy"))]
 pub type Role = bark_proto::Relay;
+/// The node this image runs with the `sleepy` feature: a sleepy node,
+/// without the heard table and the delivery queue it does not keep (spec
+/// "Sleepy nodes").
+#[cfg(feature = "sleepy")]
+pub type Role = bark_proto::SleepyNode;
 
 /// How often the driver's counters are logged; the uptime line's period.
 const REPORT_EVERY: Duration = Duration::from_secs(10);

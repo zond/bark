@@ -192,7 +192,7 @@ pub struct ReturnsSummary {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SleepSummary {
     /// Listening time per sleepy node and hour, seconds: the time its
-    /// radio was not asleep, mean, median and 90th percentile over the
+    /// radio did not receive duty-cycled, mean, median and 90th percentile over the
     /// sleepy nodes.
     pub listen_s_per_h: [f64; 3],
     /// Of that time, the time it received duty-cycled (`Action::Sniff`),
@@ -480,10 +480,9 @@ impl Sim {
         }
         let nodes = &self.metrics.nodes[n..];
         let hour = |us: u64| us as f64 / window as f64 * 3600.0;
-        // Listening: neither asleep nor receiving duty-cycled, or taking a
-        // frame it caught then.
-        let listen_us =
-            |m: &NodeMetrics| (window + m.sniff_rx_us).saturating_sub(m.asleep_us + m.sniff_us);
+        // Listening: not receiving duty-cycled, or taking a frame it
+        // caught then.
+        let listen_us = |m: &NodeMetrics| (window + m.sniff_rx_us).saturating_sub(m.sniff_us);
         let sniff_us = |m: &NodeMetrics| m.sniff_us.saturating_sub(m.sniff_rx_us);
         let parts = |m: &NodeMetrics| {
             let ua = |us: u64, ua: f64| us as f64 * ua / window as f64 / 1e3;
@@ -836,14 +835,13 @@ impl Summary {
         let d = &self.rx.deaf;
         let _ = writeln!(
             s,
-            "deaf by reason: retune {}, cad {}, rssi {}, tx {}, corrupt {}, absent {}, asleep {}, duty-cycled {}; sinr of which adjacent {}",
+            "deaf by reason: retune {}, cad {}, rssi {}, tx {}, corrupt {}, absent {}, duty-cycled {}; sinr of which adjacent {}",
             d.retune,
             d.cad,
             d.rssi,
             d.tx,
             d.corrupt,
             d.absent,
-            d.asleep,
             d.sniff,
             self.rx.sinr_fail_adjacent
         );

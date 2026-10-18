@@ -18,7 +18,7 @@ mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{Load, Relay};
+pub use relay::{Load, Node, Relay, SleepyNode};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).

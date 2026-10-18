@@ -119,16 +119,17 @@ pub enum Pushed {
     Full,
 }
 
-/// The delivery queue, in arrival order.
+/// The delivery queue, in arrival order, of up to `N` messages: a
+/// sleepy node keeps none (spec "Sleepy nodes").
 #[derive(Clone)]
-pub struct DeliveryQueue {
-    entries: FixedVec<Queued, DELIVERY_QUEUE>,
+pub struct DeliveryQueue<const N: usize = DELIVERY_QUEUE> {
+    entries: FixedVec<Queued, N>,
     ttl: Duration,
 }
 
-impl DeliveryQueue {
+impl<const N: usize> DeliveryQueue<N> {
     /// An empty queue whose messages live `ttl`.
-    pub const fn new(ttl: Duration) -> DeliveryQueue {
+    pub const fn new(ttl: Duration) -> DeliveryQueue<N> {
         let fill = Queued {
             msg_id: MsgId(0),
             dst_pos: Position { lat: 0, lon: 0 },
@@ -145,7 +146,7 @@ impl DeliveryQueue {
     }
 
     /// An empty queue with `config.delivery_ttl`.
-    pub const fn from_config(config: &Config) -> DeliveryQueue {
+    pub const fn from_config(config: &Config) -> DeliveryQueue<N> {
         DeliveryQueue::new(config.delivery_ttl)
     }
 
@@ -247,7 +248,7 @@ mod tests {
 
     #[test]
     fn fifo_per_node_and_dedup() {
-        let mut q = DeliveryQueue::from_config(&Config::default());
+        let mut q = DeliveryQueue::<DELIVERY_QUEUE>::from_config(&Config::default());
         assert_eq!(q.push(msg(1, 1, 0)), Pushed::Queued);
         assert_eq!(q.push(msg(2, 2, 1)), Pushed::Queued);
         assert_eq!(q.push(msg(3, 1, 2)), Pushed::Queued);
@@ -262,7 +263,7 @@ mod tests {
 
     #[test]
     fn ttl() {
-        let mut q = DeliveryQueue::from_config(&Config::default());
+        let mut q = DeliveryQueue::<DELIVERY_QUEUE>::from_config(&Config::default());
         q.push(msg(1, 1, 0));
         q.push(msg(2, 2, 100));
         assert_eq!(q.next_expiry(), Some(at(600)));
@@ -275,7 +276,7 @@ mod tests {
 
     #[test]
     fn full_queue_refuses() {
-        let mut q = DeliveryQueue::from_config(&Config::default());
+        let mut q = DeliveryQueue::<DELIVERY_QUEUE>::from_config(&Config::default());
         for i in 0..DELIVERY_QUEUE as u32 {
             assert_eq!(q.push(msg(i, i as u8, i as u64)), Pushed::Queued);
         }

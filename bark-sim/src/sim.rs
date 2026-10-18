@@ -217,9 +217,6 @@ pub(crate) struct NodeState {
     pub restarts: u32,
     /// The last heartbeats to reach this node, for [`crate::metrics::Addressed`].
     pub beats: BeatRing,
-    /// The radio is asleep until then (`Action::Sleep`), since `asleep_since`.
-    pub asleep: Option<Instant>,
-    pub asleep_since: Instant,
     /// The radio receives duty-cycled (`Action::Sniff`): its cycle began
     /// then, with a receive window, and it ends then.
     pub sniff: Option<(Instant, Instant)>,
@@ -228,11 +225,6 @@ pub(crate) struct NodeState {
 }
 
 impl NodeState {
-    /// Whether the radio is asleep at `t`.
-    pub(crate) fn asleep_at(&self, t: Instant) -> bool {
-        self.asleep.is_some_and(|u| t < u)
-    }
-
     /// When the duty cycle of a radio receiving duty-cycled at `t` began.
     pub(crate) fn sniffing_at(&self, t: Instant) -> Option<Instant> {
         self.sniff.filter(|&(_, u)| t < u).map(|(t0, _)| t0)
@@ -279,8 +271,8 @@ impl BeatRing {
 pub(crate) struct ToSleepy {
     /// The node.
     pub node: u32,
-    /// It could not hear the frame when it started: asleep, or receiving
-    /// duty-cycled and the frame's preamble short.
+    /// It could not hear the frame when it started: it received
+    /// duty-cycled and the frame's preamble was short.
     pub deaf: bool,
     /// It was dark or removed then.
     pub absent: bool,
@@ -779,8 +771,6 @@ impl Sim {
                 held_gen: 0,
                 restarts: 0,
                 beats: BeatRing::default(),
-                asleep: None,
-                asleep_since: Instant::ZERO,
                 sniff: None,
                 sniff_since: Instant::ZERO,
             })
@@ -1459,19 +1449,6 @@ impl Sim {
         (n, back.len() as u64, at(50.0), at(90.0), sent, got)
     }
 
-    /// The radio of `node` sleeps until `until`: anything it was receiving
-    /// is lost, and it receives nothing until then.
-    fn sleep(&mut self, node: u32, until: Instant) {
-        self.wake(node);
-        if until <= self.now {
-            return;
-        }
-        self.abort_lock(node, Deaf::Asleep);
-        let st = &mut self.nodes[node as usize];
-        st.asleep = Some(until);
-        st.asleep_since = self.now;
-    }
-
     /// The radio of `node` receives duty-cycled until `until`, its cycle
     /// starting now. A packet it was receiving is lost unless enough of
     /// its preamble is left for the first window to detect it.
@@ -1491,18 +1468,12 @@ impl Sim {
         st.sniff_since = self.now;
     }
 
-    /// The radio of `node` is awake from now: count the time it slept or
+    /// The radio of `node` listens in full from now: count the time it
     /// received duty-cycled after the settle time.
     fn wake(&mut self, node: u32) {
         let (now, settle) = (self.now, self.settle);
         let st = &mut self.nodes[node as usize];
         let m = &mut self.metrics.nodes[node as usize];
-        if let Some(until) = st.asleep.take() {
-            let (from, to) = (st.asleep_since.max(settle), until.min(now));
-            if to > from {
-                m.asleep_us += to.since(from).as_micros();
-            }
-        }
         if let Some((_, until)) = st.sniff.take() {
             let (from, to) = (st.sniff_since.max(settle), until.min(now));
             if to > from {
@@ -1655,7 +1626,7 @@ impl Sim {
             a,
             Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
         ) {
-            // Any use of the radio wakes it (core-interface §3 rules 10, 11).
+            // Any use of the radio ends a sniff (core-interface §3 rule 10).
             self.wake(node);
         }
         // The core's instants are on its own clock; a script's are true.
@@ -1667,7 +1638,6 @@ impl Sim {
             }
         };
         match a {
-            Action::Sleep(until) => self.sleep(node, true_time(until)),
             Action::Sniff(until) => self.sniff(node, true_time(until)),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),

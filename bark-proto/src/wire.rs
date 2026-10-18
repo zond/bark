@@ -1,6 +1,6 @@
 //! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x1, 0x2, 0x4, 0x6, 0x7 and 0xB to 0xE are unused (roadmap D46,
-//! D49).
+//! codes 0x1, 0x2, 0x4, 0x6, 0x7, 0xA and 0xC to 0xE are unused (roadmap
+//! D46, D49, D58).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
 //! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
@@ -12,7 +12,7 @@
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x8/0x9/0xA first id pos                               = 9
+//! HEARTBEAT 0x8/0x9/0xB first id pos                               = 9
 //! ACK       0x3      first msg from to                              = 13
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
@@ -40,8 +40,9 @@
 //! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
 //!   bits of an ACK are sent as zero and ignored on receipt.
 //! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
-//!   sleepy (0x9), and 0x2, anchorless (0xA), never both (0xB is
-//!   rejected): a node that sleeps has an anchor. `aux` holds the home channel, 0 to 12, in all four of
+//!   sleepy (0x9), and 0x2, anchorless, only with sleepy (0xB; 0xA is
+//!   rejected): a node that listens all the time has no anchor to miss.
+//!   `aux` holds the home channel, 0 to 12, in all four of
 //!   its bits, so the flags are in the type. 0x8 is the one base with both
 //!   low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0 would
 //!   give 0x3, the ACK, 0x4 would give 0x5, DATA, and 0xC would give 0xF,
@@ -82,6 +83,10 @@ const HEARTBEAT_FLAGS: u8 = 0x3;
 const HEARTBEAT_SLEEPY: u8 = 0x1;
 const HEARTBEAT_ANCHORLESS: u8 = 0x2;
 const _: () = assert!(HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS == HEARTBEAT_FLAGS);
+const _: () = assert!(
+    T_HEARTBEAT | HEARTBEAT_SLEEPY == 0x9 && T_HEARTBEAT | HEARTBEAT_FLAGS == 0xB,
+    "spec \"Packet formats\": 0x8, 0x9 and 0xB"
+);
 const _: () = assert!(
     T_HEARTBEAT & HEARTBEAT_FLAGS == 0
         && T_ACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
@@ -131,17 +136,13 @@ const _: () = assert!(MAX_PAYLOAD == 233);
 /// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// Sleepy (0x9): reach the sender only in its window after its beat.
-    /// Its address points at its anchor, where its mail waits, so only the
-    /// anchor sends to it, and it is never a next hop. Clear, it may be
-    /// sent to at any time.
+    /// Sleepy (0x9): reach the sender cheaply in its window after its
+    /// beat, or at any time with the long preamble; it holds mail for
+    /// nobody. Clear, it listens all the time.
     pub sleepy: bool,
-    /// Anchorless (0xA): the sender is sleepy and knows no node that is not:
-    /// it holds and forwards mail as a relay does, sends with the long
-    /// preamble, and is reached at any time with it. It is no mailbox to
-    /// anchor to, since it leaves the mode at the first relay it hears; a
-    /// node that is not sleepy wakes it with an answer. Never with
-    /// `sleepy`.
+    /// Anchorless (0xB, with `sleepy`): the sender knows no node that is
+    /// not sleepy; one that is answers, so that it can anchor. Nobody
+    /// anchors to it. Encoded only with `sleepy`.
     pub anchorless: bool,
     /// The sender's home channel.
     pub home: Channel,
@@ -324,7 +325,7 @@ impl Packet<'_> {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
                 let kind = T_HEARTBEAT
                     | flag(h.sleepy, HEARTBEAT_SLEEPY)
-                    | flag(h.anchorless && !h.sleepy, HEARTBEAT_ANCHORLESS);
+                    | flag(h.anchorless && h.sleepy, HEARTBEAT_ANCHORLESS);
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
@@ -366,7 +367,9 @@ impl<'a> Packet<'a> {
         let kind = first >> TYPE_SHIFT;
         let aux = first & AUX_MASK;
         match kind {
-            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT && k & HEARTBEAT_FLAGS != HEARTBEAT_FLAGS => {
+            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT
+                && k & HEARTBEAT_FLAGS != HEARTBEAT_ANCHORLESS =>
+            {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
                     sleepy: kind & HEARTBEAT_SLEEPY != 0,
@@ -455,7 +458,7 @@ mod tests {
             id in id(),
             position in position(),
         ) {
-            let anchorless = anchorless && !sleepy;
+            let anchorless = anchorless && sleepy;
             let hb = Heartbeat { sleepy, anchorless, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
@@ -548,11 +551,11 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xb0] {
+        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xa0] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
-                "unused, or sleepy and anchorless at once"
+                "unused, or anchorless without sleepy"
             );
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
@@ -599,10 +602,16 @@ mod tests {
         assert_eq!(buf[0], 0x9c);
         let anchorless = Heartbeat {
             anchorless: true,
-            ..hb
+            ..sleepy
         };
         Packet::Heartbeat(anchorless).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0xac);
+        assert_eq!(buf[0], 0xbc);
+        let alone = Heartbeat {
+            anchorless: true,
+            ..hb
+        };
+        Packet::Heartbeat(alone).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x8c, "anchorless only with sleepy");
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),

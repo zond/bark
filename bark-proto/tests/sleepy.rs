@@ -103,7 +103,6 @@ fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
     h.run_until(at(2000), |_| false);
     let sleepy = &h.nodes[s].core;
     let anchor = sleepy.anchor().expect("an anchor");
-    assert!(sleepy.sleeps());
     assert_eq!(anchor.id, h.nodes[strong].core.id());
     assert_eq!(sleepy.address(), h.nodes[strong].core.config().position);
     let home = h.nodes[strong].core.home();
@@ -239,9 +238,11 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
     }
 }
 
-/// A sleepy node that sleeps is no next hop: O hands a message for D to
-/// A, and once A has gone from its table it does not offer the next to
-/// S, which sleeps. S's beats keep it out of O's neighbour table (spec
+/// A sleepy node with an anchor is a next hop only as a last resort: O
+/// hands a message for D to A, though S is nearer D, and once A has gone
+/// from its table it hands the next to S, with the long preamble, and S
+/// forwards it at once to D with the short one. S's beats put it in O's
+/// neighbour table, marked sleepy, and in O's heard table (spec
 /// "Neighbour table", "Next hop"). All share one channel, so O hears S's
 /// beats.
 ///
@@ -251,7 +252,7 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
 ///     ---- S ---
 /// ```
 #[test]
-fn a_sleeping_node_is_no_next_hop() {
+fn a_sleepy_node_is_a_last_resort() {
     let (o, a, s, d) = (0, 1, 2, 3);
     let one = Config {
         home_override: bark_proto::Channel::new(4),
@@ -267,9 +268,14 @@ fn a_sleeping_node_is_no_next_hop() {
         h.link(x, y);
     }
     h.run_until(at(700), |_| false);
-    assert!(h.nodes[s].core.sleeps());
+    assert!(h.nodes[s].core.anchor().is_some());
     let sid = h.nodes[s].core.id();
-    assert!(h.nodes[o].core.neighbours().all(|n| n.id != sid));
+    let entry = h.nodes[o].core.neighbours().find(|n| n.id == sid).copied();
+    assert!(
+        entry.is_some_and(|n| n.sleepy && n.last_resort()),
+        "{entry:?}"
+    );
+    assert!(h.nodes[o].core.heard_nodes().get(sid).is_some());
     let forwarded = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].traces.iter().find_map(|(_, t)| match t {
             Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some(*to),
@@ -280,16 +286,25 @@ fn a_sleeping_node_is_no_next_hop() {
     assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, d, id).is_some()));
     assert_eq!(forwarded(&h, id), Some(h.nodes[a].core.id()));
     h.kill(a);
-    // Once A has expired at O (spec "Neighbour table": 390 s).
+    // Once A has expired at O (spec "Neighbour table": 390 s), and while S
+    // is still in O's table from its last beat.
     h.run_for(secs(400));
-    let id = send(&mut h, o, d, b"not via S");
-    h.run_for(secs(600));
-    assert_eq!(forwarded(&h, id), None);
-    assert_eq!(delivered_at(&h, d, id), None);
-    let offered = h.nodes[o].sent.iter().any(
-        |(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(x)) if x.dst_hop == sid),
-    );
-    assert!(!offered, "no DATA to the sleeping node");
+    let id = send(&mut h, o, d, b"via S");
+    assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, d, id).is_some()));
+    assert_eq!(forwarded(&h, id), Some(sid));
+    let data = |i: usize, to: NodeId| {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter(move |(_, f)| {
+                matches!(Packet::decode(f.payload()), Ok(Packet::Data(x)) if x.dst_hop == to)
+            })
+            .map(|(_, f)| f.preamble_symbols)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(data(o, sid), [LONG_PREAMBLE_SYMBOLS]);
+    let did = h.nodes[d].core.id();
+    assert_eq!(data(s, did), [bark_proto::radio::MIN_PREAMBLE_SYMBOLS]);
 }
 
 /// Sleepy nodes that hear no other kind route among themselves: S1
@@ -315,13 +330,13 @@ fn sleepy_nodes_alone_meet_and_route() {
         pos(800.0, 0.0),
         "its own position"
     );
-    assert!(!h.nodes[1].core.sleeps());
+    assert!(h.nodes[1].core.anchor().is_none());
     assert!(h.nodes[1].core.anchorless());
     let b: Vec<_> = beats(&h, 1)
         .into_iter()
         .filter(|b| b.0 >= at(400))
         .collect();
-    assert!(b.iter().all(|&(_, _, sleepy)| !sleepy));
+    assert!(b.iter().all(|&(_, _, sleepy)| sleepy));
     let long = |f: &bark_proto::Frame| f.preamble_symbols == LONG_PREAMBLE_SYMBOLS;
     let anchorless = h.nodes[1]
         .sent
@@ -331,6 +346,15 @@ fn sleepy_nodes_alone_meet_and_route() {
             _ => true,
         });
     assert!(anchorless);
+    // Each has the others in its neighbour table, sleepy and anchorless,
+    // and keeps no heard table.
+    let n = h.nodes[1]
+        .core
+        .neighbours()
+        .filter(|n| n.anchorless)
+        .count();
+    assert_eq!(n, 2);
+    assert!(h.nodes[1].core.heard_nodes().is_empty());
     let longest = ANCHORLESS_BEAT_PERIOD.mul(3).div(2) + secs(1);
     assert!(b.windows(2).all(|w| w[1].0.since(w[0].0) <= longest));
     assert!(b.windows(2).all(|w| w[1].1 == w[0].1.next()));
@@ -527,28 +551,28 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
     );
 }
 
-/// Time node `i`'s radio slept between `from` and `to`.
-fn slept(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> Duration {
+/// Time node `i`'s radio received duty-cycled between `from` and `to`.
+fn sniffed(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> Duration {
     h.nodes[i]
-        .asleep
+        .sniffed
         .iter()
         .map(|&(a, b)| (a.max(from), b.min(to)))
         .filter(|(a, b)| b > a)
         .fold(Duration::ZERO, |sum, (a, b)| sum + b.since(a))
 }
 
-/// A sleepy node with an anchor lets its radio sleep (`Action::Sleep`,
-/// core-interface §3 rule 10) except while it beats and through the
-/// window after each beat (spec "Delivery"), and a message for it still
-/// reaches it there.
+/// A sleepy node with an anchor lets its radio receive duty-cycled
+/// (`Action::Sniff`, core-interface §3 rule 10) except while it beats and
+/// through the window after each beat (spec "Delivery"), and a message for
+/// it still reaches it there.
 #[test]
-fn a_sleepy_node_sleeps_between_its_windows() {
+fn a_sleepy_node_receives_duty_cycled_between_its_windows() {
     let (r, s) = (0, 1);
     let mut h = Harness::new(vec![node(0.0, false, 61), node(50.0, true, 62)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
-    assert!(h.nodes[s].core.sleeps());
+    assert!(h.nodes[s].core.anchor().is_some());
     let id = send(&mut h, r, s, b"in the window");
     h.run_until(at(3000), |_| false);
     assert!(delivered_at(&h, s, id).is_some());
@@ -574,17 +598,17 @@ fn a_sleepy_node_sleeps_between_its_windows() {
             .iter()
             .find(|&&a| a >= t && a < t + window)
             .map_or(t + window, |&a| a + linger);
-        assert_eq!(slept(&h, s, t, end), Duration::ZERO, "beat at {t:?}");
+        assert_eq!(sniffed(&h, s, t, end), Duration::ZERO, "beat at {t:?}");
     }
     for &a in &answered {
         assert_eq!(
-            slept(&h, s, a, a + linger),
+            sniffed(&h, s, a, a + linger),
             Duration::ZERO,
             "answer at {a:?}"
         );
     }
     let (from, to) = (at(1000), at(3000));
-    let awake = to.since(from) - slept(&h, s, from, to);
+    let awake = to.since(from) - sniffed(&h, s, from, to);
     // The windows, the delivery's, and once a rotation of its anchor's
     // heartbeat a watch for it, from 420 ms before to 431 ms after the
     // time its interval gives (spec "Relay choice").
@@ -607,14 +631,14 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
-    // Asleep when the application sends.
-    let asleep = |h: &Harness<Relay>| {
+    // Receiving duty-cycled when the application sends.
+    let sniffing = |h: &Harness<Relay>| {
         h.nodes[s]
-            .asleep
+            .sniffed
             .last()
             .is_some_and(|&(a, b)| a <= h.now && b > h.now + secs(1))
     };
-    assert!(h.run_until(h.now + secs(400), asleep));
+    assert!(h.run_until(h.now + secs(400), sniffing));
     let id = send(&mut h, s, r, b"to my anchor");
     assert!(h.run_until(h.now + secs(5), |h| delivered_at(h, r, id).is_some()));
     h.run_for(secs(1));
@@ -629,22 +653,22 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
 
 /// Messages waiting for a sleepy node go one after the other in the
 /// window after its beat: the node listens one hand-over after each it
-/// answers, and sleeps once a hand-over has passed after the last (spec
-/// "Delivery").
+/// answers, and receives duty-cycled again once a hand-over has passed
+/// after the last (spec "Delivery").
 #[test]
-fn a_burst_goes_on_one_beat_and_the_node_sleeps_a_hand_over_after_the_last() {
+fn a_burst_goes_on_one_beat_and_the_node_sniffs_a_hand_over_after_the_last() {
     let (r, s) = (0, 1);
     let mut h = Harness::new(vec![node(0.0, false, 81), node(50.0, true, 82)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
-    let asleep = |h: &Harness<Relay>| {
+    let sniffing = |h: &Harness<Relay>| {
         h.nodes[s]
-            .asleep
+            .sniffed
             .last()
             .is_some_and(|&(a, b)| a <= h.now && b > h.now + secs(1))
     };
-    assert!(h.run_until(h.now + secs(400), asleep));
+    assert!(h.run_until(h.now + secs(400), sniffing));
     let ids: Vec<MsgId> = [b"one", b"two", b"six"]
         .iter()
         .map(|t| send(&mut h, r, s, *t))
@@ -670,12 +694,15 @@ fn a_burst_goes_on_one_beat_and_the_node_sleeps_a_hand_over_after_the_last() {
         .map(|(t, _)| *t)
         .next_back()
         .unwrap();
-    let sleeps_at = h.nodes[s].asleep.last().unwrap().0;
-    assert_eq!(slept(&h, s, last_ack, last_ack + p.linger), Duration::ZERO);
+    let sniffs_at = h.nodes[s].sniffed.last().unwrap().0;
+    assert_eq!(
+        sniffed(&h, s, last_ack, last_ack + p.linger),
+        Duration::ZERO
+    );
     assert!(
-        sleeps_at.since(last_ack) < p.linger + Duration::from_millis(50),
-        "asleep {:?} after its last answer",
-        sleeps_at.since(last_ack)
+        sniffs_at.since(last_ack) < p.linger + Duration::from_millis(50),
+        "duty-cycled {:?} after its last answer",
+        sniffs_at.since(last_ack)
     );
 }
 
@@ -846,7 +873,7 @@ fn a_holder_that_moves_sends_on_its_new_channel_to_who_listens() {
 /// A node out of reach of everything, in a basement, misses its anchor's
 /// heartbeat, checks, hears nothing at all, and keeps its anchor without
 /// checking again while it hears nothing; back in reach it hears it again
-/// and sleeps as before (spec "Relay choice").
+/// and receives duty-cycled as before (spec "Relay choice").
 #[test]
 fn a_node_out_of_reach_keeps_its_anchor() {
     let (r, s) = (0, 1);
@@ -870,7 +897,7 @@ fn a_node_out_of_reach_keeps_its_anchor() {
     let back = h.now;
     h.run_for(secs(1200));
     assert_eq!(h.nodes[s].core.anchor(), anchor);
-    let awake = secs(600) - slept(&h, s, back + secs(600), back + secs(1200));
+    let awake = secs(600) - sniffed(&h, s, back + secs(600), back + secs(1200));
     assert!(awake < secs(30), "awake {awake:?} in ten minutes once back");
 }
 
@@ -910,4 +937,79 @@ fn an_unanswered_delivery_waits_for_the_next_beat() {
         .rfind(|&t| t <= got)
         .unwrap();
     assert!(beat > waited, "delivered on a later beat");
+}
+
+/// The way out of a pocket: A, a sleepy node without an anchor, hears no
+/// relay, and S, a sleepy node anchored to R, is its only neighbour. S
+/// hears one of A's long beats when it comes to S's channel, and from then
+/// on beats once a period on A's channel too, with the long preamble and
+/// the sleepy bit alone; A keeps it as a last resort, and its message for
+/// R goes through S, with the long preamble to S and the short one from S
+/// to R (spec "Beats", "Next hop").
+///
+/// ```text
+///   A ---- S ---- R
+/// ```
+#[test]
+fn a_pocket_learns_its_way_out_from_long_beats() {
+    let (r, s, a) = (0, 1, 2);
+    let on = |c: u8| Config {
+        home_override: bark_proto::Channel::new(c),
+        ..Config::default()
+    };
+    let mut h = Harness::new(vec![
+        node_with(0.0, false, 151, on(3)),
+        node(400.0, true, 152),
+        node_with(800.0, true, 153, on(9)),
+    ]);
+    h.link(r, s);
+    h.link(s, a);
+    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    let sid = h.nodes[s].core.id();
+    let knows_s = |h: &Harness<Relay>| {
+        h.nodes[a]
+            .core
+            .neighbours()
+            .any(|n| n.id == sid && n.last_resort())
+    };
+    let limit = at(400) + rotation.mul(2) + beat_period(Config::default().delivery_ttl);
+    assert!(h.run_until(limit, knows_s));
+    assert!(h.nodes[a].core.anchorless());
+    let anchor = h.nodes[s].core.anchor().map(|x| x.id);
+    assert_eq!(anchor, Some(h.nodes[r].core.id()));
+    let n = *h.nodes[a].core.neighbours().find(|n| n.id == sid).unwrap();
+    assert_eq!(Some(n.home), bark_proto::Channel::new(3));
+    let reach = h.nodes[s].sent.iter().any(|(_, f)| {
+        let beat = matches!(Packet::decode(f.payload()),
+            Ok(Packet::Heartbeat(hb)) if hb.sleepy && !hb.anchorless);
+        beat && f.preamble_symbols == LONG_PREAMBLE_SYMBOLS
+            && Some(f.channel) == bark_proto::Channel::new(9)
+    });
+    assert!(reach, "a long beat on A's channel");
+    let id = send(&mut h, a, r, b"out of the pocket");
+    assert!(h.run_until(h.now + secs(20), |h| delivered_at(h, r, id).is_some()));
+    let data = |i: usize| {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+            .map(|(_, f)| f.preamble_symbols)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(data(a), [LONG_PREAMBLE_SYMBOLS]);
+    assert_eq!(data(s), [bark_proto::radio::MIN_PREAMBLE_SYMBOLS]);
+    // Once a beat period on A's channel, give or take the channel check.
+    let from = h.now;
+    let periods = 6;
+    let period = beat_period(Config::default().delivery_ttl);
+    h.run_for(period.mul(periods));
+    let long_beats = h.nodes[s]
+        .sent
+        .iter()
+        .filter(|(t, f)| *t >= from && f.preamble_symbols == LONG_PREAMBLE_SYMBOLS)
+        .count() as u64;
+    assert!(
+        (periods - 1..=periods + 1).contains(&long_beats),
+        "{long_beats} in {periods} periods"
+    );
 }

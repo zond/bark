@@ -2,12 +2,18 @@
 //! owner rule, and the per-hop transfer of its send queue.
 //!
 //! A node owns a message addressed to its own ID wherever it is (spec
-//! "Owner"). A sleepy node is never a next hop: it is not in the
-//! neighbour table (spec "Neighbour table", "Next hop").
-//! A message that reaches the owner of its position and is for another
-//! node waits in the delivery queue until that node, a sleepy one this
-//! node hears, listens (`relay/delivery.rs`); it goes to it as DATA in the
-//! send queue, a hand-over like any other.
+//! "Owner"). A message that reaches the owner of its position and is for
+//! another node waits in the delivery queue until that node, a sleepy one
+//! this node hears, listens (`relay/delivery.rs`); it goes to it as DATA
+//! in the send queue, a hand-over like any other. A sleepy node holds mail
+//! for nobody, so it owns no other node's message and forwards it (spec
+//! "Sleepy nodes"); nor does a sleepy neighbour closer to a destination
+//! keep the owner rule from holding here.
+//!
+//! A sleepy neighbour with an anchor is a next hop only as a last resort,
+//! where no other neighbour is left that could take the message but for
+//! a ban, and every DATA to a sleepy neighbour carries the long preamble
+//! (spec "Next hop").
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
@@ -131,7 +137,7 @@
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
-use super::{Job, Relay};
+use super::{Job, Node};
 use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
@@ -202,17 +208,17 @@ fn data_frame(d: &Data<'_>, channel: Channel, preamble: u16) -> Frame {
     mac::frame(&Packet::Data(*d), channel, preamble)
 }
 
-/// The preamble a DATA to `n` needs: the long one to an anchorless node,
-/// which receives duty-cycled (spec "Sleepy nodes alone").
+/// The preamble a DATA to `n` needs: the long one to a sleepy node, which
+/// receives duty-cycled between its windows (spec "Sleepy nodes").
 fn preamble(n: &Neighbour) -> u16 {
-    if n.anchorless {
+    if n.sleepy {
         LONG_PREAMBLE_SYMBOLS
     } else {
         MIN_PREAMBLE_SYMBOLS
     }
 }
 
-impl Relay {
+impl<const H: usize, const Q: usize> Node<H, Q> {
     /// This node's ID.
     pub(super) fn me(&self) -> NodeId {
         self.id
@@ -303,8 +309,13 @@ impl Relay {
 
     // --- Owner and next hop (spec "Next hop", "Owner") ---
 
-    /// Whether this relay owns the destination `dst` (spec "Owner").
+    /// Whether this relay owns the destination `dst` of another node's
+    /// message (spec "Owner"). A sleepy node owns none (module
+    /// documentation).
     fn owns(&self, dst: Position, now: Instant) -> bool {
+        if self.config.sleepy {
+            return false;
+        }
         if dst == self.config.position {
             return true;
         }
@@ -314,7 +325,31 @@ impl Relay {
             && !self
                 .neighbours
                 .candidates(now)
-                .any(|(_, n)| n.local.distance2(target) < mine)
+                .any(|(_, n)| n.relay() && n.local.distance2(target) < mine)
+    }
+
+    /// Whether `n` is among the neighbours to choose from, `others_open`
+    /// telling whether any that is no last resort is open: a sleepy
+    /// neighbour with an anchor only where none is, banned or not (spec
+    /// "Next hop"). A message whose other neighbours are banned waits for
+    /// them (spec "Overload waits").
+    fn tier(n: &Neighbour, others_open: bool) -> bool {
+        n.last_resort() != others_open
+    }
+
+    /// Whether any neighbour that is no last resort is open for the
+    /// message of `record` at `now` ([`Self::tier`]): live, neither handed
+    /// it nor its parent, and a candidate or one but for a ban. One set
+    /// aside for this hand-over and not banned, which listen-before-talk
+    /// gave up on, is not.
+    fn others_open(&self, record: &Record, now: Instant) -> bool {
+        let parent = record.parent().map(|(name, _)| name);
+        self.neighbours.live(now).any(|(slot, n)| {
+            !n.last_resort()
+                && !record.handed(slot)
+                && Some(n.id) != parent
+                && (self.skipped & (1 << slot) == 0 || self.neighbours.is_banned(n, now))
+        })
     }
 
     /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
@@ -331,10 +366,12 @@ impl Relay {
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
+        let others = self.others_open(record, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
+                    && (first.is_some() || Self::tier(n, others))
                     && !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
@@ -358,7 +395,7 @@ impl Relay {
     /// rate the relays reached their cap and the domain collapsed
     /// (`docs/one-node-type-2026-10-16.md`).
     pub(super) fn first_hop(&self, now: Instant) -> Option<NodeId> {
-        let a = self.anchor.filter(|_| self.sleeps())?;
+        let a = self.anchor.filter(|_| self.anchored_sleepy())?;
         self.neighbours
             .live(now)
             .any(|(_, n)| n.id == a.id)
@@ -910,8 +947,13 @@ impl Relay {
         if let Some((_, a)) = self.first_hop(now).and_then(|a| self.neighbours.by_id(a)) {
             return self.neighbours.is_banned(a, now).then_some(a.banned_until);
         }
+        let others = self.neighbours.live(now).any(|(_, n)| !n.last_resort());
         let mut until: Option<Instant> = None;
-        for (_, n) in self.neighbours.live(now) {
+        for (_, n) in self
+            .neighbours
+            .live(now)
+            .filter(|(_, n)| Self::tier(n, others))
+        {
             if !self.neighbours.is_banned(n, now) {
                 return None;
             }
@@ -926,9 +968,12 @@ impl Relay {
     /// A refusal also sets its sender aside for this hand-over, so being set
     /// aside does not count against a banned neighbour.
     fn ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
+        let others = self.others_open(record, now);
         self.neighbours
             .live(now)
-            .filter(|(slot, n)| !record.handed(*slot) && self.neighbours.is_banned(n, now))
+            .filter(|(slot, n)| {
+                Self::tier(n, others) && !record.handed(*slot) && self.neighbours.is_banned(n, now)
+            })
             .map(|(_, n)| n.banned_until)
             .min()
     }
@@ -943,7 +988,7 @@ impl Relay {
     }
 
     /// The preamble of a DATA to `id`: the long one while the neighbour
-    /// table has it anchorless, else the shortest.
+    /// table has it sleepy, else the shortest.
     fn preamble_to(&self, id: NodeId) -> u16 {
         self.neighbours
             .get(id)
@@ -973,8 +1018,8 @@ impl Relay {
 
     /// Address the current frame as its receiver is now, before each attempt
     /// (spec "Hand-over"): a neighbour that moved home since the frame was queued, or
-    /// since the last attempt, listens elsewhere, and one that has found an
-    /// anchor no longer needs the long preamble. A receiver no longer in
+    /// since the last attempt, listens elsewhere, and one whose heartbeat
+    /// has changed between sleepy and not changes its preamble. A receiver no longer in
     /// its table keeps the address it had.
     fn readdress(&mut self) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
@@ -983,7 +1028,8 @@ impl Relay {
                 self.home_of(d.dst_hop),
                 self.neighbours.get(d.dst_hop).map(preamble),
             ),
-            Ok(Packet::Data(d)) => (self.home_of(d.dst_hop), None),
+            // Its holder moves its sleepy nodes with it (`take_listeners`).
+            Ok(Packet::Data(d)) => (self.heard.get(d.dst_hop).map(|n| n.home), None),
             _ => (None, None),
         };
         out.frame.channel = channel.unwrap_or(out.frame.channel);
@@ -1128,7 +1174,9 @@ impl Relay {
         match self.records.get(id) {
             // A sleepy node hands its own message over as fresh work: the
             // node that takes it is its origin (module documentation).
-            Some(r) if self.sleeps() && self.own == Some(id) && r.parent().is_none() => Some(0),
+            Some(r) if self.anchored_sleepy() && self.own == Some(id) && r.parent().is_none() => {
+                Some(0)
+            }
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }

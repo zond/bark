@@ -131,7 +131,8 @@ impl Sim {
             _ => None,
         };
         let beat = match decoded {
-            Some(WirePacket::Heartbeat(h)) => Some(h.sleepy),
+            // A beat that opens a window: the sleepy bit alone.
+            Some(WirePacket::Heartbeat(h)) => Some(h.sleepy && !h.anchorless),
             _ => None,
         };
         if let Some(WirePacket::Data(d)) = decoded {
@@ -140,12 +141,8 @@ impl Sim {
                 // Receiving duty-cycled, it catches the long preamble only.
                 let short = preamble < sniff::LONG_PREAMBLE_SYMBOLS;
                 let sniffing = st.sniffing_at(self.now).is_some();
-                let deaf = st.asleep_at(self.now) || (sniffing && short);
-                let since = if sniffing {
-                    st.sniff_since
-                } else {
-                    st.asleep_since
-                };
+                let deaf = sniffing && short;
+                let since = st.sniff_since;
                 let to = ToSleepy {
                     node: n,
                     deaf,
@@ -345,7 +342,7 @@ impl Sim {
                         | Outcome::SinrFail { .. }
                         | Outcome::Deaf(Deaf::Corrupt),
                     ) => FirstTry::Collided,
-                    Some(Outcome::Deaf(Deaf::Asleep | Deaf::Sniff)) => FirstTry::Deaf,
+                    Some(Outcome::Deaf(Deaf::Sniff)) => FirstTry::Deaf,
                     Some(Outcome::Deaf(_)) => FirstTry::Busy,
                     _ => FirstTry::Unheard,
                 };
@@ -372,12 +369,14 @@ impl Sim {
                 let audible = base_dbm as f64 >= self.sens_dbm;
                 let anchored_here =
                     b >= self.relays() && self.relay(b).anchor().is_some_and(|a| a.id == src_id);
+                // Receiving duty-cycled, it catches the long preamble only.
+                let short = tx.frame.preamble_symbols < sniff::LONG_PREAMBLE_SYMBOLS;
+                let sniffing = st.sniffing_at(start).is_some() || st.sniffing_at(end).is_some();
                 if audible && anchored_here && st.alive && st.present && st.resting == Some(ch) {
-                    let asleep = st.asleep_at(start) || st.asleep_at(end);
-                    self.metrics.sleep.anchor_beats[usize::from(asleep)] += 1;
+                    self.metrics.sleep.anchor_beats[usize::from(sniffing && short)] += 1;
                 }
                 let st = &self.nodes[b as usize];
-                let off = !st.alive || !st.present || st.asleep_at(start);
+                let off = !st.alive || !st.present || (short && st.sniffing_at(start).is_some());
                 if !audible || off || st.resting != Some(ch) {
                     continue;
                 }
@@ -502,9 +501,7 @@ impl Sim {
             let caught = st.sniffing_at(now).map(|t0| {
                 sniff::detects(t0.as_micros(), now.as_micros(), p.preamble_end.since(now))
             });
-            let outcome = if st.asleep_at(now) {
-                Some(Outcome::Deaf(Deaf::Asleep))
-            } else if caught == Some(None) {
+            let outcome = if caught == Some(None) {
                 Some(Outcome::Deaf(Deaf::Sniff))
             } else if let Some(ex) = st.ex.as_ref().filter(|e| e.deaf) {
                 Some(Outcome::Deaf(ex.reason_at(now)))

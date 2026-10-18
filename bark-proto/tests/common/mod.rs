@@ -81,10 +81,7 @@ pub struct SimNode<C: Core> {
     pub traces: Vec<(Instant, Trace)>,
     pub sent: Vec<(Instant, Frame)>,
     pub received: Vec<(Instant, Vec<u8>)>,
-    /// When the radio was off (`Action::Sleep`, core-interface §3 rule 10):
-    /// from, until.
-    pub asleep: Vec<(Instant, Instant)>,
-    /// When the radio received duty-cycled (`Action::Sniff`, rule 11):
+    /// When the radio received duty-cycled (`Action::Sniff`, rule 10):
     /// from, until. It hears then only frames with the long preamble.
     pub sniffed: Vec<(Instant, Instant)>,
 }
@@ -128,7 +125,6 @@ impl<C: Core> Harness<C> {
                 traces: Vec::new(),
                 sent: Vec::new(),
                 received: Vec::new(),
-                asleep: Vec::new(),
                 sniffed: Vec::new(),
             })
             .collect();
@@ -355,7 +351,6 @@ impl<C: Core> Harness<C> {
             && n.resting_since <= tx.start
             && n.deaf_until <= tx.start
             && n.ex.is_none_or(|e| !e.deaf)
-            && !n.asleep.iter().any(|&(a, b)| a < tx.end && b > tx.start)
             && (tx.preamble >= LONG_PREAMBLE_SYMBOLS
                 || !n
                     .sniffed
@@ -421,23 +416,14 @@ impl<C: Core> Harness<C> {
                 | Action::Cad(_)
                 | Action::Rssi(_)
                 | Action::Transmit(_)
-                | Action::Sleep(_)
                 | Action::Sniff(_)
         ) {
-            // Any use of the radio wakes it, and a sleep ends a sniff.
-            let n = &mut self.nodes[i];
-            for last in [n.asleep.last_mut(), n.sniffed.last_mut()]
-                .into_iter()
-                .flatten()
-            {
+            // Any use of the radio ends a sniff, and so does a new one.
+            if let Some(last) = self.nodes[i].sniffed.last_mut() {
                 last.1 = last.1.min(now);
             }
         }
         match a {
-            Action::Sleep(until) => {
-                assert!(until > now, "core {i} asked to sleep until the past");
-                self.nodes[i].asleep.push((now, until));
-            }
             Action::Sniff(until) => {
                 assert!(until > now, "core {i} asked to sniff until the past");
                 self.nodes[i].sniffed.push((now, until));

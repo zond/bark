@@ -75,16 +75,23 @@
 //!
 //! # Sleepy and anchorless neighbours
 //!
-//! A sleepy node's beat keeps it out of the table (`node/relay.rs`): it
-//! sleeps, and is never a next hop. A sleepy node without an anchor beats
-//! with the anchorless bit, once a beat period on the next channel each
-//! time, and receives duty-cycled in between: no anchor, sent to with the
-//! long preamble, and otherwise an entry like any other, except that it
-//! expires two of its worst-case rotations and a beat's lag after its last
-//! beat. A rotation of its beats is 13 minutes; with one lost beat in ten
-//! an expiry after one would drop a live neighbour every tenth rotation,
-//! for a rotation, where it may be the only way on. Two lose it one time
-//! in a hundred; a stale entry costs a hand-over's attempts and a ban.
+//! A sleepy node's beat fills the table like any heartbeat, the entry
+//! marked sleepy: between its windows it receives duty-cycled, so it is
+//! sent to with the long preamble. One with an anchor is a next hop only
+//! as a last resort ([`Neighbour::last_resort`], spec "Next hop"), and
+//! its entry expires after two beat periods, since its beats come once a
+//! period and only on its anchor's channel. As a newcomer to a full table
+//! it takes only a free slot: eviction makes way for a node that is a
+//! next hop like any other (spec "Neighbour table").
+//!
+//! A sleepy node without an anchor beats with the anchorless bit too, once
+//! an anchorless beat period on the next channel each time: no anchor, a
+//! next hop like any other, and its entry expires two of its worst-case
+//! rotations and a beat's lag after its last beat. A rotation of its beats
+//! is 13 minutes; with one lost beat in ten an expiry after one would drop
+//! a live neighbour every tenth rotation, for a rotation, where it may be
+//! the only way on. Two lose it one time in a hundred; a stale entry costs
+//! a hand-over's attempts and a ban.
 //!
 //! A relay answers each beat of an anchorless neighbour with its own
 //! heartbeat on the neighbour's channel, with the long preamble, so that
@@ -105,6 +112,7 @@ use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::sniff::ANCHORLESS_BEAT_PERIOD;
 use crate::tables::budget::hold;
+use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
 
@@ -133,8 +141,12 @@ pub struct Neighbour {
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
-    /// Whether it knows no node that is not sleepy (heartbeat 0xA): no
-    /// anchor for a sleepy node.
+    /// Whether it is sleepy (heartbeat 0x9 or 0xB): it receives
+    /// duty-cycled between its windows, and is sent to with the long
+    /// preamble.
+    pub sleepy: bool,
+    /// Whether it is sleepy and knows no node that is not (heartbeat 0xB):
+    /// no anchor for a sleepy node.
     pub anchorless: bool,
     /// Heartbeats heard from it, up to [`BEATS`].
     pub beats: u8,
@@ -147,6 +159,19 @@ pub struct Neighbour {
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
+}
+
+impl Neighbour {
+    /// Whether it is a sleepy node with an anchor: a next hop only where
+    /// no other is (spec "Next hop").
+    pub fn last_resort(&self) -> bool {
+        self.sleepy && !self.anchorless
+    }
+
+    /// Whether it can be an anchor: it is not sleepy (spec "Relay choice").
+    pub fn relay(&self) -> bool {
+        !self.sleepy
+    }
 }
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
@@ -167,6 +192,9 @@ pub struct NeighbourParams {
     pub stale_after: Duration,
     /// Age at which an anchorless entry expires.
     pub anchorless_expire_after: Duration,
+    /// Age at which the entry of a sleepy node with an anchor expires: two
+    /// beat periods.
+    pub sleepy_expire_after: Duration,
 }
 
 impl NeighbourParams {
@@ -185,6 +213,7 @@ impl NeighbourParams {
                     + ANCHORLESS_BEAT_PERIOD.as_micros() / 2
                     + heartbeat_lag(c).as_micros(),
             ),
+            sleepy_expire_after: beat_period(c.delivery_ttl).mul(2),
         }
     }
 }
@@ -309,6 +338,8 @@ impl Neighbours {
     fn expire_after(&self, n: &Neighbour) -> Duration {
         if n.anchorless {
             self.params.anchorless_expire_after
+        } else if n.sleepy {
+            self.params.sleepy_expire_after
         } else {
             self.params.expire_after
         }
@@ -332,8 +363,9 @@ impl Neighbours {
     }
 
     /// A heartbeat from `hb.id` at `position` was heard at `now` with
-    /// packet RSSI `rssi`. Refreshes its position, channel, flag, time and
-    /// RSSI, or adds it.
+    /// packet RSSI `rssi`. Refreshes its position, channel, flags, time and
+    /// RSSI, or adds it; a sleepy node with an anchor only into a free
+    /// slot (module documentation).
     pub fn heard(
         &mut self,
         hb: &Heartbeat,
@@ -349,7 +381,8 @@ impl Neighbours {
                     n.local = plane.point(position);
                 }
                 n.home = hb.home;
-                n.anchorless = hb.anchorless;
+                n.sleepy = hb.sleepy;
+                n.anchorless = hb.anchorless && hb.sleepy;
                 n.answered = 0;
                 n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
@@ -367,7 +400,8 @@ impl Neighbours {
             banned_until: Instant::ZERO,
             rssi: rssi as f32,
             fail_count: 0,
-            anchorless: hb.anchorless,
+            sleepy: hb.sleepy,
+            anchorless: hb.anchorless && hb.sleepy,
             beats: 1,
             beat_at: now,
             beat_on: hb.home,
@@ -376,6 +410,9 @@ impl Neighbours {
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
             return Heard::Added(i);
+        }
+        if new.last_resort() {
+            return Heard::Rejected;
         }
         match victim(self, now) {
             Some(i) => match self.slots[i].replace(new) {
@@ -567,6 +604,7 @@ mod tests {
     fn hear_anchorless(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
         let (hb, p) = hb(i, 0);
         let hb = Heartbeat {
+            sleepy: true,
             anchorless: true,
             ..hb
         };
@@ -649,6 +687,46 @@ mod tests {
             t.next_expiry(),
             Some(Instant::ZERO + params().anchorless_expire_after)
         );
+    }
+
+    /// Hear sleepy node `i`'s beat, the sleepy bit alone: it has an anchor.
+    fn hear_sleepy(t: &mut Neighbours, i: i32, rssi: i16, now: Instant) -> Heard {
+        let (hb, p) = hb(i, 0);
+        let hb = Heartbeat { sleepy: true, ..hb };
+        t.heard(&hb, p, rssi, &plane(), now)
+    }
+
+    /// A sleepy node with an anchor is in the table, marked sleepy, a last
+    /// resort, and expires two beat periods after its last beat, 600 s.
+    #[test]
+    fn sleepy_entries_expire_after_two_beat_periods() {
+        let mut t = Neighbours::new(params());
+        assert_eq!(params().sleepy_expire_after, Duration::from_secs(600));
+        hear_sleepy(&mut t, 0, -80, at(0));
+        let n = *t.get(id(0)).unwrap();
+        assert!(n.sleepy && !n.anchorless && n.last_resort() && !n.relay());
+        assert_eq!(t.live(at(599)).count(), 1);
+        assert_eq!(t.live(at(600)).count(), 0);
+        assert_eq!(t.next_expiry(), Some(at(600)));
+        hear_anchorless(&mut t, 1, -80, at(0));
+        let n = *t.get(id(1)).unwrap();
+        assert!(n.sleepy && n.anchorless && !n.last_resort());
+    }
+
+    /// A sleepy node with an anchor takes a free slot but makes nobody
+    /// give up theirs, where any other newcomer would.
+    #[test]
+    fn a_sleepy_newcomer_takes_only_a_free_slot() {
+        let mut t = Neighbours::new(params());
+        for i in 0..NEIGHBOURS as i32 - 1 {
+            hear(&mut t, i, 0, -80, at(0));
+        }
+        assert_eq!(hear_sleepy(&mut t, 200, -80, at(1)), Heard::Added(63));
+        assert_eq!(hear_sleepy(&mut t, 201, -80, at(300)), Heard::Rejected);
+        assert!(matches!(
+            hear_anchorless(&mut t, 202, -80, at(300)),
+            Heard::Replaced(..)
+        ));
     }
 
     /// A relay answers an anchorless neighbour's beat at once and a fade

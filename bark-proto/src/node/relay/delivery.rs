@@ -29,7 +29,7 @@
 //!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
 
-use super::Relay;
+use super::Node;
 use crate::event::{Action, DropReason, Trace};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
@@ -39,7 +39,7 @@ use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
 use crate::wire::{Data, Packet};
 
-impl Relay {
+impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the sleepy node `id` may be sent to at `now`: in the window
     /// after a beat, or with `sleepy_listens` whenever it is heard.
     pub(super) fn listening(&self, id: NodeId, now: Instant) -> bool {

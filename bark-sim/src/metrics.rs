@@ -52,8 +52,6 @@ pub struct DeafCounts {
     pub corrupt: u64,
     /// Out of radio reach (dark leaf).
     pub absent: u64,
-    /// The radio asleep (`Action::Sleep`).
-    pub asleep: u64,
     /// No window of the duty-cycled receive detected it (`Action::Sniff`).
     pub sniff: u64,
 }
@@ -67,7 +65,6 @@ impl DeafCounts {
             Deaf::Tx => self.tx += 1,
             Deaf::Corrupt => self.corrupt += 1,
             Deaf::Absent => self.absent += 1,
-            Deaf::Asleep => self.asleep += 1,
             Deaf::Sniff => self.sniff += 1,
             Deaf::HalfDuplex => unreachable!("counted as half_duplex"),
         }
@@ -75,14 +72,7 @@ impl DeafCounts {
 
     /// Total.
     pub fn total(&self) -> u64 {
-        self.retune
-            + self.cad
-            + self.rssi
-            + self.tx
-            + self.corrupt
-            + self.absent
-            + self.asleep
-            + self.sniff
+        self.retune + self.cad + self.rssi + self.tx + self.corrupt + self.absent + self.sniff
     }
 
     fn merge(&mut self, o: &DeafCounts) {
@@ -92,7 +82,6 @@ impl DeafCounts {
         self.tx += o.tx;
         self.corrupt += o.corrupt;
         self.absent += o.absent;
-        self.asleep += o.asleep;
         self.sniff += o.sniff;
     }
 }
@@ -189,9 +178,6 @@ pub struct NodeMetrics {
     /// For a sleepy node: times it took an anchor other than the one it
     /// last had (spec "Relay choice").
     pub relay_changes: u64,
-    /// For a sleepy node: time its radio was asleep after the settle
-    /// time, µs.
-    pub asleep_us: u64,
     /// For a sleepy node: time its radio received duty-cycled after the
     /// settle time, µs, a frame it caught included.
     pub sniff_us: u64,
@@ -334,6 +320,7 @@ impl LeafSums {
         let (a, b) = (&mut self.airtime_by_type, &m.airtime_by_type);
         a.heartbeat_us += b.heartbeat_us;
         a.beat_us += b.beat_us;
+        a.reach_us += b.reach_us;
         a.anchorless_us += b.anchorless_us;
         a.answer_us += b.answer_us;
         a.long_data_us += b.long_data_us;
@@ -513,8 +500,11 @@ pub struct ChannelMetrics {
 pub struct TypeAirtime {
     /// HEARTBEAT of a node that is not sleepy, in its slot.
     pub heartbeat_us: u64,
-    /// HEARTBEAT of a sleepy node.
+    /// HEARTBEAT of a sleepy node with an anchor, with the short preamble.
     pub beat_us: u64,
+    /// HEARTBEAT of a sleepy node with an anchor, with the long preamble,
+    /// to its anchorless neighbours (spec "Beats").
+    pub reach_us: u64,
     /// HEARTBEAT of a sleepy node without an anchor, with the long
     /// preamble.
     pub anchorless_us: u64,
@@ -524,8 +514,8 @@ pub struct TypeAirtime {
     pub ack_us: u64,
     /// DATA.
     pub data_us: u64,
-    /// Of `data_us`, DATA with the long preamble, to a node without an
-    /// anchor.
+    /// Of `data_us`, DATA with the long preamble, to a sleepy node
+    /// receiving duty-cycled.
     pub long_data_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
@@ -537,8 +527,9 @@ impl TypeAirtime {
         use bark_proto::wire::Packet;
         let long = preamble >= bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
         let c = match p {
-            Some(Packet::Heartbeat(h)) if h.sleepy => &mut self.beat_us,
             Some(Packet::Heartbeat(h)) if h.anchorless => &mut self.anchorless_us,
+            Some(Packet::Heartbeat(h)) if h.sleepy && long => &mut self.reach_us,
+            Some(Packet::Heartbeat(h)) if h.sleepy => &mut self.beat_us,
             Some(Packet::Heartbeat(_)) if long => &mut self.answer_us,
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
@@ -601,14 +592,15 @@ pub struct HeartbeatFates {
     pub lost_with_heartbeat: u64,
 }
 
-/// What sleeping does (`Action::Sleep`), counted after the settle time.
+/// What sleepy nodes do and what is sent to them, counted after the
+/// settle time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SleepMetrics {
     /// DATA addressed to a sleepy node: received, sent while it could not
     /// hear it, lost otherwise.
     pub to_sleepy: [u64; 3],
-    /// DATA sent to a sleepy node that could not hear it: asleep, or
-    /// receiving duty-cycled and the frame's preamble short. By its
+    /// DATA sent to a sleepy node that could not hear it: receiving
+    /// duty-cycled, and the frame's preamble short. By its
     /// anchor, and by any other node; and how long it had been so, under
     /// 5 s or more.
     pub to_deaf: [[u64; 2]; 2],
@@ -645,7 +637,7 @@ pub struct SleepMetrics {
     pub watch_earliest_us: i64,
     /// Heartbeats of its anchor that reached a sleepy node on its channel
     /// above sensitivity on average: with its radio on throughout, and
-    /// with it asleep at the start or the end.
+    /// with it receiving duty-cycled at the start or the end.
     pub anchor_beats: [u64; 2],
     /// Stops and walks walkers began (`walk.rs`).
     pub walks: [u64; 2],
@@ -666,8 +658,7 @@ pub enum FirstTry {
     NotStarted,
     /// It started, but no DATA went on the air: the channel stayed busy.
     NotSent,
-    /// It reached the node when it could not hear it: asleep, or
-    /// receiving duty-cycled with a short preamble.
+    /// It reached the node receiving duty-cycled, with a short preamble.
     Deaf,
     /// The node was out of reach (dark or gone).
     Absent,

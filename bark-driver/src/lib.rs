@@ -373,9 +373,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::App(e) => app.message(&e),
             Action::Trace(t) => log::info!("{:?}", t),
             // The radio keeps listening: the contract allows it, and the
-            // firmware does not sleep the radio or receive duty-cycled yet
-            // (spec "Implementation notes", bring-up step 5).
-            Action::Sleep(_) | Action::Sniff(_) => {}
+            // firmware does not receive duty-cycled yet (spec
+            // "Implementation notes", bring-up step 5).
+            Action::Sniff(_) => {}
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
@@ -442,11 +442,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
-            Action::Listen(_)
-            | Action::Sleep(_)
-            | Action::Sniff(_)
-            | Action::App(_)
-            | Action::Trace(_) => {
+            Action::Listen(_) | Action::Sniff(_) | Action::App(_) | Action::Trace(_) => {
                 unreachable!("only excursions are kept")
             }
         };
