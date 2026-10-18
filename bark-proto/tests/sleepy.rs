@@ -4,7 +4,7 @@
 
 mod common;
 
-use bark_proto::sniff::{ANCHORLESS_BEAT_PERIOD, LONG_PREAMBLE_SYMBOLS};
+use bark_proto::sniff::{anchorless_beat_period, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::tables::heard::{beat_period, HeardParams};
 use bark_proto::wire::{Data, Packet, TTL_UNIT};
 use bark_proto::{
@@ -323,7 +323,8 @@ fn sleepy_nodes_alone_meet_and_route() {
     h.link(0, 1);
     h.link(1, 2);
     // Two rotations of their beats, by when each has heard the other's.
-    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    let rotation = anchorless_beat_period(Config::default().delivery_ttl)
+        .mul(bark_proto::radio::CHANNELS as u64);
     h.run_until(at(195) + rotation.mul(2), |_| false);
     assert_eq!(
         h.nodes[2].core.address(),
@@ -355,7 +356,10 @@ fn sleepy_nodes_alone_meet_and_route() {
         .count();
     assert_eq!(n, 2);
     assert!(h.nodes[1].core.heard_nodes().is_empty());
-    let longest = ANCHORLESS_BEAT_PERIOD.mul(3).div(2) + secs(1);
+    let longest = anchorless_beat_period(Config::default().delivery_ttl)
+        .mul(3)
+        .div(2)
+        + secs(1);
     assert!(b.windows(2).all(|w| w[1].0.since(w[0].0) <= longest));
     assert!(b.windows(2).all(|w| w[1].1 == w[0].1.next()));
     // Its radio receives duty-cycled nearly all the time.
@@ -412,7 +416,8 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
     let mut h = Harness::new(vec![node(0.0, true, 37), node(400.0, false, 38)]);
     h.link(s, r);
     h.start_at(r, at(600));
-    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    let rotation = anchorless_beat_period(Config::default().delivery_ttl)
+        .mul(bark_proto::radio::CHANNELS as u64);
     let limit = at(600) + rotation.mul(2);
     assert!(h.run_until(limit, |h| h.nodes[s].core.anchor().is_some()));
     let anchored = h.now;
@@ -964,7 +969,8 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
     ]);
     h.link(r, s);
     h.link(s, a);
-    let rotation = ANCHORLESS_BEAT_PERIOD.mul(bark_proto::radio::CHANNELS as u64);
+    let rotation = anchorless_beat_period(Config::default().delivery_ttl)
+        .mul(bark_proto::radio::CHANNELS as u64);
     let sid = h.nodes[s].core.id();
     let knows_s = |h: &Harness<Relay>| {
         h.nodes[a]
@@ -998,18 +1004,19 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
     };
     assert_eq!(data(a), [LONG_PREAMBLE_SYMBOLS]);
     assert_eq!(data(s), [bark_proto::radio::MIN_PREAMBLE_SYMBOLS]);
-    // Once a beat period on A's channel, give or take the channel check.
+    // Each of S's beats goes on A's channel too, just before it.
     let from = h.now;
-    let periods = 6;
-    let period = beat_period(Config::default().delivery_ttl);
-    h.run_for(period.mul(periods));
-    let long_beats = h.nodes[s]
-        .sent
-        .iter()
-        .filter(|(t, f)| *t >= from && f.preamble_symbols == LONG_PREAMBLE_SYMBOLS)
-        .count() as u64;
-    assert!(
-        (periods - 1..=periods + 1).contains(&long_beats),
-        "{long_beats} in {periods} periods"
-    );
+    h.run_for(beat_period(Config::default().delivery_ttl).mul(6));
+    let sent: Vec<_> = beats(&h, s)
+        .into_iter()
+        .filter(|b| b.0 >= from)
+        .map(|b| b.1)
+        .collect();
+    let on = |c: u8| {
+        sent.iter()
+            .filter(|&&x| Some(x) == bark_proto::Channel::new(c))
+            .count()
+    };
+    assert!(on(3) >= 6, "{sent:?}");
+    assert!(on(9).abs_diff(on(3)) <= 1, "{sent:?}");
 }

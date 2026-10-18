@@ -42,7 +42,7 @@
 //! where the two are equal. Longer sleeps make every frame to the node
 //! longer; shorter ones make it listen more.
 
-use crate::radio::{header_end, SYMBOL_TIME};
+use crate::radio::{header_end, CHANNELS, SYMBOL_TIME};
 use crate::time::Duration;
 
 /// Preamble symbols the receiver needs inside a receive window to detect
@@ -78,9 +78,19 @@ pub const TX_CURRENT_UA: u64 = 32_000;
 pub const SLEEP_CURRENT_NA: u64 = 1_200;
 
 /// How often a sleepy node without an anchor beats, at most (spec
-/// "Sleepy nodes alone"): once a minute, on the next channel each time, so
-/// that a relay in reach on any channel hears it within 13 minutes.
-pub const ANCHORLESS_BEAT_PERIOD: Duration = Duration::from_secs(60);
+/// "Sleepy nodes alone"): the delivery TTL over the channels, 46.2 s, so
+/// that beats on the next channel each time visit every channel within a
+/// TTL, before anything the network holds for the node runs out.
+pub const fn anchorless_beat_period(delivery_ttl: Duration) -> Duration {
+    delivery_ttl.div(CHANNELS as u64)
+}
+
+/// The beat interval the cycle is set for
+/// (spec "Duty-cycled receive and the long preamble"): the anchorless
+/// beat period it was first derived with. One cycle serves every sleepy node; at the mean anchorless
+/// interval of 34.6 s the least would be 274 ms, and this one costs 4 %
+/// more there.
+pub const CYCLE_BEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 const fn ceil_to(d: u64, step: u64) -> u64 {
     d.div_ceil(step) * step
@@ -121,7 +131,7 @@ pub const SNIFF_RX: Duration = Duration::from_micros(ceil_to(
 pub const SNIFF_SLEEP: Duration = {
     let on = (SNIFF_RX.as_micros() + SNIFF_WAKE.as_micros()) as u128;
     let cycle = isqrt(
-        RX_CURRENT_UA as u128 * on * ANCHORLESS_BEAT_PERIOD.as_micros() as u128
+        RX_CURRENT_UA as u128 * on * CYCLE_BEAT_INTERVAL.as_micros() as u128
             / TX_CURRENT_UA as u128,
     );
     let sleep = cycle - SNIFF_RX.as_micros() - SNIFF_WAKE.as_micros();
@@ -208,13 +218,21 @@ mod tests {
     fn the_cycle_balances_windows_against_beats() {
         let c = SNIFF_CYCLE.as_micros() as f64;
         let on = (SNIFF_RX + SNIFF_WAKE).as_micros() as f64;
-        let p = ANCHORLESS_BEAT_PERIOD.as_micros() as f64;
+        let p = CYCLE_BEAT_INTERVAL.as_micros() as f64;
         let cost = |c: f64| RX_CURRENT_UA as f64 * on / c + TX_CURRENT_UA as f64 * c / p;
         assert!(cost(c) <= cost(c * 0.9) && cost(c) <= cost(c * 1.1));
         // Within 7 % of the least between 250 and 520 ms: the choice is flat.
         for t in [250e3, 520e3] {
             assert!(cost(t) < cost(c) * 1.07, "{t}");
         }
+        // At the mean anchorless interval, three quarters of the period:
+        // the least there is 274 ms, and this cycle costs 4 % more.
+        let ttl = crate::node::Config::default().delivery_ttl;
+        let p = anchorless_beat_period(ttl).as_micros() as f64 * 0.75;
+        let cost = |c: f64| RX_CURRENT_UA as f64 * on / c + TX_CURRENT_UA as f64 * c / p;
+        let least = (RX_CURRENT_UA as f64 * on * p / TX_CURRENT_UA as f64).sqrt();
+        assert!((least / 1e3 - 274.0).abs() < 1.0, "{least}");
+        assert!((cost(c) / cost(least) - 1.04).abs() < 0.005);
     }
 
     #[test]

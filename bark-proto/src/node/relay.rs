@@ -40,10 +40,10 @@
 //! by the busy estimate.
 //!
 //! With an anchor it heartbeats on its home channel only, with the sleepy
-//! bit, at a random time in the second
-//! half of each beat period (`tables::heard::beat_period`, 300 s): at most
-//! a period apart, so that two beats missed are a delivery TTL; spread, so
-//! that two nodes that met once do not meet again. After it chooses or
+//! bit, each beat a random half to one beat period after the last
+//! (`tables::heard::beat_period`, 300 s): at most a period apart, so that
+//! two beats missed are a delivery TTL; spread, so that two nodes that met
+//! once do not meet again. After it chooses or
 //! changes its anchor it beats at once and once more within a heartbeat
 //! interval, so that one lost beat does not hide it from its new holder for
 //! a period. It sweeps the channels only while it boots: receiving
@@ -55,15 +55,15 @@
 //! ([`SleepyNode`]), owns only messages addressed to its ID, and forwards
 //! what it is given at once (spec "Sleepy nodes"). Its neighbours keep it
 //! as a last resort (spec "Next hop"); where its neighbour table holds
-//! anchorless nodes it beats once a period on each of their channels too,
+//! anchorless nodes it sends each beat on each of their channels too,
 //! with the long preamble, so that they learn where it listens (spec
 //! "Beats").
 //!
 //! Without an anchor it is anchorless ([`Node::anchorless`], spec
 //! "Sleepy nodes alone"): it has no window, so every frame to it carries
 //! the long preamble. It beats with the anchorless bit and the long
-//! preamble at a random time in the second half of each anchorless beat
-//! period, a minute, on the next channel each time, so that a relay on any
+//! preamble, each beat a random half to one anchorless beat period, 46.2 s,
+//! after the last, on the next channel each time, so that a relay on any
 //! channel hears it within a rotation; nobody takes it as an anchor, since
 //! it leaves the mode at the first relay it hears. A relay answers each
 //! such beat it hears with a heartbeat on the node's channel with the long
@@ -93,7 +93,7 @@ use crate::node::transfer::{Replies, Step, Transfer};
 use crate::node::{heartbeat_interval, heartbeat_lag, Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::sniff::{ANCHORLESS_BEAT_PERIOD, LONG_PREAMBLE_SYMBOLS};
+use crate::sniff::{anchorless_beat_period, LONG_PREAMBLE_SYMBOLS};
 use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
 use crate::tables::delivered::Delivered;
@@ -222,11 +222,12 @@ struct Beacon {
     /// A sleepy node's beats still to come at the heartbeat interval after
     /// a change of anchor.
     quick: u8,
-    /// Of a sleepy node with an anchor, the channels still to beat on in
-    /// its round of beats to its anchorless neighbours (spec "Beats"), as
-    /// a mask, and when the last round began.
+    /// Of a sleepy node with an anchor, the channels its anchorless
+    /// neighbours listen on, as a mask, taken when its beat came due (spec
+    /// "Beats"), and those of them still to beat on with the long preamble
+    /// before the beat itself goes.
+    reach_all: Option<u16>,
     reach_left: u16,
-    reach_at: Option<Instant>,
 }
 
 /// Which heartbeat the beacon sends.
@@ -398,8 +399,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 busy_checks: 0,
                 check: Check::Idle,
                 quick: 0,
+                reach_all: None,
                 reach_left: 0,
-                reach_at: None,
             },
             mover: Mover {
                 excess_since: None,
@@ -531,8 +532,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             busy_checks: 0,
             check: Check::Idle,
             quick: 0,
+            reach_all: None,
             reach_left: 0,
-            reach_at: None,
         };
         *mover = Mover::default();
         records.clear();
@@ -602,6 +603,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.config.sleepy && self.anchor.is_some()
     }
 
+    /// How often a sleepy node without an anchor beats, at most (spec
+    /// "Sleepy nodes alone").
+    fn anchorless_period(&self) -> Duration {
+        anchorless_beat_period(self.config.delivery_ttl)
+    }
+
     /// Whether this node is a sleepy node without an anchor, past its boot
     /// listen: it beats with the anchorless bit and the long preamble, and
     /// has no window (spec "Sleepy nodes alone").
@@ -650,10 +657,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a sleepy node next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     fn radio_due(&self) -> Instant {
-        let slot = self
-            .reach_due()
-            .map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at));
-        let beat = slot.max(self.beacon.ready_at);
+        let beat = self.beacon.next_at.max(self.beacon.ready_at);
         let due = self.queue.earliest_due().map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
@@ -874,7 +878,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // At a random time within a beat period, so that nodes that
                 // boot together do not beat together.
                 self.beacon.next_at =
-                    now + self.rng.duration(Duration::ZERO, ANCHORLESS_BEAT_PERIOD);
+                    now + self.rng.duration(Duration::ZERO, self.anchorless_period());
             }
             return;
         }
@@ -917,9 +921,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Channel::all().filter(near).nth(pick).unwrap_or(self.home)
     }
 
-    /// The time to a sleepy node's next beat: at a random time in the
-    /// second half of its beat period, the anchorless one without an
-    /// anchor. A relay heartbeats on its fixed interval instead
+    /// The time to a sleepy node's next beat: a random half to one beat
+    /// period, the anchorless one without an anchor. A relay heartbeats on its fixed interval instead
     /// (`heartbeat_done`).
     fn beat_interval(&mut self) -> Duration {
         if self.beacon.quick > 0 {
@@ -931,7 +934,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let period = if self.anchored_sleepy() {
             beat_period(self.config.delivery_ttl)
         } else {
-            ANCHORLESS_BEAT_PERIOD
+            self.anchorless_period()
         };
         self.rng.duration(period.div(2), period)
     }
@@ -1236,14 +1239,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && (self.beacon.current.is_some()
                 || self.beacon.announce.is_some()
                 || now >= self.beacon.next_at
-                || self.reach_due().is_some_and(|t| now >= t)
                 || self.answer_due().is_some_and(|(_, _, at)| now >= at))
     }
 
     /// How many times a relay answers a beat of an anchorless node: once
     /// a fade for two of its beat periods (spec "Sleepy nodes alone").
     fn answers(&self) -> u8 {
-        let span = ANCHORLESS_BEAT_PERIOD.mul(2).as_micros();
+        let span = self.anchorless_period().mul(2).as_micros();
         span.div_ceil(self.config.fade_retry.as_micros().max(1)) as u8
     }
 
@@ -1260,8 +1262,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The heartbeat in progress. It carries the home at the moment it is
     /// sent, so a move during its backoff still announces the new channel.
     /// A sleepy node with an anchor beats on its home; a node without an
-    /// anchor, a relay answering one, and a sleepy node's beat to its
-    /// anchorless neighbours send with the long preamble.
+    /// anchor, a relay answering one, and a sleepy node's beat on its
+    /// anchorless neighbours' channels, its home among them, send with the
+    /// long preamble.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, beat) = self
             .beacon
@@ -1279,9 +1282,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             id: self.id,
             short: self.config.position.short(),
         };
+        let reaches_home = self.beacon.reach_all.unwrap_or(0) & channel_bit(self.home) != 0;
         let preamble = match beat {
             Beat::Answer(_) | Beat::Reach => LONG_PREAMBLE_SYMBOLS,
             _ if hb.anchorless => LONG_PREAMBLE_SYMBOLS,
+            // An anchorless neighbour listens on its home too.
+            Beat::Slot if anchored && reaches_home => LONG_PREAMBLE_SYMBOLS,
             _ => MIN_PREAMBLE_SYMBOLS,
         };
         mac::frame(&Packet::Heartbeat(hb), channel, preamble)
@@ -1291,18 +1297,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// a slot the budget will not let us use. Nothing else transmits
     /// between this check and the transmission, and the bucket only fills
     /// meanwhile, so the budget cannot have shrunk by then. The
-    /// announcement after a move goes first, then a beat to anchorless
-    /// neighbours, then the heartbeat of the slot, then an answer.
+    /// announcement after a move goes first, then the heartbeat of the
+    /// slot, after a sleepy node's copies of it on its anchorless
+    /// neighbours' channels, then an answer.
     fn start_heartbeat(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if self.beacon.current.is_none() {
-            if self.reach_due().is_some_and(|t| now >= t) {
-                self.reach_round(now);
+            if now >= self.beacon.next_at && self.beacon.reach_all.is_none() {
+                let all = self.reach_channels(now);
+                self.beacon.reach_all = Some(all);
+                self.beacon.reach_left = all & !channel_bit(self.home);
             }
             let reach = Channel::all().find(|c| self.beacon.reach_left & channel_bit(*c) != 0);
             self.beacon.current = match (self.beacon.announce, self.answer_due()) {
                 (Some(old), _) => Some((old, Beat::Announce)),
-                _ if reach.is_some() => reach.map(|c| (c, Beat::Reach)),
-                _ if now >= self.beacon.next_at => Some((self.beacon.rotation, Beat::Slot)),
+                _ if now >= self.beacon.next_at => match reach {
+                    Some(c) => Some((c, Beat::Reach)),
+                    None => Some((self.beacon.rotation, Beat::Slot)),
+                },
                 (None, Some((id, home, at))) if now >= at => Some((home, Beat::Answer(id))),
                 _ => return false,
             };
@@ -1324,36 +1335,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         true
     }
 
-    /// When a sleepy node with an anchor next beats to its anchorless
-    /// neighbours, if it has any (spec "Beats"): at once while a round is
-    /// under way, else a beat period after the last round began, or at
-    /// once if there was none.
-    fn reach_due(&self) -> Option<Instant> {
-        if !self.anchored_sleepy() || self.stage != Stage::Running {
-            return None;
+    /// The channels the anchorless neighbours of a sleepy node with an
+    /// anchor listen on at `now`, as a mask: each of its beats goes on
+    /// each of them too, with the long preamble (spec "Beats").
+    fn reach_channels(&self, now: Instant) -> u16 {
+        if !self.anchored_sleepy() {
+            return 0;
         }
-        if self.beacon.reach_left != 0 {
-            return Some(Instant::ZERO);
-        }
-        if !self.neighbours.iter().any(|n| n.anchorless) {
-            return None;
-        }
-        let period = beat_period(self.config.delivery_ttl);
-        Some(self.beacon.reach_at.map_or(Instant::ZERO, |t| t + period))
-    }
-
-    /// Start a round of beats to the anchorless neighbours: one with the
-    /// long preamble on each channel they listen on.
-    fn reach_round(&mut self, now: Instant) {
-        if self.beacon.reach_left != 0 {
-            return;
-        }
-        self.beacon.reach_at = Some(now);
-        self.beacon.reach_left = self
-            .neighbours
+        self.neighbours
             .live(now)
             .filter(|(_, n)| n.anchorless)
-            .fold(0, |m, (_, n)| m | channel_bit(n.home));
+            .fold(0, |m, (_, n)| m | channel_bit(n.home))
     }
 
     fn heartbeat_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -1410,6 +1402,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             _ => {}
         }
+        // The next beat takes its anchorless neighbours' channels afresh.
+        self.beacon.reach_all = None;
         if sent && self.anchored_sleepy() {
             // The window after its beat (spec "Delivery").
             self.awake_until = now + self.heard.params().awake;
@@ -1705,13 +1699,9 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 let due = if pending {
                     self.beacon.ready_at
                 } else {
-                    // A relay's answer, or a sleepy node's beat to its
-                    // anchorless neighbours, may come before its next slot.
+                    // A relay's answer may come before its next slot.
                     let answer = self.answer_due().map(|(_, _, at)| at);
-                    [answer, self.reach_due()]
-                        .into_iter()
-                        .flatten()
-                        .fold(self.beacon.next_at, Instant::min)
+                    answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
                 };
                 at(due.max(self.beacon.ready_at));
             }

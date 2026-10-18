@@ -38,7 +38,7 @@ pub struct Config {
     /// listens after a beat. Between its windows it receives duty-cycled,
     /// a next hop only as a last resort, with the long preamble; it holds
     /// mail for nobody and forwards at once. Without such a node it is
-    /// anchorless: it beats once a minute on the rotating channel with the
+    /// anchorless: it beats about every 46 s on the rotating channel with the
     /// long preamble and has no window (spec "Sleepy nodes alone"). It does
     /// not choose its channel by how busy channels are, and sweeps them
     /// only while it boots.

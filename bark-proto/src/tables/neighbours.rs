@@ -110,7 +110,7 @@ use crate::ids::NodeId;
 use crate::node::{heartbeat_lag, Config};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
-use crate::sniff::ANCHORLESS_BEAT_PERIOD;
+use crate::sniff::anchorless_beat_period;
 use crate::tables::budget::hold;
 use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
@@ -209,8 +209,7 @@ impl NeighbourParams {
             expire_after: mean_rotation.mul(c.neighbour_expiry_rotations as u64),
             stale_after: c.heartbeat_max.mul(CHANNELS as u64),
             anchorless_expire_after: Duration::from_micros(
-                ANCHORLESS_BEAT_PERIOD.as_micros() * (2 * CHANNELS as u64)
-                    + ANCHORLESS_BEAT_PERIOD.as_micros() / 2
+                anchorless_beat_period(c.delivery_ttl).as_micros() * (2 * CHANNELS as u64)
                     + heartbeat_lag(c).as_micros(),
             ),
             sleepy_expire_after: beat_period(c.delivery_ttl).mul(2),
@@ -668,21 +667,21 @@ mod tests {
     }
 
     /// An anchorless entry expires two of its sender's worst-case
-    /// rotations and a beat's lag after its last heartbeat: 26.5 beat
-    /// periods, and a long full frame, the ACK timeout and two backoffs,
-    /// 0.99 s.
+    /// rotations and a beat's lag after its last heartbeat: 26 beat
+    /// periods of 600 / 13 s, and a long full frame, the ACK timeout and
+    /// two backoffs, 0.99 s.
     #[test]
     fn anchorless_entries_expire_after_two_rotations() {
         let mut t = Neighbours::new(params());
         assert_eq!(
             params().anchorless_expire_after,
-            Duration::from_micros(1_590_992_864)
+            Duration::from_micros(1_200_992_860)
         );
         hear_anchorless(&mut t, 0, -80, at(0));
-        hear(&mut t, 1, 0, -80, at(1300));
+        hear(&mut t, 1, 0, -80, at(1000));
         assert!(t.get(id(0)).unwrap().anchorless);
-        assert_eq!(t.live(at(1590)).count(), 2);
-        assert_eq!(t.live(at(1591)).count(), 1);
+        assert_eq!(t.live(at(1200)).count(), 2);
+        assert_eq!(t.live(at(1201)).count(), 1);
         assert_eq!(
             t.next_expiry(),
             Some(Instant::ZERO + params().anchorless_expire_after)
