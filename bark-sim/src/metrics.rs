@@ -642,6 +642,10 @@ pub struct SleepMetrics {
     pub watch_early: u64,
     /// See `watch_early`.
     pub watch_earliest_us: i64,
+    /// Heartbeats of its anchor that reached a sleepy node on its channel
+    /// above sensitivity on average: with its radio on throughout, and
+    /// with it asleep at the start or the end.
+    pub anchor_beats: [u64; 2],
 }
 
 /// `SleepMetrics::waited`: the window after the node's beat.

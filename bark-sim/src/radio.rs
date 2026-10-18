@@ -317,12 +317,20 @@ impl Sim {
         );
         if heartbeat && self.now >= self.settle {
             let (start, end, c) = (tx.start, tx.end, ch.index());
+            let src_id = self.relay(tx.src).id();
             for i in 0..self.links.row(tx.src).len() {
                 let l = self.links.row(tx.src)[i];
                 let b = l.rx;
                 let st = &self.nodes[b as usize];
                 // Only where it arrives above sensitivity on average.
                 let audible = l.base_dbm as f64 >= self.sens_dbm;
+                let anchored_here =
+                    b >= self.relays() && self.relay(b).anchor().is_some_and(|a| a.id == src_id);
+                if audible && anchored_here && st.alive && st.present && st.resting == Some(ch) {
+                    let asleep = st.asleep_at(start) || st.asleep_at(end);
+                    self.metrics.sleep.anchor_beats[usize::from(asleep)] += 1;
+                }
+                let st = &self.nodes[b as usize];
                 let off = !st.alive || !st.present || st.asleep_at(start);
                 if !audible || off || st.resting != Some(ch) {
                     continue;
