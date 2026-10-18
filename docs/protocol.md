@@ -1629,9 +1629,9 @@ relays nothing for them. Summed over the domain's 20 000 sleepy nodes
 they take 1.18 s of airtime a second, 9 % of one channel's time over the
 13, where every relay hears every other.
 
-A sleepy node in anchorless mode costs more: 22 s an hour of beats, a
-relay's answers, and every DATA to it 357 ms longer
-([sleepy nodes alone](#sleepy-nodes-alone)). In the simulated domain, booted together with its
+A sleepy node in anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
+its long beats, a relay's answers, and the long preamble on every DATA to
+it. In the simulated domain, booted together with its
 relays, about one sleepy node in thirty heard no relay in its boot listen
 and spent a median of seven minutes in that mode; the domain carried
 1.3 points less and spent half again as much airtime as when such nodes
@@ -1719,12 +1719,8 @@ heartbeat does not say where its sender's position came from: no
 receiver needs to know.
 
 - **Sleepy**: "I sleep. Reach me cheaply in my window after my beat,
-  or at any time with the long preamble." Between its windows the
-  sender receives duty-cycled ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
-  A node that holds a message for it and hears its beat sends in the
-  window with the short preamble ([delivery](#delivery)); any node sends to it with
-  the long preamble as a last resort ([next hop](#next-hop)). It holds no mail for
-  anyone ([sleepy nodes](#sleepy-nodes)). Every sleepy node sets it. Clear: the sender
+  or at any time with the long preamble." ([sleepy nodes](#sleepy-nodes), [delivery](#delivery),
+  [next hop](#next-hop).) Every sleepy node sets it. Clear: the sender
   listens all the time; reach it at any time with the short preamble.
 - **Anchorless**: "I know no node that is not sleepy. If you are one,
   tell me, so I can anchor to you." A sleepy node without an anchor
