@@ -118,8 +118,8 @@ GFSK: [capacity and sizing](#capacity-and-sizing).
 SF is network-wide because an SX1262 receives one SF at a time, so a
 mixed-SF network splits into parts that cannot hear each other. Starting
 at SF7 would force a network-wide switch later; the deployment is expected
-to start at a density where SF5 range suffices (indoor coverage at ≈9.6
-relays/km², [capacity and sizing](#capacity-and-sizing)).
+to start at a density where SF5 range suffices
+([capacity and sizing](#capacity-and-sizing)).
 
 ### Duty-cycled receive and the long preamble
 
@@ -130,8 +130,8 @@ SetRxDutyCycle): it receives for a window `rx`, takes about 1 ms to save
 and restore its state, sleeps for `sleep`, starts its oscillator (the
 TCXO, 5 ms as the firmware sets it), and receives again; a cycle of
 `C = rx + sleep + wake`, with `wake` = 6 ms. It catches a preamble only if
-a window holds `D` of it, 4 symbols, the time the modem takes to lock
-([busy estimate](#busy-estimate)). A preamble starting just too late for one window must
+a window holds `D` of it, the time the modem takes to lock, taken here as
+4 symbols (≈1 ms; measure in bring-up step 1, [implementation notes](#implementation-notes)). A preamble starting just too late for one window must
 reach `D` into the next, so it is caught wherever it starts if it is at
 least `sleep + wake + 2D` long. Once it has detected one, the radio waits
 `2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble + Theader ≤ 2 ×
@@ -164,10 +164,8 @@ pay it, every frame, and a relay forwards at the 10 % cap long before its
 channel fills ([duty cycle cap](#duty-cycle-cap)). Long frames go only where the receiver
 cannot be reached otherwise: DATA to a sleepy node outside its window,
 the beats of a node without an anchor, a relay's answer to them, and a
-sleepy node's beats to its anchorless neighbours ([beats](#beats)). A node without an anchor
-beating once a minute spends 22 s an hour on its beats, 6 % of its
-budget; a relay's answer is a long heartbeat, two for each such beat it
-hears.
+sleepy node's beats to its anchorless neighbours ([beats](#beats)); their cost is in
+[sleepy nodes alone](#sleepy-nodes-alone).
 
 ---
 
@@ -211,8 +209,8 @@ reading:
   home; ≈0.5 ms, so ≈6.5 ms per second, 0.65% of the time off the home
   channel.
 - **Cost:** while the node is away it can miss a packet. The modem needs
-  some length `D` of preamble to lock on, taken here as 4 symbols
-  (≈1 ms; measure in bring-up step 1, [implementation notes](#implementation-notes)). A packet is lost if its
+  a length `D` of preamble to lock on
+  ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)). A packet is lost if its
   preamble starts too late before the gap for the modem to have locked,
   or too early in it to leave `D` after it: a window of `g + 2D − P` per
   gap of length `g`, with `P` the preamble, 12 symbols (3.1 ms, [physical layer](#physical-layer)). For
@@ -1566,7 +1564,7 @@ channel of the rotation each time ([heartbeat](#heartbeat)), naming its own chan
 listens or receives duty-cycled, so a relay in reach on any channel hears
 it within a rotation of its beats, 13 minutes, and two nodes in
 anchorless mode find each other within one. The beats cost it 22 s an
-hour of airtime and 0.20 mA at 32 mA of transmit current, about what its
+hour of airtime, 6 % of its budget, and 0.20 mA at 32 mA of transmit current, about what its
 receive windows cost, which is what sets the cycle, 0.39 mA for the two.
 With the cycle set the same way for another period the two cost in
 proportion to one over its square root: a period of 46 s would bring a
