@@ -43,11 +43,14 @@ Verified on the host:
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the three builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The node image, relay or
-  sleepy, is 308 KiB of flash (`llvm-size`), 162 KiB of it the node's
-  empty tables, which start in flash and are copied to RAM at boot; it
-  uses 170 KiB of RAM before the stack, which leaves 86 KiB for the
-  stack (2026-10-17, roadmap D51 draft). Its deepest single stack frame, the
+  initial stack pointer is `0x20040000`. The relay image is 310 KiB of
+  flash (`llvm-size -A`, `.text`, `.rodata` and `.data`), 162 KiB of it
+  the node's empty tables, which start in flash and are copied to RAM at
+  boot; it uses 170 KiB of RAM before the stack (`.data` and `.bss`),
+  which leaves 85 KiB for the stack. The sleepy image keeps no heard
+  table and no delivery queue: 288 KiB of flash and 152 KiB of RAM,
+  which leaves 103 KiB for the stack; before, it was the relay's size,
+  310 KiB and 170 KiB (2026-10-18, roadmap D58). Its deepest single stack frame, the
   largest stack adjustment in the disassembly (`llvm-objdump`), is 23 KiB,
   in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
   28 KiB for the image before D46, where this file said 18 KiB.
