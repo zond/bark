@@ -482,8 +482,8 @@ Per node, up to 64 entries, by node ID:
   `fail_count ≥ 2` is demoted until it ACKs a packet from this relay or
   three rotations (390 s) pass, and is a next hop only when no other with
   margin is left ([next hop](#next-hop)). Its heartbeats keep it in the table but do not
-  clear the demotion: a heartbeat proves the
-  neighbour is alive, not that it hears us, and a link that works one way
+  clear the demotion: a heartbeat proves the neighbour is alive, not that
+  it hears us, and a link that works one way
   only would otherwise cost every message the failed attempts again.
   Heartbeat expiry takes minutes; a failed forward must demote at once.
 - **Eviction** when full and a relay not in the table is heard: the
@@ -1579,8 +1579,7 @@ authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
 any position, attract traffic to it and drop it, send packets in another
 node's name, or replay what it has heard. The app's end-to-end
 encryption keeps payloads private and authentic; it does nothing for
-routing. This is the scope stated at the top: infrastructure loss, not an
-adversary on the air.
+routing. This is the scope stated at the top.
 
 ---
 
