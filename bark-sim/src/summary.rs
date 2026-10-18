@@ -161,6 +161,10 @@ pub struct NodeSummary {
     /// For a leaf, the relay it is attached to at the end.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay: Option<u32>,
+    /// Whether it walks (`walk.rs`); `x`, `y` and `site` are where it
+    /// was placed.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub walks: bool,
     /// Counters.
     #[serde(flatten)]
     pub m: NodeMetrics,
@@ -369,6 +373,7 @@ impl Sim {
                     relay: (i as u32 >= self.relays())
                         .then(|| self.attached_relay(i as u32))
                         .flatten(),
+                    walks: self.walks.as_ref().is_some_and(|w| w.walks(i as u32)),
                     m: n.clone(),
                     airtime_fraction: n.airtime_us as f64 / dur_us as f64,
                 })

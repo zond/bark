@@ -240,6 +240,8 @@ pub struct NodeRadio<'a> {
     pub site: &'a [Site],
     /// Names, for table lookups.
     pub names: &'a [Option<String>],
+    /// Nodes that walk: no link of theirs is stored (`walk.rs`).
+    pub walks: &'a [bool],
 }
 
 impl LinkTable {
@@ -284,6 +286,9 @@ impl LinkTable {
                     .fold(0.0, f64::max);
                 let shadow_seed = stream_seed(run_seed, Purpose::Shadowing, 0);
                 for a in 0..n {
+                    if nodes.walks[a] {
+                        continue;
+                    }
                     let from = nodes.site[a];
                     for (to, site_to) in Site::ALL.into_iter().enumerate() {
                         let Some(grid) = &grids[from as usize][to] else {
@@ -292,7 +297,7 @@ impl LinkTable {
                         let radius = grid.side();
                         grid.neighbourhood(nodes.xy[a], |k| {
                             let b = class[to][k as usize] as usize;
-                            if b <= a {
+                            if b <= a || nodes.walks[b] {
                                 return;
                             }
                             stats.evaluated += 1;
@@ -325,6 +330,9 @@ impl LinkTable {
                     let (a, b) = (index(&l.a)?, index(&l.b)?);
                     if a == b {
                         return Err(format!("link table has a self-link on {:?}", l.a));
+                    }
+                    if nodes.walks[a] || nodes.walks[b] {
+                        return Err("a node of a loaded link table cannot walk".into());
                     }
                     stats.evaluated += 1;
                     let before = pair_nodes.len();
@@ -548,6 +556,7 @@ mod tests {
             tx_dbm: &tx,
             site: &site,
             names: &names,
+            walks: &vec![false; n],
         };
         let t = LinkTable::build(&p, &nodes, cutoff, 9).unwrap();
         let cut = t.stats.cutoff_m;
@@ -642,6 +651,7 @@ mod tests {
             tx_dbm: &[10.0, 10.0],
             site: &[Site::Outdoor, Site::Outdoor],
             names: &[None, None],
+            walks: &[false, false],
         };
         let mut t = LinkTable::build(&p, &nodes, -129.0, 3).unwrap();
         let (ab, ba) = (*t.get(0, 1).unwrap(), *t.get(1, 0).unwrap());

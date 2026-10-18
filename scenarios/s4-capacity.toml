@@ -43,6 +43,20 @@ sleepy_s = 1800.0
 [clocks]
 drift_ppm = 50.0
 
+# A fifth of the people walk somewhere now and then, as people do in a
+# city whose transport has stopped. A walk is a kilometre on average,
+# twelve minutes at a common walking speed, between stops of an hour: a
+# walker is in the street a sixth of the time, so 3 % of all sleepy nodes
+# are at any moment, about the half hour a day of its waking hours a
+# person spends walking. Stops are indoors and walks outdoors, without
+# the wall. Relays never move.
+[movement]
+fraction = 0.2
+speed_m_s = 1.4
+trip_m = 1000.0
+stop_s = 3600.0
+shadow_decorrelation_m = 50.0
+
 [origin]
 lat = 50.45
 lon = 30.52

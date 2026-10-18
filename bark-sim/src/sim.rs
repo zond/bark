@@ -23,6 +23,7 @@ use crate::scenario::{
     resolve, Destination, Ids, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
+use crate::walk::{MovingLink, Walks};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
@@ -63,6 +64,10 @@ pub(crate) enum Ev {
     Held(u32, u32),
     /// Time-series sample.
     Sample,
+    /// A walker ends its stop or its walk (walker index).
+    Leg(u32),
+    /// A walking node takes a GPS fix (node).
+    Fix(u32),
 }
 
 struct Entry {
@@ -297,6 +302,9 @@ pub(crate) struct AirTx {
     pub on_air: bool,
     pub start: Instant,
     pub end: Instant,
+    /// Its receivers over links with a walker at either end, from when it
+    /// reached the air.
+    pub extra: Vec<MovingLink>,
 }
 
 pub(crate) struct Interferer {
@@ -368,6 +376,10 @@ struct OriginRecord {
     airtime_us: u64,
     /// The largest hand-over count a DATA frame of it carried (spec "Hop count").
     hops: u8,
+    /// How far apart its origin and destination were when it was sent,
+    /// and whether its destination was walking then.
+    distance_m: f64,
+    dst_walking: bool,
 }
 
 /// One originated message, for the per-message table (`Sim::message_rows`).
@@ -393,8 +405,11 @@ pub struct MessageRow {
     pub airtime_s: f64,
     /// The largest hand-over count it carried.
     pub hops: u8,
-    /// Straight-line distance from origin to destination, metres.
+    /// Straight-line distance from origin to destination when it was
+    /// sent, metres.
     pub distance_m: f64,
+    /// Whether its destination was walking when it was sent.
+    pub dst_walking: bool,
     /// Origination to its core taking it, seconds.
     pub taken_s: Option<f64>,
     /// Origination to its drop, seconds.
@@ -475,8 +490,14 @@ pub struct Sim {
     pub(crate) busy_signal_mw: f64,
     pub(crate) links: LinkTable,
     names: Vec<Option<String>>,
-    xy: Vec<Xy>,
-    sites: Vec<Site>,
+    pub(crate) xy: Vec<Xy>,
+    pub(crate) sites: Vec<Site>,
+    /// The walking nodes, if any walk.
+    pub(crate) walks: Option<Walks>,
+    /// Where the local grid is on the Earth.
+    origin: Origin,
+    /// Whether the core being handed a GPS fix (`Ev::Fix`) is.
+    fixing: bool,
     /// Each node's ID: one per node, assigned here (spec "Addresses").
     ids: Vec<NodeId>,
     /// Relay node by ID, as [`key`] gives it.
@@ -692,6 +713,24 @@ impl Sim {
         let names: Vec<Option<String>> = placed.iter().map(|p| p.name.clone()).collect();
         let tx_dbm = vec![base.tx_power_dbm as f64; n];
         let site: Vec<Site> = placed.iter().map(PlacedNode::site).collect();
+        let walks = (sc.movement.fraction > 0.0).then(|| {
+            Walks::new(
+                &sc.movement,
+                &sc.links,
+                base.tx_power_dbm as f64,
+                radio.cutoff_dbm(),
+                &xy,
+                &site,
+                n_relays..n as u32,
+                sc.seed,
+            )
+        });
+        if walks.is_some() && !sc.interferers.is_empty() {
+            return Err("interferers reach nodes where they were placed, so none may walk".into());
+        }
+        let walking: Vec<bool> = (0..n as u32)
+            .map(|i| walks.as_ref().is_some_and(|w| w.walks(i)))
+            .collect();
         let links = LinkTable::build(
             &sc.links,
             &NodeRadio {
@@ -699,6 +738,7 @@ impl Sim {
                 tx_dbm: &tx_dbm,
                 site: &site,
                 names: &names,
+                walks: &walking,
             },
             radio.cutoff_dbm(),
             sc.seed,
@@ -777,6 +817,9 @@ impl Sim {
             ids,
             positions,
             sites: site,
+            walks,
+            origin,
+            fixing: false,
             was_booting: false,
             n_relays,
             relays,
@@ -1046,6 +1089,15 @@ impl Sim {
         if let Some(step) = self.links.fading_step() {
             self.push(Instant::ZERO + step, Ev::FadeTick);
         }
+        // Walkers move whether their node is on or not.
+        let legs: Vec<Instant> = self
+            .walks
+            .iter()
+            .flat_map(|w| w.walkers.iter().map(|k| k.until))
+            .collect();
+        for (w, until) in legs.into_iter().enumerate() {
+            self.push(until, Ev::Leg(w as u32));
+        }
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
         }
@@ -1192,6 +1244,25 @@ impl Sim {
                 }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
+            }
+            Ev::Leg(w) => {
+                let walks = self.walks.as_mut().expect("walkers");
+                let until = walks.next_leg(w, self.now);
+                if self.now >= self.settle {
+                    let k = &walks.walkers[w as usize];
+                    self.metrics.sleep.walks[usize::from(k.walking)] += 1;
+                }
+                self.push(until, Ev::Leg(w));
+            }
+            Ev::Fix(n) => {
+                let walks = self.walks.as_ref().expect("walkers");
+                let at = walks.walker(n).expect("a walker").at(self.now);
+                if self.nodes[n as usize].alive {
+                    let position = self.origin.position(at);
+                    self.fixing = true;
+                    self.deliver(n, Event::App(AppCommand::SetPosition { position }));
+                    self.fixing = false;
+                }
             }
         }
     }
@@ -1602,6 +1673,7 @@ impl Sim {
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
                 self.note_sent_again(node, &f);
+                self.note_beat_fix(node, &f, scripted);
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
@@ -1621,7 +1693,12 @@ impl Sim {
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
-                    Trace::AnchorCheck => c.anchor_checks += 1,
+                    Trace::AnchorCheck => {
+                        c.anchor_checks += 1;
+                        if self.fixing && self.now >= self.settle {
+                            self.metrics.sleep.fix_checks += 1;
+                        }
+                    }
                     Trace::AnchorWatch {
                         heard,
                         offset_us,
@@ -1719,6 +1796,20 @@ impl Sim {
         h.refusals += 1;
         h.with_place += u64::from(with);
         self.refused_at.insert((sender, id), (self.now, with));
+    }
+
+    /// `node` sends `f`: if it walks and `f` is its beat, it takes a GPS
+    /// fix as it goes (spec "Beats"), which its core is handed next.
+    fn note_beat_fix(&mut self, node: u32, f: &Frame, scripted: bool) {
+        let walks = self.walks.as_ref().is_some_and(|w| w.walks(node));
+        if scripted || !walks {
+            return;
+        }
+        if let Ok(bark_proto::wire::Packet::Heartbeat(_)) =
+            bark_proto::wire::Packet::decode(f.payload())
+        {
+            self.push(self.now, Ev::Fix(node));
+        }
     }
 
     /// `node` sends `f`: if it is a DATA of a message refused to it, the
@@ -1884,6 +1975,7 @@ impl Sim {
                     on_air: false,
                     start: bounds[0],
                     end: bounds[1],
+                    extra: Vec::new(),
                 });
                 ex.slot = Some(slot);
                 let sg = self.slot_gen[slot as usize];
@@ -2105,7 +2197,8 @@ impl Sim {
                 frames: o.frames,
                 airtime_s: o.airtime_us as f64 / 1e6,
                 hops: o.hops,
-                distance_m: self.xy[o.src as usize].dist(self.xy[o.dst as usize]),
+                distance_m: o.distance_m,
+                dst_walking: o.dst_walking,
                 taken_s: o.taken_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 dropped_s: o.dropped_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
             })
@@ -2129,7 +2222,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s\n",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking\n",
         );
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
@@ -2144,7 +2237,7 @@ impl Sim {
             let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -2153,7 +2246,8 @@ impl Sim {
                 r.frames,
                 r.airtime_s,
                 r.hops,
-                r.distance_m
+                r.distance_m,
+                r.dst_walking
             ));
         }
         s
@@ -2301,6 +2395,14 @@ impl Sim {
         (!self.pending_boot[i] && self.nodes[i].alive).then_some(self.boot_at[i])
     }
 
+    /// Where a node is now.
+    pub fn place(&self, node: u32) -> Xy {
+        match self.walks.as_ref().and_then(|w| w.walker(node)) {
+            Some(k) => k.at(self.now),
+            None => self.xy[node as usize],
+        }
+    }
+
     /// A node's ID.
     pub fn node_id(&self, node: u32) -> NodeId {
         self.ids[node as usize]
@@ -2339,6 +2441,12 @@ impl Sim {
             frames: 0,
             airtime_us: 0,
             hops: 0,
+            distance_m: self.place(src).dist(self.place(dst)),
+            dst_walking: self
+                .walks
+                .as_ref()
+                .and_then(|w| w.walker(dst))
+                .is_some_and(|k| k.walking),
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -2719,6 +2827,8 @@ mod tests {
                 frames: 0,
                 airtime_us: 0,
                 hops: 0,
+                distance_m: 0.0,
+                dst_walking: false,
             });
             sim.msg_tags.insert(id, tag);
         }

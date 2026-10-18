@@ -39,6 +39,8 @@ pub enum Purpose {
     NodeId = 11,
     /// Each node's clock rate.
     Clock = 12,
+    /// Whether a sleepy node walks, and its stops and walks.
+    Walk = 13,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

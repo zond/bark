@@ -630,3 +630,33 @@ fn drifting_clocks_keep_the_anchor_watch() {
         }
     }
 }
+
+/// S2 with every sleepy node walking, stops of ten minutes: walkers move
+/// far enough from where they chose to check their anchor
+/// (spec "Relay choice"), change anchors, and their texts still arrive or
+/// are accounted for.
+#[test]
+fn walkers_check_and_change_their_anchor() {
+    let mut sc = scenario("s2-block.toml");
+    sc.movement.fraction = 1.0;
+    sc.movement.stop_s = 600.0;
+    sc.duration_s = 2.0 * 3600.0;
+    let mut sim = Sim::new(&sc).expect("S2 builds");
+    sim.run();
+    let s = sim.summary();
+    let z = s.sleep.as_ref().expect("sleepy nodes");
+    assert!(z.m.walks[1] > 80, "{} walks", z.m.walks[1]);
+    assert!(
+        z.m.fix_checks > 10,
+        "{} checks after a move",
+        z.m.fix_checks
+    );
+    assert!(
+        z.m.anchor_changes > 20,
+        "{} anchor changes",
+        z.m.anchor_changes
+    );
+    let phase = &s.app.phases[1];
+    assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
+    accounted(&sim, "S2 walking");
+}

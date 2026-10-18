@@ -33,6 +33,7 @@
 use crate::metrics::{FirstTry, Outcome};
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{key, Arrival, ExKind, Lock, Rx, Sim, ToSleepy};
+use crate::walk::MovingLink;
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff;
 use bark_proto::wire::Packet as WirePacket;
@@ -234,6 +235,44 @@ impl Sim {
             }
             self.arrive(l.rx, a, Some(packet));
         }
+        // Links with a walker at either end, worked out now and kept for
+        // the frame's end.
+        let Some(walks) = &mut self.walks else {
+            return;
+        };
+        let extra = walks.links_from(src, start, ch, &self.xy, &self.sites);
+        for l in &extra {
+            let a = Arrival {
+                key: tx_key,
+                channel: ch.index(),
+                dbm: l.dbm,
+                mw: phy::mw(l.dbm),
+                end,
+                lora: true,
+            };
+            if let Some(sleepy) = beat {
+                self.nodes[l.rx as usize]
+                    .beats
+                    .push(start, end, ch.index(), sleepy);
+            }
+            self.arrive(l.rx, a, Some(packet));
+        }
+        if let Some(tx) = self.txs[slot as usize].as_mut() {
+            tx.extra = extra;
+        }
+    }
+
+    /// The `i`-th receiver of a frame from `src`, `extra` its links with
+    /// walkers: its node and its power before fading.
+    fn receiver(&self, src: u32, extra: &[MovingLink], i: usize) -> (u32, f32) {
+        let row = self.links.row(src);
+        match row.get(i) {
+            Some(l) => (l.rx, l.base_dbm),
+            None => {
+                let l = extra[i - row.len()];
+                (l.rx, l.base_dbm)
+            }
+        }
     }
 
     /// A transmission leaves the air, at its end or because its transmitter
@@ -251,8 +290,9 @@ impl Sim {
         }
         let ch = tx.frame.channel;
         let mut got: Vec<(u32, f64, f64)> = Vec::new();
-        for i in 0..self.links.row(tx.src).len() {
-            let b = self.links.row(tx.src)[i].rx;
+        let receivers = self.links.row(tx.src).len() + tx.extra.len();
+        for i in 0..receivers {
+            let (b, _) = self.receiver(tx.src, &tx.extra, i);
             self.remove_arrival(b, tx.key);
             let st = &mut self.nodes[b as usize];
             if let Lock::Rx(r) = st.lock {
@@ -318,12 +358,11 @@ impl Sim {
         if heartbeat && self.now >= self.settle {
             let (start, end, c) = (tx.start, tx.end, ch.index());
             let src_id = self.relay(tx.src).id();
-            for i in 0..self.links.row(tx.src).len() {
-                let l = self.links.row(tx.src)[i];
-                let b = l.rx;
+            for i in 0..receivers {
+                let (b, base_dbm) = self.receiver(tx.src, &tx.extra, i);
                 let st = &self.nodes[b as usize];
                 // Only where it arrives above sensitivity on average.
-                let audible = l.base_dbm as f64 >= self.sens_dbm;
+                let audible = base_dbm as f64 >= self.sens_dbm;
                 let anchored_here =
                     b >= self.relays() && self.relay(b).anchor().is_some_and(|a| a.id == src_id);
                 if audible && anchored_here && st.alive && st.present && st.resting == Some(ch) {

@@ -360,6 +360,41 @@ pub struct Clocks {
     pub drift_ppm: f64,
 }
 
+/// Walking sleepy nodes. A share of them walk: each stops indoors at a
+/// point, then walks outdoors in a straight line to another, and so on.
+/// Nodes that are not sleepy never move.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Movement {
+    /// The share of sleepy nodes that walk; 0 for none.
+    pub fraction: f64,
+    /// Walking speed, metres a second.
+    pub speed_m_s: f64,
+    /// Mean straight-line length of a walk, metres; exponential, in a
+    /// random direction, folded back at the edges of the area the nodes
+    /// were placed in.
+    pub trip_m: f64,
+    /// Mean time at a stop, seconds; exponential.
+    pub stop_s: f64,
+    /// The distance over which the shadowing of a walker's links changes,
+    /// metres.
+    pub shadow_decorrelation_m: f64,
+}
+
+impl Default for Movement {
+    fn default() -> Self {
+        Movement {
+            fraction: 0.0,
+            // A common pedestrian walking speed.
+            speed_m_s: 1.4,
+            trip_m: 1000.0,
+            stop_s: 3600.0,
+            // 3GPP TR 38.901, urban macro, not in line of sight.
+            shadow_decorrelation_m: 50.0,
+        }
+    }
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -376,6 +411,8 @@ pub struct Scenario {
     pub boot: Boot,
     /// How their clocks run.
     pub clocks: Clocks,
+    /// Which of them walk, and how.
+    pub movement: Movement,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -413,6 +450,7 @@ impl Default for Scenario {
             ids: Ids::default(),
             boot: Boot::default(),
             clocks: Clocks::default(),
+            movement: Movement::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

@@ -646,6 +646,11 @@ pub struct SleepMetrics {
     /// above sensitivity on average: with its radio on throughout, and
     /// with it asleep at the start or the end.
     pub anchor_beats: [u64; 2],
+    /// Stops and walks walkers began (`walk.rs`).
+    pub walks: [u64; 2],
+    /// Checks of the anchor a GPS fix started: the node had moved too far
+    /// from where it chose (spec "Relay choice").
+    pub fix_checks: u64,
 }
 
 /// `SleepMetrics::waited`: the window after the node's beat.
