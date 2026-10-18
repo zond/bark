@@ -1630,15 +1630,6 @@ Nobody anchors to a node in anchorless mode: it leaves the mode the
 moment it hears a relay, and an address pointing at it would then point
 at a node that holds nothing.
 
-Measured in the simulator (roadmap D51), sixty sleepy nodes over a square
-kilometre with no relay delivered every text, as when they listened all
-the time, at 0.59 mA a node instead of 5.85 mA, half a second at the
-median instead of a tenth, and 2 154 s of airtime a run instead of 344
-s, the busiest node at 1 % of its duty cycle. Two relays switched on at
-the edge of such a village brought its nodes in 215 s after they were
-switched on at the median, their 195 s boot listen included, and 686 s at
-the 90th percentile.
-
 ---
 
 ## Phone link
