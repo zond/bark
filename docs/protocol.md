@@ -234,11 +234,15 @@ reading:
   Packets addressed to the node (DATA), the ACKs of its own
   hand-overs, and its own transmissions and ACKs go wherever it goes:
   counting them would make a busy relay leave its channel for its own
-  traffic and take that traffic along. So a home reading is 1 if RSSI is
-  above the threshold and no packet addressed to the node was on the air
-  when it was taken; otherwise it is the fraction of the time since the
-  last home reading spent receiving packets addressed to others
-  (heartbeats included), from the packet lengths. Whether a reading fell
+  traffic and take that traffic along. So a home reading taken while one
+  of them was on the air is set aside, and every other is the same 0/1
+  reading as on any other channel. The move rule compares home with the
+  other channels, so both must be read alike. Counting on home the
+  receive time of every packet decoded there, as the rule did before,
+  also counted packets too faint for any reading to see; under load home
+  then read busier than the quietest channel by more than the move
+  threshold, and most relays moved every 15 to 25 minutes (roadmap D55).
+  Whether a reading fell
   in the node's own packet is known only when that packet ends, so a home
   reading is held until the next, one second later, longer than any
   packet (roadmap D24). A home reading may fall inside a reception, since

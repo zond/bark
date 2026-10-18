@@ -186,11 +186,6 @@ struct Sweep {
     next_at: Instant,
     /// The channel the next reading takes.
     channel: Channel,
-    /// When the home channel was last read.
-    last_home: Instant,
-    /// Time spent since `last_home` receiving packets for other nodes on
-    /// the home channel.
-    foreign: Duration,
     /// The last home reading, held until any reception it fell in has
     /// ended and shown whether the energy it read was this relay's own.
     pending: Option<HomeReading>,
@@ -392,8 +387,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sweep: Sweep {
                 next_at: Instant::ZERO,
                 channel,
-                last_home: Instant::ZERO,
-                foreign: Duration::ZERO,
                 pending: None,
             },
             beacon: Beacon {
@@ -525,8 +518,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *sweep = Sweep {
             next_at: Instant::ZERO,
             channel: Channel::all().next().expect("the plan has channels"),
-            last_home: Instant::ZERO,
-            foreign: Duration::ZERO,
             pending: None,
         };
         *beacon = Beacon {
@@ -890,7 +881,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let rotations = if self.config.sleepy { 2 } else { 1 };
         self.stage = Stage::Booting(now + self.config.boot_listen.mul(rotations));
         self.sweep.next_at = now;
-        self.sweep.last_home = now;
         emit(Action::Listen(self.home));
     }
 
@@ -926,7 +916,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if to != self.home {
             // What was heard on the old channel says nothing of the new.
             self.sweep.pending = None;
-            self.sweep.foreign = Duration::ZERO;
             emit(Action::Trace(Trace::HomeChannelMoved {
                 from: self.home,
                 to,
@@ -1206,17 +1195,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// A reading of the home channel is held for one sweep interval, longer
-    /// than any packet it can fall in, and then counts only energy that
-    /// would stay on the channel if this relay left it (spec "Busy estimate").
+    /// than any packet it can fall in, and then counts as a reading of any
+    /// other channel does, unless energy that would follow this relay
+    /// was on the air when it was taken (spec "Busy estimate").
     fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
         if channel == self.home {
-            if let Some(p) = self.sweep.pending.take() {
-                let interval = now.since(self.sweep.last_home);
-                self.busy
-                    .sample_home(p.channel, p.dbm, self.sweep.foreign, interval);
+            // A reading that fell in this relay's own packet says nothing
+            // of what would stay behind, and is not taken.
+            if let Some((c, dbm)) = self
+                .sweep
+                .pending
+                .take()
+                .and_then(|p| p.dbm.map(|d| (p.channel, d)))
+            {
+                self.busy.sample(c, dbm);
             }
-            self.sweep.foreign = Duration::ZERO;
-            self.sweep.last_home = now;
             self.sweep.pending = Some(HomeReading {
                 channel,
                 at: now,
@@ -1471,7 +1464,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- Reception ---
 
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.count_busy(bytes, now);
+        self.set_aside_own(bytes, now);
         if core::mem::take(&mut self.dark) {
             // Back in reach: its anchor's rotations count from here.
             self.misses = 0;
@@ -1500,20 +1493,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Account a reception on the home channel to the busy estimate (spec "Busy estimate").
-    /// Packets addressed to this relay, and the replies to its own
-    /// hand-overs, follow it to any channel it moves to, so they are not
-    /// counted, and a home reading taken while one was on the air is set
-    /// aside.
-    /// Everything else, heartbeats included, stays behind and counts.
-    fn count_busy(&mut self, bytes: &[u8], now: Instant) {
-        // A frame's preamble is not reported: an anchorless node's beat
-        // has the long one, and the rest are taken to have the shortest.
-        let len = bytes.len().min(u8::MAX as usize) as u8;
-        let airtime = match Packet::decode(bytes) {
-            Ok(Packet::Heartbeat(hb)) => heartbeat_airtime(&hb),
-            _ => time_on_air(len, MIN_PREAMBLE_SYMBOLS),
-        };
+    /// Set aside a home reading taken while a reception that follows this
+    /// relay to any channel was on the air: a packet addressed to it, or
+    /// the reply to its own hand-over (spec "Busy estimate"). Everything
+    /// else stays behind, and the reading counts it as the sweep counts
+    /// any channel's.
+    fn set_aside_own(&mut self, bytes: &[u8], now: Instant) {
         let me = self.me();
         let own = match Packet::decode(bytes) {
             Ok(Packet::Data(d)) => d.dst_hop == me,
@@ -1521,9 +1506,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => false,
         };
         if !own {
-            self.sweep.foreign = self.sweep.foreign + airtime;
             return;
         }
+        // A frame's preamble is not reported: one addressed to a node
+        // that sweeps has the shortest.
+        let len = bytes.len().min(u8::MAX as usize) as u8;
+        let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
         if let Some(p) = &mut self.sweep.pending {
             if now.since(p.at) <= airtime {
                 p.dbm = None;

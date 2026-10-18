@@ -1890,6 +1890,76 @@ fn a_relay_does_not_flee_its_own_traffic() {
     }
 }
 
+/// D hears two pairs of relays, P to Q on its home channel and R to S on
+/// another, each sending a full frame every second, all four too faint for
+/// a reading to rise above the busy threshold but not for D to receive
+/// their frames. The sweep measures the other channel by its readings
+/// alone, so the home channel must be measured the same way: otherwise it
+/// reads busy with traffic D could not see on any other channel, and the
+/// move rule takes D away from a channel no busier than the rest (spec
+/// "Busy estimate", roadmap D55).
+#[test]
+fn home_and_away_are_measured_alike() {
+    use bark_proto::tables::busy::{percent, ONE};
+    use bark_proto::wire::MAX_PAYLOAD;
+    let (d, p, q, r, s) = (0, 1, 2, 3, 4);
+    let fixed = |east: f64, north: f64, home: u8, seed: u64| {
+        Relay::new(
+            Config {
+                position: pos(east, north),
+                boot_listen: secs(5),
+                home_override: Some(ch(home)),
+                ..Config::default()
+            },
+            seed,
+        )
+    };
+    let pairs = [(p, q), (r, s)];
+    let mut h = Harness::new(vec![
+        fixed(0.0, 0.0, 4, 61),
+        fixed(600.0, 0.0, 4, 62),
+        fixed(600.0, 100.0, 4, 63),
+        fixed(-600.0, 0.0, 9, 64),
+        fixed(-600.0, 100.0, 9, 65),
+    ]);
+    for (a, b) in pairs {
+        h.link(a, b);
+    }
+    // Above sensitivity, below the noise floor's −121 dBm plus 6 dB.
+    for n in [p, q, r, s] {
+        h.link(d, n);
+        h.set_rssi(d, n, -117);
+    }
+    discover(&mut h, &pairs);
+    let end = h.now + secs(1200);
+    let mut k = 0u32;
+    while h.now < end {
+        for (a, b) in pairs {
+            if !bark_proto::Core::accepts_send(core(&h, a), h.now) {
+                continue;
+            }
+            let mut text = [0u8; MAX_PAYLOAD];
+            text[..4].copy_from_slice(&k.to_be_bytes());
+            send(&mut h, a, b, &text);
+        }
+        k += 1;
+        h.run_until(h.now + secs(1), |_| false);
+    }
+    let (to_q, to_s) = (h.nodes[q].app.len(), h.nodes[s].app.len());
+    let busy = core(&h, d).busy();
+    let (home, away) = (busy.fraction(ch(4)), busy.fraction(ch(9)));
+    println!(
+        "D: home {:.2} %, away {:.2} %; Q took {to_q}, S {to_s} of {k} rounds",
+        home as f64 * 100.0 / ONE as f64,
+        away as f64 * 100.0 / ONE as f64
+    );
+    assert!(to_q > 600 && to_s > 600, "too little traffic");
+    assert!(
+        home.abs_diff(away) < percent(1),
+        "home and away measured differently"
+    );
+}
+
 /// O sends to D through F every 2.5 s, over a link that loses F's first
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
