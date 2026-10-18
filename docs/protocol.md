@@ -295,14 +295,20 @@ of the same interference sees the same ranking and they all jump together.
 
 **Position.** A node's position comes from its GPS (L76K), which is
 used for position only, unless the fix is judged unreliable or the app
-sets a fixed map point. A fix is unreliable when it fails a plausibility
-check: it jumps farther than the node can have moved since the last
-accepted one (50 m for a node that does not move), it is inconsistent
-with the neighbours heard, or the satellite signal-to-noise C/N0 is not
-sane; these are the signs of jamming or spoofing. An unreliable fix is
-not used. A map point set in the app wins over GPS; a rooftop relay
-without a sky view of its own uses one. A node whose position changes
-heartbeats the new one ([node identity](#node-identity)). Positions on
+sets a fixed map point. A map point set in the app wins over GPS; a
+rooftop relay without a sky view of its own uses one. A relay does not
+move: it keeps its first accepted fix, or its map point, for as long as it
+runs, so no later fix, true or spoofed, moves it (roadmap D63). A sleepy
+node is carried and takes each fix that passes a plausibility check: it
+is no farther from the last accepted fix than the node can have moved
+since, it is consistent with the neighbours heard, and the satellite
+signal-to-noise C/N0 is sane; failing one is a sign of jamming or
+spoofing, and an unreliable fix is not used. A spoofed fix that drifts
+slower than the node can move passes the first check; the checks are
+expected to grow. Two fixes of a node that has not moved may differ by
+50 m, the allowance the [owner](#owner) rule and the move check of
+[relay choice](#relay-choice) use. A node whose position changes heartbeats the new one
+([node identity](#node-identity)). Positions on
 the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
 7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
 converts every position it handles into metres on a flat plane centred on
