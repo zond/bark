@@ -467,29 +467,21 @@ fn corridor_carries_crossing_flows() {
 /// The ring (`scenarios/ring.toml`): eight relays, each leaf sending to
 /// the leaf three relays on, every 2 s. The relays run at their duty cap
 /// with messages waiting for each other round the ring, and none is
-/// dropped for want of room (roadmap D31): seeds 1 to 5 deliver 0.995 to
-/// 0.997 of the settled phase, where returning or dropping what found
-/// every neighbour busy delivered 0.49 to 0.66. The bound leaves room for
-/// the spread between seeds.
+/// dropped for want of room (roadmap D31): seeds 1 to 40 deliver 0.985 to
+/// 0.999 of the settled phase, where returning or dropping what found
+/// every neighbour busy delivered 0.49 to 0.66. The one seed below, 27,
+/// delivers 0.976: one relay hears neither neighbour's heartbeat until
+/// 540 s, and its leaf's texts find no route until then. The bound leaves
+/// room for the spread between seeds (`docs/ring-jam-2026-10-18.md`).
 ///
 /// Its sleepy nodes take what is held for them at once here
 /// (`sleepy_listens`): on the beat a node can take only what its holder's
 /// delivery queue held at the beat, 41 messages, against the 150 a beat
 /// period of this flow brings (`docs/one-node-type-2026-10-16.md`).
-///
-/// The flows start at 800 s, once every sleepy node has its anchor under
-/// either way of choosing it, by 727 s in the runs measured: when a ring at its cap
-/// starts its flows decides on which seeds it jams later on, and a node
-/// that anchors sooner starts them sooner (`docs/sleepy-next-hop-2026-10-17.md`).
 #[test]
 fn ring_carries_flows_that_wait_for_each_other() {
     let mut sc = scenario("ring.toml");
     sc.protocol.sleepy_listens = Some(true);
-    for t in &mut sc.traffic {
-        if let TrafficSpec::Periodic { start_s, .. } = t {
-            *start_s = Some(800.0);
-        }
-    }
     for seed in 1..=3 {
         let mut sc = sc.clone();
         sc.seed = seed;
