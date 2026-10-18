@@ -237,12 +237,11 @@ reading:
   traffic and take that traffic along. So a home reading taken while one
   of them was on the air is set aside, and every other is the same 0/1
   reading as on any other channel. The move rule compares home with the
-  other channels, so both must be read alike. Counting on home the
-  receive time of every packet decoded there, as the rule did before,
-  also counted packets too faint for any reading to see; under load home
-  then read busier than the quietest channel by more than the move
-  threshold, and most relays moved every 15 to 25 minutes (roadmap D55).
-  Whether a reading fell
+  other channels, so both must be read alike: a relay decodes packets
+  too faint for any reading to see, and counting their receive time on
+  home alone made home read busier than any other channel the more
+  traffic there was, until under load the rule moved relays over and
+  over to no gain (roadmap D55). Whether a reading fell
   in the node's own packet is known only when that packet ends, so a home
   reading is held until the next, one second later, longer than any
   packet (roadmap D24). A home reading may fall inside a reception, since
@@ -1517,8 +1516,8 @@ queue; there it goes first ([delivery](#delivery)). In the node's window it
 needs a place in the regular room ([send queue](#send-queue)), and in the
 bucket its own frame and the reply reserve, not the airtime of everything
 queued, which it goes ahead of: counted behind the forwards, a holder at
-its cap kept it out while the node listened, and it waited a beat period
-or expired (roadmap D55). One the bucket cannot fit yet goes the moment
+its cap would keep it out while the node listens, and it would wait a beat
+period or expire (roadmap D55). One the bucket cannot fit yet goes the moment
 the bucket will. One whose node has
 stopped listening by the time its hand-over would start waits for the
 next beat. A failed delivery counts no failure against anyone: the
