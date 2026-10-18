@@ -280,13 +280,14 @@ Move only when `busy[home] − min_c busy[c] > 0.05` continuously for
 `argmin` with random tie-break. Immediately after retuning, send **one
 heartbeat on the old channel** (it carries the new channel): that retunes
 any neighbour parked on the old channel at once. A sleeping node anchored
-to it follows at the next heartbeat it wakes for ([relay choice](#relay-choice)). A sleepy node
+to it follows at the next heartbeat it wakes for ([relay choice](#relay-choice)), and beats on
+the new channel soon after ([beats](#beats)). A sleepy node
 listening at the time, in a window ([delivery](#delivery)), hears the heartbeat on the old
 channel and follows at once, so the moving node sends to the sleepy nodes
 of its heard table on the old channel that listen now on the new one
-([heard table](#heard-table)); the others say where they listen with their next beat.
+([heard table](#heard-table)); the others say where they listen with that beat.
 Sent on the old channel instead, a delivery to a node that had followed
-went unanswered until that beat (roadmap D53).
+went unanswered until the node beat again (roadmap D53).
 No other announcement. Neighbours that miss it learn the new channel from
 the next rotation (≤130 s) or from ACK failure ([hand-over](#hand-over)).
 
@@ -1381,7 +1382,16 @@ while a node that has gone is kept no longer than its messages
 ([heard table](#heard-table)). The spread keeps two nodes whose beats met once from
 meeting again. After it chooses or changes its anchor it beats at once
 and once more within a heartbeat interval, 5–15 s, so that one lost
-beat does not hide it from its new holder for a period.
+beat does not hide it from its new holder for a period. After it follows
+its anchor to a new home channel ([channel moves](#channel-moves)) it beats there once, at
+a random time within a heartbeat interval, 0–15 s: without it, its holder
+knows only the old channel, and has no window to send in until the node's
+next beat, up to a period later. Every node of the anchor follows on the same
+heartbeat, about 120 at a relay of the simulated capacity domain, so
+beating at once they would meet. With a tenth of that domain's relays
+removed, which sets their neighbours moving, the beat delivered 1.0
+points more; without the removal, where each relay moves about once in
+three hours, no change was measured, for 0.16 % more airtime (roadmap D57).
 
 A sleepy node may have moved since its last beat, so it refreshes its
 GPS fix before each beat. GPS goes off after a fix, and off after 10
