@@ -44,6 +44,8 @@ pub struct AppSummary {
     pub duplicates: u64,
     /// Deliveries to the wrong node.
     pub misdelivered: u64,
+    /// Messages whose ID an earlier message already had.
+    pub shared_ids: u64,
     /// Drop reports from cores, by reason.
     pub drops: DropCounts,
     /// Messages whose last reported fate is a drop, by reason.
@@ -408,6 +410,7 @@ impl Sim {
                 },
                 duplicates: m.app.duplicates,
                 misdelivered: m.app.misdelivered,
+                shared_ids: m.app.shared_ids,
                 drops: m.app.drops,
                 lost_dropped,
                 lost_at,
@@ -640,6 +643,13 @@ impl Summary {
             a.in_flight,
             a.unaccounted
         );
+        if a.shared_ids > 0 {
+            let _ = writeln!(
+                s,
+                "messages with the ID of an earlier one: {}",
+                a.shared_ids
+            );
+        }
         let o = &a.offers;
         if o.waited + o.skipped > 0 {
             let _ = writeln!(

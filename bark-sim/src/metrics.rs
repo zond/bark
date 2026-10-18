@@ -598,6 +598,10 @@ pub struct AppMetrics {
     pub duplicates: u64,
     /// Messages that reached a node other than their destination.
     pub misdelivered: u64,
+    /// Messages whose 32-bit ID an earlier message already had (spec
+    /// "Packet formats"): the simulator follows a message by its ID, so
+    /// the earlier one's fate may be told as the later one's.
+    pub shared_ids: u64,
     /// Messages the traffic model did not send because their destination
     /// leaf had never attached, so no sender could know its address (spec "Addresses").
     pub unaddressed: u64,

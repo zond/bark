@@ -2891,7 +2891,9 @@ impl Sim {
         // The ID the core gives it (core-interface §7), to follow its
         // traces and drops.
         let id = MsgId::of(o.dst_pos, o.dst_id, payload);
-        self.msg_tags.insert(id.0, o.tag);
+        if self.msg_tags.insert(id.0, o.tag).is_some() {
+            self.metrics.app.shared_ids += 1;
+        }
         let cmd = AppCommand::Send {
             dst_pos: o.dst_pos,
             dst_id: o.dst_id,
