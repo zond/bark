@@ -1969,13 +1969,21 @@ impl Sim {
                         }
                     }
                     Trace::Delivered { msg_id, .. } => {
+                        c.delivered += 1;
                         self.first_try.remove(&(node, msg_id.0));
                     }
                     Trace::DeliveryWaits {
                         msg_id,
                         node: to,
                         tried,
-                    } => self.delivery_waits(node, msg_id.0, key(to), tried),
+                    } => {
+                        if tried {
+                            c.deliveries_failed += 1;
+                        } else {
+                            c.deliveries_late += 1;
+                        }
+                        self.delivery_waits(node, msg_id.0, key(to), tried)
+                    }
                     Trace::Forwarded { hops, .. } => {
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);

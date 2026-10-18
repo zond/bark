@@ -237,6 +237,12 @@ pub struct CoreCounts {
     /// Hand-overs to a neighbour whose every attempt went unanswered (spec
     /// "Hand-over" step 6).
     pub failed: u64,
+    /// Deliveries to a sleepy node whose every attempt went unanswered
+    /// (spec "Delivery").
+    pub deliveries_failed: u64,
+    /// Deliveries whose node had stopped listening when their hand-over
+    /// would have started (spec "Delivery queue").
+    pub deliveries_late: u64,
     /// Heartbeats from a relay not in the table that took the place of
     /// one that was (D12).
     pub evictions: u64,
@@ -330,6 +336,7 @@ impl LeafSums {
         a.anchorless_us += b.anchorless_us;
         a.answer_us += b.answer_us;
         a.long_data_us += b.long_data_us;
+        a.to_dst_us += b.to_dst_us;
         a.ack_us += b.ack_us;
         a.data_us += b.data_us;
         a.other_us += b.other_us;
@@ -523,6 +530,9 @@ pub struct TypeAirtime {
     /// Of `data_us`, DATA with the long preamble, to a sleepy node
     /// receiving duty-cycled.
     pub long_data_us: u64,
+    /// Of `data_us`, DATA to the node it is addressed to: a delivery by
+    /// its holder (spec "Delivery"), or the last hop to a relay.
+    pub to_dst_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
 }
@@ -539,9 +549,12 @@ impl TypeAirtime {
             Some(Packet::Heartbeat(_)) if long => &mut self.answer_us,
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
-            Some(Packet::Data(_)) => {
+            Some(Packet::Data(d)) => {
                 if long {
                     self.long_data_us += us;
+                }
+                if d.dst_hop == d.dst_id {
+                    self.to_dst_us += us;
                 }
                 &mut self.data_us
             }
