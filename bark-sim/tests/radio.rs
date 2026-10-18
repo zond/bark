@@ -360,6 +360,7 @@ fn interferers_are_heard_by_rssi_and_by_cad_only_if_lora_like() {
             lora,
             mean_on_s: 10.0,
             mean_off_s: 0.0,
+            from_s: 0.0,
         });
         let sim = run(&sc);
         // 100 m at exponent 2 from 40 dB at 1 m: 80 dB loss, -80 dBm.

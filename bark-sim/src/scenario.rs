@@ -199,6 +199,10 @@ pub struct InterfererSpec {
     /// Mean off period, seconds; 0 means always on.
     #[serde(default)]
     pub mean_off_s: f64,
+    /// Silent until then, seconds: a transmitter that appears among
+    /// nodes that have settled.
+    #[serde(default)]
+    pub from_s: f64,
 }
 
 /// Destination choice for Poisson traffic.
@@ -350,6 +354,69 @@ pub enum Ids {
     Random,
 }
 
+/// Which nodes of a forced pair share an ID ([`SharedIds`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairKind {
+    /// Two nodes that are not sleepy.
+    RelayRelay,
+    /// One that is not sleepy and one that is.
+    RelaySleepy,
+    /// Two sleepy nodes.
+    SleepySleepy,
+}
+
+/// Whether the two nodes of a forced pair hear each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PairReach {
+    /// Each hears the other above sensitivity before fading.
+    In,
+    /// No link is stored between them either way: neither even adds to
+    /// the other's noise.
+    Out,
+}
+
+/// Pairs of nodes forced to share an ID (spec "Node identity"), which a
+/// real domain has about one run in twenty and the simulator otherwise
+/// never makes. The pairs are drawn from the run's seed among nodes that
+/// do not walk, no node in two. With `share = false` the same pairs are
+/// drawn and marked but keep their own IDs, the comparison run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedIds {
+    /// What the two nodes are.
+    pub kind: PairKind,
+    /// Whether they hear each other.
+    pub reach: PairReach,
+    /// How many such pairs.
+    pub count: u32,
+    /// Whether they share the ID, or are only marked.
+    #[serde(default = "yes")]
+    pub share: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Sleepy nodes that go dark together, as the people in one train or one
+/// basement do (spec "Delivery queue"): the `count` that do not walk
+/// nearest to the node `near`, from `at_s` for `for_s` seconds. Each goes
+/// dark whatever its own availability process says, and back to it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DarkGroup {
+    /// The node whose area it is, as a node reference.
+    pub near: String,
+    /// How many sleepy nodes.
+    pub count: u32,
+    /// When they go dark, seconds.
+    pub at_s: f64,
+    /// For how long, seconds.
+    pub for_s: f64,
+}
+
 /// Node clocks. Each node's clock runs at its own rate, drawn uniformly
 /// within `drift_ppm` of true time from the run's seed; the simulator's
 /// time is true time. 0 keeps every clock true.
@@ -395,6 +462,106 @@ impl Default for Movement {
     }
 }
 
+/// Sleepy nodes carried in vehicles. A share of the sleepy nodes that do
+/// not walk ride: each stops indoors at a point of a straight route, then
+/// is driven along the route to another point drawn uniformly on it, and
+/// so on. Driven, its links are outdoor ones less the vehicle's body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Vehicles {
+    /// The share of sleepy nodes that ride; 0 for none.
+    pub fraction: f64,
+    /// Driving speed, metres a second.
+    pub speed_m_s: f64,
+    /// Mean time at a stop, seconds; exponential.
+    pub stop_s: f64,
+    /// The route's two ends, `[x0, y0, x1, y1]`, metres.
+    pub route: [f64; 4],
+    /// What the vehicle's body takes from every link of a node inside it
+    /// while it drives, dB.
+    pub loss_db: f64,
+}
+
+impl Default for Vehicles {
+    fn default() -> Self {
+        Vehicles {
+            fraction: 0.0,
+            speed_m_s: 10.0,
+            stop_s: 600.0,
+            route: [0.0; 4],
+            // 3GPP TR 38.901 §7.4.3.2: the mean penetration loss of a car.
+            loss_db: 9.0,
+        }
+    }
+}
+
+/// A node held on one home channel from its boot, for a scenario that
+/// needs two nodes on one channel (`Config::home_override`): it neither
+/// chooses nor moves its home, and a sleepy one does not follow its
+/// anchor's.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HomeSpec {
+    /// The node, as a node reference.
+    pub node: String,
+    /// Its channel.
+    pub channel: u8,
+}
+
+/// How a GPS fix goes wrong (`GpsFault`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultKind {
+    /// From `at_s` every fix is `distance_m` off, in one direction: a
+    /// spoofed position.
+    Jump,
+    /// From `at_s` the fixes walk away at `speed_m_s`, in one direction:
+    /// a spoofer that pulls the position slowly.
+    Drift,
+}
+
+/// Nodes whose GPS gives wrong fixes from a time on
+/// (spec "Position and time"), drawn from the run's seed among the relays or among the sleepy
+/// nodes that do not move, each in its own random direction.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GpsFault {
+    /// How the fixes go wrong.
+    pub kind: FaultKind,
+    /// Sleepy nodes, or relays.
+    pub sleepy: bool,
+    /// How many nodes.
+    pub count: u32,
+    /// From when, seconds.
+    pub at_s: f64,
+    /// How far off a jump puts the fixes, metres.
+    #[serde(default)]
+    pub distance_m: f64,
+    /// How fast a drift pulls them, metres a second.
+    #[serde(default)]
+    pub speed_m_s: f64,
+}
+
+/// GPS fixes that go wrong, and whether a node's driver applies the
+/// plausibility checks of spec "Position and time" before handing a fix to its
+/// core. A relay takes a fix every second, the receiver's usual output
+/// rate; a sleepy node one before each beat (spec "Beats"). Only nodes with
+/// a fault are handed fixes, since a true one changes nothing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Gps {
+    /// The faults.
+    pub faults: Vec<GpsFault>,
+    /// Whether the checks are applied.
+    pub checks: bool,
+    /// The fastest a carried node may have moved between two fixes, for
+    /// the jump check, metres a second.
+    pub carried_speed_m_s: f64,
+    /// A relay's jump check measures from its first fix, where it was
+    /// put, rather than from the last fix handed over (roadmap D63).
+    pub relays_keep_first: bool,
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -413,6 +580,14 @@ pub struct Scenario {
     pub clocks: Clocks,
     /// Which of them walk, and how.
     pub movement: Movement,
+    /// Which of them ride in vehicles, and how.
+    pub vehicles: Vehicles,
+    /// Pairs forced to share an ID.
+    pub shared_ids: Vec<SharedIds>,
+    /// Groups of sleepy nodes that go dark together.
+    pub dark_groups: Vec<DarkGroup>,
+    /// GPS fixes that go wrong.
+    pub gps: Gps,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -439,6 +614,8 @@ pub struct Scenario {
     pub events: Vec<ScriptedEvent>,
     /// Metrics options.
     pub metrics: MetricsParams,
+    /// Nodes held on one home channel.
+    pub homes: Vec<HomeSpec>,
 }
 
 impl Default for Scenario {
@@ -451,6 +628,10 @@ impl Default for Scenario {
             boot: Boot::default(),
             clocks: Clocks::default(),
             movement: Movement::default(),
+            vehicles: Vehicles::default(),
+            shared_ids: Vec::new(),
+            dark_groups: Vec::new(),
+            gps: Gps::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),
@@ -461,6 +642,7 @@ impl Default for Scenario {
             traffic: Vec::new(),
             availability: None,
             events: Vec::new(),
+            homes: Vec::new(),
             metrics: MetricsParams {
                 per_node: true,
                 ..MetricsParams::default()

@@ -135,6 +135,10 @@ impl Sim {
             Some(WirePacket::Heartbeat(h)) => Some(h.sleepy && !h.anchorless),
             _ => None,
         };
+        if matches!(decoded, Some(WirePacket::Heartbeat(h)) if !h.sleepy) && self.now >= self.settle
+        {
+            self.beat_losses.insert(tx_key, Vec::new());
+        }
         if let Some(WirePacket::Data(d)) = decoded {
             if let Some(&n) = self.sleepy_index.get(&key(d.dst_hop)) {
                 let st = &self.nodes[n as usize];
@@ -359,6 +363,7 @@ impl Sim {
             WirePacket::decode(tx.frame.payload()),
             Ok(WirePacket::Heartbeat(h)) if !h.sleepy
         );
+        let losses = self.beat_losses.remove(&tx.key).unwrap_or_default();
         if heartbeat && self.now >= self.settle {
             let (start, end, c) = (tx.start, tx.end, ch.index());
             let src_id = self.relay(tx.src).id();
@@ -384,8 +389,16 @@ impl Sim {
                 h.candidates += 1;
                 if got.iter().any(|g| g.0 == b) {
                     h.received += 1;
-                } else if st.beats.count(start, end, c) > 1 {
+                    continue;
+                }
+                if st.beats.count(start, end, c) > 1 {
                     h.lost_with_heartbeat += 1;
+                }
+                match losses.iter().find(|l| l.0 == b).map(|l| l.1) {
+                    Some(Outcome::LostCapture | Outcome::SinrFail { .. }) => h.lost_collided += 1,
+                    Some(Outcome::BelowSensitivity) => h.lost_weak += 1,
+                    Some(Outcome::Deaf(_)) => h.lost_deaf += 1,
+                    _ => {}
                 }
             }
         }
@@ -604,8 +617,17 @@ impl Sim {
     /// Note why the DATA `key` to a sleepy node was lost there, if `b` is
     /// that node.
     fn note_to_sleepy(&mut self, key: u64, b: u32, o: Outcome) {
+        self.note_beat_loss(key, b, o);
         if let Some(t) = self.to_sleepy.get_mut(&key).filter(|t| t.node == b) {
             t.lost = Some(o);
+        }
+    }
+
+    /// Note why `b` lost the frame `key`, if it is a heartbeat followed
+    /// for [`crate::metrics::HeartbeatFates`].
+    pub(crate) fn note_beat_loss(&mut self, key: u64, b: u32, o: Outcome) {
+        if let Some(l) = self.beat_losses.get_mut(&key) {
+            l.push((b, o));
         }
     }
 

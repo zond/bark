@@ -165,6 +165,9 @@ pub struct NodeSummary {
     /// was placed.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub walks: bool,
+    /// Whether it rides in a vehicle (`walk.rs`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub vehicle: bool,
     /// Counters.
     #[serde(flatten)]
     pub m: NodeMetrics,
@@ -287,6 +290,8 @@ pub struct Summary {
     pub observers: Vec<ObserverSummary>,
     /// Per node, if requested.
     pub nodes: Option<Vec<NodeSummary>>,
+    /// The research models (`metrics::Research`).
+    pub research: crate::metrics::Research,
 }
 
 impl Sim {
@@ -374,6 +379,11 @@ impl Sim {
                         .then(|| self.attached_relay(i as u32))
                         .flatten(),
                     walks: self.walks.as_ref().is_some_and(|w| w.walks(i as u32)),
+                    vehicle: self
+                        .walks
+                        .as_ref()
+                        .and_then(|w| w.walker(i as u32))
+                        .is_some_and(|k| k.route.is_some()),
                     m: n.clone(),
                     airtime_fraction: n.airtime_us as f64 / dur_us as f64,
                 })
@@ -442,6 +452,10 @@ impl Sim {
             channels,
             observers,
             nodes,
+            research: crate::metrics::Research {
+                pairs: self.pairs.clone(),
+                ..m.research.clone()
+            },
         }
     }
 }

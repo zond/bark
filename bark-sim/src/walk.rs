@@ -13,7 +13,7 @@
 use crate::geo::{Grid, Xy};
 use crate::links::{LinkParams, Site, SHADOW_TRUNCATE_SIGMA};
 use crate::rng::{mix, normal_fast_at, stream_seed, Purpose, Stream};
-use crate::scenario::Movement;
+use crate::scenario::{Movement, Vehicles};
 use bark_proto::radio::{Channel, CHANNELS};
 use bark_proto::{Duration, Instant};
 
@@ -34,13 +34,18 @@ pub(crate) struct Walker {
     pub node: u32,
     from: Xy,
     to: Xy,
-    since: Instant,
+    /// When its current stop or walk began, and when it ends.
+    pub since: Instant,
     pub until: Instant,
     /// Walking (outdoors) or stopped (indoors).
     pub walking: bool,
     /// Counts the walks and stops: a new stop is a new place with new
     /// multipath.
     pub leg: u32,
+    /// How fast it moves, metres a second.
+    pub speed: f64,
+    /// It rides in a vehicle along a route, between these ends.
+    pub route: Option<(Xy, Xy)>,
     rng: Stream,
 }
 
@@ -57,6 +62,11 @@ impl Walker {
             x: self.from.x + (self.to.x - self.from.x) * f,
             y: self.from.y + (self.to.y - self.from.y) * f,
         }
+    }
+
+    /// Whether it is driven now.
+    pub fn driven(&self) -> bool {
+        self.walking && self.route.is_some()
     }
 
     /// Where its antenna is: indoors at a stop, outdoors walking.
@@ -81,15 +91,19 @@ pub(crate) struct Walks {
     /// Per node, its walker, or `u32::MAX`.
     of: Vec<u32>,
     p: Movement,
+    v: Vehicles,
+    /// The fastest anyone moves, metres a second.
+    fastest: f64,
+    /// The wavelength at the centre of the band, metres.
+    wavelength: f64,
     links: LinkParams,
     tx_dbm: f64,
     floor_dbm: f64,
     /// Corners of the area walks stay in.
     lo: Xy,
     hi: Xy,
-    /// Correlation time of the fading at a stop and while walking.
+    /// Correlation time of the fading at a stop.
     tau_still: Duration,
-    tau_walking: Duration,
     shadow_seed: u64,
     fade_seed: u64,
     /// Static nodes by site, gridded at the longest a walker reaches them.
@@ -102,13 +116,15 @@ pub(crate) struct Walks {
 
 /// How often the walkers' grids are built again: their side allows for
 /// as far as a walker goes in that time.
-const REGRID: Duration = Duration::from_secs(10);
+pub(crate) const REGRID: Duration = Duration::from_secs(10);
 
 impl Walks {
-    /// Choose the walkers among `sleepy` nodes and start each at a stop.
+    /// Choose the walkers and riders among `sleepy` nodes and start each
+    /// at a stop.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         p: &Movement,
+        v: &Vehicles,
         links: &LinkParams,
         tx_dbm: f64,
         floor_dbm: f64,
@@ -120,7 +136,7 @@ impl Walks {
         let n = xy.len();
         let mut of = vec![u32::MAX; n];
         let mut walkers = Vec::new();
-        for i in sleepy {
+        for i in sleepy.clone() {
             let mut rng = Stream::new(seed, Purpose::Walk, i as u64);
             if !rng.chance(p.fraction) {
                 continue;
@@ -137,6 +153,40 @@ impl Walks {
                 until: Instant::ZERO + stop,
                 walking: false,
                 leg: 0,
+                speed: p.speed_m_s,
+                route: None,
+                rng,
+            });
+        }
+        let ends = (
+            Xy {
+                x: v.route[0],
+                y: v.route[1],
+            },
+            Xy {
+                x: v.route[2],
+                y: v.route[3],
+            },
+        );
+        for i in sleepy {
+            let mut rng = Stream::new(seed, Purpose::Vehicle, i as u64);
+            if of[i as usize] != u32::MAX || !rng.chance(v.fraction) {
+                continue;
+            }
+            // In the stationary state, at a point of the route.
+            let stop = Duration::from_micros((rng.exponential(v.stop_s) * 1e6) as u64);
+            let at = on_route(ends, rng.uniform());
+            of[i as usize] = walkers.len() as u32;
+            walkers.push(Walker {
+                node: i,
+                from: at,
+                to: at,
+                since: Instant::ZERO,
+                until: Instant::ZERO + stop,
+                walking: false,
+                leg: 0,
+                speed: v.speed_m_s,
+                route: Some(ends),
                 rng,
             });
         }
@@ -153,9 +203,7 @@ impl Walks {
         }
         let centre = Channel::new(CHANNELS / 2).expect("centre channel").hz() as f64;
         let wavelength = C_M_PER_S / centre;
-        // Coherence time of fading for a receiver moving at v: 0.423 / f_D
-        // with the Doppler spread f_D = v / λ.
-        let tau_walking = 0.423 * wavelength / p.speed_m_s;
+        let fastest = walkers.iter().map(|w| w.speed).fold(0.0, f64::max);
         let secs = |s: f64| Duration::from_micros((s * 1e6).round().max(1.0) as u64);
         let reach = |a: Site, b: Site| links.cutoff_distance_m(tx_dbm, floor_dbm, a, b);
         let classes = [Site::Outdoor, Site::Indoor, Site::Rooftop].map(|c| {
@@ -173,13 +221,15 @@ impl Walks {
             walkers,
             of,
             p: p.clone(),
+            v: v.clone(),
+            fastest,
+            wavelength,
             links: links.clone(),
             tx_dbm,
             floor_dbm,
             lo,
             hi,
             tau_still: secs(links.fading.correlation_time_s),
-            tau_walking: secs(tau_walking),
             shadow_seed: stream_seed(seed, Purpose::Shadowing, 1),
             fade_seed: stream_seed(seed, Purpose::Fading, 1),
             classes,
@@ -202,9 +252,12 @@ impl Walks {
     /// Walker `w` ends its stop or its walk at `now`: it starts the other.
     /// Returns when that ends.
     pub fn next_leg(&mut self, w: u32, now: Instant) -> Instant {
-        let (speed, trip, stop) = (self.p.speed_m_s, self.p.trip_m, self.p.stop_s);
-        let (lo, hi) = (self.lo, self.hi);
+        let (trip, (lo, hi)) = (self.p.trip_m, (self.lo, self.hi));
         let k = &mut self.walkers[w as usize];
+        let (speed, stop) = match k.route {
+            Some(_) => (k.speed, self.v.stop_s),
+            None => (k.speed, self.p.stop_s),
+        };
         let here = k.at(now);
         k.leg += 1;
         if k.walking {
@@ -213,6 +266,15 @@ impl Walks {
             k.to = here;
             k.since = now;
             k.until = now + Duration::from_micros((k.rng.exponential(stop) * 1e6) as u64);
+        } else if let Some(ends) = k.route {
+            // Driven along the route to a point drawn on it.
+            let to = on_route(ends, k.rng.uniform());
+            k.walking = true;
+            k.from = here;
+            k.to = to;
+            k.since = now;
+            let len = here.dist(to);
+            k.until = now + Duration::from_micros((len / speed * 1e6).round().max(1.0) as u64);
         } else {
             // A straight walk in a random direction, as long as an
             // exponential draw, folded back into the area at its edges.
@@ -241,12 +303,38 @@ impl Walks {
         k.until
     }
 
+    /// The walkers that a source of `power_dbm` at `at` reaches at or
+    /// above `floor_dbm` at `now`, and the power at each: the path loss,
+    /// the wall at a stop and the vehicle's body while driven. Like the
+    /// sources placed among nodes that stay, it has no shadowing.
+    pub fn reached_from(
+        &self,
+        at: Xy,
+        power_dbm: f64,
+        floor_dbm: f64,
+        now: Instant,
+    ) -> Vec<(u32, f32)> {
+        self.walkers
+            .iter()
+            .filter_map(|w| {
+                let mut dbm = power_dbm - self.links.path_loss_db(at.dist(w.at(now)));
+                if !w.walking {
+                    dbm -= self.links.indoor_loss_db;
+                }
+                if w.driven() {
+                    dbm -= self.v.loss_db;
+                }
+                (dbm >= floor_dbm).then_some((w.node, dbm as f32))
+            })
+            .collect()
+    }
+
     /// Grid the walkers again if they have moved on or changed what they do.
     fn regrid(&mut self, now: Instant) {
         if self.built.is_some_and(|b| now.since(b) < REGRID) {
             return;
         }
-        let slack = self.p.speed_m_s * REGRID.as_micros() as f64 / 1e6;
+        let slack = self.fastest * REGRID.as_micros() as f64 / 1e6;
         let reach = |a: Site| {
             [Site::Outdoor, Site::Indoor, Site::Rooftop]
                 .map(|b| {
@@ -306,7 +394,17 @@ impl Walks {
                 (true, false) => from,
                 _ => at,
             };
-            let loss = s.links.path_loss_db(d) + s.links.site_loss_db(from_site, rx_site)
+            let body = |n: u32| {
+                if s.walker(n).is_some_and(Walker::driven) {
+                    s.v.loss_db
+                } else {
+                    0.0
+                }
+            };
+            let loss = s.links.path_loss_db(d)
+                + s.links.site_loss_db(from_site, rx_site)
+                + body(src)
+                + body(rx)
                 - s.shadow_db(src, rx, mover);
             let base = s.tx_dbm - loss;
             if base < s.floor_dbm {
@@ -382,32 +480,43 @@ impl Walks {
     /// Fading of the link `a`–`b` on `channel` at `t`, dB: a normal of the
     /// scenario's deviation that varies smoothly over time, independent
     /// points a correlation time apart: the scenario's while both ends
-    /// stay put, the Doppler coherence time while either walks. A new stop
-    /// or walk starts a new draw.
+    /// stay put, the Doppler coherence time of the faster end while either
+    /// moves. A new stop or walk starts a new draw.
     fn fade_db(&self, a: u32, b: u32, channel: Channel, t: Instant) -> f64 {
         let sigma = self.links.fading.sigma_db;
         if sigma <= 0.0 {
             return 0.0;
         }
-        let (mut walking, mut legs) = (false, 0u64);
+        let (mut speed, mut legs) = (0.0f64, 0u64);
         for n in [a, b] {
             if let Some(w) = self.walker(n) {
-                walking |= w.walking;
+                if w.walking {
+                    speed = speed.max(w.speed);
+                }
                 legs = mix(legs ^ (w.leg as u64) ^ ((n as u64) << 32));
             }
         }
-        let tau = if walking {
-            self.tau_walking
+        // Coherence time of fading for a receiver moving at v: 0.423 / f_D
+        // with the Doppler spread f_D = v / λ.
+        let tau = if speed > 0.0 {
+            ((0.423 * self.wavelength / speed * 1e6).round() as u64).max(1)
         } else {
-            self.tau_still
-        }
-        .as_micros();
+            self.tau_still.as_micros()
+        };
         let k = t.as_micros() / tau;
         let u = (t.as_micros() % tau) as f64 / tau as f64;
         let pair = pair_key(a, b) ^ legs;
         let at = |k: u64| normal_fast_at(self.fade_seed, pair, (k << 4) | channel.index() as u64);
         let x = (1.0 - u) * at(k) + u * at(k + 1);
         sigma * x / ((1.0 - u) * (1.0 - u) + u * u).sqrt()
+    }
+}
+
+/// The point a fraction `f` of the way along a route.
+fn on_route((a, b): (Xy, Xy), f: f64) -> Xy {
+    Xy {
+        x: a.x + (b.x - a.x) * f,
+        y: a.y + (b.y - a.y) * f,
     }
 }
 
@@ -453,6 +562,7 @@ mod tests {
         };
         let w = Walks::new(
             &m,
+            &Vehicles::default(),
             &params(),
             10.0,
             -129.0,
@@ -501,6 +611,67 @@ mod tests {
             }
         }
         assert_eq!(walked, 3 * 400);
+    }
+
+    /// Riders stay on their route, are driven along it at their speed,
+    /// and lose the vehicle's body on every link while driven.
+    #[test]
+    fn riders_drive_along_their_route() {
+        let (_, xy, site) = town();
+        let v = Vehicles {
+            fraction: 1.0,
+            speed_m_s: 12.0,
+            stop_s: 60.0,
+            route: [0.0, 400.0, 1000.0, 400.0],
+            loss_db: 9.0,
+        };
+        let m = Movement::default();
+        let mut w = Walks::new(
+            &m,
+            &v,
+            &params(),
+            10.0,
+            -129.0,
+            &xy,
+            &site,
+            1..xy.len() as u32,
+            7,
+        );
+        assert_eq!(w.walkers.len(), 400);
+        for k in 0..w.walkers.len() as u32 {
+            let mut now = w.walkers[k as usize].until;
+            // Driven, stopped, driven: each ends on the road.
+            for _ in 0..3 {
+                let until = w.next_leg(k, now);
+                let r = &w.walkers[k as usize];
+                for p in [r.at(now), r.at(until)] {
+                    assert!((p.y - 400.0).abs() < 1e-6 && (0.0..=1000.0).contains(&p.x));
+                }
+                if r.driven() {
+                    let secs = until.since(now).as_micros() as f64 / 1e6;
+                    let (a, b) = (r.at(now), r.at(until));
+                    assert!(secs < 1e-5 || (a.dist(b) / secs - 12.0).abs() < 1e-3);
+                }
+                now = until;
+            }
+        }
+        // The body's loss: a driven rider and the relay, against the same
+        // link with the rider stopped outdoors.
+        let k = (0..w.walkers.len())
+            .find(|&k| w.walkers[k].driven())
+            .unwrap();
+        let rider = w.walkers[k].node;
+        let at = w.walkers[k].since;
+        let link = |w: &mut Walks| {
+            w.links_from(0, at, Channel::new(4).unwrap(), &xy, &site)
+                .into_iter()
+                .find(|l| l.rx == rider)
+        };
+        if let Some(driven) = link(&mut w) {
+            w.v.loss_db = 0.0;
+            let open = link(&mut w).expect("heard without the body");
+            assert!((open.base_dbm - driven.base_dbm - 9.0).abs() < 1e-3);
+        }
     }
 
     /// The links a frame finds are those the stored table would hold:

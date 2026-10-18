@@ -51,6 +51,7 @@ fn busy_block(seed: u64) -> Scenario {
         lora: false,
         mean_on_s: 2.0,
         mean_off_s: 5.0,
+        from_s: 0.0,
     });
     sc.traffic.push(TrafficSpec::Poisson {
         per_leaf_per_hour: 60.0,

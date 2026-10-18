@@ -1,0 +1,113 @@
+# Groups of sleepy nodes that go dark together (spec "Delivery queue":
+# the people in one train or one basement), for roadmap D59 and
+# docs/unproven-2026-10-18.md. A district of four square kilometres at
+# S4's densities, with a relay at its centre and, beside it, one building
+# whose 400 people all take it as their anchor: the case the delivery
+# queue is sized for. Texts at the spec "Capacity and sizing" rate to
+# anyone in the district keep coming while a group is dark.
+#
+# The file has no group of its own; a run adds one, for example
+#
+#   [[dark_groups]]
+#   near = "C"
+#   count = 400
+#   at_s = 1800.0
+#   for_s = 1200.0
+#
+# which darkens the 400 sleepy nodes nearest the centre relay, the
+# building's, from 1800 s for 20 minutes.
+
+name = "dark-groups"
+seed = 1
+# The longest spell, 20 minutes from 1800 s, and 30 minutes after it for
+# the queue's TTL and a beat period to bring the last messages in.
+duration_s = 4800.0
+# As S4: a relay's first channel move can come 795 s after it is switched
+# on (s4-capacity.toml).
+settle_s = 900.0
+ids = "random"
+
+[clocks]
+drift_ppm = 50.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+# As S4 (s4-capacity.toml).
+[links]
+model = "log_distance"
+exponent = 3.6
+indoor_loss_db = 14.4
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+# The relay at the centre, on a windowsill of the building.
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 1000.0
+y = 1000.0
+
+# S4's relays: 1.9 per km² on roofs, 7.7 on windowsills.
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 2000.0
+height_m = 2000.0
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 2000.0
+height_m = 2000.0
+per_km2 = 7.7
+
+# The building: 400 people within 30 m of the centre relay, the most
+# sleepy nodes a relay is expected to hold for at 50 % adoption in Kyiv
+# (spec "Heard table").
+[[nodes]]
+place = "density"
+role = "leaf"
+x0 = 1000.0
+y0 = 1000.0
+width_m = 30.0
+height_m = 30.0
+per_km2 = 444444.4
+indoor = true
+
+# S4's people, indoors.
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 2000.0
+height_m = 2000.0
+per_km2 = 714.2857
+indoor = true
+
+# 23 texts per person per day (spec "Capacity and sizing"), 100 bytes, to
+# anyone in the district alike.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.9583333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+# As S4: dark five minutes in an hour on average, each on its own.
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 60.0
+observers = []
+per_node = true

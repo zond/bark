@@ -590,6 +590,14 @@ pub struct HeartbeatFates {
     pub received: u64,
     /// Of the others, ones with another heartbeat on the air there.
     pub lost_with_heartbeat: u64,
+    /// Of the others, by why: to another frame, by capture or by symbol
+    /// errors; to a receiver that was deaf, retuning, checking, sending or
+    /// locked to another frame's garbage; and below sensitivity.
+    pub lost_collided: u64,
+    /// See `lost_collided`.
+    pub lost_deaf: u64,
+    /// See `lost_collided`.
+    pub lost_weak: u64,
 }
 
 /// What sleepy nodes do and what is sent to them, counted after the
@@ -754,6 +762,73 @@ pub struct SampleRow {
     pub app_delivered: u64,
 }
 
+/// Two nodes the scenario forced to share an ID (`scenario::SharedIds`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Pair {
+    /// What they are.
+    pub kind: crate::scenario::PairKind,
+    /// Whether they hear each other.
+    pub reach: crate::scenario::PairReach,
+    /// The two nodes; `b` took `a`'s ID.
+    pub a: u32,
+    /// See `a`.
+    pub b: u32,
+    /// Whether they share it, or are only marked.
+    pub shared: bool,
+    /// Relays that hear both above sensitivity before fading.
+    pub relays_hearing_both: u32,
+}
+
+/// Counts for the research models that are off by default
+/// (`docs/simulator-design.md` §3.8).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Research {
+    /// The forced pairs.
+    pub pairs: Vec<Pair>,
+    /// Messages that reached the application of a node with their
+    /// destination's ID that is not their destination.
+    pub to_twin: u64,
+    /// The groups that go dark together.
+    pub groups: Vec<Group>,
+    /// Once a minute after the settle time, walkers (0) and riders (1)
+    /// with an anchor: by what they do, moving or at a stop for less than
+    /// 1, 2, 5 and 10 minutes or longer, how many were sampled and how
+    /// many of them their anchor would hear (`Sim::sample_anchors`).
+    pub movers: [[(u64, u64); MOVER_BINS]; 2],
+    /// Once a minute after the settle time, per relay, the samples it
+    /// was running on each home channel.
+    pub homes: Vec<[u32; CHANNELS as usize]>,
+    /// Every move of a relay's home after its boot: when, s, the relay,
+    /// and the channels it left and took.
+    pub moves: Vec<(f64, u32, u8, u8)>,
+    /// The nodes with a GPS fault (`scenario::GpsFault`), relays and
+    /// sleepy nodes.
+    pub gps_nodes: [Vec<u32>; 2],
+    /// Their fixes after the fault began: handed to the core, rejected for
+    /// a jump, rejected as inconsistent with the neighbours heard; relays
+    /// and sleepy nodes.
+    pub fixes: [[u64; 3]; 2],
+}
+
+/// Bins of `Research::movers`: moving, then at a stop for less than each
+/// of these many seconds, then longer.
+pub const MOVER_STOPS_S: [u64; 4] = [60, 120, 300, 600];
+/// See [`MOVER_STOPS_S`].
+pub const MOVER_BINS: usize = MOVER_STOPS_S.len() + 2;
+
+/// Sleepy nodes that went dark together (`scenario::DarkGroup`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Group {
+    /// The node whose area it is.
+    pub near: u32,
+    /// When it went dark and came back, seconds.
+    pub from_s: f64,
+    /// See `from_s`.
+    pub to_s: f64,
+    /// Its nodes.
+    pub members: Vec<u32>,
+}
+
 /// All counters of a run.
 #[derive(Clone, Debug, Default)]
 pub struct Metrics {
@@ -779,6 +854,8 @@ pub struct Metrics {
     pub samples: Vec<SampleRow>,
     /// Heap events processed.
     pub events: u64,
+    /// The research models.
+    pub research: Research,
     last_sample: SampleMark,
 }
 

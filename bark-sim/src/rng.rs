@@ -41,6 +41,12 @@ pub enum Purpose {
     Clock = 12,
     /// Whether a sleepy node walks, and its stops and walks.
     Walk = 13,
+    /// The pairs of nodes forced to share an ID.
+    SharedIds = 14,
+    /// Whether a sleepy node rides in a vehicle, and its stops and drives.
+    Vehicle = 15,
+    /// Which nodes' GPS goes wrong, and in which direction.
+    Gps = 16,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

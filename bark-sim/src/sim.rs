@@ -20,7 +20,8 @@ use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEA
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
-    resolve, Destination, Ids, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
+    resolve, Destination, Ids, PairKind, PairReach, PlacedNode, RoleSpec, Scenario, ScriptAction,
+    SharedIds, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
 use crate::walk::{MovingLink, Walks};
@@ -56,6 +57,9 @@ pub(crate) enum Ev {
     FadeTick,
     /// Interferer toggles (interferer, generation).
     Interferer(u32, u32),
+    /// An interferer that is on reaches the walkers where they are now
+    /// (interferer, generation).
+    InterfererMoves(u32, u32),
     /// Leaf availability toggles.
     Availability(u32),
     /// Scripted event.
@@ -68,6 +72,10 @@ pub(crate) enum Ev {
     Leg(u32),
     /// A walking node takes a GPS fix (node).
     Fix(u32),
+    /// A group of sleepy nodes goes dark, or comes back (group, dark).
+    Group(u32, bool),
+    /// A relay with a GPS fault takes a fix (node).
+    Gps(u32),
 }
 
 struct Entry {
@@ -197,6 +205,10 @@ pub(crate) struct NodeState {
     pub alive: bool,
     /// In radio reach (false while a leaf is dark).
     pub present: bool,
+    /// Dark by its own availability process, and in how many groups that
+    /// are dark (`scenario::DarkGroup`): present only when neither.
+    pub avail_dark: bool,
+    pub group_dark: u32,
     pub resting: Option<Channel>,
     /// After a `Listen` retune, the radio listens from here.
     pub listen_from: Instant,
@@ -305,7 +317,13 @@ pub(crate) struct Interferer {
     pub lora: bool,
     pub mean_on_s: f64,
     pub mean_off_s: f64,
+    /// Where it is and how strong, for the walkers it reaches.
+    pub at: Xy,
+    pub power_dbm: f64,
+    /// The nodes that do not walk it reaches, and the power at each.
     pub reach: Vec<(u32, f32)>,
+    /// The walkers it reaches while it is on, as of its last look.
+    pub moving: Vec<(u32, f32)>,
     pub on: bool,
     pub gen: u32,
     pub key: u64,
@@ -373,6 +391,17 @@ struct OriginRecord {
     /// and whether its destination was walking then.
     distance_m: f64,
     dst_walking: bool,
+    /// The relays whose positions its origin's and its destination's
+    /// addresses were when it was sent, if any.
+    src_relay: Option<u32>,
+    dst_relay: Option<u32>,
+    /// It reached the application of a node with its destination's ID
+    /// that is not its destination.
+    to_twin: bool,
+    /// Its origin was walking or driven when it was sent.
+    src_moving: bool,
+    /// Its destination's anchor then, if it had one.
+    dst_anchor: Option<u32>,
 }
 
 /// One originated message, for the per-message table (`Sim::message_rows`).
@@ -407,6 +436,17 @@ pub struct MessageRow {
     pub taken_s: Option<f64>,
     /// Origination to its drop, seconds.
     pub dropped_s: Option<f64>,
+    /// The relays at its origin's and its destination's addresses.
+    pub src_relay: Option<u32>,
+    /// See `src_relay`.
+    pub dst_relay: Option<u32>,
+    /// It reached a node with its destination's ID that is not its
+    /// destination.
+    pub to_twin: bool,
+    /// Its origin was walking or driven when it was sent.
+    pub src_moving: bool,
+    /// Its destination's anchor then, if it had one.
+    pub dst_anchor: Option<u32>,
 }
 
 /// A message an application waits to hand to its core.
@@ -491,8 +531,16 @@ pub struct Sim {
     origin: Origin,
     /// Whether the core being handed a GPS fix (`Ev::Fix`) is.
     fixing: bool,
-    /// Each node's ID: one per node, assigned here (spec "Addresses").
+    /// Each node's ID, assigned here (spec "Addresses"): one per node but
+    /// for the pairs the scenario forces to share one.
     ids: Vec<NodeId>,
+    /// The forced pairs, and whether each shares its ID (`SharedIds`).
+    pub(crate) pairs: Vec<crate::metrics::Pair>,
+    /// Per node, its GPS fault: from when, how, and in which direction;
+    /// whether fixes are checked; the last fix handed to its core and when.
+    gps_fault: Vec<Option<(Instant, crate::scenario::FaultKind, f64, Xy)>>,
+    gps: crate::scenario::Gps,
+    accepted: Vec<(Xy, Instant)>,
     /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u32, u32>,
     /// Whether the relay a core event is being delivered to was booting
@@ -549,6 +597,9 @@ pub struct Sim {
     /// DATA on air addressed to a sleepy node: key to the node, what the
     /// frame found at its start, and the message and its holder.
     pub(crate) to_sleepy: HashMap<u64, ToSleepy>,
+    /// Heartbeats on air of nodes that are not sleepy, after the settle
+    /// time: key to the receivers that lost them, and why.
+    pub(crate) beat_losses: HashMap<u64, Vec<(u32, crate::metrics::Outcome)>>,
     /// Per sleepy node by index less the relays: the start of its last
     /// beat and the end of the last DATA for it that it received.
     pub(crate) beat_took: Vec<(Instant, Instant)>,
@@ -635,6 +686,95 @@ fn random_ids(seed: u64, n: usize) -> Vec<NodeId> {
         .collect()
 }
 
+/// The pairs of nodes `specs` force to share an ID, drawn from the run's
+/// seed among the nodes that do not walk, whose links are stored; no node
+/// is in two. Nodes `0..n_relays` are not sleepy. A pair in reach hears
+/// each other both ways above `sens_dbm` before fading; one out of reach
+/// has no link stored either way. Each pair also counts the relays that
+/// hear both of its nodes above `sens_dbm`, which keep one entry for two.
+fn draw_pairs(
+    specs: &[SharedIds],
+    seed: u64,
+    n_relays: u32,
+    walking: &[bool],
+    links: &LinkTable,
+    sens_dbm: f64,
+) -> Result<Vec<crate::metrics::Pair>, String> {
+    let n = walking.len() as u32;
+    let mut used = vec![false; n as usize];
+    let up = |a: u32, b: u32| {
+        links
+            .get(a, b)
+            .is_some_and(|l| l.base_dbm as f64 >= sens_dbm)
+    };
+    let mut out = Vec::new();
+    for (k, spec) in specs.iter().enumerate() {
+        let mut r = Stream::new(seed, Purpose::SharedIds, k as u64);
+        let (ga, gb) = match spec.kind {
+            PairKind::RelayRelay => (0..n_relays, 0..n_relays),
+            PairKind::RelaySleepy => (0..n_relays, n_relays..n),
+            PairKind::SleepySleepy => (n_relays..n, n_relays..n),
+        };
+        let free = |i: u32, used: &[bool]| !used[i as usize] && !walking[i as usize];
+        for _ in 0..spec.count {
+            let mut found = None;
+            for _ in 0..100_000 {
+                if ga.is_empty() || gb.is_empty() {
+                    break;
+                }
+                let a = r.range(ga.start as u64, ga.end as u64 - 1) as u32;
+                if !free(a, &used) {
+                    continue;
+                }
+                let b = match spec.reach {
+                    PairReach::In => {
+                        let c: Vec<u32> = links
+                            .row(a)
+                            .iter()
+                            .map(|l| l.rx)
+                            .filter(|&b| gb.contains(&b) && b != a && free(b, &used))
+                            .filter(|&b| up(a, b) && up(b, a))
+                            .collect();
+                        if c.is_empty() {
+                            continue;
+                        }
+                        c[r.range(0, c.len() as u64 - 1) as usize]
+                    }
+                    PairReach::Out => {
+                        let b = r.range(gb.start as u64, gb.end as u64 - 1) as u32;
+                        if b == a || !free(b, &used) || links.get(a, b).is_some() {
+                            continue;
+                        }
+                        if links.get(b, a).is_some() {
+                            continue;
+                        }
+                        b
+                    }
+                };
+                found = Some((a, b));
+                break;
+            }
+            let Some((a, b)) = found else {
+                return Err(format!("shared_ids {k}: no pair found"));
+            };
+            used[a as usize] = true;
+            used[b as usize] = true;
+            let both = (0..n_relays)
+                .filter(|&x| x != a && x != b && up(a, x) && up(b, x))
+                .count() as u32;
+            out.push(crate::metrics::Pair {
+                kind: spec.kind,
+                reach: spec.reach,
+                a,
+                b,
+                shared: spec.share,
+                relays_hearing_both: both,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// A node's clock: at true time `t` it reads `t + t × ppb / 10⁹`. The
 /// simulator keeps true time and hands each core its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -706,9 +846,11 @@ impl Sim {
         let names: Vec<Option<String>> = placed.iter().map(|p| p.name.clone()).collect();
         let tx_dbm = vec![base.tx_power_dbm as f64; n];
         let site: Vec<Site> = placed.iter().map(PlacedNode::site).collect();
-        let walks = (sc.movement.fraction > 0.0).then(|| {
+        let moves = sc.movement.fraction > 0.0 || sc.vehicles.fraction > 0.0;
+        let walks = moves.then(|| {
             Walks::new(
                 &sc.movement,
+                &sc.vehicles,
                 &sc.links,
                 base.tx_power_dbm as f64,
                 radio.cutoff_dbm(),
@@ -718,9 +860,6 @@ impl Sim {
                 sc.seed,
             )
         });
-        if walks.is_some() && !sc.interferers.is_empty() {
-            return Err("interferers reach nodes where they were placed, so none may walk".into());
-        }
         let walking: Vec<bool> = (0..n as u32)
             .map(|i| walks.as_ref().is_some_and(|w| w.walks(i)))
             .collect();
@@ -737,14 +876,34 @@ impl Sim {
             sc.seed,
         )?;
 
-        let ids: Vec<NodeId> = match sc.ids {
+        let mut ids: Vec<NodeId> = match sc.ids {
             Ids::Sequence => (0..n as u32).map(node_id).collect(),
             Ids::Random => random_ids(sc.seed, n),
         };
+        let pairs = draw_pairs(
+            &sc.shared_ids,
+            sc.seed,
+            n_relays,
+            &walking,
+            &links,
+            radio.sensitivity_dbm(),
+        )?;
+        for p in &pairs {
+            if p.shared {
+                ids[p.b as usize] = ids[p.a as usize];
+            }
+        }
+        let mut homes = vec![None; n];
+        for h in &sc.homes {
+            let c = Channel::new(h.channel)
+                .ok_or_else(|| format!("home {}: no channel {}", h.node, h.channel))?;
+            homes[resolve(&placed, &h.node)? as usize] = Some(c);
+        }
         let config_for = |i: usize| Config {
             position: positions[i],
             node_id: ids[i],
             sleepy: i >= n_relays as usize,
+            home_override: homes[i],
             ..base
         };
         let core_seed = |i: usize| stream_seed(sc.seed, Purpose::CoreSeed, i as u64);
@@ -756,6 +915,8 @@ impl Sim {
             .map(|i| NodeState {
                 alive: true,
                 present: true,
+                avail_dark: false,
+                group_dark: 0,
                 resting: None,
                 listen_from: Instant::ZERO,
                 ex: None,
@@ -802,10 +963,15 @@ impl Sim {
                 .map(|i| (key(ids[i as usize]), i))
                 .collect(),
             to_sleepy: HashMap::new(),
+            beat_losses: HashMap::new(),
             beat_took: vec![(Instant::ZERO, Instant::ZERO); n - n_relays as usize],
             first_try: HashMap::new(),
             orphans: HashMap::new(),
             ids,
+            pairs,
+            gps_fault: vec![None; n],
+            gps: sc.gps.clone(),
+            accepted: Vec::new(),
             positions,
             sites: site,
             walks,
@@ -930,10 +1096,12 @@ impl Sim {
             }
             let at = Xy { x: s.x, y: s.y };
             let floor = self.radio.cutoff_dbm();
+            let walks = self.walks.as_ref();
             let reach = self
                 .xy
                 .iter()
                 .enumerate()
+                .filter(|(i, _)| !walks.is_some_and(|w| w.walks(*i as u32)))
                 .filter_map(|(i, &p)| {
                     let mut dbm = s.power_dbm - sc.links.path_loss_db(at.dist(p));
                     if placed[i].indoor {
@@ -955,19 +1123,23 @@ impl Sim {
                 lora: s.lora,
                 mean_on_s: s.mean_on_s,
                 mean_off_s: s.mean_off_s,
+                at,
+                power_dbm: s.power_dbm,
                 reach,
+                moving: Vec::new(),
                 on: false,
                 gen: 0,
                 key: 0,
                 end: Instant::ZERO,
                 rng,
             });
-            // Toggle at time zero into the start state.
+            // Toggle at its start into the start state.
+            let from = Instant::ZERO + secs(s.from_s.max(0.0));
             if start_on {
-                self.push(Instant::ZERO, Ev::Interferer(k as u32, 0));
+                self.push(from, Ev::Interferer(k as u32, 0));
             } else {
                 let off = secs(self.interferers[k].rng.exponential(s.mean_off_s));
-                self.push(Instant::ZERO + off, Ev::Interferer(k as u32, 0));
+                self.push(from + off, Ev::Interferer(k as u32, 0));
             }
         }
         // Traffic.
@@ -1088,6 +1260,71 @@ impl Sim {
             .collect();
         for (w, until) in legs.into_iter().enumerate() {
             self.push(until, Ev::Leg(w as u32));
+        }
+        // GPS faults.
+        self.accepted = (0..n).map(|i| (self.xy[i], Instant::ZERO)).collect();
+        for (k, f) in sc.gps.faults.iter().enumerate() {
+            let mut r = Stream::new(sc.seed, Purpose::Gps, k as u64);
+            let walks = self.walks.as_ref();
+            let pool: Vec<u32> = if f.sleepy {
+                (self.n_relays..n as u32)
+                    .filter(|&i| !walks.is_some_and(|w| w.walks(i)))
+                    .collect()
+            } else {
+                (0..self.n_relays).collect()
+            };
+            let mut pool: Vec<u32> = pool
+                .into_iter()
+                .filter(|&i| self.gps_fault[i as usize].is_none())
+                .collect();
+            if pool.len() < f.count as usize {
+                return Err(format!("gps fault {k}: only {} nodes", pool.len()));
+            }
+            for _ in 0..f.count {
+                let i = pool.swap_remove(r.range(0, pool.len() as u64 - 1) as usize);
+                let a = r.uniform() * std::f64::consts::TAU;
+                let size = match f.kind {
+                    crate::scenario::FaultKind::Jump => f.distance_m,
+                    crate::scenario::FaultKind::Drift => f.speed_m_s,
+                };
+                let dir = Xy {
+                    x: a.cos(),
+                    y: a.sin(),
+                };
+                let at = Instant::ZERO + secs(f.at_s);
+                self.gps_fault[i as usize] = Some((at, f.kind, size, dir));
+                self.metrics.research.gps_nodes[usize::from(f.sleepy)].push(i);
+                if !f.sleepy {
+                    self.push(at, Ev::Gps(i));
+                }
+            }
+        }
+        // Groups that go dark together.
+        for (k, g) in sc.dark_groups.iter().enumerate() {
+            let near = resolve(placed, &g.near)?;
+            let at = self.xy[near as usize];
+            let mut c: Vec<u32> = (self.n_relays..n as u32)
+                .filter(|&i| !self.walks.as_ref().is_some_and(|w| w.walks(i)))
+                .collect();
+            c.sort_by(|&a, &b| {
+                let d = |i: u32| self.xy[i as usize].dist(at);
+                d(a).total_cmp(&d(b)).then(a.cmp(&b))
+            });
+            c.truncate(g.count as usize);
+            if c.len() < g.count as usize {
+                return Err(format!("dark group {k}: only {} sleepy nodes", c.len()));
+            }
+            self.metrics.research.groups.push(crate::metrics::Group {
+                near,
+                from_s: g.at_s,
+                to_s: g.at_s + g.for_s,
+                members: c,
+            });
+            self.push(Instant::ZERO + secs(g.at_s), Ev::Group(k as u32, true));
+            self.push(
+                Instant::ZERO + secs(g.at_s + g.for_s),
+                Ev::Group(k as u32, false),
+            );
         }
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
@@ -1215,6 +1452,12 @@ impl Sim {
                 self.push(self.now + step, Ev::FadeTick);
             }
             Ev::Interferer(k, g) => self.interferer_toggle(k, g),
+            Ev::InterfererMoves(k, g) => {
+                if self.interferers[k as usize].gen == g && self.interferers[k as usize].on {
+                    self.interferer_reaches_walkers(k);
+                    self.push(self.now + crate::walk::REGRID, Ev::InterfererMoves(k, g));
+                }
+            }
             Ev::Availability(n) => self.availability_toggle(n),
             Ev::Script(k) => self.run_script(k),
             Ev::Held(n, g) => {
@@ -1245,15 +1488,22 @@ impl Sim {
                 }
                 self.push(until, Ev::Leg(w));
             }
-            Ev::Fix(n) => {
-                let walks = self.walks.as_ref().expect("walkers");
-                let at = walks.walker(n).expect("a walker").at(self.now);
-                if self.nodes[n as usize].alive {
-                    let position = self.origin.position(at);
-                    self.fixing = true;
-                    self.deliver(n, Event::App(AppCommand::SetPosition { position }));
-                    self.fixing = false;
+            Ev::Group(k, dark) => {
+                let members = self.metrics.research.groups[k as usize].members.clone();
+                for n in members {
+                    let st = &mut self.nodes[n as usize];
+                    if dark {
+                        st.group_dark += 1;
+                    } else {
+                        st.group_dark -= 1;
+                    }
+                    self.set_presence(n);
                 }
+            }
+            Ev::Fix(n) => self.fix(n),
+            Ev::Gps(n) => {
+                self.fix(n);
+                self.push(self.now + Duration::from_secs(1), Ev::Gps(n));
             }
         }
     }
@@ -1563,6 +1813,17 @@ impl Sim {
         if self.now < self.settle || self.n_relays == 0 {
             return;
         }
+        let homes = &mut self.metrics.research.homes;
+        homes.resize(
+            self.n_relays as usize,
+            [0; bark_proto::radio::CHANNELS as usize],
+        );
+        for (i, h) in homes.iter_mut().enumerate() {
+            let r = &self.relays[i];
+            if self.nodes[i].alive && !r.booting() {
+                h[r.home().index() as usize] += 1;
+            }
+        }
         let s = &mut self.metrics.sleep;
         s.samples += 1;
         for n in self.n_relays as usize..self.relays.len() {
@@ -1581,6 +1842,18 @@ impl Sim {
             s.off_channel += u64::from(off);
             s.unheard += u64::from(unheard);
             let hears = self.nodes[ai as usize].alive && !off && !unheard;
+            if let Some(k) = self.walks.as_ref().and_then(|w| w.walker(n as u32)) {
+                use crate::metrics::MOVER_STOPS_S;
+                let bin = if k.walking {
+                    0
+                } else {
+                    let at = self.now.since(k.since).as_micros() / 1_000_000;
+                    1 + MOVER_STOPS_S.iter().take_while(|&&s| at >= s).count()
+                };
+                let m = &mut self.metrics.research.movers[usize::from(k.route.is_some())][bin];
+                m.0 += 1;
+                m.1 += u64::from(hears);
+            }
             if let Some((_, back @ None)) = self.orphans.get_mut(&(n as u32)) {
                 if hears {
                     *back = Some(self.now);
@@ -1654,7 +1927,14 @@ impl Sim {
             Action::Trace(t) => {
                 let c = &mut self.metrics.nodes[node as usize].core;
                 match t {
-                    Trace::HomeChannelMoved { .. } if !self.was_booting => c.home_moves += 1,
+                    Trace::HomeChannelMoved { from, to } if !self.was_booting => {
+                        c.home_moves += 1;
+                        if node < self.n_relays {
+                            let t = self.now.as_micros() as f64 / 1e6;
+                            let m = (t, node, from.index(), to.index());
+                            self.metrics.research.moves.push(m);
+                        }
+                    }
                     Trace::HeartbeatSkipped { .. } => c.heartbeats_skipped += 1,
                     Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
                     Trace::Refused { msg_id, reason } => {
@@ -1769,11 +2049,85 @@ impl Sim {
         self.refused_at.insert((sender, id), (self.now, with));
     }
 
-    /// `node` sends `f`: if it walks and `f` is its beat, it takes a GPS
-    /// fix as it goes (spec "Beats"), which its core is handed next.
+    /// `node` takes a GPS fix: where it is, or where a fault says. With
+    /// the checks on (spec "Position and time"), a fix farther from the
+    /// last one handed to the core than the node can have moved since,
+    /// 50 m for a relay and the carried speed's worth more for a sleepy
+    /// node, or farther than the longest hearing radius from every
+    /// neighbour it keeps, is not handed over. The check of the satellite
+    /// signal-to-noise cannot be modelled: the simulator has no satellites.
+    fn fix(&mut self, n: u32) {
+        if !self.nodes[n as usize].alive {
+            return;
+        }
+        let mut at = self.place(n);
+        let fault = self.gps_fault[n as usize].filter(|f| self.now >= f.0);
+        if let Some((from, kind, size, dir)) = fault {
+            let off = match kind {
+                crate::scenario::FaultKind::Jump => size,
+                crate::scenario::FaultKind::Drift => {
+                    size * self.now.since(from).as_micros() as f64 / 1e6
+                }
+            };
+            at = Xy {
+                x: at.x + dir.x * off,
+                y: at.y + dir.y * off,
+            };
+        }
+        let position = self.origin.position(at);
+        let k = usize::from(n >= self.n_relays);
+        if self.gps.checks {
+            // Two fixes of a node that has not moved may differ by this
+            // much (spec "Position and time").
+            const STILL_M: f64 = 50.0;
+            // The longest hearing radius, rooftop to rooftop (spec
+            // "Physical layer").
+            const HEARING_M: f32 = 3000.0;
+            let (mut last, when) = self.accepted[n as usize];
+            if n < self.n_relays && self.gps.relays_keep_first {
+                last = self.xy[n as usize];
+            }
+            let moved = if n < self.n_relays {
+                STILL_M
+            } else {
+                STILL_M + self.gps.carried_speed_m_s * self.now.since(when).as_micros() as f64 / 1e6
+            };
+            let plane = bark_proto::geo::LocalPlane::new(position);
+            let far = |p: Position| plane.point(p).distance_m(Default::default()) > HEARING_M;
+            let mut heard = self.relays[n as usize]
+                .neighbours()
+                .map(|e| e.position)
+                .peekable();
+            let alone = heard.peek().is_some() && heard.all(far);
+            if at.dist(last) > moved {
+                if fault.is_some() {
+                    self.metrics.research.fixes[k][1] += 1;
+                }
+                return;
+            }
+            if alone {
+                if fault.is_some() {
+                    self.metrics.research.fixes[k][2] += 1;
+                }
+                return;
+            }
+        }
+        if fault.is_some() {
+            self.metrics.research.fixes[k][0] += 1;
+        }
+        self.accepted[n as usize] = (at, self.now);
+        self.fixing = true;
+        self.deliver(n, Event::App(AppCommand::SetPosition { position }));
+        self.fixing = false;
+    }
+
+    /// `node` sends `f`: if it walks, or its GPS has a fault, and `f` is
+    /// its beat, it takes a GPS fix as it goes (spec "Beats"), which its
+    /// core is handed next.
     fn note_beat_fix(&mut self, node: u32, f: &Frame, scripted: bool) {
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(node));
-        if scripted || !walks {
+        let faulty = node >= self.n_relays && self.gps_fault[node as usize].is_some();
+        if scripted || !(walks || faulty) {
             return;
         }
         if let Ok(bark_proto::wire::Packet::Heartbeat(_)) =
@@ -2068,6 +2422,11 @@ impl Sim {
                 m.app.latencies_us.push(self.now.since(o.t).as_micros());
             }
             Some(o) if o.dst == node => m.app.duplicates += 1,
+            Some(o) if self.ids[o.dst as usize] == self.ids[node as usize] => {
+                m.app.misdelivered += 1;
+                m.research.to_twin += 1;
+                o.to_twin = true;
+            }
             _ => m.app.misdelivered += 1,
         }
     }
@@ -2172,6 +2531,11 @@ impl Sim {
                 dst_walking: o.dst_walking,
                 taken_s: o.taken_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 dropped_s: o.dropped_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
+                src_relay: o.src_relay,
+                dst_relay: o.dst_relay,
+                to_twin: o.to_twin,
+                src_moving: o.src_moving,
+                dst_anchor: o.dst_anchor,
             })
             .collect()
     }
@@ -2193,7 +2557,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking\n",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor\n",
         );
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
@@ -2207,8 +2571,9 @@ impl Sim {
             let latency = r.latency_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            let relay = |r: Option<u32>| r.map(|r| r.to_string()).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -2218,7 +2583,12 @@ impl Sim {
                 r.airtime_s,
                 r.hops,
                 r.distance_m,
-                r.dst_walking
+                r.dst_walking,
+                relay(r.src_relay),
+                relay(r.dst_relay),
+                r.to_twin,
+                r.src_moving,
+                relay(r.dst_anchor)
             ));
         }
         s
@@ -2400,6 +2770,13 @@ impl Sim {
         };
         let tag = self.origins.len() as u32;
         let reachable = self.reachable(src, dst_pos);
+        let src_pos = if src < self.n_relays {
+            self.positions[src as usize]
+        } else {
+            self.relays[src as usize].address()
+        };
+        let relay_at = |p: Position| (0..self.n_relays).find(|&r| self.positions[r as usize] == p);
+        let (src_relay, dst_relay) = (relay_at(src_pos), relay_at(dst_pos));
         self.origins.push(OriginRecord {
             src,
             dst,
@@ -2418,6 +2795,17 @@ impl Sim {
                 .as_ref()
                 .and_then(|w| w.walker(dst))
                 .is_some_and(|k| k.walking),
+            src_relay,
+            dst_relay,
+            to_twin: false,
+            src_moving: self
+                .walks
+                .as_ref()
+                .and_then(|w| w.walker(src))
+                .is_some_and(|k| k.walking),
+            dst_anchor: (dst >= self.n_relays)
+                .then(|| self.attached_relay(dst))
+                .flatten(),
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -2635,7 +3023,8 @@ impl Sim {
             let key = i.key;
             let off = secs(i.rng.exponential(i.mean_off_s));
             let reach = std::mem::take(&mut i.reach);
-            for &(n, _) in &reach {
+            let moving = std::mem::take(&mut i.moving);
+            for &(n, _) in reach.iter().chain(&moving) {
                 self.remove_arrival(n, key);
             }
             self.interferers[k as usize].reach = reach;
@@ -2671,6 +3060,46 @@ impl Sim {
             if !always {
                 self.push(end, Ev::Interferer(k, g));
             }
+            if self.walks.is_some() {
+                self.interferer_reaches_walkers(k);
+                self.push(now + crate::walk::REGRID, Ev::InterfererMoves(k, g));
+            }
+        }
+    }
+
+    /// Interferer `k`, which is on, reaches the walkers where they are
+    /// now. Looked at again as often as the walkers' grids are built, a
+    /// walk of 14 m, which moves the path loss of a walker 300 m away by
+    /// under a decibel; a stop that begins or ends between two looks
+    /// keeps its wall or its lack of one until the next.
+    fn interferer_reaches_walkers(&mut self, k: u32) {
+        let i = &self.interferers[k as usize];
+        let (key, end, ch, lora) = (i.key, i.end, i.channel, i.lora);
+        let floor = self.radio.cutoff_dbm();
+        let now = self.now;
+        let new = self
+            .walks
+            .as_ref()
+            .expect("walkers")
+            .reached_from(i.at, i.power_dbm, floor, now);
+        let old = std::mem::replace(&mut self.interferers[k as usize].moving, new.clone());
+        for (n, _) in old {
+            self.remove_arrival(n, key);
+        }
+        for (n, dbm) in new {
+            let dbm = dbm as f64;
+            self.arrive(
+                n,
+                Arrival {
+                    key,
+                    channel: ch,
+                    dbm,
+                    mw: phy::mw(dbm),
+                    end,
+                    lora,
+                },
+                None,
+            );
         }
     }
 
@@ -2680,26 +3109,48 @@ impl Sim {
         if !self.nodes[n as usize].alive {
             return;
         }
-        let present = self.nodes[n as usize].present;
-        if let Some(t) = &mut self.tracer {
-            t.note(self.now, n, if present { "dark" } else { "back" });
+        let dark = !self.nodes[n as usize].avail_dark;
+        self.nodes[n as usize].avail_dark = dark;
+        let next = if dark {
+            self.avail_rng[li].exponential(mean_dark)
+        } else {
+            self.avail_rng[li].exponential(mean_up)
+        };
+        self.set_presence(n);
+        self.push(self.now + secs(next), Ev::Availability(n));
+    }
+
+    /// `n` is in reach unless its availability process or a group has it
+    /// dark: bring its radio in or out of reach to match.
+    fn set_presence(&mut self, n: u32) {
+        let st = &self.nodes[n as usize];
+        let present = !st.avail_dark && st.group_dark == 0;
+        if present == st.present || !st.alive {
+            return;
         }
-        let next = if present {
+        if let Some(t) = &mut self.tracer {
+            t.note(self.now, n, if present { "back" } else { "dark" });
+        }
+        let back = (n >= self.n_relays)
+            .then(|| self.back_at.get_mut((n - self.n_relays) as usize))
+            .flatten();
+        if present {
+            // Back in reach. Signals already on the air are not added: the
+            // error is at most one packet's worth of interference.
+            if let Some(b) = back {
+                *b = Some(self.now);
+            }
+            self.nodes[n as usize].present = true;
+            self.metrics.returns.returned += 1;
+        } else {
             // Going dark: out of reach of everything now on the air.
+            if let Some(b) = back {
+                *b = None;
+            }
             self.abort_lock(n, Deaf::Absent);
             self.clear_arrivals(n);
             self.nodes[n as usize].present = false;
-            self.back_at[li] = None;
-            self.avail_rng[li].exponential(mean_dark)
-        } else {
-            // Back in reach. Signals already on the air are not added: the
-            // error is at most one packet's worth of interference.
-            self.nodes[n as usize].present = true;
-            self.back_at[li] = Some(self.now);
-            self.metrics.returns.returned += 1;
-            self.avail_rng[li].exponential(mean_up)
-        };
-        self.push(self.now + secs(next), Ev::Availability(n));
+        }
     }
 
     // ---- Helpers for the reception model --------------------------------
@@ -2710,8 +3161,10 @@ impl Sim {
         let st = &mut self.nodes[node as usize];
         if let Lock::Rx(r) = st.lock {
             self.metrics.outcome(node, r.channel, Outcome::Deaf(why));
+            st.lock = Lock::Idle;
+            self.note_beat_loss(r.key, node, Outcome::Deaf(why));
         }
-        st.lock = Lock::Idle;
+        self.nodes[node as usize].lock = Lock::Idle;
     }
 }
 
@@ -2773,6 +3226,199 @@ mod tests {
         assert_eq!(pairs(&sequence), 256 * 8 * 7 / 2);
     }
 
+    /// A block of relays and sleepy nodes on the log-distance links of the
+    /// scenarios (`scenarios/s2-block.toml`), for the research models.
+    fn block(seed: u64, duration_s: f64) -> Scenario {
+        block_of(1000.0, seed, duration_s)
+    }
+
+    /// [`block`], `side` metres square.
+    fn block_of(side: f64, seed: u64, duration_s: f64) -> Scenario {
+        let mut sc = Scenario::new("block", seed, duration_s)
+            .place(crate::scenario::Placement::Density {
+                role: RoleSpec::Relay,
+                x0: 0.0,
+                y0: 0.0,
+                width_m: side,
+                height_m: side,
+                per_km2: 10.0,
+                indoor: false,
+                rooftop: false,
+            })
+            .place(crate::scenario::Placement::Density {
+                role: RoleSpec::Leaf,
+                x0: 0.0,
+                y0: 0.0,
+                width_m: side,
+                height_m: side,
+                per_km2: 200.0,
+                indoor: true,
+                rooftop: false,
+            });
+        sc.links.exponent = 3.6;
+        sc.links.indoor_loss_db = 14.4;
+        sc.links.shadowing_sigma_db = 6.0;
+        sc
+    }
+
+    /// Forced pairs are of the kind and reach asked for, no node is in
+    /// two, and they share an ID only when told to.
+    #[test]
+    fn forced_pairs_share_an_id() {
+        use crate::scenario::{PairKind, PairReach};
+        let mut sc = block_of(4000.0, 3, 1.0);
+        for kind in [
+            PairKind::RelayRelay,
+            PairKind::RelaySleepy,
+            PairKind::SleepySleepy,
+        ] {
+            for reach in [PairReach::In, PairReach::Out] {
+                sc.shared_ids.push(SharedIds {
+                    kind,
+                    reach,
+                    count: 2,
+                    share: kind != PairKind::RelaySleepy,
+                });
+            }
+        }
+        let sim = Sim::new(&sc).unwrap();
+        assert_eq!(sim.pairs.len(), 12);
+        let mut seen = std::collections::HashSet::new();
+        for p in &sim.pairs {
+            assert!(seen.insert(p.a) && seen.insert(p.b), "{p:?} in two pairs");
+            let relay = |i: u32| i < sim.n_relays;
+            let kinds = match p.kind {
+                PairKind::RelayRelay => (true, true),
+                PairKind::RelaySleepy => (true, false),
+                PairKind::SleepySleepy => (false, false),
+            };
+            assert_eq!((relay(p.a), relay(p.b)), kinds, "{p:?}");
+            let up = |a, b| {
+                sim.links
+                    .get(a, b)
+                    .is_some_and(|l| l.base_dbm as f64 >= sim.sens_dbm)
+            };
+            match p.reach {
+                PairReach::In => assert!(up(p.a, p.b) && up(p.b, p.a), "{p:?}"),
+                PairReach::Out => {
+                    assert!(sim.links.get(p.a, p.b).is_none() && sim.links.get(p.b, p.a).is_none())
+                }
+            }
+            assert_eq!(sim.node_id(p.a) == sim.node_id(p.b), p.shared, "{p:?}");
+        }
+    }
+
+    /// A dark group is the sleepy nodes nearest its node; they go out of
+    /// reach together for the spell and come back, whatever their own
+    /// availability says.
+    #[test]
+    fn a_dark_group_goes_dark_together() {
+        let mut sc = block(4, 400.0);
+        sc.availability = Some(crate::scenario::Availability {
+            mean_available_s: 100.0,
+            mean_dark_s: 50.0,
+        });
+        sc.dark_groups.push(crate::scenario::DarkGroup {
+            near: "relay:0".into(),
+            count: 20,
+            at_s: 100.0,
+            for_s: 200.0,
+        });
+        let mut sim = Sim::new(&sc).unwrap();
+        let g = sim.metrics.research.groups[0].clone();
+        let at = sim.xy(0);
+        let far = g
+            .members
+            .iter()
+            .map(|&i| sim.xy(i).dist(at))
+            .fold(0.0, f64::max);
+        let nearer = (sim.n_relays..sim.node_count() as u32)
+            .filter(|i| !g.members.contains(i))
+            .filter(|&i| sim.xy(i).dist(at) < far)
+            .count();
+        assert_eq!((g.members.len(), nearer), (20, 0));
+        sim.run_until(Instant::ZERO + secs(150.0));
+        assert!(g.members.iter().all(|&i| !sim.nodes[i as usize].present));
+        sim.run_until(Instant::ZERO + secs(350.0));
+        for &i in &g.members {
+            let st = &sim.nodes[i as usize];
+            assert_eq!(st.present, !st.avail_dark, "node {i}");
+        }
+    }
+
+    /// A relay whose GPS jumps is handed the fix unchecked, and with the
+    /// checks the jump is refused; a drift slower than 50 m a second
+    /// passes the jump check fix by fix.
+    #[test]
+    fn checks_refuse_a_jump_and_pass_a_slow_drift() {
+        use crate::scenario::{FaultKind, GpsFault};
+        let fault = |kind, checks| {
+            let mut sc = block(5, 300.0);
+            sc.gps.checks = checks;
+            sc.gps.faults.push(GpsFault {
+                kind,
+                sleepy: false,
+                count: 1,
+                at_s: 100.0,
+                distance_m: 5000.0,
+                speed_m_s: 1.0,
+            });
+            let mut sim = Sim::new(&sc).unwrap();
+            sim.run();
+            let n = sim.metrics.research.gps_nodes[0][0];
+            let moved = sim.relay(n).config().position != sim.positions[n as usize];
+            (sim.metrics.research.fixes[0], moved)
+        };
+        let (f, moved) = fault(FaultKind::Jump, false);
+        assert!(f[0] > 150 && f[1] + f[2] == 0 && moved, "{f:?}");
+        let (f, moved) = fault(FaultKind::Jump, true);
+        assert!(f[0] == 0 && f[1] > 150 && !moved, "{f:?}");
+        let (f, moved) = fault(FaultKind::Drift, true);
+        assert!(f[0] > 150 && f[1] + f[2] == 0 && moved, "{f:?}");
+    }
+
+    /// An interferer reaches walkers where they are: one that walks out of
+    /// its reach no longer hears it.
+    #[test]
+    fn interferers_reach_walkers_where_they_are() {
+        let mut sc = block(6, 4000.0);
+        sc.movement.fraction = 1.0;
+        sc.movement.stop_s = 300.0;
+        sc.interferers.push(crate::scenario::InterfererSpec {
+            x: 500.0,
+            y: 500.0,
+            channel: 6,
+            power_dbm: 10.0,
+            lora: false,
+            mean_on_s: 1.0,
+            mean_off_s: 0.0,
+            from_s: 0.0,
+        });
+        let mut sim = Sim::new(&sc).unwrap();
+        let mut changed = 0;
+        let mut last: Option<Vec<u32>> = None;
+        for t in 1..40 {
+            sim.run_until(Instant::ZERO + secs(t as f64 * 100.0));
+            let i = &sim.interferers[0];
+            assert!(i.reach.iter().all(|&(n, _)| n < sim.n_relays));
+            let now: Vec<u32> = i.moving.iter().map(|m| m.0).collect();
+            for &(n, dbm) in &i.moving {
+                let w = sim.walks.as_ref().unwrap().walker(n).unwrap();
+                let mut want = 10.0 - sc.links.path_loss_db(w.at(sim.now).dist(i.at));
+                if !w.walking {
+                    want -= sc.links.indoor_loss_db;
+                }
+                // Looked at again within the walkers' regrid interval.
+                assert!((dbm as f64 - want).abs() < 3.0, "{dbm} against {want}");
+            }
+            if last.as_ref().is_some_and(|l| *l != now) {
+                changed += 1;
+            }
+            last = Some(now);
+        }
+        assert!(changed > 10, "{changed} changes in the walkers reached");
+    }
+
     /// Drops are attributed to the node and reason the core reports, and a
     /// delivery of another copy overrides them.
     #[test]
@@ -2800,6 +3446,11 @@ mod tests {
                 hops: 0,
                 distance_m: 0.0,
                 dst_walking: false,
+                src_relay: None,
+                dst_relay: None,
+                to_twin: false,
+                src_moving: false,
+                dst_anchor: None,
             });
             sim.msg_tags.insert(id, tag);
         }

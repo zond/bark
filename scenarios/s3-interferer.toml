@@ -1,0 +1,106 @@
+# S3: S2 with a foreign transmitter on channel 6 and three rooftop relays
+# that all hear each other (docs/simulator-design.md §6), for roadmap D59
+# and docs/unproven-2026-10-18.md. Checks that relays that hear the
+# transmitter move off its channel (spec "Channel moves"), that the
+# hysteresis keeps them from jumping together, and that sleepy nodes
+# follow their anchors.
+#
+# The transmitter stands for an LPD433 handheld at the 10 mW its
+# licence-free band allows, in use a third of the time, at the block's
+# centre on 433.920 MHz, the busiest spot of the band
+# (spec "Channel plan"); it is not LoRa, so channel activity detection does not see it
+# and only RSSI does (spec "Busy estimate"). It appears at 1800 s, after
+# every relay has chosen its home, so that the relays on its channel must
+# move off it.
+
+name = "s3-interferer"
+seed = 1
+duration_s = 9000.0
+# As S2, and a move needs ten minutes of measurement and up to five of
+# waiting after the boot listen (spec "Channel moves"): 195 + 600 + 300 s.
+settle_s = 1095.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+# As S2 (s2-block.toml), with S4's rooftop bonus.
+[links]
+model = "log_distance"
+exponent = 3.6
+indoor_loss_db = 14.4
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 1000.0
+height_m = 1000.0
+per_km2 = 10.0
+
+# Three rooftop relays, a few hundred metres apart: each hears the other
+# two and the transmitter.
+[[nodes]]
+place = "point"
+name = "R1"
+role = "relay"
+x = 300.0
+y = 300.0
+rooftop = true
+
+[[nodes]]
+place = "point"
+name = "R2"
+role = "relay"
+x = 700.0
+y = 300.0
+rooftop = true
+
+[[nodes]]
+place = "point"
+name = "R3"
+role = "relay"
+x = 500.0
+y = 650.0
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 1000.0
+height_m = 1000.0
+per_km2 = 80.0
+indoor = true
+
+[[interferers]]
+x = 500.0
+y = 500.0
+channel = 6
+power_dbm = 10.0
+lora = false
+mean_on_s = 20.0
+mean_off_s = 40.0
+from_s = 1800.0
+
+# As S2: ten texts per node per day.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.4166667
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 60.0
+observers = ["relay:*"]
+per_node = true
