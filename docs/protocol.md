@@ -1558,11 +1558,19 @@ its first hop, which overload must not give to fresh work.
 
 A refused message waits as a relay's own does ([a node's own message](#a-nodes-own-message)).
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
-or when the anchor's ban ends if that is later: a fade lasts about a
-minute (the scenarios' correlation time), and the three attempts of one
-hand-over, a few hundred milliseconds apart, all fall inside it, where
-the ban's ladder would offer it every few seconds to a node whose
-channel is full. A message that finds no live neighbour at all waits
+doubled for each unanswered hand-over to the anchor in a row, or when
+the anchor's ban ends if that is later: a fade lasts about a minute (the
+scenarios' correlation time), and the three attempts of one hand-over, a
+few hundred milliseconds apart, all fall inside it, where the ban's
+ladder would offer it every few seconds to a node whose channel is full.
+Silence says no more than that the channel or the anchor is full
+([silence is pushback](#silence-is-pushback)), so the wait doubles as
+the ban does. Tried again every fade instead, in the simulated capacity
+domain at three times the texting rate of
+[capacity and sizing](#capacity-and-sizing) a text that its anchor never
+took cost its sender 27 frames over its TTL, such texts took a quarter
+of the airtime that texts took, and 63 % of the texts were delivered;
+with the doubling, 79 % (roadmap D54). A message that finds no live neighbour at all waits
 for one, routed again every 60 s, until its time runs out
 ([receiving DATA](#receiving-data)): a carried node loses its neighbours by going dark
 and finds them again. The application is not told ([addresses](#addresses)).

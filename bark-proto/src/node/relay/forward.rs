@@ -1361,13 +1361,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.count_failure(d.dst_hop, now, emit);
                 if self.config.sleepy && d.hops == 0 {
                     // A sleepy node's own message tries its anchor again a
-                    // fade later (spec "A sleepy node's own message"):
-                    // the ban's ladder would offer it every few seconds to
-                    // a node whose channel is full.
+                    // fade later, doubled for each silence in a row
+                    // (spec "A sleepy node's own message"): the ban's ladder would
+                    // offer it every few seconds to a node whose channel is
+                    // full, and a fixed fade every minute for its whole TTL.
                     let ban = self.wait_for(d.dst_hop, now).unwrap_or(now);
+                    let silences = self
+                        .neighbours
+                        .by_id(d.dst_hop)
+                        .map_or(1, |(_, n)| n.fail_count.max(1));
+                    let mut fade = self.config.fade_retry;
+                    for _ in 1..silences {
+                        fade = fade.mul(2).min(self.config.delivery_ttl);
+                    }
                     self.skipped = 0;
                     if let Some(current) = self.queue.current_mut() {
-                        current.not_before = ban.max(now + self.config.fade_retry);
+                        current.not_before = ban.max(now + fade);
                         current.tries = 0;
                     }
                     return;
