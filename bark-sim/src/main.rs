@@ -1,6 +1,6 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
 //! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE]`. Prints a short table; writes the JSON summary, the CSV
+//! [--series FILE] [--message-minutes FILE]`. Prints a short table; writes the JSON summary, the CSV
 //! time series, the per-message CSV, the per-node event trace, the links
 //! between relays and the per-minute series of every relay when asked.
 
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -25,7 +25,7 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let mut path = None;
     let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
-    let (mut messages, mut links, mut series) = (None, None, None);
+    let (mut messages, mut links, mut series, mut minutes) = (None, None, None, None);
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -52,6 +52,7 @@ fn run() -> Result<(), String> {
             "--messages" => messages = Some(PathBuf::from(val("--messages")?)),
             "--links" => links = Some(PathBuf::from(val("--links")?)),
             "--series" => series = Some(PathBuf::from(val("--series")?)),
+            "--message-minutes" => minutes = Some(PathBuf::from(val("--message-minutes")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -80,6 +81,9 @@ fn run() -> Result<(), String> {
     if series.is_some() {
         sim.series_on();
     }
+    if minutes.is_some() {
+        sim.message_minutes_on();
+    }
     let built = t0.elapsed();
     sim.run();
     let ran = t0.elapsed() - built;
@@ -98,6 +102,9 @@ fn run() -> Result<(), String> {
     }
     if let Some(p) = messages {
         std::fs::write(&p, sim.messages_csv()).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if let (Some(p), Some(s)) = (minutes, sim.message_minutes_csv()) {
+        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let (Some(p), Some(s)) = (series, sim.series()) {
         std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;

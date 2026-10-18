@@ -32,7 +32,7 @@
 
 use crate::metrics::{FirstTry, Outcome};
 use crate::phy::{self, Deaf, Loss};
-use crate::sim::{key, Arrival, ExKind, Lock, Rx, Sim, ToSleepy};
+use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim, ToSleepy};
 use crate::walk::MovingLink;
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff;
@@ -119,8 +119,9 @@ impl Sim {
         let frame = tx.frame;
         let decoded = WirePacket::decode(frame.payload()).ok();
         let msg = match decoded {
-            Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops)),
-            Some(WirePacket::Ack(a)) => Some((a.msg_id, 0)),
+            Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops, FrameKind::Data)),
+            Some(WirePacket::Ack(a)) if a.refused => Some((a.msg_id, 0, FrameKind::Refused)),
+            Some(WirePacket::Ack(a)) => Some((a.msg_id, 0, FrameKind::Taken)),
             _ => None,
         };
         let to = match decoded {
@@ -128,6 +129,9 @@ impl Sim {
                 Some((key(d.dst_hop), if src < self.relays() { 0 } else { 2 }))
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => Some((key(a.to), 1)),
+            Some(WirePacket::Heartbeat(h)) if h.sleepy => {
+                self.relay(src).anchor().map(|a| (key(a.id), 3))
+            }
             _ => None,
         };
         let beat = match decoded {
@@ -184,8 +188,12 @@ impl Sim {
         chm.tx_frames += 1;
         chm.airtime_us += air;
         chm.airtime_by_type.add(decoded.as_ref(), preamble, air);
-        if let Some((id, hops)) = msg {
-            self.message_frame(id, hops, air);
+        if let Some((id, hops, kind)) = msg {
+            let to_dst = match decoded {
+                Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id => Some(d.time_left()),
+                _ => None,
+            };
+            self.message_frame(id, hops, air, src, kind, to_dst);
         }
         match decoded {
             Some(WirePacket::Data(d)) => {
@@ -410,7 +418,7 @@ impl Sim {
                 state
             };
             if let (0, Some((msg, to))) = (fate, answer) {
-                if kind != 1 {
+                if kind == 0 || kind == 2 {
                     let deadline = self.now + self.relay(d).config().ack_timeout;
                     self.awaiting.insert((d, msg, to), (deadline, kind == 2));
                 }

@@ -381,6 +381,19 @@ struct OriginRecord {
     taken_at: Option<Instant>,
     /// When a node dropped it.
     dropped_at: Option<Instant>,
+    /// When a node other than its origin first sent a DATA of it: when it
+    /// entered the network past its first hop's admission.
+    entered_at: Option<Instant>,
+    /// The time left the last DATA to its destination node carried: what
+    /// that node's application learns of the message's way (spec
+    /// "Receiving DATA").
+    time_left: Option<Duration>,
+    /// The node that queued it for its destination node
+    /// (spec "Delivery queue"), the beats of that node it heard while the
+    /// message was queued, and the DATA it sent it.
+    holder: Option<u32>,
+    holder_beats: u32,
+    holder_tries: u32,
     /// Frames that carried it or answered it (DATA and their ACKs),
     /// and their time on air, µs.
     frames: u32,
@@ -447,6 +460,27 @@ pub struct MessageRow {
     pub src_moving: bool,
     /// Its destination's anchor then, if it had one.
     pub dst_anchor: Option<u32>,
+    /// Origination to the first DATA of it from a node other than its
+    /// origin, seconds.
+    pub entered_s: Option<f64>,
+    /// The time left in the last DATA to its destination node, seconds.
+    pub time_left_s: Option<f64>,
+    /// Beats of its destination node its holder heard while it was
+    /// queued, and the DATA the holder sent it.
+    pub holder_beats: u32,
+    /// See `holder_beats`.
+    pub holder_tries: u32,
+}
+
+/// What a frame of a message was, for [`Sim::message_frame`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameKind {
+    /// A DATA.
+    Data,
+    /// An ACK that takes it.
+    Taken,
+    /// An ACK that refuses it.
+    Refused,
 }
 
 /// A message an application waits to hand to its core.
@@ -615,6 +649,11 @@ pub struct Sim {
     offers: Vec<Option<Offer>>,
     /// Message id (kept across hops) to traffic tag.
     msg_tags: HashMap<u32, u32>,
+    /// Per minute and message tag, airtime by frame kind, when asked for.
+    msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,
+    /// Messages queued, by holder and destination node's ID, for counting
+    /// the beats the holder hears.
+    queued_for: HashMap<(u32, u32), Vec<u32>>,
     script: Vec<ScriptEntry>,
     /// Results of scripted excursions, in completion order.
     pub script_log: Vec<ScriptResult>,
@@ -1020,6 +1059,8 @@ impl Sim {
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
             msg_tags: HashMap::new(),
+            msg_minutes: None,
+            queued_for: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
             cadence: sc.metrics.cadence_s.map(secs),
@@ -1583,9 +1624,10 @@ impl Sim {
         }
         let app = &self.metrics.app;
         s.push_str(&format!(
-            "{{\"t\":{t},\"leaves\":{},\"addressed\":{},\"originated\":{},\"delivered\":{},\"skipped\":{}}}\n",
+            "{{\"t\":{t},\"leaves\":{},\"addressed\":{},\"sleep\":{},\"originated\":{},\"delivered\":{},\"skipped\":{}}}\n",
             serde_json::to_string(&a).expect("serialisable"),
             serde_json::to_string(&self.metrics.addressed).expect("serialisable"),
+            serde_json::to_string(&self.metrics.sleep).expect("serialisable"),
             app.originated,
             app.delivered,
             app.skipped
@@ -1885,6 +1927,13 @@ impl Sim {
         else {
             return;
         };
+        if let Some(tags) = self.queued_for.get_mut(&(receiver, key(hb.id))) {
+            let origins = &mut self.origins;
+            tags.retain(|&t| origins[t as usize].fate == Fate::Unaccounted);
+            for &t in tags.iter() {
+                origins[t as usize].holder_beats += 1;
+            }
+        }
         let Some(&leaf) = self.leaf_nodes.get(&hb.id.0) else {
             return;
         };
@@ -1977,6 +2026,15 @@ impl Sim {
                     Trace::Delivered { msg_id, .. } => {
                         c.delivered += 1;
                         self.first_try.remove(&(node, msg_id.0));
+                    }
+                    Trace::Queued { msg_id, node: to } => {
+                        if let Some(&tag) = self.msg_tags.get(&msg_id.0) {
+                            self.origins[tag as usize].holder = Some(node);
+                            self.queued_for
+                                .entry((node, key(to)))
+                                .or_default()
+                                .push(tag);
+                        }
                     }
                     Trace::DeliveryWaits {
                         msg_id,
@@ -2503,18 +2561,65 @@ impl Sim {
         }
     }
 
-    /// A frame of message `id` went on the air: it carried `hops` (DATA)
-    /// and took `air_us`.
-    pub(crate) fn message_frame(&mut self, id: MsgId, hops: u8, air_us: u64) {
-        if let Some(o) = self
-            .msg_tags
-            .get(&id.0)
-            .and_then(|&t| self.origins.get_mut(t as usize))
-        {
-            o.frames += 1;
-            o.airtime_us += air_us;
-            o.hops = o.hops.max(hops);
+    /// A frame of message `id` went on the air from `src`: it carried
+    /// `hops` (DATA) and took `air_us`.
+    pub(crate) fn message_frame(
+        &mut self,
+        id: MsgId,
+        hops: u8,
+        air_us: u64,
+        src: u32,
+        kind: FrameKind,
+        time_left: Option<Duration>,
+    ) {
+        let Some(&tag) = self.msg_tags.get(&id.0) else {
+            return;
+        };
+        let Some(o) = self.origins.get_mut(tag as usize) else {
+            return;
+        };
+        o.frames += 1;
+        o.airtime_us += air_us;
+        o.hops = o.hops.max(hops);
+        if time_left.is_some() {
+            o.time_left = time_left;
+            if o.holder == Some(src) {
+                o.holder_tries += 1;
+            }
         }
+        let kind = match kind {
+            FrameKind::Data if src == o.src => 0,
+            FrameKind::Data => {
+                o.entered_at.get_or_insert(self.now);
+                1
+            }
+            FrameKind::Taken => 2,
+            FrameKind::Refused => 3,
+        };
+        if let Some(mm) = &mut self.msg_minutes {
+            let minute = (self.now.as_micros() / 60_000_000) as u32;
+            mm.entry((minute, tag)).or_default()[kind] += air_us;
+        }
+    }
+
+    /// Keep, per minute and message, the airtime of its frames by
+    /// [`FrameKind`] (`bark-sim --message-minutes FILE`).
+    pub fn message_minutes_on(&mut self) {
+        self.msg_minutes = Some(HashMap::new());
+    }
+
+    /// `minute,tag,origin_data_us,data_us,ack_us,refused_us`, sorted:
+    /// DATA from the message's origin, DATA from any other node, ACKs that
+    /// take it and ACKs that refuse it.
+    pub fn message_minutes_csv(&self) -> Option<String> {
+        let mm = self.msg_minutes.as_ref()?;
+        let mut rows: Vec<_> = mm.iter().collect();
+        rows.sort_unstable_by_key(|(k, _)| **k);
+        let mut s = String::from("minute,tag,origin_data_us,data_us,ack_us,refused_us\n");
+        for ((m, t), a) in rows {
+            s.push_str(&format!("{m},{t},{},{},{},{}\n", a[0], a[1], a[2], a[3]));
+        }
+        Some(s)
     }
 
     /// Whether relay `r`'s neighbour table holds `id`, and how many entries
@@ -2574,6 +2679,10 @@ impl Sim {
                 to_twin: o.to_twin,
                 src_moving: o.src_moving,
                 dst_anchor: o.dst_anchor,
+                entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
+                time_left_s: o.time_left.map(|d| d.as_micros() as f64 / 1e6),
+                holder_beats: o.holder_beats,
+                holder_tries: o.holder_tries,
             })
             .collect()
     }
@@ -2595,7 +2704,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x\n",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries\n",
         );
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
@@ -2609,9 +2718,11 @@ impl Sim {
             let latency = r.latency_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            let entered = r.entered_s.map(|l| format!("{l:.6}")).unwrap_or_default();
+            let left = r.time_left_s.map(|l| format!("{l:.1}")).unwrap_or_default();
             let relay = |r: Option<u32>| r.map(|r| r.to_string()).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0},{entered},{left},{},{}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -2628,7 +2739,9 @@ impl Sim {
                 r.src_moving,
                 relay(r.dst_anchor),
                 self.xy(r.src).x,
-                self.xy(r.dst).x
+                self.xy(r.dst).x,
+                r.holder_beats,
+                r.holder_tries
             ));
         }
         s
@@ -2826,6 +2939,11 @@ impl Sim {
             delivered_at: None,
             taken_at: None,
             dropped_at: None,
+            entered_at: None,
+            time_left: None,
+            holder: None,
+            holder_beats: 0,
+            holder_tries: 0,
             frames: 0,
             airtime_us: 0,
             hops: 0,
@@ -3483,6 +3601,11 @@ mod tests {
                 delivered_at: None,
                 taken_at: None,
                 dropped_at: None,
+                entered_at: None,
+                time_left: None,
+                holder: None,
+                holder_beats: 0,
+                holder_tries: 0,
                 frames: 0,
                 airtime_us: 0,
                 hops: 0,

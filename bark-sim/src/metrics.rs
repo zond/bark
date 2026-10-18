@@ -266,20 +266,20 @@ pub struct CoreCounts {
 /// What became of frames addressed to one node that is not sleepy, by
 /// what that node was doing when the frame started: `[kind][fate]`. Kinds:
 /// DATA from a node that is not sleepy, an ACK from one, DATA from a
-/// sleepy node. Fates: received; lost although the receiver was listening
+/// sleepy node, and a sleepy node's beat at its anchor. Fates: received; lost although the receiver was listening
 /// and free; lost while it was receiving another frame; lost while it was
 /// deaf on the channel (checking, transmitting, retuning); lost while it
 /// was on another channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Addressed {
     /// Counts.
-    pub counts: [[u64; 5]; 3],
+    pub counts: [[u64; 5]; 4],
     /// Of `counts`, the frames during which a sleepy node's heartbeat was
     /// on the air at the receiver: the hidden-terminal question of a
     /// presence frame sent at a time the sender chose (roadmap D41).
-    pub with_beat: [[u64; 5]; 3],
+    pub with_beat: [[u64; 5]; 4],
     /// The same for the heartbeat of a node that is not sleepy.
-    pub with_heartbeat: [[u64; 5]; 3],
+    pub with_heartbeat: [[u64; 5]; 4],
     /// Of the DATA frames received, `[relay's, leaf's][answer]`: an ACK that
     /// takes it, one that refuses it, either started later than the ACK
     /// timeout after the frame's end, or none.
