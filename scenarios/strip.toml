@@ -1,0 +1,167 @@
+# The strip: three collision domains of the city model side by side
+# (spec "Capacity and sizing"), each S4 (`s4-capacity.toml`), the unit, with
+# a centre in the middle one, and texts that cross the strip. Roadmap D52,
+# `docs/realism-2026-10-18.md`.
+#
+# Spec "Capacity and sizing" carries 23 texts per user per day over about
+# eight hops, the width of the city, so a text goes to anyone in the city.
+# Here it goes to anyone in the strip: two in three leave their domain and
+# two in nine cross from one end to the other, 16 km, where S4 keeps every
+# text inside its 5.3 km. Everything else is S4's: its links, relays,
+# people, switch-on, clocks and walks.
+#
+# The run is three to four times an S4 run in memory and time.
+
+name = "strip"
+seed = 1
+# One settled hour after the settle time: 2700 + 3600 s.
+duration_s = 6300.0
+# As S4: a node settles 900 s after its switch-on, the last at 1800 s.
+settle_s = 900.0
+ids = "random"
+
+[boot]
+relays_s = 600.0
+sleepy_s = 1800.0
+
+[clocks]
+drift_ppm = 50.0
+
+[movement]
+fraction = 0.2
+speed_m_s = 1.4
+trip_m = 1000.0
+stop_s = 3600.0
+shadow_decorrelation_m = 50.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+exponent = 3.6
+indoor_loss_db = 14.4
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+# Three squares of 28 km², side 5291.5 m, west to east. In each, relays at
+# 1.9 per km² on roofs and 7.7 on windowsills, and 714 sleepy nodes per
+# km² indoors, as in S4.
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 0.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 0.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 7.7
+
+[[nodes]]
+place = "density"
+role = "leaf"
+x0 = 0.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 714.2857
+indoor = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 5291.5
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 5291.5
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 7.7
+
+[[nodes]]
+place = "density"
+role = "leaf"
+x0 = 5291.5
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 714.2857
+indoor = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 10583.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+x0 = 10583.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 7.7
+
+[[nodes]]
+place = "density"
+role = "leaf"
+x0 = 10583.0
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 714.2857
+indoor = true
+
+# The centre (spec "Capacity and sizing": the city centre is the hot spot):
+# a district of 2.6 km by 2.6 km, a quarter of the middle domain, with
+# twice the people. What makes a centre hot is people: by day it holds its
+# residents and those who come in to work, about twice the density of the
+# city at large, while how often a person texts does not depend on where
+# they are. Relays stay at the city's density: they were put up for
+# coverage, not for people.
+[[nodes]]
+place = "density"
+role = "leaf"
+x0 = 6637.25
+y0 = 1345.75
+width_m = 2600.0
+height_m = 2600.0
+per_km2 = 714.2857
+indoor = true
+
+# 23 texts per user per day (spec "Capacity and sizing"), 100 bytes each,
+# to anyone in the strip alike.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.9583333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 1.0
+observers = ["relay:*"]
+per_node = true

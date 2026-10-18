@@ -138,7 +138,8 @@ measurements use. Each file says in its header what it is for.
 | `ring.toml` | eight relays on an octagon, a leaf at each, every leaf sending to the leaf three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
 | `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
 | `mesh-spread.toml` | the same mesh and flows, each leaf starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
-| `s4-capacity.toml` | S4: 28 km², 269 relays of which 53 on roofs, 20 000 indoor leaves, 23 texts per leaf per day, one settled hour | capacity and where it binds; `capacity-research-2026-10-15.md` |
+| `s4-capacity.toml` | S4: 28 km², 269 relays of which 53 on roofs, 20 000 indoor leaves, 23 texts per leaf per day, one settled hour; switched on over 10 and 30 minutes, random IDs, drifting clocks, a fifth of the people walking | capacity and where it binds; `capacity-research-2026-10-15.md`, `realism-2026-10-18.md` |
+| `strip.toml` | three S4 domains side by side, 16 km by 5.3 km, a centre of 2.6 km by 2.6 km with twice the people in the middle one, texts to anyone in the strip | texts across the city, about eight hops; where the centre binds; `realism-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's
 seed, so each seed is a different mesh: some have holes, and some leave

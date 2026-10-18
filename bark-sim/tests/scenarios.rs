@@ -660,3 +660,23 @@ fn walkers_check_and_change_their_anchor() {
     assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
     accounted(&sim, "S2 walking");
 }
+
+/// The strip (`scenarios/strip.toml`): three S4 domains side by side and a
+/// centre with twice the people in the middle one. Only placed here; a
+/// run takes three to four times an S4 run's memory.
+#[test]
+fn strip_places_three_domains_and_a_centre() {
+    let sc = scenario("strip.toml");
+    let n = sc.placed().expect("places");
+    let relays = n.iter().filter(|p| p.role == RoleSpec::Relay).count();
+    assert_eq!(relays, 3 * 269);
+    let centre = |p: &&&bark_sim::scenario::PlacedNode| {
+        (6637.25..9237.25).contains(&p.xy.x) && (1345.75..3945.75).contains(&p.xy.y)
+    };
+    let leaves: Vec<_> = n.iter().filter(|p| p.role == RoleSpec::Leaf).collect();
+    assert_eq!(leaves.len(), 3 * 20_000 + 4829);
+    let inside = leaves.iter().filter(centre).count() as f64;
+    // Twice the density over 6.76 km²: about 9 657, give or take its root.
+    assert!((inside - 9657.0).abs() < 300.0, "{inside} in the centre");
+    assert_eq!(sc.settled_s(), 2700.0);
+}
