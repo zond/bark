@@ -722,6 +722,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// heartbeat may come late behind its slot, never early, so the time
     /// expected is kept from the earliest heard, moved later only by as
     /// much as the clocks may drift apart.
+    /// A heartbeat of the anchor outside its slots was heard: the anchor
+    /// is alive, and the time its next is expected stays as it was.
+    fn anchor_alive(&mut self) {
+        if self.rescan.is_some() {
+            self.anchored();
+        }
+        self.misses = 0;
+    }
+
     fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor else { return };
         if self.rescan.is_some() {
@@ -1514,7 +1523,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // When it started: a heartbeat's slot is its start, give or take
         // the listen-before-talk.
         let started = now - heartbeat_airtime(&hb);
-        self.neighbours.beat_heard(hb.id, self.home, started);
+        // A heartbeat of the anchor that a sleeping node hears before its
+        // watch opens is not in a slot: an answer to a node without an
+        // anchor, or the one after a move (spec "Heartbeat"). It shows the
+        // anchor alive but says nothing of its slots.
+        let off_slot = self.anchor.is_some_and(|a| a.id == hb.id)
+            && self.watch_at.is_some()
+            && self.watch().is_some_and(|(from, _)| started < from);
+        if !off_slot {
+            self.neighbours.beat_heard(hb.id, self.home, started);
+        }
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
@@ -1543,7 +1561,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }));
                 }
             }
-            self.anchor_heard(started);
+            if off_slot {
+                self.anchor_alive();
+            } else {
+                self.anchor_heard(started);
+            }
         }
     }
 

@@ -380,8 +380,10 @@ check held for a reception in progress waits less, at most that frame.
 
 A relay also sends a heartbeat outside its slots, with the long
 preamble, to answer a node without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). A
-receiver cannot tell an answer from a heartbeat in its slot; one that
-takes it for its anchor's slot at worst checks its anchor once.
+receiver cannot tell an answer from a heartbeat in its slot by the frame;
+a sleeping node tells them apart by the time, and an answer of its anchor
+heard before it expects the anchor's next slot does not move that time
+([relay choice](#relay-choice), roadmap D62).
 
 The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
 2 × 11.8 = 23.7 ms: two nodes whose intervals differ slide past each other
@@ -1327,7 +1329,13 @@ keeps the anchor's neighbour entry whatever its age, and wakes for the
 anchor's next heartbeat on its channel, at the time the anchor's
 interval gives ([heartbeat](#heartbeat)). It keeps the time it expects from the earliest
 heartbeat heard, moved later only by the drift of two clocks, ±50 ppm
-each, since a late one says only that the anchor was busy. It listens
+each, since a late one says only that the anchor was busy. A heartbeat of
+the anchor heard before its watch opens, as early is defined below, is no
+slot's: an answer to a node without an anchor on its channel, or the one
+after a move ([heartbeat](#heartbeat), [channel moves](#channel-moves)).
+It shows the anchor alive and moves nothing; taken as a slot, it would
+put every later watch at the wrong time and cost a check each time a
+relay answers an anchorless node that does not hear it (roadmap D62). It listens
 from as early as the heartbeat can come to as late, and goes back to
 sleep as soon as it hears it. As early is the time expected less three
 times the drift since the last heartbeat heard, at most 59 ms over a

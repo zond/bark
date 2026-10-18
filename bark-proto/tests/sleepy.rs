@@ -755,6 +755,60 @@ fn a_sleeping_node_hears_its_anchor_every_rotation() {
     assert_eq!(heard, to_s.len(), "heard every one");
 }
 
+/// A heartbeat of its anchor that a sleeping node hears between its
+/// watches, as it hears an answer to a node without an anchor on its
+/// channel, shows the anchor alive and leaves the time it expects the
+/// next where it was: the node checks its anchor no more for answers once
+/// a minute, and hears every heartbeat of a slot (spec "Relay choice").
+#[test]
+fn heartbeats_out_of_slot_do_not_move_the_watch() {
+    use bark_proto::wire::Heartbeat;
+    use bark_proto::{Frame, MAX_FRAME};
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 131), node(50.0, true, 132)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let home = h.resting(s).unwrap();
+    let relay = &h.nodes[r].core;
+    let hb = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        home: relay.home(),
+        id: relay.id(),
+        short: relay.config().position.short(),
+    };
+    let mut answer = Frame {
+        channel: home,
+        preamble_symbols: LONG_PREAMBLE_SYMBOLS,
+        len: 0,
+        bytes: [0; MAX_FRAME],
+    };
+    answer.len = Packet::Heartbeat(hb).encode(&mut answer.bytes).unwrap() as u8;
+    // Answers as a relay sends them to a node without an anchor that
+    // does not hear them: at once and a fade later, each time the node's
+    // beat comes to the relay's channel, about every 450 s, for an hour.
+    for k in 0..8 {
+        for fade in [0, 60] {
+            h.run_until(at(1000 + 450 * k + fade), |_| false);
+            h.inject(r, answer);
+        }
+    }
+    h.run_until(at(4800), |_| false);
+    let checks = h.nodes[s]
+        .traces
+        .iter()
+        .filter(|(t, x)| *t >= at(1000) && *x == Trace::AnchorCheck)
+        .count();
+    assert_eq!(checks, 0, "checked its anchor");
+    let missed = h.nodes[s]
+        .traces
+        .iter()
+        .filter(|(t, x)| *t >= at(1000) && matches!(x, Trace::AnchorWatch { heard: false, .. }))
+        .count();
+    assert_eq!(missed, 0, "missed a watch");
+}
+
 /// A node whose anchor is gone notices when two of the anchor's rotations
 /// pass without its heartbeat, listens a rotation, and takes the other node
 /// it hears (spec "Relay choice").
