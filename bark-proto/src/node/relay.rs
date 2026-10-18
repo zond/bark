@@ -1349,12 +1349,14 @@ impl Relay {
         // neighbours to forward to: it takes no traffic (spec "Channel at boot").
         let running = self.stage == Stage::Running;
         let decoded = Packet::decode(bytes);
-        // A node's DATA says where it listens now (spec "Packet sender"). Its
+        // A node's DATA says where it listens now (spec "Packet sender"),
+        // a sleepy node's that it is still in reach (spec "Heard table"). Its
         // DATA and ACKs show how well it is heard (spec "Neighbour table").
         match decoded {
             Ok(Packet::Data(d)) => {
                 self.neighbours.home_heard(d.src_hop, d.sender_home);
                 self.neighbours.frame_heard(d.src_hop, rssi);
+                self.heard.sent(d.src_hop, d.sender_home, now);
             }
             Ok(Packet::Ack(a)) => self.neighbours.frame_heard(a.from, rssi),
             _ => {}

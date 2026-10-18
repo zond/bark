@@ -9,9 +9,11 @@
 //! channel, until when it listens, and whether a delivery to it went
 //! unanswered since its last beat.
 //!
-//! An entry is kept for two beat periods, the delivery TTL, after its last
-//! beat: one lost beat does not lose it, and a node that has gone is kept
-//! no longer than the messages held for it (spec "Sleepy nodes"). When the table
+//! An entry is kept for two beat periods, the delivery TTL, after the last
+//! frame heard from the node, its beat, its own DATA or its ACK: one lost
+//! beat does not lose it, a node that answers is not lost for its beats
+//! going unheard, and a node that has gone is kept no longer than the
+//! messages held for it (spec "Sleepy nodes", "Heard table"). When the table
 //! is full a newcomer takes the place of an expired entry, else of the
 //! weakest if it is heard stronger: the strongest are the nodes most
 //! likely to have chosen this one (spec "Relay choice").
@@ -40,7 +42,8 @@ pub const fn beat_period(delivery_ttl: Duration) -> Duration {
 /// The table's parameters, from a configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeardParams {
-    /// How long an entry is kept after its last beat: two beat periods.
+    /// How long an entry is kept after the last frame heard from its node:
+    /// two beat periods.
     pub keep: Duration,
     /// How long a sleepy node listens after its beat, and so how long a
     /// holder may start sending to it then: long enough for one hand-over
@@ -85,7 +88,7 @@ pub struct HeardNode {
     pub rssi: i16,
     /// RSSI of its last beat.
     pub last: i16,
-    /// When its last beat was heard.
+    /// When the last frame from it was heard: a beat, its DATA or its ACK.
     pub last_heard: Instant,
     /// Until when it listens.
     pub awake_until: Instant,
@@ -205,6 +208,17 @@ impl Heard {
         if let Some(n) = self.get_mut(id) {
             n.awake_until = awake;
             n.missed = false;
+            n.last_heard = now;
+        }
+    }
+
+    /// A DATA of `id`'s own, sent from its home channel `home`, was heard
+    /// at `now`: it is in reach, and listens on `home`. Sending says
+    /// nothing of whether it listens now.
+    pub fn sent(&mut self, id: NodeId, home: Channel, now: Instant) {
+        if let Some(n) = self.get_mut(id) {
+            n.home = home;
+            n.last_heard = now;
         }
     }
 
@@ -215,7 +229,7 @@ impl Heard {
         }
     }
 
-    /// Remove every entry not heard for two beat periods at `now`.
+    /// Remove every entry of a node not heard for two beat periods at `now`.
     pub fn expire(&mut self, now: Instant) {
         let keep = self.params.keep;
         self.nodes.retain(|n| now.since(n.last_heard) < keep);
@@ -274,6 +288,25 @@ mod tests {
         let n = *t.get(id(1)).unwrap();
         assert_eq!((n.home, n.rssi, n.last, n.missed), (ch(4), -85, -80, false));
         assert!(t.awake(id(1), at(300)));
+    }
+
+    /// A node heard by its own DATA or by taking a message is kept as by
+    /// a beat, and its DATA names the channel it listens on.
+    #[test]
+    fn any_frame_from_a_node_keeps_it() {
+        let mut t = Heard::from_config(&Config::default());
+        assert!(t.heard(id(1), ch(3), -90, at(0)));
+        t.sent(id(1), ch(5), at(500));
+        assert!(!t.awake(id(1), at(500)), "sending is not listening");
+        t.expire(at(1000));
+        assert_eq!(t.get(id(1)).map(|n| n.home), Some(ch(5)));
+        t.took(id(1), at(1050));
+        t.expire(at(1600));
+        assert!(t.get(id(1)).is_some());
+        t.expire(at(1650));
+        assert!(t.get(id(1)).is_none());
+        t.sent(id(2), ch(5), at(1650));
+        assert!(t.is_empty(), "DATA alone does not make a node sleepy");
     }
 
     #[test]

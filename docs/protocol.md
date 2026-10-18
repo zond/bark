@@ -1387,7 +1387,18 @@ A node keeps the sleepy nodes it hears beat in its **heard table**,
 256 entries, by ID: the node's home channel, until when it listens
 ([delivery](#delivery)), whether a delivery to it went unanswered since its
 last beat, and the mean RSSI of its last two beats. An entry is kept for
-two beat periods after the last beat, the delivery TTL. When the table
+two beat periods, the delivery TTL, after the last frame heard from the
+node: a beat, its own DATA, whose `aux` also names its home channel
+([packet sender](#packet-sender)), or its ACK of a delivery. A node that answers is in reach
+whether or not its beats are heard, and a busy holder misses beats, while
+it transmits or when another frame meets the beat there. A node reached
+only in the windows its beats open renews its entry with each of them,
+but one kept awake by a flow longer than a TTL does not. In the simulated
+ring at its cap, with its sleepy nodes listening all the time, a holder
+missed one beat in five, and on half the seeds forgot a node that took a
+message from it every two seconds; the messages for that node filled the
+delivery queue, were refused, and waited at the relays before it, already
+at their cap, until its next beat was heard (roadmap D53). When the table
 is full a newcomer takes the place of an expired entry, else of the
 weakest if the newcomer is heard stronger: the strongest are the nodes
 most likely to have chosen this relay as their anchor. Hearing the beat
