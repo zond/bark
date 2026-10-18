@@ -266,6 +266,16 @@ pub enum Trace {
         /// The parent.
         to: NodeId,
     },
+    /// A DATA of a message this node has a record of was taken, and was
+    /// not a retransmission (spec "Receiving DATA" cases 4 and 5).
+    Copy {
+        /// The message.
+        msg_id: MsgId,
+        /// From a neighbour this node handed the message to: a return.
+        returned: bool,
+        /// This node holds another copy, which goes on (case 4).
+        merged: bool,
+    },
     /// Every attempt of a hand-over to a neighbour went unanswered, and a
     /// failure was counted against it (spec "Hand-over" step 6).
     HandOverFailed {

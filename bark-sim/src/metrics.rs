@@ -237,6 +237,15 @@ pub struct CoreCounts {
     /// Hand-overs to a neighbour whose every attempt went unanswered (spec
     /// "Hand-over" step 6).
     pub failed: u64,
+    /// Copies of a message taken that were not retransmissions and came
+    /// from no neighbour this node had handed the message to (spec
+    /// "Receiving DATA" cases 4 and 5): a split's second copy, or the
+    /// search coming back by another way.
+    pub copies: u64,
+    /// Of those, merged with a copy held here (case 4).
+    pub merged: u64,
+    /// Returns taken from a neighbour this node handed the message to.
+    pub returns_in: u64,
     /// Deliveries to a sleepy node whose every attempt went unanswered
     /// (spec "Delivery").
     pub deliveries_failed: u64,

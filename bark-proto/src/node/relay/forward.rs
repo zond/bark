@@ -418,6 +418,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
         let case = self.classify(id, repeat);
+        let copy = self
+            .records
+            .get(id)
+            .filter(|r| !repeat && !r.arrived())
+            .map(|r| {
+                let returned = self
+                    .neighbours
+                    .slot_of(d.src_hop)
+                    .is_some_and(|s| r.handed(s));
+                (returned, case == Case::AckOnly)
+            });
         let owner = case != Case::AckOnly && (d.dst_id == self.me() || self.owns(d.dst_pos, now));
         let sends = case != Case::AckOnly && !owner;
         // The time left was stamped as the frame went on air. Gone, the
@@ -504,6 +515,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if owner {
                 r.set_arrived();
             }
+        }
+        if let Some((returned, merged)) = copy {
+            emit(Action::Trace(Trace::Copy {
+                msg_id: id,
+                returned,
+                merged,
+            }));
         }
         match case {
             Case::AckOnly => {

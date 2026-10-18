@@ -1989,6 +1989,16 @@ impl Sim {
                         c.originated_out += u64::from(hops == 1);
                     }
                     Trace::HandOverFailed { .. } => c.failed += 1,
+                    Trace::Copy {
+                        returned, merged, ..
+                    } => {
+                        if returned {
+                            c.returns_in += 1;
+                        } else {
+                            c.copies += 1;
+                            c.merged += u64::from(merged);
+                        }
+                    }
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
                         c.returned += 1;
