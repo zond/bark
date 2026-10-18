@@ -237,6 +237,9 @@ pub struct CoreCounts {
     /// Hand-overs to a neighbour whose every attempt went unanswered (spec
     /// "Hand-over" step 6).
     pub failed: u64,
+    /// Of those, whose receiver had the message by then, most likely
+    /// because only its ACKs were lost.
+    pub failed_taken: u64,
     /// Copies of a message taken that were not retransmissions and came
     /// from no neighbour this node had handed the message to (spec
     /// "Receiving DATA" cases 4 and 5): a split's second copy, or the

@@ -824,6 +824,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
     }
 
+    /// Whether this relay has a record of message `id`: it has received
+    /// or originated it (spec "Message records"). For a driver to sample;
+    /// reading it changes nothing.
+    pub fn knows(&self, id: MsgId) -> bool {
+        self.records.get(id).is_some()
+    }
+
     /// The lowest count a packet from a relay may carry to be taken into
     /// a hop place now, if any is free (spec "Send queue"). For a driver to sample;
     /// reading it changes nothing.

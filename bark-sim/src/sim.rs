@@ -1988,7 +1988,14 @@ impl Sim {
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
                     }
-                    Trace::HandOverFailed { .. } => c.failed += 1,
+                    Trace::HandOverFailed { msg_id, to } => {
+                        c.failed += 1;
+                        let had = self
+                            .relay_index
+                            .get(&key(to))
+                            .is_some_and(|&r| self.relays[r as usize].knows(msg_id));
+                        c.failed_taken += u64::from(had);
+                    }
                     Trace::Copy {
                         returned, merged, ..
                     } => {
