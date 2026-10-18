@@ -1540,9 +1540,10 @@ impl Sim {
             let l = r.load(self.clocks[i].local(self.now));
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
-                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"m\":{m}}}\n",
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"home\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"m\":{m}}}\n",
                 self.nodes[i].alive,
                 r.booting(),
+                r.home().index(),
                 r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64,
                 bark_proto::Channel::all()
                     .map(|c| r.busy().fraction(c))
