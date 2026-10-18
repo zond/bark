@@ -84,6 +84,9 @@
 //! it takes only a free slot: eviction makes way for a node that is a
 //! next hop like any other (spec "Neighbour table").
 //!
+//! An anchorless entry counts the consecutive rotations of its sender's
+//! beats in which one was heard here ([`Neighbour::stays_anchorless`]).
+//!
 //! A sleepy node without an anchor beats with the anchorless bit too, once
 //! an anchorless beat period on the next channel each time: no anchor, a
 //! next hop like any other, and its entry expires two of its worst-case
@@ -148,7 +151,9 @@ pub struct Neighbour {
     /// Whether it is sleepy and knows no node that is not (heartbeat 0xB):
     /// no anchor for a sleepy node.
     pub anchorless: bool,
-    /// Heartbeats heard from it, up to [`BEATS`].
+    /// Heartbeats heard from it, up to [`BEATS`]; of an anchorless one,
+    /// the consecutive rotations of its beats in which one was heard here,
+    /// up to [`BEATS`] ([`Neighbour::stays_anchorless`]).
     pub beats: u8,
     /// When its last heartbeat heard started, and on which channel: with its
     /// fixed interval, when its next comes to any channel
@@ -172,6 +177,13 @@ impl Neighbour {
     pub fn relay(&self) -> bool {
         !self.sleepy
     }
+
+    /// Whether it is anchorless and was heard so in two consecutive
+    /// rotations of its beats: not switching on, about to anchor, but in a
+    /// pocket with no relay (spec "Beats").
+    pub fn stays_anchorless(&self) -> bool {
+        self.anchorless && self.beats >= BEATS
+    }
 }
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
@@ -192,6 +204,13 @@ pub struct NeighbourParams {
     pub stale_after: Duration,
     /// Age at which an anchorless entry expires.
     pub anchorless_expire_after: Duration,
+    /// The longest rotation of an anchorless node's beats: 13 beats, one on
+    /// each channel, each at most an anchorless beat period after the
+    /// last. Two of its beats heard here come in consecutive rotations when
+    /// they are at least half of this apart, each beat at least half a
+    /// period after the last, and at most this and a heartbeat's lag
+    /// ([`NeighbourParams::anchorless_rotations`]).
+    pub anchorless_rotation: Duration,
     /// Age at which the entry of a sleepy node with an anchor expires: two
     /// beat periods.
     pub sleepy_expire_after: Duration,
@@ -213,7 +232,17 @@ impl NeighbourParams {
                     + heartbeat_lag(c).as_micros(),
             ),
             sleepy_expire_after: beat_period(c.delivery_ttl).mul(2),
+            anchorless_rotation: anchorless_beat_period(c.delivery_ttl).mul(CHANNELS as u64),
         }
+    }
+
+    /// The least and the most time between two anchorless beats heard in
+    /// consecutive rotations of their sender's beats; the lag is what the
+    /// expiry adds to two rotations.
+    pub fn anchorless_rotations(&self) -> (Duration, Duration) {
+        let rotation = self.anchorless_rotation;
+        let lag = self.anchorless_expire_after - rotation.mul(2);
+        (rotation.div(2), rotation + lag)
     }
 }
 
@@ -381,9 +410,22 @@ impl Neighbours {
                 }
                 n.home = hb.home;
                 n.sleepy = hb.sleepy;
-                n.anchorless = hb.anchorless && hb.sleepy;
+                let anchorless = hb.anchorless && hb.sleepy;
+                let (min, max) = self.params.anchorless_rotations();
+                let gap = now.since(n.beat_at);
+                n.beats = if anchorless && !n.anchorless {
+                    1
+                } else if anchorless && gap < min {
+                    // On this channel twice in one rotation: no new one.
+                    n.beats
+                } else if anchorless && gap > max {
+                    // A rotation missed: not consecutive.
+                    1
+                } else {
+                    (n.beats + 1).min(BEATS)
+                };
+                n.anchorless = anchorless;
                 n.answered = 0;
-                n.beats = (n.beats + 1).min(BEATS);
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
             }
@@ -686,6 +728,32 @@ mod tests {
             t.next_expiry(),
             Some(Instant::ZERO + params().anchorless_expire_after)
         );
+    }
+
+    /// An anchorless neighbour stays anchorless once heard so in two
+    /// consecutive rotations of its beats: not twice within half a
+    /// rotation, 300 s, not across a rotation missed, more than 600 s and a
+    /// heartbeat's lag, and no more once heard with the sleepy bit alone.
+    #[test]
+    fn an_anchorless_neighbour_stays_anchorless_over_two_rotations() {
+        let mut t = Neighbours::new(params());
+        let (min, max) = params().anchorless_rotations();
+        assert_eq!(min, Duration::from_micros(299_999_999));
+        assert_eq!(max, Duration::from_micros(600_992_862));
+        let beat = |t: &mut Neighbours, s: u64| {
+            hear_anchorless(t, 0, -80, at(s));
+            t.beat_heard(id(0), Channel::new(0).unwrap(), at(s));
+            t.get(id(0)).unwrap().stays_anchorless()
+        };
+        assert!(!beat(&mut t, 0), "once");
+        assert!(!beat(&mut t, 200), "twice in one rotation");
+        assert!(beat(&mut t, 500), "a rotation later");
+        assert!(beat(&mut t, 1000));
+        hear_sleepy(&mut t, 0, -80, at(1100));
+        assert!(!t.get(id(0)).unwrap().stays_anchorless(), "anchored");
+        assert!(!beat(&mut t, 1200), "anchorless again: once");
+        assert!(!beat(&mut t, 1900), "a rotation missed");
+        assert!(beat(&mut t, 2400));
     }
 
     /// Hear sleepy node `i`'s beat, the sleepy bit alone: it has an anchor.

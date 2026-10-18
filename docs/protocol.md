@@ -1383,9 +1383,19 @@ listen on as well, with the long preamble: they receive duty-cycled and
 would not hear a short beat, and the long one tells them a last resort
 they can reach with the preamble, not an anchor, since it carries the
 sleepy bit alone. It hears them because their beats carry the long
-preamble and step through every channel ([sleepy nodes alone](#sleepy-nodes-alone)). Each such
-beat is a long heartbeat, 366 ms ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-5.9 s an hour per channel at sixteen beats (roadmap D58).
+preamble and step through every channel ([sleepy nodes alone](#sleepy-nodes-alone)). It does so
+for a neighbour only once it has heard that neighbour's anchorless beat
+in two consecutive rotations of its beats: at least half a rotation apart,
+13 beats each at least half an anchorless beat period after the last,
+300 s, and at most a rotation and a heartbeat's lag, 601 s; it stops when
+the entry expires ([neighbour table](#neighbour-table)) or the neighbour is heard with the
+sleepy bit alone. A neighbour heard anchorless once may be switching on,
+and will anchor within minutes; one still anchorless a rotation later is
+in a pocket with no relay, and a pocket's nodes mostly know their way out
+already, from the time both were anchorless, so waiting a rotation costs
+them little. Each such beat is a long heartbeat, 366 ms
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), 5.9 s an hour per channel at sixteen
+beats (roadmap D58).
 
 A sleepy node may have moved since its last beat, so it refreshes its
 GPS fix before each beat. GPS goes off after a fix, and off after 10

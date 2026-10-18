@@ -1337,14 +1337,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The channels the anchorless neighbours of a sleepy node with an
     /// anchor listen on at `now`, as a mask: each of its beats goes on
-    /// each of them too, with the long preamble (spec "Beats").
+    /// each of them too, with the long preamble, once it has heard the
+    /// neighbour anchorless in two consecutive rotations of its beats
+    /// (spec "Beats"). One heard so once may be switching on, and anchor
+    /// within minutes.
     fn reach_channels(&self, now: Instant) -> u16 {
         if !self.anchored_sleepy() {
             return 0;
         }
         self.neighbours
             .live(now)
-            .filter(|(_, n)| n.anchorless)
+            .filter(|(_, n)| n.stays_anchorless())
             .fold(0, |m, (_, n)| m | channel_bit(n.home))
     }
 

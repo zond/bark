@@ -992,6 +992,26 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
             && Some(f.channel) == bark_proto::Channel::new(9)
     });
     assert!(reach, "a long beat on A's channel");
+    // Only once S has heard A anchorless in two rotations of A's beats, at
+    // least half a rotation apart: one heard once may be switching on.
+    let aid = h.nodes[a].core.id();
+    let heard_a: Vec<Instant> = h.nodes[s]
+        .received
+        .iter()
+        .filter(|(_, b)| matches!(Packet::decode(b), Ok(Packet::Heartbeat(hb)) if hb.id == aid))
+        .map(|(t, _)| *t)
+        .collect();
+    let first_long = h.nodes[s]
+        .sent
+        .iter()
+        .find(|(_, f)| f.preamble_symbols == LONG_PREAMBLE_SYMBOLS)
+        .map(|(t, _)| *t)
+        .unwrap();
+    let before: Vec<_> = heard_a.iter().filter(|&&t| t < first_long).collect();
+    assert!(
+        before.len() >= 2 && before[before.len() - 1].since(*before[0]) >= rotation.div(2),
+        "{heard_a:?} {first_long:?}"
+    );
     let id = send(&mut h, a, r, b"out of the pocket");
     assert!(h.run_until(h.now + secs(20), |h| delivered_at(h, r, id).is_some()));
     let data = |i: usize| {
