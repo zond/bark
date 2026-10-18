@@ -30,17 +30,18 @@ pub struct Config {
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
     /// its seed.
     pub node_id: NodeId,
-    /// The node sleeps between heartbeats, as a carried node on battery
-    /// does. It heartbeats only on its home channel, at most every beat
-    /// period (`tables::heard::beat_period`, 300 s); its home is the
-    /// channel of the strongest node that is not sleepy it hears, and its
-    /// address that node's position; it is no next hop, and a node holding
-    /// a message for it sends it while it listens after a beat. Without
-    /// such a node it is anchorless: it holds and forwards as a relay does,
-    /// beats once a minute on the rotating channel with the long preamble,
-    /// and receives duty-cycled between beats (spec "Sleepy nodes alone").
-    /// It does not choose its channel by how busy channels are, and sweeps
-    /// them only while it boots.
+    /// The node is a carried node on battery (spec "Sleepy nodes"). It
+    /// heartbeats only on its home channel, at most every beat period
+    /// (`tables::heard::beat_period`, 300 s); its home is the channel of
+    /// the strongest node that is not sleepy it hears, and its address that
+    /// node's position; a node holding a message for it sends it while it
+    /// listens after a beat. Between its windows it receives duty-cycled,
+    /// a next hop only as a last resort, with the long preamble; it holds
+    /// mail for nobody and forwards at once. Without such a node it is
+    /// anchorless: it beats once a minute on the rotating channel with the
+    /// long preamble and has no window (spec "Sleepy nodes alone"). It does
+    /// not choose its channel by how busy channels are, and sweeps them
+    /// only while it boots.
     pub sleepy: bool,
     /// Research switch: holders send to a sleepy node whenever they hold a
     /// message for it, as if it listened all the time, instead of only
@@ -135,8 +136,8 @@ pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
 }
 
 /// The longest a heartbeat waits behind its slot: a hand-over attempt it
-/// may find under way, a full frame with the long preamble, to a node
-/// without an anchor, and the ACK timeout, 592.86 ms, which is longer than
+/// may find under way, a full frame with the long preamble, to a sleepy
+/// node, and the ACK timeout, 592.86 ms, which is longer than
 /// a reception its check waits for, and two listen-before-talk backoffs
 /// before its last check, 400 ms (spec "Heartbeat", "Hand-over"):
 /// 992.86 ms.

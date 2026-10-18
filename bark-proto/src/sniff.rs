@@ -1,7 +1,7 @@
 //! Duty-cycled receive and the long preamble (spec "Physical layer",
-//! "Sleepy nodes alone").
+//! "Sleepy nodes").
 //!
-//! A sleepy node without an anchor keeps its receiver in the SX1262's
+//! A sleepy node keeps its receiver, between its windows, in the SX1262's
 //! duty-cycled receive (SX1261/2 datasheet Rev 1.2, §13.1.7,
 //! SetRxDutyCycle): the radio receives for [`SNIFF_RX`], sleeps for
 //! [`SNIFF_SLEEP`], wakes, and so on. A frame is caught only if its
@@ -132,8 +132,9 @@ pub const SNIFF_SLEEP: Duration = {
 pub const SNIFF_CYCLE: Duration =
     Duration::from_micros(SNIFF_RX.as_micros() + SNIFF_SLEEP.as_micros() + SNIFF_WAKE.as_micros());
 
-/// The preamble of every frame to a sleepy node without an anchor, and of
-/// its own beats: the shortest that a duty-cycled receiver always catches,
+/// The preamble of every frame to a sleepy node outside its windows, and
+/// of the beats of one without an anchor: the shortest that a duty-cycled
+/// receiver always catches,
 /// the sleep, the wake and two detections, in whole symbols.
 pub const LONG_PREAMBLE_SYMBOLS: u16 =
     (SNIFF_SLEEP.as_micros() + SNIFF_WAKE.as_micros() + 2 * DETECT)
