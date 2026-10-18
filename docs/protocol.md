@@ -414,7 +414,7 @@ matters only among the nodes one node keeps in its tables, 64 neighbours
 and 256 sleepy nodes ([heard table](#heard-table)), 1.2 × 10⁻⁵.
 
 The ID, not the position, is a node's identity: a node whose position
-changes keeps its ID and heartbeats the new position. Its address changes
+changes keeps its ID ([position and time](#position-and-time)). Its address changes
 with it ([addresses](#addresses)), and so does that of every sleepy node anchored to it.
 Two nodes at one position are two nodes.
 
@@ -489,7 +489,7 @@ Per node, up to 64 entries, by node ID:
 - **Eviction** when full and a relay not in the table is heard: the
   newcomer replaces the least recently heard demoted entry; failing that,
   the least recently heard entry if it has not been heard for a
-  worst-case rotation, 13 × 15 s = 195 s ([heartbeat](#heartbeat)), so it has certainly missed
+  worst-case rotation ([heartbeat](#heartbeat)), so it has certainly missed
   a heartbeat on this channel; failing that, the newcomer is not added
   (roadmap D12). Replacing the least recently heard entry outright does
   not work for a rooftop relay that hears ≈270 relays ([capacity and sizing](#capacity-and-sizing)): about two
@@ -504,9 +504,7 @@ Per node, up to 64 entries, by node ID:
 A heartbeat with the sleepy bit, a beat ([beats](#beats)), fills the neighbour
 table like any heartbeat, the entry marked sleepy, and at a node that is
 not sleepy the heard table too, which holders use to deliver
-([heard table](#heard-table)). Every node keeps a neighbour table and a send queue; only
-a node that is not sleepy keeps the heard table and the delivery queue
-([sleepy nodes](#sleepy-nodes)).
+([heard table](#heard-table)).
 
 ---
 
