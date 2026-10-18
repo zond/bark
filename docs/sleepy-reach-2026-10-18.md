@@ -244,3 +244,42 @@ queue, whose empty contents also start in flash.
   edge of relay coverage set; S4 starts everything within ten minutes.
 - No test on hardware: the firmware still keeps the radio listening where
   the core asks for duty-cycled receive.
+
+## Separately: a holder delivering outside the window with a long frame
+
+Not part of D58, and in its own last commit so that it can be dropped. A
+holder sends a message for a sleepy node at once, with the long preamble,
+while the node is outside its window, if its bucket holds that frame
+beyond everything it already has to send: the send queue, the other
+messages of its delivery queue at the short preamble in their windows, and
+the reply reserve, which is the admission rule of the send queue's
+regular room with the delivery queue's needs added. Otherwise, or once a
+delivery to the node has gone unanswered, the message waits for the
+node's beat as before. Once the node has taken it, the node lingers and
+what follows goes with the short preamble. Measured against N with the
+same scenarios and seeds (**E**):
+
+| | N | E | E − N |
+|---|---|---|---|
+| S4 delivered | 91.15 % | 93.81 % | +2.67 ± 0.04 points |
+| S4 latency p50, p90 | 137.1, 341.2 s | 1.6, 162.1 s | −135.5 ± 1.8, −179.1 ± 4.7 s |
+| S4 DATA with the long preamble | 1 590 s | 14 886 s | |
+| S4 airtime, all | 59 454 s | 71 976 s | +12 522 ± 2 476 s |
+| S4 busiest node's duty cycle, seeds 1, 2 | 3.3, 3.8 % | 5.5, 5.9 % | |
+| S4 sleepy node's current | 0.593 mA | 0.645 mA | +0.051 ± 0.001 mA |
+| Village beside a district, delivered | 88.06 % | 90.78 % | +2.72 ± 0.72 points |
+| ... latency p50, p90 | 140.7, 339.9 s | 0.8, 196.8 s | −139.9 ± 4.1, −143.1 ± 19.4 s |
+
+The D42 suites, delivered and the sleepy node's current, E − N: S1, S1b,
+the corridor and the burst mesh unchanged, the mesh spread −0.47 ± 0.24
+points, S2 +2.49 ± 0.53, the ring at 2 s +18.2 ± 1.7 and at 1 s +24.7 ±
+2.4, the corridor at 1 s +0.35 ± 0.45 and at 0.5 s +1.33 ± 0.68, the burst
+mesh ×64 +9.5 ± 1.8. Latency at the median falls from 90 to 340 s to
+1 to 100 s in every one. The current rises where messages to sleepy
+nodes are many, since each one taken holds the node listening a hand-over
+more: +0.58 mA in S1b and the corridor, +0.79 mA and +0.59 mA in the
+rings, +2.6 mA in the corridor at 1 s, +0.91 mA in the burst mesh ×64.
+In S4 the busiest node spends half again its airtime; the DATA lost
+otherwise at sleepy nodes rises from 4 724 to 15 822 a run over the two
+seeds, frames to nodes that are dark or gone, which a beat no longer
+gates.

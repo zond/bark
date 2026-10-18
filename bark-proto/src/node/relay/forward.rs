@@ -795,7 +795,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 },
                 // Stays in the delivery queue while its node sleeps.
                 Kind::Deliver => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) => {
+                    Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) || self.early(&out) => {
                         Routed::To(out, self.expect(d.msg_id(), d.dst_hop))
                     }
                     Ok(Packet::Data(d)) => {
@@ -860,6 +860,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.handover.cancel();
         self.skipped = 0;
+    }
+
+    /// Whether the delivery `out` goes outside its node's window, with the
+    /// long preamble, to a node not known to be out of reach
+    /// (`relay/delivery.rs`).
+    fn early(&self, out: &Outgoing) -> bool {
+        let to = match Packet::decode(out.frame.payload()) {
+            Ok(Packet::Data(d)) => d.dst_hop,
+            _ => return false,
+        };
+        out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS
+            && self.heard.get(to).is_some_and(|n| !n.missed)
     }
 
     /// Address the forward `out` (spec "Next hop"), or let it wait for a ban to
@@ -1021,15 +1033,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// since the last attempt, listens elsewhere, and one whose heartbeat
     /// has changed between sleepy and not changes its preamble. A receiver no longer in
     /// its table keeps the address it had.
-    fn readdress(&mut self) -> Option<Outgoing> {
+    fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
         let (channel, preamble) = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) if out.kind != Kind::Deliver => (
                 self.home_of(d.dst_hop),
                 self.neighbours.get(d.dst_hop).map(preamble),
             ),
-            // Its holder moves its sleepy nodes with it (`take_listeners`).
-            Ok(Packet::Data(d)) => (self.heard.get(d.dst_hop).map(|n| n.home), None),
+            // Its holder moves its sleepy nodes with it (`take_listeners`);
+            // one that listens now needs no long preamble.
+            Ok(Packet::Data(d)) => (
+                self.heard.get(d.dst_hop).map(|n| n.home),
+                self.listening(d.dst_hop, now)
+                    .then_some(MIN_PREAMBLE_SYMBOLS),
+            ),
             _ => (None, None),
         };
         out.frame.channel = channel.unwrap_or(out.frame.channel);
@@ -1046,7 +1063,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.handover.due(now) {
             return false;
         }
-        let Some(out) = self.readdress() else {
+        let Some(out) = self.readdress(now) else {
             return false;
         };
         if !self.affordable(mac::airtime(&out.frame), now) {

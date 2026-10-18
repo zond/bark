@@ -173,12 +173,15 @@ fn a_sleepy_node_anchors_at_the_first_relay_and_then_takes_the_strongest() {
 }
 
 /// A message for a sleepy node waits at its holder, the owner of its
-/// address, until the node beats, and goes to it in the window after the
-/// beat (`tables::heard`). With `sleepy_listens` the node listens all the
-/// time and the holder sends it at once. The wait is the delivery queue's and does not count against the
-/// message's time left: the DATA carries the time it arrived with.
+/// address, and goes to it at once with the long preamble while the
+/// holder's bucket has room beyond what it has to send; it would otherwise
+/// wait for the node's beat (`relay/delivery.rs`). With `sleepy_listens`
+/// the node listens all the time and the holder sends it at once with the
+/// short preamble. The wait is the delivery queue's and does not count
+/// against the message's time left: the DATA carries the time it arrived
+/// with.
 #[test]
-fn a_message_for_a_sleepy_node_goes_on_its_beat() {
+fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
     for listens in [false, true] {
         let (r, s) = (0, 1);
         let config = Config {
@@ -201,21 +204,22 @@ fn a_message_for_a_sleepy_node_goes_on_its_beat() {
         let id = send(&mut h, r, s, b"wake up");
         assert!(h.run_until(sent_at + secs(400), |h| delivered_at(h, s, id).is_some()));
         let got = delivered_at(&h, s, id).unwrap();
-        if listens {
-            assert!(got.since(sent_at) < secs(1), "{:?}", got.since(sent_at));
+        assert!(got.since(sent_at) < secs(1), "{:?}", got.since(sent_at));
+        let sid = h.nodes[s].core.id();
+        let preambles: Vec<_> = h.nodes[r]
+            .sent
+            .iter()
+            .filter(|(_, f)| {
+                matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.dst_hop == sid)
+            })
+            .map(|(_, f)| f.preamble_symbols)
+            .collect();
+        let want = if listens {
+            bark_proto::radio::MIN_PREAMBLE_SYMBOLS
         } else {
-            let beat = beats(&h, s)
-                .into_iter()
-                .map(|(t, _, _)| t)
-                .rfind(|&t| t <= got)
-                .unwrap();
-            assert!(beat > sent_at, "delivered before the node woke");
-            assert!(
-                got.since(beat) < window,
-                "{:?} after the beat",
-                got.since(beat)
-            );
-        }
+            LONG_PREAMBLE_SYMBOLS
+        };
+        assert_eq!(preambles, [want]);
         let ttl = Data::units(Config::default().delivery_ttl);
         let to_node: Vec<_> = h.nodes[r]
             .sent
@@ -659,7 +663,8 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
 /// Messages waiting for a sleepy node go one after the other in the
 /// window after its beat: the node listens one hand-over after each it
 /// answers, and receives duty-cycled again once a hand-over has passed
-/// after the last (spec "Delivery").
+/// after the last (spec "Delivery"). The first DATA, with the long
+/// preamble before the beat, is lost, so the holder waits for the beat.
 #[test]
 fn a_burst_goes_on_one_beat_and_the_node_sniffs_a_hand_over_after_the_last() {
     let (r, s) = (0, 1);
@@ -667,6 +672,14 @@ fn a_burst_goes_on_one_beat_and_the_node_sniffs_a_hand_over_after_the_last() {
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
+    let attempts = Config::default().hop_attempts as usize;
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, _, to, bytes| {
+        let data = to == s && matches!(Packet::decode(bytes), Ok(Packet::Data(_)));
+        let lose = data && lost < attempts;
+        lost += usize::from(lose);
+        lose
+    }));
     let sniffing = |h: &Harness<Relay>| {
         h.nodes[s]
             .sniffed

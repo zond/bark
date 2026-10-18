@@ -33,15 +33,17 @@ use super::Node;
 use crate::event::{Action, DropReason, Trace};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::radio::MIN_PREAMBLE_SYMBOLS;
+use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
+use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{Duration, Instant};
-use crate::wire::{Data, Packet};
+use crate::wire::{Data, Packet, DATA_HEADER_LEN};
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// Whether the sleepy node `id` may be sent to at `now`: in the window
-    /// after a beat, or with `sleepy_listens` whenever it is heard.
+    /// Whether the sleepy node `id` may be sent to with the short preamble
+    /// at `now`: in the window after a beat, or with `sleepy_listens`
+    /// whenever it is heard.
     pub(super) fn listening(&self, id: NodeId, now: Instant) -> bool {
         if self.config.sleepy_listens {
             return self.heard.get(id).is_some();
@@ -55,6 +57,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// send queue has no room for it: `Err(Some(t))` when the bucket will
     /// fit it at `t`, `Err(None)` when only a hand-over ending will make
     /// room.
+    ///
+    /// Outside its window, the node receiving duty-cycled, the message goes
+    /// with the long preamble if the bucket holds it beyond everything this
+    /// node has to send: the send queue, the other messages of the delivery
+    /// queue in their windows, and the reply reserve. Otherwise, or once a
+    /// delivery to the node has gone unanswered, it waits for its beat.
     pub(super) fn try_deliver(
         &mut self,
         node: NodeId,
@@ -73,7 +81,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             o.kind == Kind::Deliver
                 && matches!(Packet::decode(o.frame.payload()), Ok(Packet::Data(d)) if d.dst_hop == node)
         };
-        if !listens || self.queue.iter().any(is_for) {
+        // Outside its window, and not known to be out of reach.
+        let early = !listens && !self.config.sleepy_listens && !n.missed;
+        if (!listens && !early) || self.queue.iter().any(is_for) {
             return Ok(());
         }
         let home = n.home;
@@ -91,8 +101,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             time_left: q.time_left,
             payload: q.payload(),
         };
-        let frame = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+        let preamble = if early {
+            LONG_PREAMBLE_SYMBOLS
+        } else {
+            MIN_PREAMBLE_SYMBOLS
+        };
+        let (msg_id, frame) = (q.msg_id, mac::frame(&Packet::Data(data), home, preamble));
         let airtime = mac::airtime(&frame);
+        if early {
+            // The other messages it holds for sleepy nodes, in their windows.
+            let held = self
+                .delivery
+                .iter()
+                .filter(|o| o.msg_id != msg_id)
+                .map(|o| {
+                    time_on_air(
+                        (DATA_HEADER_LEN + o.payload().len()) as u8,
+                        MIN_PREAMBLE_SYMBOLS,
+                    )
+                })
+                .fold(Duration::ZERO, |a, b| a + b);
+            if self.no_room(airtime, held, now).is_none() {
+                let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
+            }
+            return Ok(());
+        }
         match self.no_room(airtime, Duration::ZERO, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
