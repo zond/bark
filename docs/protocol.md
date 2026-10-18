@@ -1324,8 +1324,9 @@ mean of two heartbeats has σ/√2, and the difference of two such means
 relay that is no better takes the node on 2.3 % of comparisons. The
 neighbour table's average lets each new frame count half, which varies
 less than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more
-than two standard deviations there. Vehicles cannot keep up and rely on
-the delivery queue and a new anchor on arrival.
+than two standard deviations there. A node in a vehicle does not keep
+up: the mail its holder keeps for it waits out its TTL there, and is lost
+unless the sender learns the new address (roadmap D65).
 
 **Asleep.** Between its windows a sleepy node receives duty-cycled,
 which catches no heartbeat of the ordinary preamble, so it hears the
@@ -1339,9 +1340,7 @@ each, since a late one says only that the anchor was busy. A heartbeat of
 the anchor heard before its watch opens, as early is defined below, is no
 slot's: an answer to a node without an anchor on its channel, or the one
 after a move ([heartbeat](#heartbeat), [channel moves](#channel-moves)).
-It shows the anchor alive and moves nothing; taken as a slot, it would
-put every later watch at the wrong time and cost a check each time a
-relay answers an anchorless node that does not hear it (roadmap D62). It listens
+It shows the anchor alive and moves nothing (roadmap D62). It listens
 from as early as the heartbeat can come to as late, and goes back to
 sleep as soon as it hears it. As early is the time expected less three
 times the drift since the last heartbeat heard, at most 59 ms over a
