@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-15 and 16. Open item O8. Spec references are to
 `protocol.md`. Builds on `capacity-research-2026-10-15.md` (S4, one
-domain of 28 km²), D39 (`leaf-polls-2026-10-15.md`) and D38. Research
+domain of 28 km²), D39 and D38. Research
 only: the prototype is behind `Config::power`, off by default, and gives
 byte-identical results with it off. Nothing here changes the spec.
 
@@ -333,7 +333,7 @@ domain has room. At twice the rate:
 
 Here the channel binds: at full power every relay hears every other's
 heartbeats and hand-overs, 41 % of each channel is busy, and 19 DATA
-frames go out per hand-over that succeeds (the D39 note's finding).
+frames go out per hand-over that succeeds (found when D39 was measured).
 
 - **Per-receiver power for data is not enough.** Heartbeats at full
   power keep all 269 relays in reach of each other and the tables full;

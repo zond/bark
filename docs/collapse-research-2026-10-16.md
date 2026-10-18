@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-16. Scenario S4 (`scenarios/s4-capacity.toml`, one domain
 of 28 km², 269 relays, 20 000 indoor leaves). Builds on
-`capacity-research-2026-10-15.md` and `leaf-polls-2026-10-15.md` (D39).
+`capacity-research-2026-10-15.md` and on the relay polling its leaves (D39).
 Spec references are to `protocol.md`. Protocol code: main `f1fa059`; the
 simulator gains read-only instruments (commits `85cffb8` and `fe6ef32`) that change no
 result. Nothing here changes the protocol. The experiments named below
