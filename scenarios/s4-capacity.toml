@@ -19,6 +19,10 @@ duration_s = 6300.0
 # after it is switched on. The run has settled this long after the last
 # switch-on, 1800 + 900 s.
 settle_s = 900.0
+# A node's ID is its chip's factory ID (spec "Node identity"), effectively
+# random, so two nodes share a heartbeat interval by chance; "sequence"
+# spreads the intervals evenly, as before roadmap D52.
+ids = "random"
 
 # Nobody switches a city's nodes on in the same second. The network comes
 # up when a power cut ends or in the morning: relays on the mains come back

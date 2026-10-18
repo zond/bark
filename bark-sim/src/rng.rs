@@ -35,6 +35,8 @@ pub enum Purpose {
     Boot = 9,
     /// Symbol error draws per receiving node.
     Reception = 10,
+    /// Node IDs, when drawn at random.
+    NodeId = 11,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

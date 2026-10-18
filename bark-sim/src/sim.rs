@@ -20,7 +20,7 @@ use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEA
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
-    resolve, Destination, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
+    resolve, Destination, Ids, PlacedNode, RoleSpec, Scenario, ScriptAction, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
@@ -600,6 +600,25 @@ pub(crate) fn key(id: NodeId) -> u32 {
     u32::from_be_bytes(id.0)
 }
 
+/// `n` node IDs drawn from the run's seed, each node from its own stream.
+/// A draw that is zero, which names no node, or another node's ID is drawn
+/// again: the simulator keys its own tables by ID. Among the 20 000 nodes
+/// of a domain two share an ID about one run in twenty.
+fn random_ids(seed: u64, n: usize) -> Vec<NodeId> {
+    let mut seen = std::collections::HashSet::with_capacity(n);
+    (0..n as u64)
+        .map(|i| {
+            let mut r = Stream::new(seed, Purpose::NodeId, i);
+            loop {
+                let id = r.next_u64() as u32;
+                if id != 0 && seen.insert(id) {
+                    return NodeId(id.to_be_bytes());
+                }
+            }
+        })
+        .collect()
+}
+
 /// The interval of the series, µs.
 const SERIES_EVERY_US: u64 = 60_000_000;
 
@@ -636,7 +655,10 @@ impl Sim {
             sc.seed,
         )?;
 
-        let ids: Vec<NodeId> = (0..n as u32).map(node_id).collect();
+        let ids: Vec<NodeId> = match sc.ids {
+            Ids::Sequence => (0..n as u32).map(node_id).collect(),
+            Ids::Random => random_ids(sc.seed, n),
+        };
         let config_for = |i: usize| Config {
             position: positions[i],
             node_id: ids[i],
@@ -2531,6 +2553,35 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Random IDs are distinct, never zero, the same for a seed, and share
+    /// last bytes at the chance rate: n nodes have n² / 512 pairs on one
+    /// byte, where the sequence spreads them evenly.
+    #[test]
+    fn random_ids_share_last_bytes_by_chance() {
+        let n = 2048;
+        let ids = random_ids(7, n);
+        assert_eq!(ids, random_ids(7, n));
+        assert_ne!(ids, random_ids(8, n));
+        let set: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(set.len(), n);
+        assert!(!set.contains(&NodeId::NONE));
+        let pairs = |ids: &[NodeId]| {
+            let mut count = [0u64; 256];
+            for id in ids {
+                count[id.0[3] as usize] += 1;
+            }
+            count
+                .iter()
+                .map(|c| c * c.saturating_sub(1) / 2)
+                .sum::<u64>()
+        };
+        // Expected 2048 × 2047 / 512 = 8188, standard deviation about 370.
+        let chance = pairs(&ids);
+        assert!((7100..9300).contains(&chance), "{chance} pairs");
+        let sequence: Vec<NodeId> = (0..n as u32).map(node_id).collect();
+        assert_eq!(pairs(&sequence), 256 * 8 * 7 / 2);
+    }
 
     /// Drops are attributed to the node and reason the core reports, and a
     /// delivery of another copy overrides them.

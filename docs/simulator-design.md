@@ -153,6 +153,17 @@ own. S4 switches its relays on over 10 minutes and its sleepy nodes over
 30 (the file argues it); both windows 0, the default, switch every node
 on at once, as every measurement before roadmap D52 did.
 
+**Node IDs.** With `ids = "random"` each node's ID is drawn from the
+run's seed, as a chip's factory ID is random (spec "Node identity"), so
+two nodes in reach share a heartbeat interval, set by the ID's last byte
+(spec "Heartbeat"), at the chance rate of one pair in 256. A draw that is
+zero or another node's ID is drawn again, since the simulator keys its
+own tables by ID; among a domain's 20 000 nodes two would share one about
+one run in twenty. The default, `"sequence"`, gives node `i` the ID
+`(i + 1) × 0x9e3779b1`, whose last bytes go through all 256 values in
+turn, so that relays share an interval about a sixteenth as often as by
+chance.
+
 **Restart.** A scripted `restart` powers a node off and on at once. The
 node keeps its ID and position, and
 loses everything else, as a solar relay does after a night. Its core is

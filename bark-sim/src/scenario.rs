@@ -337,6 +337,19 @@ impl Boot {
     }
 }
 
+/// How the simulator gives nodes their IDs (spec "Node identity").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ids {
+    /// Node `i` gets `i + 1` times an odd constant: every node its own
+    /// and the last bytes, which set heartbeat intervals, spread evenly.
+    #[default]
+    Sequence,
+    /// Drawn from the run's seed, as the chip's factory ID is random:
+    /// last bytes shared at their chance rate. Two nodes never get one ID.
+    Random,
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -347,6 +360,8 @@ pub struct Scenario {
     pub seed: u64,
     /// Simulated duration, seconds.
     pub duration_s: f64,
+    /// How nodes get their IDs.
+    pub ids: Ids,
     /// When nodes are switched on.
     pub boot: Boot,
     /// How long a node takes to settle after it is switched on, seconds:
@@ -383,6 +398,7 @@ impl Default for Scenario {
             name: "unnamed".into(),
             seed: 1,
             duration_s: 60.0,
+            ids: Ids::default(),
             boot: Boot::default(),
             settle_s: 0.0,
             origin: Origin::default(),
