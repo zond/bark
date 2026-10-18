@@ -36,6 +36,13 @@ ids = "random"
 relays_s = 600.0
 sleepy_s = 1800.0
 
+# Each node's clock runs off true time by up to the ±50 ppm of a watch
+# crystal (spec "Heartbeat"), uniformly: the tolerance bounds the error
+# and says nothing of its spread, and a uniform spread puts more clocks
+# near the bound than one that clusters at zero would.
+[clocks]
+drift_ppm = 50.0
+
 [origin]
 lat = 50.45
 lon = 30.52

@@ -509,6 +509,8 @@ pub struct Sim {
     /// When each node is switched on, and whether it is still to be.
     boot_at: Vec<Instant>,
     pending_boot: Vec<bool>,
+    /// Each node's clock.
+    pub(crate) clocks: Vec<Clock>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
     /// Since when each sleepy node has been without an anchor, past its
@@ -617,6 +619,53 @@ fn random_ids(seed: u64, n: usize) -> Vec<NodeId> {
             }
         })
         .collect()
+}
+
+/// A node's clock: at true time `t` it reads `t + t × ppb / 10⁹`. The
+/// simulator keeps true time and hands each core its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Clock {
+    /// How fast it runs, parts per billion; negative if slow.
+    ppb: i64,
+}
+
+impl Clock {
+    const BILLION: i128 = 1_000_000_000;
+
+    /// A clock off by `ppm` parts per million.
+    fn off_by(ppm: f64) -> Clock {
+        Clock {
+            ppb: (ppm * 1e3).round() as i64,
+        }
+    }
+
+    /// What the clock reads at true time `t`.
+    pub(crate) fn local(self, t: Instant) -> Instant {
+        if self.ppb == 0 {
+            return t;
+        }
+        let us = t.as_micros() as i128;
+        let l = us + (us * self.ppb as i128).div_euclid(Self::BILLION);
+        Instant::from_micros(l.clamp(0, u64::MAX as i128) as u64)
+    }
+
+    /// The earliest true time at which the clock reads `l` or later: a
+    /// timer the core sets for `l` fires then, never before.
+    pub(crate) fn true_time(self, l: Instant) -> Instant {
+        if self.ppb == 0 || l == Instant::MAX {
+            return l;
+        }
+        let target = l.as_micros() as i128;
+        let reads = |t: i128| t + (t * self.ppb as i128).div_euclid(Self::BILLION);
+        let mut t = target * Self::BILLION / (Self::BILLION + self.ppb as i128);
+        while reads(t) < target {
+            t += 1;
+        }
+        while t > 0 && reads(t - 1) >= target {
+            t -= 1;
+        }
+        Instant::from_micros(t.clamp(0, u64::MAX as i128) as u64)
+    }
 }
 
 /// The interval of the series, µs.
@@ -747,6 +796,17 @@ impl Sim {
             leaf_xy: Vec::new(),
             address: vec![None; n],
             boot_at: vec![Instant::ZERO; n],
+            clocks: (0..n as u64)
+                .map(|i| {
+                    let drift = sc.clocks.drift_ppm;
+                    if drift > 0.0 {
+                        let u = Stream::new(sc.seed, Purpose::Clock, i).uniform();
+                        Clock::off_by((2.0 * u - 1.0) * drift)
+                    } else {
+                        Clock::default()
+                    }
+                })
+                .collect(),
             pending_boot: vec![true; n],
             first_anchor: vec![None; n],
             anchorless_since: vec![None; n],
@@ -1165,7 +1225,7 @@ impl Sim {
         };
         let t = self.now.as_micros() / 1_000_000;
         for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
-            let l = r.load(self.now);
+            let l = r.load(self.clocks[i].local(self.now));
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
                 "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"busy\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"m\":{m}}}\n",
@@ -1221,7 +1281,7 @@ impl Sim {
             if !self.nodes[i].alive || r.booting() {
                 continue;
             }
-            let l = r.load(self.now);
+            let l = r.load(self.clocks[i].local(self.now));
             self.metrics.nodes[i]
                 .load
                 .get_or_insert_with(Default::default)
@@ -1257,10 +1317,11 @@ impl Sim {
                 _ => None,
             };
         }
+        let clock = self.clocks[node as usize];
         let c = &mut self.relays[node as usize];
         self.was_booting = c.booting();
-        c.handle(ev, now, &mut |a| buf.push(a));
-        let wake = c.next_wakeup();
+        c.handle(ev, clock.local(now), &mut |a| buf.push(a));
+        let wake = c.next_wakeup().map(|t| clock.true_time(t));
         if node >= self.n_relays {
             let anchor = c.anchor().map(|a| a.position);
             let alone = c.anchorless();
@@ -1525,9 +1586,17 @@ impl Sim {
             // Any use of the radio wakes it (core-interface §3 rules 10, 11).
             self.wake(node);
         }
+        // The core's instants are on its own clock; a script's are true.
+        let true_time = |t: Instant| {
+            if scripted {
+                t
+            } else {
+                self.clocks[node as usize].true_time(t)
+            }
+        };
         match a {
-            Action::Sleep(until) => self.sleep(node, until),
-            Action::Sniff(until) => self.sniff(node, until),
+            Action::Sleep(until) => self.sleep(node, true_time(until)),
+            Action::Sniff(until) => self.sniff(node, true_time(until)),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
@@ -1553,6 +1622,21 @@ impl Sim {
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::AnchorCheck => c.anchor_checks += 1,
+                    Trace::AnchorWatch {
+                        heard,
+                        offset_us,
+                        listened,
+                    } if self.now >= self.settle => {
+                        let s = &mut self.metrics.sleep;
+                        s.watches[usize::from(!heard)] += 1;
+                        s.watch_listen_us += listened.as_micros();
+                        if heard && offset_us < 0 {
+                            s.watch_early += 1;
+                        }
+                        if heard {
+                            s.watch_earliest_us = s.watch_earliest_us.min(offset_us as i64);
+                        }
+                    }
                     Trace::Delivered { msg_id, .. } => {
                         self.first_try.remove(&(node, msg_id.0));
                     }
@@ -1628,7 +1712,8 @@ impl Sim {
         };
         let me = self.relays[node as usize].id();
         let lowest = self.relays[node as usize].lowest_free_hop_place();
-        let held = self.relays[sender as usize].highest_count_for(me, self.now);
+        let then = self.clocks[sender as usize].local(self.now);
+        let held = self.relays[sender as usize].highest_count_for(me, then);
         let with = matches!((lowest, held), (Some(k), Some(h)) if h >= k);
         let h = &mut self.metrics.hop_places;
         h.refusals += 1;
@@ -2278,7 +2363,8 @@ impl Sim {
     /// Hand `src`'s waiting message to its core, if the core takes one now.
     fn offer(&mut self, src: u32) {
         let now = self.now;
-        let ready = self.nodes[src as usize].alive && self.relays[src as usize].accepts_send(now);
+        let local = self.clocks[src as usize].local(now);
+        let ready = self.nodes[src as usize].alive && self.relays[src as usize].accepts_send(local);
         if !ready {
             return;
         }
@@ -2553,6 +2639,31 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clock off by 50 ppm reads 50 µs more or less a second, and a
+    /// timer set on it fires at the first true microsecond it reads the
+    /// time set, never before.
+    #[test]
+    fn clocks_run_at_their_rate_and_timers_never_fire_early() {
+        for ppm in [50.0, -50.0, 12.345, -0.001] {
+            let c = Clock::off_by(ppm);
+            let second = Instant::from_micros(1_000_000);
+            let off = c.local(second).as_micros() as i64 - 1_000_000;
+            assert_eq!(off, ppm.floor() as i64, "{ppm} ppm");
+            for l in [0u64, 1, 999, 1_000_000, 3_600_000_000, 123_456_789_012] {
+                let l = Instant::from_micros(l);
+                let t = c.true_time(l);
+                assert!(c.local(t) >= l, "{ppm} ppm: fires early for {l:?}");
+                if t > Instant::ZERO {
+                    let before = Instant::from_micros(t.as_micros() - 1);
+                    assert!(c.local(before) < l, "{ppm} ppm: fires late for {l:?}");
+                }
+            }
+        }
+        let c = Clock::default();
+        assert_eq!(c.local(Instant::from_micros(7)), Instant::from_micros(7));
+        assert_eq!(c.true_time(Instant::MAX), Instant::MAX);
+    }
 
     /// Random IDs are distinct, never zero, the same for a seed, and share
     /// last bytes at the chance rate: n nodes have n² / 512 pairs on one

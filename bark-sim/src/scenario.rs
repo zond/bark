@@ -350,6 +350,16 @@ pub enum Ids {
     Random,
 }
 
+/// Node clocks. Each node's clock runs at its own rate, drawn uniformly
+/// within `drift_ppm` of true time from the run's seed; the simulator's
+/// time is true time. 0 keeps every clock true.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Clocks {
+    /// The most a clock runs fast or slow, parts per million.
+    pub drift_ppm: f64,
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -364,6 +374,8 @@ pub struct Scenario {
     pub ids: Ids,
     /// When nodes are switched on.
     pub boot: Boot,
+    /// How their clocks run.
+    pub clocks: Clocks,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -400,6 +412,7 @@ impl Default for Scenario {
             duration_s: 60.0,
             ids: Ids::default(),
             boot: Boot::default(),
+            clocks: Clocks::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

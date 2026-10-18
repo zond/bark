@@ -164,6 +164,16 @@ one run in twenty. The default, `"sequence"`, gives node `i` the ID
 turn, so that relays share an interval about a sixteenth as often as by
 chance.
 
+**Clocks.** The simulator's time is true time. With `[clocks]
+drift_ppm` each node's clock runs at its own rate, drawn from the run's
+seed uniformly within that many parts per million of true time: at true
+time `t` it reads `t (1 + rate)`. Each core is handed the time its own
+clock reads, and a time a core gives back, a wakeup or the end of a
+sleep, is taken as the first true microsecond at which its clock reads
+it, so that no timer fires early. Durations the radio takes, airtime and
+retunes, are true. The rate is fixed for the run: temperature does not
+move it. The default, 0, keeps every clock true.
+
 **Restart.** A scripted `restart` powers a node off and on at once. The
 node keeps its ID and position, and
 loses everything else, as a solar relay does after a night. Its core is

@@ -632,6 +632,16 @@ pub struct SleepMetrics {
     /// in, [`AFTER_BEAT`] or [`AFTER_TAKE`], and by what became of the
     /// first DATA of their hand-over, a [`FirstTry`].
     pub waited: [[u64; FIRST_TRIES]; 2],
+    /// Windows a sleeping node woke for its anchor's heartbeat in
+    /// (`Trace::AnchorWatch`): with the heartbeat, and without it.
+    pub watches: [u64; 2],
+    /// Time the node listened in them, µs.
+    pub watch_listen_us: u64,
+    /// Heartbeats heard in them that started before the time expected,
+    /// and how early the earliest was, µs, negative; 0 if none was.
+    pub watch_early: u64,
+    /// See `watch_early`.
+    pub watch_earliest_us: i64,
 }
 
 /// `SleepMetrics::waited`: the window after the node's beat.

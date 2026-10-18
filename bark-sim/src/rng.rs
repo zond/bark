@@ -37,6 +37,8 @@ pub enum Purpose {
     Reception = 10,
     /// Node IDs, when drawn at random.
     NodeId = 11,
+    /// Each node's clock rate.
+    Clock = 12,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

@@ -10,7 +10,7 @@
 use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
 use crate::radio::Channel;
-use crate::time::Instant;
+use crate::time::{Duration, Instant};
 
 /// Largest LoRa payload the SX126x carries, and so the largest frame the
 /// core will ever emit or accept.
@@ -288,6 +288,18 @@ pub enum Trace {
     /// A sleepy node that sleeps listens a rotation to check its anchor
     /// (spec "Relay choice").
     AnchorCheck,
+    /// A window in which a sleeping node woke for its anchor's heartbeat
+    /// ended (spec "Relay choice"): with the heartbeat, which started
+    /// `offset_us` after the time expected, negative if before it; or
+    /// without it. `listened` is how long the window had been open.
+    AnchorWatch {
+        /// Whether the heartbeat was heard in the window.
+        heard: bool,
+        /// When it started against the time expected, µs.
+        offset_us: i32,
+        /// How long the node listened in the window.
+        listened: Duration,
+    },
     /// A message for another node entered the delivery queue (spec
     /// "Delivery queue").
     Queued {

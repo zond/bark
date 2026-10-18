@@ -665,7 +665,12 @@ impl Relay {
                 self.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
             }
         }
-        while self.watch().is_some_and(|(_, to)| now >= to) {
+        while let Some((from, to)) = self.watch().filter(|&(_, to)| now >= to) {
+            emit(Action::Trace(Trace::AnchorWatch {
+                heard: false,
+                offset_us: 0,
+                listened: to.since(from),
+            }));
             self.misses = self.misses.saturating_add(1);
             if self.misses >= 2 && !self.dark {
                 self.watch_at = None;
@@ -1451,6 +1456,16 @@ impl Relay {
             }
             self.reconsider_anchor(now, emit);
             if self.anchor.is_some_and(|a| a.id == hb.id) {
+                if let (Some(at), Some((from, to))) = (self.watch_at, self.watch()) {
+                    if started >= from && started < to {
+                        let offset = started.as_micros() as i64 - at.as_micros() as i64;
+                        emit(Action::Trace(Trace::AnchorWatch {
+                            heard: true,
+                            offset_us: offset as i32,
+                            listened: now.since(from),
+                        }));
+                    }
+                }
                 self.anchor_heard(started);
             }
         }

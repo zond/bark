@@ -598,3 +598,35 @@ fn nodes_switch_on_within_their_windows() {
         assert!(t <= at(window), "node {k} on at {t:?}");
     }
 }
+
+/// Clocks off by up to 50 ppm (spec "Heartbeat"): a sleeping node still
+/// wakes in time for every heartbeat of its anchor (spec "Relay choice"),
+/// and never checks its anchor for want of one.
+#[test]
+fn drifting_clocks_keep_the_anchor_watch() {
+    for seed in 1..=4 {
+        let mut sc = Scenario::new("drift", seed, 3.0 * 3600.0)
+            .point("R", RoleSpec::Relay, 0.0, 0.0)
+            .point("L0", RoleSpec::Leaf, 50.0, 0.0)
+            .point("L1", RoleSpec::Leaf, 100.0, 0.0)
+            .point("L2", RoleSpec::Leaf, 150.0, 0.0)
+            .link("R", "L0", -90.0)
+            .link("R", "L1", -90.0)
+            .link("R", "L2", -90.0);
+        sc.clocks.drift_ppm = 50.0;
+        sc.settle_s = 900.0;
+        let mut sim = Sim::new(&sc).unwrap();
+        sim.run();
+        let s = &sim.metrics.sleep;
+        assert!(
+            s.watches[0] > 3 * 60,
+            "seed {seed}: {} watches",
+            s.watches[0]
+        );
+        assert_eq!(s.watches[1], 0, "seed {seed}: heartbeats missed");
+        for n in 1..4 {
+            let checks = sim.metrics.nodes[n].core.anchor_checks;
+            assert_eq!(checks, 0, "seed {seed}: node {n} checked its anchor");
+        }
+    }
+}
