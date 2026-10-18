@@ -973,15 +973,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .copied()
         };
         let first = self.anchor.is_none();
+        // The choice after the first anchor is made when its time comes,
+        // whether or not the anchor is still in the table: left for later,
+        // its time would wake the node at once, again and again.
+        let chosen = self.choosing.is_some_and(|t| now >= t);
+        if chosen {
+            self.choosing = None;
+        }
         let to = match current {
             None => strongest(None, 0),
             // A rotation after its first anchor, by when every node in range
             // has visited its channel, and while few can have its address:
             // the strongest heard, without the margin.
-            Some(a) if self.choosing.is_some_and(|t| now >= t) => {
-                self.choosing = None;
-                strongest(Some(a.id), 0).filter(|b| b.rssi > a.rssi)
-            }
+            Some(a) if chosen => strongest(Some(a.id), 0).filter(|b| b.rssi > a.rssi),
             Some(a) => strongest(Some(a.id), BEATS).filter(|b| b.rssi >= a.rssi + SWITCH_MARGIN_DB),
         };
         if let (Some(a), None) = (current, to) {
@@ -1910,6 +1914,87 @@ mod tests {
                 _ => {}
             });
         }
+    }
+
+    /// A sleepy node whose anchor is not in its table when the rotation of
+    /// its first choice ends makes the choice at its time and does not
+    /// wake at once again. Before D58 a sleepy node beating with the
+    /// anchor's ID removed the entry; now the entry is pinned, so the test
+    /// forgets it by hand to keep the invariant: a timer that is due is
+    /// cleared.
+    #[test]
+    fn the_first_choice_ends_without_the_anchor() {
+        use crate::wire::Heartbeat;
+        let config = Config {
+            sleepy: true,
+            boot_listen: Duration::from_secs(10),
+            ..Config::default()
+        };
+        let mut s = Relay::new(config, 5);
+        let at = |ms: u64| Instant::ZERO + Duration::from_millis(ms);
+        s.handle(Event::Wakeup, at(0), &mut |_| {});
+        let anchor = name(77);
+        let beat = || {
+            let hb = Heartbeat {
+                sleepy: false,
+                anchorless: false,
+                home: Channel::new(4).unwrap(),
+                id: anchor,
+                short: config.position.short(),
+            };
+            let mut bytes = [0u8; crate::event::MAX_FRAME];
+            let n = Packet::Heartbeat(hb).encode(&mut bytes).unwrap();
+            (bytes, n)
+        };
+        let hear = |s: &mut Relay, t: Instant| {
+            let (bytes, n) = beat();
+            let ev = Event::Received {
+                channel: Channel::new(4).unwrap(),
+                rssi_dbm: -90,
+                snr_db: 0,
+                bytes: &bytes[..n],
+            };
+            s.handle(ev, t, &mut |_| {});
+        };
+        hear(&mut s, at(1000));
+        assert_eq!(s.anchor().map(|a| a.id), Some(anchor));
+        s.neighbours.pin(None);
+        s.neighbours.forget(anchor);
+        assert!(s.neighbours().all(|n| n.id != anchor));
+        // Run it, completing its radio actions at once, for as many
+        // events as a minute takes it; stuck, it would spend them all at
+        // the end of the choice.
+        let mut now = at(2000);
+        let mut pending: Vec<Action> = Vec::new();
+        for _ in 0..10_000 {
+            let event = match pending.pop() {
+                Some(Action::Cad(channel)) => Event::CadDone {
+                    channel,
+                    busy: false,
+                },
+                Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+                Some(Action::Transmit(f)) => {
+                    now += mac::airtime(&f);
+                    Event::TxDone
+                }
+                Some(_) => continue,
+                None => match s.next_wakeup() {
+                    Some(t) => {
+                        now = now.max(t);
+                        Event::Wakeup
+                    }
+                    None => break,
+                },
+            };
+            if now > at(60_000) {
+                break;
+            }
+            s.handle(event, now, &mut |a| match a {
+                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                _ => {}
+            });
+        }
+        assert!(now > at(60_000), "stuck at {now:?}");
     }
 
     /// A relay reset in place, after it has run and holds messages, does
