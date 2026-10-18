@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, draft for roadmap D51. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -17,11 +17,10 @@ fn accepts_send(&self, now: Instant) -> bool;
 ```
 
 One struct, `Relay`, for every node; `Config::sleepy` makes it a sleepy node
-(spec "Sleepy nodes"). `Relay::sleeps()` says whether the node sleeps its radio between
-the windows after its beats: only a sleepy node with an anchor does. When the radio may
-sleep, and until when, the core says with `Action::Sleep` (§3 rule 10). `Relay::anchorless()`
-says whether it is a sleepy node without an anchor, whose radio receives duty-cycled between
-its beats; when and until when, the core says with `Action::Sniff` (§3 rule 11).
+(spec "Sleepy nodes"). A sleepy node's radio receives duty-cycled whenever the node is not
+in a window or listening for its anchor's heartbeat; when and until when, the core says
+with `Action::Sniff` (§3 rule 10). `Relay::anchorless()` says whether it is a sleepy node
+without an anchor (spec "Sleepy nodes alone").
 
 The core never blocks, never sleeps, never allocates, and never reads a clock: `now` is an
 argument. Every random choice comes from the `Rng` seeded at construction, so a core's
@@ -64,7 +63,7 @@ Rules:
    `Config::tx_power_dbm` on `Frame::channel` with `Frame::preamble_symbols` of preamble,
    then returns to the resting channel. The core asks for the shortest preamble, or for
    `sniff::LONG_PREAMBLE_SYMBOLS` (1396, 357.4 ms) on a frame to a node that receives
-   duty-cycled (rule 11). The receiver is programmed for the long preamble, the longest a
+   duty-cycled (rule 10). The receiver is programmed for the long preamble, the longest a
    frame can have, which the datasheet asks where the length varies (§6.1.4); it still
    receives the short one.
 5. **Listen-before-talk is the core's job.** The driver never checks the channel on its own;
@@ -81,24 +80,19 @@ Rules:
 9. **`Action::Trace` carries no obligation.** It reports protocol events (a dropped message
    and why, a deferral, a forward, a backtrack, a demotion, a channel move) for the simulator's
    metrics and the firmware's log. A driver may ignore it.
-10. **`Action::Sleep(until)` lets the radio sleep.** The core needs to hear nothing before
-    `until`, so the driver may switch the receiver off; what arrives meanwhile is lost to
-    the node. The sleep ends at `until`, or sooner at the core's next `Listen`, `Cad`,
-    `Rssi` or `Transmit`, which the driver carries out as ever, waking the radio first; the
-    radio then listens on the resting channel again. `until` is when the core next needs
-    the radio of its own accord, so a driver can have the receiver ready by then. A driver
-    that keeps listening breaks nothing: the core handles whatever it receives. Only a
-    sleepy node with an anchor asks for it, outside the windows in which it listens
-    (spec "Delivery").
-11. **`Action::Sniff(until)` lets the radio receive duty-cycled** on the resting channel
+10. **`Action::Sniff(until)` lets the radio receive duty-cycled** on the resting channel
     until `until`: the SX1262's SetRxDutyCycle (datasheet §13.1.7) with a receive period of
     `sniff::SNIFF_RX` (6 ms, 384 steps of 15.625 µs) and a sleep period of
     `sniff::SNIFF_SLEEP` (349.125 ms, 22 344 steps). The radio then catches every frame
     whose preamble is `sniff::LONG_PREAMBLE_SYMBOLS` long and may miss any other; what it
     catches is `Received` as ever, and after it the driver starts the cycle again. The
-    sniff ends as a sleep does (rule 10), and also at the core's next `Sleep`. A driver
-    that keeps listening breaks nothing. Only a sleepy node without an anchor asks for it,
-    whenever it has nothing under way (spec "Sleepy nodes alone").
+    sniff ends at `until`, or sooner at the core's next `Listen`, `Cad`, `Rssi` or
+    `Transmit`, which the driver carries out as ever, the radio then listening on the
+    resting channel again; `until` is when the core next needs the radio of its own
+    accord. A driver that keeps listening breaks nothing: the core handles whatever it
+    receives. Every sleepy node asks for it whenever it has nothing under way and is
+    neither in a window nor listening for its anchor's heartbeat (spec "Sleepy nodes",
+    "Delivery", "Relay choice"); a node that is not sleepy never does.
 
 The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated.
 
@@ -144,7 +138,6 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | Clock | event-heap time | embassy monotonic |
 | Wakeup when `now >= next_wakeup()` | heap entry per core, lazily invalidated | one embassy timer |
 | `Listen` | update the per-channel listener set | `rx_switch_channel` |
-| `Sleep` | deaf until then or the next radio action; the time asleep is counted | ignored for now: the radio keeps listening |
 | `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | ignored for now: the radio keeps listening; to do: SetRxDutyCycle, and the receiver programmed for the long preamble |
 | `Cad` | deaf for CAD duration, result from the reception model | `prepare_for_cad` + `cad` |
 | `Rssi` | deaf for retune + sample, dB-sum at the node | `get_rssi` after retune |
