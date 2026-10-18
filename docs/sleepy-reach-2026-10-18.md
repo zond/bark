@@ -8,6 +8,13 @@ counts the DATA sent to a sleepy node that cannot hear it.
 
 ## Summary
 
+The branch as adopted, D58 with the amendment below and the holder's
+delivery outside the window, against the old code: S4 delivers 93.77 %
+against 90.75 % (+3.02 points), at 1.6 s median latency against 137 s, a
+sleepy node draws 0.638 mA against 0.399, and all airtime is 55 291 s
+against 33 011. The rest of this summary is D58 alone, before the
+amendment.
+
 - **The pocket is fixed.** DATA sent into sleepy nodes that cannot hear it
   falls from 412 to 1 a run in the village beside a district, and from 741
   to 15 in S4; what is left is a holder's DATA at the very end of a
@@ -43,6 +50,9 @@ counts the DATA sent to a sleepy node that cannot hear it.
 | `7fa31c2` | The spec where the implementation found it silent (below). |
 | `d0aaa77` | The four points of the user's review of the spec (below). |
 | `e3e7c55` | The spec's derived current of the anchorless beats, 0.34 mA, not 0.33. |
+| `06848d6` | This note and the D58 row. |
+| `f254460` | The amendment: long beats only to a neighbour that stays anchorless a rotation (below). |
+| `de02bec` | The holder's delivery outside the window, its own decision (last section). |
 
 In the core:
 
@@ -235,6 +245,59 @@ do it changes with any change that moves a frame.
 The sleepy image saves 19 000 B of RAM, the heard table and the delivery
 queue, whose empty contents also start in flash.
 
+## The amendment: long beats only to a neighbour that stays anchorless
+
+Decided by the user after the results above: a sleepy node sends its
+beats on an anchorless neighbour's channel only once it has heard that
+neighbour's anchorless beat in two consecutive rotations of its beats.
+Two beats heard on one channel come in consecutive rotations when they are
+at least half a rotation apart, 13 beats at half an anchorless period
+each, 300 s, and at most a rotation and a heartbeat's lag, 601 s; the
+entry counts them in its count of beats, and a beat with the sleepy bit
+alone, or the entry's expiry, starts it again. The reason: a neighbour
+heard anchorless once may be switching on and anchor within minutes; a
+pocket's nodes mostly know their bridge already from the time both were
+anchorless. Measured against the branch before it, with the holder's
+delivery outside the window in both (**E**, and **A** with the
+amendment):
+
+| | E | A | A − E |
+|---|---|---|---|
+| S4 delivered | 93.81 % | 93.77 % | −0.04 ± 0.20 points |
+| S4 latency p50, p90 | 1.6, 162.1 s | 1.6, 149.8 s | 0.0, −12.2 ± 8.0 s |
+| S4 long beats to anchorless neighbours | 25 835 s | 8 013 s | −69 % |
+| S4 airtime with the long preamble | 43 949 s | 26 878 s | −17 071 ± 2 936 s |
+| S4 airtime, all | 71 976 s | 55 291 s | −16 684 ± 2 826 s |
+| S4 sleepy nodes sending them | 4 724 | 1 296 | |
+| S4 sleepy node's current | 0.645 mA | 0.638 mA | −0.006 mA |
+| Village beside a district, delivered | 90.78 % | 89.98 % | −0.80 ± 0.94 points |
+| ... village to village | 75.5 % | 75.1 % | −0.4 ± 4.9 |
+| ... between the village and the district | 83.8 % | 82.6 % | −1.2 ± 2.3 |
+| ... long beats to anchorless neighbours | 1 716 s | 1 150 s | |
+| ... airtime, all | 4 005 s | 3 470 s | −535 ± 136 s |
+| ... village nodes' current | 1.448 mA | 1.369 mA | −0.079 ± 0.021 mA |
+
+The pocket still finds its way out. In the village beside the district,
+the texts the village's nodes send are delivered, over the ten seeds:
+
+| Sent | E | A |
+|---|---|---|
+| Before the relays, 900–1 800 s | 78.5 % (135) | 80.6 % (134) |
+| 0–300 s after the relays are switched on | 86.7 % (45) | 82.6 % (46) |
+| 300–600 s after | 87.2 % (47) | 89.1 % (46) |
+| 600–1 200 s after | 92.0 % (87) | 87.8 % (90) |
+| 1 200–2 100 s after | 95.5 % (132) | 95.4 % (131) |
+
+The differences are two to four texts in forty to ninety, within what
+ten seeds can tell. 63 of the 220 sleepy nodes send the long beats there
+against 69: the village's nodes heard each other anchorless for the half
+hour before the relays came, so the bridges among them qualify at once
+when they anchor. In S4 most of the anchorless spells are a node switching
+on, and the long beats fall by two thirds. The village of sixty, which
+has no anchor, and the D42 suites are identical, run for run: none has a
+node in anchorless mode beside one with an anchor, but S2, +0.30 ± 0.31
+points and 23.5 s less airtime.
+
 ## What it does not show
 
 - Two seeds of S4; the gain in delivery there is within what two seeds
@@ -247,7 +310,7 @@ queue, whose empty contents also start in flash.
 
 ## Separately: a holder delivering outside the window with a long frame
 
-Not part of D58, and in its own last commit so that it can be dropped. A
+Its own decision, in its own last commit; the user decided to keep it. A
 holder sends a message for a sleepy node at once, with the long preamble,
 while the node is outside its window, if its bucket holds that frame
 beyond everything it already has to send: the send queue, the other
