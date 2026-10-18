@@ -265,14 +265,8 @@ it takes as its anchor, and moves to the anchor's channel; one that hears
 none homes as a relay does and keeps that channel ([relay choice](#relay-choice), [sleepy nodes alone](#sleepy-nodes-alone)).
 A sleepy node listens two rotations, 390 s: a relay switched on with it
 heartbeats only after a boot listen of its own, and once the node
-receives duty-cycled it hears relays only by their answers. Booted
-together with their relays, 3 % of the sleepy nodes of the simulated
-capacity domain still heard none in that time and went without an anchor
-for seven minutes at the median (roadmap D51). Switched on over half an
-hour among relays switched on over ten minutes, 2.4 % did, nearly all of
-them switched on before most relays had sent a heartbeat; of those
-switched on among running relays, one in 300 (roadmap D52). A config
-override exists for bench work.
+receives duty-cycled it hears relays only by their answers (roadmap D51,
+D52). A config override exists for bench work.
 
 ### Channel moves
 
@@ -286,9 +280,7 @@ the new channel soon after ([beats](#beats)). A sleepy node
 listening at the time, in a window ([delivery](#delivery)), hears the heartbeat on the old
 channel and follows at once, so the moving node sends to the sleepy nodes
 of its heard table on the old channel that listen now on the new one
-([heard table](#heard-table)); the others say where they listen with that beat.
-Sent on the old channel instead, a delivery to a node that had followed
-went unanswered until the node beat again (roadmap D53).
+([heard table](#heard-table)); the others say where they listen with that beat (roadmap D53).
 No other announcement. Neighbours that miss it learn the new channel from
 the next rotation (≤130 s) or from ACK failure ([hand-over](#hand-over)).
 
@@ -392,8 +384,7 @@ The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
 by more than an overlap at every heartbeat, so their heartbeats meet at
 most once in a row, as random intervals would; 10 s / 23.7 ms = 422
 steps would do, and 256 is the largest power of two below it, one byte.
-Two nodes in reach share an interval with probability 1/256, about 68 of
-the 17 500 pairs in reach in the simulated capacity domain. A shared
+Two nodes in reach share an interval with probability 1/256. A shared
 interval matters only if the two are also in step, within 23.7 ms in a
 10 s interval, 0.24 % of such pairs; their heartbeats then meet each time
 they are on one channel, as do those of a pair whose intervals stand 2:1
@@ -402,9 +393,7 @@ crystal is good to about ±50 ppm, so two clocks part by up to 1 ms per
 10 s heartbeat, and an overlap of 23.7 ms ends within 24 heartbeats, four
 minutes, at that drift, longer for clocks that drift alike. Nodes that
 boot together, after a power cut, would start in step but for the random
-first phase. Measured in the capacity domain, 0.84 % of heartbeats were
-lost at a listening receiver with another heartbeat on the air there,
-against 0.80 % with random intervals (roadmap D47).
+first phase (roadmap D47).
 
 This is why no scanning is needed: every node sits on its home channel,
 every neighbour's heartbeat visits all channels, so each neighbour lands
@@ -739,12 +728,12 @@ each silence in a row (step 6), as the wait of a refused message does
 ([a node's own message](#a-nodes-own-message)), and ends at the longest anything waits for a bucket. Without
 the ban a neighbour that stops answering under load is offered every
 other message at once, each offer up to three more frames where frames
-are already being lost; in the simulated capacity domain at three times
-the texting rate of [capacity and sizing](#capacity-and-sizing) that loop is what breaks first. The
+are already being lost; past the cap that loop is what breaks first
+(roadmap D42). The
 message whose hand-over failed waits for the same neighbour rather than
 going to the next one: the next one is usually a longer way round, which
-costs more frames on the same full channels, and measured, going there
-at once undoes what the ban gains (roadmap D42). Silence twice in a row
+costs more frames on the same full channels, and going there at once
+undoes what the ban gains (roadmap D42). Silence twice in a row
 demotes the neighbour, and a link that is really gone then costs one ban
 and one more hand-over before the message moves on; a neighbour that is
 gone is tried again after each ban until its entry expires
@@ -1053,13 +1042,10 @@ node carries the time it arrived with ([delivery](#delivery)). A return or a cop
 any DATA, so the parent's copy (case 5) ends by the same clock.
 
 Without an end by time, a message the network has taken lives as long
-as hand-overs to someone succeed. In the simulated capacity domain at
-three times the texting rate of [capacity and sizing](#capacity-and-sizing), past the point where
-it collapses, messages lived up to an hour and cost about 1500 frames
-each, long after their sender and their destination's queue would have
-given them up, and they kept the relays at their duty cap (roadmap D42,
-D44). The TTL is the one the delivery queue keeps: the time the network
-keeps a message ([sleepy nodes](#sleepy-nodes)).
+as hand-overs to someone succeed: past the cap, long after its sender
+and its destination's queue would have given it up, keeping the relays
+at their duty cap (roadmap D42, D44). The TTL is the one the delivery
+queue keeps: the time the network keeps a message ([sleepy nodes](#sleepy-nodes)).
 
 Rounding down loses up to a unit at each hand-over, a whole one at a
 hand-over that follows at once. 2.5 s is the finest unit at which one
@@ -1356,10 +1342,7 @@ sleep as soon as it hears it. As early is the time expected less three
 times the drift since the last heartbeat heard, at most 59 ms over a
 rotation: once for the drift itself, and twice because a heartbeat held
 up by a busy anchor may have moved the time expected a drift later
-while its slot was a drift early. With one drift, clocks drifting within
-their tolerance in the simulated capacity domain missed a fifth more
-watches, 18.8 % against 15.0 %, and drew 0.40 mA against 0.33 (roadmap
-D52). As late is the drift, 992.9 ms more and the heartbeat's airtime. Hearing it is how the node knows the anchor is
+while its slot was a drift early (roadmap D52). As late is the drift, 992.9 ms more and the heartbeat's airtime. Hearing it is how the node knows the anchor is
 alive, and how it follows it to a new home channel ([channel moves](#channel-moves)): the
 heartbeat names the anchor's home, and the next on the new channel comes
 when the rotation brings it there.
@@ -1371,23 +1354,16 @@ strongest relay it heard. One that heard nothing at all is out of reach,
 in a pocket, a basement or the metro, not without its anchor: it keeps
 the anchor, watches for it as before, and checks again only once it has
 heard any frame again. One that heard frames but no relay keeps it too:
-giving it up and going without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)) made
-nodes at the edge of a relay's reach switch to and fro, and cost the
-simulated capacity domain 1.8 points of delivery and half again its
-airtime on the seed tried (roadmap D51). It also checks after moving farther from where
+giving it up and going without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)) makes
+nodes at the edge of a relay's reach switch to and fro (roadmap D51). It also checks after moving farther from where
 it last chose than takes the anchor's signal down by the switching
 margin, `r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
 scenarios' path-loss exponent of 3.6, and no less than 50 m, what two GPS
 fixes of a node that has not moved may differ by ([position and time](#position-and-time)).
 Between its windows a node hears no relay's heartbeat ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), so it switches by the
 rule above mainly while it checks. A node back from the dark keeps its
-anchor: taking the first relay heard instead changed anchors two and a
-half times as often, and the messages sent to the old address waited out
-their TTL (roadmap D46). Measured in the simulated capacity domain with
-a tenth of its relays removed at once, the nodes anchored to them were
-heard by a new anchor after 480 s at the median; keeping the anchor
-until a hand-over of the node's own message to it failed left 60 % of
-them without one at the end of the run (roadmap D47).
+anchor: a new one would strand the messages sent to the old address
+(roadmap D46, D47).
 
 ### Beats
 
@@ -1407,11 +1383,7 @@ its anchor to a new home channel ([channel moves](#channel-moves)) it beats ther
 a random time within a heartbeat interval, 0–15 s: without it, its holder
 knows only the old channel, and has no window to send in until the node's
 next beat, up to a period later. Every node of the anchor follows on the same
-heartbeat, about 120 at a relay of the simulated capacity domain, so
-beating at once they would meet. With a tenth of that domain's relays
-removed, which sets their neighbours moving, the beat delivered 1.0
-points more; without the removal, where each relay moves about once in
-three hours, no change was measured, for 0.16 % more airtime (roadmap D57).
+heartbeat, so beating at once they would meet (roadmap D57).
 
 A sleepy node whose neighbour table holds anchorless neighbours
 ([sleepy nodes alone](#sleepy-nodes-alone)) beats once a period on each channel those neighbours
@@ -1421,15 +1393,14 @@ they can reach with the preamble, not an anchor, since it carries the
 sleepy bit alone. It hears them because their beats carry the long
 preamble and step through every channel ([sleepy nodes alone](#sleepy-nodes-alone)). Each such
 beat is a long heartbeat, 366 ms ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-4.4 s an hour per channel at twelve beats; a pocket has one or two
-(roadmap D58).
+4.4 s an hour per channel at twelve beats (roadmap D58).
 
 A sleepy node may have moved since its last beat, so it refreshes its
 GPS fix before each beat. GPS goes off after a fix, and off after 10
 minutes without one (searching under jamming draws ≈27 mA, ≈1.3 days).
 
 At a mean interval of 225 s a node beats 16 times an hour, 189 ms of
-airtime; measured with the beats after anchor changes, 212 ms an hour.
+airtime.
 
 A sleepy node with an anchor does not move its home channel by the busy
 estimate ([channel moves](#channel-moves)), and does not sweep the channels ([busy estimate](#busy-estimate)): receiving
@@ -1450,12 +1421,7 @@ node: a beat, its own DATA, whose `aux` also names its home channel
 whether or not its beats are heard, and a busy holder misses beats, while
 it transmits or when another frame meets the beat there. A node reached
 only in the windows its beats open renews its entry with each of them,
-but one kept awake by a flow longer than a TTL does not. In the simulated
-ring at its cap, with its sleepy nodes listening all the time, a holder
-missed one beat in five, and on half the seeds forgot a node that took a
-message from it every two seconds; the messages for that node filled the
-delivery queue, were refused, and waited at the relays before it, already
-at their cap, until its next beat was heard (roadmap D53). When the table
+but one kept awake by a flow longer than a TTL does not (roadmap D53). When the table
 is full a newcomer takes the place of an expired entry, else of the
 weakest if the newcomer is heard stronger: the strongest are the nodes
 most likely to have chosen this relay as their anchor. Hearing the beat
@@ -1510,12 +1476,10 @@ does not count against it ([receiving DATA](#receiving-data)).
 So a message waits for its node a mean of about two minutes, at most a
 beat period. A node listens 3.37 s after each beat, 54 s an hour, 3.13 s
 after each message it takes, and for its anchor's heartbeat, under a
-second a rotation; measured in the simulated capacity domain, where a
-node is out of reach five minutes in an hour, a sleepy node listened
-156 s an hour at the median and 218 s on average, most of it checking
-its anchor after the dark and listening after its beats: 0.35 mA on
-average at the 5.8 mA of listening (roadmap D47, D48, D50), and 0.194 mA
-more for receiving duty-cycled between (roadmap D58).
+second a rotation, at the 5.8 mA of listening, and receives duty-cycled
+between, 0.194 mA ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)); what
+it listens besides, checking its anchor after the dark, depends on how
+often it is out of reach (roadmap D47, D48, D50, D58).
 
 ### Delivery queue
 
@@ -1566,10 +1530,8 @@ regular room and only while not every neighbour of its is banned
 ([receiving DATA](#receiving-data)), and counts the sender as tried, so the search never
 returns to a node that sleeps. Overload then stops a new message where
 it enters (roadmap D31, D34). Handed to the neighbour nearest its
-destination instead, the first hop was often a faint, far relay: in the
-simulated capacity domain at twice the texting rate of
-[capacity and sizing](#capacity-and-sizing) the relays reached their duty cap and 62 and 36 % of
-texts were delivered, against 90 % with the anchor (roadmap D46). Sent
+destination instead, the first hop is often a faint, far relay (roadmap
+D46). Sent
 with count 1, as a relay's own message is, it could take hop place 1 at
 its first hop, which overload must not give to fresh work.
 
