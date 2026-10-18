@@ -2595,7 +2595,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor\n",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x\n",
         );
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
@@ -2611,7 +2611,7 @@ impl Sim {
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let relay = |r: Option<u32>| r.map(|r| r.to_string()).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -2626,7 +2626,9 @@ impl Sim {
                 relay(r.dst_relay),
                 r.to_twin,
                 r.src_moving,
-                relay(r.dst_anchor)
+                relay(r.dst_anchor),
+                self.xy(r.src).x,
+                self.xy(r.dst).x
             ));
         }
         s
