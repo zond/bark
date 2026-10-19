@@ -133,7 +133,7 @@
 //! the network has taken lives as long as hand-overs to someone succeed,
 //! which past the capacity domain's collapse was up to an hour (roadmap
 //! D44). A packet that comes with its time gone is taken as no work, and
-//! ends here. At its owner the delivery queue's own TTL takes over.
+//! ends here. At its owner the delivery queue takes over.
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
@@ -557,7 +557,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
                 Err(why) => Some(why),
             }
-        } else if for_leaf && self.delivery.is_full() {
+        } else if for_leaf && !self.delivery.has_room(now) {
             Some(DropReason::DeliveryFull)
         } else if !self.affordable(ACK_AIRTIME, now) {
             Some(DropReason::Budget)
@@ -756,6 +756,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::PayloadTooLong, emit);
             return;
         };
+        if !self.delivery.iter().any(|e| e.msg_id == id) {
+            self.make_room(now, emit);
+        }
         match self.delivery.push(q) {
             Pushed::Duplicate => return,
             Pushed::Full => {
@@ -818,7 +821,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Deliver the held message once the delivery queue has a place.
     pub(super) fn release_held(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some(h) = self.held else { return };
-        if self.delivery.is_full() {
+        if !self.delivery.has_room(now) {
             return;
         }
         self.held = None;
@@ -877,9 +880,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let mut record = Record::new(id, None, 0, now);
             record.set_arrived();
             self.records.put(at, record);
-            if dst_id != self.me() && self.delivery.is_full() {
-                // At its owner: the delivery queue's TTL, not its time
-                // left, ends it from here (spec "Delivery queue").
+            if dst_id != self.me() && !self.delivery.has_room(now) {
+                // At its owner: the delivery queue, not its time left,
+                // ends it from here (spec "Delivery queue").
                 let out = Outgoing::new(
                     data_frame(&d, self.home, self.forward_preamble()),
                     Kind::Forward,
@@ -1021,7 +1024,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
-            if self.own == Some(id) && d.dst_id != self.me() && self.delivery.is_full() {
+            if self.own == Some(id) && d.dst_id != self.me() && !self.delivery.has_room(now) {
                 return Routed::Hold;
             }
             let time_left = Data::units(out.expires.since(now));
@@ -1252,7 +1255,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             let id = d.msg_id();
             // A DATA to a sleepy node keeps the time it arrived with: the
-            // delivery queue's TTL, not its time left, ends it there.
+            // delivery queue, not its time left, ends it there.
             let time_left = match out.expires {
                 Instant::MAX => d.time_left,
                 ends => Data::units(ends.since(now)),
@@ -1610,7 +1613,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// rather than when its turn comes. One whose frame is on air or waits
     /// for its ACK ends at its next attempt instead (`transmit_current`).
     /// A message set aside for the delivery queue is at its owner, where
-    /// that queue's TTL ends it.
+    /// that queue ends it.
     fn expire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.time_gone_at().is_none_or(|t| t > now) {
             return;

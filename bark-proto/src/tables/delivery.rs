@@ -2,11 +2,12 @@
 //! their owner and are for another node, a sleepy one it hears, held until
 //! that node wakes instead of failed at once.
 //!
-//! Each message lives the delivery TTL (spec "Sleepy nodes": 10 minutes); oldest first.
-//! The node hands a sleepy node's messages to the send queue in arrival
-//! order while that node listens, after each of its beats
-//! (`tables/heard.rs`), and drains [`DeliveryQueue::pop_expired`] to fail
-//! the expired ones.
+//! Messages are kept oldest first. The node hands a sleepy node's messages
+//! to the send queue in arrival order while that node listens, after each
+//! of its beats (`tables/heard.rs`). One queued the delivery TTL ago or
+//! longer (spec "Sleepy nodes": 10 minutes) is stale: it stays, and is
+//! still delivered, until a message arrives at a full queue, when the
+//! oldest stale one makes way ([`DeliveryQueue::make_room`]).
 //!
 //! A message waits at most a beat period for its node, unless that node
 //! is a phone in a pocket, a basement or the metro, and then for its first
@@ -18,8 +19,9 @@
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
 //! duplicate that slipped past the per-message records costs nothing here.
-//! A message that finds the queue full is refused (spec "Receiving DATA"): what is queued
-//! stays, and the sender learns at once that this relay cannot take it.
+//! A message that finds the queue full of messages that are not stale is
+//! refused (spec "Receiving DATA"): what is queued stays, and the sender
+//! learns at once that this relay cannot take it.
 
 use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
@@ -198,19 +200,30 @@ impl<const N: usize> DeliveryQueue<N> {
         Some(self.entries.remove(i))
     }
 
-    /// Take the oldest message if it has expired at `now`. Call until `None`.
-    pub fn pop_expired(&mut self, now: Instant) -> Option<Queued> {
+    /// Whether a message arriving at `now` finds a place: a free one, or
+    /// one a stale message, queued a TTL ago or longer, would make.
+    pub fn has_room(&self, now: Instant) -> bool {
+        !self.is_full() || self.iter().next().is_some_and(|q| self.stale(q, now))
+    }
+
+    /// Make a place for a message arriving at `now` in a full queue: take
+    /// the oldest message if it is stale.
+    pub fn make_room(&mut self, now: Instant) -> Option<Queued> {
         let oldest = self.iter().next()?;
-        if now.since(oldest.enqueued) >= self.ttl {
+        if self.is_full() && self.stale(oldest, now) {
             Some(self.entries.remove(0))
         } else {
             None
         }
     }
 
-    /// When the oldest message expires, if any.
-    pub fn next_expiry(&self) -> Option<Instant> {
+    /// When the oldest message turns stale, if any.
+    pub fn stale_from(&self) -> Option<Instant> {
         self.iter().next().map(|q| q.enqueued + self.ttl)
+    }
+
+    fn stale(&self, q: &Queued, now: Instant) -> bool {
+        now.since(q.enqueued) >= self.ttl
     }
 }
 
@@ -262,16 +275,24 @@ mod tests {
     }
 
     #[test]
-    fn ttl() {
-        let mut q = DeliveryQueue::<DELIVERY_QUEUE>::from_config(&Config::default());
-        q.push(msg(1, 1, 0));
-        q.push(msg(2, 2, 100));
-        assert_eq!(q.next_expiry(), Some(at(600)));
-        assert_eq!(q.pop_expired(at(599)), None);
-        assert_eq!(q.pop_expired(at(700)).unwrap().msg_id, MsgId(1));
-        assert_eq!(q.pop_expired(at(700)).unwrap().msg_id, MsgId(2));
-        assert_eq!(q.pop_expired(at(700)), None);
-        assert_eq!(q.next_expiry(), None);
+    fn a_stale_message_stays_until_its_place_is_needed() {
+        let mut q = DeliveryQueue::<4>::from_config(&Config::default());
+        for i in 0..4 {
+            q.push(msg(i, i as u8, 100 * i as u64));
+        }
+        // Not full: nothing goes, stale or not.
+        q.remove(MsgId(3));
+        assert!(q.has_room(at(10_000)));
+        assert_eq!(q.make_room(at(10_000)), None);
+        q.push(msg(3, 3, 300));
+        // Full, the oldest not yet stale: no room.
+        assert!(!q.has_room(at(599)));
+        assert_eq!(q.make_room(at(599)), None);
+        // The oldest stale: it makes way, and only it.
+        assert!(q.has_room(at(600)));
+        assert_eq!(q.make_room(at(800)).unwrap().msg_id, MsgId(0));
+        assert_eq!(q.make_room(at(800)), None);
+        assert_eq!(q.len(), 3);
     }
 
     #[test]

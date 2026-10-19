@@ -3,7 +3,8 @@
 //!
 //! A message that reaches the owner of its position and is for another
 //! node waits in the delivery queue, whether or not that node is heard,
-//! and leaves it when the node ACKs it or when the delivery TTL runs out.
+//! and leaves it when the node ACKs it or, stale after the delivery TTL,
+//! when a newer message needs its place (`tables/delivery.rs`).
 //! It goes to the node as DATA addressed to its ID, through the send queue
 //! like any hand-over, only while the node listens: from each of its beats
 //! for the heard table's window, which each message it takes renews
@@ -25,7 +26,7 @@
 //! taken to listen all the time: its messages go at once, and after an
 //! unanswered one every `delivery_retry` (60 s) as well as on its beats.
 //!
-//! Messages for a node this one does not hear wait for it for the TTL, as
+//! Messages for a node this one does not hear wait for it all the same, as
 //! spec "Owner" has the owner queue when nobody knows the node.
 //!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
@@ -186,23 +187,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.deliver_now(node, now);
     }
 
-    /// Expire the heard table and the delivery queue (spec "Delivery queue"), and
-    /// with `sleepy_listens` retry the queue.
-    pub(super) fn delivery_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+    /// Make a place in the full delivery queue for a message arriving at
+    /// `now`, if a stale one can give it up (spec "Delivery queue").
+    pub(super) fn make_room(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(q) = self.delivery.make_room(now) else {
+            return;
+        };
+        // A hand-over of it not yet on its way goes with it.
+        let id = q.msg_id;
+        let active = !self.handover.idle();
+        self.queue.retain(|current, o| {
+            (current && active) || o.kind != Kind::Deliver || o.msg_id() != Some(id)
+        });
+        self.feed_due = true;
+        emit(Action::Trace(Trace::Dropped {
+            msg_id: id,
+            reason: DropReason::QueueExpired,
+        }));
+    }
+
+    /// Expire the heard table, and with `sleepy_listens` retry the
+    /// delivery queue.
+    pub(super) fn delivery_timers(&mut self, now: Instant) {
         self.heard.expire(now);
-        while let Some(q) = self.delivery.pop_expired(now) {
-            // A hand-over of it not yet on its way goes with it.
-            let id = q.msg_id;
-            let active = !self.handover.idle();
-            self.queue.retain(|current, o| {
-                (current && active) || o.kind != Kind::Deliver || o.msg_id() != Some(id)
-            });
-            self.feed_due = true;
-            emit(Action::Trace(Trace::Dropped {
-                msg_id: id,
-                reason: DropReason::QueueExpired,
-            }));
-        }
         if self.config.sleepy_listens && now >= self.delivery_retry_at {
             self.delivery_retry_at = now + self.config.delivery_retry;
             self.feed(true, now);
@@ -214,10 +221,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
             .then_some(self.delivery_retry_at);
         [
-            self.delivery.next_expiry(),
             retry,
             self.feed_at,
             self.heard.next_expiry(),
+            // A message of its own waits for a place (`release_held`).
+            self.held.and(self.delivery.stale_from()),
         ]
         .into_iter()
         .flatten()

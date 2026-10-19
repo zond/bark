@@ -1088,8 +1088,9 @@ waits in the send queue, for its turn, for the bucket, for a ban, in a
 hop place or as a return, and one whose frame is on air at its next
 attempt. A packet that arrives with its time gone is no work: the relay
 takes it, as in cases 1, 3 and 4, and the message ends there. A message
-to deliver is not affected: at its owner the delivery queue keeps it for
-its own TTL, whatever was left ([delivery queue](#delivery-queue)). A return or a copy carries the time like
+to deliver is not affected: at its owner the delivery queue keeps it
+until its node takes it or a newer message needs its place, whatever was
+left ([delivery queue](#delivery-queue)). A return or a copy carries the time like
 any DATA, so the parent's copy (case 5) ends by the same clock.
 
 Without an end by time, a message the network has taken lives as long
@@ -1198,7 +1199,7 @@ owner queues it for the addressed node ([delivery queue](#delivery-queue)) and s
 the node listens ([delivery](#delivery)), whether or not it hears the node now; a
 later copy of a message it has delivered is only ACKed
 ([receiving DATA](#receiving-data), case 1). A message for a relay that is gone waits there
-for the queue's TTL and ends.
+until a newer message needs its place, and ends.
 
 
 ### Why the search finds a path
@@ -1267,9 +1268,10 @@ What breaks it:
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
 - **Life:** at most the delivery TTL from a node taking it from the
   application to its owner ([receiving DATA](#receiving-data)), whatever its search and
-  however long it waits, then up to a TTL more in the owner's delivery
-  queue ([delivery queue](#delivery-queue)). So it holds a place in a send queue no longer
-  than a TTL.
+  however long it waits, then in the owner's delivery queue until its
+  node takes it or, a TTL or more after it came, a newer message needs
+  its place ([delivery queue](#delivery-queue)). So it holds a place in a send queue no
+  longer than a TTL.
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
@@ -1327,8 +1329,9 @@ node.
 A sleepy node can go **dark** for a few minutes: a phone in a pocket, a
 basement or the metro. What the network keeps for a node that does not
 answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
-messages waiting for it ([delivery queue](#delivery-queue)) and the node in its holder's
-table ([heard table](#heard-table)). The network keeps a message on its way for the
+node in its holder's table ([heard table](#heard-table)), and the messages waiting for
+it, which stay longer while nothing needs their place
+([delivery queue](#delivery-queue)). The network keeps a message on its way for the
 same time ([receiving DATA](#receiving-data)).
 
 ### Relay choice
@@ -1366,7 +1369,7 @@ relay that is no better takes the node on 2.3 % of comparisons. The
 neighbour table's average lets each new frame count half, which varies
 less than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more
 than two standard deviations there. A node in a vehicle does not keep
-up: the mail its holder keeps for it waits out its TTL there, and is lost
+up: the mail its holder keeps for it waits there until its place is needed, and is lost
 unless the sender learns the new address (roadmap D65).
 
 **Asleep.** Between its windows a sleepy node receives duty-cycled,
@@ -1536,12 +1539,17 @@ often it is out of reach (roadmap D47, D48, D50, D58).
 ### Delivery queue
 
 Kept by nodes that are not sleepy ([sleepy nodes](#sleepy-nodes)). Bounded, not a
-mailbox: up to 41 messages per node, kept for the
-delivery TTL. On expiry the message is dropped. The
-same TTL bounds a message's way through the network ([receiving DATA](#receiving-data));
-the queue's starts afresh when the message arrives, since it is the wait
-for a node that sleeps or is dark. When the queue is full, a message for
-another node is refused ([receiving DATA](#receiving-data)): what is queued stays, and
+mailbox: up to 41 messages per node. A message queued the delivery TTL
+ago or longer is **stale**; it stays, and goes to its node at the node's
+next beat as any other, until a message arrives at a full queue: then
+the oldest stale message makes way for it. Age alone drops nothing: a
+message dropped when no other needs its place is lost for nothing, and
+its node may yet beat, back from a pocket or a basement, or heard at
+last by a holder that missed its beats. The same TTL bounds a message's
+way through the network ([receiving DATA](#receiving-data)); the queue's starts afresh
+when the message arrives, since it is the wait for a node that sleeps or
+is dark. When the queue is full and holds no stale message, a message
+for another node is refused ([receiving DATA](#receiving-data)): what is queued stays, and
 the sender learns at once.
 
 A queued message goes to the send queue one per node at a time and
@@ -1573,7 +1581,7 @@ forgets nothing. 41 is the delivery queue's size, for the same reason.
 
 Nothing covers a node that has moved out of reach of every holder that
 has its mail: the old holder does not forward to the new anchor, the
-mail waits out the queue's TTL there, and the sender is not told
+mail waits there until its place is needed, and the sender is not told
 ([addresses](#addresses)).
 
 ### A sleepy node's own message

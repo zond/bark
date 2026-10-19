@@ -1702,7 +1702,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.timers(now, emit);
         self.forward_timers(now, emit);
-        self.delivery_timers(now, emit);
+        self.delivery_timers(now);
         self.pump(now, emit);
         self.app_ready_at = self.send_ready_at(now);
         if woke.get() {
@@ -2378,13 +2378,17 @@ mod tests {
             DELIVERY_QUEUE + 1,
             "taken while holding"
         );
-        // The oldest expire after the delivery TTL; the held one takes a
-        // place, and the application may send again.
+        // A delivery TTL on the oldest is stale and makes way for the held
+        // one; the others stay, and the application may send again.
         let ttl = r.config.delivery_ttl;
         let until = now + ttl + Duration::from_secs(1);
         drive(&mut r, &mut now, until);
         assert!(r.held.is_none());
-        assert_eq!(r.holding().count(), 1, "the held one, now queued");
+        assert_eq!(
+            r.holding().count(),
+            DELIVERY_QUEUE,
+            "the held one, now queued"
+        );
         assert!(r.accepts_send(now));
 
         // A bucket spent down to a full frame keeps the application
