@@ -1,7 +1,7 @@
 # Texts that expire waiting for a node the holder never hears
 
-**Date:** 2026-10-19, roadmap D66. **Status:** measured, awaiting the
-decision. Spec references are to `protocol.md`. Every run is S4
+**Date:** 2026-10-19, roadmap D66. **Status:** decided 2026-10-19, the
+stale text kept adopted, levers a, c and d not. Spec references are to `protocol.md`. Every run is S4
 (`scenarios/s4-capacity.toml`, with its switch-on, random IDs, clocks,
 walkers and dark spells) for two settled hours, 10 500 s, counting the
 reachable texts the sleepy nodes sent from 2700 to 9900 s, as D54 did.
