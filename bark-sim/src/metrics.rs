@@ -311,6 +311,17 @@ pub struct HopPlaceRefusals {
     pub wait_with_place_us: u64,
 }
 
+/// DATA a relay received for a message it once kept a record of and no
+/// longer does: the record made way for another (spec "Message records",
+/// roadmap D31), and the relay takes the message for new.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct RecordsLost {
+    /// Such packets.
+    pub packets: u64,
+    /// The tag of each such packet's message.
+    pub tags: Vec<u32>,
+}
+
 /// The sleepy nodes' counters summed, for the series (`Sim::series_on`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct LeafSums {
@@ -894,6 +905,8 @@ pub struct Metrics {
     pub addressed: Addressed,
     /// Refusals for room, and the hop places free at them.
     pub hop_places: HopPlaceRefusals,
+    /// DATA for messages whose record their receiver had lost.
+    pub records_lost: RecordsLost,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.

@@ -260,6 +260,15 @@ impl Records {
         self.len = 0;
     }
 
+    /// When the least recently active record was last active, once the
+    /// table is full: about how long a record lasts before it makes way.
+    pub fn least_recent(&self) -> Option<Instant> {
+        if !self.is_full() {
+            return None;
+        }
+        self.entries.iter().map(|r| r.last_active).min()
+    }
+
     /// Whether a new record must take an old one's place.
     pub fn is_full(&self) -> bool {
         self.len == RECORDS

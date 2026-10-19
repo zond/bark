@@ -841,6 +841,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.records.get(id).is_some()
     }
 
+    /// How many records this relay keeps, and, once the table is full,
+    /// how long its least recently active record has been idle at `now`:
+    /// about how long a record lasts here (spec "Message records"). For a
+    /// driver to sample; reading it changes nothing.
+    pub fn records(&self, now: Instant) -> (usize, Option<Duration>) {
+        let idle = self.records.least_recent().map(|t| now.since(t));
+        (self.records.len(), idle)
+    }
+
     /// The lowest count a packet from a relay may carry to be taken into
     /// a hop place now, if any is free (spec "Send queue"). For a driver to sample;
     /// reading it changes nothing.

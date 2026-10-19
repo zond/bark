@@ -747,6 +747,9 @@ pub struct Sim {
     /// The relay DATA a relay is being handed now: (relay, message,
     /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
     rx_data: Option<(u32, u32, u32, u8)>,
+    /// (relay, message) for every record a relay has kept, for
+    /// [`crate::metrics::RecordsLost`].
+    recorded: std::collections::HashSet<(u32, u32)>,
     /// Refused messages not yet sent again: (sender, message) to the
     /// refusal's time and whether a hop place was free for another.
     refused_at: HashMap<(u32, u32), (Instant, bool)>,
@@ -1153,6 +1156,7 @@ impl Sim {
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
             rx_data: None,
+            recorded: std::collections::HashSet::new(),
             refused_at: HashMap::new(),
         };
         sim.component = sim.components();
@@ -1663,9 +1667,10 @@ impl Sim {
         let t = self.now.as_micros() / 1_000_000;
         for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
             let l = r.load(self.clocks[i].local(self.now));
+            let rec = r.records(self.clocks[i].local(self.now));
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
-                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"home\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"m\":{m}}}\n",
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"home\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"rec\":{},\"rec_idle_s\":{},\"m\":{m}}}\n",
                 self.nodes[i].alive,
                 r.booting(),
                 r.home().index(),
@@ -1682,7 +1687,9 @@ impl Sim {
                 l.neighbours,
                 l.hop_places,
                 l.waiting,
-                l.returns
+                l.returns,
+                rec.0,
+                rec.1.map_or(-1, |d| (d.as_micros() / 1_000_000) as i64)
             ));
         }
         let now = self.now;
@@ -1765,9 +1772,22 @@ impl Sim {
             };
         }
         let clock = self.clocks[node as usize];
+        let rx = self.rx_data.filter(|r| r.0 == node);
+        if let Some((at, id, _, _)) = rx {
+            if !self.relays[at as usize].knows(MsgId(id)) && self.recorded.contains(&(at, id)) {
+                let l = &mut self.metrics.records_lost;
+                l.packets += 1;
+                l.tags.extend(self.msg_tags.get(&id));
+            }
+        }
         let c = &mut self.relays[node as usize];
         self.was_booting = c.booting();
         c.handle(ev, clock.local(now), &mut |a| buf.push(a));
+        if let Some((at, id, _, _)) = rx {
+            if c.knows(MsgId(id)) {
+                self.recorded.insert((at, id));
+            }
+        }
         let wake = c.next_wakeup().map(|t| clock.true_time(t));
         if node >= self.n_relays {
             let anchor = c.anchor().map(|a| a.position);

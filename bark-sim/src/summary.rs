@@ -284,6 +284,8 @@ pub struct Summary {
     /// Refusals for room, and the hop places free at them.
     #[serde(skip_serializing_if = "hop_places_none")]
     pub hop_places: HopPlaceRefusals,
+    /// DATA for messages whose record their receiver had lost.
+    pub records_lost: crate::metrics::RecordsLost,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -452,6 +454,7 @@ impl Sim {
             heartbeats: m.heartbeats,
             interval_pairs: self.interval_pairs(),
             hop_places: m.hop_places,
+            records_lost: m.records_lost.clone(),
             addressed: m.addressed,
             channels,
             observers,
