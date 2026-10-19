@@ -2405,13 +2405,17 @@ impl Sim {
         let now = self.now;
         let st = &mut self.nodes[node as usize];
         let deaf = !(kind == ExKind::Rssi && st.resting == Some(c));
-        if let (false, true, Lock::Rx(r)) = (scripted, deaf, st.lock) {
+        let receiving = match &st.lock {
+            Lock::Rx(r) if !scripted && deaf => Some(r.end),
+            _ => None,
+        };
+        if let Some(end) = receiving {
             if st.alive && st.ex.is_none() && st.held.is_none() {
                 let longest = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
                 st.held = Some((kind, c));
                 st.held_gen = st.held_gen.wrapping_add(1);
                 let g = st.held_gen;
-                self.push(r.end.min(now + longest), Ev::Held(node, g));
+                self.push(end.min(now + longest), Ev::Held(node, g));
                 return;
             }
         }
@@ -2427,22 +2431,25 @@ impl Sim {
         scripted: bool,
     ) {
         let now = self.now;
-        let label = self.label(node);
+        // Only a broken rule needs the name.
+        let label = || self.label(node);
         let st = &self.nodes[node as usize];
         if !st.alive {
             return;
         }
         if st.held.is_some() && !scripted {
             panic!(
-                "{label}: core started {kind:?} while a held check is outstanding \
-                 (docs/core-interface.md §3 rule 1: one excursion outstanding)"
+                "{}: core started {kind:?} while a held check is outstanding \
+                 (docs/core-interface.md §3 rule 1: one excursion outstanding)",
+                label()
             );
         }
         if let Some(ex) = &st.ex {
             let who = if scripted { "scripted event" } else { "core" };
             panic!(
-                "{label}: {who} started {kind:?} on channel {} while a {}{:?} excursion is outstanding \
+                "{}: {who} started {kind:?} on channel {} while a {}{:?} excursion is outstanding \
                  (docs/core-interface.md §3 rule 1: one excursion outstanding)",
+                label(),
                 c.index(),
                 if ex.scripted { "scripted " } else { "" },
                 ex.kind
@@ -2451,13 +2458,15 @@ impl Sim {
         if let Some(f) = &frame {
             assert!(
                 f.preamble_symbols >= MIN_PREAMBLE_SYMBOLS,
-                "{label}: transmit with a {}-symbol preamble, below the {MIN_PREAMBLE_SYMBOLS}-symbol minimum \
+                "{}: transmit with a {}-symbol preamble, below the {MIN_PREAMBLE_SYMBOLS}-symbol minimum \
                  (docs/core-interface.md §3 rule 4)",
+                label(),
                 f.preamble_symbols
             );
             assert!(
                 f.len as usize <= MAX_FRAME,
-                "{label}: frame longer than MAX_FRAME"
+                "{}: frame longer than MAX_FRAME",
+                label()
             );
         }
         let off = st.resting != Some(c);
