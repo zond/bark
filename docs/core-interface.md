@@ -222,5 +222,5 @@ action at a time, and the core never allocates.
     had when it reached the holder.
   - Types 0x1, 0x2, 0x4, 0x6 and 0xB to 0xE are unused and rejected.
   - A refusal is a NACK, type 0x7, 14 bytes: the ACK's 13 and the wait it asks for in
-    units of 2.5 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
+    bans of 1.56 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
     receipt. A fixed-size packet with trailing bytes is rejected.

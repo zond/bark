@@ -38,10 +38,11 @@
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - An ACK takes the offer; a NACK, type 0x7, refuses it and adds a byte
-//!   for the wait it asks for, in whole [`TTL_UNIT`]s rounded down
-//!   (`tables/budget.rs`). At SF5 the 14th byte costs no airtime, and a
-//!   byte of 2.5 s holds more than the delivery TTL: a relay at its cap
-//!   with its sleepy nodes in line asks for minutes. `aux` is zero in both.
+//!   for the wait it asks for, in whole bans rounded down
+//!   (`tables/budget.rs`). At SF5 the 14th byte costs no airtime. The
+//!   places in a refuser's line are one ban apart and nothing acts faster
+//!   than a ban, so the unit keeps every place apart; 255 bans are 398 s,
+//!   and a longer wait is told as that. `aux` is zero in both.
 //! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
 //!   sleepy (0x9), and 0x2, anchorless, only with sleepy (0xB; 0xA is
 //!   rejected): a node that listens all the time has no anchor to miss.
@@ -185,8 +186,8 @@ pub struct Ack {
     pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
-    /// For a refusal, the wait the refuser asks for, in whole
-    /// [`TTL_UNIT`]s (spec "Refusal"); 0 in an ACK that takes.
+    /// For a refusal, the wait the refuser asks for, in whole bans
+    /// (spec "Refusal"); 0 in an ACK that takes.
     pub wait: u8,
 }
 

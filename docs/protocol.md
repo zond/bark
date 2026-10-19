@@ -748,10 +748,17 @@ bring back, so those refused in one moment come back one after another
 as the room frees, not all at once. A refusal of fresh work for the way
 on ([receiving DATA](#receiving-data)) asks for the rest of the ban on that way, as it
 was learned, without a place in line: passed on so, a wait cannot grow
-from relay to relay around a ring. The wait is told in whole units of
-2.5 s, rounded down, the unit of `time_left`, so a byte holds 637 s,
-more than the delivery TTL; a refusal for want of room at a relay at its
-cap, with a hundred sleepy nodes in line, asks for minutes (roadmap D54).
+from relay to relay around a ring. The wait is told in whole bans,
+rounded down: the places in line are one ban apart, and nothing in the
+protocol acts sooner than a ban, so the unit keeps every place apart,
+where a coarser one would merge neighbouring places. A byte holds 255
+bans, 398 s; a refusal for want of room at a relay at its cap, with a
+hundred sleepy nodes in line, asks for minutes, and a longer wait is
+told as the longest, the sender coming back early to be refused again.
+The range a sender can use is bounded by the delivery TTL and the
+resolution by the ban, so a geometric scale in the byte would buy range
+that cannot be used and lose the places the line exists for (roadmap
+D54).
 
 #### Silence is pushback
 
@@ -1783,8 +1790,8 @@ ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
           from, to = the IDs of the answering and the answered node
 NACK      0x7: first(1) id(4) from(4) to(4) wait(1)                         = 14
           the answer to a DATA that refuses it, as the ACK; wait = how
-          long the refuser asks its sender to wait, in 2.5 s, rounded
-          down ([refusal](#refusal)); aux = 0
+          long the refuser asks its sender to wait, in bans of 1.56 s,
+          rounded down ([refusal](#refusal)); aux = 0
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
                time_left(1) payload                                         = 22 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
