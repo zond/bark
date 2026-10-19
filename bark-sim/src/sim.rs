@@ -18,13 +18,13 @@ use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio, Site};
 use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEAT, AFTER_TAKE};
 use crate::phy::{self, Deaf, ErrorCurve, Loss, RadioParams};
+use crate::queue::{self, Events, Wakeups};
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::scenario::{
     resolve, Destination, Ids, PairKind, PairReach, PlacedNode, RoleSpec, Scenario, ScriptAction,
     SharedIds, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
-use crate::wakeups::{self, Wakeups};
 use crate::walk::{MovingLink, Walks};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
@@ -32,8 +32,7 @@ use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, MsgId,
     NodeId, Position, Relay, Trace, MAX_FRAME,
 };
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 
 /// Something scheduled. Indices are node, slot, flow or script indices.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,30 +74,6 @@ pub(crate) enum Ev {
     Group(u32, bool),
     /// A relay with a GPS fault takes a fix (node).
     Gps(u32),
-}
-
-struct Entry {
-    t: Instant,
-    seq: u64,
-    ev: Ev,
-}
-
-impl PartialEq for Entry {
-    fn eq(&self, o: &Self) -> bool {
-        (self.t, self.seq) == (o.t, o.seq)
-    }
-}
-impl Eq for Entry {}
-impl PartialOrd for Entry {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-impl Ord for Entry {
-    /// Reversed: `BinaryHeap` is a max-heap and we want the earliest.
-    fn cmp(&self, o: &Self) -> Ordering {
-        (o.t, o.seq).cmp(&(self.t, self.seq))
-    }
 }
 
 /// Kind of excursion.
@@ -658,8 +633,8 @@ pub struct Sim {
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
     pub(crate) now: Instant,
-    heap: BinaryHeap<Entry>,
-    /// The cores' wakeups, apart from `heap` (`wakeups.rs`).
+    heap: Events<Ev>,
+    /// The cores' wakeups, apart from `heap` (`queue.rs`).
     wakeups: Wakeups,
     seq: u64,
     pub(crate) txs: Vec<Option<AirTx>>,
@@ -1103,7 +1078,7 @@ impl Sim {
             relays,
             nodes,
             now: Instant::ZERO,
-            heap: BinaryHeap::new(),
+            heap: Events::new(),
             wakeups: Wakeups::new(n),
             seq: 0,
             txs: Vec::new(),
@@ -1464,11 +1439,7 @@ impl Sim {
 
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
         self.seq += 1;
-        self.heap.push(Entry {
-            t,
-            seq: self.seq,
-            ev,
-        });
+        self.heap.push(queue::order(t, self.seq), ev);
     }
 
     /// Current simulated time.
@@ -1543,26 +1514,33 @@ impl Sim {
     /// Process every event at or before `t`, then set the clock to `t`.
     pub fn run_until(&mut self, t: Instant) {
         loop {
-            let event = self.heap.peek().map(|e| wakeups::order(e.t, e.seq));
-            let wakeup = self.wakeups.peek().map(|(o, _)| o);
-            let Some(next) = event.into_iter().chain(wakeup).min() else {
-                break;
+            let event = self.heap.peek();
+            let wakeup = self.wakeups.peek();
+            let next = match (event, wakeup) {
+                (Some(e), Some((w, _))) => e.min(w),
+                (Some(e), None) => e,
+                (None, Some((w, _))) => w,
+                (None, None) => break,
             };
-            if wakeups::time(next) > t {
+            if queue::time(next) > t {
                 break;
             }
-            self.now = wakeups::time(next);
+            self.now = queue::time(next);
             self.metrics.events += 1;
-            if wakeup == Some(next) {
-                let n = self.wakeups.pop().expect("peeked");
+            if let Some((_, n)) = wakeup.filter(|&(w, _)| w == next) {
+                // The wakeup stays queued while the core runs, so that the
+                // one it sets next takes its place in one move.
                 let st = &mut self.nodes[n as usize];
                 if st.alive {
                     st.wake_at = None;
                     self.deliver(n, Event::Wakeup);
                 }
+                if self.wakeups.get(n) == Some(next) {
+                    self.wakeups.set(n, None);
+                }
             } else {
-                let e = self.heap.pop().expect("peeked");
-                self.dispatch(e.ev);
+                let (_, ev) = self.heap.pop().expect("peeked");
+                self.dispatch(ev);
             }
         }
         self.now = self.now.max(t);
@@ -1814,7 +1792,7 @@ impl Sim {
             let order = wake.map(|t| {
                 self.seq += 1;
                 // Late is allowed, early is not: a past deadline fires now.
-                wakeups::order(t.max(now), self.seq)
+                queue::order(t.max(now), self.seq)
             });
             self.wakeups.set(node, order);
         }

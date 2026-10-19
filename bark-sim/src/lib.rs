@@ -13,13 +13,13 @@ pub mod geo;
 pub mod links;
 pub mod metrics;
 pub mod phy;
+mod queue;
 mod radio;
 pub mod rng;
 pub mod scenario;
 pub mod sim;
 pub mod summary;
 mod trace;
-mod wakeups;
 mod walk;
 
 pub use scenario::Scenario;
