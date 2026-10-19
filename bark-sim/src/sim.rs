@@ -523,7 +523,7 @@ pub mod beat_fate {
 }
 
 /// A message's wait at its holder, for [`MessageRow`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HolderWatch {
     /// When the holder queued it.
     pub queued_at: Option<Instant>,
@@ -538,6 +538,10 @@ pub struct HolderWatch {
     /// Of the beats the holder did not receive, those another node that
     /// is not sleepy did.
     pub elsewhere: u32,
+    /// For a node that does not walk, its link to the holder and to the
+    /// strongest relay, dBm before fading, when the holder queued it.
+    pub holder_dbm: Option<f32>,
+    pub best_dbm: Option<f32>,
 }
 
 /// What a frame of a message was, for [`Sim::message_frame`].
@@ -2129,6 +2133,10 @@ impl Sim {
                             w.queued_at = Some(self.now);
                             w.known = r.heard_nodes().get(to).is_some();
                             w.anchored = self.relays[dst].anchor().is_some_and(|a| a.id == r.id());
+                            let row = self.links.row(dst as u32);
+                            let to_relay = row.iter().filter(|l| l.rx < self.n_relays);
+                            w.best_dbm = to_relay.map(|l| l.base_dbm).reduce(f32::max);
+                            w.holder_dbm = row.iter().find(|l| l.rx == node).map(|l| l.base_dbm);
                             let holders = self.holders_of.entry(key(to)).or_default();
                             if !holders.contains(&node) {
                                 holders.push(node);
@@ -2851,7 +2859,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm",
         );
         for n in beat_fate::NAMES {
             s.push_str(",b_");
@@ -2905,6 +2913,8 @@ impl Sim {
                 ",{queued},{},{},{}",
                 w.known, w.anchored, w.long_tries
             ));
+            let dbm = |d: Option<f32>| d.map(|d| format!("{d:.1}")).unwrap_or_default();
+            s.push_str(&format!(",{},{}", dbm(w.holder_dbm), dbm(w.best_dbm)));
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
