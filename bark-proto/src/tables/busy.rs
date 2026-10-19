@@ -73,6 +73,11 @@ pub struct NoiseFloor {
     bins: [u32; HIST_BINS],
     total: u32,
     halve_at: u32,
+    /// The bin the percentile falls in, and the samples in the bins below
+    /// it. The floor is read on every event, so it is kept as samples
+    /// come rather than counted out of the histogram at each read.
+    floor: usize,
+    below: u32,
 }
 
 impl NoiseFloor {
@@ -82,6 +87,8 @@ impl NoiseFloor {
             bins: [0; HIST_BINS],
             total: 0,
             halve_at,
+            floor: 0,
+            below: 0,
         }
     }
 
@@ -90,11 +97,40 @@ impl NoiseFloor {
         let bin = (dbm.saturating_sub(HIST_LOW_DBM)).clamp(0, HIST_BINS as i16 - 1) as usize;
         self.bins[bin] += 1;
         self.total += 1;
+        if bin < self.floor {
+            self.below += 1;
+        }
         if self.total >= self.halve_at {
             self.total = 0;
             for b in &mut self.bins {
                 *b /= 2;
                 self.total += *b;
+            }
+            (self.floor, self.below) = (0, 0);
+        }
+        self.settle();
+    }
+
+    /// Move the floor to the lowest bin where the bins up to it hold the
+    /// percentile's rank of samples, stepping from where it was: after one
+    /// sample it is close, after a halving it climbs from the bottom.
+    fn settle(&mut self) {
+        if self.total == 0 {
+            (self.floor, self.below) = (0, 0);
+            return;
+        }
+        let rank = rank(self.total);
+        loop {
+            if self.floor > 0 && self.below as u64 >= rank {
+                self.floor -= 1;
+                self.below -= self.bins[self.floor];
+            } else if self.floor + 1 < HIST_BINS
+                && ((self.below + self.bins[self.floor]) as u64) < rank
+            {
+                self.below += self.bins[self.floor];
+                self.floor += 1;
+            } else {
+                return;
             }
         }
     }
@@ -104,16 +140,13 @@ impl NoiseFloor {
         if self.total == 0 {
             return NOMINAL_NOISE_FLOOR_DBM;
         }
-        let rank = (self.total as u64 * FLOOR_PERCENTILE).div_ceil(100).max(1);
-        let mut seen = 0;
-        for (i, &b) in self.bins.iter().enumerate() {
-            seen += b as u64;
-            if seen >= rank {
-                return HIST_LOW_DBM + i as i16;
-            }
-        }
-        HIST_LOW_DBM + HIST_BINS as i16 - 1
+        HIST_LOW_DBM + self.floor as i16
     }
+}
+
+/// How many of `total` samples lie at or below the floor.
+fn rank(total: u32) -> u64 {
+    (total as u64 * FLOOR_PERCENTILE).div_ceil(100).max(1)
 }
 
 /// The busy estimates for all channels.
@@ -254,6 +287,41 @@ mod tests {
             d.add(-110);
         }
         assert_eq!(d.dbm(), -110);
+    }
+
+    /// The floor counted out of the histogram, as defined.
+    fn counted(n: &NoiseFloor) -> i16 {
+        if n.total == 0 {
+            return NOMINAL_NOISE_FLOOR_DBM;
+        }
+        let rank = rank(n.total);
+        let mut seen = 0;
+        for (i, &b) in n.bins.iter().enumerate() {
+            seen += b as u64;
+            if seen >= rank {
+                return HIST_LOW_DBM + i as i16;
+            }
+        }
+        HIST_LOW_DBM + HIST_BINS as i16 - 1
+    }
+
+    #[test]
+    fn kept_floor_is_the_counted_one() {
+        // Readings over the whole range and past both ends, narrow and
+        // wide in turn and drifting, with halvings from every sample to
+        // the estimator's own.
+        let own = 2 * CHANNELS as u32 * Config::default().busy_ema_inverse as u32;
+        for halve_at in [1, 2, 7, 100, own] {
+            let mut n = NoiseFloor::new(halve_at);
+            let mut x: u32 = 1;
+            for i in 0..50_000u32 {
+                x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let spread = if (i / 5000) % 2 == 0 { 8 } else { 90 };
+                let dbm = -135 + ((x >> 16) % spread) as i16 + (i / 2000) as i16;
+                n.add(dbm);
+                assert_eq!(n.dbm(), counted(&n), "halve_at {halve_at}, sample {i}");
+            }
+        }
     }
 
     #[test]
