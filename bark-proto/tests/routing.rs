@@ -1508,8 +1508,8 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
 /// The same line, C gone. Every DATA of the message, the forward to R
 /// and R's return to P alike, carries the time its origin gave it less
 /// the time it has spent since, rounded down (spec "Receiving DATA"). With a
-/// shorter TTL at P, R's copy ends at that time while it waits for C's
-/// bans, before C's entry expires, and is never returned.
+/// shorter TTL at P, R's copy outlives that time while it waits for C's
+/// bans, and is returned with none left once C's entry expires.
 #[test]
 fn the_time_left_travels_with_the_message_and_its_return() {
     use bark_proto::wire::TTL_UNIT;
@@ -1586,16 +1586,13 @@ fn the_time_left_travels_with_the_message_and_its_return() {
     let mut h = line(short);
     let start = h.now;
     let id = send(&mut h, p, d, b"timed");
-    let ended = |h: &Harness<Relay>| {
-        traces(h, r).contains(&Trace::Dropped {
-            msg_id: id,
-            reason: DropReason::Expired,
-        })
-    };
-    assert!(h.run_until(start + short, ended), "R kept it past its time");
-    h.run_for(secs(400));
-    assert!(!returned(&h));
-    assert!(!traces(&h, p)
+    assert!(
+        h.run_until(start + secs(600), returned),
+        "R did not return it"
+    );
+    assert!(h.now.since(start) > short);
+    assert_eq!(datas(&h, r, id).last().map(|d| d.1), Some(0));
+    assert!(!traces(&h, r)
         .iter()
         .any(|t| matches!(t, Trace::Dropped { .. })));
 }

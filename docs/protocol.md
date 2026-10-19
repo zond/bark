@@ -820,16 +820,16 @@ end, the packets that waited for them go first ([overload waits](#overload-waits
 
 #### Overload waits
 
-Overload makes a message wait and never ends it; only its time does. A
+Overload makes a message wait and never ends it, nor does its age. A
 message whose every remaining candidate is banned, by refusals or by
 silence, waits in its place in the send queue, with its airtime still
 counted, until the earliest ban ends, and is routed again then, at the
-origin or anywhere else. A message ends only when it is delivered, when
-its search runs out of neighbours ([return to parent](#return-to-parent)), when a return goes
-unanswered twice in a row (step 6), when its time runs out on the way
-([receiving DATA](#receiving-data)), when its sleepy node does not take it within the
-delivery queue's TTL ([delivery queue](#delivery-queue)), at the hop cap
-([hop count](#hop-count)), or when a node holding it dies (roadmap D31, D44).
+origin or anywhere else. Once a node has taken it from its origin, a message ends only when it
+is delivered, when its search runs out of neighbours ([return to parent](#return-to-parent)), when a
+return goes unanswered twice in a row (step 6), when a newer message
+needs its place in its node's delivery queue ([delivery queue](#delivery-queue)), at the
+hop cap ([hop count](#hop-count)), or when a node holding it dies; before that, its
+origin drops it once its time is gone ([receiving DATA](#receiving-data)) (roadmap D31, D67).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
 of messages for each other would refuse each other forever, since what
@@ -1065,7 +1065,7 @@ updates its last-active time.
 Only cases 1, 3 and 4 end a packet without acting on it, and in each the
 message lives on: it has arrived, the packet was acted on when it first
 came, or another copy goes on. So no case ends the last copy of a
-message; only its time can (below). Nothing is sent straight back: a
+message. Nothing is sent straight back: a
 relay that has had the message goes on from where its own search stands, and its sender, if the relay
 has not tried it, stays a candidate and gets the message back in turn.
 A return goes from a relay to its parent, and the parents, each set when
@@ -1073,39 +1073,32 @@ its record was made, lead back to the origin without a loop, so a
 message cannot go back and forth between two relays that hold none of
 it (roadmap D35).
 
-**Time left.** A message lives in the network for at most the delivery
-TTL, 600 s ([sleepy nodes](#sleepy-nodes)), from when a node took it from its application.
-Every DATA carries the time the message has left, `time_left`, in whole
-units of 2.5 s ([packet formats](#packet-formats)). That node starts it at the TTL. Each
-transmission, retries included, carries what is left at that moment,
-rounded down, so no node claims more than the message has, and a sleepy
-node's waits for its anchor count against it. A relay that takes a
-packet to send on counts the message's time from the packet: what it
-carries less the frame's time on air, since the sender stamps the time
-as the frame goes out. With one unit or less left a message can no longer be
-sent with any, and its time is gone: the relay drops it wherever it
-waits in the send queue, for its turn, for the bucket, for a ban, in a
-hop place or as a return, and one whose frame is on air at its next
-attempt. A packet that arrives with its time gone is no work: the relay
-takes it, as in cases 1, 3 and 4, and the message ends there. A message
-to deliver is not affected: at its owner the delivery queue keeps it
-until its node takes it or a newer message needs its place, whatever was
-left ([delivery queue](#delivery-queue)). A return or a copy carries the time like
-any DATA, so the parent's copy (case 5) ends by the same clock.
+**Time left.** Every DATA carries the time the message has left of the
+delivery TTL, 600 s ([sleepy nodes](#sleepy-nodes)), from when a node took it from its
+application, `time_left`, in whole units of 2.5 s ([packet formats](#packet-formats)). That
+node starts it at the TTL. Each transmission, retries included, carries
+what is left at that moment, rounded down and never below zero, so no
+node claims more than the message has, and a sleepy node's waits for its
+anchor count against it. A relay that takes a packet to send on counts
+the message's time from the packet: what it carries less the frame's
+time on air, since the sender stamps the time as the frame goes out.
+What reaches the destination tells its application how long the message
+was on its way ([delivery queue](#delivery-queue)).
 
-Without an end by time, a message the network has taken lives as long
-as hand-overs to someone succeed: past the cap, long after its sender
-and its destination's queue would have given it up, keeping the relays
-at their duty cap (roadmap D42, D44).
-
-Rounding down loses up to a unit at each hand-over, a whole one at a
-hand-over that follows at once. 2.5 s is the finest unit at which one
-byte holds the TTL, as 240, so a message whose hand-overs follow each
-other at once has time for 239 of them, near the 255 of the hop cap
-([hop count](#hop-count)); at 10 s it would have time for 59, fewer than some searches
-under load take to reach their owner (roadmap D44). Rounded to the
-nearest instead, a message that stays just under half a unit at each
-relay would lose no time at all.
+The time ends a message only at its origin, before any node has taken
+it: an application's message that its node cannot hand over with a whole
+unit left is dropped there, wherever it waits in the send queue, and at
+its next attempt if its frame is on air. 2.5 s is the finest unit at
+which one byte holds the TTL, as 240. Once a node has taken it, a message
+has no end by time: a packet with no time left is work like any other,
+and a relay keeps it wherever it waits. Overload is refused where a
+message enters the network, at its origin's first hop, with a wait its
+application hears ([refusal](#refusal), [a sleepy node's own message](#a-sleepy-nodes-own-message)); a message
+the network has taken is one it had room for, and ending it later by
+age would throw away the airtime already spent on it, with nobody told,
+where waiting costs only its place. What ends a message that keeps going
+past the network's capacity is that refusal, not its age (roadmap D44,
+D67).
 
 #### Return to parent
 
@@ -1266,12 +1259,12 @@ What breaks it:
   the table 390 s after its last heartbeat or ACK: the bans 1.56, 3.11, 6.2,
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
-- **Life:** at most the delivery TTL from a node taking it from the
-  application to its owner ([receiving DATA](#receiving-data)), whatever its search and
-  however long it waits, then in the owner's delivery queue until its
-  node takes it or, a TTL or more after it came, a newer message needs
-  its place ([delivery queue](#delivery-queue)). So it holds a place in a send queue no
-  longer than a TTL.
+- **Life:** at most the delivery TTL at its origin before a node takes
+  it ([receiving DATA](#receiving-data)); then at most 256 hand-overs that succeed, and
+  between them as long as the bans it waits for last ([overload waits](#overload-waits)):
+  no time bounds its stay in a send queue; then in the owner's delivery
+  queue until its node takes it or, a TTL or more after it came, a newer
+  message needs its place ([delivery queue](#delivery-queue)).
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
@@ -1331,8 +1324,8 @@ basement or the metro. What the network keeps for a node that does not
 answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
 node in its holder's table ([heard table](#heard-table)), and the messages waiting for
 it, which stay longer while nothing needs their place
-([delivery queue](#delivery-queue)). The network keeps a message on its way for the
-same time ([receiving DATA](#receiving-data)).
+([delivery queue](#delivery-queue)). A node keeps its application's message, until
+a first hop takes it, for the same time ([receiving DATA](#receiving-data)).
 
 ### Relay choice
 
@@ -1547,7 +1540,7 @@ the oldest stale message makes way for it. Age alone drops nothing: a
 message dropped when no other needs its place is lost for nothing, and
 its node may yet beat, back from a pocket or a basement, or heard at
 last by a holder that missed its beats. The same TTL bounds a message's
-way through the network ([receiving DATA](#receiving-data)); the queue's starts afresh
+wait at its origin ([receiving DATA](#receiving-data)); the queue's starts afresh
 when the message arrives, since it is the wait for a node that sleeps or
 is dark. When the queue is full and holds no stale message, a message
 for another node is refused ([receiving DATA](#receiving-data)): what is queued stays, and

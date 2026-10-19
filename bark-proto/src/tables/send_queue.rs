@@ -92,8 +92,8 @@ pub struct Outgoing {
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
     /// When a DATA's time left reaches zero (spec "Receiving DATA");
-    /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
-    /// queue's TTL ends.
+    /// [`Instant::MAX`] for a DATA to a sleepy node, which carries the
+    /// time it reached its holder with.
     pub expires: Instant,
 }
 

@@ -101,8 +101,8 @@
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
-//! is not returned or dropped: overload makes a message wait, never end;
-//! only its time does (below).
+//! is not returned or dropped: overload makes a message wait, never end,
+//! and once a node has taken it neither does its age (below).
 //! Only a search exhausted by neighbours tried or set aside returns or
 //! drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
@@ -127,13 +127,13 @@
 //! A queued DATA keeps when its time runs out, from the packet it came in:
 //! the time it carried less its time on air, which passed after the
 //! sender stamped it. Each attempt carries what is left then, rounded
-//! down to whole [`TTL_UNIT`]s. With no more than one unit left it cannot
-//! be sent with any, and it is dropped wherever it waits, as soon as that
-//! happens, so its place frees at once. Without an end by time a message
-//! the network has taken lives as long as hand-overs to someone succeed,
-//! which past the capacity domain's collapse was up to an hour (roadmap
-//! D44). A packet that comes with its time gone is taken as no work, and
-//! ends here. At its owner the delivery queue takes over.
+//! down to whole [`TTL_UNIT`]s, never below zero. The time ends only the
+//! application's message at its origin, before any node has taken it: a
+//! node that cannot hand it over within the TTL drops it there, and the
+//! application may offer it again. A message the network has taken ends
+//! by delivery, its search or the hop cap, never by age: overload is
+//! pushed back to the application before a message is taken
+//! (roadmap D67).
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
@@ -520,10 +520,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             });
         let owner = case != Case::AckOnly && (d.dst_id == self.me() || self.owns(d.dst_pos, now));
         let sends = case != Case::AckOnly && !owner;
-        // The time left was stamped as the frame went on air. Gone, the
-        // packet is no work, and the message ends here.
+        // The time left was stamped as the frame went on air. It is passed
+        // on, and ends nothing here.
         let expires = now + d.time_left() - self.data_airtime(d.payload.len());
-        let expired = sends && now >= expires - TTL_UNIT;
         let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_id != self.me();
         let record_at = match case {
@@ -542,7 +541,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             Duration::ZERO
         };
-        let refusal = if case == Case::AckOnly || expired {
+        let refusal = if case == Case::AckOnly {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
@@ -635,9 +634,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Case::New | Case::Search if owner => {
                 self.arrive(id, &d, now, emit);
-            }
-            Case::New | Case::Search if expired => {
-                self.drop_msg(id, DropReason::Expired, emit);
             }
             Case::New | Case::Search => self.send_on(&d, place, expires, emit),
         }
@@ -1260,8 +1256,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Instant::MAX => d.time_left,
                 ends => Data::units(ends.since(now)),
             };
-            let (Some(hops), false) = (self.count(&d, id), gone(&out, now)) else {
-                let reason = match gone(&out, now) {
+            let aged = self.aged(&out, now);
+            let (Some(hops), false) = (self.count(&d, id), aged) else {
+                let reason = match aged {
                     true => DropReason::Expired,
                     false => DropReason::HopCap,
                 };
@@ -1611,39 +1608,36 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.expire(now, emit);
     }
 
-    /// Drop every message in the send queue whose time is gone (spec "Receiving DATA"):
-    /// it could no longer be sent with a whole unit left. Waiting for a
-    /// ban, in a hop place or a return alike; it frees its place at once
-    /// rather than when its turn comes. One whose frame is on air or waits
-    /// for its ACK ends at its next attempt instead (`transmit_current`).
-    /// A message set aside for the delivery queue is at its owner, where
-    /// that queue ends it.
+    /// Drop the application's message once its time is gone at its
+    /// origin (spec "Receiving DATA"): a sleepy node waiting for its
+    /// anchor, or a relay for its first hop, which no node has taken yet.
+    /// Waiting for a ban alike; it frees its place at once rather than
+    /// when its turn comes. One whose frame is on air or waits for its ACK
+    /// ends at its next attempt instead (`transmit_current`). Once taken,
+    /// a message has no end by time.
     fn expire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.time_gone_at().is_none_or(|t| t > now) {
             return;
         }
-        loop {
-            let under_way = self.under_way();
-            let found = self
-                .queue
-                .iter()
-                .enumerate()
-                .position(|(i, o)| Some(i) != under_way && gone(o, now));
-            let Some(i) = found else { break };
-            let id = self.queue.iter().nth(i).and_then(Outgoing::msg_id);
-            if self.queue.current_index() == Some(i) {
-                // Not yet on air: waiting its turn, for the bucket or to retry.
-                self.handover.cancel();
-                self.skipped = 0;
-            }
-            let mut k = 0;
-            self.queue.retain(|_, _| {
-                k += 1;
-                k != i + 1
-            });
-            self.feed_due = true;
-            self.drop_msg(id.unwrap_or_default(), DropReason::Expired, emit);
+        let under_way = self.under_way();
+        let found = self
+            .queue
+            .iter()
+            .enumerate()
+            .position(|(i, o)| Some(i) != under_way && self.aged(o, now));
+        let Some(i) = found else { return };
+        if self.queue.current_index() == Some(i) {
+            // Not yet on air: waiting its turn, for the bucket or to retry.
+            self.handover.cancel();
+            self.skipped = 0;
         }
+        let mut k = 0;
+        self.queue.retain(|_, _| {
+            k += 1;
+            k != i + 1
+        });
+        self.feed_due = true;
+        self.drop_msg(self.own.unwrap_or_default(), DropReason::Expired, emit);
     }
 
     /// The send queue's entry whose frame is on air or waiting for its ACK.
@@ -1652,23 +1646,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue.current_index().filter(|_| on_air)
     }
 
-    /// When the earliest message in the send queue, but for one on air or
-    /// waiting for its ACK, can no longer be sent with a whole unit of time
-    /// left.
+    /// When the application's message, waiting at its origin but not on
+    /// air or waiting for its ACK, can no longer be sent with a whole unit
+    /// of time left.
     fn time_gone_at(&self) -> Option<Instant> {
-        // Asked on every event; mostly there is nothing queued.
-        if self.queue.is_empty() {
-            return None;
-        }
+        // Asked on every event; mostly no message of the application's waits.
+        let own = self.own?;
         let under_way = self.under_way();
         self.queue
             .iter()
             .enumerate()
-            .filter(|(i, _)| Some(*i) != under_way)
+            .filter(|(i, o)| Some(*i) != under_way && o.msg_id() == Some(own))
             .map(|(_, o)| o.expires)
             .min()
             .filter(|&t| t != Instant::MAX)
             .map(|t| t - TTL_UNIT)
+    }
+
+    /// Whether `out` is the application's message, still at its origin,
+    /// and its time is gone: no more than one unit is left, and a DATA
+    /// carries only whole ones, rounded down (spec "Receiving DATA").
+    fn aged(&self, out: &Outgoing, now: Instant) -> bool {
+        self.own.is_some()
+            && out.expires != Instant::MAX
+            && now >= out.expires - TTL_UNIT
+            && out.msg_id() == self.own
     }
 
     /// When forwarding next needs the core. The ACK wait counts even while
@@ -1697,10 +1699,4 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         w
     }
-}
-
-/// Whether `out`'s time is gone: no more than one unit is left, and a
-/// DATA carries only whole ones, rounded down (spec "Receiving DATA").
-fn gone(out: &Outgoing, now: Instant) -> bool {
-    out.expires != Instant::MAX && now >= out.expires - TTL_UNIT
 }
