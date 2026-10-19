@@ -30,7 +30,7 @@ A **scenario**:
 
 ### 3.1 Time and events
 
-Discrete-event, microsecond resolution, single-threaded, deterministic for a given seed. A binary heap of `(time, sequence, event)`. Event kinds: node timer, transmission start, transmission end at each receiver, CAD/RSSI sample result, traffic arrival, leaf movement, interferer toggle.
+Discrete-event, microsecond resolution, single-threaded, deterministic for a given seed. A binary heap of `(time, sequence, event)`, and beside it one place per node for its core's timer, ordered the same way: the core sets a new timer after every event, and one it replaced is dropped rather than left in the heap. Event kinds: node timer, transmission start, transmission end at each receiver, CAD/RSSI sample result, traffic arrival, leaf movement, interferer toggle.
 
 ### 3.2 Radio state per node
 

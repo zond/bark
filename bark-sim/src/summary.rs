@@ -249,7 +249,8 @@ pub struct Summary {
     pub leaves: u32,
     /// Link table.
     pub links: BuildStats,
-    /// Heap events processed.
+    /// Events processed; a core timer counts when it fires, not when
+    /// replaced.
     pub events: u64,
     /// Application level.
     pub app: AppSummary,

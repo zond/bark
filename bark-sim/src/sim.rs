@@ -24,6 +24,7 @@ use crate::scenario::{
     SharedIds, TrafficSpec,
 };
 use crate::trace::{Names, Tracer};
+use crate::wakeups::{self, Wakeups};
 use crate::walk::{MovingLink, Walks};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
@@ -39,8 +40,6 @@ use std::collections::{BinaryHeap, HashMap};
 pub(crate) enum Ev {
     /// Power-on of a node.
     Boot(u32),
-    /// Core wakeup, valid if the generation matches.
-    Wakeup(u32, u32),
     /// A transmission's first symbol reaches the air (slot, slot generation).
     AirStart(u32, u32),
     /// A transmission's last symbol leaves the air (slot, slot generation).
@@ -214,7 +213,6 @@ pub(crate) struct NodeState {
     pub listen_from: Instant,
     pub ex: Option<Excursion>,
     pub ex_gen: u32,
-    pub wake_gen: u32,
     pub wake_at: Option<Instant>,
     pub lock: Lock,
     pub arrivals: Vec<Arrival>,
@@ -661,6 +659,8 @@ pub struct Sim {
     pub(crate) nodes: Vec<NodeState>,
     pub(crate) now: Instant,
     heap: BinaryHeap<Entry>,
+    /// The cores' wakeups, apart from `heap` (`wakeups.rs`).
+    wakeups: Wakeups,
     seq: u64,
     pub(crate) txs: Vec<Option<AirTx>>,
     free_slots: Vec<u32>,
@@ -1043,7 +1043,6 @@ impl Sim {
                 listen_from: Instant::ZERO,
                 ex: None,
                 ex_gen: 0,
-                wake_gen: 0,
                 wake_at: None,
                 lock: Lock::Idle,
                 arrivals: Vec::new(),
@@ -1105,6 +1104,7 @@ impl Sim {
             nodes,
             now: Instant::ZERO,
             heap: BinaryHeap::new(),
+            wakeups: Wakeups::new(n),
             seq: 0,
             txs: Vec::new(),
             free_slots: Vec::new(),
@@ -1542,11 +1542,28 @@ impl Sim {
 
     /// Process every event at or before `t`, then set the clock to `t`.
     pub fn run_until(&mut self, t: Instant) {
-        while self.heap.peek().is_some_and(|e| e.t <= t) {
-            let e = self.heap.pop().expect("peeked");
-            self.now = e.t;
+        loop {
+            let event = self.heap.peek().map(|e| wakeups::order(e.t, e.seq));
+            let wakeup = self.wakeups.peek().map(|(o, _)| o);
+            let Some(next) = event.into_iter().chain(wakeup).min() else {
+                break;
+            };
+            if wakeups::time(next) > t {
+                break;
+            }
+            self.now = wakeups::time(next);
             self.metrics.events += 1;
-            self.dispatch(e.ev);
+            if wakeup == Some(next) {
+                let n = self.wakeups.pop().expect("peeked");
+                let st = &mut self.nodes[n as usize];
+                if st.alive {
+                    st.wake_at = None;
+                    self.deliver(n, Event::Wakeup);
+                }
+            } else {
+                let e = self.heap.pop().expect("peeked");
+                self.dispatch(e.ev);
+            }
         }
         self.now = self.now.max(t);
     }
@@ -1556,13 +1573,6 @@ impl Sim {
             Ev::Boot(n) => {
                 if std::mem::take(&mut self.pending_boot[n as usize]) {
                     self.start(n);
-                }
-            }
-            Ev::Wakeup(n, g) => {
-                let st = &mut self.nodes[n as usize];
-                if st.alive && st.wake_gen == g {
-                    st.wake_at = None;
-                    self.deliver(n, Event::Wakeup);
                 }
             }
             Ev::AirStart(slot, g) => self.air_start(slot, g),
@@ -1800,13 +1810,13 @@ impl Sim {
         self.actions = buf;
         let st = &mut self.nodes[node as usize];
         if st.wake_at != wake {
-            st.wake_gen = st.wake_gen.wrapping_add(1);
             st.wake_at = wake;
-            if let Some(t) = wake {
-                let g = st.wake_gen;
+            let order = wake.map(|t| {
+                self.seq += 1;
                 // Late is allowed, early is not: a past deadline fires now.
-                self.push(t.max(now), Ev::Wakeup(node, g));
-            }
+                wakeups::order(t.max(now), self.seq)
+            });
+            self.wakeups.set(node, order);
         }
         // The application asks again after every event (core-interface §4).
         if self.offers[node as usize].is_some() {
@@ -3351,8 +3361,9 @@ impl Sim {
         let st = &mut self.nodes[node as usize];
         st.alive = false;
         st.resting = None;
-        st.wake_gen = st.wake_gen.wrapping_add(1);
         st.wake_at = None;
+        self.wakeups.set(node, None);
+        let st = &mut self.nodes[node as usize];
         st.ex_gen = st.ex_gen.wrapping_add(1);
         st.held = None;
         st.held_gen = st.held_gen.wrapping_add(1);

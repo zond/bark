@@ -19,6 +19,7 @@ pub mod scenario;
 pub mod sim;
 pub mod summary;
 mod trace;
+mod wakeups;
 mod walk;
 
 pub use scenario::Scenario;

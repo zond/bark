@@ -898,7 +898,8 @@ pub struct Metrics {
     pub observers: Vec<Observer>,
     /// Time series.
     pub samples: Vec<SampleRow>,
-    /// Heap events processed.
+    /// Events processed; a core timer counts when it fires, not when
+    /// replaced.
     pub events: u64,
     /// The research models.
     pub research: Research,
