@@ -896,8 +896,19 @@ impl Clock {
             return t;
         }
         let us = t.as_micros() as i128;
-        let l = us + (us * self.ppb as i128).div_euclid(Self::BILLION);
+        let l = us + self.gained(us);
         Instant::from_micros(l.clamp(0, u64::MAX as i128) as u64)
+    }
+
+    /// What the clock has gained by true time `t`, µs, rounded down:
+    /// `t × ppb / 10⁹`. In 64 bits when they hold the product, as they do
+    /// for any run of a month or less: a 128-bit division costs several
+    /// times more, and the clock is read on every event.
+    fn gained(self, t: i128) -> i128 {
+        match i64::try_from(t).ok().and_then(|t| t.checked_mul(self.ppb)) {
+            Some(p) => p.div_euclid(Self::BILLION as i64) as i128,
+            None => (t * self.ppb as i128).div_euclid(Self::BILLION),
+        }
     }
 
     /// The earliest true time at which the clock reads `l` or later: a
@@ -907,7 +918,7 @@ impl Clock {
             return l;
         }
         let target = l.as_micros() as i128;
-        let reads = |t: i128| t + (t * self.ppb as i128).div_euclid(Self::BILLION);
+        let reads = |t: i128| t + self.gained(t);
         let mut t = target * Self::BILLION / (Self::BILLION + self.ppb as i128);
         while reads(t) < target {
             t += 1;
@@ -3556,6 +3567,28 @@ mod tests {
         let c = Clock::default();
         assert_eq!(c.local(Instant::from_micros(7)), Instant::from_micros(7));
         assert_eq!(c.true_time(Instant::MAX), Instant::MAX);
+    }
+
+    /// The gain in 64 bits is the gain in 128, up to where the product
+    /// no longer fits and the 128-bit one takes over.
+    #[test]
+    fn clock_gain_is_the_same_in_64_bits() {
+        for ppb in [1, -1, 50_000, -50_000, 12_345, i64::MAX, i64::MIN] {
+            let c = Clock { ppb };
+            for t in [
+                0,
+                1,
+                999_999_999,
+                1_000_000_001,
+                3_600_000_000,
+                u64::MAX as i128,
+            ] {
+                for t in [t, -t] {
+                    let wide = (t * ppb as i128).div_euclid(Clock::BILLION);
+                    assert_eq!(c.gained(t), wide, "{ppb} ppb at {t}");
+                }
+            }
+        }
     }
 
     /// Random IDs are distinct, never zero, the same for a seed, and share
