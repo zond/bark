@@ -896,37 +896,32 @@ impl Clock {
             return t;
         }
         let us = t.as_micros() as i128;
-        let l = us + self.gained(us);
+        let l = us + floor_ratio(us, self.ppb, Self::BILLION as i64);
         Instant::from_micros(l.clamp(0, u64::MAX as i128) as u64)
     }
 
-    /// What the clock has gained by true time `t`, µs, rounded down:
-    /// `t × ppb / 10⁹`. In 64 bits when they hold the product, as they do
-    /// for any run of a month or less: a 128-bit division costs several
-    /// times more, and the clock is read on every event.
-    fn gained(self, t: i128) -> i128 {
-        match i64::try_from(t).ok().and_then(|t| t.checked_mul(self.ppb)) {
-            Some(p) => p.div_euclid(Self::BILLION as i64) as i128,
-            None => (t * self.ppb as i128).div_euclid(Self::BILLION),
-        }
-    }
-
     /// The earliest true time at which the clock reads `l` or later: a
-    /// timer the core sets for `l` fires then, never before.
+    /// timer the core sets for `l` fires then, never before. At `t` the
+    /// clock reads `⌊t (10⁹ + ppb) / 10⁹⌋`, `l` or more from
+    /// `t = l × 10⁹ / (10⁹ + ppb)` on, and the first whole microsecond of
+    /// that is `l − ⌊l × ppb / (10⁹ + ppb)⌋`.
     pub(crate) fn true_time(self, l: Instant) -> Instant {
         if self.ppb == 0 || l == Instant::MAX {
             return l;
         }
         let target = l.as_micros() as i128;
-        let reads = |t: i128| t + self.gained(t);
-        let mut t = target * Self::BILLION / (Self::BILLION + self.ppb as i128);
-        while reads(t) < target {
-            t += 1;
-        }
-        while t > 0 && reads(t - 1) >= target {
-            t -= 1;
-        }
+        let t = target - floor_ratio(target, self.ppb, Self::BILLION as i64 + self.ppb);
         Instant::from_micros(t.clamp(0, u64::MAX as i128) as u64)
+    }
+}
+
+/// `⌊a × b / d⌋` for `d > 0`. In 64 bits when they hold the product, as
+/// they do for a clock's gain over any run of a month or less: a 128-bit
+/// division costs several times more, and a clock is read on every event.
+fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
+    match i64::try_from(a).ok().and_then(|a| a.checked_mul(b)) {
+        Some(p) => p.div_euclid(d) as i128,
+        None => (a * b as i128).div_euclid(d as i128),
     }
 }
 
@@ -3569,13 +3564,36 @@ mod tests {
         assert_eq!(c.true_time(Instant::MAX), Instant::MAX);
     }
 
-    /// The gain in 64 bits is the gain in 128, up to where the product
-    /// no longer fits and the 128-bit one takes over.
+    /// The closed forms meet their definitions: what the clock reads, and
+    /// a timer that fires at the first microsecond the clock reads its
+    /// time; and the 64-bit ratio is the 128-bit one, up to where the
+    /// product no longer fits.
     #[test]
-    fn clock_gain_is_the_same_in_64_bits() {
-        for ppb in [1, -1, 50_000, -50_000, 12_345, i64::MAX, i64::MIN] {
-            let c = Clock { ppb };
-            for t in [
+    fn clock_closed_forms_are_the_definitions() {
+        let reads =
+            |c: Clock, t: i128| (t * (1_000_000_000 + c.ppb as i128)).div_euclid(1_000_000_000);
+        for ppm in [50.0, -50.0, 12.345, -0.001, 999.0, -999.0] {
+            let c = Clock::off_by(ppm);
+            let far = [
+                999_999,
+                1_000_000_001,
+                3_600_000_000,
+                123_456_789_012,
+                (1 << 62) + 12_345,
+            ];
+            for l in (0..3000).chain(far) {
+                let local = c.local(Instant::from_micros(l)).as_micros() as i128;
+                assert_eq!(local, reads(c, l as i128), "{ppm} ppm at {l}");
+                let t = c.true_time(Instant::from_micros(l)).as_micros() as i128;
+                assert!(reads(c, t) >= l as i128, "{ppm} ppm: early for {l}");
+                assert!(
+                    t == 0 || reads(c, t - 1) < l as i128,
+                    "{ppm} ppm: late for {l}"
+                );
+            }
+        }
+        for b in [1, -1, 50_000, -50_000, 12_345, i64::MAX, i64::MIN] {
+            for a in [
                 0,
                 1,
                 999_999_999,
@@ -3583,9 +3601,10 @@ mod tests {
                 3_600_000_000,
                 u64::MAX as i128,
             ] {
-                for t in [t, -t] {
-                    let wide = (t * ppb as i128).div_euclid(Clock::BILLION);
-                    assert_eq!(c.gained(t), wide, "{ppb} ppb at {t}");
+                for a in [a, -a] {
+                    let d = 1_000_000_007;
+                    let wide = (a * b as i128).div_euclid(d as i128);
+                    assert_eq!(floor_ratio(a, b, d), wide, "{a} × {b}");
                 }
             }
         }
