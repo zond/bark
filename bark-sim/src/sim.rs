@@ -919,7 +919,8 @@ impl Clock {
 /// they do for a clock's gain over any run of a month or less: a 128-bit
 /// division costs several times more, and a clock is read on every event.
 fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
-    match i64::try_from(a).ok().and_then(|a| a.checked_mul(b)) {
+    let narrow = a >= i64::MIN as i128 && a <= i64::MAX as i128;
+    match (a as i64).checked_mul(b).filter(|_| narrow) {
         Some(p) => p.div_euclid(d) as i128,
         None => (a * b as i128).div_euclid(d as i128),
     }
