@@ -481,7 +481,7 @@ pub struct DropCounts {
     pub return_failed: u64,
     /// The delivery TTL ran out (spec "Delivery queue").
     pub queue_expired: u64,
-    /// Its time ran out at its origin (spec "Receiving DATA").
+    /// Its time left ran out on the way (spec "Receiving DATA").
     pub expired: u64,
     /// The delivery queue was full (spec "Delivery queue").
     pub delivery_full: u64,

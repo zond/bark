@@ -218,8 +218,8 @@ action at a time, and the core never allocates.
   - Application payload at most 233 bytes, what remains of 255 after the 22-byte DATA
     header; the decoder rejects anything longer.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
-    transmission and never below zero (spec "Receiving DATA"); a DATA to a sleepy node
-    carries what the message had when it reached the holder.
+    transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
+    had when it reached the holder.
   - Types 0x1, 0x2, 0x4, 0x6 and 0xB to 0xE are unused and rejected.
   - A refusal is a NACK, type 0x7, 14 bytes: the ACK's 13 and the wait it asks for in
     bans of 1.56 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on

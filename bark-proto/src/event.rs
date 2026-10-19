@@ -134,8 +134,7 @@ pub enum DropReason {
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
-    /// Its time ran out at its origin before a first hop took it (spec
-    /// "Receiving DATA").
+    /// Its time left ran out before it reached its owner (spec "Receiving DATA").
     Expired,
     /// The delivery queue had no room for it (spec "Delivery queue").
     DeliveryFull,

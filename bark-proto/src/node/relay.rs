@@ -3049,37 +3049,38 @@ mod tests {
         (place, refused, dropped)
     }
 
-    /// A packet whose time is gone is work like any other: the network
-    /// has taken the message, and only its origin ends it by age
-    /// (spec "Receiving DATA").
+    /// A packet whose time is gone, one unit left that the time on air has
+    /// eaten into, is no work: taken, not refused, and the message ends
+    /// here. With two units it is queued (spec "Receiving DATA").
     #[test]
-    fn a_packet_whose_time_is_gone_is_taken_and_sent_on() {
+    fn a_packet_whose_time_is_gone_is_taken_and_ends() {
+        use crate::event::DropReason;
         let (mut r, mut now, far) = with_every_neighbour_banned();
         assert_eq!(
-            offer_timed(&mut r, &mut now, far, 1, 2, 0),
-            (Some(0), None, None)
+            offer_timed(&mut r, &mut now, far, 1, 2, 1),
+            (None, None, Some(DropReason::Expired))
         );
         assert_eq!(
-            offer_timed(&mut r, &mut now, far, 2, 2, 1),
+            offer_timed(&mut r, &mut now, far, 2, 2, 2),
             (Some(0), None, None)
         );
     }
 
     /// A message waiting here carries its time as it is at each attempt,
-    /// rounded down, down to none, and waits on past it, in the regular
-    /// room or a hop place (spec "Receiving DATA").
+    /// rounded down, and is dropped once no whole unit is left, waiting for
+    /// a ban or not; a hop place frees with it (spec "Receiving DATA").
     #[test]
-    fn a_waiting_message_outlives_its_time() {
+    fn a_waiting_message_ends_with_its_time() {
         use crate::wire::{Data, TTL_UNIT};
         let (mut r, start, far) = with_every_neighbour_banned();
         let mut now = start;
-        let units = 2;
+        let units = 8;
         let (place, _, _) = offer_timed(&mut r, &mut now, far, 1, 2, units);
         assert_eq!(place, Some(0));
+        // At least the time on air of the frame is gone already.
         let deadline = start + TTL_UNIT.mul(units as u64);
         // The neighbours do not answer: the message waits for their bans.
-        let until = deadline + Duration::from_secs(20);
-        let sent = drive(&mut r, &mut now, until);
+        let sent = drive(&mut r, &mut now, deadline);
         let offers: Vec<_> = sent
             .iter()
             .filter_map(|(t, f)| match Packet::decode(f.payload()) {
@@ -3087,23 +3088,26 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(offers.iter().any(|(t, _)| *t > deadline), "{offers:?}");
+        assert!(offers.len() >= 3, "{offers:?}");
         for (t, left) in &offers {
+            assert!(*left >= 1, "sent with no time left");
             assert!(
                 *left <= Data::units(deadline.since(*t)),
                 "{left} units at {t:?}"
             );
         }
-        assert_eq!(r.holding().count(), 1, "ended by its time");
+        assert!(r.holding().next().is_none(), "kept past its time");
+        assert!(offers.iter().all(|(t, _)| *t < deadline - TTL_UNIT));
 
         // In a hop place, the same.
         let spend = r.budget.available(now) - Duration::from_millis(300);
         r.budget.record(spend, now);
-        let (place, _, _) = offer_timed(&mut r, &mut now, far, 2, 2, 1);
+        let (place, _, _) = offer_timed(&mut r, &mut now, far, 2, 2, 3);
         assert_eq!(place, Some(2));
-        let until = now + TTL_UNIT.mul(4);
+        let until = now + TTL_UNIT.mul(2);
         drive(&mut r, &mut now, until);
-        assert_eq!(r.holding().count(), 2);
+        assert!(r.holding().next().is_none());
+        assert_eq!(r.lowest_free_hop_place(), Some(1));
     }
 
     /// A packet already in the network is taken under the same bans, into
