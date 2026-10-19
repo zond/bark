@@ -55,8 +55,11 @@ nothing accepted is later dropped by age.
 - **The wait needs a byte, not three bits**: told waits at three times
   the rate run to 157 s, a quarter are from 40 to 77.5 s, part of them
   past the 61 s three bits on the ban's doubling scale reach, and the
-  places in line, one ban apart, need a linear scale to stay apart. A NACK of 14 bytes costs the ACK's 14.4 ms
-  at SF5 and carries a byte of 2.5 s units, 637 s.
+  places in line, one ban apart, need a linear scale to stay apart. A
+  NACK of 14 bytes costs the ACK's 14.4 ms at SF5 and carries a byte
+  that counts bans of 1.56 s, 398 s in all; measured first in units of
+  2.5 s, the unit of `time_left`, it now counts bans so that no two
+  places in line are told the same wait (see the follow-up below).
 - **The age signal** DATA carries to the destination's application leads
   the slide by 20 to 40 minutes over the whole domain, but a node sees
   two texts an hour and needs about 50 to tell the plateau from the
@@ -401,12 +404,12 @@ in four forms at three times the rate, seed 1:
 - **The wait.** A refusal is a NACK, a new type 0x7 of 14 bytes, the
   ACK's 13 and a byte. At SF5 the 14th byte fits in the 13th's block of
   symbols, so the NACK costs the ACK's 14.4 ms (an assert in `wire.rs`).
-  The byte counts whole units of 2.5 s, rounded down: the unit of
-  `time_left`, so 255 units hold 637 s, more than the TTL a text can
-  wait for, and rounding down makes a wait passed from relay to relay
-  only shrink. Linear, not geometric: the waits told to senders standing
-  in line differ by one ban, 1.56 s, and must stay apart at a minute as
-  at a second.
+  The byte counted whole units of 2.5 s in the runs of this section,
+  the unit of `time_left`, so 255 units hold 637 s; it now counts bans
+  (follow-up below). Rounding down makes a wait passed from relay to
+  relay only shrink. Linear, not geometric: the waits told to senders
+  standing in line differ by one ban, 1.56 s, and must stay apart at a
+  minute as at a second.
 - **The refuser's wait.** For want of room: until its bucket holds
   everything queued, the frame and its ACK with the reply reserve left.
   Each sender refused takes a place in line one ban after the last, the
@@ -494,6 +497,83 @@ simulated application offers again at once and gives up at the TTL. A
 firmware must pass the give-back to the phone, which the core interface
 now names (`DropReason::Pushback`) but no firmware does yet.
 
+### Follow-up: one function, a unit of one ban, and the wait carried by forwards
+
+Three changes after review, each its own commit, measured on `1419f25`.
+
+- **One choice of hop** (commit 6). The way a message would go, for the
+  pushback, and the way it goes were two copies of the same choice; now
+  one function with a flag. Runs repeat to the frame.
+- **Correction.** The binaries measured above as PB3b also told a forward
+  refused for want of room no less than the ban on its way on; the
+  commit that carried them (commit 4) left that out. Measured again as
+  committed (H, units of 2.5 s): 77.2 % at three times the rate, seed 1,
+  against 77.3 % with it. The numbers above stand for both forms.
+- **The unit** (commit 8). The places in a refuser's line are one ban
+  apart, and nothing in the protocol acts sooner than a ban, so the NACK
+  counts whole bans, rounded down: 255 bans are 398 s, and a longer wait
+  is told as that. Units of 2.5 s merged neighbouring places about a
+  third of the time. The range a sender can use is bounded by the
+  delivery TTL, the resolution by the ban; a geometric scale in the byte
+  would buy range that cannot be used and lose the places the line exists
+  for. The waits told hardly reach the end of the byte: at three times
+  the rate 39 of 450 000 NACKs asked for 64 bans (100 s) or more (UM,
+  seed 2), none in the other runs.
+- **The wait carried by forwards** (commit 9, the middle form). A relay
+  refuses a forward only for want of room, as before, and tells it no
+  less than the rest of the ban on the way that forward would go on; it
+  does not refuse it for that ban. The relay before then bans this one
+  as long, its queue holds the message as long, and its own refusals tell
+  longer waits.
+
+S4 at three times the rate, on `1419f25`, all with idea 3:
+
+| | Seed | Delivered | Refused at the origin | Aged at the origin | Aged in transit | Aged in a delivery queue | Airtime of refused and aged texts, share, per text | Latency p50, p90 | Airtime |
+|---|---|---|---|---|---|---|---|---|---|
+| Main (no idea 3) | 1 | 55.3 % | 0 | 33.4 % | 1.4 % | 9.2 % | 29.4 %, 2.03 s | 174, 545 s | 327 000 s |
+| Main (no idea 3) | 2 | 54.5 % | 0 | 34.5 % | 1.6 % | 8.6 % | 29.9 %, 2.03 s | 191, 565 s | 331 000 s |
+| H: units of 2.5 s | 1 | 77.2 % | 7.6 % | 5.6 % | 0.1 % | 9.2 % | 10.1 %, 1.38 s | 85, 444 s | 264 000 s |
+| U: units of a ban | 1 | 77.7 % | 7.3 % | 5.4 % | 0.1 % | 9.2 % | 9.7 %, 1.37 s | 81, 438 s | 266 000 s |
+| U | 2 | 72.6 % | 11.3 % | 6.2 % | 0.2 % | 9.2 % | 13.2 %, 1.47 s | 134, 498 s | 280 000 s |
+| UM: U and the wait carried by forwards | 1 | 76.7 % | 8.0 % | 5.6 % | 0.1 % | 9.3 % | 10.4 %, 1.39 s | 92, 446 s | 268 000 s |
+| UM | 2 | 70.8 % | 12.6 % | 6.5 % | 0.2 % | 9.4 % | 14.4 %, 1.50 s | 139, 506 s | 286 000 s |
+
+The waits told, in bans, by the count of the refused DATA (UM, seed 1;
+U is within two points in every cell):
+
+| Refused DATA | NACKs | 1 | 2–3 | 4–7 | 8–15 | 16–31 | 32–63 bans |
+|---|---|---|---|---|---|---|---|
+| A sleepy node's own (count 0) | 268 000 | 11 % | 13 % | 18 % | 23 % | 29 % | 7 % |
+| Count 1 | 36 000 | 6 % | 14 % | 20 % | 25 % | 29 % | 6 % |
+| Count 2–3 | 37 000 | 2 % | 12 % | 22 % | 28 % | 31 % | 6 % |
+| Count 4 and more | 15 000 | 0 | 6 % | 19 % | 29 % | 39 % | 8 % |
+
+**What the middle form shows.** The waits told grow with the count, a
+little: the farther from the origin a forward is refused, the longer it
+is told to wait. But forwards are refused rarely, a quarter of all
+NACKs, because the hop places take a message already in the network
+whatever the bucket holds; and a refused forward is set aside and goes
+to its next candidate rather than waiting out the ban it learned. So
+little of the wait reaches the outer relays, and what does holds their
+queues longer: 1.0 and 1.8 points less than U at three times the rate,
+texts refused at the origin up 0.7 and 1.3 points, airtime up 1 to 2 %.
+It does not herd: in the loaded ring and corridor it is within one
+standard error of U (ring at 1 s +0.6 ± 0.8, corridor at 1 s −0.1 ±
+0.6, at 0.5 s +0.1 ± 0.8, the ring at 10 seeds +1.8 ± 0.9). The strip
+at the spec rate 92.0 % against 92.5 % on main and 92.4 % with the wait
+carried in units of 2.5 s. **Not kept**; commit 10 reverts it.
+
+**The unit alone** (U against H): 77.7 against 77.2 % at three times the
+rate, seed 1; at the spec rate 93.3 % (H with idea 3: 93.2 %, main 94.0
+%) and at twice it 92.2 % (92.0, 93.0 %); in the suites within one
+standard error (the corridors −0.8 and −0.9, the ring at 1 s −0.9 ±
+0.8). Kept.
+
+The whole of D54 against main `1419f25` in the suites (idea 3, idea 5 in
+units of a ban, UM's numbers; U's differ by under a point): S2 −0.8 ±
+0.3, the corridor at 1 s −2.2 ± 0.5, at 0.5 s −3.1 ± 1.1, the ring at 1
+s −2.0 ± 0.7, mesh-burst at 64 times +0.4 ± 0.3; the rest unchanged.
+
 ## Ideas 1 to 3 together, against main, on `4ccbaf4`
 
 | | Main ×1 | Ideas 1–3 ×1 | Main ×2 | Ideas 1–3 ×2 | Main ×3 | Ideas 1–3 ×3 | Ideas 1–3 ×4 |
@@ -561,13 +641,16 @@ either way.
    sender refused at once comes back at once. It works when the refused
    senders stand in line, one ban apart, which needs the byte.
 4. A pushback passed on hop by hop, by refusing forwards, keeps itself up
-   around loops of relays and stalls the network. Passed from the
+   around loops of relays and stalls the network. Carried by the
+   refusals of forwards that happen anyway, for want of room, it does
+   not herd, but it reaches the outer relays little, since forwards are
+   refused rarely and go round, and costs a point or two. Passed from the
    origin's anchor's next hop to the anchor, and from there to the
-   application, it does not.
+   application, it works.
 5. The age at delivery leads the slide over the whole domain but reaches
    each application too rarely to act on.
 
-**Proposed** (commits 2 and 4, for the user to take or leave):
+**Proposed** (commits 2, 4 and 8, for the user to take or leave):
 
 - **Idea 3, the doubling after silence.** At three times the rate on
   `1419f25` +11.4 points and −16 % airtime; its cost, about a point at the
@@ -578,18 +661,20 @@ either way.
   92.4 %. The user's call: about a point where the network has room for
   ten to twenty where it has none.
 - **Idea 5, the NACK and the line, with the text given back to the
-  application.** With idea 3, +22 points at three times the rate, transit
-  ages 1.4 → 0.1 %, and the application told how long to wait instead of
-  a node that holds its text until it ages. It is a wire change (type 0x7,
-  14 bytes) and an interface change (`DropReason::Pushback`, and a
-  firmware that tells the phone); it costs one to one and a half points
-  in the loaded corridor and ring, where a sender used to try again after
-  1.6 s. Alone it changes nothing measurable at the spec rate or on the
-  strip (92.5 → 92.7 %).
+  application, the wait in bans.** With idea 3, at three times the rate
+  55.3 → 77.7 % (seed 1) and 54.5 → 72.6 % (seed 2), transit ages 1.4 →
+  0.1 %, and the application told how long to wait instead of a node that
+  holds its text until it ages. It is a wire change (type 0x7, 14 bytes,
+  a byte of bans) and an interface change (`DropReason::Pushback`, and a
+  firmware that tells the phone); with idea 3 it costs two to three
+  points in the loaded corridors and ring, where a sender used to try
+  again after 1.6 s. Alone it changes nothing measurable at the spec rate
+  or on the strip (92.5 → 92.7 %).
 
-**Not proposed:** refusing forwards for their way on; the told wait on
-three bits, or in place of the sender's ladder; a share per sender; an
-age signal for the application.
+**Not proposed:** refusing forwards for their way on; carrying the way
+on's ban in the refusals of forwards (the middle form, reverted); the
+told wait on three bits, or in place of the sender's ladder, or in units
+of 2.5 s; a share per sender; an age signal for the application.
 
 **Left to do**, toward the ideal of a text refused at once and everything
 accepted delivered: a refused text still costs its sender about 20
