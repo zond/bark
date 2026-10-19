@@ -1369,8 +1369,9 @@ relay that is no better takes the node on 2.3 % of comparisons. The
 neighbour table's average lets each new frame count half, which varies
 less than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more
 than two standard deviations there. A node in a vehicle does not keep
-up: the mail its holder keeps for it waits there until its place is needed, and is lost
-unless the sender learns the new address (roadmap D65).
+up: the mail its holder keeps for it waits there until its place is
+needed, and is lost unless the sender learns the new address (roadmap
+D65).
 
 **Asleep.** Between its windows a sleepy node receives duty-cycled,
 which catches no heartbeat of the ordinary preamble, so it hears the
