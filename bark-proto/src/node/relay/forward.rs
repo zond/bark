@@ -1656,6 +1656,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// waiting for its ACK, can no longer be sent with a whole unit of time
     /// left.
     fn time_gone_at(&self) -> Option<Instant> {
+        // Asked on every event; mostly there is nothing queued.
+        if self.queue.is_empty() {
+            return None;
+        }
         let under_way = self.under_way();
         self.queue
             .iter()

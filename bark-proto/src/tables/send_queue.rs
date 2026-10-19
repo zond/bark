@@ -253,6 +253,10 @@ impl SendQueue {
     /// is due, the first; else of those that have waited and are due, the
     /// most travelled, the earliest of equals; else the first that is due.
     pub fn next_due(&self, now: Instant) -> Option<usize> {
+        // Asked on every event; mostly there is nothing queued.
+        if self.is_empty() {
+            return None;
+        }
         let due = |o: &Outgoing| o.not_before <= now;
         if let Some(i) = self.delivery_due(now) {
             return Some(i);

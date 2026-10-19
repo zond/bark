@@ -102,7 +102,7 @@ use crate::tables::heard::{beat_period, Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours, BEATS};
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue};
-use crate::time::{Duration, Instant};
+use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 use forward::OWNER_RADIUS_M;
 
@@ -778,14 +778,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // The ends of the windows it listens in, and the start of the next
         // for its anchor's heartbeat, need the core, to say so.
-        let watch = self
-            .watch()
-            .map_or([None, None], |(from, to)| [Some(from), Some(to)]);
-        self.window_ends = [Some(self.awake_until), self.choosing, watch[0], watch[1]]
-            .into_iter()
-            .flatten()
-            .filter(|&t| self.anchored_sleepy() && t > now)
-            .min();
+        self.window_ends = None;
+        if self.anchored_sleepy() {
+            let ahead = |t: Option<Instant>| t.filter(|&t| t > now);
+            let watch = self.watch();
+            self.window_ends = earlier(
+                earlier(ahead(Some(self.awake_until)), ahead(self.choosing)),
+                earlier(ahead(watch.map(|w| w.0)), ahead(watch.map(|w| w.1))),
+            );
+        }
         if !self.may_sniff(now) {
             return;
         }

@@ -39,7 +39,7 @@ use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::send_queue::{Kind, Outgoing};
-use crate::time::{Duration, Instant};
+use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Data, Packet, DATA_HEADER_LEN};
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
@@ -220,15 +220,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn delivery_wakeup(&self) -> Option<Instant> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
             .then_some(self.delivery_retry_at);
-        [
-            retry,
-            self.feed_at,
-            self.heard.next_expiry(),
-            // A message of its own waits for a place (`release_held`).
-            self.held.as_ref().and(self.delivery.stale_from()),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        // A message of its own waits for a place (`release_held`).
+        let held = self.held.as_ref().and(self.delivery.stale_from());
+        earlier(
+            earlier(retry, self.feed_at),
+            earlier(self.heard.next_expiry(), held),
+        )
     }
 }

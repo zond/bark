@@ -38,6 +38,16 @@ impl Instant {
     }
 }
 
+/// The earlier of two instants that may each be absent: when the
+/// first of two things that may be pending is due.
+pub fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, None) => a,
+        (None, b) => b,
+    }
+}
+
 impl Duration {
     /// Zero.
     pub const ZERO: Duration = Duration(0);
