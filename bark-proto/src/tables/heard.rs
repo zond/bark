@@ -240,12 +240,19 @@ impl<const N: usize> Heard<N> {
 
     /// Remove every entry of a node not heard for two beat periods at `now`.
     pub fn expire(&mut self, now: Instant) {
+        // Called on every event, mostly of an empty table.
+        if self.is_empty() {
+            return;
+        }
         let keep = self.params.keep;
         self.nodes.retain(|n| now.since(n.last_heard) < keep);
     }
 
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
+        if self.is_empty() {
+            return None;
+        }
         self.iter().map(|n| n.last_heard + self.params.keep).min()
     }
 }
