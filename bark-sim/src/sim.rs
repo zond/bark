@@ -1267,7 +1267,7 @@ impl Sim {
             }
         }
         // Traffic.
-        for (k, t) in sc.traffic.iter().enumerate() {
+        for t in &sc.traffic {
             match t {
                 TrafficSpec::Periodic {
                     from,
@@ -1289,8 +1289,10 @@ impl Sim {
                         len: *payload_bytes,
                     };
                     let first = secs(start_s.unwrap_or(*interval_s));
+                    // Its own index among the flows, not among all traffic.
+                    let i = self.flows.len() as u32;
                     self.flows.push(f);
-                    self.push(Instant::ZERO + first, Ev::Flow(k as u32));
+                    self.push(Instant::ZERO + first, Ev::Flow(i));
                 }
                 TrafficSpec::Poisson {
                     per_leaf_per_hour,
