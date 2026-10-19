@@ -1,6 +1,6 @@
 # Collapse at the edge of capacity: channel moves, deliveries, and dropping
 
-Research note, 2026-10-18, roadmap D56. Spec references are to
+Research note, 2026-10-18, roadmap D56; decided 2026-10-19: the busy-estimate rule superseded by D55's form, the delivery rule adopted as D55's, nothing else adopted. Spec references are to
 `protocol.md`. Builds on `collapse-research-2026-10-16.md`,
 `backoff-2026-10-16.md`, `admission-2026-10-16.md`, `ttl-2026-10-16.md`,
 `bandwidth-research-2026-10-16.md` and `realism-2026-10-18.md`.

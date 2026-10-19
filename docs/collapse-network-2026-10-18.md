@@ -1,6 +1,6 @@
 # Inside the network at the edge of its capacity
 
-Research note, 2026-10-18, roadmap D55. Measured against main `4ccbaf4`
+Research note, 2026-10-18, roadmap D55; decided 2026-10-19, both rules adopted. Measured against main `4ccbaf4`
 (D58), with read-only instruments added; the branch was then rebased onto
 `c1732b2` (D59 to D64) without measuring again. A first round against `8704790`
 (D52), before D57 and D58, found the same mechanism; its experiments are
