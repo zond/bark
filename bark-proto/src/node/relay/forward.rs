@@ -1598,10 +1598,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- Timers ---
 
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let (max, retry) = (self.config.hop_attempts, self.retry_unit());
-        if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
-            if let Some(out) = self.queue.current().copied() {
-                self.handover_failed(out, true, now, emit);
+        // This runs on every event; only an ACK wait that ran out needs the
+        // retry unit's two airtimes.
+        if matches!(self.handover.step(), Step::AwaitAck(deadline) if now >= deadline) {
+            let (max, retry) = (self.config.hop_attempts, self.retry_unit());
+            if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
+                if let Some(out) = self.queue.current().copied() {
+                    self.handover_failed(out, true, now, emit);
+                }
             }
         }
         self.expire(now, emit);

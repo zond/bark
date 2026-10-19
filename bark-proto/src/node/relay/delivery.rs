@@ -225,7 +225,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.feed_at,
             self.heard.next_expiry(),
             // A message of its own waits for a place (`release_held`).
-            self.held.and(self.delivery.stale_from()),
+            self.held.as_ref().and(self.delivery.stale_from()),
         ]
         .into_iter()
         .flatten()
