@@ -1,6 +1,6 @@
 # What slides a loaded domain into collapse, from the sender's end
 
-**Date:** 2026-10-18 and 19, roadmap D54. Spec references are to
+**Date:** 2026-10-18 and 19, roadmap D54; decided 2026-10-19, ideas 3 and 5 adopted, the middle form not. Spec references are to
 `protocol.md`. Three baselines, named in every table: main `8704790`
 (D52), on which the ideas were first built and traced one at a time;
 main `4ccbaf4` (D58), on which ideas 1 to 3 were measured together
