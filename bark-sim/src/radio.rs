@@ -139,6 +139,14 @@ impl Sim {
             Some(WirePacket::Heartbeat(h)) => Some(h.sleepy && !h.anchorless),
             _ => None,
         };
+        if let Some(WirePacket::Heartbeat(h)) = decoded.filter(|_| src >= self.relays()) {
+            // Not its copies with the long preamble on anchorless
+            // neighbours' channels (spec "Beats").
+            let short = preamble < sniff::LONG_PREAMBLE_SYMBOLS;
+            if h.sleepy && (short || h.anchorless) {
+                self.watch_beat(slot, key(h.id), h.anchorless);
+            }
+        }
         if matches!(decoded, Some(WirePacket::Heartbeat(h)) if !h.sleepy) && self.now >= self.settle
         {
             self.beat_losses.insert(tx_key, Vec::new());
@@ -161,6 +169,9 @@ impl Sim {
                     lost: None,
                 };
                 self.to_sleepy.insert(tx_key, to);
+                if !short {
+                    self.note_long_try(d.msg_id().0, src);
+                }
                 if deaf && self.now >= self.settle {
                     let anchor = self.relay(n).anchor().map(|a| a.id);
                     let by = usize::from(anchor != Some(d.src_hop));
@@ -300,6 +311,41 @@ impl Sim {
         }
     }
 
+    /// A beat of the sleepy node `id` reaches the air in `slot`: note, for
+    /// each holder of messages for it, what is already known of its fate
+    /// there (`crate::sim::HolderWatch`).
+    fn watch_beat(&mut self, slot: u32, id: u32, anchorless: bool) {
+        use crate::sim::beat_fate as f;
+        let holders = self.holders_waiting(id);
+        if holders.is_empty() {
+            return;
+        }
+        let tx = self.txs[slot as usize].as_ref().expect("valid slot");
+        let (src, ch, tx_key) = (tx.src, tx.frame.channel, tx.key);
+        let receivers = self.links.row(src).len() + tx.extra.len();
+        let present = self.nodes[src as usize].present;
+        let mut watch = Vec::new();
+        for h in holders {
+            let linked = (0..receivers).any(|i| {
+                let (b, dbm) = self.receiver(src, &tx.extra, i);
+                b == h && dbm as f64 >= self.sens_dbm
+            });
+            let fate = if anchorless {
+                Some(f::ANCHORLESS)
+            } else if !present {
+                Some(f::DARK)
+            } else if !linked {
+                Some(f::FAR)
+            } else if self.nodes[h as usize].resting != Some(ch) {
+                Some(f::OFF_CHANNEL)
+            } else {
+                None
+            };
+            watch.push((h, fate));
+        }
+        self.beat_watch.insert(tx_key, watch);
+    }
+
     /// The `i`-th receiver of a frame from `src`, `extra` its links with
     /// walkers: its node and its power before fading.
     fn receiver(&self, src: u32, extra: &[MovingLink], i: usize) -> (u32, f32) {
@@ -356,6 +402,23 @@ impl Sim {
                         got.push((b, r.mw, r.max_i_mw));
                     }
                 }
+            }
+        }
+        if let Some(w) = self.beat_watch.remove(&tx.key) {
+            use crate::sim::beat_fate as f;
+            let id = key(self.relay(tx.src).id());
+            for (h, fate) in w {
+                let received = got.iter().any(|g| g.0 == h);
+                let fate = if received {
+                    f::RECEIVED
+                } else {
+                    fate.unwrap_or(f::OTHER)
+                };
+                let elsewhere = !received
+                    && got
+                        .iter()
+                        .any(|g| g.0 != h && !self.relay(g.0).config().sleepy);
+                self.watch_note(h, id, fate, elsewhere);
             }
         }
         if let Some(t) = self.to_sleepy.remove(&tx.key) {
@@ -656,6 +719,20 @@ impl Sim {
     /// Note why `b` lost the frame `key`, if it is a heartbeat followed
     /// for [`crate::metrics::HeartbeatFates`].
     pub(crate) fn note_beat_loss(&mut self, key: u64, b: u32, o: Outcome) {
+        if let Some(w) = self.beat_watch.get_mut(&key) {
+            use crate::sim::beat_fate as f;
+            for (_, fate) in w.iter_mut().filter(|(h, f)| *h == b && f.is_none()) {
+                *fate = Some(match o {
+                    Outcome::BelowSensitivity => f::WEAK,
+                    Outcome::LostCapture
+                    | Outcome::SinrFail { .. }
+                    | Outcome::Deaf(Deaf::Corrupt) => f::COLLIDED,
+                    Outcome::Deaf(Deaf::Tx | Deaf::HalfDuplex) => f::TRANSMITTING,
+                    Outcome::Deaf(Deaf::Cad | Deaf::Rssi | Deaf::Retune) => f::CHECKING,
+                    _ => f::OTHER,
+                });
+            }
+        }
         if let Some(l) = self.beat_losses.get_mut(&key) {
             l.push((b, o));
         }
