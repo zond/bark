@@ -574,6 +574,40 @@ units of a ban, UM's numbers; U's differ by under a point): S2 −0.8 ±
 0.3, the corridor at 1 s −2.2 ± 0.5, at 0.5 s −3.1 ± 1.1, the ring at 1
 s −2.0 ± 0.7, mesh-burst at 64 times +0.4 ± 0.3; the rest unchanged.
 
+### Follow-up: the delivery queue's expiry
+
+Asked: let a holder keep a text a full delivery TTL from its arrival,
+not count its travel time, so that the queue fills, refuses with a wait
+the sender's application hears, and delivery is delayed instead of lost.
+That is already the rule (spec "Delivery queue"; `tables/delivery.rs`
+expires a text `delivery_ttl` after it was queued, and the DATA to the
+sleepy node carries the `time_left` it arrived with), so there is
+nothing to build. What the queues do under U, on `1419f25`, seed 1 (seed
+2 for ×3 in brackets):
+
+| | ×1 | ×3 |
+|---|---|---|
+| Expired in a delivery queue | 5.4 % | 9.2 (9.2) % |
+| ... the node heard by its holder while the text waited | 0.3 % | 0.4 (0.4) % |
+| ... never heard while it waited | 5.1 % | 8.8 (8.9) % |
+| Refusals for a full delivery queue, whole run | 0 | 57 (160) |
+| Texts queued, all relays, every 20 minutes | 290 to 340 | 1 780 to 2 030 (1 830 to 1 960) |
+| Most at one relay, of 41 places | 5 to 9 | 32 to 40 (32 to 39) |
+| Time a delivered text waited in the queue, p50, p90, max | 0, 60, 595 s | 0, 294, 596 s (14, 324, 597 s) |
+
+Main `1419f25` at ×3, seed 1: 9.2 %, of it 8.9 % never heard; 5 refusals
+for a full queue; 0 to 35 per relay; 37, 350, 595 s.
+
+What expires in a delivery queue is, nineteen times in twenty, a text for
+a node its holder never heard while it waited: a node gone, dark or at
+the edge of the holder's reach, the edge nodes the traces found, not a
+mailbox too small. A longer stay would hold a place for a node that does
+not collect. The queues fill at a few relays at three times the rate, a
+full one refuses a few dozen to a hundred and sixty texts in two hours,
+and every refusal asks for one ban: the line does not apply to a full
+delivery queue, which empties when a node collects, not at the bucket's
+rate. Not measured further.
+
 ## Ideas 1 to 3 together, against main, on `4ccbaf4`
 
 | | Main ×1 | Ideas 1–3 ×1 | Main ×2 | Ideas 1–3 ×2 | Main ×3 | Ideas 1–3 ×3 | Ideas 1–3 ×4 |
