@@ -404,7 +404,10 @@ impl Sim {
                 }
             }
         }
-        if let Some(w) = self.beat_watch.remove(&tx.key) {
+        let watched = (!self.beat_watch.is_empty())
+            .then(|| self.beat_watch.remove(&tx.key))
+            .flatten();
+        if let Some(w) = watched {
             use crate::sim::beat_fate as f;
             let id = key(self.relay(tx.src).id());
             for (h, fate) in w {
@@ -719,7 +722,10 @@ impl Sim {
     /// Note why `b` lost the frame `key`, if it is a heartbeat followed
     /// for [`crate::metrics::HeartbeatFates`].
     pub(crate) fn note_beat_loss(&mut self, key: u64, b: u32, o: Outcome) {
-        if let Some(w) = self.beat_watch.get_mut(&key) {
+        if let Some(w) = (!self.beat_watch.is_empty())
+            .then(|| self.beat_watch.get_mut(&key))
+            .flatten()
+        {
             use crate::sim::beat_fate as f;
             for (_, fate) in w.iter_mut().filter(|(h, f)| *h == b && f.is_none()) {
                 *fate = Some(match o {
