@@ -405,14 +405,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// message of `record` at `now` ([`Self::tier`]): live, neither handed
     /// it nor its parent, and a candidate or one but for a ban. One set
     /// aside for this hand-over and not banned, which listen-before-talk
-    /// gave up on, is not.
-    fn others_open(&self, record: &Record, now: Instant) -> bool {
+    /// gave up on, is not; with `blocks` false neither counts.
+    fn others_open(&self, record: &Record, blocks: bool, now: Instant) -> bool {
         let parent = record.parent().map(|(name, _)| name);
         self.neighbours.live(now).any(|(slot, n)| {
             !n.last_resort()
                 && !record.handed(slot)
                 && Some(n.id) != parent
-                && (self.skipped & (1 << slot) == 0 || self.neighbours.is_banned(n, now))
+                && (!blocks || self.skipped & (1 << slot) == 0 || self.neighbours.is_banned(n, now))
         })
     }
 
@@ -422,34 +422,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// when no other with margin is left, and one without margin only when
     /// no other at all (roadmap D25, D29, D38).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
-        let target = self.plane.point(dst);
-        let parent = record.parent().map(|(name, _)| name);
-        let skipped = self.skipped;
-        // Computed once: it takes a logarithm.
-        let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
-        let faint = |n: &Neighbour| n.rssi < margin;
-        let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
-        let first = self.first_hop(now).filter(|_| record.parent().is_none());
-        let others = self.others_open(record, now);
-        self.neighbours
-            .live(now)
-            .filter(|(slot, n)| {
-                first.is_none_or(|a| n.id == a)
-                    && (first.is_some() || Self::tier(n, others))
-                    && !record.handed(*slot)
-                    && skipped & (1 << slot) == 0
-                    && Some(n.id) != parent
-                    && !self.neighbours.is_banned(n, now)
-            })
-            .min_by(|(_, a), (_, b)| {
-                let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                faint(a)
-                    .cmp(&faint(b))
-                    .then(demoted(a).cmp(&demoted(b)))
-                    .then(da.total_cmp(&db))
-                    .then(a.id.0.cmp(&b.id.0))
-            })
-            .map(|(slot, n)| (slot, *n))
+        self.hop(record, dst, true, now)
     }
 
     /// The neighbour [`Self::next_hop`] would choose for the message of
@@ -461,23 +434,37 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         dst: Position,
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
+        self.hop(record, dst, false, now)
+    }
+
+    /// [`Self::next_hop`], and with `blocks` false [`Self::preferred_hop`]:
+    /// one choice, so that the way a message would go and the way it goes
+    /// cannot part.
+    fn hop(
+        &self,
+        record: &Record,
+        dst: Position,
+        blocks: bool,
+        now: Instant,
+    ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
+        let skipped = if blocks { self.skipped } else { 0 };
+        // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
-        let others = self
-            .neighbours
-            .live(now)
-            .any(|(slot, n)| !n.last_resort() && !record.handed(slot) && Some(n.id) != parent);
+        let others = self.others_open(record, blocks, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
                     && (first.is_some() || Self::tier(n, others))
                     && !record.handed(*slot)
+                    && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
+                    && (!blocks || !self.neighbours.is_banned(n, now))
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
@@ -1119,7 +1106,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A refusal also sets its sender aside for this hand-over, so being set
     /// aside does not count against a banned neighbour.
     fn ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
-        let others = self.others_open(record, now);
+        let others = self.others_open(record, true, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
