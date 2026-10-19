@@ -199,11 +199,29 @@ impl Sim {
             Some(WirePacket::Data(d)) => {
                 self.answer_of
                     .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
+                if self
+                    .relay_index
+                    .get(&key(d.dst_hop))
+                    .is_some_and(|&r| r < self.relays())
+                {
+                    self.data_hops
+                        .insert((d.msg_id().0, key(d.dst_hop)), d.hops);
+                }
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => {
+                let hops = self.data_hops.remove(&(a.msg_id.0, key(a.from)));
                 if a.refused {
-                    self.metrics.addressed.refusal_steps
-                        [(u8::BITS - a.wait.leading_zeros()).min(7) as usize] += 1;
+                    let w = (u8::BITS - a.wait.leading_zeros()).min(7) as usize;
+                    self.metrics.addressed.refusal_steps[w] += 1;
+                    if let Some(h) = hops {
+                        let k = match h {
+                            0 => 0,
+                            1 => 1,
+                            2 | 3 => 2,
+                            _ => 3,
+                        };
+                        self.metrics.addressed.refusal_by_hops[k][w] += 1;
+                    }
                 }
                 let k = (src, a.msg_id.0, key(a.to));
                 if let Some((deadline, leaf)) = self.awaiting.remove(&k) {

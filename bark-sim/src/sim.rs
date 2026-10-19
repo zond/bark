@@ -652,6 +652,9 @@ pub struct Sim {
     msg_tags: HashMap<u32, u32>,
     /// What each application offered, to offer again when given back.
     offered: HashMap<u32, Offer>,
+    /// The count of the last DATA of each message to each node, to read
+    /// the count a NACK answers.
+    pub(crate) data_hops: HashMap<(u32, u32), u8>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,
     /// Messages queued, by holder and destination node's ID, for counting
@@ -1063,6 +1066,7 @@ impl Sim {
             offers: (0..n).map(|_| None).collect(),
             msg_tags: HashMap::new(),
             offered: HashMap::new(),
+            data_hops: HashMap::new(),
             msg_minutes: None,
             queued_for: HashMap::new(),
             script: Vec::new(),
