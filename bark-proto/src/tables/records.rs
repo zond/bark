@@ -270,6 +270,15 @@ impl Records {
         self.entries[..self.len].iter().find(|r| r.id == id)
     }
 
+    /// Forget the record for `id`, if there is one: its message was given
+    /// back to its application and may be offered again as new.
+    pub fn forget(&mut self, id: MsgId) {
+        if let Some(i) = self.entries[..self.len].iter().position(|r| r.id == id) {
+            self.len -= 1;
+            self.entries.swap(i, self.len);
+        }
+    }
+
     /// The record for `id`, to update.
     pub fn get_mut(&mut self, id: MsgId) -> Option<&mut Record> {
         self.entries[..self.len].iter_mut().find(|r| r.id == id)

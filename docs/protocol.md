@@ -557,7 +557,11 @@ neighbour is banned ([receiving DATA](#receiving-data)); for a sleepy node with 
 the anchor is not banned ([a sleepy node's own message](#a-sleepy-nodes-own-message)). A node whose neighbours are
 busy keeps the message and offers it again ([a node's own message](#a-nodes-own-message)), so a
 busy network makes its users wait rather than lose their messages at the
-first step (roadmap D29).
+first step (roadmap D29). A sleepy node whose own message is refused
+gives it back to its application with the wait the refusal asks for,
+and takes no other until then ([a sleepy node's own message](#a-sleepy-nodes-own-message)): the
+one thing the application hears, so that a person told to wait is not
+left with a message that ages in a node (roadmap D54).
 
 ### Duty cycle cap
 
@@ -673,9 +677,11 @@ longer by as much as its frame is longer, and its unit grows by that,
 
 The receiver retunes to the sender's channel, listens
 before talking, sends the ACK, and retunes home. The ACK is the first
-byte, whose `aux` says whether the packet is refused, the message ID,
-and the IDs of the answering and the answered node (13 bytes, 14.4 ms,
-[packet formats](#packet-formats)). The sender
+byte, the message ID, and the IDs of the answering and the answered node
+(13 bytes, 14.4 ms, [packet formats](#packet-formats)); one that refuses is a NACK, the same and
+a byte for the wait it asks for ([refusal](#refusal)), 14 bytes at the same
+14.4 ms, since at SF5 the 14th byte fits in the 13th's block of symbols.
+Below, an ACK is either unless it says so. The sender
 matches the ID and both names against its outstanding hand-over.
 
 An ACK resets the neighbour's failure count and refreshes its last-heard
@@ -724,13 +730,28 @@ is set aside for this hand-over, not counted as tried, no failure is
 counted, and the next hop is chosen at once. A return to the parent has
 no other candidate: it waits in the send queue until the ban ends and is
 sent again, and the refused transmission does not count as one of its
-attempts. The neighbour is also **banned** for 1.56 s. A relay refuses a
+attempts. The neighbour is also **banned** for as long as the refusal
+asks, and never less than 1.56 s. A relay refuses a
 packet to send on when the frame and the ACK that takes it, at most
 138.6 + 14.4 = 153.0 ms, do not fit in its bucket on top of what it holds
 and no hop place takes it ([receiving DATA](#receiving-data)), and its bucket refills that
 much in 153.0 ms / 9.83 % = 1.56 s ([duty cycle cap](#duty-cycle-cap)). Until then it is no
 candidate for any message ([next hop](#next-hop)): trying it again before its bucket
 has refilled would only cost it another reply (roadmap D29).
+
+A refusal says how long to wait, a NACK ([packet formats](#packet-formats)). For want of
+room it is the time until the bucket holds everything queued, the frame
+and its ACK with the reply reserve left, if nothing else comes; and the
+senders refused stand in line: each is told one ban later than the one
+before, the time the bucket takes to refill the frame and ACK it will
+bring back, so those refused in one moment come back one after another
+as the room frees, not all at once. A refusal of fresh work for the way
+on ([receiving DATA](#receiving-data)) asks for the rest of the ban on that way, as it
+was learned, without a place in line: passed on so, a wait cannot grow
+from relay to relay around a ring. The wait is told in whole units of
+2.5 s, rounded down, the unit of `time_left`, so a byte holds 637 s,
+more than the delivery TTL; a refusal for want of room at a relay at its
+cap, with a hundred sleepy nodes in line, asks for minutes (roadmap D54).
 
 #### Silence is pushback
 
@@ -983,7 +1004,14 @@ Whether it takes the packet depends on what the packet gives it to do:
   where the application sees it. A relay with no live neighbour at all
   takes it, and the search ends as in [return to parent](#return-to-parent). So a relay takes
   from sleepy nodes and its own application no more than it can start
-  sending now (roadmap D34).
+  sending now (roadmap D34). It also refuses it while the neighbour it
+  would go to, were none banned, is banned: the way on has pushed back,
+  and the message would only wait here for it, ageing. Each neighbour's
+  pushback is its own ban, so a way that pushes back does not hold up
+  the others, and it ends with the ban. A message already in the network
+  is not refused for that: refused, its sender would send it round the
+  pushback, and around a ring of relays such refusals kept each other up
+  (roadmap D54).
 - **Something to deliver.** It takes the packet only if its bucket holds
   the reply reserve and an ACK and, for another node, its delivery
   queue has room ([delivery queue](#delivery-queue)).
@@ -1556,7 +1584,11 @@ D46). Sent
 with count 1, as a relay's own message is, it could take hop place 1 at
 its first hop, which overload must not give to fresh work.
 
-A refused message waits as a relay's own does ([a node's own message](#a-nodes-own-message)).
+A refused message goes back to the application with the wait the
+refusal asks for ([refusal](#refusal)), and the node takes no message of the
+application's until that wait is over; the application may offer it
+again then, or give it up, and tell the person either way. Held by the
+node instead, a refused message aged at its origin until its time ran out.
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
 doubled for each unanswered hand-over to the anchor in a row, or when
 the anchor's ban ends if that is later: a fade lasts about a minute (the
@@ -1746,16 +1778,20 @@ HEARTBEAT 0x8/0x9/0xB: first(1) id(4) short_pos(4)                         = 9
           type bit 0 = sleepy (0x9); bit 1 = anchorless, only with sleepy
           (0xB); aux = home channel, 0 to 12, in all four bits
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
-          the answer to a DATA, taken or refused; sent on the channel in
-          the answered packet's aux; aux bit 0 = refused
+          the answer to a DATA that takes it; sent on the channel in
+          the answered packet's aux; aux = 0
           from, to = the IDs of the answering and the answered node
+NACK      0x7: first(1) id(4) from(4) to(4) wait(1)                         = 14
+          the answer to a DATA that refuses it, as the ACK; wait = how
+          long the refuser asks its sender to wait, in 2.5 s, rounded
+          down ([refusal](#refusal)); aux = 0
 DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
                time_left(1) payload                                         = 22 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
           stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
-Types 0x1, 0x2, 0x4, 0x6, 0x7, 0xA and 0xC to 0xE are unused; nodes reject them like any unknown type.
+Types 0x1, 0x2, 0x4, 0x6, 0xA and 0xC to 0xE are unused; nodes reject them like any unknown type.
 Type 0xF is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type.

@@ -201,6 +201,10 @@ impl Sim {
                     .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => {
+                if a.refused {
+                    self.metrics.addressed.refusal_steps
+                        [(u8::BITS - a.wait.leading_zeros()).min(7) as usize] += 1;
+                }
                 let k = (src, a.msg_id.0, key(a.to));
                 if let Some((deadline, leaf)) = self.awaiting.remove(&k) {
                     let answer = if self.now > deadline {

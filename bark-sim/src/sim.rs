@@ -484,6 +484,7 @@ pub(crate) enum FrameKind {
 }
 
 /// A message an application waits to hand to its core.
+#[derive(Clone, Copy)]
 struct Offer {
     tag: u32,
     dst_pos: Position,
@@ -649,6 +650,8 @@ pub struct Sim {
     offers: Vec<Option<Offer>>,
     /// Message id (kept across hops) to traffic tag.
     msg_tags: HashMap<u32, u32>,
+    /// What each application offered, to offer again when given back.
+    offered: HashMap<u32, Offer>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,
     /// Messages queued, by holder and destination node's ID, for counting
@@ -1059,6 +1062,7 @@ impl Sim {
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
             msg_tags: HashMap::new(),
+            offered: HashMap::new(),
             msg_minutes: None,
             queued_for: HashMap::new(),
             script: Vec::new(),
@@ -2533,6 +2537,9 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
+        if reason == DropReason::Pushback && self.give_back(node, msg_id) {
+            return;
+        }
         let dst = self
             .msg_tags
             .get(&msg_id.0)
@@ -2985,6 +2992,31 @@ impl Sim {
             .map(|o| self.now.since(self.origins[o.tag as usize].t))
     }
 
+    /// A core gave its application's message back with a wait: the
+    /// application offers it again, as long as it is younger than the TTL
+    /// the network would have kept it for. Whether it did.
+    fn give_back(&mut self, node: u32, msg_id: MsgId) -> bool {
+        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
+            return false;
+        };
+        let patience = self.relays[node as usize].config().delivery_ttl;
+        let local = self.clocks[node as usize].local(self.now);
+        let wait = self.relays[node as usize].retry_at().since(local);
+        let o = &self.origins[tag as usize];
+        // Told to wait past its patience, the application gives up at once.
+        if o.src != node
+            || self.now.since(o.t) + wait >= patience
+            || self.offers[node as usize].is_some()
+        {
+            return false;
+        }
+        let Some(offer) = self.offered.get(&tag).copied() else {
+            return false;
+        };
+        self.offers[node as usize] = Some(offer);
+        true
+    }
+
     /// Hand `src`'s waiting message to its core, if the core takes one now.
     fn offer(&mut self, src: u32) {
         let now = self.now;
@@ -2996,6 +3028,7 @@ impl Sim {
         let Some(o) = self.offers[src as usize].take() else {
             return;
         };
+        self.offered.insert(o.tag, o);
         self.origins[o.tag as usize].taken_at = Some(now);
         let wait = now.since(self.origins[o.tag as usize].t);
         if wait > Duration::ZERO {

@@ -145,7 +145,9 @@ use crate::node::transfer::{Check, Missed, Owed, Reply, Step};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
-use crate::tables::budget::{hold, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE};
+use crate::tables::budget::{
+    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
+};
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
@@ -231,7 +233,54 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             from,
             to: self.me(),
             refused: false,
+            wait: 0,
         }
+    }
+
+    /// How long a message of `record` to `dst` would wait here for its
+    /// way on (spec "Refusal"): the rest of the ban on the neighbour it
+    /// would go to were no neighbour banned, which is the pushback that
+    /// neighbour gave. Kept per neighbour, so a direction that pushes back
+    /// does not hold up the others, and it ends with the ban.
+    fn pushback(&self, record: &Record, dst: Position, now: Instant) -> Duration {
+        self.preferred_hop(record, dst, now)
+            .filter(|(_, n)| self.neighbours.is_banned(n, now))
+            .map_or(Duration::ZERO, |(_, n)| n.banned_until.since(now))
+    }
+
+    /// The wait a refusal for `reason` asks for (spec "Refusal"): for want
+    /// of room, until the bucket holds everything queued, a frame of
+    /// `airtime` and its ACK with the reply reserve left, if nothing else
+    /// comes; anything else frees in one ban; and never less than the
+    /// pushback the message's way on gave (`pushback`), so a wait told
+    /// at the centre is passed back hop by hop toward the origin.
+    ///
+    /// Every sender refused takes a place in line: the next is told one
+    /// ban later than the last, the time the bucket takes to refill the
+    /// frame and ACK a sender will bring back. So the senders refused in
+    /// one moment come back one after the other, as the room frees, and
+    /// not all at once.
+    fn refusal_wait(
+        &mut self,
+        reason: DropReason,
+        airtime: Duration,
+        pushback: Duration,
+        now: Instant,
+    ) -> Duration {
+        let room = match reason {
+            DropReason::Budget | DropReason::SendQueueFull => {
+                let queued = self.queue.airtime() + self.held_airtime();
+                self.budget
+                    .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
+                    .map_or(self.config.delivery_ttl, |t| t.since(now))
+            }
+            _ => BAN,
+        };
+        // Only the room is a line; a pushback passes on as it is, so it
+        // cannot grow around a loop of relays.
+        let slot = self.promised.max(now + room);
+        self.promised = slot + BAN;
+        slot.since(now).max(pushback)
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
@@ -403,6 +452,44 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(slot, n)| (slot, *n))
     }
 
+    /// The neighbour [`Self::next_hop`] would choose for the message of
+    /// `record` were none banned and none set aside: the way the message
+    /// would go.
+    fn preferred_hop(
+        &self,
+        record: &Record,
+        dst: Position,
+        now: Instant,
+    ) -> Option<(usize, Neighbour)> {
+        let target = self.plane.point(dst);
+        let parent = record.parent().map(|(name, _)| name);
+        let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
+        let faint = |n: &Neighbour| n.rssi < margin;
+        let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
+        let first = self.first_hop(now).filter(|_| record.parent().is_none());
+        let others = self
+            .neighbours
+            .live(now)
+            .any(|(slot, n)| !n.last_resort() && !record.handed(slot) && Some(n.id) != parent);
+        self.neighbours
+            .live(now)
+            .filter(|(slot, n)| {
+                first.is_none_or(|a| n.id == a)
+                    && (first.is_some() || Self::tier(n, others))
+                    && !record.handed(*slot)
+                    && Some(n.id) != parent
+            })
+            .min_by(|(_, a), (_, b)| {
+                let (da, db) = (a.local.distance2(target), b.local.distance2(target));
+                faint(a)
+                    .cmp(&faint(b))
+                    .then(demoted(a).cmp(&demoted(b)))
+                    .then(da.total_cmp(&db))
+                    .then(a.id.0.cmp(&b.id.0))
+            })
+            .map(|(slot, n)| (slot, *n))
+    }
+
     /// Where a sleepy node hands its own message: its anchor while that is
     /// live (spec "A sleepy node's own message"). Sent to
     /// the neighbour nearest the destination instead, the first hop was
@@ -457,6 +544,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => None,
         };
         let mut place = 0;
+        // Fresh work is refused while the way it would go on from here
+        // pushes back, and told how long (spec "Receiving DATA"). A message
+        // already in the network is not: refused for that, its sender
+        // would send it round the pushback, and around a ring of relays
+        // the refusals kept each other up.
+        let pushback = if case == Case::New && sends && fresh {
+            let probe = Record::new(id, None, d.hops, now);
+            self.pushback(&probe, d.dst_pos, now)
+        } else {
+            Duration::ZERO
+        };
         let refusal = if case == Case::AckOnly || expired {
             None
         } else if case == Case::New && record_at.is_none() {
@@ -465,6 +563,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let air = self.data_airtime(d.payload.len());
             match self.admit(air, ACK_AIRTIME, d.hops, completes, now) {
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
+                Ok(_) if pushback > Duration::ZERO => Some(DropReason::Banned),
                 Ok(k) => {
                     place = k;
                     None
@@ -478,11 +577,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             None
         };
+        let air = self.data_airtime(d.payload.len());
+        let wait = refusal.map_or(0, |why| {
+            wait_units(self.refusal_wait(why, air, pushback, now))
+        });
         let reply = Ack {
             msg_id: id,
             from: self.me(),
             to: d.src_hop,
             refused: refusal.is_some(),
+            wait,
         };
         if !self.replies.can_owe(reply, d.sender_home, now) {
             // The packet could not be answered; its sender's retry
@@ -689,6 +793,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         !self.booting()
             && self.own.is_none()
+            && now >= self.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
@@ -709,10 +814,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .budget
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now);
-        match (bucket, self.bans_end(now)) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (a, b) => a.or(b),
-        }
+        let retry = Some(self.retry_at).filter(|&t| t > now);
+        [bucket, self.bans_end(now), retry]
+            .into_iter()
+            .flatten()
+            .max()
     }
 
     /// The application's message is now `own`; a new one, or none, has
@@ -1271,10 +1377,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let msg_id = out.msg_id().unwrap_or_default();
         let by = ack.from;
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
+        // As long as the refuser asks: its pushback, learned per neighbour
+        // and ending with the ban (spec "Refusal").
+        let wait = told(ack.wait);
         let slot = self.neighbours.slot_of(by);
         if slot.is_some() {
             self.neighbours.answered(by, now);
-            self.neighbours.refused(by, now + BAN);
+            self.neighbours.refused(by, now + wait);
+        }
+        if self.config.sleepy && self.own == Some(msg_id) && out.kind == Kind::Forward {
+            // A sleepy node's own message goes back to its application,
+            // which may offer it again once the wait is over: refused at
+            // the origin, it does not age here (spec "A sleepy node's own message").
+            self.handover.cancel();
+            self.queue.take_current();
+            self.skipped = 0;
+            self.feed_due = true;
+            self.retry_at = now + wait;
+            self.records.forget(msg_id);
+            self.drop_msg(msg_id, DropReason::Pushback, emit);
+            return;
         }
         match out.kind {
             Kind::Forward => {
@@ -1288,7 +1410,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let tries = self.handover.refused();
                 self.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
-                    current.not_before = now + BAN;
+                    current.not_before = now + wait;
                     current.tries = tries;
                 }
             }

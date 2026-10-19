@@ -255,7 +255,9 @@ fn s1_parses_and_runs() {
 /// One run of S1. Once the relays know each other, a worst-case rotation
 /// after their boot listen (spec "Channel at boot", "Heartbeat"), every text with an address
 /// is delivered until B is removed at 20 minutes; after that every one is
-/// dropped at A for want of a route (spec "Return to parent"). The
+/// dropped at A for want of a route (spec "Return to parent"), or, while A
+/// waits out the ban on B, refused at LA and given back to its application
+/// with that wait (spec "A sleepy node's own message"). The
 /// sleepy node LA hands its texts to A, then, as the origin of their
 /// search (`docs/one-node-type-2026-10-16.md`); the application skips the
 /// texts due while LA holds one (roadmap D34). Every message has a fate,
@@ -291,8 +293,17 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     // Texts skipped while LA held one fall before the removal or after it.
     let after_n = after.len() as u64;
     assert_eq!(after_n, 20 - sim.skipped_since(removal), "seed {seed}");
+    let given_back = |f: &Fate| {
+        matches!(
+            f,
+            Fate::Dropped {
+                reason: DropReason::Pushback,
+                ..
+            }
+        )
+    };
     assert!(
-        after.iter().all(|(_, f)| *f == a_no_route),
+        after.iter().all(|(_, f)| *f == a_no_route || given_back(f)),
         "seed {seed}: {after:?}"
     );
     // The summary splits the run the same way.
@@ -311,11 +322,10 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
         (after_n, 0, 0),
         "seed {seed}"
     );
-    assert_eq!(
-        off.lost_at.get("relay 0 (A): dropped NoRoute"),
-        Some(&after_n)
-    );
-    assert_eq!(off.lost_at.len(), 1, "seed {seed}");
+    let back = after.iter().filter(|(_, f)| given_back(f)).count() as u64;
+    let no_route = off.lost_at.get("relay 0 (A): dropped NoRoute").copied();
+    assert_eq!(no_route.unwrap_or(0) + back, after_n, "seed {seed}");
+    assert_eq!(off.lost_at.len(), 1 + usize::from(back > 0), "seed {seed}");
     // B was removed at 20 minutes and its relay core stopped.
     assert!(sim.resting(1).is_none());
     assert!(sim.resting(0).is_some() && sim.resting(2).is_some());

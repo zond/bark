@@ -140,6 +140,10 @@ pub enum DropReason {
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
+    /// A sleepy node's own message, refused with a wait: given back to its
+    /// application, which may offer it again after that wait
+    /// (spec "A sleepy node's own message").
+    Pushback,
 }
 
 /// Events for the application side: only a message for it. What becomes

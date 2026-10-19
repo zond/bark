@@ -121,8 +121,12 @@ bucket and bans keep it from accepting, its `next_wakeup()` includes the moment 
 it. A node whose remaining neighbours are all banned once it holds the message keeps it and
 tries again when the first ban ends, or later after refusals in a row
 (spec "A node's own message"); one for a sleepy node it holds for that finds the delivery
-queue full waits for a place (spec "Return to parent"). A sleepy node's own message waits
-as in spec "A sleepy node's own message".
+queue full waits for a place (spec "Return to parent"). A sleepy node's own message that
+its first hop refuses goes back to the application (spec "A sleepy node's own message"):
+the core reports `Trace::Dropped` with `DropReason::Pushback`, and `accepts_send` stays false
+until the wait the refusal asked for is over, which `next_wakeup()` includes; the driver
+tells the application, which may offer the message again then. One whose hand-over goes
+unanswered waits in the node as in that section.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
@@ -216,7 +220,7 @@ action at a time, and the core never allocates.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - Types 0x1, 0x2, 0x4, 0x6, 0x7 and 0xB to 0xE are unused and rejected.
-  - ACK `aux` bit 0 is set for a refusal (roadmap D32); the other `aux` bits of an ACK are
-    sent as zero and ignored on receipt. A fixed-size packet with trailing bytes is
-    rejected.
+  - Types 0x1, 0x2, 0x4, 0x6 and 0xB to 0xE are unused and rejected.
+  - A refusal is a NACK, type 0x7, 14 bytes: the ACK's 13 and the wait it asks for in
+    units of 2.5 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
+    receipt. A fixed-size packet with trailing bytes is rejected.

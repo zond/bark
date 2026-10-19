@@ -321,6 +321,12 @@ pub struct Node<const H: usize, const Q: usize> {
     /// Refusals in a row of `own` by banned neighbours: each doubles the
     /// hold before it is offered again (`budget::hold`).
     own_refusals: u8,
+    /// Before this the application is not offered a send: the wait the
+    /// last refusal of its message asked for (spec "A sleepy node's own message").
+    retry_at: Instant,
+    /// When the bucket will have refilled what the senders it refused
+    /// were told to come back for (spec "Refusal").
+    promised: Instant,
     /// The application's message for a sleepy node this relay holds for, set aside
     /// while the delivery queue is full.
     held: Option<forward::Held>,
@@ -418,6 +424,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             app_ready_at: None,
             own: None,
             own_refusals: 0,
+            retry_at: Instant::ZERO,
+            promised: Instant::ZERO,
             held: None,
             feed_due: false,
             feed_at: None,
@@ -491,6 +499,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             app_ready_at,
             own,
             own_refusals,
+            retry_at,
+            promised,
             held,
             feed_due,
             feed_at,
@@ -546,6 +556,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *app_ready_at = None;
         *own = None;
         *own_refusals = 0;
+        *retry_at = Instant::ZERO;
+        *promised = Instant::ZERO;
         *held = None;
         *feed_due = false;
         *feed_at = None;
@@ -573,6 +585,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Configuration.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Before when its application should not offer a message again: the
+    /// wait the last refusal of its message asked for.
+    pub fn retry_at(&self) -> Instant {
+        self.retry_at
     }
 
     /// This node's ID (spec "Addresses").
@@ -2646,6 +2664,7 @@ mod tests {
                             from: id_of(b),
                             to: r.me(),
                             refused: offers.len() <= refusals,
+                            wait: 0,
                         });
                         pending.extend(hear(&mut r, now, &reply));
                     }
@@ -2774,6 +2793,7 @@ mod tests {
             from: id_of(d_pos),
             to: r.me(),
             refused: false,
+            wait: 0,
         };
         let to_c = Ack {
             to: name(0x0c0c_0c0c),
@@ -2893,6 +2913,7 @@ mod tests {
                 from: id_of(d_pos),
                 to: r.me(),
                 refused,
+                wait: 0,
             };
             let pending = hear(r, *now, &Packet::Ack(ack));
             r.queue.retain(|_, _| false);
@@ -3157,6 +3178,7 @@ mod tests {
             from: id_of(near),
             to: r.me(),
             refused: false,
+            wait: 0,
         };
         let f = mac::frame(&Packet::Ack(ack), r.home, MIN_PREAMBLE_SYMBOLS);
         let event = Event::Received {
@@ -3277,6 +3299,7 @@ mod tests {
             from: id_of(addressed),
             to: r.me(),
             refused: false,
+            wait: 0,
         };
         hear(&mut r, &mut now, &Packet::Ack(ack));
         assert!(r.records.get(id).unwrap().arrived());

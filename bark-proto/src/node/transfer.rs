@@ -96,6 +96,7 @@ impl Transfer {
                 from: NodeId::NONE,
                 to: NodeId::NONE,
                 refused: false,
+                wait: 0,
             },
         }
     }
@@ -489,6 +490,7 @@ mod tests {
             from: NodeId([1, 2, 3, 4]),
             to: NodeId([5, 6, 7, 8]),
             refused: false,
+            wait: 0,
         }
     }
 

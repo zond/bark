@@ -69,7 +69,7 @@ use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::{retrying_span, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
-use crate::wire::{ACK_LEN, HEARTBEAT_LEN};
+use crate::wire::{ACK_LEN, HEARTBEAT_LEN, TTL_UNIT};
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration =
@@ -164,6 +164,18 @@ pub const fn hold(refusals: u8) -> Duration {
         k += 1;
     }
     Duration::from_micros(if wait < cap { wait } else { cap })
+}
+
+/// The wait a refusal asking for `units` of [`TTL_UNIT`] means
+/// (spec "Refusal"): never less than one [`BAN`].
+pub fn told(units: u8) -> Duration {
+    TTL_UNIT.mul(units as u64).max(BAN)
+}
+
+/// `wait` in whole units of [`TTL_UNIT`], rounded down, up to what a byte
+/// holds: passed on from relay to relay, a wait so rounded only shrinks.
+pub fn wait_units(wait: Duration) -> u8 {
+    (wait.as_micros() / TTL_UNIT.as_micros()).min(u8::MAX as u64) as u8
 }
 
 /// The duty-cycle token bucket.

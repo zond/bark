@@ -284,6 +284,9 @@ pub struct Addressed {
     /// takes it, one that refuses it, either started later than the ACK
     /// timeout after the frame's end, or none.
     pub replies: [[u64; 4]; 2],
+    /// Refusing ACKs by the wait they ask for, in TTL units: 0, 1, 2–3,
+    /// 4–7 and so on doubling, 64 and more.
+    pub refusal_steps: [u64; 8],
 }
 
 /// Refusals of a relay's DATA for want of room (spec "Receiving DATA"), and whether the
@@ -470,6 +473,9 @@ pub struct DropCounts {
     pub delivery_full: u64,
     /// The payload was too long (spec "Packet formats").
     pub payload_too_long: u64,
+    /// A sleepy node's own message given back to its application with a
+    /// wait (spec "A sleepy node's own message").
+    pub pushback: u64,
 }
 
 impl DropCounts {
@@ -487,6 +493,7 @@ impl DropCounts {
             DropReason::Expired => &mut self.expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
+            DropReason::Pushback => &mut self.pushback,
         };
         *c += 1;
     }
@@ -504,6 +511,7 @@ impl DropCounts {
             + self.expired
             + self.delivery_full
             + self.payload_too_long
+            + self.pushback
     }
 }
 

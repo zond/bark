@@ -37,8 +37,11 @@
 //! - The payload is at most [`MAX_PAYLOAD`] = 233 bytes, what a frame holds
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
-//! - ACK `aux` bit 0 is set when the offer is refused. The other `aux`
-//!   bits of an ACK are sent as zero and ignored on receipt.
+//! - An ACK takes the offer; a NACK, type 0x7, refuses it and adds a byte
+//!   for the wait it asks for, in whole [`TTL_UNIT`]s rounded down
+//!   (`tables/budget.rs`). At SF5 the 14th byte costs no airtime, and a
+//!   byte of 2.5 s holds more than the delivery TTL: a relay at its cap
+//!   with its sleepy nodes in line asks for minutes. `aux` is zero in both.
 //! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
 //!   sleepy (0x9), and 0x2, anchorless, only with sleepy (0xB; 0xA is
 //!   rejected): a node that listens all the time has no anchor to miss.
@@ -74,6 +77,8 @@ const AUX_MASK: u8 = 0x0f;
 
 // Type codes (spec "Packet formats").
 const T_ACK: u8 = 0x3;
+// The ACK that refuses, with the wait it asks for (spec "Refusal").
+const T_NACK: u8 = 0x7;
 const T_DATA: u8 = 0x5;
 // Reserved for the firmware's bench frames (spec "Packet formats").
 const T_BENCH: u8 = 0xF;
@@ -90,6 +95,7 @@ const _: () = assert!(
 const _: () = assert!(
     T_HEARTBEAT & HEARTBEAT_FLAGS == 0
         && T_ACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
+        && T_NACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
         && T_DATA & !HEARTBEAT_FLAGS != T_HEARTBEAT
         && T_BENCH & !HEARTBEAT_FLAGS != T_HEARTBEAT,
     "every heartbeat code is free"
@@ -107,8 +113,10 @@ const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
 const ACK_TO: usize = ACK_FROM + ID_LEN;
 /// ACK length (spec "Packet formats": 13).
 pub const ACK_LEN: usize = ACK_TO + ID_LEN;
-/// The `aux` bit of an ACK that refuses.
-const ACK_REFUSED: u8 = 0x1;
+// NACK: an ACK and the wait, in whole TTL units.
+const NACK_WAIT: usize = ACK_LEN;
+/// NACK length (spec "Packet formats": 14).
+pub const NACK_LEN: usize = NACK_WAIT + 1;
 
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
@@ -124,7 +132,12 @@ pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 /// 255 − 22 = 233 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13);
+const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13 && NACK_LEN == 14);
+const _: () = assert!(
+    time_on_air(NACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        == time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
+    "the wait costs the refusal no airtime"
+);
 const _: () = assert!(
     time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         == time_on_air(8, MIN_PREAMBLE_SYMBOLS).as_micros(),
@@ -172,6 +185,9 @@ pub struct Ack {
     pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
+    /// For a refusal, the wait the refuser asks for, in whole
+    /// [`TTL_UNIT`]s (spec "Refusal"); 0 in an ACK that takes.
+    pub wait: u8,
 }
 
 impl Ack {
@@ -332,12 +348,15 @@ impl Packet<'_> {
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
-                let aux = if a.refused { ACK_REFUSED } else { 0 };
-                buf[FIRST] = first(T_ACK, aux);
+                buf[FIRST] = first(if a.refused { T_NACK } else { T_ACK }, 0);
                 put(buf, ACK_ID, &a.msg_id.0.to_be_bytes());
                 put(buf, ACK_FROM, &a.from.0);
                 put(buf, ACK_TO, &a.to.0);
-                Ok(ACK_LEN)
+                if !a.refused {
+                    return Ok(ACK_LEN);
+                }
+                buf[NACK_WAIT] = a.wait;
+                Ok(NACK_LEN)
             }
             Packet::Data(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
@@ -379,13 +398,15 @@ impl<'a> Packet<'a> {
                     short: get_short(b, HEARTBEAT_POS),
                 }))
             }
-            T_ACK => {
-                exact(b, ACK_LEN)?;
+            T_ACK | T_NACK => {
+                let refused = kind == T_NACK;
+                exact(b, if refused { NACK_LEN } else { ACK_LEN })?;
                 Ok(Packet::Ack(Ack {
                     msg_id: get_msg_id(b, ACK_ID),
                     from: NodeId(get4(b, ACK_FROM)),
                     to: NodeId(get4(b, ACK_TO)),
-                    refused: aux & ACK_REFUSED != 0,
+                    refused,
+                    wait: if refused { b[NACK_WAIT] } else { 0 },
                 }))
             }
             T_DATA => {
@@ -442,6 +463,7 @@ mod tests {
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
             Packet::Heartbeat(_) => 9,
+            Packet::Ack(a) if a.refused => 14,
             Packet::Ack(_) => 13,
             Packet::Data(d) => 22 + d.payload.len(),
         };
@@ -465,8 +487,15 @@ mod tests {
         }
 
         #[test]
-        fn ack_round_trips(msg_id in msg(), from: [u8; 4], to: [u8; 4], refused: bool) {
-            let ack = Ack { msg_id, from: NodeId(from), to: NodeId(to), refused };
+        fn ack_round_trips(
+            msg_id in msg(),
+            from: [u8; 4],
+            to: [u8; 4],
+            refused: bool,
+            step: u8,
+        ) {
+            let wait = if refused { step } else { 0 };
+            let ack = Ack { msg_id, from: NodeId(from), to: NodeId(to), refused, wait };
             round_trip(&Packet::Ack(ack));
             let flipped = Ack { refused: !refused, ..ack };
             prop_assert!(ack.answers(&flipped));
@@ -551,7 +580,7 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60, 0x70, 0xa0] {
+        for gone in [0x10, 0x20, 0x40, 0x60, 0xa0] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
@@ -570,6 +599,8 @@ mod tests {
         );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
+        assert_eq!(Packet::decode(&[0x70; NACK_LEN - 1]), Err(Short));
+        assert_eq!(Packet::decode(&[0x70; NACK_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
 
         let mut data = [0u8; DATA_HEADER_LEN];
@@ -623,19 +654,29 @@ mod tests {
             from: NodeId([5, 6, 7, 8]),
             to: NodeId([9, 10, 11, 12]),
             refused: false,
+            wait: 0,
         };
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x30, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-        let refused = Ack {
-            refused: true,
-            ..ack
-        };
-        let len = Packet::Ack(refused).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x31, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(14_400),
             "51.25 symbols at SF5"
+        );
+        let refused = Ack {
+            refused: true,
+            wait: 24,
+            ..ack
+        };
+        let len = Packet::Ack(refused).encode(&mut buf).unwrap();
+        assert_eq!(
+            &buf[..len],
+            &[0x70, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 24]
+        );
+        assert_eq!(
+            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(14_400),
+            "the 14th byte fits in the 13th's block of symbols"
         );
 
         let d = Data {
