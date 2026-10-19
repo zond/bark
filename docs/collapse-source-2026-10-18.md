@@ -608,6 +608,39 @@ and every refusal asks for one ban: the line does not apply to a full
 delivery queue, which empties when a node collects, not at the bucket's
 rate. Not measured further.
 
+Why the share for nodes never heard rises from 5.1 % at the spec rate
+to 8.8 % at three times it (U, `1419f25`, seed 1). The instruments count
+beats at their anchors by fate over the whole run, not per text, so the
+split below is of all beats, not of the beats of the texts that expired;
+whether another relay heard those nodes was not recorded.
+
+| Sleepy nodes' beats at their anchor, settled run | ×1 | ×3 |
+|---|---|---|
+| Received | 76 % | 62 % |
+| Lost with the anchor listening and free (weak link, or the node out of reach) | 13 % | 13 % |
+| Lost while the anchor received another frame | 5 % | 14 % |
+| Lost while the anchor was deaf: transmitting, checking or retuning | 2 % | 7 % |
+| Lost while the anchor listened on another channel | 3 % | 4 % |
+| Relays' duty cycle, mean | 2.1 % | 7.2 % |
+| Expired in a queue, node never heard while the text waited, of all texts | 5.1 % | 8.8 % |
+| ... of those, its destination walking when the text was sent | 10 % | 11 % |
+| ... its node anchored to the holder at the end of the run | 43 % | 50 % |
+| ... its node's distance to its anchor, median | 483 m | 410 m |
+
+The part of beats lost to a weak link or a node out of reach does not
+change with load (13 %); what grows is the anchor's own load, beats lost
+while it receives other frames (5 → 14 %) or transmits (2 → 7 %), as its
+duty cycle goes from 2 to 7 %. A text waits about 2.7 beats of its node
+in the ten minutes; at 76 % of beats heard the chance that none is heard
+is 0.24^2.7 ≈ 2 %, at 62 % it is 0.38^2.7 ≈ 7 %. That accounts for the
+rise from the spec rate to three times it: the nodes at the edge of
+reach are lost at every rate, and load adds nodes that are not at the
+edge but whose few beats all meet the anchor busy. Half of them are
+still anchored to the holder at the end, so a different anchor would
+not have helped those. To split the expired texts themselves by what
+became of their nodes' beats, and to see whether another relay heard
+them, needs a per-text record of beats and a run with it.
+
 ## Ideas 1 to 3 together, against main, on `4ccbaf4`
 
 | | Main ×1 | Ideas 1–3 ×1 | Main ×2 | Ideas 1–3 ×2 | Main ×3 | Ideas 1–3 ×3 | Ideas 1–3 ×4 |
