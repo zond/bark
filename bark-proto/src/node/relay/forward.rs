@@ -1260,7 +1260,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Instant::MAX => d.time_left,
                 ends => Data::units(ends.since(now)),
             };
-            let (Some(hops), false) = (self.count(&d, id), gone(&out, now)) else {
+            let (Some(hops), false) = (self.count(&d, id, out.kind), gone(&out, now)) else {
                 let reason = match gone(&out, now) {
                     true => DropReason::Expired,
                     false => DropReason::HopCap,
@@ -1308,8 +1308,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// its retries. Stamped when queued, a frame would keep a count older
     /// than one this relay has since received or sent, and a relay that
     /// readdressed it would offer a count it had already used. `None` past
-    /// the hop cap.
-    fn count(&self, d: &Data<'_>, id: MsgId) -> Option<u8> {
+    /// the hop cap, but for a delivery: its search has ended, and the cap
+    /// ends searches, so it goes at the cap.
+    fn count(&self, d: &Data<'_>, id: MsgId, kind: Kind) -> Option<u8> {
         if self.handover.transmitted() {
             return Some(d.hops);
         }
@@ -1323,6 +1324,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(r) if self.anchored_sleepy() && self.own == Some(id) && r.parent().is_none() => {
                 Some(0)
             }
+            Some(r) if kind == Kind::Deliver => Some(r.highest_hops().saturating_add(1)),
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }

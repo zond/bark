@@ -1177,3 +1177,52 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
     assert!(on(3) >= 6, "{sent:?}");
     assert!(on(9).abs_diff(on(3)) <= 1, "{sent:?}");
 }
+
+/// A message that reaches its owner at the hop cap has found its way: the
+/// owner delivers it to its node, at the cap, rather than dropping it at
+/// the last step and finding it in its delivery queue again
+/// (spec "Hop count").
+#[test]
+fn a_message_at_the_hop_cap_is_still_delivered() {
+    use bark_proto::radio::MIN_PREAMBLE_SYMBOLS;
+    use bark_proto::{Frame, MAX_FRAME};
+    let (r, q, s) = (0, 1, 2);
+    let mut h = Harness::new(vec![
+        node(0.0, false, 161),
+        node(-300.0, false, 162),
+        node(50.0, true, 163),
+    ]);
+    h.link(r, s);
+    h.link(q, r);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert!(h.nodes[s].core.anchor().is_some());
+    let text = b"the long way round";
+    let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
+    let data = Data {
+        sender_home: h.resting(q).unwrap(),
+        dst_hop: h.nodes[r].core.id(),
+        src_hop: h.nodes[q].core.id(),
+        dst_pos,
+        dst_id,
+        hops: u8::MAX,
+        time_left: u8::MAX,
+        payload: text,
+    };
+    let mut frame = Frame {
+        channel: h.resting(r).unwrap(),
+        preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+        len: 0,
+        bytes: [0; MAX_FRAME],
+    };
+    frame.len = Packet::Data(data).encode(&mut frame.bytes).unwrap() as u8;
+    h.inject(q, frame);
+    let id = MsgId::of(dst_pos, dst_id, text);
+    assert!(h.run_until(h.now + secs(700), |h| delivered_at(h, s, id).is_some()));
+    let dropped = h.nodes[r]
+        .traces
+        .iter()
+        .filter(|(_, t)| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
+        .count();
+    assert_eq!(dropped, 0);
+}

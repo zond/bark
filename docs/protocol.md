@@ -1159,7 +1159,10 @@ stands when it goes. The count also numbers the hop places of the send
 queue ([send queue](#send-queue)).
 
 A relay that would have to send a count above 255, the largest the
-one-byte field holds, drops the message. A search that keeps its records
+one-byte field holds, drops the message, except an owner delivering it to
+its node ([delivery](#delivery)), which sends 255: the search has ended
+there, and dropping the message at the last step would leave it in the
+delivery queue to be dropped again at every try. A search that keeps its records
 ends on its own ([why the search finds a path](#why-the-search-finds-a-path)); the cap ends one that has lost
 its way because a record was replaced, or because the message split in
 two, and it ends the chain of hop places ([overload waits](#overload-waits)). 255 is generous:
