@@ -1,7 +1,7 @@
 # Simulator design
 
-**Status:** proposal, 2026-10-14. For discussion before Phase 1 starts.
-Spec references are to `protocol.md`.
+**Status:** 2026-10-20. The simulator in `bark-sim` as it is. Spec references are to
+`protocol.md`.
 
 ## 1. Purpose
 
@@ -11,17 +11,17 @@ Answer, before and after hardware exists:
 2. What is the capacity in a realistic city deployment, and where does it bind first: channel busy fraction, per-relay 10% duty cycle, delivery queue, neighbour table?
 3. Which values for the open thresholds (O3, O4) and which unknown radio parameters (adjacent-channel rejection, hearing radius, SF5 sensitivity) change the answer?
 
-Non-goals: BLE, the phone app, crypto, GPS acquisition, battery chemistry. A sleepy node's sleep is modelled only by when its holder sends to it (spec "Delivery"); the simulated radio always listens.
+Non-goals: BLE, the app, encryption, GPS acquisition, battery chemistry.
 
 ## 2. What the user supplies
 
 A **scenario**:
 
 - **Nodes.** Each has a position (metres on a local grid; the simulator converts to the 51-bit WGS-84 wire form around a chosen origin so the real codec runs), the sleepy setting (a relay or a sleepy node), and for relays whether it is rooftop or windowsill (affects nothing in the protocol, only the link generator). Nodes can be placed one by one, on a lattice with jitter, or by density per km².
-- **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured transmit power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below sensitivity minus an interference margin (a parameter; a signal too weak to decode still adds to the noise) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k leaves would otherwise mean 4×10⁸ entries). A table can also be loaded from a file so field measurements replace the model later; absent pairs are out of range.
-- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the leaf itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (spec "Channel moves"), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A loaded table may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
+- **Links.** A sparse pairwise receive-power table `rx_dbm[a][b]`: the power at b when a transmits at its configured transmit power. This is the primary interface. Only pairs that can interact are stored: a pair whose receive power is below sensitivity minus an interference margin (a parameter; a signal too weak to decode still adds to the noise) has no entry and never meets in the event loop. Generators fill the table in: log-distance path loss with a chosen exponent, a rooftop-to-rooftop bonus, indoor wall penetration loss per node, optional shadow-fading noise with a seed; each generator takes a cut-off distance from its own parameters so it never evaluates the full N² (20k sleepy nodes would otherwise mean 4×10⁸ entries). A scenario can instead give the table pair by pair (`model = "table"`), so field measurements can replace the model; absent pairs are out of range.
+- **Per-channel and time-varying links.** Each stored pair carries one base value plus a per-channel offset that evolves in time, so the table is really `rx_dbm[a][b][channel](t)`. Path loss is the same on all 13 channels: the band spans 1.74 MHz, 0.035 dB of free-space difference end to end. What differs per channel is multipath fading, which varies with frequency once channels are further apart than the coherence bandwidth (hundreds of kHz to a few MHz in a city), and the antenna match of a cheap whip, which can tilt a few dB across the band per node. Fading changes over time as people, vehicles and the node itself move. Default generator: a per-pair, per-channel Gauss-Markov offset with a standard deviation of a few dB and a correlation time of seconds to minutes, seeded; static nodes get a slower process than moving ones. The offsets are why a relay hears a neighbour's heartbeat on channel 3 and misses it on channel 9, and why a quiet home channel becomes busy without any new transmitter; they exercise the move rule (spec "Channel moves"), the neighbour-table expiry and the per-hop retry logic. Interferers (below) are the other, larger source of per-channel difference. A table given pair by pair may give one value per pair or one per channel; the time process is applied on top in either case unless disabled.
 - **Interferers.** Per channel, foreign busy sources (key fobs, LPD433 handhelds): a position, a power, and an on/off process. Signal strength readings (RSSI) always see them; channel activity detection (CAD) sees them only if they are LoRa (a flag).
-- **Traffic.** Message arrival as a Poisson process per leaf with a rate, a payload-length distribution, and a destination distribution (uniform, or distance-biased so most texts are local). A share of the leaves may walk (§3.7). Leaves also have an availability process: periods where the phone is dark (pocket, metro) and the leaf does not ACK deliveries.
+- **Traffic.** Message arrival as a Poisson process per sleepy node with a rate, a payload-length distribution, and a destination distribution (uniform, or distance-biased so most texts are local). A share of the sleepy nodes may walk (§3.7). Sleepy nodes also have an availability process: dark periods (pocket, basement, metro) in which they are out of radio reach.
 - **Radio parameters.** Everything the firmware will measure in Phase 2, with the datasheet value as default: SF5 sensitivity, noise floor, co-channel capture threshold, adjacent-channel rejection at ±1 and ±2 channels, CAD duration and miss probability, retune time, transmit/receive turnaround, sweep schedule.
 - **Protocol parameters.** The O3 thresholds, table sizes, intervals; defaults from the design.
 - **Run.** Duration, seed, which metrics to log and at what cadence.
@@ -30,11 +30,11 @@ A **scenario**:
 
 ### 3.1 Time and events
 
-Discrete-event, microsecond resolution, single-threaded, deterministic for a given seed. A binary heap of `(time, sequence, event)`, and beside it one place per node for its core's timer, ordered the same way: the core sets a new timer after every event, and one it replaced is dropped rather than left in the heap. Event kinds: node timer, transmission start, transmission end at each receiver, CAD/RSSI sample result, traffic arrival, leaf movement, interferer toggle.
+Discrete-event, microsecond resolution, single-threaded, deterministic for a given seed. A binary heap of `(time, sequence, event)`, and beside it one place per node for its core's timer, ordered the same way: the core sets a new timer after every event, and one it replaced is dropped rather than left in the heap. Event kinds: node timer, transmission start, transmission end at each receiver, CAD/RSSI sample result, traffic arrival, a walker's movement, interferer toggle.
 
 ### 3.2 Radio state per node
 
-`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (spec "Busy estimate"), heartbeat deafness (§7) and the per-hop retune cost (spec "Hand-over") are measured rather than assumed.
+`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`, `Sniff`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (spec "Busy estimate"), heartbeat deafness (§7) and the per-hop retune cost (spec "Hand-over") are measured rather than assumed.
 
 ### 3.3 Reception
 
@@ -60,11 +60,11 @@ The once-per-second 13-channel sweep (spec "Busy estimate") is modelled explicit
 
 Time on air from the SX126x datasheet formula for SF5/SF6 (6.25-symbol overhead, 12-symbol minimum preamble), computed from the actual encoded packet length. The protocol core's duty-cycle token bucket is the real code; the simulator records when it blocks forwarding.
 
-### 3.7 Sleepy nodes and phones
+### 3.7 Sleepy nodes
 
-Scenario files place relays and leaves; a leaf runs as a sleepy node (spec "Sleepy nodes"): it chooses an anchor, beats on its channel and takes deliveries in the window after each beat. Its radio sleeps when its core says it may (`Action::Sleep`) and hears nothing then; without an anchor it receives duty-cycled (`Action::Sniff`), and takes a frame only if a window of its cycle, started at the sniff and again after each frame it takes, holds four symbols of the preamble (spec "Duty-cycled receive and the long preamble"). The time asleep, the time receiving duty-cycled and the time on air give its radio current. The phone behind it is only an availability process and a traffic source.
+Scenario files place relays and sleepy nodes (spec "Sleepy nodes"; `role = "leaf"` in the files): a sleepy node chooses an anchor, beats on its channel and takes deliveries in the window after each beat. Between its windows its radio receives duty-cycled when its core says so (`Action::Sniff`), and takes a frame only if a window of its cycle, started at the sniff and again after each frame it takes, holds four symbols of the preamble (spec "Duty-cycled receive and the long preamble"). The time receiving duty-cycled, the time listening and the time on air give its radio current. The person carrying it is only an availability process and a traffic source.
 
-**Movement.** With `[movement] fraction` above 0 that share of the sleepy nodes walk, chosen from the run's seed. A walker stops indoors at a point for a time drawn from an exponential with mean `stop_s`, then walks outdoors at `speed_m_s` in a straight line in a random direction, as far as an exponential with mean `trip_m` takes it, folded back at the edges of the area the nodes were placed in, and stops again; it starts at its placed point, partway through a stop. Indoors its links have the wall loss, outdoors not. Relays never move. A walker's links change as it moves, so none is stored: each frame with a walker at either end works its receivers out when it reaches the air, from the same path loss and cut-off as the stored links (`walk.rs`). Their shadowing has the scenario's deviation and varies over the moving end's position, from independent draws `shadow_decorrelation_m` apart, interpolated between; their fading has the scenario's deviation and varies over time, from independent draws one correlation time apart: the scenario's at a stop, and while either end walks the coherence time of a receiver moving at walking speed, 0.423 λ / v = 0.21 s. A new stop or walk draws its fading afresh. A walker's core is handed a GPS fix, its position then, each time it sends a heartbeat (spec "Beats": it refreshes its fix before each beat). A loaded link table cannot hold a walker. An interferer reaches the nodes that stay where they were placed, and the walkers where they are when it comes on and again every 10 s while it is on, the interval at which the walkers' grids are rebuilt: a walk of 14 m, which moves the path loss of a walker 300 m away by under a decibel. Like the stored links to interferers, those to walkers have the wall at a stop and no shadowing.
+**Movement.** With `[movement] fraction` above 0 that share of the sleepy nodes walk, chosen from the run's seed. A walker stops indoors at a point for a time drawn from an exponential with mean `stop_s`, then walks outdoors at `speed_m_s` in a straight line in a random direction, as far as an exponential with mean `trip_m` takes it, folded back at the edges of the area the nodes were placed in, and stops again; it starts at its placed point, partway through a stop. Indoors its links have the wall loss, outdoors not. Relays never move. A walker's links change as it moves, so none is stored: each frame with a walker at either end works its receivers out when it reaches the air, from the same path loss and cut-off as the stored links (`walk.rs`). Their shadowing has the scenario's deviation and varies over the moving end's position, from independent draws `shadow_decorrelation_m` apart, interpolated between; their fading has the scenario's deviation and varies over time, from independent draws one correlation time apart: the scenario's at a stop, and while either end walks the coherence time of a receiver moving at walking speed, 0.423 λ / v = 0.21 s. A new stop or walk draws its fading afresh. A walker's core is handed a GPS fix, its position then, each time it sends a heartbeat (spec "Beats": it refreshes its fix before each beat). A table given pair by pair cannot hold a walker. An interferer reaches the nodes that stay where they were placed, and the walkers where they are when it comes on and again every 10 s while it is on, the interval at which the walkers' grids are rebuilt: a walk of 14 m, which moves the path loss of a walker 300 m away by under a decibel. Like the stored links to interferers, those to walkers have the wall at a stop and no shadowing.
 
 **Vehicles.** With `[vehicles] fraction` above 0 that share of the sleepy nodes that do not walk ride in vehicles along one straight route, `route`, between its two ends. A rider stops indoors at a point of the route for a time drawn from an exponential with mean `stop_s`, then is driven at `speed_m_s` to a point drawn uniformly on the route, and stops again; it starts at a point drawn on the route, partway through a stop. Driven, its links are those of a walker outdoors less the vehicle's body, `loss_db` (default 9 dB, the mean car penetration loss of 3GPP TR 38.901 §7.4.3.2), and their fading changes over the coherence time at its speed, 29 ms at 10 m/s.
 
@@ -97,21 +97,25 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 
 ```
 bark-proto (no_std, no allocation: D8)
-  node::Node            state machine: handle(Event, Instant) -> Actions
-  wire::*               spec "Packet formats" codecs, position codec
-  tables::*             neighbour, leaf, delivery queue, message records
-  mac::*                busy estimator, channel selection, heartbeat schedule,
-                        per-hop transfer, duty-cycle budget
-  routing::*            greedy, DFS, owner rule
+  node                  configuration, the node, the Core trait
+  node::relay           the node: medium access, heartbeat, relay choice;
+                        relay::forward the search and the owner rule,
+                        relay::delivery delivery to sleepy nodes
+  node::transfer        per-hop transfer
+  tables                neighbours, heard, delivery queue, delivered window,
+                        message records, send queue, busy estimate,
+                        duty-cycle budget
+  wire, position        spec "Packet formats" codecs, the position codec
+  sniff                 duty-cycled receive and the long preamble
 
 bark-sim (std)
-  engine                event heap, clock, RNG
-  radio                 per-node radio state, reception model (§3.3), timings
-  links                 sparse rx_dbm table, generators, file load/save
+  sim                   event heap, the cores, the driver side of the contract
+  radio, phy            reception model (§3.3), the radio's numbers
+  links, walk           sparse rx_dbm table and its generator, walkers' links
   scenario              builder API + TOML file
-  traffic               arrivals, destinations, leaf movement, availability
-  metrics               collectors, CSV/JSON writers
-  bin/bark-sim          run a scenario file, print a summary
+  metrics, summary      counters, JSON and CSV
+  trace                 per-node event trace
+  main                  bark-sim: run a scenario file, print a summary
 ```
 
 The core's interface is `core-interface.md`. Firmware maps its actions onto `lora-phy` calls and one embassy timer; the simulator maps them onto heap events.
@@ -123,37 +127,29 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 | message records | message ID (spec "Packet formats") | 1855 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 4-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
 | `tables::heard` | 4-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
-| `tables::delivery` | message ID | 41 messages, 10 min TTL | messages waiting for a sleepy node |
+| `tables::delivery` | message ID | 41 messages; when the queue is full, the oldest queued 10 min or longer makes way for a new one (spec "Delivery queue") | messages waiting for a sleepy node |
 
-`routing` chooses the next hop from (destination, neighbour table, message record, own position) as in spec "Next hop", and applies the owner rule of spec "Owner". Link generators in `bark-sim` include a terrain-class model (free-space loss plus per-cell attenuation along the path) beside the log-distance one.
+`relay::forward` chooses the next hop from (destination, neighbour table, message record, own position) as in spec "Next hop", and applies the owner rule of spec "Owner".
 
 ## 6. Scenario catalogue
 
-| # | Scenario | Checks | Bench twin |
-|---|---|---|---|
-| S1 | Three relays in a line, A cannot hear C; one leaf at C | greedy forward, ACK, demotion when B dies, drop after B dies | design step 4 |
-| S2 | 1 km² block: 10 windowsill relays, 80 leaves, 10 texts/leaf/day | anchors, beats, delivery, queue, dark phones | step 5 |
-| S3 | S2 plus an interferer on channel 6 and three rooftop relays that all hear each other | avoidance, move hysteresis, no joint jumps | step 3 |
-| S4 | 28 km² domain: 270 relays at 9.6/km², 20k leaves, spec "Capacity and sizing" rates | capacity table, where the 10% cap binds, heartbeat load per channel ≈2.5% | field test |
-| S5 | S4 with the central relay removed / with a 2× hearing radius / with ACR_1 from 20 to 60 dB | sensitivity of S4 to the unknowns | C1 |
-| S6 | Cold start: all S4 nodes boot within 10 minutes | boot listen (spec "Channel at boot"), identity collision offset, convergence time | |
-
-### Scenarios in the repository
-
 The files in `scenarios/` are the ones the tests and the roadmap's
-measurements use. Each file says in its header what it is for.
+measurements use. Each file says in its header what it is for, and S1 to
+S3 are the twins of spec "Implementation notes" steps 4, 5 and 3.
 
 | File | What it is | What it checks |
 |---|---|---|
-| `s1-line.toml` | S1: three relays in a line, a leaf at each end, one sending to the other every 30 s; the middle relay is removed at 20 minutes | forwarding, ACK, delivery; every message dropped at the first relay after the removal |
-| `s1b-hidden.toml` | S1 with both leaves sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
-| `s2-block.toml` | S2: ten relays and eighty indoor leaves in a square kilometre for an hour | anchors, beats, delivery queue, dark phones |
-| `corridor.toml` | five relays in a line, a leaf at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
-| `ring.toml` | eight relays on an octagon, a leaf at each, every leaf sending to the leaf three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
-| `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a leaf at each; every leaf sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
-| `mesh-spread.toml` | the same mesh and flows, each leaf starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
-| `s4-capacity.toml` | S4: 28 km², 269 relays of which 53 on roofs, 20 000 indoor leaves, 23 texts per leaf per day, one settled hour; switched on over 10 and 30 minutes, random IDs, drifting clocks, a fifth of the people walking | capacity and where it binds; `capacity-research-2026-10-15.md`, `realism-2026-10-18.md` |
+| `s1-line.toml` | S1: three relays in a line, a sleepy node at each end, one sending to the other every 30 s; the middle relay is removed at 20 minutes | forwarding, ACK, delivery; every message dropped at the first relay after the removal |
+| `s1b-hidden.toml` | S1 with both sleepy nodes sending to each other at the same instant every 30 s | two senders that cannot hear each other handing to the middle relay at once |
+| `s2-block.toml` | S2: ten relays and eighty indoor sleepy nodes in a square kilometre for an hour | anchors, beats, delivery queue, nodes that go dark |
+| `s3-interferer.toml` | S3: S2 with a foreign transmitter on channel 6 from 1800 s and three rooftop relays that all hear each other | relays move off the channel, not all at once; sleepy nodes follow their anchors |
+| `corridor.toml` | five relays in a line, a sleepy node at each end, both sending every 30 s from the same instant | two flows meeting head on at every relay |
+| `ring.toml` | eight relays on an octagon, a sleepy node at each, each sending to the one three relays on every 2 s | relays at their duty cap whose waiting messages could close a circle |
+| `mesh-burst.toml` | 25 relays at random in a 2.5 km square, a sleepy node at each; every one sends across the mesh at the same instant every 10 minutes | routing around holes; every relay meeting crossing traffic at once |
+| `mesh-spread.toml` | the same mesh and flows, each sender starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
+| `s4-capacity.toml` | S4: 28 km², 269 relays of which 53 on roofs, 20 000 indoor sleepy nodes, 23 texts per node per day, one settled hour; switched on over 10 and 30 minutes, random IDs, drifting clocks, a fifth of the people walking | capacity and where it binds; `capacity-research-2026-10-15.md`, `realism-2026-10-18.md` |
 | `strip.toml` | three S4 domains side by side, 16 km by 5.3 km, a centre of 2.6 km by 2.6 km with twice the people in the middle one, texts to anyone in the strip | texts across the city, about eight hops; where the centre binds; `realism-2026-10-18.md` |
+| `dark-groups.toml` | four square kilometres at S4's densities, a relay at the centre and a building of 400 people beside it; a run adds the group that goes dark | the delivery queue while a group is dark; `unproven-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's
 seed, so each seed is a different mesh: some have holes, and some leave
@@ -240,6 +236,5 @@ S4 for one simulated hour in a few minutes on the dev machine. Sleepy nodes are 
 
 ## 8. Validation of the simulator itself
 
-- Unit tests that a single packet between two nodes has the datasheet airtime.
-- A two-node capture test reproducing the 5 dB co-channel figure.
-- S1 run on the four real boards in Phase 3 with the same scenario file; the simulator's parameters are then adjusted until the measured latency and loss match.
+- `bark-sim/tests/radio.rs` checks that a single packet has the datasheet airtime, that capture holds at the 5 dB threshold and fails below it, and the loss curve of §3.3.
+- In Phase 3, S1 runs on four boards with the same scenario file, and the simulator's parameters are adjusted until the measured latency and loss match.
