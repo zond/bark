@@ -219,10 +219,14 @@ impl Record {
 }
 
 /// The records of one relay.
+///
+/// Its few fields first, then the items: an event reads the first and
+/// seldom the items ([`crate::Node`]'s layout).
 #[derive(Clone)]
+#[repr(C)]
 pub struct Records {
-    entries: [Record; RECORDS],
     len: usize,
+    entries: [Record; RECORDS],
 }
 
 impl Records {

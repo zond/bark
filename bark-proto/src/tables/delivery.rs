@@ -123,10 +123,14 @@ pub enum Pushed {
 
 /// The delivery queue, in arrival order, of up to `N` messages: a
 /// sleepy node keeps none (spec "Sleepy nodes").
+///
+/// Its few fields first, then the items: an event reads the first and
+/// seldom the items ([`crate::Node`]'s layout).
 #[derive(Clone)]
+#[repr(C)]
 pub struct DeliveryQueue<const N: usize = DELIVERY_QUEUE> {
-    entries: FixedVec<Queued, N>,
     ttl: Duration,
+    entries: FixedVec<Queued, N>,
 }
 
 impl<const N: usize> DeliveryQueue<N> {

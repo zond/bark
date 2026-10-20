@@ -100,10 +100,14 @@ pub struct HeardNode {
 
 /// The heard table, of up to `N` nodes: a sleepy node keeps none (spec
 /// "Heard table").
+///
+/// Its few fields first, then the items: an event reads the first and
+/// seldom the items ([`crate::Node`]'s layout).
 #[derive(Clone)]
+#[repr(C)]
 pub struct Heard<const N: usize = HEARD> {
-    nodes: FixedVec<HeardNode, N>,
     params: HeardParams,
+    nodes: FixedVec<HeardNode, N>,
 }
 
 const EMPTY: HeardNode = HeardNode {

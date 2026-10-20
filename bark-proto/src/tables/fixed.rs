@@ -2,10 +2,14 @@
 
 /// Up to `N` values of `T`, inline. Slots past `len` hold a filler value
 /// and are never observed.
+///
+/// Its length first, then the items: an event reads the first and
+/// seldom the items ([`crate::Node`]'s layout).
 #[derive(Clone)]
+#[repr(C)]
 pub(crate) struct FixedVec<T: Copy, const N: usize> {
-    items: [T; N],
     len: usize,
+    items: [T; N],
 }
 
 impl<T: Copy, const N: usize> FixedVec<T, N> {

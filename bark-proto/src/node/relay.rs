@@ -281,40 +281,59 @@ pub type SleepyNode = Node<0, 0>;
 
 /// The node, with room for `H` sleepy nodes heard and `Q` messages for
 /// them (`docs/core-interface.md` §6).
+///
+/// Laid out as declared: what an event reads first, the tables after,
+/// each with its few fields before its items, so that an event touches
+/// few pages of memory. A simulator holds tens of thousands of nodes,
+/// and in a city-sized run the pages it touches, not its instructions,
+/// set its speed.
+#[repr(C)]
 pub struct Node<const H: usize, const Q: usize> {
-    config: Config,
-    /// This node's ID: `config.node_id`, or drawn from the seed.
-    id: NodeId,
-    plane: LocalPlane,
-    rng: Rng,
-    home: Channel,
     stage: Stage,
-    radio: Radio<Job>,
-    busy: BusyEstimator,
-    budget: Budget,
-    neighbours: Neighbours,
-    sweep: Sweep,
-    beacon: Beacon,
-    mover: Mover,
-    records: Records,
-    queue: SendQueue,
+    config: Config,
+    /// Until when a sleepy node listens after its beat or a message it
+    /// took (spec "Delivery").
+    awake_until: Instant,
     /// The hand-over of `queue`'s current entry.
     handover: Transfer,
-    /// Neighbour slots the current forward passed over because
-    /// listen-before-talk gave up on them, they refused it, or its
-    /// attempts went unanswered (spec "Hand-over"); not tried.
-    skipped: u64,
-    replies: Replies,
-    /// The sleepy nodes heard, for delivery.
-    heard: Heard<H>,
+    sweep: Sweep,
     /// A sleepy node's anchor, kept while it hears no better one.
     anchor: Option<Anchor>,
-    delivery: DeliveryQueue<Q>,
-    delivered: Delivered,
-    /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
-    delivery_retry_at: Instant,
+    mover: Mover,
+    replies: Replies,
+    radio: Radio<Job>,
+    /// When the bucket will fit the DATA to a sleepy node the send queue last had no
+    /// room for, as a hand-over the bucket cannot fit yet is deferred.
+    feed_at: Option<Instant>,
+    /// The send queue may have room for the delivery queue: a hand-over
+    /// ended or the delivery queue changed.
+    feed_due: bool,
+    /// Until when a sleepy node that has just taken its first anchor
+    /// listens, a worst-case rotation, to take the strongest node it heard
+    /// at its end (spec "Relay choice").
+    choosing: Option<Instant>,
+    /// Since when a node that sleeps listens a rotation to check its
+    /// anchor.
+    rescan: Option<Instant>,
+    /// When the window it listens in ends, while it is awake.
+    window_ends: Option<Instant>,
     /// When the bucket lets the application send, if only it is missing.
     app_ready_at: Option<Instant>,
+    /// Until when the driver was told the radio may receive duty-cycled
+    /// (module documentation).
+    sniffing: Option<Instant>,
+    /// When a node that sleeps expects its anchor's next heartbeat on its
+    /// channel, from when it expected the last, and the rotations since it
+    /// last heard one there.
+    watch_at: Option<Instant>,
+    watch_base: Instant,
+    misses: u8,
+    /// Its last check heard nothing at all: it is out of reach, and checks
+    /// again only once it hears something.
+    dark: bool,
+    /// The owed reply takes a DATA for this node: once it is sent, the
+    /// node listens one hand-over for the next.
+    renew: bool,
     /// The application's message, from when it is taken until its first
     /// hop takes it, it arrives here, or it is dropped (roadmap D29).
     own: Option<MsgId>,
@@ -327,46 +346,34 @@ pub struct Node<const H: usize, const Q: usize> {
     /// When the bucket will have refilled what the senders it refused
     /// were told to come back for (spec "Refusal").
     promised: Instant,
-    /// The application's message for a sleepy node this relay holds for, set aside
-    /// while the delivery queue is full.
-    held: Option<forward::Held>,
-    /// The send queue may have room for the delivery queue: a hand-over
-    /// ended or the delivery queue changed.
-    feed_due: bool,
-    /// When the bucket will fit the DATA to a sleepy node the send queue last had no
-    /// room for, as a hand-over the bucket cannot fit yet is deferred.
-    feed_at: Option<Instant>,
-    /// Until when the driver was told the radio may receive duty-cycled
-    /// (module documentation).
-    sniffing: Option<Instant>,
-    /// Until when a sleepy node listens after its beat or a message it
-    /// took (spec "Delivery").
-    awake_until: Instant,
-    /// Until when a sleepy node that has just taken its first anchor
-    /// listens, a worst-case rotation, to take the strongest node it heard
-    /// at its end (spec "Relay choice").
-    choosing: Option<Instant>,
-    /// The owed reply takes a DATA for this node: once it is sent, the
-    /// node listens one hand-over for the next.
-    renew: bool,
-    /// Since when a node that sleeps listens a rotation to check its
-    /// anchor.
-    rescan: Option<Instant>,
-    /// When the window it listens in ends, while it is awake.
-    window_ends: Option<Instant>,
-    /// When a node that sleeps expects its anchor's next heartbeat on its
-    /// channel, from when it expected the last, and the rotations since it
-    /// last heard one there.
-    watch_at: Option<Instant>,
-    watch_base: Instant,
-    misses: u8,
-    /// Its last check heard nothing at all: it is out of reach, and checks
-    /// again only once it hears something.
-    dark: bool,
+    /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
+    delivery_retry_at: Instant,
+    /// Neighbour slots the current forward passed over because
+    /// listen-before-talk gave up on them, they refused it, or its
+    /// attempts went unanswered (spec "Hand-over"); not tried.
+    skipped: u64,
+    /// This node's ID: `config.node_id`, or drawn from the seed.
+    id: NodeId,
+    home: Channel,
+    plane: LocalPlane,
+    rng: Rng,
     /// Where the node was when it chose or last confirmed its anchor, and
     /// how far the anchor was then, metres.
     chosen_from: Position,
     reach_m: f32,
+    beacon: Beacon,
+    budget: Budget,
+    busy: BusyEstimator,
+    /// The application's message for a sleepy node this relay holds for, set aside
+    /// while the delivery queue is full.
+    held: Option<forward::Held>,
+    delivered: Delivered,
+    /// The sleepy nodes heard, for delivery.
+    heard: Heard<H>,
+    delivery: DeliveryQueue<Q>,
+    neighbours: Neighbours,
+    queue: SendQueue,
+    records: Records,
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {

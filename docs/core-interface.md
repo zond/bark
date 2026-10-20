@@ -176,9 +176,9 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-166 832 B (162.9 KiB, measured 2026-10-18): the tables and, in under 1 KiB around them, the
+166 880 B (163.0 KiB, measured 2026-10-20): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
-waits. A `SleepyNode` is 147 816 B (144.4 KiB), without the heard table and the delivery
+waits. A `SleepyNode` is 147 864 B (144.4 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58). There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB

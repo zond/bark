@@ -137,11 +137,15 @@ impl Outgoing {
 pub struct Full;
 
 /// The send queue.
+///
+/// Its few fields first, then the items: an event reads the first and
+/// seldom the items ([`crate::Node`]'s layout).
 #[derive(Clone)]
+#[repr(C)]
 pub struct SendQueue {
-    frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
     /// The entry being handed over, or last chosen to be.
     current: Option<usize>,
+    frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
 }
 
 impl SendQueue {
