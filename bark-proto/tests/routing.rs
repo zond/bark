@@ -2166,13 +2166,19 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     let mut latency: Vec<Duration> = h.nodes[d]
         .app
         .iter()
-        .map(|(t, AppEvent::Message { msg_id, .. })| t.since(sent_at[msg_id]))
+        .filter_map(|(t, e)| match e {
+            AppEvent::Message { msg_id, .. } => Some(t.since(sent_at[msg_id])),
+            AppEvent::GivenBack { .. } => None,
+        })
         .collect();
     latency.sort();
     let mut since_taken: Vec<Duration> = h.nodes[d]
         .app
         .iter()
-        .map(|(t, AppEvent::Message { msg_id, .. })| t.since(taken_at[msg_id]))
+        .filter_map(|(t, e)| match e {
+            AppEvent::Message { msg_id, .. } => Some(t.since(taken_at[msg_id])),
+            AppEvent::GivenBack { .. } => None,
+        })
         .collect();
     since_taken.sort();
     let mut offered = to_f.clone();

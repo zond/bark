@@ -124,7 +124,8 @@ pub trait App {
     /// message, and the core then takes it.
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing>;
 
-    /// A message for this node's application.
+    /// What the core tells the application: a message for it, or its own
+    /// message given back with when to offer it again (core-interface §4).
     fn message(&mut self, event: &AppEvent);
 }
 

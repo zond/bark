@@ -49,7 +49,7 @@ impl Clock for Monotonic {
 }
 
 /// No application yet (BLE comes later, roadmap D5): nothing to send, and
-/// a message for this node goes to the log.
+/// what the core tells the application goes to the log.
 pub struct LogApp;
 
 impl App for LogApp {
@@ -62,17 +62,28 @@ impl App for LogApp {
     }
 
     fn message(&mut self, event: &AppEvent) {
-        let AppEvent::Message {
-            msg_id,
-            len,
-            payload,
-        } = event;
-        log::info!(
-            "message id={:08x} len={} bytes={:02x?}",
-            msg_id.0,
-            len,
-            &payload[..*len as usize]
-        );
+        match event {
+            AppEvent::Message {
+                msg_id,
+                len,
+                payload,
+            } => log::info!(
+                "message id={:08x} len={} bytes={:02x?}",
+                msg_id.0,
+                len,
+                &payload[..*len as usize]
+            ),
+            // The person is to be told and may send again after the wait
+            // (spec "A sleepy node's own message").
+            AppEvent::GivenBack { msg_id, retry_at } => {
+                let now = Monotonic.now();
+                log::warn!(
+                    "given back id={:08x} reason=refused retry_in_ms={}",
+                    msg_id.0,
+                    retry_at.since(now).as_micros() / 1000
+                )
+            }
+        }
     }
 }
 

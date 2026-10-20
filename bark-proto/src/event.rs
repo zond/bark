@@ -146,10 +146,10 @@ pub enum DropReason {
     Pushback,
 }
 
-/// Events for the application side: only a message for it. What becomes
-/// of a message it sent is not reported (`docs/core-interface.md` §4).
-/// `Message` carries its payload by value for the same reason
-/// `Action::Transmit` does.
+/// Events for the application side: a message for it, and a sleepy
+/// node's own message given back. Nothing else is reported of a message it
+/// sent (`docs/core-interface.md` §4). `Message` carries its payload by
+/// value for the same reason `Action::Transmit` does.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppEvent {
@@ -161,6 +161,16 @@ pub enum AppEvent {
         len: u8,
         /// Opaque payload; only `..len` is meaningful.
         payload: [u8; MAX_FRAME],
+    },
+    /// A sleepy node's own message, refused by its first hop, is the
+    /// application's again: the node takes none before `retry_at`, and the
+    /// application may offer it again then or give it up
+    /// (spec "A sleepy node's own message").
+    GivenBack {
+        /// Its id.
+        msg_id: MsgId,
+        /// The end of the wait the refusal asked for.
+        retry_at: Instant,
     },
 }
 

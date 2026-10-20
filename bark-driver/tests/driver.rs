@@ -603,7 +603,7 @@ fn a_relay_runs_through_the_loop() {
         d.app()
             .messages
             .iter()
-            .any(|AppEvent::Message { payload, len, .. }| &payload[..*len as usize] == b"hello"),
+            .any(|e| matches!(e, AppEvent::Message { payload, len, .. } if &payload[..*len as usize] == b"hello")),
         "its own message came back: {:?}",
         d.app().messages
     );

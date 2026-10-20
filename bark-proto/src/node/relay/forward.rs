@@ -1386,6 +1386,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.retry_at = now + wait;
             self.records.forget(msg_id);
             self.drop_msg(msg_id, DropReason::Pushback, emit);
+            emit(Action::App(AppEvent::GivenBack {
+                msg_id,
+                retry_at: self.retry_at,
+            }));
             return;
         }
         match out.kind {

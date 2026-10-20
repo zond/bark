@@ -158,6 +158,14 @@ impl Tracer {
                     payload_tag(&payload[..*len as usize])
                 );
             }
+            Action::App(AppEvent::GivenBack { msg_id, retry_at }) => {
+                let _ = write!(
+                    what,
+                    "app given back {} to {:.3} s",
+                    self.msg(*msg_id, tags),
+                    retry_at.as_micros() as f64 / 1e6
+                );
+            }
             Action::Trace(tr) => {
                 let n = &self.names;
                 let _ = match *tr {

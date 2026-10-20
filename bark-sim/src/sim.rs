@@ -2636,10 +2636,19 @@ impl Sim {
     // ---- Application ---------------------------------------------------
 
     /// Every application event the core can emit is interpreted here and
-    /// nowhere else: a message for this node's application.
+    /// nowhere else: a message for this node's application, or its own
+    /// message given back.
     fn app_event(&mut self, node: u32, e: AppEvent) {
+        let (len, payload) = match e {
+            AppEvent::Message { len, payload, .. } => (len, payload),
+            AppEvent::GivenBack { msg_id, retry_at } => {
+                if !self.give_back(node, msg_id, retry_at) {
+                    self.mark_dropped(node, msg_id, DropReason::Pushback);
+                }
+                return;
+            }
+        };
         let m = &mut self.metrics;
-        let AppEvent::Message { len, payload, .. } = e;
         m.nodes[node as usize].messages_in += 1;
         if len < 4 {
             m.app.misdelivered += 1;
@@ -2669,7 +2678,9 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
-        if reason == DropReason::Pushback && self.give_back(node, msg_id) {
+        if reason == DropReason::Pushback {
+            // The message is its application's again, which decides its
+            // fate on the `AppEvent::GivenBack` that follows.
             return;
         }
         let dst = self
@@ -2688,6 +2699,12 @@ impl Sim {
             };
             self.metrics.sleep.queue_expired[k] += 1;
         }
+        self.mark_dropped(node, msg_id, reason);
+    }
+
+    /// Message `msg_id` ended at `node` for `reason`, unless it was
+    /// delivered already.
+    fn mark_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         if let Some(o) = self
             .msg_tags
             .get(&msg_id.0)
@@ -3189,13 +3206,13 @@ impl Sim {
     /// A core gave its application's message back with a wait: the
     /// application offers it again, as long as it is younger than the TTL
     /// the network would have kept it for. Whether it did.
-    fn give_back(&mut self, node: u32, msg_id: MsgId) -> bool {
+    fn give_back(&mut self, node: u32, msg_id: MsgId, retry_at: Instant) -> bool {
         let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
             return false;
         };
         let patience = self.relays[node as usize].config().delivery_ttl;
         let local = self.clocks[node as usize].local(self.now);
-        let wait = self.relays[node as usize].retry_at().since(local);
+        let wait = retry_at.since(local);
         let o = &self.origins[tag as usize];
         // Told to wait past its patience, the application gives up at once.
         if o.src != node

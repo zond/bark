@@ -660,6 +660,76 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
     assert!(h.nodes[s].core.holding().next().is_none());
 }
 
+/// A sleepy node's own message that its anchor refuses goes back to the
+/// application with the wait the refusal asked for, and the node takes no
+/// message until that wait is over (spec "A sleepy node's own message").
+#[test]
+fn a_refused_message_goes_back_to_the_application_with_its_wait() {
+    use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
+    use bark_proto::tables::budget::told;
+    use bark_proto::wire::Ack;
+    use bark_proto::{Frame, MAX_FRAME};
+    let (r, s) = (0, 1);
+    let mut h = Harness::new(vec![node(0.0, false, 75), node(50.0, true, 76)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert!(h.accepts(s));
+    // The anchor does not hear the DATA; the test answers for it.
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        from == s && to == r && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let id = send(&mut h, s, r, b"refused");
+    let data = |h: &Harness<Relay>| {
+        h.nodes[s]
+            .sent
+            .iter()
+            .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+            .map(|(t, f)| *t + time_on_air(f.len, f.preamble_symbols))
+    };
+    assert!(h.run_until(h.now + secs(5), |h| data(h).is_some()));
+    let end = data(&h).unwrap();
+    h.run_until(end + Duration::from_millis(5), |_| false);
+    let bans = 4;
+    let nack = Ack {
+        msg_id: id,
+        from: h.nodes[r].core.id(),
+        to: h.nodes[s].core.id(),
+        refused: true,
+        wait: bans,
+    };
+    let mut frame = Frame {
+        channel: h.resting(s).unwrap(),
+        preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+        len: 0,
+        bytes: [0; MAX_FRAME],
+    };
+    frame.len = Packet::Ack(nack).encode(&mut frame.bytes).unwrap() as u8;
+    let sent = h.now;
+    h.inject(r, frame);
+    let given = |h: &Harness<Relay>| {
+        h.nodes[s].app.iter().find_map(|(t, e)| match *e {
+            AppEvent::GivenBack { msg_id, retry_at } if msg_id == id => Some((*t, retry_at)),
+            _ => None,
+        })
+    };
+    assert!(h.run_until(h.now + secs(1), |h| given(h).is_some()));
+    let (t, retry_at) = given(&h).unwrap();
+    let heard = sent + time_on_air(frame.len, frame.preamble_symbols);
+    assert!(t >= heard && t < heard + Duration::from_millis(5), "{t:?}");
+    assert_eq!(retry_at, t + told(bans));
+    assert_eq!(retry_at, h.nodes[s].core.retry_at());
+    assert!(h.nodes[s].traces.iter().any(|(_, x)| *x
+        == Trace::Dropped {
+            msg_id: id,
+            reason: DropReason::Pushback
+        }));
+    assert!(h.nodes[s].core.holding().next().is_none());
+    h.run_until(retry_at - Duration::from_millis(1), |h| h.accepts(s));
+    assert!(!h.accepts(s), "took a message before the wait was over");
+    assert!(h.run_until(retry_at + secs(1), |h| h.accepts(s)));
+}
+
 /// Messages waiting for a sleepy node go one after the other in the
 /// window after its beat: the node listens one hand-over after each it
 /// answers, and receives duty-cycled again once a hand-over has passed

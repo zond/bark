@@ -102,12 +102,12 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send` and `AppCommand::SetPosition`, and the
-one event `AppEvent::Message`.
+events `AppEvent::Message` and `AppEvent::GivenBack`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
-send awaits it. The core reports nothing back about the message, not even the first hop's
+send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
 sending it or waiting to. The protocol has no end-to-end acknowledgement (spec "Addresses"), so
 whether the message arrived is for the app to find out inside its payload. A message the
@@ -123,9 +123,10 @@ tries again when the first ban ends, or later after refusals in a row
 (spec "A node's own message"); one for a sleepy node it holds for that finds the delivery
 queue full waits for a place (spec "Return to parent"). A sleepy node's own message that
 its first hop refuses goes back to the application (spec "A sleepy node's own message"):
-the core reports `Trace::Dropped` with `DropReason::Pushback`, and `accepts_send` stays false
-until the wait the refusal asked for is over, which `next_wakeup()` includes; the driver
-tells the application, which may offer the message again then. One whose hand-over goes
+the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
+wait the refusal asked for, and `Trace::Dropped` with `DropReason::Pushback` for the log;
+`accepts_send` stays false until `retry_at`, which `next_wakeup()` includes. The driver
+hands the event to the application, which may offer the message again then or give it up. One whose hand-over goes
 unanswered waits in the node as in that section.
 
 A `Send` while `accepts_send` is false, or with a longer payload, breaks the contract like
