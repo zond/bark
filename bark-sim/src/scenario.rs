@@ -140,7 +140,6 @@ pub struct ProtocolOverrides {
     pub retry_backoff_ms: Option<u64>,
     pub boot_listen_ms: Option<u64>,
     pub sleepy_listens: Option<bool>,
-    pub power_neighbours: Option<u8>,
 }
 
 impl ProtocolOverrides {
@@ -186,7 +185,6 @@ impl ProtocolOverrides {
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
         set!(boot_listen, boot_listen_ms, ms);
         set!(sleepy_listens);
-        set!(power_neighbours);
         c
     }
 }

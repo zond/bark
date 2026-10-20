@@ -527,26 +527,6 @@ not sleepy the heard table too if the sleepy bit is alone, which holders
 use to deliver ([heard table](#heard-table)); a node without an anchor has no window to
 deliver in ([sleepy nodes alone](#sleepy-nodes-alone)).
 
-### Power by density
-
-**Proposal, not adopted** (roadmap D68). A relay sends every frame at one
-power, full power at boot. Once a worst-case rotation, 195 s, by when every
-relay in reach has been heard on its channel ([heartbeat](#heartbeat)), it
-counts the relays in its neighbour table that have margin. Above a target
-N it lowers its power by 2 dB; below N / 1.29 it raises it by 2 dB, never
-above full power ([regulatory limits](#regulatory-limits)) nor below
-−9 dBm, the radio's lowest (SX1262 datasheet §13.4.4).
-
-- 2 dB is about the spread of a neighbour's averaged RSSI under fading of
-  4 dB, 4 / √3 dB with each new frame counting half: a smaller step is
-  not seen in the count.
-- 1.29 is how much one step changes the area a frame reaches,
-  10^(2 × 2 / (10 × 3.6)) under the path-loss exponent 3.6: a band that
-  wide keeps one step from carrying the count across it.
-- A relay's own power does not change what it hears, only what its
-  neighbours count, so the count settles only through the neighbours'
-  steps.
-
 ---
 
 ## Forwarding

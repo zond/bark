@@ -208,7 +208,6 @@ impl Sim {
         }
         match decoded {
             Some(WirePacket::Data(d)) => {
-                self.note_asymmetric(src, d.dst_hop, 0);
                 self.answer_of
                     .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
                 if self
@@ -267,13 +266,9 @@ impl Sim {
         if !self.nodes[src as usize].present {
             return; // A dark leaf transmits into a tunnel.
         }
-        let off = self.tx_offset_db[src as usize];
         for i in 0..self.links.row(src).len() {
             let l = self.links.row(src)[i];
-            let mut dbm = self.links.rx_dbm(&l, ch);
-            if off != 0.0 {
-                dbm += off;
-            }
+            let dbm = self.links.rx_dbm(&l, ch);
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
@@ -296,12 +291,11 @@ impl Sim {
         };
         let extra = walks.links_from(src, start, ch, &self.xy, &self.sites);
         for l in &extra {
-            let dbm = l.dbm + off;
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
-                dbm,
-                mw: phy::mw(dbm),
+                dbm: l.dbm,
+                mw: phy::mw(l.dbm),
                 end,
                 lora: true,
             };

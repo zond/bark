@@ -18,7 +18,7 @@ mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{power_band, Load, Node, Relay, SleepyNode, MIN_POWER_DBM, POWER_STEP_DB};
+pub use relay::{Load, Node, Relay, SleepyNode};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).
@@ -108,9 +108,6 @@ pub struct Config {
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
-    /// Proposal (spec "Power by density"): a relay that hears more than
-    /// this many relays with margin lowers its power; 0 keeps full power.
-    pub power_neighbours: u8,
 }
 
 impl Default for Config {
@@ -185,7 +182,6 @@ impl Config {
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         home_override: None,
-        power_neighbours: 0,
     };
 }
 

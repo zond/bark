@@ -217,9 +217,6 @@ impl Tracer {
                     other => write!(what, "{other:?}"),
                 };
             }
-            Action::Power(dbm) => {
-                let _ = write!(what, "power {dbm} dBm");
-            }
             Action::Cad(_) | Action::Rssi(_) => return,
         }
         self.line(t, node, &what);

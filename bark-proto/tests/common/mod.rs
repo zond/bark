@@ -79,8 +79,6 @@ pub struct SimNode<C: Core> {
     pub checks: Vec<(Instant, Instant, Action, bool)>,
     pub app: Vec<(Instant, AppEvent)>,
     pub traces: Vec<(Instant, Trace)>,
-    /// The powers it asked for (`Action::Power`), dBm.
-    pub power: Vec<(Instant, i8)>,
     pub sent: Vec<(Instant, Frame)>,
     pub received: Vec<(Instant, Vec<u8>)>,
     /// When the radio received duty-cycled (`Action::Sniff`, rule 10):
@@ -125,7 +123,6 @@ impl<C: Core> Harness<C> {
                 checks: Vec::new(),
                 app: Vec::new(),
                 traces: Vec::new(),
-                power: Vec::new(),
                 sent: Vec::new(),
                 received: Vec::new(),
                 sniffed: Vec::new(),
@@ -453,7 +450,6 @@ impl<C: Core> Harness<C> {
             }
             Action::App(e) => self.nodes[i].app.push((now, e)),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
-            Action::Power(dbm) => self.nodes[i].power.push((now, dbm)),
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 let n = &self.nodes[i];
                 assert!(
