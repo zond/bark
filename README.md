@@ -2,20 +2,22 @@
 
 Firmware, protocol core and simulator for a civilian resilience mesh on
 433 MHz LoRa: off-the-shelf LILYGO T-Echo nodes (nRF52840 + SX1262) that let
-phone apps message each other across a city when ordinary infrastructure is
-gone. Licence-free in the EU and Ukraine (10 mW effective radiated power,
-10% duty cycle).
+people message each other across a city, through an app linked to their node
+over Bluetooth, when ordinary infrastructure is gone. Licence-free in the EU
+and Ukraine (10 mW effective radiated power, 10% duty cycle).
 
 The name is from Darwin's bark spider (*Caerostris darwini*), the Madagascan
 spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-10-14)
+## Status (2026-10-20)
 
-Skeleton and core interface in place; protocol core and simulator in
-progress. Four T-Echo boards are on order, expected around 2026-11-04.
-Until they arrive the work is the simulator.
+The protocol core, the simulator and the firmware are written. In the
+simulator, 28 km² of city with 270 relays and 20 000 sleepy nodes delivers
+96 % of the texts it can reach at the design's rate. The firmware runs the
+core as a relay or a sleepy node but has not yet run on a board; four
+T-Echo boards are expected around 2026-11-04. `docs/roadmap.md` has the phases.
 
 Read, in order:
 
@@ -24,7 +26,7 @@ Read, in order:
 2. `docs/roadmap.md`: phases, decisions taken, open questions.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
-4. `docs/simulator-design.md`: the capacity simulator we build first.
+4. `docs/simulator-design.md`: the simulator.
 5. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
    ecosystem, hardware facts, and corrections to the design doc.
 6. `docs/reception-research-2026-10-15.md`: how the simulator decides
