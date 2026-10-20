@@ -123,7 +123,7 @@ pub(crate) struct Walks {
     /// their power before fading, worked out at its first frame of the
     /// stop: they are the same for the whole stop.
     stays: Vec<Option<Vec<(u32, f64)>>>,
-    /// The nodes below this never sleep, so never walk.
+    /// The nodes below this never sleep; most stay where they are.
     fixed: u32,
     /// Per node that never sleeps and walker, the power before fading of
     /// a frame from that node, `NAN` if not yet worked out in this stop,
@@ -138,8 +138,8 @@ pub(crate) struct Walks {
 pub(crate) const REGRID: Duration = Duration::from_secs(10);
 
 impl Walks {
-    /// Choose the walkers and riders among `sleepy` nodes and start each
-    /// at a stop.
+    /// Choose the walkers and riders among `sleepy` nodes and the relays
+    /// placed as people, `relays`, and start each at a stop.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         p: &Movement,
@@ -150,15 +150,20 @@ impl Walks {
         xy: &[Xy],
         site: &[Site],
         sleepy: std::ops::Range<u32>,
+        relays: &[u32],
         seed: u64,
     ) -> Walks {
         let n = xy.len();
         let fixed = sleepy.start;
         let mut of = vec![u32::MAX; n];
         let mut walkers = Vec::new();
-        for i in sleepy.clone() {
+        let walking = sleepy
+            .clone()
+            .map(|i| (i, p.fraction))
+            .chain(relays.iter().map(|&i| (i, p.relay_fraction)));
+        for (i, share) in walking {
             let mut rng = Stream::new(seed, Purpose::Walk, i as u64);
-            if !rng.chance(p.fraction) {
+            if !rng.chance(share) {
                 continue;
             }
             // In the stationary state: the time left at the first stop is
@@ -188,9 +193,12 @@ impl Walks {
                 y: v.route[3],
             },
         );
-        for i in sleepy {
+        let riders = sleepy
+            .map(|i| (i, v.fraction))
+            .chain(relays.iter().map(|&i| (i, v.relay_fraction)));
+        for (i, share) in riders {
             let mut rng = Stream::new(seed, Purpose::Vehicle, i as u64);
-            if of[i as usize] != u32::MAX || !rng.chance(v.fraction) {
+            if of[i as usize] != u32::MAX || !rng.chance(share) {
                 continue;
             }
             // In the stationary state, at a point of the route.
@@ -419,7 +427,7 @@ impl Walks {
                     if w.node == src {
                         return;
                     }
-                    let known = (src < self.fixed && !w.walking)
+                    let known = (src < self.fixed && !w.walking && !self.walks(src))
                         .then(|| src as usize * self.walkers.len() + wi as usize);
                     let base = match known.map(|i| heard[i]) {
                         Some(b) if !b.is_nan() => b,
@@ -672,6 +680,7 @@ mod tests {
             &xy,
             &site,
             1..xy.len() as u32,
+            &[],
             7,
         );
         (w, xy, site)
@@ -723,6 +732,7 @@ mod tests {
         let (_, xy, site) = town();
         let v = Vehicles {
             fraction: 1.0,
+            relay_fraction: 0.0,
             speed_m_s: 12.0,
             stop_s: 60.0,
             route: [0.0, 400.0, 1000.0, 400.0],
@@ -738,6 +748,7 @@ mod tests {
             &xy,
             &site,
             1..xy.len() as u32,
+            &[],
             7,
         );
         assert_eq!(w.walkers.len(), 400);

@@ -647,6 +647,11 @@ pub struct Sim {
     poisson_rng: Vec<Stream>,
     leaf_grid: Option<Grid>,
     leaf_xy: Vec<Xy>,
+    /// The people's nodes, in node order: relays placed as leaves, then the
+    /// sleepy nodes. They send and receive the texts.
+    people: Vec<u32>,
+    /// Per node, its index in `people`, or `u32::MAX`.
+    person_of: Vec<u32>,
     /// Each node's address as a sender last learned it: a relay's
     /// position, or the relay a leaf was last attached to.
     address: Vec<Option<Position>>,
@@ -953,7 +958,18 @@ impl Sim {
         let names: Vec<Option<String>> = placed.iter().map(|p| p.name.clone()).collect();
         let tx_dbm = vec![base.tx_power_dbm as f64; n];
         let site: Vec<Site> = placed.iter().map(PlacedNode::site).collect();
-        let moves = sc.movement.fraction > 0.0 || sc.vehicles.fraction > 0.0;
+        let people: Vec<u32> = (0..n as u32)
+            .filter(|&i| placed[i as usize].person)
+            .collect();
+        let mut person_of = vec![u32::MAX; n];
+        for (k, &i) in people.iter().enumerate() {
+            person_of[i as usize] = k as u32;
+        }
+        let relay_people: Vec<u32> = people.iter().copied().filter(|&i| i < n_relays).collect();
+        let moves = sc.movement.fraction > 0.0
+            || sc.vehicles.fraction > 0.0
+            || (!relay_people.is_empty()
+                && (sc.movement.relay_fraction > 0.0 || sc.vehicles.relay_fraction > 0.0));
         let walks = moves.then(|| {
             Walks::new(
                 &sc.movement,
@@ -964,6 +980,7 @@ impl Sim {
                 &xy,
                 &site,
                 n_relays..n as u32,
+                &relay_people,
                 sc.seed,
             )
         });
@@ -1101,6 +1118,8 @@ impl Sim {
             poisson_rng: Vec::new(),
             leaf_grid: None,
             leaf_xy: Vec::new(),
+            people,
+            person_of,
             address: vec![None; n],
             boot_at: vec![Instant::ZERO; n],
             clocks: (0..n as u64)
@@ -1168,7 +1187,8 @@ impl Sim {
         let n = placed.len();
         // Switch-on: every node is off until its boot.
         for i in 0..n {
-            let window = if (i as u32) < self.n_relays {
+            // A person switches a relay on as a sleepy node.
+            let window = if (i as u32) < self.n_relays && self.person_of[i] == u32::MAX {
                 sc.boot.relays_s
             } else {
                 sc.boot.sleepy_s
@@ -1184,7 +1204,11 @@ impl Sim {
             self.push(at, Ev::Boot(i as u32));
         }
         // Observers.
-        let all_relays: Vec<String> = (0..self.n_relays).map(|i| format!("relay:{i}")).collect();
+        // The relays placed as such: those placed as people may be many.
+        let all_relays: Vec<String> = (0..self.n_relays)
+            .filter(|&i| self.person_of[i as usize] == u32::MAX)
+            .map(|i| format!("relay:{i}"))
+            .collect();
         let observers = sc.metrics.observers.iter().flat_map(|o| {
             if o == "relay:*" {
                 all_relays.clone()
@@ -1306,11 +1330,12 @@ impl Sim {
                         max: *payload_max,
                         dest: destination.clone(),
                     });
-                    self.leaf_xy = self.xy[self.n_relays as usize..].to_vec();
+                    self.leaf_xy = self.people.iter().map(|&i| self.xy[i as usize]).collect();
                     if let Destination::Within { radius_m } = destination {
                         self.leaf_grid = Some(Grid::new(&self.leaf_xy, *radius_m));
                     }
-                    for i in self.n_relays..n as u32 {
+                    for k in 0..self.people.len() {
+                        let i = self.people[k];
                         let mut r = Stream::new(sc.seed, Purpose::Traffic, (1u64 << 32) | i as u64);
                         let gap = secs(r.exponential(mean_gap_s));
                         self.poisson_rng.push(r);
@@ -1387,7 +1412,9 @@ impl Sim {
                     .filter(|&i| !walks.is_some_and(|w| w.walks(i)))
                     .collect()
             } else {
-                (0..self.n_relays).collect()
+                (0..self.n_relays)
+                    .filter(|&i| !walks.is_some_and(|w| w.walks(i)))
+                    .collect()
             };
             let mut pool: Vec<u32> = pool
                 .into_iter()
@@ -3052,8 +3079,12 @@ impl Sim {
         } else {
             relay_at(self.relays[src as usize].address())
         };
+        // A relay that walks has no stored links to judge by.
+        let walks = |r: u32| self.walks.as_ref().is_some_and(|w| w.walks(r));
         match (from, relay_at(dst)) {
-            (Some(a), Some(b)) => self.component[a as usize] == self.component[b as usize],
+            (Some(a), Some(b)) if !walks(a) && !walks(b) => {
+                self.component[a as usize] == self.component[b as usize]
+            }
             _ => true,
         }
     }
@@ -3084,7 +3115,7 @@ impl Sim {
     /// neither: nobody can have its address.
     fn address_of(&mut self, node: u32) -> Option<Position> {
         if node < self.n_relays {
-            return Some(self.positions[node as usize]);
+            return Some(self.relay_position(node));
         }
         let leaf = &self.relays[node as usize];
         if self.n_relays == 0 {
@@ -3098,6 +3129,16 @@ impl Sim {
             self.address[node as usize] = Some(a.position);
         }
         self.address[node as usize]
+    }
+
+    /// Where a relay says it is: where it was placed, or for one that
+    /// walks, the position its core holds.
+    fn relay_position(&self, relay: u32) -> Position {
+        if self.walks.as_ref().is_some_and(|w| w.walks(relay)) {
+            self.relays[relay as usize].config().position
+        } else {
+            self.positions[relay as usize]
+        }
     }
 
     /// When a node was switched on, if it has been.
@@ -3141,7 +3182,7 @@ impl Sim {
         let tag = self.origins.len() as u32;
         let reachable = self.reachable(src, dst_pos);
         let src_pos = if src < self.n_relays {
-            self.positions[src as usize]
+            self.relay_position(src)
         } else {
             self.relays[src as usize].address()
         };
@@ -3265,7 +3306,7 @@ impl Sim {
     }
 
     fn poisson_arrival(&mut self, n: u32) {
-        let li = (n - self.n_relays) as usize;
+        let li = self.person_of[n as usize] as usize;
         let p = self.poisson.as_ref().expect("poisson configured");
         let (mean, min, max) = (p.mean_gap_s, p.min, p.max);
         let dest = p.dest.clone();
@@ -3294,7 +3335,7 @@ impl Sim {
         };
         let gap = secs(r.exponential(mean));
         if let Some(d) = dst {
-            self.originate(n, self.n_relays + d as u32, len);
+            self.originate(n, self.people[d as usize], len);
         }
         self.push(self.now + gap, Ev::Poisson(n));
     }
@@ -3695,6 +3736,7 @@ mod tests {
                 per_km2: 10.0,
                 indoor: false,
                 rooftop: false,
+                relay_share: 0.0,
             })
             .place(crate::scenario::Placement::Density {
                 role: RoleSpec::Leaf,
@@ -3705,11 +3747,61 @@ mod tests {
                 per_km2: 200.0,
                 indoor: true,
                 rooftop: false,
+                relay_share: 0.0,
             });
         sc.links.exponent = 3.6;
         sc.links.indoor_loss_db = 14.4;
         sc.links.shadowing_sigma_db = 6.0;
         sc
+    }
+
+    /// Relays placed as people send and receive texts like the sleepy
+    /// nodes, and those that walk carry their position with them: their
+    /// address is the position their core holds.
+    #[test]
+    fn people_s_relays_text_and_walk() {
+        let mut sc = block(5, 1800.0);
+        if let crate::scenario::Placement::Density { relay_share, .. } = &mut sc.nodes[1] {
+            *relay_share = 0.1;
+        }
+        sc.movement.relay_fraction = 1.0;
+        sc.movement.trip_m = 300.0;
+        sc.movement.stop_s = 300.0;
+        sc.traffic.push(TrafficSpec::Poisson {
+            per_leaf_per_hour: 2.0,
+            payload_min: 20,
+            payload_max: 20,
+            destination: Destination::Uniform,
+        });
+        let mut sim = Sim::new(&sc).unwrap();
+        let people: Vec<u32> = (0..sim.n_relays)
+            .filter(|&i| sim.person_of[i as usize] != u32::MAX)
+            .collect();
+        assert!(
+            people.len() > 10,
+            "{} relays among the people",
+            people.len()
+        );
+        assert!(people.iter().all(|&i| sim.walks.as_ref().unwrap().walks(i)));
+        assert!((0..sim.n_relays)
+            .filter(|&i| sim.person_of[i as usize] == u32::MAX)
+            .all(|i| !sim.walks.as_ref().unwrap().walks(i)));
+        sim.run();
+        let sent = people
+            .iter()
+            .map(|&i| sim.metrics.nodes[i as usize].originated);
+        assert!(sent.sum::<u64>() > 0, "the people's relays sent nothing");
+        let to_them = sim
+            .origins
+            .iter()
+            .filter(|o| people.contains(&o.dst))
+            .count();
+        assert!(to_them > 0, "nothing was sent to the people's relays");
+        let moved = people
+            .iter()
+            .filter(|&&i| sim.relay_position(i) != sim.positions[i as usize])
+            .count();
+        assert!(moved > 0, "no walking relay took a fix");
     }
 
     /// Forced pairs are of the kind and reach asked for, no node is in

@@ -104,6 +104,12 @@ pub enum Placement {
         /// On a roof.
         #[serde(default)]
         rooftop: bool,
+        /// Of leaves, the share that are relays, as a person's node is
+        /// while it is on USB power: drawn apart from the positions, so
+        /// that the people stand where they would with none. They stay
+        /// people: they send and receive texts and may walk.
+        #[serde(default)]
+        relay_share: f64,
     },
 }
 
@@ -440,6 +446,9 @@ pub struct Clocks {
 pub struct Movement {
     /// The share of sleepy nodes that walk; 0 for none.
     pub fraction: f64,
+    /// The share of relays placed as leaves (`relay_share`) that walk:
+    /// a person's node on a power bank. 0 for none.
+    pub relay_fraction: f64,
     /// Walking speed, metres a second.
     pub speed_m_s: f64,
     /// Mean straight-line length of a walk, metres; exponential, in a
@@ -457,6 +466,7 @@ impl Default for Movement {
     fn default() -> Self {
         Movement {
             fraction: 0.0,
+            relay_fraction: 0.0,
             // A common pedestrian walking speed.
             speed_m_s: 1.4,
             trip_m: 1000.0,
@@ -476,6 +486,8 @@ impl Default for Movement {
 pub struct Vehicles {
     /// The share of sleepy nodes that ride; 0 for none.
     pub fraction: f64,
+    /// The share of relays placed as leaves that do not walk and ride.
+    pub relay_fraction: f64,
     /// Driving speed, metres a second.
     pub speed_m_s: f64,
     /// Mean time at a stop, seconds; exponential.
@@ -491,6 +503,7 @@ impl Default for Vehicles {
     fn default() -> Self {
         Vehicles {
             fraction: 0.0,
+            relay_fraction: 0.0,
             speed_m_s: 10.0,
             stop_s: 600.0,
             route: [0.0; 4],
@@ -669,6 +682,9 @@ pub struct PlacedNode {
     pub indoor: bool,
     /// On a roof.
     pub rooftop: bool,
+    /// A person's node: a leaf, or a relay placed as a leaf
+    /// (`relay_share`). People send and receive texts and may walk.
+    pub person: bool,
 }
 
 impl PlacedNode {
@@ -801,6 +817,7 @@ impl Scenario {
                     xy: Xy { x: *x, y: *y },
                     indoor: *indoor,
                     rooftop: *rooftop,
+                    person: *role == RoleSpec::Leaf,
                 }),
                 Placement::Lattice {
                     role,
@@ -831,6 +848,7 @@ impl Scenario {
                                 },
                                 indoor: *indoor,
                                 rooftop: *rooftop,
+                                person: *role == RoleSpec::Leaf,
                             });
                         }
                     }
@@ -844,18 +862,22 @@ impl Scenario {
                     per_km2,
                     indoor,
                     rooftop,
+                    relay_share,
                 } => {
                     let n = (per_km2 * width_m * height_m / 1e6).round() as usize;
+                    let mut share = Stream::new(self.seed, Purpose::RelayShare, pi as u64);
                     for _ in 0..n {
+                        let relay = *role == RoleSpec::Leaf && share.chance(*relay_share);
                         out.push(PlacedNode {
                             name: None,
-                            role: *role,
+                            role: if relay { RoleSpec::Relay } else { *role },
                             xy: Xy {
                                 x: x0 + rng.uniform() * width_m,
                                 y: y0 + rng.uniform() * height_m,
                             },
                             indoor: *indoor,
                             rooftop: *rooftop,
+                            person: *role == RoleSpec::Leaf,
                         });
                     }
                 }
@@ -930,6 +952,7 @@ mod tests {
                 per_km2: 25.0,
                 indoor: true,
                 rooftop: false,
+                relay_share: 0.0,
             });
         let n = s.placed().unwrap();
         assert_eq!(n.len(), 1 + 1 + 6 + 25);
@@ -940,6 +963,44 @@ mod tests {
         assert_eq!(resolve(&n, "leaf:25").unwrap(), 32);
         assert!(resolve(&n, "leaf:26").is_err());
         assert_eq!(s.placed().unwrap(), n, "deterministic");
+    }
+
+    /// A share of a leaf placement are relays, drawn apart from where the
+    /// people stand: the places are those of no share, and every node
+    /// placed is still a person's.
+    #[test]
+    fn a_share_of_people_are_relays_where_they_stand() {
+        let people = |share: f64| {
+            Scenario::new("t", 3, 1.0)
+                .place(Placement::Density {
+                    role: RoleSpec::Leaf,
+                    x0: 0.0,
+                    y0: 0.0,
+                    width_m: 1000.0,
+                    height_m: 1000.0,
+                    per_km2: 400.0,
+                    indoor: true,
+                    rooftop: false,
+                    relay_share: share,
+                })
+                .placed()
+                .unwrap()
+        };
+        let (none, some) = (people(0.0), people(0.25));
+        let relays = some.iter().filter(|n| n.role == RoleSpec::Relay).count();
+        assert!((80..120).contains(&relays), "{relays} relays of 400");
+        assert!(some.iter().all(|n| n.person));
+        let mut a: Vec<(i64, i64)> = none
+            .iter()
+            .map(|n| (n.xy.x as i64, n.xy.y as i64))
+            .collect();
+        let mut b: Vec<(i64, i64)> = some
+            .iter()
+            .map(|n| (n.xy.x as i64, n.xy.y as i64))
+            .collect();
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b);
     }
 
     #[test]

@@ -34,6 +34,7 @@ fn busy_block(seed: u64) -> Scenario {
             per_km2: 50.0,
             indoor: true,
             rooftop: false,
+            relay_share: 0.0,
         });
     sc.links.exponent = 3.5;
     sc.links.indoor_loss_db = 10.0;

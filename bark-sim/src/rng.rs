@@ -47,6 +47,8 @@ pub enum Purpose {
     Vehicle = 15,
     /// Which nodes' GPS goes wrong, and in which direction.
     Gps = 16,
+    /// Which people's nodes are relays (`relay_share`).
+    RelayShare = 17,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.
