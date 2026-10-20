@@ -1,4 +1,4 @@
-//! Walking nodes (docs/simulator-design.md §2, "Movement").
+//! Walking nodes (docs/simulator-design.md §3.7, "Movement").
 //!
 //! A share of the sleepy nodes walk: each stops indoors at a point for a
 //! while, then walks outdoors in a straight line to another, and so on.
