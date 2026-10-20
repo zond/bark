@@ -1,6 +1,6 @@
 # Roadmap and decisions
 
-**Status:** 2026-10-16. "The design" and "the spec" are `protocol.md`; a quoted name after "spec" is one of its headings.
+**Status:** 2026-10-20. "The design" and "the spec" are `protocol.md`; a quoted name after "spec" is one of its headings.
 
 ## Decisions
 
@@ -76,64 +76,50 @@
 
 ## Phases
 
-### Phase 0: skeleton and protocol core (now)
+### Phase 0: protocol core (done)
 
-- Cargo workspace, CI for host tests.
-- `bark-proto`: wire codecs for every packet in spec "Packet formats" (heartbeat, ACK, ATTACH, DATA, DELIVER), the 7-byte position codec (spec "Heartbeat"), local tangent-plane distance (spec "Position and time"), neighbour table, leaf table, delivery queue, recently received IDs, busy estimator and home-channel rule (spec "Home channel selection"), heartbeat scheduler (spec "Heartbeat"), per-hop transfer state machine (spec "Hand-over"), duty-cycle budget (spec "Regulatory limits").
-- Tables and routing: per-message DFS records (spec "Routing"), a neighbour table keyed by 7-byte position with channel and `fail_count` and expiry after three rotations, and a routing function that picks the neighbour nearest the destination, falls back to DFS when no neighbour is closer, and applies the owner rule (spec "Routing") for leaves.
-- Exit criterion: every codec round-trips under property tests; a two-node unit test exchanges heartbeat, ATTACH, DATA, ACK through the core with a fake clock.
+Built 2026-10-14 and 15: the workspace; `bark-proto`, the protocol core, with the codecs of spec "Packet formats", the tables, forwarding and the search around gaps (spec "Forwarding"), the busy estimate and the home channel (spec "Home channel selection"), the heartbeat and the duty-cycle budget; `bark-driver`, the loop that runs the core against a radio and a clock (`firmware-adapter-2026-10-15.md`); and the contract between them, `core-interface.md`. The core first had two kinds of node; D46 (2026-10-17) made them one node with a sleepy setting, and D47 to D51, D58 and D61 to D64 define what a sleepy node does (spec "Sleepy nodes"). The codecs round-trip under property tests (`bark-proto/src/wire.rs`), and the tests in `bark-proto/tests` run nodes through the core with a fake clock.
 
-### Phase 1: simulator (until boards arrive, ~2026-11-04)
+### Phase 1: simulator (done)
 
-See `simulator-design.md`. Milestones:
+Built from 2026-10-14 (D2, `simulator-design.md`): a discrete-event simulator that runs the real core, carries its frames as bytes and reads scenarios from `scenarios/`. What it showed:
 
-1. Three relays in a line, one leaf: greedy forward, ACK, demotion when the middle relay dies. Mirrors bench step 4 so the same scenario later runs on hardware.
-2. One km² block, ~10 relays, ~80 leaves: attach, keepalive, delivery, queue (bench step 5).
-3. Channel selection: inject a busy channel, confirm avoidance and no oscillation among relays that all hear each other (bench step 3).
-4. Capacity: a 28 km² collision domain, ~270 relays, 20k leaves, texts at the spec "Capacity and sizing" rates. Measure delivery ratio, latency, per-channel busy fraction, per-relay airtime, where the 10% cap binds first. *Measured 2026-10-15* (`capacity-research-2026-10-15.md`): the cap of centre windowsill relays binds from a quarter of the spec "Capacity and sizing" rate, about 2.2 texts/s per domain at 90 % delivery, against spec "Capacity and sizing"'s 5.7.
-5. Sweep the unknowns: adjacent-channel rejection at 125 kHz spacing (bench item C1), hearing radius, SF5 sensitivity, heartbeat interval. Produce the table that replaces spec "Capacity and sizing".
+- Forwarding, the ACK and the search around a dead relay (`s1-line.toml`, `s1b-hidden.toml`), a block of relays and sleepy nodes (`s2-block.toml`) and channel choice beside an interferer (`s3-interferer.toml`), each the twin of a bring-up step.
+- One collision domain at the rates of spec "Capacity and sizing" (`s4-capacity.toml`). On 2026-10-15 it carried about half its texts, the duty-cycle cap of windowsill relays in the centre binding first (`capacity-research-2026-10-15.md`). The decisions from D29 on come from the collapses found there; since D52 the runs switch nodes on over time, with random IDs, drifting clocks and walkers (`realism-2026-10-18.md`). On 2026-10-19 it delivered 96 % of its reachable texts at the rate and 77 to 90 % at three times it, and three domains side by side (`strip.toml`) 95 % at the rate (D66, D67).
 
-### Phase 2: bring-up (boards in hand)
+The radio's unknowns, adjacent-channel rejection, SF5 sensitivity, fading and the hearing radius, keep the datasheet's values and assumptions until Phase 2 measures them.
 
-Spec "Implementation notes" steps 1 to 3 on real boards: transmit and receive at SF5, channel activity detection (CAD), signal strength (RSSI) read, retune time, sweep time, noise floor, adjacent-channel rejection with two boards and attenuators. Every measurement goes back into the simulator parameters. Toolchain: `thumbv7em-none-eabihf` target, a UF2 converter, text logging over USB serial (no debug probe).
+### Phase 2: bring-up (boards around 2026-11-04)
 
-The bench list, with what each number is expected to be and where it goes. The console (`bark-fw --features console`, `bark-fw/scripts/measure.md`) prints the timing ones.
+Four T-Echo 433 boards are expected around 2026-11-04. The firmware runs the core as a relay or a sleepy node, or a measurement console; it has been built but not yet run on a board (`bark-fw/README.md`). Spec "Implementation notes" steps 1 to 3 come first: transmit and receive at SF5, channel activity detection (CAD), signal strength (RSSI), retune and sweep times, noise floor, adjacent-channel rejection with two boards and attenuators. Every measurement goes back into the simulator. Toolchain: the `thumbv7em-none-eabihf` target, a UF2 converter, text logging over USB serial (no debug probe).
+
+The bench list, with what each number is expected to be and where it goes. `bark-fw/scripts/measure.md` says how to take each; the console (`bark-fw --features console`) prints the timing ones.
 
 | Measurement | How | Expected | Goes to |
 |---|---|---|---|
 | Retune time | console `ch`, `retune_us` | ≈0.1 ms with the oscillator kept running (D20); ≈5 ms would mean the chip restarted it | Spec "Busy estimate", the simulator's 86 µs |
-| Oscillator start | shorten `TCXO_START` from 5 ms until XOSC_START_ERR appears, then back off | 1 to 2 ms | `bark-fw/src/radio.rs` |
+| Oscillator start | shorten `TCXO_START` from 5 ms until XOSC_START_ERR appears, then back off | 1 to 2 ms | `bark-fw/src/radio.rs`, the wake of spec "Duty-cycled receive and the long preamble" |
 | Transmit and CAD overheads | console `tx` (`excess_us`, `rest_us`), `cad` (`cad_us`) | a few hundred µs; CAD ≈2.2 ms plus the oscillator start | Spec "Hand-over" listen-before-talk timing, the simulator's CAD cost |
 | Sweep time | console sweep | 13 channels at retune plus 300 µs dwell, ≈5 ms | Spec "Busy estimate" |
 | Time away from the radio | relay build, `longest_away_us` in the 10 s log line, under load from a second board | under 3.6 ms (D37) | D37 |
-| Output power | power meter or a calibrated receiver at the connector, each setting from the lowest to 10 dBm | 10 dBm at the 10 dBm setting (spec "Regulatory limits") | Spec "Regulatory limits" |
+| Output power | power meter or a calibrated receiver at the connector | 10 dBm (spec "Regulatory limits") | Spec "Regulatory limits" |
 | Noise floor and RSSI calibration | RSSI with no transmitter, each channel, over a day; a known source through attenuators | ≈−118 dBm floor (spec "Physical layer"); RSSI linear to the source | Spec "Busy estimate" busy threshold (O11) |
 | Sensitivity and the loss curve | one board through stepped attenuation, frames of 8, 64 and 255 bytes, 1 000 each per step | 1 % loss at ≈−119 dBm for 64 bytes (`reception-research-2026-10-15.md`); the length difference D38 derives | `bark-sim/src/phy.rs`, D38's margin |
-| Adjacent-channel rejection | two boards through attenuators, the second transmitting one channel over at stepped power | the datasheet's figure at 125 kHz spacing; fallback 11 × 150 kHz if it fails (O5) | Spec "Channel plan" channel plan |
-| Fading and shadowing | two boards logging each other's heartbeat RSSI for 24 h: indoor to indoor, indoor to street, rooftop to street | the scenarios assume 6 dB shadowing fixed per pair and 4 dB fading over 60 s, unmeasured; the capacity result hinges on these (`capacity-research-2026-10-15.md`) | `scenarios/*.toml`, D38's fade depth |
-| Range | walk tests with a leaf at 10 dBm: street, indoors, from a rooftop | 750 m to a handheld in the street, 300 m indoors (spec "Physical layer") | Spec "Physical layer", "Capacity and sizing" |
-| Hybrid-mode leaf | a DELIVER with the 2000-symbol preamble to a leaf checking every 500 ms, 100 times | caught every time (spec section "Leaf receive mode" (before D46)) | Spec section "Leaf receive mode" (before D46), D39's poll window |
-| Current | relay listening, transmitting, and the leaf in each mode | RX ≈4.6 mA plus the TCXO's 1.5 mA, TX per the datasheet (SX1261/2 DS Table 3-5) | Spec "Implementation notes" power budget |
+| Adjacent-channel rejection | two boards through attenuators, the second transmitting one channel over at stepped power | the datasheet's figure at 125 kHz spacing; fallback 11 × 150 kHz if it fails (O5) | Spec "Channel plan" |
+| Fading and shadowing | two boards logging each other's heartbeat RSSI for 24 h: indoor to indoor, indoor to street, rooftop to street | the scenarios assume 6 dB shadowing fixed per pair and 4 dB fading over 60 s, unmeasured; the capacity result hinges on these (`capacity-research-2026-10-15.md`) | `scenarios/*.toml`, the fade of spec "Neighbour table" (D38) |
+| Range | walk tests with a sleepy node: street, indoors, from a rooftop | 750 m to a handheld in the street, 300 m indoors (spec "Physical layer") | Spec "Physical layer", "Capacity and sizing" |
+| Duty-cycled receive | a DATA with the long preamble sent 100 times to a sleepy board between its windows | caught every time; the radio locks on 4 symbols of preamble | Spec "Duty-cycled receive and the long preamble", `bark-proto/src/sniff.rs` |
+| Current | a relay listening and transmitting; a sleepy node asleep, receiving duty-cycled and in its window | listening 5.8 mA, transmitting under 32 mA, asleep 1.2 µA (SX1261/2 datasheet Tables 3-5 and 3-6); 0.194 mA on average while receiving duty-cycled | `bark-proto/src/sniff.rs`, spec "Duty-cycled receive and the long preamble" |
 
 ### Phase 3: protocol on hardware
 
-Steps 4 and 5 with four boards (three relays in a line plus one leaf), then BLE GATT and a minimal phone app (Flutter; flutter_rust_bridge is already installed here). Field test needs more boards or RAK4631 EU433 relays (research doc, procurement).
+Spec "Implementation notes" steps 4 and 5 on four boards, three relays in a line and a sleepy node; then step 6, the BLE link of spec "Phone link" and a minimal app for it. The field test, step 7, needs more boards or RAK4631 EU433 relays (spec "Hardware", O12).
 
-## Open questions for discussion
+## Questions settled
 
-- **Q1 (D3), decided 2026-10-14.** The core does no I/O. An async node task would need a mini-executor in the simulator and makes 20k simulated leaves expensive. The contract is `docs/core-interface.md`.
-- **Q2.** Link model fidelity. Start with a user-supplied table of received power for each pair of nodes in range, plus a few generators (log-distance with exponent, rooftop bonus, indoor wall loss). A terrain model (free-space loss plus per-cell attenuation along the path) can be one generator, not the primary interface.
-- **Q3.** Leaf behaviour model: static, random walk, or trace-driven? Phones in pockets go dark for minutes; that drives the delivery-queue sizing (spec "Delivery queue").
-- **Q4.** Whether the simulator exercises the real wire format (bytes through the codec) or passes structs. Recommendation: real bytes, so a codec bug is a simulator failure too, and airtime is computed from actual lengths.
+- **Q1 (D3), decided 2026-10-14.** The core does no I/O. An async node task would need a mini-executor in the simulator and makes 20k simulated nodes expensive. The contract is `docs/core-interface.md`.
+- **Q2, decided 2026-10-14.** The link model is a sparse table of received power for each pair in range, filled by a log-distance generator with a rooftop bonus and a wall loss, or given pair by pair, with shadowing per pair and fading per channel over time (`bark-sim/src/links.rs`, `phy.rs`).
+- **Q3, decided 2026-10-14 and 2026-10-18.** Sleepy nodes stay at their points and go dark at random (2026-10-14); since D52 a share of them walk, and D59 added riders in vehicles and groups that go dark together (`simulator-design.md`).
+- **Q4, decided 2026-10-14.** The simulator carries the bytes the core encodes, so a codec bug fails it too and airtime follows from the real lengths.
 - **Q5 (D13), decided 2026-10-14.** The 8-symbol preamble was wrong for SF5 (12 minimum). The spec now uses 12 everywhere, and the sweep-loss argument, redone, spreads the sweep.
-- **Q6.** Scenario file format: Rust builder only, or a TOML/RON file so scenarios can be shared and diffed? Recommendation: both, with the file format as the stable interface.
-
-## Timeline
-
-| When | What |
-|---|---|
-| 2026-10-14 | This document. Workspace skeleton and `docs/core-interface.md`. |
-| Oct 2026 | Phase 0 and simulator milestones 1 to 3. |
-| late Oct 2026 | Capacity scenario and parameter sweeps; revise spec "Capacity and sizing". |
-| ~2026-11-04 | Four T-Echo 433 arrive. Phase 2. |
-| Nov 2026 | Phase 3 on four boards. Decide procurement for a dozen-relay field test. |
+- **Q6, decided 2026-10-14.** Scenarios are TOML files in `scenarios/`, the stable interface, and the builder in `bark-sim/src/scenario.rs` serves the tests.
