@@ -38,8 +38,12 @@ const C_M_PER_S: f64 = 299_792_458.0;
 /// Free-space loss at 1 m for the band centre (channel 6, 433.92 MHz):
 /// 20·log10(4π f / c) ≈ 25.2 dB.
 pub fn free_space_loss_1m_db() -> f64 {
-    let f = Channel::new(CHANNELS / 2).expect("centre channel").hz() as f64;
-    20.0 * (4.0 * core::f64::consts::PI * f / C_M_PER_S).log10()
+    // Worked out once: every path loss the simulator computes needs it.
+    static LOSS: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
+        let f = Channel::new(CHANNELS / 2).expect("centre channel").hz() as f64;
+        20.0 * (4.0 * core::f64::consts::PI * f / C_M_PER_S).log10()
+    });
+    *LOSS
 }
 
 /// Shadowing draws are truncated at this many standard deviations, so that
@@ -60,7 +64,8 @@ pub enum Site {
 }
 
 impl Site {
-    const ALL: [Site; 3] = [Site::Outdoor, Site::Indoor, Site::Rooftop];
+    /// Every site, in the order of their discriminants.
+    pub(crate) const ALL: [Site; 3] = [Site::Outdoor, Site::Indoor, Site::Rooftop];
 }
 
 /// Which generator fills the table.

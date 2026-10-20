@@ -142,6 +142,31 @@ impl Grid {
         }
     }
 
+    /// Call `f` with every point in the cells that the square of half-side
+    /// `r` around `p` touches: a superset of the points within `r` of `p`,
+    /// for any `r`. With cells smaller than `r` it visits far fewer points
+    /// outside the disc than [`Grid::neighbourhood`] does.
+    pub fn within(&self, p: Xy, r: f64, mut f: impl FnMut(u32)) {
+        let (x0, y0) = self.coords(Xy {
+            x: p.x - r,
+            y: p.y - r,
+        });
+        let (x1, y1) = self.coords(Xy {
+            x: p.x + r,
+            y: p.y + r,
+        });
+        for y in y0..=y1 {
+            // The cells of a row are stored one after another.
+            let (a, b) = (
+                self.start[y * self.nx + x0],
+                self.start[y * self.nx + x1 + 1],
+            );
+            for &i in &self.items[a as usize..b as usize] {
+                f(i);
+            }
+        }
+    }
+
     /// Cell side in metres.
     pub fn side(&self) -> f64 {
         self.side
@@ -182,6 +207,33 @@ mod tests {
                 if p.dist(q) <= 100.0 {
                     assert!(got.contains(&(i as u32)));
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn within_is_superset_of_disc() {
+        let pts: Vec<Xy> = (0..400)
+            .map(|i| Xy {
+                x: (i % 20) as f64 * 37.0,
+                y: (i / 20) as f64 * 41.0,
+            })
+            .collect();
+        let g = Grid::new(&pts, 60.0);
+        let far = Xy {
+            x: -500.0,
+            y: 300.0,
+        };
+        for r in [10.0, 60.0, 150.0, 1000.0] {
+            for &q in pts.iter().chain([&far]) {
+                let mut got = Vec::new();
+                g.within(q, r, |i| got.push(i));
+                for (i, &p) in pts.iter().enumerate() {
+                    if p.dist(q) <= r {
+                        assert!(got.contains(&(i as u32)));
+                    }
+                }
+                assert!(got.len() <= pts.len());
             }
         }
     }

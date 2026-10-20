@@ -92,8 +92,6 @@ pub(crate) struct Walks {
     of: Vec<u32>,
     p: Movement,
     v: Vehicles,
-    /// The fastest anyone moves, metres a second.
-    fastest: f64,
     /// The wavelength at the centre of the band, metres.
     wavelength: f64,
     links: LinkParams,
@@ -106,10 +104,19 @@ pub(crate) struct Walks {
     tau_still: Duration,
     shadow_seed: u64,
     fade_seed: u64,
-    /// Static nodes by site, gridded at the longest a walker reaches them.
+    /// The cut-off distance by the sites at the two ends, indexed by
+    /// [`Site`]; kept since every candidate link is checked against it.
+    cutoff: [[f64; 3]; 3],
+    /// The side of the grids' cells: half the shortest cut-off of a link
+    /// with a walker, so that a search for links visits few nodes out of
+    /// reach.
+    cell: f64,
+    /// How far anyone moves between two builds of the walkers' grids.
+    slack: f64,
+    /// Static nodes by site, gridded.
     classes: [Class; 3],
-    /// Walkers stopped and walking, gridded at the longest they reach
-    /// anything, and when.
+    /// Walkers stopped and walking, gridded where they were when the grids
+    /// were built, and when.
     moving: [(Option<Grid>, Vec<u32>); 2],
     built: Option<Instant>,
 }
@@ -206,14 +213,18 @@ impl Walks {
         let fastest = walkers.iter().map(|w| w.speed).fold(0.0, f64::max);
         let secs = |s: f64| Duration::from_micros((s * 1e6).round().max(1.0) as u64);
         let reach = |a: Site, b: Site| links.cutoff_distance_m(tx_dbm, floor_dbm, a, b);
+        let cell = [Site::Outdoor, Site::Indoor]
+            .iter()
+            .flat_map(|&a| Site::ALL.map(|b| reach(a, b)))
+            .fold(f64::INFINITY, f64::min)
+            / 2.0;
         let classes = [Site::Outdoor, Site::Indoor, Site::Rooftop].map(|c| {
             let nodes: Vec<u32> = (0..n as u32)
                 .filter(|&i| of[i as usize] == u32::MAX && site[i as usize] == c)
                 .collect();
             let pts: Vec<Xy> = nodes.iter().map(|&i| xy[i as usize]).collect();
-            let side = reach(Site::Outdoor, c).max(reach(Site::Indoor, c));
             Class {
-                grid: (!pts.is_empty()).then(|| Grid::new(&pts, side)),
+                grid: (!pts.is_empty()).then(|| Grid::new(&pts, cell)),
                 nodes,
             }
         });
@@ -222,7 +233,6 @@ impl Walks {
             of,
             p: p.clone(),
             v: v.clone(),
-            fastest,
             wavelength,
             links: links.clone(),
             tx_dbm,
@@ -230,6 +240,9 @@ impl Walks {
             lo,
             hi,
             tau_still: secs(links.fading.correlation_time_s),
+            cell,
+            slack: fastest * REGRID.as_micros() as f64 / 1e6,
+            cutoff: Site::ALL.map(|a| Site::ALL.map(|b| reach(a, b))),
             shadow_seed: stream_seed(seed, Purpose::Shadowing, 1),
             fade_seed: stream_seed(seed, Purpose::Fading, 1),
             classes,
@@ -334,16 +347,6 @@ impl Walks {
         if self.built.is_some_and(|b| now.since(b) < REGRID) {
             return;
         }
-        let slack = self.fastest * REGRID.as_micros() as f64 / 1e6;
-        let reach = |a: Site| {
-            [Site::Outdoor, Site::Indoor, Site::Rooftop]
-                .map(|b| {
-                    self.links
-                        .cutoff_distance_m(self.tx_dbm, self.floor_dbm, a, b)
-                })
-                .into_iter()
-                .fold(0.0, f64::max)
-        };
         for (k, site) in [(0, Site::Indoor), (1, Site::Outdoor)] {
             let ws: Vec<u32> = (0..self.walkers.len() as u32)
                 .filter(|&w| self.walkers[w as usize].site() == site)
@@ -352,7 +355,7 @@ impl Walks {
                 .iter()
                 .map(|&w| self.walkers[w as usize].at(now))
                 .collect();
-            let grid = (!pts.is_empty()).then(|| Grid::new(&pts, reach(site) + slack));
+            let grid = (!pts.is_empty()).then(|| Grid::new(&pts, self.cell));
             self.moving[k] = (grid, ws);
         }
         self.built = Some(now);
@@ -380,10 +383,7 @@ impl Walks {
                 return;
             }
             let d = from.dist(at);
-            if d > s
-                .links
-                .cutoff_distance_m(s.tx_dbm, s.floor_dbm, from_site, rx_site)
-            {
+            if d > s.cutoff[from_site as usize][rx_site as usize] {
                 return;
             }
             let mover = match (s.walks(src), s.walks(rx)) {
@@ -417,10 +417,14 @@ impl Walks {
                 dbm,
             });
         };
-        // Walkers in reach of anyone.
-        for (grid, ws) in &self.moving {
+        // A search wider than the cut-off by more than the rounding of the
+        // distance, so that it finds every node `consider` keeps.
+        let wide = |r: f64| r * (1.0 + 1e-9) + 1.0;
+        // Walkers in reach, wherever they went since the grids were built.
+        for ((grid, ws), site) in self.moving.iter().zip([Site::Indoor, Site::Outdoor]) {
             if let Some(g) = grid {
-                g.neighbourhood(from, |k| {
+                let r = wide(self.cutoff[from_site as usize][site as usize] + self.slack);
+                g.within(from, r, |k| {
                     let w = &self.walkers[ws[k as usize] as usize];
                     consider(self, w.node, w.at(now), w.site());
                 });
@@ -428,9 +432,10 @@ impl Walks {
         }
         // Nodes that stay, in reach of a walker.
         if self.walks(src) {
-            for class in &self.classes {
+            for (class, c) in self.classes.iter().zip(Site::ALL) {
                 if let Some(g) = &class.grid {
-                    g.neighbourhood(from, |k| {
+                    let r = wide(self.cutoff[from_site as usize][c as usize]);
+                    g.within(from, r, |k| {
                         let n = class.nodes[k as usize];
                         consider(self, n, xy[n as usize], site[n as usize]);
                     });
