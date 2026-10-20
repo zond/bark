@@ -1631,6 +1631,7 @@ impl Sim {
                     self.series_rows();
                     self.sample_anchors();
                     self.sample_anchorless();
+                    self.sample_dense();
                 }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
@@ -1987,6 +1988,58 @@ impl Sim {
     /// See `anchorless`.
     pub fn anchorless_series(&self) -> &[(u64, f64, u32, u32)] {
         &self.anchorless
+    }
+
+    /// Per relay, how many running relays keep it in their neighbour
+    /// tables, and how many with margin.
+    pub(crate) fn known_by(&self) -> Vec<(u32, u32)> {
+        use bark_proto::tables::neighbours::Neighbours;
+        let mut known = vec![(0u32, 0u32); self.n_relays as usize];
+        for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
+            if !self.nodes[i].alive || r.booting() {
+                continue;
+            }
+            let floor = r.busy().noise_floor_dbm();
+            for e in r.neighbours().filter(|e| e.relay()) {
+                if let Some(&j) = self.relay_index.get(&key(e.id)) {
+                    let k = &mut known[j as usize];
+                    k.0 += 1;
+                    k.1 += u32::from(Neighbours::has_margin(e, floor));
+                }
+            }
+        }
+        known
+    }
+
+    /// Whether relays are placed among the people, so that the dense
+    /// instruments are kept.
+    fn dense(&self) -> bool {
+        self.people.first().is_some_and(|&i| i < self.n_relays)
+    }
+
+    /// Once a minute after the settle time, with relays among the people:
+    /// the running relays no running relay keeps (`metrics::Dense`).
+    fn sample_dense(&mut self) {
+        if !self.dense() || self.now < self.settle {
+            return;
+        }
+        let known = self.known_by();
+        let (mut none, mut faint) = ([0u32; 2], [0u32; 2]);
+        for (i, k) in known.iter().enumerate() {
+            if !self.nodes[i].alive || self.relays[i].booting() {
+                continue;
+            }
+            let person = usize::from(self.person_of[i] != u32::MAX);
+            none[person] += u32::from(k.0 == 0);
+            faint[person] += u32::from(k.1 == 0);
+        }
+        let t = self.now.as_micros() / 1_000_000;
+        let d = self
+            .metrics
+            .research
+            .dense
+            .get_or_insert_with(Default::default);
+        d.unknown.push((t, none, faint));
     }
 
     /// Once a minute after the settle time: sleepy nodes whose anchor would

@@ -865,6 +865,24 @@ pub struct Research {
     /// a jump, rejected as inconsistent with the neighbours heard; relays
     /// and sleepy nodes.
     pub fixes: [[u64; 3]; 2],
+    /// With relays among the people (`scenario` `relay_share`), what their
+    /// density does to the relays' tables; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dense: Option<Dense>,
+}
+
+/// What dense relays do to the relays' neighbour tables
+/// (`Research::dense`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Dense {
+    /// Once a minute after the settle time: the time, s, and of the
+    /// running relays, how many no other running relay keeps in its
+    /// neighbour table, and how many none keeps with margin; those placed
+    /// as relays and those placed as people apart.
+    pub unknown: Vec<(u64, [u32; 2], [u32; 2])>,
+    /// At the end, per relay: how many running relays keep it in their
+    /// neighbour tables, and how many of those with margin.
+    pub known_by: Vec<(u32, u32)>,
 }
 
 /// Bins of `Research::movers`: moving, then at a stop for less than each

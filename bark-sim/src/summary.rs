@@ -461,6 +461,10 @@ impl Sim {
             nodes,
             research: crate::metrics::Research {
                 pairs: self.pairs.clone(),
+                dense: m.research.dense.clone().map(|d| crate::metrics::Dense {
+                    known_by: self.known_by(),
+                    ..d
+                }),
                 ..m.research.clone()
             },
         }
