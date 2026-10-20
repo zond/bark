@@ -23,6 +23,7 @@ use core::future::pending;
 
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
+use bark_proto::time::earlier;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position,
@@ -72,6 +73,12 @@ pub trait Radio {
 
     /// Listen on `channel` from whatever state the radio is in.
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error>;
+
+    /// Receive duty-cycled on `channel` from whatever state the radio is
+    /// in: windows of `sniff::SNIFF_RX` every `sniff::SNIFF_CYCLE`
+    /// (core-interface §3 rule 10). It ends with the first packet that
+    /// ends, with a frame or without; the driver then starts it again.
+    async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error>;
 
     /// While listening, wait until the radio has something to report.
     /// Cancel-safe: it only waits.
@@ -143,6 +150,9 @@ pub struct Stats {
     pub held: u32,
     /// Radio operations that failed.
     pub radio_errors: u32,
+    /// Times duty-cycled receive was started: at each `Sniff` and again
+    /// after each packet it caught.
+    pub sniffs: u32,
     /// Longest single `handle` call.
     pub longest_handle: Duration,
     /// Longest stretch the loop spent away from the radio while the radio
@@ -160,11 +170,16 @@ pub struct Driver<C, R, K, A> {
     booted: bool,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
+    /// Until when the core lets the radio receive duty-cycled
+    /// (`Action::Sniff`).
+    sniff_until: Option<Instant>,
     /// Where the radio listens; `None` during an excursion and after a
     /// failure, until the next step puts it back.
     listening: Option<Channel>,
-    /// A packet has begun on `listening` and not yet ended.
-    receiving: bool,
+    /// The radio receives duty-cycled on `listening`.
+    sniffing: bool,
+    /// When a packet began on `listening` that has not yet ended.
+    receiving: Option<Instant>,
     /// The excursion the core asked for and is waiting on.
     excursion: Option<Action>,
     /// When the outstanding check began waiting for a reception to end.
@@ -186,8 +201,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             tx_dbm,
             booted: false,
             resting: None,
+            sniff_until: None,
             listening: None,
-            receiving: false,
+            sniffing: false,
+            receiving: None,
             excursion: None,
             held_since: None,
             rx: [0; MAX_FRAME],
@@ -243,10 +260,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
 
         let wake = self.core.next_wakeup();
         let hold_end = self.held_since.map(|t| t + MAX_AIRTIME);
-        let deadline = match (wake, hold_end) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let deadline = earlier(earlier(wake, hold_end), self.radio_due());
         let offer = self.core.accepts_send(now);
         let clock = &self.clock;
         let timer = async {
@@ -270,7 +284,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             // Late is allowed, early is not (core-interface §2).
             Either3::First(()) => match wake {
                 Some(w) if start >= w => self.deliver(Event::Wakeup).await,
-                _ => Ok(()),
+                _ => self.listen_resting().await,
             },
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
@@ -289,10 +303,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     fn holds(&mut self, action: &Action, now: Instant) -> bool {
         let leaves = match action {
             Action::Cad(_) => true,
-            Action::Rssi(c) => self.listening != Some(*c),
+            // A duty-cycled radio reads no RSSI: it must listen first.
+            Action::Rssi(c) => self.listening != Some(*c) || self.sniffing,
             _ => false,
         };
-        if !leaves || !self.receiving {
+        if !leaves || self.receiving.is_none() {
             return false;
         }
         let stats = &mut self.stats;
@@ -308,21 +323,30 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Ok(h) => h,
             Err(e) => return Err(self.failed(e)),
         };
+        if heard == Heard::Started {
+            let now = self.clock.now();
+            self.receiving.get_or_insert(now);
+            return Ok(());
+        }
+        self.receiving = None;
+        let listening = self.listening;
+        if self.sniffing {
+            // Duty-cycled receive ends with a packet (DS §13.1.7), and
+            // after anything else the radio may have been woken out of
+            // it; the next `listen_resting` starts it again.
+            self.listening = None;
+            self.sniffing = false;
+        }
         match heard {
-            Heard::Started => self.receiving = true,
-            Heard::Nothing => {}
-            Heard::Failed => {
-                self.receiving = false;
-                self.stats.failed += 1;
-            }
+            Heard::Started | Heard::Nothing => {}
+            Heard::Failed => self.stats.failed += 1,
             Heard::Frame {
                 len,
                 rssi_dbm,
                 snr_db,
             } => {
-                self.receiving = false;
                 self.stats.frames += 1;
-                if let Some(channel) = self.listening {
+                if let Some(channel) = listening {
                     // A copy, so the core can borrow it while the driver
                     // is borrowed mutably.
                     let bytes = self.rx;
@@ -361,28 +385,31 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let now = self.clock.now();
         let mut resting = self.resting;
         let mut excursion = self.excursion;
+        let mut sniff = self.sniff_until;
         let app = &mut self.app;
         self.core.handle(event, now, &mut |action| match action {
-            Action::Listen(c) => resting = Some(c),
+            Action::Listen(c) => {
+                resting = Some(c);
+                sniff = None;
+            }
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 assert!(
                     excursion.is_none(),
                     "second excursion outstanding (docs/core-interface.md §3 rule 1)"
                 );
                 excursion = Some(action);
+                sniff = None;
             }
+            Action::Sniff(until) => sniff = Some(until).filter(|&t| t > now),
             Action::App(e) => app.message(&e),
             Action::Trace(t) => log::info!("{:?}", t),
-            // The radio keeps listening: the contract allows it, and the
-            // firmware does not receive duty-cycled yet (spec
-            // "Implementation notes", bring-up step 5).
-            Action::Sniff(_) => {}
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
         self.stats.longest_handle = self.stats.longest_handle.max(took);
         self.resting = resting;
         self.excursion = excursion;
+        self.sniff_until = sniff;
         self.listen_resting().await
     }
 
@@ -393,8 +420,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     async fn perform(&mut self, action: Action) -> Event<'static> {
         let done = match action {
             Action::Cad(channel) => {
-                self.listening = None;
-                self.receiving = false;
+                self.deaf();
                 let busy = match self.radio.cad(channel).await {
                     Ok(busy) => busy,
                     Err(e) => {
@@ -405,9 +431,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 Event::CadDone { channel, busy }
             }
             Action::Rssi(channel) => {
-                if self.listening != Some(channel) {
-                    self.listening = None;
-                    self.receiving = false;
+                if self.listening != Some(channel) || self.sniffing {
+                    self.deaf();
                     match self.radio.listen(channel).await {
                         Ok(()) => {
                             self.listening = Some(channel);
@@ -436,8 +461,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                     "{}-symbol preamble (docs/core-interface.md §3 rule 4)",
                     frame.preamble_symbols
                 );
-                self.listening = None;
-                self.receiving = false;
+                self.deaf();
                 if let Err(e) = self.radio.transmit(&frame, self.tx_dbm).await {
                     self.failed(e);
                 }
@@ -453,18 +477,64 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         done
     }
 
+    /// Put the radio where the core wants it: on the resting channel,
+    /// duty-cycled until the sniff's end, else listening. Not while an
+    /// excursion waits: it would only delay it, and the excursion ends here.
     async fn listen_resting(&mut self) -> Result<(), R::Error> {
-        match self.resting {
-            Some(c) if self.listening != Some(c) => match self.radio.listen(c).await {
-                Ok(()) => {
-                    self.listening = Some(c);
-                    self.receiving = false;
-                    Ok(())
-                }
-                Err(e) => Err(self.failed(e)),
-            },
-            _ => Ok(()),
+        let now = self.clock.now();
+        if self.sniff_until.is_some_and(|t| t <= now) {
+            self.sniff_until = None;
         }
+        let Some(c) = self.resting.filter(|_| self.excursion.is_none()) else {
+            return Ok(());
+        };
+        let sniff = self.sniff_until.is_some();
+        if self.listening == Some(c) {
+            // A packet under way is heard either way: the switch waits for
+            // it to end, as a check is held for it (core-interface §3 rule
+            // 8), and for no longer than one can last. One that outlasts
+            // that in a window may have left the radio stuck there, and the
+            // cycle is started again.
+            let arriving = self.receiving.is_some_and(|t| now < t + MAX_AIRTIME);
+            let stuck = self.sniffing && self.receiving.is_some() && !arriving;
+            if (self.sniffing == sniff || arriving) && !stuck {
+                return Ok(());
+            }
+        }
+        let result = match sniff {
+            true => self.radio.sniff(c).await,
+            false => self.radio.listen(c).await,
+        };
+        match result {
+            Ok(()) => {
+                self.listening = Some(c);
+                self.sniffing = sniff;
+                self.receiving = None;
+                self.stats.sniffs += u32::from(sniff);
+                Ok(())
+            }
+            Err(e) => Err(self.failed(e)),
+        }
+    }
+
+    /// When the radio's setting next changes without the core: the end of
+    /// the sniff, or of the longest packet that holds it back.
+    fn radio_due(&self) -> Option<Instant> {
+        let settles = self.resting.is_some() && self.excursion.is_none();
+        if !settles || (!self.sniffing && self.sniff_until.is_none()) {
+            return None;
+        }
+        match self.receiving {
+            Some(t) => Some(t + MAX_AIRTIME),
+            None => self.sniff_until,
+        }
+    }
+
+    /// The radio has left its channel.
+    fn deaf(&mut self) {
+        self.listening = None;
+        self.sniffing = false;
+        self.receiving = None;
     }
 
     /// Note a radio failure. The radio's state is unknown afterwards, so
@@ -472,8 +542,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     fn failed(&mut self, e: R::Error) -> R::Error {
         log::warn!("radio: {:?}", e);
         self.stats.radio_errors += 1;
-        self.listening = None;
-        self.receiving = false;
+        self.deaf();
         e
     }
 }

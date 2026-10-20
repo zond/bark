@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -91,7 +91,9 @@ Rules:
     sniff ends at `until`, or sooner at the core's next `Listen`, `Cad`, `Rssi` or
     `Transmit`, which the driver carries out as ever, the radio then listening on the
     resting channel again; `until` is when the core next needs the radio of its own
-    accord. A driver that keeps listening breaks nothing: the core handles whatever it
+    accord. The driver may let a packet already under way end first, by at most the
+    airtime of rule 8, since either receive hears it; a packet that outlasts that
+    starts the cycle again. A driver that keeps listening breaks nothing: the core handles whatever it
     receives. Every sleepy node asks for it whenever it has nothing under way and is
     neither in a window nor listening for its anchor's heartbeat (spec "Sleepy nodes",
     "Delivery", "Relay choice"); a node that is not sleepy never does.
@@ -145,7 +147,7 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | Clock | event-heap time | embassy monotonic |
 | Wakeup when `now >= next_wakeup()` | heap entry per core, lazily invalidated | one embassy timer |
 | `Listen` | update the per-channel listener set | `rx_switch_channel` |
-| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | ignored for now: the radio keeps listening; to do: SetRxDutyCycle, and the receiver programmed for the long preamble |
+| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(384, 22 344) from STDBY_RC, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command (`bark-driver`, `bark-fw/src/radio.rs`) |
 | `Cad` | deaf for CAD duration, result from the reception model | `prepare_for_cad` + `cad` |
 | `Rssi` | deaf for retune + sample, dB-sum at the node | `get_rssi` after retune |
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |

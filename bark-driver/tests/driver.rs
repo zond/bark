@@ -31,6 +31,7 @@ const CAD_TIME: Duration = Duration::from_micros(17 * SYMBOL_TIME.as_micros() / 
 #[derive(Clone, Debug, PartialEq)]
 enum Op {
     Listen(Channel),
+    Sniff(Channel),
     Cad(Channel),
     Rssi(Channel),
     Transmit(Frame),
@@ -54,6 +55,8 @@ struct Inner {
     air: VecDeque<OnAir>,
     listening: Option<Channel>,
     listening_since: Instant,
+    /// The radio receives duty-cycled, and stops at the end of a packet.
+    sniffing: bool,
     /// The last frame completed and not yet read.
     ready: Option<(Channel, Vec<u8>)>,
     started: bool,
@@ -174,6 +177,11 @@ impl FakeRadio {
                     w.ready = Some((a.channel, a.bytes));
                     w.started = false;
                     report = true;
+                    if w.sniffing {
+                        // Duty-cycled receive ends in standby (DS §13.1.7).
+                        w.listening = None;
+                        w.sniffing = false;
+                    }
                 } else {
                     w.lost += 1;
                 }
@@ -198,6 +206,15 @@ impl FakeRadio {
     fn deaf(&self) {
         let mut w = self.world.0.borrow_mut();
         w.listening = None;
+        w.sniffing = false;
+        w.started = false;
+    }
+
+    fn rx(&self, channel: Channel, sniffing: bool) {
+        let mut w = self.world.0.borrow_mut();
+        w.listening = Some(channel);
+        w.listening_since = w.now;
+        w.sniffing = sniffing;
         w.started = false;
     }
 }
@@ -207,10 +224,15 @@ impl Radio for FakeRadio {
 
     async fn listen(&mut self, channel: Channel) -> Result<(), ()> {
         self.world.op(Op::Listen(channel));
-        let mut w = self.world.0.borrow_mut();
-        w.listening = Some(channel);
-        w.listening_since = w.now;
-        w.started = false;
+        self.rx(channel, false);
+        Ok(())
+    }
+
+    // Hears every frame: which ones a cycle catches is the chip's affair
+    // (`bark_proto::sniff::detects`); the driver's is to keep it running.
+    async fn sniff(&mut self, channel: Channel) -> Result<(), ()> {
+        self.world.op(Op::Sniff(channel));
+        self.rx(channel, true);
         Ok(())
     }
 
@@ -328,12 +350,14 @@ fn at_ms(ms: u64) -> Instant {
 
 /// A core that does what a test tells it: wakes at the instants in
 /// `wakeups`, transmits on the wakeups listed in `send`, checks the
-/// channel on those listed in `check`, and records every event.
+/// channel on those listed in `check`, emits the actions listed in `then`
+/// on theirs, and records every event.
 struct Scripted {
     home: Channel,
     wakeups: VecDeque<Instant>,
     send: Vec<Instant>,
     check: Vec<Instant>,
+    then: Vec<(Instant, Action)>,
     seen: Vec<(Instant, String)>,
 }
 
@@ -344,6 +368,7 @@ impl Scripted {
             wakeups: wakeups.iter().copied().collect(),
             send: Vec::new(),
             check: Vec::new(),
+            then: Vec::new(),
             seen: Vec::new(),
         }
     }
@@ -376,6 +401,9 @@ impl Core for Scripted {
                 }
                 if self.check.contains(&due) {
                     emit(Action::Cad(self.home));
+                }
+                for (_, a) in self.then.iter().filter(|(t, _)| *t == due) {
+                    emit(*a);
                 }
                 "wakeup".into()
             }
@@ -552,8 +580,13 @@ fn a_relay_runs_through_the_loop() {
         },
         b"hello".to_vec(),
     ));
+    // It sweeps at once, and rests on its home after the first reading.
     step(&mut d, &world);
-    assert_eq!(world.ops()[0], (Instant::ZERO, Op::Listen(ch(3))));
+    step(&mut d, &world);
+    assert_eq!(
+        world.ops().last().map(|o| o.1.clone()),
+        Some(Op::Listen(ch(3)))
+    );
 
     let other = Position::from_degrees(50.46, 30.52);
     let hb = Packet::Heartbeat(Heartbeat {
@@ -608,4 +641,185 @@ fn a_relay_runs_through_the_loop() {
         d.app().messages
     );
     assert!(d.app().outgoing.is_none(), "taken");
+}
+
+/// A script that sniffs from 10 ms to `until` on channel 3 and wakes at
+/// `wakeups` besides.
+fn sniffing(until: Instant, wakeups: &[Instant]) -> Scripted {
+    let mut all = vec![at_ms(10)];
+    all.extend_from_slice(wakeups);
+    let mut core = Scripted::new(ch(3), &all);
+    core.then.push((at_ms(10), Action::Sniff(until)));
+    core
+}
+
+/// `Sniff` starts duty-cycled receive on the resting channel, and at its
+/// end the radio listens again, without the core.
+#[test]
+fn a_sniff_runs_until_its_end() {
+    let world = World::default();
+    let mut d = driver(sniffing(at_ms(200), &[at_ms(500)]), &world, Duration::ZERO);
+    run_until(&mut d, &world, at_ms(500));
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Sniff(ch(3))),
+            (at_ms(200), Op::Listen(ch(3))),
+        ]
+    );
+    assert_eq!(
+        seen(&d),
+        [(0, "boot"), (10_000, "wakeup"), (500_000, "wakeup")]
+    );
+    assert_eq!(d.stats().sniffs, 1);
+}
+
+/// The radio stops duty-cycled receive with each frame it catches; the
+/// driver hands the frame to the core and starts the cycle again, so the
+/// next frame is caught too.
+#[test]
+fn a_sniff_starts_again_after_each_frame() {
+    let world = World::default();
+    let mut d = driver(sniffing(at_ms(300), &[]), &world, Duration::ZERO);
+    world.send(at_ms(50), ch(3), &[1]);
+    world.send(at_ms(120), ch(3), &[2]);
+    run_until(&mut d, &world, at_ms(300));
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (10_000, "wakeup"),
+            (50_000, "rx 3 [1]"),
+            (120_000, "rx 3 [2]")
+        ]
+    );
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Sniff(ch(3))),
+            (at_ms(50), Op::Sniff(ch(3))),
+            (at_ms(120), Op::Sniff(ch(3))),
+            (at_ms(300), Op::Listen(ch(3))),
+        ]
+    );
+    assert_eq!(world.0.borrow().lost, 0);
+}
+
+/// The core's next `Listen`, `Cad`, `Rssi` or `Transmit` ends a sniff
+/// before its end; the radio is carried out as ever and listens after.
+#[test]
+fn the_next_radio_action_ends_a_sniff() {
+    let t = at_ms(100);
+    let cad_done = t + CAD_TIME;
+    let tx_done = t + time_on_air(3, MIN_PREAMBLE_SYMBOLS);
+    let cases = [
+        (
+            Action::Cad(ch(3)),
+            vec![(t, Op::Cad(ch(3))), (cad_done, Op::Listen(ch(3)))],
+        ),
+        (
+            Action::Transmit(frame(ch(5), b"out")),
+            vec![
+                (t, Op::Transmit(frame(ch(5), b"out"))),
+                (tx_done, Op::Listen(ch(3))),
+            ],
+        ),
+        (Action::Listen(ch(4)), vec![(t, Op::Listen(ch(4)))]),
+        // On the resting channel: listening, then the reading once the
+        // receiver has settled.
+        (
+            Action::Rssi(ch(3)),
+            vec![(t, Op::Listen(ch(3))), (t + RSSI_DWELL, Op::Rssi(ch(3)))],
+        ),
+    ];
+    for (action, after) in cases {
+        let world = World::default();
+        let mut core = sniffing(at_ms(5000), &[t, at_ms(400)]);
+        core.then.push((t, action));
+        let mut d = driver(core, &world, Duration::ZERO);
+        run_until(&mut d, &world, at_ms(400));
+        let mut ops = vec![
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Sniff(ch(3))),
+        ];
+        ops.extend(after);
+        assert_eq!(world.ops(), ops, "{action:?}");
+    }
+}
+
+/// A sniff that ends while a packet arrives keeps the radio as it is
+/// until the packet is over, so the packet is not cut short.
+#[test]
+fn a_sniff_ends_after_the_packet_under_way() {
+    let world = World::default();
+    let mut d = driver(sniffing(at_ms(200), &[at_ms(500)]), &world, Duration::ZERO);
+    world.0.borrow_mut().air.push_back(OnAir {
+        start: at_ms(180),
+        end: at_ms(240),
+        channel: ch(3),
+        bytes: vec![7],
+        started: false,
+    });
+    run_until(&mut d, &world, at_ms(500));
+    assert!(seen(&d).contains(&(240_000, "rx 3 [7]")), "{:?}", seen(&d));
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Sniff(ch(3))),
+            (at_ms(240), Op::Listen(ch(3))),
+        ]
+    );
+}
+
+/// A packet that begins in a window and never ends may leave the radio
+/// stuck receiving: after the longest frame the cycle starts again.
+#[test]
+fn a_packet_that_never_ends_starts_the_cycle_again() {
+    let world = World::default();
+    let mut d = driver(sniffing(at_ms(5000), &[]), &world, Duration::ZERO);
+    world.0.borrow_mut().air.push_back(OnAir {
+        start: at_ms(20),
+        end: at_ms(3000),
+        channel: ch(3),
+        bytes: vec![7],
+        started: false,
+    });
+    run_until(&mut d, &world, at_ms(5000));
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Sniff(ch(3))),
+            (at_ms(20) + MAX_AIRTIME, Op::Sniff(ch(3))),
+            (at_ms(5000), Op::Listen(ch(3))),
+        ]
+    );
+    assert_eq!(world.0.borrow().lost, 1);
+}
+
+/// A check that ends a sniff while a packet arrives is held for it as
+/// ever, and the loop waits, without spinning, until the hold's bound.
+#[test]
+fn a_check_that_ends_a_sniff_waits_for_the_packet() {
+    let world = World::default();
+    let mut core = sniffing(at_ms(5000), &[at_ms(50), at_ms(1000)]);
+    core.check.push(at_ms(50));
+    let mut d = driver(core, &world, Duration::ZERO);
+    world.0.borrow_mut().air.push_back(OnAir {
+        start: at_ms(20),
+        end: at_ms(700),
+        channel: ch(3),
+        bytes: vec![7],
+        started: false,
+    });
+    let mut steps = 0;
+    while world.now() < at_ms(1000) {
+        step(&mut d, &world);
+        steps += 1;
+        assert!(steps < 100, "the loop spins");
+    }
+    assert_eq!(world.ops()[2], (at_ms(50) + MAX_AIRTIME, Op::Cad(ch(3))));
 }

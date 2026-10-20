@@ -612,9 +612,13 @@ where
     async fn do_rx(&mut self, rx_mode: RxMode) -> Result<(), RadioError> {
         self.intf.iv.enable_rf_switch_rx().await?;
 
-        // Stop the Rx timer on preamble detection
-        let op_code_and_true_flag = [OpCode::SetStopRxTimerOnPreamble.value(), 0x01u8];
-        self.intf.write(&op_code_and_true_flag, false).await?;
+        // Stop the Rx timer on preamble detection, except in duty-cycled
+        // receive: there the timer restarts at a preamble to bound the wait
+        // for the header (datasheet §13.1.7), and stopped it would keep the
+        // chip in Rx after a false detection (§13.1.6).
+        let stop_on_preamble = !matches!(rx_mode, RxMode::DutyCycle(_));
+        let op_code_and_flag = [OpCode::SetStopRxTimerOnPreamble.value(), stop_on_preamble as u8];
+        self.intf.write(&op_code_and_flag, false).await?;
 
         let num_symbols = match rx_mode {
             RxMode::DutyCycle(_) | RxMode::Continuous | RxMode::SingleMs(_) => 0,
@@ -627,6 +631,10 @@ where
 
         match rx_mode {
             RxMode::DutyCycle(args) => {
+                // The chip saves its context and starts the cycle when the
+                // command comes in STDBY_RC (datasheet §13.1.7).
+                let op_code_and_standby_mode = [OpCode::SetStandby.value(), StandbyMode::RC.value()];
+                self.intf.write(&op_code_and_standby_mode, false).await?;
                 let op = [
                     OpCode::SetRxDutyCycle.value(),
                     Self::timeout_1(args.rx_time),

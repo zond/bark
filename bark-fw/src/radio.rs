@@ -8,8 +8,9 @@ use core::cell::Cell;
 use bark_driver::Heard;
 use bark_proto::radio::{
     time_on_air, Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MAX_ERP_DBM,
-    MIN_PREAMBLE_SYMBOLS, SPREADING_FACTOR, SYMBOL_TIME,
+    SPREADING_FACTOR, SYMBOL_TIME,
 };
+use bark_proto::sniff::{LONG_PREAMBLE_SYMBOLS, SNIFF_RX, SNIFF_SLEEP};
 use bark_proto::{Frame, MAX_FRAME};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::typelevel::{Binding, SPI2};
@@ -19,7 +20,8 @@ use embassy_nrf::Peri;
 use embassy_time::{with_deadline, with_timeout, Delay, Duration, Instant, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::mod_params::{
-    Bandwidth, CodingRate, ModulationParams, PacketParams, RadioError, SpreadingFactor,
+    Bandwidth, CodingRate, DutyCycleParams, ModulationParams, PacketParams, RadioError,
+    SpreadingFactor,
 };
 use lora_phy::mod_traits::{InterfaceVariant, IrqState};
 use lora_phy::sx126x::{self, Sx126x, TcxoCtrlVoltage};
@@ -52,10 +54,10 @@ pub const MAX_TX_DBM: i8 = MAX_ERP_DBM - ANTENNA_GAIN_DBD;
 /// Lowest power the SX1262 high-power PA can be set to (DS §13.4.4 SetTxParams).
 pub const MIN_TX_DBM: i8 = -9;
 
-/// Time on air of the longest frame.
+/// Time on air of the longest frame, with the long preamble.
 #[cfg(feature = "console")]
 pub const MAX_AIRTIME: Duration =
-    Duration::from_micros(time_on_air(MAX_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
+    Duration::from_micros(time_on_air(MAX_LEN as u8, LONG_PREAMBLE_SYMBOLS).as_micros());
 
 /// TCXO start-up the chip waits out, in full, each time it powers the TCXO
 /// (SetDIO3AsTCXOCtrl, DS §13.3.6). The radio idles in STDBY_XOSC, so this
@@ -64,6 +66,23 @@ pub const MAX_AIRTIME: Duration =
 /// time; 5 ms is an assumption with margin. A delay too short raises
 /// XOSC_START_ERR (DS §13.3.6).
 pub const TCXO_START: Duration = Duration::from_millis(5);
+
+/// A duty-cycled receive period in the chip's steps of 15.625 µs, 64 to
+/// the millisecond (DS §13.1.7).
+const fn steps(d: bark_proto::Duration) -> u32 {
+    assert!(
+        (d.as_micros() * 64).is_multiple_of(1000),
+        "not a whole number of steps"
+    );
+    (d.as_micros() * 64 / 1000) as u32
+}
+
+/// SetRxDutyCycle's receive and sleep periods (`bark_proto::sniff`): 384
+/// and 22 344 steps.
+const SNIFF: DutyCycleParams = DutyCycleParams {
+    rx_time: steps(SNIFF_RX),
+    sleep_time: steps(SNIFF_SLEEP),
+};
 
 /// Cold start to STDBY_RC, the longest switching time in DS Table 8-2; a
 /// full calibration takes as long (DS §13.1.12).
@@ -204,6 +223,9 @@ pub struct Radio<'a> {
     /// In continuous receive, where a retune is a frequency change; after
     /// a transmit or CAD the chip is in standby and needs the full setup.
     receiving: bool,
+    /// In duty-cycled receive, where the chip may be asleep and must be
+    /// woken before any command.
+    sniffing: bool,
     irq_deadline: &'a Cell<Option<Instant>>,
     clock: &'a Clock,
     // Dropping an Output disconnects the pin, which would cut the rail.
@@ -261,10 +283,12 @@ impl<'a> Radio<'a> {
         // `false`: the private sync word 0x1424, not LoRaWAN's public 0x3444
         // (spec "Physical layer").
         let mut lora = LoRa::new(Sx126x::new(spi, iv, chip), false, Delay).await?;
-        // Packet parameters do not depend on the channel.
+        // Packet parameters do not depend on the channel. The receiver is
+        // set for the longest preamble a frame has, as DS §6.1.4 asks where
+        // it varies (core-interface §3 rule 4); it still takes the shortest.
         let mdl = lora.create_modulation_params(SF, BW, CR, CHANNEL_0_HZ)?;
         let rx_params = lora.create_rx_packet_params(
-            MIN_PREAMBLE_SYMBOLS,
+            LONG_PREAMBLE_SYMBOLS,
             false,
             MAX_LEN as u8,
             true,
@@ -275,6 +299,7 @@ impl<'a> Radio<'a> {
             lora,
             rx_params,
             receiving: false,
+            sniffing: false,
             irq_deadline,
             clock,
             _radio_en: radio_en,
@@ -286,9 +311,26 @@ impl<'a> Radio<'a> {
         self.lora.create_modulation_params(SF, BW, CR, ch.hz())
     }
 
+    /// Out of duty-cycled receive, if it is in it, into standby. Asleep in
+    /// the cycle the chip takes no command until a falling NSS edge wakes it
+    /// (DS §13.1.7); one that comes as it goes to sleep may be lost, and
+    /// then BUSY stays high for the sleep, so a timeout is tried once more.
+    async fn wake(&mut self) -> Result<(), RadioError> {
+        if !self.sniffing {
+            return Ok(());
+        }
+        match self.lora.enter_standby().await {
+            Err(RadioError::Busy) => self.lora.enter_standby().await?,
+            result => result?,
+        }
+        self.sniffing = false;
+        Ok(())
+    }
+
     /// Listen on `ch` until told otherwise, from any state.
     pub async fn rest(&mut self, ch: Channel) -> Result<(), RadioError> {
         self.receiving = false;
+        self.wake().await?;
         let mdl = self.modulation(ch)?;
         self.lora
             .prepare_for_rx(RxMode::Continuous, &mdl, &self.rx_params)
@@ -298,6 +340,24 @@ impl<'a> Radio<'a> {
         self.lora.clear_irq_status().await?;
         self.lora.start_rx().await?;
         self.receiving = true;
+        Ok(())
+    }
+
+    /// Receive duty-cycled on `ch` (SetRxDutyCycle, DS §13.1.7), from any
+    /// state, until a packet ends or the radio is told otherwise. In each
+    /// sleep the chip is in SLEEP with its configuration kept and the TCXO
+    /// unpowered, since DIO3 supplies it only in STDBY_XOSC, FS, TX and RX
+    /// (DS §13.3.6).
+    pub async fn sniff(&mut self, ch: Channel) -> Result<(), RadioError> {
+        self.receiving = false;
+        self.wake().await?;
+        let mdl = self.modulation(ch)?;
+        self.lora
+            .prepare_for_rx(RxMode::DutyCycle(SNIFF), &mdl, &self.rx_params)
+            .await?;
+        self.lora.clear_irq_status().await?;
+        self.lora.start_rx().await?;
+        self.sniffing = true;
         Ok(())
     }
 
@@ -323,6 +383,7 @@ impl<'a> Radio<'a> {
         let len = u8::try_from(frame.len())
             .map_err(|_| RadioError::PayloadSizeUnexpected(frame.len()))?;
         self.receiving = false;
+        self.wake().await?;
         let t0 = self.clock.now();
         let mdl = self.modulation(ch)?;
         let mut params = self
@@ -348,6 +409,7 @@ impl<'a> Radio<'a> {
     /// standby.
     pub async fn cad(&mut self, ch: Channel) -> Result<(bool, u32, u32), RadioError> {
         self.receiving = false;
+        self.wake().await?;
         let t0 = self.clock.now();
         let mdl = self.modulation(ch)?;
         self.lora.prepare_for_cad(&mdl).await?;
@@ -412,7 +474,11 @@ impl Radio<'_> {
             }
             Ok(Some(IrqState::PreambleReceived)) => Ok(Heard::Started),
             Ok(None) => Ok(Heard::Nothing),
-            Err(RadioError::CrcError | RadioError::HeaderError) => Ok(Heard::Failed),
+            // A timeout ends a duty-cycled window that found a preamble and
+            // no header in time (DS §13.1.7): a packet without a frame.
+            Err(RadioError::CrcError | RadioError::HeaderError | RadioError::ReceiveTimeout) => {
+                Ok(Heard::Failed)
+            }
             Err(e) => Err(e),
         }
     }
@@ -426,6 +492,10 @@ impl bark_driver::Radio for Radio<'_> {
             true => self.retune(channel).await,
             false => self.rest(channel).await,
         }
+    }
+
+    async fn sniff(&mut self, channel: Channel) -> Result<(), RadioError> {
+        Radio::sniff(self, channel).await
     }
 
     async fn wait(&mut self) -> Result<(), RadioError> {

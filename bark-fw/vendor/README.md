@@ -18,6 +18,11 @@ library does not offer (roadmap D20). Changes from the upstream revision:
   (SetRxTxFallbackMode), and return there after image calibration, which runs from
   STDBY_RC. With `standby_xosc: false` and `tcxo_delay_us: 10_000` the driver sends
   the same commands as upstream; the upstream tests pass with those values.
+- `src/sx126x/mod.rs`, duty-cycled receive (`RxMode::DutyCycle`): the chip is put in
+  STDBY_RC before SetRxDutyCycle, the mode the datasheet starts the cycle from
+  (§13.1.7), and the receive timer is not stopped at a preamble, so that the chip's own
+  bound on the wait for the header applies (§13.1.6, §13.1.7). Other receive modes send
+  the same commands as before.
 
 To move to a newer upstream revision: replace the directory with that revision's
 `lora-phy`, reapply the changes listed here, and review the upstream diff as for

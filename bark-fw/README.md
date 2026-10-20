@@ -7,7 +7,8 @@ Current state (2026-10-15). The firmware blinks the green LED at 1 Hz,
 logs over USB CDC-ACM (a banner with the firmware version and constants
 from `bark-proto`, the previous boot's panic message if there was one, an
 uptime line every 10 s), powers up the SX1262 at bark's modulation (SF5,
-125 kHz, CR 4/5, 12-symbol preamble, CRC on, private sync word) and then
+125 kHz, CR 4/5, CRC on, private sync word, the receiver set for the
+1396-symbol long preamble) and then
 does one of three things, chosen when it is built:
 
 | Build | Runs |
@@ -55,7 +56,10 @@ Verified on the host:
   in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
   28 KiB for the image before D46, where this file said 18 KiB.
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
-  the host workspace).
+  the host workspace), duty-cycled receive included: it starts at the
+  core's `Sniff`, starts again after each frame, ends at the sniff's end or
+  at the core's next use of the radio, waits for a packet under way, and
+  starts again after a packet that never ends (2026-10-20).
 - `scripts/uf2.py` produces a UF2 that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, contiguous 256-byte payloads starting
   at `0x26000`.
@@ -83,6 +87,16 @@ Unverified, in the order they will fail if wrong:
   can be read back after the error (`get_rx_result` in continuous receive),
   RSSI reads are valid immediately after a retune, and continuous receive
   keeps running after a header or CRC error.
+- Duty-cycled receive (`Radio::sniff`, below), in the order it would fail:
+  the chip accepts SetRxDutyCycle(384, 22 344) and cycles; it catches a
+  frame with the long preamble wherever it starts (`sniff::detects`);
+  after the frame it raises RxDone and stops in standby, and the driver
+  starts it again; a preamble without a header ends in a timeout or in the
+  cycle, and either way the cycle goes on; a falling NSS edge wakes the
+  chip from its sleep, and a second try after a BUSY timeout covers an
+  edge lost as it goes to sleep; set for 1396 symbols the receiver still
+  takes the 12-symbol preamble in continuous receive. `scripts/measure.md`
+  step 4 tests each.
 - Transmit power: the chip's 10 dBm setting gives about 10 dBm at the
   antenna port, and the stock antenna has no gain over a dipole, so the
   console's 10 dBm cap meets the 10 mW ERP limit.
@@ -233,6 +247,40 @@ which it also draws in RX (4.6 mA, DS Table 3-5). The radio listens
 whenever it is not transmitting or checking a channel, so it spends only
 the moments between operations in standby and the extra current does not
 matter.
+
+A sleepy node's radio receives duty-cycled whenever its core allows it
+(`Action::Sniff`, `docs/core-interface.md` §3 rule 10): SetRxDutyCycle
+(DS §13.1.7) with a 6 ms window (384 steps of 15.625 µs) and a 349.125 ms
+sleep (22 344 steps), `bark_proto::sniff`. The command is sent in
+STDBY_RC, where the datasheet starts the cycle, and the receive timer
+stops at a header rather than at a preamble, so that after a preamble the
+chip waits `2 × rx + sleep` for the header and no longer (DS §13.1.6,
+§13.1.7; `vendor/README.md`). In each sleep the chip keeps its
+configuration and its 64 kHz clock and powers the TCXO down: DIO3 supplies
+it only in STDBY_XOSC, FS, TX and RX (DS §13.3.6). Each wake costs about
+1 ms to restore its state and the 5 ms TCXO start (DS Figures 13-2 and
+13-3). The Rx gain register is lost in each sleep (DS §9.6); the firmware
+uses the default power-saving gain, which is what the register returns to.
+After a frame the chip stops in standby, and the driver starts the cycle
+again once the core has the frame; any command to the chip is preceded by
+a falling NSS edge, which wakes it.
+
+The radio's expected current in the cycle, from the datasheet: the window
+in receive at 4.6 mA (DS Table 3-5, DC-DC, LoRa 125 kHz, power-saving
+gain) and the TCXO at its nominal 1.5 mA (DS §4.1.4), 6.1 mA; the 6 ms of
+each wake, for which the datasheet gives no figure, between STDBY_RC's
+0.6 mA with the TCXO, 2.1 mA, and the full 6.1 mA; the sleep at 1.2 µA
+(DS Table 3-5, configuration kept and the 64 kHz clock on). Over the
+361.125 ms cycle:
+
+```
+upper: (12 × 6.1 + 349.125 × 0.0012) / 361.125 = 0.204 mA
+lower: (6 × 6.1 + 6 × 2.1 + 349.125 × 0.0012) / 361.125 = 0.137 mA
+```
+
+against 6.1 mA listening, 30 to 44 times less. The core's own figure,
+`sniff::SNIFF_CURRENT_NA`, is 0.194 mA, from 5.8 mA for receive and wake.
+`scripts/measure.md` step 4 measures it.
 
 The programmed delay, 5 ms (`radio::TCXO_START`), is still paid where the
 chip turns the TCXO off on its own: at power-up, after a calibration and
