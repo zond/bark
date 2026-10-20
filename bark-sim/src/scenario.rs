@@ -9,6 +9,11 @@
 //! fourth relay placed, `"leaf:0"` the first leaf, across all placements in
 //! file order. A name given to a point node can be used anywhere a node is
 //! referenced.
+//!
+//! A leaf is a sleepy node (spec "Sleepy nodes"): the files, the rate
+//! `per_leaf_per_hour` and the metrics keep the name the format was made
+//! with, and the simulator's code says sleepy node where it means the
+//! protocol's thing.
 
 use crate::geo::{Origin, Xy};
 use crate::links::{LinkParams, Site};
@@ -23,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub enum RoleSpec {
     /// Relay core.
     Relay,
-    /// Leaf core.
+    /// A sleepy node (`Config::sleepy`); the name is the file format's.
     Leaf,
 }
 
