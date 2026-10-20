@@ -883,8 +883,6 @@ pub struct Dense {
     /// At the end, per relay: how many running relays keep it in their
     /// neighbour tables, and how many of those with margin.
     pub known_by: Vec<(u32, u32)>,
-    /// People's relays that stood down before the run (`scenario::StandDown`).
-    pub stood_down: u32,
 }
 
 /// Bins of `Research::movers`: moving, then at a stop for less than each

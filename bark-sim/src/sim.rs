@@ -880,87 +880,6 @@ fn draw_pairs(
     Ok(out)
 }
 
-/// The signal a full frame needs, dBm, before fading: the margin's packet
-/// RSSI less the noise it includes (spec "Neighbour table").
-fn full_frame_signal_dbm(radio: &RadioParams) -> f64 {
-    let above = bark_proto::radio::full_frame_rssi_above_noise_db() as f64;
-    radio.noise_floor_dbm() + 10.0 * (10f64.powf(above / 10.0) - 1.0).log10()
-}
-
-/// The people's relays that stand down (`scenario::StandDown`): in an
-/// order drawn from the run's seed, each that hears at least the number
-/// of relays still standing with margin both ways, before fading, runs
-/// as a sleepy node. Returns the nodes in their new order, relays first,
-/// with the index each had, by which its links are drawn, and how many
-/// stood down; the nodes as given if none is to.
-fn stand_down(sc: &Scenario, mut placed: Vec<PlacedNode>) -> Result<Standing, String> {
-    let n_min = sc.stand_down.neighbours as usize;
-    if n_min == 0 {
-        return Ok(Standing {
-            placed,
-            keys: None,
-            down: 0,
-        });
-    }
-    let n = placed.len();
-    let base = sc.protocol.config();
-    let xy: Vec<Xy> = placed.iter().map(|p| p.xy).collect();
-    let site: Vec<Site> = placed.iter().map(PlacedNode::site).collect();
-    let names: Vec<Option<String>> = placed.iter().map(|p| p.name.clone()).collect();
-    let links = LinkTable::build(
-        &sc.links,
-        &NodeRadio {
-            xy: &xy,
-            tx_dbm: &vec![base.tx_power_dbm as f64; n],
-            site: &site,
-            names: &names,
-            walks: &vec![false; n],
-            keys: None,
-        },
-        sc.radio.cutoff_dbm(),
-        sc.seed,
-    )?;
-    let need = full_frame_signal_dbm(&sc.radio);
-    let up = |a: u32, b: u32| links.get(a, b).is_some_and(|l| l.base_dbm as f64 >= need);
-    let mut standing: Vec<bool> = placed.iter().map(|p| p.role == RoleSpec::Relay).collect();
-    let mut order: Vec<u32> = (0..n as u32)
-        .filter(|&i| standing[i as usize] && placed[i as usize].person)
-        .collect();
-    let mut r = Stream::new(sc.seed, Purpose::StandDown, 0);
-    for k in (1..order.len()).rev() {
-        order.swap(k, r.range(0, k as u64) as usize);
-    }
-    let mut down = 0;
-    for &c in &order {
-        let heard = links
-            .row(c)
-            .iter()
-            .filter(|l| standing[l.rx as usize] && up(c, l.rx) && up(l.rx, c))
-            .count();
-        if heard >= n_min {
-            standing[c as usize] = false;
-            placed[c as usize].role = RoleSpec::Leaf;
-            down += 1;
-        }
-    }
-    let mut keyed: Vec<(u32, PlacedNode)> = (0..n as u32).zip(placed).collect();
-    keyed.sort_by_key(|(_, p)| p.role != RoleSpec::Relay);
-    let (keys, placed) = keyed.into_iter().unzip();
-    Ok(Standing {
-        placed,
-        keys: Some(keys),
-        down,
-    })
-}
-
-/// The nodes after [`stand_down`]: in their order, the index each had,
-/// and how many stood down.
-struct Standing {
-    placed: Vec<PlacedNode>,
-    keys: Option<Vec<u32>>,
-    down: u32,
-}
-
 /// A node's clock: at true time `t` it reads `t + t × ppb / 10⁹`. The
 /// simulator keeps true time and hands each core its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1025,11 +944,7 @@ fn secs(s: f64) -> Duration {
 impl Sim {
     /// Build a simulator from a scenario.
     pub fn new(sc: &Scenario) -> Result<Sim, String> {
-        let Standing {
-            placed,
-            keys,
-            down: stood_down,
-        } = stand_down(sc, sc.placed()?)?;
+        let placed = sc.placed()?;
         let n = placed.len();
         if n == 0 {
             return Err("scenario has no nodes".into());
@@ -1080,7 +995,6 @@ impl Sim {
                 site: &site,
                 names: &names,
                 walks: &walking,
-                keys: keys.as_deref(),
             },
             radio.cutoff_dbm(),
             sc.seed,
@@ -1264,12 +1178,6 @@ impl Sim {
             recorded: std::collections::HashSet::new(),
             refused_at: HashMap::new(),
         };
-        if stood_down > 0 {
-            sim.metrics.research.dense = Some(crate::metrics::Dense {
-                stood_down,
-                ..Default::default()
-            });
-        }
         sim.component = sim.components();
         sim.setup(sc, &placed)?;
         Ok(sim)
@@ -3947,51 +3855,6 @@ mod tests {
             .filter(|&&i| sim.relay_position(i) != sim.positions[i as usize])
             .count();
         assert!(moved > 0, "no walking relay took a fix");
-    }
-
-    /// People's relays that hear enough relays stand down before the run
-    /// and keep their links: each that stood down heard at least that many
-    /// relays with margin both ways among those still standing then, all
-    /// of which are relays now or stood down later.
-    #[test]
-    fn crowded_people_s_relays_stand_down() {
-        let mut sc = block(7, 1.0);
-        if let crate::scenario::Placement::Density { relay_share, .. } = &mut sc.nodes[1] {
-            *relay_share = 0.5;
-        }
-        let all = Sim::new(&sc).unwrap();
-        sc.stand_down.neighbours = 6;
-        let sim = Sim::new(&sc).unwrap();
-        let down = sim.metrics.research.dense.as_ref().unwrap().stood_down;
-        assert!(down > 10, "{down} stood down");
-        assert_eq!(sim.n_relays + down, all.n_relays);
-        assert_eq!(sim.node_count(), all.node_count());
-        let need = full_frame_signal_dbm(&sc.radio);
-        let up = |a: u32, b: u32| {
-            sim.links
-                .get(a, b)
-                .is_some_and(|l| l.base_dbm as f64 >= need)
-        };
-        let before = |n: u32| {
-            all.xy
-                .iter()
-                .position(|&p| p == sim.xy[n as usize])
-                .unwrap() as u32
-        };
-        let was_relay = |n: u32| n < sim.n_relays || before(n) < all.n_relays;
-        for n in sim.n_relays..sim.node_count() as u32 {
-            if before(n) >= all.n_relays {
-                continue;
-            }
-            let heard = (0..sim.node_count() as u32)
-                .filter(|&r| r != n && was_relay(r) && up(n, r) && up(r, n))
-                .count();
-            assert!(heard >= 6, "node {n} stood down hearing {heard}");
-            for l in sim.links.row(n) {
-                let kept = all.links.get(before(n), before(l.rx)).unwrap();
-                assert_eq!(kept.base_dbm, l.base_dbm, "links kept");
-            }
-        }
     }
 
     /// Forced pairs are of the kind and reach asked for, no node is in
