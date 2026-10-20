@@ -3,10 +3,11 @@
 Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
-Current state (2026-10-15). The firmware blinks the green LED at 1 Hz,
-logs over USB CDC-ACM (a banner with the firmware version and constants
-from `bark-proto`, the previous boot's panic message if there was one, an
-uptime line every 10 s), powers up the SX1262 at bark's modulation (SF5,
+Current state (2026-10-20). The firmware blinks the green LED at 1 Hz
+(except the sleepy image, below), logs over USB CDC-ACM (a banner with
+the firmware version and constants from `bark-proto`, the previous boot's
+panic message if there was one, an uptime line every 10 s but in the
+sleepy image), powers up the SX1262 at bark's modulation (SF5,
 125 kHz, CR 4/5, CRC on, private sync word, the receiver set for the
 1396-symbol long preamble) and then
 does one of three things, chosen when it is built:
@@ -27,8 +28,11 @@ BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
 ```
 
 Without them the position is 0, 0, and boards built alike share one
-identity. Every protocol event (`Trace`) and every message for the node is
-a log line, and every 10 s a `driver` line gives the loop's counters and
+identity. Every protocol event (`Trace`), every message for the node, and
+a sleepy node's own message given back by its first hop with the time
+left to wait (`given back ... retry_in_ms=`) is a log line, and at
+the first event 10 s or more after the last a `driver` line gives the
+loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times. There is no application yet: the node sends no
 messages of its own. It does not touch GPS, e-paper or BLE (the GPS does
 get power, see Radio power below).
@@ -44,14 +48,14 @@ Verified on the host:
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the three builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The relay image is 310 KiB of
+  initial stack pointer is `0x20040000`. The relay image is 315 KiB of
   flash (`llvm-size -A`, `.text`, `.rodata` and `.data`), 162 KiB of it
   the node's empty tables, which start in flash and are copied to RAM at
   boot; it uses 170 KiB of RAM before the stack (`.data` and `.bss`),
   which leaves 85 KiB for the stack. The sleepy image keeps no heard
-  table and no delivery queue: 288 KiB of flash and 152 KiB of RAM,
-  which leaves 103 KiB for the stack; before, it was the relay's size,
-  310 KiB and 170 KiB (2026-10-18, roadmap D58). Its deepest single stack frame, the
+  table and no delivery queue: 291 KiB of flash and 152 KiB of RAM,
+  which leaves 103 KiB for the stack (2026-10-20; duty-cycled receive
+  added 3 KiB of flash to each, from 312 and 289 KiB). Its deepest single stack frame, the
   largest stack adjustment in the disassembly (`llvm-objdump`), is 23 KiB,
   in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
   28 KiB for the image before D46, where this file said 18 KiB.
@@ -69,7 +73,9 @@ Unverified, in the order they will fail if wrong:
 - The bootloader accepts the UF2 and jumps to `0x26000`.
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
-- The 32 MHz crystal starts (USB needs it); the low-frequency clock uses the
+- The 32 MHz crystal starts (USB needs it) when a node boots on USB
+  power; a node booted on battery starts none, and its USB is expected to
+  work only after a reset with the cable in; the low-frequency clock uses the
   internal RC oscillator so no 32.768 kHz crystal is assumed.
 - The green LED is on P0.15 and active low.
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
@@ -288,6 +294,46 @@ after every CAD, which ends in STDBY_RC whatever the driver asks
 (DS Table 13-73). The driver returns to STDBY_XOSC at once, so the wait
 falls inside the CAD (the console's `cad_us`), not inside the next
 operation.
+
+## The sleepy image's current
+
+The sleepy image is the one to measure a carried node's current with.
+Between the core's wakeups and the radio's interrupts nothing runs: the
+driver's loop waits on one embassy timer (the core's next wakeup, the end
+of a sniff or of a hold), DIO1 through GPIOTE, and an application that
+has nothing to send, and the embassy executor sleeps in `wfe` meanwhile.
+The USB device waits for VBUS and the log for the host to open the port,
+both on interrupts. Three things that would keep the board awake are
+gone from this image:
+
+- The LED blink: the LED stays dark, and the CPU is not woken twice a
+  second.
+- TIMER1, the console's 1 µs stopwatch: a running TIMER keeps the
+  high-frequency clock requested while the CPU sleeps (nRF52840 Product
+  Specification, TIMER and CLOCK). A node's timings come from the embassy
+  clock, to 30.5 µs. (So in the relay image too.)
+- The 32 MHz crystal, once started, runs on while the CPU sleeps; a node
+  starts it only when it boots on USB power, which USB needs (the
+  console always does). On battery the high-frequency clock is the
+  internal oscillator, started only while something needs it.
+
+What stays, and is not this firmware's to fix without a board:
+
+- The GPS. It is on the switched rail with the radio (Radio power) and
+  draws its own current, likely more than everything else together; its
+  standby pin (P1.02, `board.rs`) has an unverified polarity. Measure
+  the board with it as it is first, then decide.
+- The battery divider, about 12 µA all the time (`board.rs`, Battery).
+- The nRF52840's regulator runs as an LDO (embassy's default); the DC-DC
+  needs an inductor the T-Echo may or may not have.
+- The e-paper and the external flash are not touched; their idle current
+  is unknown.
+
+The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
+the windows after them (spec "Beats"); without an anchor each beat is a
+366 ms frame with the long preamble at the transmit current, every 34.6 s
+on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
+`scripts/measure.md` step 4 measures it in each state.
 
 ## Risks
 

@@ -1,6 +1,7 @@
 //! bark firmware for the LILYGO T-Echo.
 //!
-//! Blinks the green LED at 1 Hz, logs over USB CDC-ACM, powers up the
+//! Blinks the green LED at 1 Hz (not in the sleepy image), logs over USB
+//! CDC-ACM, powers up the
 //! SX1262 at bark's modulation and runs the protocol core on it
 //! (`node.rs`), or with the `console` feature the bring-up measurement
 //! console (`console.rs`) on the serial port. Touches no GPS, display or
@@ -22,10 +23,9 @@ use core::cell::Cell;
 use embassy_executor::Spawner;
 use embassy_futures::join::join4;
 use embassy_nrf::config::{Config, HfclkSource};
-use embassy_nrf::gpio::{Level, Output, OutputDrive};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_time::Instant;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 // The logger macro constructs the input handler through this trait.
 use embassy_usb_logger::ReceiverHandler as _;
@@ -64,11 +64,6 @@ const USB_PACKET: u16 = 64;
 /// here; once it is full, new lines are dropped, so the banner survives.
 const LOG_BUFFER: usize = 2048;
 
-/// Blink half-period: 1 Hz means 500 ms on, 500 ms off.
-const BLINK_HALF_PERIOD: Duration = Duration::from_millis(500);
-/// Half-periods between uptime lines: 20 × 500 ms = 10 s.
-const UPTIME_EVERY: u32 = 20;
-
 /// Heartbeat airtime as the core computes it (8-byte frame, minimum SF5
 /// preamble). A compile-time call into `bark-proto` for the target.
 const HEARTBEAT_AIRTIME_US: u64 =
@@ -81,14 +76,19 @@ async fn main(_spawner: Spawner) {
 
     let mut config = Config::default();
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
-    // Specification, USBD chapter). The 32.768 kHz clock stays on the
-    // internal RC oscillator, which assumes nothing about a fitted LF crystal.
-    config.hfclk_source = HfclkSource::ExternalXtal;
+    // Specification, USBD chapter), and once started it runs while the CPU
+    // sleeps. A node that boots without USB power keeps it off, so its USB
+    // works only after a reset with the cable in; the console always
+    // starts it, for its stopwatch (clock.rs). The 32.768 kHz clock stays
+    // on the internal RC oscillator, which assumes nothing about a fitted
+    // LF crystal.
+    let on_usb = embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect();
+    config.hfclk_source = match cfg!(feature = "console") || on_usb {
+        true => HfclkSource::ExternalXtal,
+        false => HfclkSource::Internal,
+    };
     let p = embassy_nrf::init(config);
     let board = board::take_board!(p);
-
-    // LED assumed active low (board.rs, Leds): start dark.
-    let mut green = Output::new(board.leds.green, Level::High, OutputDrive::Standard);
 
     // USB device with one CDC-ACM interface carrying the log.
     let driver = usb::Driver::new(board.usbd, Irqs, HardwareVbusDetect::new(Irqs));
@@ -158,20 +158,18 @@ async fn main(_spawner: Spawner) {
         log::error!("previous boot panicked: {}", msg);
     }
 
-    let blink = async {
-        let mut ticker = Ticker::every(BLINK_HALF_PERIOD);
-        let mut half_periods: u32 = 0;
-        loop {
-            ticker.next().await;
-            green.toggle();
-            half_periods = half_periods.wrapping_add(1);
-            if half_periods.is_multiple_of(UPTIME_EVERY) {
-                log::info!("uptime {} s", Instant::now().as_secs());
-            }
-        }
-    };
+    // The sleepy image is for measuring a carried node's current: the LED
+    // would dwarf the radio's, and the ticker wake the CPU twice a second.
+    // Its pin stays as reset left it, disconnected, and the LED dark.
+    #[cfg(feature = "sleepy")]
+    let blink = core::future::pending::<()>();
+    #[cfg(not(feature = "sleepy"))]
+    let blink = blink(board.leds.green);
 
+    #[cfg(feature = "console")]
     let clock = clock::Clock::new(p.TIMER1);
+    #[cfg(not(feature = "console"))]
+    let clock = clock::Clock::new();
     let irq_deadline = Cell::new(None);
     #[cfg(feature = "console")]
     let battery = embassy_nrf::saadc::Saadc::new(
@@ -218,4 +216,29 @@ async fn main(_spawner: Spawner) {
     };
 
     join4(device.run(), log_sink, blink, radio_task).await;
+}
+
+/// Blink half-period: 1 Hz means 500 ms on, 500 ms off.
+#[cfg(not(feature = "sleepy"))]
+const BLINK_HALF_PERIOD: embassy_time::Duration = embassy_time::Duration::from_millis(500);
+/// Half-periods between uptime lines: 20 × 500 ms = 10 s.
+#[cfg(not(feature = "sleepy"))]
+const UPTIME_EVERY: u32 = 20;
+
+/// Blink the green LED and log the uptime, forever.
+#[cfg(not(feature = "sleepy"))]
+async fn blink(pin: embassy_nrf::Peri<'static, peripherals::P0_15>) {
+    use embassy_nrf::gpio::{Level, Output, OutputDrive};
+    // LED assumed active low (board.rs, Leds): start dark.
+    let mut green = Output::new(pin, Level::High, OutputDrive::Standard);
+    let mut ticker = embassy_time::Ticker::every(BLINK_HALF_PERIOD);
+    let mut half_periods: u32 = 0;
+    loop {
+        ticker.next().await;
+        green.toggle();
+        half_periods = half_periods.wrapping_add(1);
+        if half_periods.is_multiple_of(UPTIME_EVERY) {
+            log::info!("uptime {} s", Instant::now().as_secs());
+        }
+    }
 }
