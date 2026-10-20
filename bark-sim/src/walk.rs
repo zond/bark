@@ -119,10 +119,22 @@ pub(crate) struct Walks {
     /// were built, and when.
     moving: [(Option<Grid>, Vec<u32>); 2],
     built: Option<Instant>,
+    /// Per walker at a stop, its links to the nodes that stay, by node, and
+    /// their power before fading, worked out at its first frame of the
+    /// stop: they are the same for the whole stop.
+    stays: Vec<Option<Vec<(u32, f64)>>>,
+    /// The nodes below this never sleep, so never walk.
+    fixed: u32,
+    /// Per node that never sleeps and walker, the power before fading of
+    /// a frame from that node, `NAN` if not yet worked out in this stop,
+    /// `-∞` if out of reach: it is the same for the whole stop, those
+    /// nodes send most of the frames, and an array indexed by both is
+    /// quicker to read than a search of the walker's links.
+    heard: Vec<f64>,
 }
 
-/// How often the walkers' grids are built again: their side allows for
-/// as far as a walker goes in that time.
+/// How often the walkers' grids are built again: a search of them allows
+/// for as far as a walker goes in that time.
 pub(crate) const REGRID: Duration = Duration::from_secs(10);
 
 impl Walks {
@@ -141,6 +153,7 @@ impl Walks {
         seed: u64,
     ) -> Walks {
         let n = xy.len();
+        let fixed = sleepy.start;
         let mut of = vec![u32::MAX; n];
         let mut walkers = Vec::new();
         for i in sleepy.clone() {
@@ -229,7 +242,6 @@ impl Walks {
             }
         });
         Walks {
-            walkers,
             of,
             p: p.clone(),
             v: v.clone(),
@@ -248,6 +260,10 @@ impl Walks {
             classes,
             moving: [(None, Vec::new()), (None, Vec::new())],
             built: None,
+            stays: vec![None; walkers.len()],
+            heard: vec![f64::NAN; walkers.len() * fixed as usize],
+            fixed,
+            walkers,
         }
     }
 
@@ -266,6 +282,7 @@ impl Walks {
     /// Returns when that ends.
     pub fn next_leg(&mut self, w: u32, now: Instant) -> Instant {
         let (trip, (lo, hi)) = (self.p.trip_m, (self.lo, self.hi));
+        let walkers = self.walkers.len();
         let k = &mut self.walkers[w as usize];
         let (speed, stop) = match k.route {
             Some(_) => (k.speed, self.v.stop_s),
@@ -273,6 +290,10 @@ impl Walks {
         };
         let here = k.at(now);
         k.leg += 1;
+        self.stays[w as usize] = None;
+        for b in self.heard.iter_mut().skip(w as usize).step_by(walkers) {
+            *b = f64::NAN;
+        }
         if k.walking {
             k.walking = false;
             k.from = here;
@@ -378,38 +399,9 @@ impl Walks {
             None => (xy[src as usize], site[src as usize]),
         };
         let mut out = Vec::new();
-        let mut consider = |s: &Self, rx: u32, at: Xy, rx_site: Site| {
-            if rx == src {
-                return;
-            }
-            let d = from.dist(at);
-            if d > s.cutoff[from_site as usize][rx_site as usize] {
-                return;
-            }
-            let mover = match (s.walks(src), s.walks(rx)) {
-                (true, true) => Xy {
-                    x: (from.x + at.x) / 2.0,
-                    y: (from.y + at.y) / 2.0,
-                },
-                (true, false) => from,
-                _ => at,
-            };
-            let body = |n: u32| {
-                if s.walker(n).is_some_and(Walker::driven) {
-                    s.v.loss_db
-                } else {
-                    0.0
-                }
-            };
-            let loss = s.links.path_loss_db(d)
-                + s.links.site_loss_db(from_site, rx_site)
-                + body(src)
-                + body(rx)
-                - s.shadow_db(src, rx, mover);
-            let base = s.tx_dbm - loss;
-            if base < s.floor_dbm {
-                return;
-            }
+        let mut stays = std::mem::take(&mut self.stays);
+        let mut heard = std::mem::take(&mut self.heard);
+        let mut push = |s: &Self, rx: u32, base: f64| {
             let dbm = base + s.fade_db(src, rx, channel, now);
             out.push(MovingLink {
                 rx,
@@ -417,33 +409,133 @@ impl Walks {
                 dbm,
             });
         };
-        // A search wider than the cut-off by more than the rounding of the
-        // distance, so that it finds every node `consider` keeps.
-        let wide = |r: f64| r * (1.0 + 1e-9) + 1.0;
         // Walkers in reach, wherever they went since the grids were built.
-        for ((grid, ws), site) in self.moving.iter().zip([Site::Indoor, Site::Outdoor]) {
+        for ((grid, ws), on) in self.moving.iter().zip([Site::Indoor, Site::Outdoor]) {
             if let Some(g) = grid {
-                let r = wide(self.cutoff[from_site as usize][site as usize] + self.slack);
+                let r = wide(self.cutoff[from_site as usize][on as usize] + self.slack);
                 g.within(from, r, |k| {
-                    let w = &self.walkers[ws[k as usize] as usize];
-                    consider(self, w.node, w.at(now), w.site());
+                    let wi = ws[k as usize];
+                    let w = &self.walkers[wi as usize];
+                    if w.node == src {
+                        return;
+                    }
+                    let known = (src < self.fixed && !w.walking)
+                        .then(|| src as usize * self.walkers.len() + wi as usize);
+                    let base = match known.map(|i| heard[i]) {
+                        Some(b) if !b.is_nan() => b,
+                        _ => {
+                            let b =
+                                self.base_dbm(src, w.node, from, w.at(now), from_site, w.site());
+                            if let Some(i) = known {
+                                heard[i] = b;
+                            }
+                            b
+                        }
+                    };
+                    if base != f64::NEG_INFINITY {
+                        push(self, w.node, base);
+                    }
                 });
             }
         }
         // Nodes that stay, in reach of a walker.
-        if self.walks(src) {
-            for (class, c) in self.classes.iter().zip(Site::ALL) {
-                if let Some(g) = &class.grid {
-                    let r = wide(self.cutoff[from_site as usize][c as usize]);
-                    g.within(from, r, |k| {
-                        let n = class.nodes[k as usize];
-                        consider(self, n, xy[n as usize], site[n as usize]);
-                    });
+        if let Some(&wi) = self.of.get(src as usize).filter(|&&w| w != u32::MAX) {
+            if self.walkers[wi as usize].walking {
+                for (class, c) in self.classes.iter().zip(Site::ALL) {
+                    if let Some(g) = &class.grid {
+                        let r = wide(self.cutoff[from_site as usize][c as usize]);
+                        g.within(from, r, |k| {
+                            let n = class.nodes[k as usize];
+                            let base = self.base_dbm(
+                                src,
+                                n,
+                                from,
+                                xy[n as usize],
+                                from_site,
+                                site[n as usize],
+                            );
+                            if base != f64::NEG_INFINITY {
+                                push(self, n, base);
+                            }
+                        });
+                    }
+                }
+            } else {
+                let row =
+                    stays[wi as usize].get_or_insert_with(|| self.stay_links(src, from, xy, site));
+                for &(n, base) in row.iter() {
+                    push(self, n, base);
                 }
             }
         }
+        self.stays = stays;
+        self.heard = heard;
         out.sort_unstable_by_key(|l| l.rx);
         out
+    }
+
+    /// The links of the walker `node`, stopped at `at`, to the nodes that
+    /// stay, by node, and the power before fading on each.
+    fn stay_links(&self, node: u32, at: Xy, xy: &[Xy], site: &[Site]) -> Vec<(u32, f64)> {
+        let mut row = Vec::new();
+        for (class, c) in self.classes.iter().zip(Site::ALL) {
+            if let Some(g) = &class.grid {
+                g.within(
+                    at,
+                    wide(self.cutoff[Site::Indoor as usize][c as usize]),
+                    |k| {
+                        let n = class.nodes[k as usize];
+                        let base = self.base_dbm(
+                            node,
+                            n,
+                            at,
+                            xy[n as usize],
+                            Site::Indoor,
+                            site[n as usize],
+                        );
+                        if base != f64::NEG_INFINITY {
+                            row.push((n, base));
+                        }
+                    },
+                );
+            }
+        }
+        row.sort_unstable_by_key(|l| l.0);
+        row
+    }
+
+    /// The power before fading at `rx`, at `at` on `rx_site`, of a frame
+    /// `src` sends from `from` on `from_site`, dBm; `-∞` if out of reach.
+    fn base_dbm(&self, src: u32, rx: u32, from: Xy, at: Xy, from_site: Site, rx_site: Site) -> f64 {
+        let d = from.dist(at);
+        if d > self.cutoff[from_site as usize][rx_site as usize] {
+            return f64::NEG_INFINITY;
+        }
+        let mover = match (self.walks(src), self.walks(rx)) {
+            (true, true) => Xy {
+                x: (from.x + at.x) / 2.0,
+                y: (from.y + at.y) / 2.0,
+            },
+            (true, false) => from,
+            _ => at,
+        };
+        let body = |n: u32| {
+            if self.walker(n).is_some_and(Walker::driven) {
+                self.v.loss_db
+            } else {
+                0.0
+            }
+        };
+        let loss = self.links.path_loss_db(d)
+            + self.links.site_loss_db(from_site, rx_site)
+            + body(src)
+            + body(rx)
+            - self.shadow_db(src, rx, mover);
+        let base = self.tx_dbm - loss;
+        if base < self.floor_dbm {
+            return f64::NEG_INFINITY;
+        }
+        base
     }
 
     /// Shadowing of the link `a`–`b` with its moving end at `p`, dB: a
@@ -515,6 +607,12 @@ impl Walks {
         let x = (1.0 - u) * at(k) + u * at(k + 1);
         sigma * x / ((1.0 - u) * (1.0 - u) + u * u).sqrt()
     }
+}
+
+/// A search wider than the cut-off `r` by more than the rounding of the
+/// distance, so that it finds every node the cut-off keeps.
+fn wide(r: f64) -> f64 {
+    r * (1.0 + 1e-9) + 1.0
 }
 
 /// The point a fraction `f` of the way along a route.
