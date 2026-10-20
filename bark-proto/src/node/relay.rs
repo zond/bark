@@ -1344,7 +1344,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let heard = self
             .neighbours
             .live(now)
-            .filter(|(_, e)| e.relay() && self.both_ways(e, floor))
+            .filter(|(_, e)| e.relay() && Neighbours::has_margin(e, floor))
             .count() as f32;
         let to = if heard > n as f32 {
             (self.power - POWER_STEP_DB).max(MIN_POWER_DBM)
@@ -1362,18 +1362,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The power every frame goes at now, dBm.
     pub fn power_dbm(&self) -> i8 {
         self.power
-    }
-
-    /// How far below full power every frame goes now, dB.
-    pub(crate) fn power_down(&self) -> u8 {
-        (self.config.tx_power_dbm - self.power).max(0) as u8
-    }
-
-    /// Whether `n` has margin and this node's frames reach it with margin
-    /// too, by what its heartbeat says of its power.
-    pub(crate) fn both_ways(&self, n: &Neighbour, noise_floor_dbm: i16) -> bool {
-        let margin = Neighbours::margin_dbm(noise_floor_dbm);
-        n.rssi >= margin && Neighbours::heard_back(n, self.power_down()) >= margin
     }
 
     // --- Heartbeat (spec "Heartbeat") ---
@@ -1427,7 +1415,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
-            power_down: self.power_down(),
         };
         let reaches_home = self.beacon.reach_all.unwrap_or(0) & channel_bit(self.home) != 0;
         let preamble = match beat {
@@ -1960,7 +1947,6 @@ mod tests {
             home: r.home(),
             id: other,
             short: config.position.short(),
-            power_down: 0,
         };
         let mut buf = [0; crate::event::MAX_FRAME];
         let len = Packet::Heartbeat(beat).encode(&mut buf).unwrap();
@@ -2071,7 +2057,6 @@ mod tests {
                 home: Channel::new(4).unwrap(),
                 id: anchor,
                 short: config.position.short(),
-                power_down: 0,
             };
             let mut bytes = [0u8; crate::event::MAX_FRAME];
             let n = Packet::Heartbeat(hb).encode(&mut bytes).unwrap();
@@ -2725,7 +2710,6 @@ mod tests {
             home: b_home,
             id: id_of(b),
             short: b.short(),
-            power_down: 0,
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         // Four forwards for B, queued in this order.
@@ -2859,7 +2843,6 @@ mod tests {
             home: Channel::new(5).unwrap(),
             id: id_of(d_pos),
             short: d_pos.short(),
-            power_down: 0,
         };
         hear(&mut r, now, &Packet::Heartbeat(hb));
         let data = Data {
@@ -2987,7 +2970,6 @@ mod tests {
                 home: Channel::new(5).unwrap(),
                 id: id_of(d_pos),
                 short: d_pos.short(),
-                power_down: 0,
             }),
         );
         let expiry = r.neighbours.params().expire_after;
@@ -3071,7 +3053,6 @@ mod tests {
                 home: Channel::new(5).unwrap(),
                 id: id_of(at),
                 short: at.short(),
-                power_down: 0,
             };
             r.neighbours.heard(&hb, at, -80, &r.plane, now);
             r.neighbours.refused(hb.id, now + BAN);

@@ -452,8 +452,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let skipped = if blocks { self.skipped } else { 0 };
         // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
-        let down = self.power_down();
-        let faint = |n: &Neighbour| n.rssi < margin || Neighbours::heard_back(n, down) < margin;
+        let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
         let others = self.others_open(record, blocks, now);

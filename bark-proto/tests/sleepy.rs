@@ -847,7 +847,6 @@ fn heartbeats_out_of_slot_do_not_move_the_watch() {
         home: relay.home(),
         id: relay.id(),
         short: relay.config().position.short(),
-        power_down: 0,
     };
     let mut answer = Frame {
         channel: home,

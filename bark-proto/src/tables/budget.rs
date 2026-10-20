@@ -314,13 +314,13 @@ mod tests {
 
     #[test]
     fn heartbeat_reserve_is_one_heartbeat() {
-        assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(13_120));
+        assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(11_840));
     }
 
     #[test]
     fn reply_reserve_and_ban() {
         assert_eq!(ACK_AIRTIME, Duration::from_micros(14_400));
-        assert_eq!(REPLY_RESERVE, Duration::from_micros(243_520));
+        assert_eq!(REPLY_RESERVE, Duration::from_micros(242_240));
         let ban = BAN.as_micros();
         assert!((1_555_000..1_556_000).contains(&ban), "{ban} µs");
         // The ban refills exactly a full frame and its ACK.
