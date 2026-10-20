@@ -547,6 +547,15 @@ above full power ([regulatory limits](#regulatory-limits)) nor below
   neighbours count, so the count settles only through the neighbours'
   steps.
 
+A heartbeat carries a tenth byte, how far below full power its sender
+sends, in dB. The path loss is the same both ways, so a relay's frames
+reach a neighbour at the neighbour's averaged RSSI here, raised by how far
+below full power the neighbour sends and lowered by how far this relay
+does. A relay counts only neighbours with margin both ways, and a
+neighbour whose way back has no margin is a next hop only as one without
+margin is ([next hop](#next-hop)). The byte costs a heartbeat a block of
+five symbols, 1.28 ms: 13.1 ms on air where 9 bytes take 11.8 ms.
+
 ---
 
 ## Forwarding

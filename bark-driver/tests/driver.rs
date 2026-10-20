@@ -595,6 +595,7 @@ fn a_relay_runs_through_the_loop() {
         home: ch(6),
         id: bark_proto::NodeId([6; 4]),
         short: other.short(),
+        power_down: 0,
     });
     let mut buf = [0u8; MAX_FRAME];
     let len = hb.encode(&mut buf).expect("encodes");

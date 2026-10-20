@@ -105,8 +105,9 @@ const _: () = assert!(
 // HEARTBEAT.
 const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
+const HEARTBEAT_POWER: usize = HEARTBEAT_POS + SHORT_LEN;
 /// HEARTBEAT length.
-pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
+pub const HEARTBEAT_LEN: usize = HEARTBEAT_POWER + 1;
 
 // ACK.
 const ACK_ID: usize = FIRST + FIRST_LEN;
@@ -133,16 +134,11 @@ pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 /// 255 − 22 = 233 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13 && NACK_LEN == 14);
+const _: () = assert!(HEARTBEAT_LEN == 10 && ACK_LEN == 13 && NACK_LEN == 14);
 const _: () = assert!(
     time_on_air(NACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         == time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
     "the wait costs the refusal no airtime"
-);
-const _: () = assert!(
-    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        == time_on_air(8, MIN_PREAMBLE_SYMBOLS).as_micros(),
-    "the node ID costs the heartbeat no airtime"
 );
 const _: () = assert!(DATA_HEADER_LEN == 22);
 const _: () = assert!(MAX_PAYLOAD == 233);
@@ -165,6 +161,9 @@ pub struct Heartbeat {
     /// The sender's position in short form; [`Heartbeat::position`]
     /// rebuilds it.
     pub short: ShortName,
+    /// How far below full power the sender sends, dB (proposal,
+    /// spec "Power by density"); 0 at full power.
+    pub power_down: u8,
 }
 
 impl Heartbeat {
@@ -346,6 +345,7 @@ impl Packet<'_> {
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
+                buf[HEARTBEAT_POWER] = h.power_down;
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
@@ -397,6 +397,7 @@ impl<'a> Packet<'a> {
                     home: channel(aux)?,
                     id: NodeId(get4(b, HEARTBEAT_ID)),
                     short: get_short(b, HEARTBEAT_POS),
+                    power_down: b[HEARTBEAT_POWER],
                 }))
             }
             T_ACK | T_NACK => {
@@ -463,7 +464,7 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
-            Packet::Heartbeat(_) => 9,
+            Packet::Heartbeat(_) => 10,
             Packet::Ack(a) if a.refused => 14,
             Packet::Ack(_) => 13,
             Packet::Data(d) => 22 + d.payload.len(),
@@ -482,7 +483,7 @@ mod tests {
             position in position(),
         ) {
             let anchorless = anchorless && sleepy;
-            let hb = Heartbeat { sleepy, anchorless, home, id, short: position.short() };
+            let hb = Heartbeat { sleepy, anchorless, home, id, short: position.short(), power_down: 3 };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -590,12 +591,12 @@ mod tests {
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
-            Packet::decode(&[0x8d, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x8d, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(ChannelOutOfRange(13))
         );
-        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
+        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
         assert_eq!(
-            Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
             Err(BadLength)
         );
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
@@ -626,9 +627,10 @@ mod tests {
             home: Channel::new(12).unwrap(),
             id: NodeId([1, 2, 3, 4]),
             short: ShortName(0x0506_0708),
+            power_down: 6,
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8, 6]);
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x9c);
@@ -646,8 +648,8 @@ mod tests {
         assert_eq!(buf[0], 0x8c, "anchorless only with sleepy");
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(11_840),
-            "46.25 symbols at SF5, as for 8 bytes"
+            Duration::from_micros(13_120),
+            "51.25 symbols at SF5: the power byte takes a block of five"
         );
 
         let ack = Ack {

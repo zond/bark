@@ -164,6 +164,9 @@ pub struct Neighbour {
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
+    /// How far below full power it sends, dB, from its last heartbeat
+    /// (proposal, spec "Power by density").
+    pub power_down: u8,
 }
 
 impl Neighbour {
@@ -353,6 +356,15 @@ impl Neighbours {
         n.rssi >= Neighbours::margin_dbm(noise_floor_dbm)
     }
 
+    /// The averaged RSSI at which `n` hears a frame from this node, sent
+    /// `power_down` dB below full power, by the path loss being the same
+    /// both ways: what this node hears of it, raised by how far below full
+    /// power `n` sends and lowered by how far this node does (proposal,
+    /// spec "Power by density").
+    pub fn heard_back(n: &Neighbour, power_down: u8) -> f32 {
+        n.rssi + n.power_down as f32 - power_down as f32
+    }
+
     /// Whether `n` is banned at `now`.
     pub fn is_banned(&self, n: &Neighbour, now: Instant) -> bool {
         now < n.banned_until
@@ -426,6 +438,7 @@ impl Neighbours {
                 };
                 n.anchorless = anchorless;
                 n.answered = 0;
+                n.power_down = hb.power_down;
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
             }
@@ -447,6 +460,7 @@ impl Neighbours {
             beat_at: now,
             beat_on: hb.home,
             answered: 0,
+            power_down: hb.power_down,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -637,6 +651,7 @@ mod tests {
             home: Channel::new(home).unwrap(),
             id: id(i),
             short: pos(i).short(),
+            power_down: 0,
         };
         (hb, pos(i))
     }

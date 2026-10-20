@@ -103,6 +103,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     home: nhome,
                     id: NodeId(pos.short().0.to_be_bytes()),
                     short: pos.short(),
+                    power_down: 0,
                 }),
                 false => Packet::Data(Data {
                     sender_home: nhome,
