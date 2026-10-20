@@ -102,7 +102,7 @@ Unverified, in the order they will fail if wrong:
   chip from its sleep, and a second try after a BUSY timeout covers an
   edge lost as it goes to sleep; set for 1396 symbols the receiver still
   takes the 12-symbol preamble in continuous receive. `scripts/measure.md`
-  step 4 tests each.
+  step 5 tests each.
 - Transmit power: the chip's 10 dBm setting gives about 10 dBm at the
   antenna port, and the stock antenna has no gain over a dipole, so the
   console's 10 dBm cap meets the 10 mW ERP limit.
@@ -200,6 +200,7 @@ retune times.
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
 | `power <dbm>` | transmit power, clamped to −9..10 dBm | the power in effect |
+| `preamble <short\|long\|n>` | preamble of `tx` and `beacon` frames: 12 symbols, the 1396 of a frame to a sleepy node, or n between | `symbols`, the airtime of a 9- and a 255-byte frame |
 | `beacon <k> <ms> [len]` | send a bench frame (default 13 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send a 13-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
@@ -218,8 +219,8 @@ big-endian sequence number, byte 5 the sender's home channel, then
 `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
 step); packet RSSI and SNR are in quarter dB.
 
-`scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and
-bench item C1, with a table that maps the results onto the simulator's
+`scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
+and bench item C1, with a table that maps the results onto the simulator's
 radio parameters.
 
 ## Radio driver
@@ -286,7 +287,7 @@ lower: (6 × 6.1 + 6 × 2.1 + 349.125 × 0.0012) / 361.125 = 0.137 mA
 
 against 6.1 mA listening, 30 to 44 times less. The core's own figure,
 `sniff::SNIFF_CURRENT_NA`, is 0.194 mA, from 5.8 mA for receive and wake.
-`scripts/measure.md` step 4 measures it.
+`scripts/measure.md` step 5 measures it.
 
 The programmed delay, 5 ms (`radio::TCXO_START`), is still paid where the
 chip turns the TCXO off on its own: at power-up, after a calibration and
@@ -333,7 +334,7 @@ The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a
 366 ms frame with the long preamble at the transmit current, every 34.6 s
 on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
-`scripts/measure.md` step 4 measures it in each state.
+`scripts/measure.md` step 5 measures it in each state.
 
 ## Risks
 

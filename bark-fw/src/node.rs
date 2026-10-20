@@ -125,12 +125,13 @@ pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> 
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
     let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp, dbm);
     log::info!(
-        "{} at {} {} power_dbm={}",
+        "{} id={:02x?} at {} {} power_dbm={}",
         if cfg!(feature = "sleepy") {
             "sleepy node"
         } else {
             "node"
         },
+        config.node_id.0,
         config.position.lat_deg(),
         config.position.lon_deg(),
         dbm
@@ -144,12 +145,13 @@ pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> 
             report_at += REPORT_EVERY;
             let s = driver.stats();
             log::info!(
-                "driver events={} frames={} failed={} held={} radio_errors={} longest_handle_us={} longest_away_us={}",
+                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={}",
                 s.events,
                 s.frames,
                 s.failed,
                 s.held,
                 s.radio_errors,
+                s.sniffs,
                 s.longest_handle.as_micros(),
                 s.longest_away.as_micros()
             );

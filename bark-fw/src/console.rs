@@ -31,6 +31,7 @@
 use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
+use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::ACK_LEN;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
@@ -181,6 +182,7 @@ enum Command<'l> {
     Sweep,
     Noise(Channel, usize, u32),
     Power(i32),
+    Preamble(u16),
     Beacon(Channel, u32, usize),
     Stop,
     Ping(Channel),
@@ -200,7 +202,7 @@ const ACK_TIMEOUT_US: u32 = 100_000;
 
 const HELP: &str =
     "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | rssi <k> [dwell_us] | sweep | \
-noise <k> <n> [gap_us] | power <dbm> | beacon <k> <ms> [len] | stop | ping <k> | status [reset]";
+noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset]";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim_start_matches('>');
@@ -229,6 +231,17 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             Command::Noise(ch, n, optional(arg(), 0)?)
         }
         "power" => Command::Power(number(arg())?),
+        "preamble" => Command::Preamble(match arg() {
+            Some("short") => MIN_PREAMBLE_SYMBOLS,
+            Some("long") => LONG_PREAMBLE_SYMBOLS,
+            word => {
+                let n = number(word)?;
+                if !(MIN_PREAMBLE_SYMBOLS..=LONG_PREAMBLE_SYMBOLS).contains(&n) {
+                    return Err("preamble: short, long or 12..=1396 symbols");
+                }
+                n
+            }
+        }),
         "beacon" => {
             let ch = channel(arg())?;
             let period = number(arg())?;
@@ -373,6 +386,8 @@ pub struct Console<'a> {
     /// unpowered chip's DIO1 floats).
     listening: bool,
     power: i8,
+    /// Preamble symbols of `tx` and `beacon` frames.
+    preamble: u16,
     beacon: Option<Beacon>,
     seq: u32,
     counters: Counters,
@@ -390,6 +405,7 @@ impl<'a> Console<'a> {
             home: Channel::new(0).expect("channel 0 is in the plan"),
             listening: false,
             power: MAX_TX_DBM,
+            preamble: MIN_PREAMBLE_SYMBOLS,
             beacon: None,
             seq: 0,
             counters: Counters::default(),
@@ -493,17 +509,16 @@ impl<'a> Console<'a> {
                     Payload::Hex(hex) => decode_hex(hex, &mut self.tx),
                 };
                 let len = frame.len();
-                let timing = self
-                    .radio
-                    .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
-                    .await?;
-                let airtime_us = airtime_us(len);
-                self.count_tx(len);
+                let preamble = self.preamble;
+                let timing = self.radio.transmit(ch, self.power, preamble, frame).await?;
+                let airtime_us = airtime_us(len, preamble);
+                self.count_tx(len, preamble);
                 let rest_us = self.rest().await?;
                 log::info!(
-                    "tx ch={} len={} power_dbm={} prepare_us={} tx_us={} airtime_us={} excess_us={} rest_us={}",
+                    "tx ch={} len={} preamble={} power_dbm={} prepare_us={} tx_us={} airtime_us={} excess_us={} rest_us={}",
                     ch.index(),
                     len,
+                    preamble,
                     self.power,
                     timing.prepare_us,
                     timing.tx_us,
@@ -613,10 +628,20 @@ impl<'a> Console<'a> {
                     MAX_TX_DBM
                 );
             }
+            Command::Preamble(symbols) => {
+                self.preamble = symbols;
+                log::info!(
+                    "preamble symbols={} airtime_us_9={} airtime_us_255={}",
+                    symbols,
+                    airtime_us(9, symbols),
+                    airtime_us(MAX_LEN, symbols)
+                );
+            }
             Command::Beacon(ch, period_ms, len) => {
                 // Regulatory duty cycle (spec "Regulatory limits"): airtime at most
                 // DUTY_CYCLE_PERCENT of the period.
-                let min_ms = (airtime_us(len) * 100 / u64::from(DUTY_CYCLE_PERCENT)).div_ceil(1000);
+                let min_ms = (airtime_us(len, self.preamble) * 100 / u64::from(DUTY_CYCLE_PERCENT))
+                    .div_ceil(1000);
                 if u64::from(period_ms) < min_ms {
                     log::warn!(
                         "beacon: a {}-byte frame needs a period of at least {} ms for {}% duty cycle",
@@ -633,10 +658,11 @@ impl<'a> Console<'a> {
                         next: Instant::now(),
                     });
                     log::info!(
-                        "beacon ch={} period_ms={} len={}",
+                        "beacon ch={} period_ms={} len={} preamble={}",
                         ch.index(),
                         period_ms,
-                        len
+                        len,
+                        self.preamble
                     );
                 }
             }
@@ -742,7 +768,7 @@ impl<'a> Console<'a> {
             .transmit(reply, self.power, MIN_PREAMBLE_SYMBOLS, frame)
             .await?;
         let turnaround_us = self.clock.since(t_rx);
-        self.count_tx(ACK_LEN);
+        self.count_tx(ACK_LEN, MIN_PREAMBLE_SYMBOLS);
         self.counters.pongs_sent += 1;
         let rest_us = self.rest().await?;
         log::info!(
@@ -769,7 +795,7 @@ impl<'a> Console<'a> {
             .await?;
         let t_sent = self.clock.now();
         let until = Instant::now() + PING_WAIT;
-        self.count_tx(ACK_LEN);
+        self.count_tx(ACK_LEN, MIN_PREAMBLE_SYMBOLS);
         let rest_us = self.rest().await?;
         let home = self.home;
         let answered = self
@@ -813,11 +839,9 @@ impl<'a> Console<'a> {
         let (ch, len) = (beacon.ch, beacon.len);
         self.seq = self.seq.wrapping_add(1);
         let frame = bench_frame(&mut self.tx, len, KIND_TEST, self.seq, self.home);
-        let timing = self
-            .radio
-            .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
-            .await?;
-        self.count_tx(len);
+        let preamble = self.preamble;
+        let timing = self.radio.transmit(ch, self.power, preamble, frame).await?;
+        self.count_tx(len, preamble);
         self.rest().await?;
         log::info!(
             "beacon ch={} seq={} len={} tx_us={}",
@@ -863,9 +887,9 @@ radio_errors={}",
         }
     }
 
-    fn count_tx(&mut self, len: usize) {
+    fn count_tx(&mut self, len: usize, preamble: u16) {
         self.counters.tx += 1;
-        self.counters.tx_airtime_us += airtime_us(len);
+        self.counters.tx_airtime_us += airtime_us(len, preamble);
     }
 
     fn count_cad(&mut self, busy: bool) {
@@ -887,9 +911,9 @@ fn report_frame(ch: Channel, frame: &[u8], status: &PacketStatus, crc: &str, at_
     );
 }
 
-/// Time on air of a `len`-byte frame with bark's preamble, µs.
-fn airtime_us(len: usize) -> u64 {
-    time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+/// Time on air of a `len`-byte frame after `preamble` symbols, µs.
+fn airtime_us(len: usize, preamble: u16) -> u64 {
+    time_on_air(len as u8, preamble).as_micros()
 }
 
 /// Nearest-rank percentile of sorted, non-empty `samples`.

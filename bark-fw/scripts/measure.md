@@ -1,6 +1,7 @@
-# Bench measurements, bring-up steps 1 to 3
+# Bench measurements, bring-up steps 1 to 3 and 5
 
-Written 2026-10-14, before any board has run this firmware. Command
+Written 2026-10-14, step 5 2026-10-20, before any board has run this
+firmware. Command
 syntax and output fields are in `src/console.rs` and `README.md`.
 A quoted name after "spec" is a heading of `docs/protocol.md`.
 
@@ -209,11 +210,106 @@ Also needs the core. What the console measures for step 3:
   channel k 10 % of the time. A continuous-wave interferer (spec "Implementation notes" step 3)
   is not in this console.
 
+## Step 5: a sleepy node, duty-cycled receive and current (spec "Implementation notes" step 5)
+
+Board S runs the sleepy image (`cargo build --release --features sleepy`),
+board A the console. With no node of the protocol near it, S hears no
+relay and stays without an anchor (spec "Sleepy nodes alone"): after its
+boot listen it receives duty-cycled at all times but its own beats. S's
+log gives what the step needs:
+
+- `sleepy node id=[..] at ...` at start, and `HomeChannelMoved { from, to }`
+  when the boot listen ends: `to` is the channel S receives on, h below.
+- The `driver` line, at the first event 10 s or more after the last:
+  `frames` counts every frame with a good CRC, the console's bench frames
+  included (the core discards them), and `sniffs` the starts of
+  duty-cycled receive, one at each `Sniff` and one after each packet.
+- A rising `sniffs` with no frames on air shows the image receives
+  duty-cycled at all.
+
+S logs only when it booted on USB power (README, The sleepy image's
+current); 5.1 and 5.2 run with S on USB, 5.3 on its battery.
+
+### 5.1 Every long preamble is caught
+
+On A, a bench frame of a DATA's length (30 bytes: the 22-byte DATA header
+and a short text) with the long preamble, 100 times, 5 s apart: 377.7 ms
+on air, 7.6 % of the period, under the console's 10 % cap. 5 s is not a
+multiple of S's 361.125 ms cycle, so the frames start at offsets spread
+over it (5000 mod 361.125 = 305.375 ms a step).
+
+```
+A> preamble long
+A> ch h
+A> beacon h 5000 30     (500 s; then:)
+A> stop
+```
+
+Note S's `frames` before and after: it should rise by 100. A frame that
+overlaps one of S's own beats (S sends one every 34.6 s on average, a
+366 ms frame A also prints as `rx`) cannot be caught, about 2 in 100;
+count those apart. What the window catches depends on the preamble alone,
+not on what follows it, so the bench frame stands for a DATA (the
+roadmap's bench row).
+
+The control, which shows the radio really sleeps: the same with
+`preamble short`. A 12-symbol frame is caught only when it starts in or
+just before a window, 1.9 % of the time (`bark_proto::sniff`, the test
+`a_short_preamble_is_caught_only_in_a_window`): about 2 of 100. Nearly all
+caught means S listens continuously and `Sniff` did not take.
+
+### 5.2 How much preamble the cycle needs
+
+The long preamble is `sleep + wake + 2D` rounded up to whole 256 µs
+symbols, with `wake` = 6 ms (a TCXO start assumed at 5 ms and about 1 ms
+to restore the chip's state) and `D` = 4 symbols, the time to lock
+(spec "Duty-cycled receive and the long preamble"). Repeat 5.1 with
+`preamble 1300`, `preamble 1350`, `preamble 1380` and so on: the shortest
+preamble `L` that is caught 100 times in 100 gives
+
+```
+wake + 2D = L × 256 µs − 349 125 µs
+```
+
+which checks the two assumptions together; with `D` = 4 it is 1396
+symbols, with the wake 1 ms shorter 1392. 5.3 measures the wake alone.
+
+### 5.3 Current
+
+S on its battery, USB unplugged (VBUS powers the rail and the charger), a
+meter in series with the battery that resolves the 6 ms windows: a power
+profiler sampling at 10 kHz or more, or a scope across a 10 Ω shunt.
+Record each state for at least a minute:
+
+| State | When | Expected, radio alone (README) |
+|---|---|---|
+| Boot listen | from power-on to the end of the boot listen | listening, 6.1 mA (4.6 mA receive, DS Table 3-5, and the TCXO's nominal 1.5 mA, DS §4.1.4) |
+| Duty-cycled receive | after the boot listen, between beats | a pulse every 361.125 ms, 0.14 to 0.20 mA on average; between pulses 1.2 µA (DS Table 3-5) |
+| A beat | every 34.6 s on average | 366 ms at the transmit current, under 32 mA at +10 dBm (DS Table 3-6) |
+| Catching a frame | during 5.1, on USB: shape only | the pulse lasts the frame's airtime, then the cycle starts again |
+
+From the trace of duty-cycled receive:
+
+- The pulse period: 361.125 ms if the chip takes the periods as given.
+- The pulse width and its two parts: the TCXO start and state restore
+  (`wake`, assumed 6 ms) at a lower level, then the 6 ms window at the
+  receive current. This replaces `SNIFF_WAKE` and `RX_CURRENT_UA` in
+  `bark_proto::sniff`, and with them the cycle and the long preamble.
+- The level between pulses: everything on the board but the radio. The
+  GPS is powered and dominates it (README); the rest is the MCU asleep,
+  the battery divider's 12 µA and the parts not driven. A level well
+  above their sum points at a clock kept running, the 32 MHz crystal or
+  a TIMER (README); a 1 Hz square wave, the LED.
+- The average over whole cycles, between beats, against the README's
+  0.14 to 0.20 mA plus that level.
+
 ## Not measured here
 
-- The preamble length the modem needs to lock (`D` in spec "Busy estimate", assumed 4
-  symbols): needs a receiver that leaves the channel for a controlled
-  gap at random times and counts the frames lost.
+- The preamble length the modem needs to lock (`D` in spec "Busy estimate",
+  assumed 4 symbols) on its own: 5.2 gives it only together
+  with the wake, which 5.3 measures; a direct measurement needs a
+  receiver that leaves the channel for a controlled gap at random times
+  and counts the frames lost.
 - Same-channel capture (`capture_db`): needs two transmitters on one
   channel at controlled levels and a third board receiving; the C1
   three-board setup with C on channel 5 instead of 6 does it.

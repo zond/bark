@@ -1884,7 +1884,7 @@ the panic message (`bark-fw/memory.x`).
    relay is powered off.
 5. Sleepy node: anchor, beats, delivery in the window, queue, the watch
    for the anchor's heartbeat, and duty-cycled receive between the
-   windows with the long preamble, which the firmware does not do yet
+   windows with the long preamble
    (`Action::Sniff`, `core-interface.md`): a long-preamble frame sent to
    a board checking every 361 ms, 100 times, caught every time.
    **This is the loop every user feels; prototype it before anything
