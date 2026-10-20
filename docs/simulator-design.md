@@ -149,6 +149,8 @@ S3 are the twins of spec "Implementation notes" steps 4, 5 and 3.
 | `mesh-spread.toml` | the same mesh and flows, each sender starting at its own time; the middle relay restarts halfway | the same without the burst; routing around a relay that has lost its tables |
 | `s4-capacity.toml` | S4: 28 km², 269 relays of which 53 on roofs, 20 000 indoor sleepy nodes, 23 texts per node per day, one settled hour; switched on over 10 and 30 minutes, random IDs, drifting clocks, a fifth of the people walking | capacity and where it binds; `capacity-research-2026-10-15.md`, `realism-2026-10-18.md` |
 | `strip.toml` | three S4 domains side by side, 16 km by 5.3 km, a centre of 2.6 km by 2.6 km with twice the people in the middle one, texts to anyone in the strip | texts across the city, about eight hops; where the centre binds; `realism-2026-10-18.md` |
+| `dense.toml` | S4 with a quarter of the people's nodes as relays, 5317 in all | relays among the people, as on USB power; `dense-relays-2026-10-20.md` |
+| `dense-movers.toml` | `dense.toml` with a fifth of the people's relays walking and the GPS checks on | relays that move; `dense-relays-2026-10-20.md` |
 | `dark-groups.toml` | four square kilometres at S4's densities, a relay at the centre and a building of 400 people beside it; a run adds the group that goes dark | the delivery queue while a group is dark; `unproven-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's

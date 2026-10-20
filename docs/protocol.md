@@ -57,6 +57,14 @@ Every node runs the same protocol with one runtime setting, **sleepy**.
 Carried on battery: sleepy ([sleepy nodes](#sleepy-nodes)). Plugged into USB on a
 windowsill, or in a solar box on a roof: not sleepy, a **relay**.
 
+**Proposal** (roadmap D68): a node on USB power is a relay only while it
+stays where it was: within 50 m of its first fix as a relay, what two
+fixes of a node that has not moved may differ by
+([position and time](#position-and-time)). Once a fix is farther it is
+sleepy, as a carried node is. A relay's position is how its neighbours
+reach it and its sleepy nodes' address, so one that moves strands both;
+a sleepy node's address is its anchor's, which stays.
+
 ---
 
 ## Regulatory limits
