@@ -10,7 +10,9 @@
 //!   across the band); zero for generated links.
 //! - `fade` is frequency-selective multipath fading: one Gauss-Markov
 //!   process per pair and channel, shared by both directions (the channel
-//!   is reciprocal), stepped by a heap event on a slow clock.
+//!   is reciprocal), stepped by a heap event on a slow clock. A process is
+//!   brought up to the clock only when its link is read, by the same steps
+//!   in the same order: most pairs are read on few of the channels.
 //!
 //! A pair is stored only if it can matter: its base power reaches the
 //! cut-off, sensitivity minus the interference margin. The margin covers
@@ -202,13 +204,24 @@ pub struct Link {
 
 /// Time-varying per-channel offsets.
 pub struct Fading {
+    sigma: f64,
     rho: f64,
     innovation: f64,
     step: Duration,
     seed: u64,
     tick: u64,
-    offsets: Vec<[f32; NCH]>,
+    offsets: Vec<[Fade; NCH]>,
 }
+
+/// One fading process: its offset, dB, after `tick` steps.
+#[derive(Clone, Copy)]
+struct Fade {
+    db: f32,
+    tick: u32,
+}
+
+/// The `tick` of a process not yet read: it starts when it is.
+const UNREAD: u32 = u32::MAX;
 
 /// What a generator did, for tests and the summary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -406,14 +419,26 @@ impl LinkTable {
     }
 
     /// Receive power of `link` on `channel` now.
-    pub fn rx_dbm(&self, link: &Link, channel: Channel) -> f64 {
+    pub fn rx_dbm(&mut self, link: &Link, channel: Channel) -> f64 {
         let c = channel.index() as usize;
         let mut p = link.base_dbm as f64;
         if let Some(o) = self.static_offsets.get(link.pair as usize) {
             p += o[c] as f64;
         }
-        if let Some(f) = &self.fading {
-            p += f.offsets[link.pair as usize][c] as f64;
+        if let Some(f) = &mut self.fading {
+            let (a, b) = self.pair_nodes[link.pair as usize];
+            let e = &mut f.offsets[link.pair as usize][c];
+            if e.tick == UNREAD {
+                // Start in the stationary distribution.
+                e.db = (f.sigma * normal_at(f.seed, pair_key(a, b), c as u64)) as f32;
+                e.tick = 0;
+            }
+            for tick in e.tick as u64 + 1..=f.tick {
+                let n = normal_fast_at(f.seed, pair_key(a, b), (tick << 4) | c as u64);
+                e.db = (f.rho * e.db as f64 + f.innovation * n) as f32;
+            }
+            e.tick = f.tick as u32;
+            p += e.db as f64;
         }
         p
     }
@@ -423,16 +448,12 @@ impl LinkTable {
         self.fading.as_ref().map(|f| f.step)
     }
 
-    /// Advance every fading process by one step.
+    /// Advance every fading process by one step: the step is taken when
+    /// the process is next read.
     pub fn fading_tick(&mut self) {
         if let Some(f) = &mut self.fading {
             f.tick += 1;
-            for (o, &(a, b)) in f.offsets.iter_mut().zip(&self.pair_nodes) {
-                for (c, x) in o.iter_mut().enumerate() {
-                    let n = normal_fast_at(f.seed, pair_key(a, b), (f.tick << 4) | c as u64);
-                    *x = (f.rho * *x as f64 + f.innovation * n) as f32;
-                }
-            }
+            assert!(f.tick < UNREAD as u64, "fading steps fit a process's count");
         }
     }
 
@@ -446,24 +467,18 @@ impl Fading {
     fn new(p: &FadingParams, pairs: &[(u32, u32)], run_seed: u64) -> Fading {
         let seed = stream_seed(run_seed, Purpose::Fading, 0);
         let rho = (-p.step_s / p.correlation_time_s).exp();
-        let offsets = pairs
-            .iter()
-            .map(|&(a, b)| {
-                let mut o = [0f32; NCH];
-                for (c, x) in o.iter_mut().enumerate() {
-                    // Start in the stationary distribution.
-                    *x = (p.sigma_db * normal_at(seed, pair_key(a, b), c as u64)) as f32;
-                }
-                o
-            })
-            .collect();
+        let unread = Fade {
+            db: 0.0,
+            tick: UNREAD,
+        };
         Fading {
+            sigma: p.sigma_db,
             rho,
             innovation: p.sigma_db * (1.0 - rho * rho).sqrt(),
             step: Duration::from_micros((p.step_s * 1e6).round() as u64),
             seed,
             tick: 0,
-            offsets,
+            offsets: vec![[unread; NCH]; pairs.len()],
         }
     }
 }
