@@ -580,6 +580,17 @@ pub struct Gps {
     pub relays_keep_first: bool,
 }
 
+/// People's relays that stand down (`relay_share`): a relay that hears
+/// at least `neighbours` relays with margin both ways runs as a sleepy
+/// node instead. Decided once, before the run, in a random order, each
+/// counting the relays still standing; 0 for none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StandDown {
+    /// The relays heard at which one stands down.
+    pub neighbours: u8,
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -606,6 +617,8 @@ pub struct Scenario {
     pub dark_groups: Vec<DarkGroup>,
     /// GPS fixes that go wrong.
     pub gps: Gps,
+    /// People's relays that stand down.
+    pub stand_down: StandDown,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -650,6 +663,7 @@ impl Default for Scenario {
             shared_ids: Vec::new(),
             dark_groups: Vec::new(),
             gps: Gps::default(),
+            stand_down: StandDown::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

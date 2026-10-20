@@ -260,6 +260,9 @@ pub struct NodeRadio<'a> {
     pub names: &'a [Option<String>],
     /// Nodes that walk: no link of theirs is stored (`walk.rs`).
     pub walks: &'a [bool],
+    /// Per node, the index its shadowing is drawn by, if not its own: a
+    /// node that changes places in the order keeps its links.
+    pub keys: Option<&'a [u32]>,
 }
 
 impl LinkTable {
@@ -303,6 +306,7 @@ impl LinkTable {
                     .map(Grid::side)
                     .fold(0.0, f64::max);
                 let shadow_seed = stream_seed(run_seed, Purpose::Shadowing, 0);
+                let key = |i: usize| nodes.keys.map_or(i as u64, |k| k[i] as u64);
                 for a in 0..n {
                     if nodes.walks[a] {
                         continue;
@@ -325,8 +329,9 @@ impl LinkTable {
                             }
                             let mut loss = p.path_loss_db(d) + p.site_loss_db(from, site_to);
                             if p.shadowing_sigma_db > 0.0 {
+                                let (ka, kb) = (key(a), key(b));
                                 loss -= p.shadowing_sigma_db
-                                    * truncated_normal(shadow_seed, a as u64, b as u64);
+                                    * truncated_normal(shadow_seed, ka.min(kb), ka.max(kb));
                             }
                             let ab = nodes.tx_dbm[a] - loss;
                             let ba = nodes.tx_dbm[b] - loss;
@@ -577,6 +582,7 @@ mod tests {
             site: &site,
             names: &names,
             walks: &vec![false; n],
+            keys: None,
         };
         let t = LinkTable::build(&p, &nodes, cutoff, 9).unwrap();
         let cut = t.stats.cutoff_m;
@@ -672,6 +678,7 @@ mod tests {
             site: &[Site::Outdoor, Site::Outdoor],
             names: &[None, None],
             walks: &[false, false],
+            keys: None,
         };
         let mut t = LinkTable::build(&p, &nodes, -129.0, 3).unwrap();
         let (ab, ba) = (*t.get(0, 1).unwrap(), *t.get(1, 0).unwrap());

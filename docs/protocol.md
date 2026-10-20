@@ -527,6 +527,14 @@ not sleepy the heard table too if the sleepy bit is alone, which holders
 use to deliver ([heard table](#heard-table)); a node without an anchor has no window to
 deliver in ([sleepy nodes alone](#sleepy-nodes-alone)).
 
+### Standing down
+
+**Proposal, not adopted** (roadmap D68). A relay that hears at least N
+relays with margin both ways runs as a sleepy node, anchored to one of
+them ([relay choice](#relay-choice)), until it hears fewer than N / 2: a
+band as wide as half the count, so that the neighbours that stand down
+together cannot carry the count of one still up across it.
+
 ---
 
 ## Forwarding
