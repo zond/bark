@@ -1,7 +1,7 @@
 # A message without an end by time on its way
 
-**Date:** 2026-10-19 and 20, roadmap D67. **Status:** measured, awaiting
-the decision. Spec references are to `protocol.md`. The base, named
+**Date:** 2026-10-19 and 20, roadmap D67. **Status:** measured; decided
+2026-10-20, the time left kept, the candidate not adopted. Spec references are to `protocol.md`. The base, named
 "main" in every table, is main `f1d4e2c` (D66) with this branch's
 read-only instruments, which repeat main to the frame (S4 at three times
 the rate, seed 1, gives D66's 81.56 % delivered). The branch was then
