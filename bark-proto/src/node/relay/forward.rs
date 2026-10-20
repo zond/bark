@@ -155,12 +155,7 @@ use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
-/// A relay within this distance of a destination that is not its own
-/// position, with no live, undemoted neighbour closer, owns it
-/// (spec "Owner"): 50 m is what spec "Position and time" allows between two GPS fixes of a relay that
-/// has not moved, so the addressed relay and this one are, for the radio,
-/// in the same place.
-pub const OWNER_RADIUS_M: f32 = 50.0;
+pub use crate::node::OWNER_RADIUS_M;
 
 /// What a received DATA packet is (spec "Receiving DATA").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

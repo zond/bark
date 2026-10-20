@@ -63,7 +63,10 @@
 //! 2. the least recently heard entry, if it is *stale*: not heard for a
 //!    full worst-case rotation (`CHANNELS × heartbeat_max`, 195 s), so it
 //!    has certainly missed a heartbeat on our channel; else
-//! 3. nothing: the newcomer is not added.
+//! 3. for a relay within the owner radius (spec "Owner"), the least
+//!    recently heard relay beyond it, since the owner rule reads from the
+//!    table that no relay that near is closer (proposal, roadmap D68); else
+//! 4. nothing: the newcomer is not added.
 //!
 //! Least-recently-heard eviction fails on a rooftop relay that hears ≈270
 //! relays (spec "Capacity and sizing"): about two heartbeats a second arrive on its channel, so
@@ -110,7 +113,7 @@
 
 use crate::geo::{LocalPlane, Point};
 use crate::ids::NodeId;
-use crate::node::{heartbeat_lag, Config};
+use crate::node::{heartbeat_lag, Config, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::sniff::anchorless_beat_period;
@@ -455,7 +458,7 @@ impl Neighbours {
         if new.last_resort() {
             return Heard::Rejected;
         }
-        match victim(self, now) {
+        match victim(self, now).or_else(|| self.near_victim(&new)) {
             Some(i) => match self.slots[i].replace(new) {
                 Some(old) => Heard::Replaced(i, old),
                 None => Heard::Added(i),
@@ -603,6 +606,25 @@ fn average(avg: f32, dbm: i16) -> f32 {
     (avg + dbm as f32) / 2.0
 }
 
+impl Neighbours {
+    /// For a relay `new` within the owner radius of this node (spec
+    /// "Owner"), the slot of the least recently heard relay beyond it: the
+    /// owner rule reads from the table that no relay that near is closer to
+    /// a destination, so one turned away would have its messages claimed
+    /// by its neighbour (roadmap D68).
+    fn near_victim(&self, new: &Neighbour) -> Option<usize> {
+        let r2 = OWNER_RADIUS_M * OWNER_RADIUS_M;
+        let near = |n: &Neighbour| n.local.distance2(Default::default()) <= r2;
+        if !new.relay() || !near(new) {
+            return None;
+        }
+        self.slots()
+            .filter(|(_, n)| Some(n.id) != self.pinned && !near(n))
+            .min_by_key(|(_, n)| n.last_heard)
+            .map(|(i, _)| i)
+    }
+}
+
 /// The eviction policy (roadmap D12): which slot of a full table a
 /// newcomer takes at `now`, if any. See the module documentation.
 pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
@@ -689,6 +711,32 @@ mod tests {
 
     fn plane() -> LocalPlane {
         LocalPlane::new(Position::default())
+    }
+
+    /// A full table of live relays turns a newcomer away, but not one
+    /// within the owner radius: it takes the place of the least recently
+    /// heard relay beyond it (spec "Neighbour table", "Owner").
+    #[test]
+    fn a_relay_within_the_owner_radius_finds_a_place() {
+        let mut t = Neighbours::new(params());
+        // Far ones, a count of latitude and longitude about 0.85 m apart.
+        for k in 0..NEIGHBOURS as i32 {
+            assert!(hear(&mut t, 2000 + k, 0, -90, at(1 + k as u64))
+                .new_occupant()
+                .is_some());
+        }
+        assert_eq!(hear(&mut t, 3000, 0, -90, at(100)), Heard::Rejected);
+        let near = hear(&mut t, 10, 0, -90, at(100));
+        assert!(
+            matches!(near, Heard::Replaced(_, old) if old.id == id(2000)),
+            "{near:?}"
+        );
+        // Near ones are not made way for.
+        for k in 11..20 {
+            hear(&mut t, k, 0, -90, at(101));
+        }
+        assert!(t.get(id(10)).is_some());
+        assert_eq!(hear(&mut t, 3001, 0, -90, at(102)), Heard::Rejected);
     }
 
     #[test]

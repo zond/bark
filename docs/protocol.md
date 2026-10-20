@@ -507,7 +507,13 @@ Per node, up to 64 entries, by node ID:
   the least recently heard entry if it has not been heard for a
   worst-case rotation ([heartbeat](#heartbeat)), so it has certainly missed
   a heartbeat on this channel; failing that, the newcomer is not added
-  (roadmap D12). Replacing the least recently heard entry outright does
+  (roadmap D12). **Proposal** (roadmap D68): failing those, a relay
+  within 50 m, the owner radius ([owner](#owner)), takes the place of the
+  least recently heard relay beyond it. The owner rule reads from the
+  table that no relay that near is closer to a destination; one turned
+  away would have its messages claimed by its neighbour and queued for a
+  node that never beats. With every person's node a relay, 714 per km²,
+  5.6 are within 50 m on average (714 × π × 0.05²), well within 64. Replacing the least recently heard entry outright does
   not work for a rooftop relay that hears ≈270 relays ([capacity and sizing](#capacity-and-sizing)): about two
   heartbeats a second arrive on its channel, most from relays not in the
   table, so each entry would last about 64 / 2 ≈ 30 s and every failure

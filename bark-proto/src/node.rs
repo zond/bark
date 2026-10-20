@@ -149,6 +149,13 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
     Duration::from_micros(attempt + backoffs)
 }
 
+/// A relay within this distance of a destination that is not its own
+/// position, with no live, undemoted neighbour closer, owns it
+/// (spec "Owner"): 50 m is what spec "Position and time" allows between two GPS fixes of a relay that
+/// has not moved, so the addressed relay and this one are, for the radio,
+/// in the same place.
+pub const OWNER_RADIUS_M: f32 = 50.0;
+
 /// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
