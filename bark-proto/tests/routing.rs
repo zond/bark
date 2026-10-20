@@ -2527,3 +2527,45 @@ fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
         neighbour: core(&h, p).id()
     }));
 }
+
+/// Proposal (spec "Power by density"): a relay that hears more relays with
+/// margin than its target steps its power down, one step a worst-case
+/// rotation, and back up once it hears fewer than the band below.
+#[test]
+fn a_crowded_relay_lowers_its_power_and_raises_it_alone() {
+    use bark_proto::node::{power_band, POWER_STEP_DB};
+    let target = 4u8;
+    let crowd = 8;
+    let mut nodes: Vec<Relay> = (0..=crowd)
+        .map(|i| relay(100.0 * i as f64, 0.0, 400 + i as u64))
+        .collect();
+    nodes[0] = Relay::new(
+        Config {
+            power_neighbours: target,
+            ..*nodes[0].config()
+        },
+        400,
+    );
+    let links: Vec<(usize, usize)> = (1..=crowd).map(|i| (0, i)).collect();
+    let mut h = build(nodes, &links);
+    let rotation = Config::default()
+        .heartbeat_max
+        .mul(bark_proto::CHANNELS as u64);
+    let from = h.now;
+    h.run_for(rotation.mul(4));
+    let steps: Vec<_> = h.nodes[0].power.iter().filter(|(t, _)| *t > from).collect();
+    assert!(!steps.is_empty(), "never stepped down");
+    for w in steps.windows(2) {
+        assert!(w[1].0.since(w[0].0) >= rotation, "{steps:?}");
+        assert_eq!(w[0].1 - w[1].1, POWER_STEP_DB);
+    }
+    let low = h.nodes[0].core.power_dbm();
+    assert!(low < 10);
+    // Alone but for one, below the target over the band: it steps up.
+    assert!(1.0f32 < target as f32 / power_band());
+    for i in 2..=crowd {
+        h.unlink(0, i);
+    }
+    h.run_for(rotation.mul(5));
+    assert!(h.nodes[0].core.power_dbm() > low, "{:?}", h.nodes[0].power);
+}

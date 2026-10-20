@@ -463,6 +463,9 @@ impl Sim {
                 pairs: self.pairs.clone(),
                 dense: m.research.dense.clone().map(|d| crate::metrics::Dense {
                     known_by: self.known_by(),
+                    power_end: (0..self.relays())
+                        .map(|i| self.relay(i).power_dbm())
+                        .collect(),
                     ..d
                 }),
                 ..m.research.clone()

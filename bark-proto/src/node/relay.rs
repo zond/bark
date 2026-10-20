@@ -140,6 +140,27 @@ fn drift(d: Duration) -> Duration {
 /// "Physical layer" (`scenarios/s4-capacity.toml`).
 pub const PATH_LOSS_EXPONENT: f32 = 3.6;
 
+/// The lowest power the radio gives, dBm at its output (SX1262 datasheet
+/// §13.4.4, SetTxParams with the high-power amplifier).
+pub const MIN_POWER_DBM: i8 = -9;
+
+/// The step of the power by density, dB: about the spread of a
+/// neighbour's averaged RSSI under the scenarios' fading, 4 dB over √3
+/// (each new frame counting half), so that one step is as much as the
+/// count can see (spec "Power by density").
+pub const POWER_STEP_DB: i8 = 2;
+
+/// How much one step changes the count of relays heard: the area a frame
+/// reaches, by `10^(2 × step / (10 × exponent))`, 1.29 for 2 dB under the
+/// path-loss exponent 3.6. A relay raises its power only below the target
+/// over this, so that one step cannot carry the count across the band.
+pub fn power_band() -> f32 {
+    libm::powf(
+        10.0,
+        2.0 * POWER_STEP_DB as f32 / (10.0 * PATH_LOSS_EXPONENT),
+    )
+}
+
 /// How far a node that sleeps may move from where it chose or confirmed
 /// its anchor, `reach_m` away then, before it listens a rotation to check
 /// it (spec "Relay choice"): as far as takes the anchor's signal down by
@@ -362,6 +383,10 @@ pub struct Node<const H: usize, const Q: usize> {
     chosen_from: Position,
     reach_m: f32,
     beacon: Beacon,
+    /// The power every frame goes at, dBm, and when it is next weighed
+    /// (spec "Power by density").
+    power: i8,
+    power_at: Instant,
     budget: Budget,
     busy: BusyEstimator,
     /// The application's message for a sleepy node this relay holds for, set aside
@@ -448,6 +473,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dark: false,
             chosen_from: Position { lat: 0, lon: 0 },
             reach_m: 0.0,
+            power: config.tx_power_dbm,
+            power_at: Instant::ZERO,
             config,
             rng: Rng::new(0),
         }
@@ -523,6 +550,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dark,
             chosen_from,
             reach_m,
+            power,
+            power_at,
         } = self;
         *id = node_id;
         *plane = LocalPlane::new(config.position);
@@ -580,6 +609,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *dark = false;
         *chosen_from = config.position;
         *reach_m = 0.0;
+        *power = config.tx_power_dbm;
+        *power_at = Instant::ZERO;
         *c = config;
         *r = rng;
     }
@@ -1167,6 +1198,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.reconsider_anchor(now, emit);
         }
         self.watch_anchor(now, emit);
+        self.weigh_power(now, emit);
         if self.sweeping() && self.mover.move_at.is_some_and(|t| now >= t) {
             self.mover = Mover::default();
             // Re-check after the random wait (spec "Channel moves").
@@ -1289,6 +1321,47 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.mover.move_at =
                 Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
         }
+    }
+
+    // --- Power by density (proposal, spec "Power by density") ---
+
+    /// Once a worst-case rotation, by when every relay in reach has been
+    /// heard on this node's channel at the power it has now: one step down
+    /// when more than `power_neighbours` relays are heard with margin, one
+    /// up when fewer than that over [`power_band`].
+    fn weigh_power(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let n = self.config.power_neighbours;
+        if n == 0 || self.config.sleepy || self.stage != Stage::Running || now < self.power_at {
+            return;
+        }
+        let rotation = self.config.heartbeat_max.mul(CHANNELS as u64);
+        if self.power_at == Instant::ZERO {
+            self.power_at = now + rotation;
+            return;
+        }
+        self.power_at = now + rotation;
+        let floor = self.busy.noise_floor_dbm();
+        let heard = self
+            .neighbours
+            .live(now)
+            .filter(|(_, e)| e.relay() && Neighbours::has_margin(e, floor))
+            .count() as f32;
+        let to = if heard > n as f32 {
+            (self.power - POWER_STEP_DB).max(MIN_POWER_DBM)
+        } else if heard < n as f32 / power_band() {
+            (self.power + POWER_STEP_DB).min(self.config.tx_power_dbm)
+        } else {
+            self.power
+        };
+        if to != self.power {
+            self.power = to;
+            emit(Action::Power(to));
+        }
+    }
+
+    /// The power every frame goes at now, dBm.
+    pub fn power_dbm(&self) -> i8 {
+        self.power
     }
 
     // --- Heartbeat (spec "Heartbeat") ---

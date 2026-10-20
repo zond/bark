@@ -167,6 +167,8 @@ pub struct Driver<C, R, K, A> {
     clock: K,
     app: A,
     tx_dbm: i8,
+    /// The most the core may ask for (`Action::Power`).
+    max_dbm: i8,
     booted: bool,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
@@ -191,7 +193,7 @@ pub struct Driver<C, R, K, A> {
 
 impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// A driver for `core`, transmitting at `tx_dbm` conducted
-    /// (`Config::tx_power_dbm`).
+    /// (`Config::tx_power_dbm`) until the core asks for less.
     pub fn new(core: C, radio: R, clock: K, app: A, tx_dbm: i8) -> Self {
         Driver {
             core,
@@ -199,6 +201,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             clock,
             app,
             tx_dbm,
+            max_dbm: tx_dbm,
             booted: false,
             resting: None,
             sniff_until: None,
@@ -386,6 +389,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let mut resting = self.resting;
         let mut excursion = self.excursion;
         let mut sniff = self.sniff_until;
+        let mut power = self.tx_dbm;
         let app = &mut self.app;
         self.core.handle(event, now, &mut |action| match action {
             Action::Listen(c) => {
@@ -401,6 +405,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 sniff = None;
             }
             Action::Sniff(until) => sniff = Some(until).filter(|&t| t > now),
+            Action::Power(dbm) => power = dbm,
             Action::App(e) => app.message(&e),
             Action::Trace(t) => log::info!("{:?}", t),
         });
@@ -410,6 +415,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.resting = resting;
         self.excursion = excursion;
         self.sniff_until = sniff;
+        self.tx_dbm = power.min(self.max_dbm);
         self.listen_resting().await
     }
 
@@ -467,7 +473,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
-            Action::Listen(_) | Action::Sniff(_) | Action::App(_) | Action::Trace(_) => {
+            Action::Listen(_)
+            | Action::Sniff(_)
+            | Action::Power(_)
+            | Action::App(_)
+            | Action::Trace(_) => {
                 unreachable!("only excursions are kept")
             }
         };

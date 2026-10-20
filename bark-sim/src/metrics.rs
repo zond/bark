@@ -883,6 +883,18 @@ pub struct Dense {
     /// At the end, per relay: how many running relays keep it in their
     /// neighbour tables, and how many of those with margin.
     pub known_by: Vec<(u32, u32)>,
+    /// Per relay, the changes of its power after the settle time, and its
+    /// power at the end, dBm (spec "Power by density").
+    pub power_steps: Vec<u32>,
+    pub power_end: Vec<i8>,
+    /// Once a minute after the settle time: the time, s, the relays'
+    /// mean power, dBm, and how many are at the lowest and at full power.
+    pub power: Vec<(u64, f64, u32, u32)>,
+    /// From the settle time, between relays that do not walk: DATA sent,
+    /// those to a relay the sender hears with margin before fading but
+    /// whose own power does not reach with margin; hand-overs that failed,
+    /// and of those, to such a relay.
+    pub asymmetric: [u64; 4],
 }
 
 /// Bins of `Research::movers`: moving, then at a stop for less than each

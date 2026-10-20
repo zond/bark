@@ -200,6 +200,10 @@ pub enum Action {
     /// (`docs/core-interface.md` §3 rule 10). Only a sleepy node asks for
     /// it, between its windows.
     Sniff(Instant),
+    /// Transmit every frame from now at this power, dBm at the radio's
+    /// output, never above `Config::tx_power_dbm` (a proposal,
+    /// spec "Power by density"). A driver starts at `Config::tx_power_dbm`.
+    Power(i8),
     /// Tell the application something.
     App(AppEvent),
     /// A protocol event for logs and the simulator's metrics. Carries no

@@ -629,6 +629,9 @@ pub struct Sim {
     positions: Vec<Position>,
     /// Nodes `0..n_relays` are not sleepy; the rest, placed as leaves, are.
     n_relays: u32,
+    /// Per node, its power less the one the links are built for, dB
+    /// (`Action::Power`).
+    pub(crate) tx_offset_db: Vec<f64>,
     /// Every node's core.
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
@@ -1102,6 +1105,7 @@ impl Sim {
             fixing: false,
             was_booting: false,
             n_relays,
+            tx_offset_db: vec![0.0; n],
             relays,
             nodes,
             now: Instant::ZERO,
@@ -2011,6 +2015,56 @@ impl Sim {
         known
     }
 
+    /// `node` transmits at `dbm` from now: every link from it is that much
+    /// above or below the power the table is built for.
+    fn set_power(&mut self, node: u32, dbm: i8) {
+        let base = self.relays[node as usize].config().tx_power_dbm;
+        self.tx_offset_db[node as usize] = (dbm - base) as f64;
+        if self.now >= self.settle && self.dense() {
+            let n = self.n_relays as usize;
+            let d = self
+                .metrics
+                .research
+                .dense
+                .get_or_insert_with(Default::default);
+            d.power_steps.resize(n, 0);
+            if (node as usize) < n {
+                d.power_steps[node as usize] += 1;
+            }
+        }
+    }
+
+    /// From the settle time: a DATA (`kind` 0) or a failed hand-over (2)
+    /// from the relay `from` to the node `to`, counted if `to` is a relay
+    /// and apart if the link is asymmetric (`metrics::Dense::asymmetric`).
+    pub(crate) fn note_asymmetric(&mut self, from: u32, to: NodeId, kind: usize) {
+        if self.now < self.settle || !self.dense() || from >= self.n_relays {
+            return;
+        }
+        let Some(&b) = self.relay_index.get(&key(to)) else {
+            return;
+        };
+        // The signal a full frame needs, above the noise, before fading:
+        // the margin's packet RSSI less the noise it includes (spec
+        // "Neighbour table").
+        let above = bark_proto::radio::full_frame_rssi_above_noise_db() as f64;
+        let need = self.radio.noise_floor_dbm() + 10.0 * (10f64.powf(above / 10.0) - 1.0).log10();
+        let reach = |x: u32, y: u32| {
+            self.links
+                .get(x, y)
+                .map(|l| l.base_dbm as f64 + self.tx_offset_db[x as usize])
+        };
+        let asym = matches!((reach(b, from), reach(from, b)),
+            (Some(back), there) if back >= need && there.is_none_or(|t| t < need));
+        let d = self
+            .metrics
+            .research
+            .dense
+            .get_or_insert_with(Default::default);
+        d.asymmetric[kind] += 1;
+        d.asymmetric[kind + 1] += u64::from(asym);
+    }
+
     /// Whether relays are placed among the people, so that the dense
     /// instruments are kept.
     fn dense(&self) -> bool {
@@ -2034,12 +2088,24 @@ impl Sim {
             faint[person] += u32::from(k.1 == 0);
         }
         let t = self.now.as_micros() / 1_000_000;
+        let (mut sum, mut low, mut full, mut running) = (0.0, 0u32, 0u32, 0u32);
+        for (i, r) in self.relays[..self.n_relays as usize].iter().enumerate() {
+            if !self.nodes[i].alive || r.booting() {
+                continue;
+            }
+            let p = r.power_dbm();
+            sum += p as f64;
+            low += u32::from(p == bark_proto::node::MIN_POWER_DBM);
+            full += u32::from(p == r.config().tx_power_dbm);
+            running += 1;
+        }
         let d = self
             .metrics
             .research
             .dense
             .get_or_insert_with(Default::default);
         d.unknown.push((t, none, faint));
+        d.power.push((t, sum / running.max(1) as f64, low, full));
     }
 
     /// Once a minute after the settle time: sleepy nodes whose anchor would
@@ -2154,6 +2220,7 @@ impl Sim {
         };
         match a {
             Action::Sniff(until) => self.sniff(node, true_time(until)),
+            Action::Power(dbm) => self.set_power(node, dbm),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
@@ -2167,6 +2234,9 @@ impl Sim {
                 self.message_dropped(node, msg_id, reason)
             }
             Action::Trace(t) => {
+                if let Trace::HandOverFailed { to, .. } = t {
+                    self.note_asymmetric(node, to, 2);
+                }
                 let c = &mut self.metrics.nodes[node as usize].core;
                 match t {
                     Trace::HomeChannelMoved { from, to } if !self.was_booting => {
