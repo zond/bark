@@ -11,12 +11,12 @@ spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-10-20)
+## Status (2026-10-21)
 
 The protocol core, the simulator and the firmware are written. In the
 simulator, 28 km² of city with 270 relays and 20 000 sleepy nodes delivers
 96 % of the texts it can reach at the design's rate. The firmware runs the
-core as a relay or a sleepy node but has not yet run on a board; four
+core, a relay on USB and sleepy on battery, but has not yet run on a board; four
 T-Echo boards are expected around 2026-11-04. `docs/roadmap.md` has the phases.
 
 Read, in order:
@@ -49,10 +49,10 @@ bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
 docs/         design notes, research, decisions.
 ```
 
-Every node runs the same protocol with one setting, sleepy. A relay, fixed
-and powered, forwards a message to the neighbour closest to the
-destination's position, backtracks around gaps, and expects an
-acknowledgement from every hop. A sleepy node, carried on battery,
+Every node runs the same protocol, and its role follows its power. A
+relay, on USB or another supply, forwards a message to the neighbour
+closest to the destination's position, backtracks around gaps, and
+expects an acknowledgement from every hop. A sleepy node, on battery,
 heartbeats rarely to the relay it has chosen, which holds its messages
 until it listens. The protocol core has no external routing dependency (roadmap D1).
 
