@@ -352,8 +352,9 @@ the node fixed at once. A node that turns
 sleepy is fixed again (roadmap D71): a sleepy node takes each fix, and plugged in, it
 keeps the fix it has then. A spoofed fix that drifts slower than the node
 can move makes a relay carried, where D63 kept it out: the relay then
-gives up its sleepy nodes and is routed to where the spoofer says. Positions on
-the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
+gives up its sleepy nodes and is routed to where the spoofer says.
+
+**Encoding.** Positions on the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
 7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
 converts every position it handles into metres on a flat plane centred on
 itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
@@ -1977,19 +1978,13 @@ firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type (roadmap D70; 0xF before).
 ```
 
-The heartbeat's flags tell others how to treat its sender. They are
-in its type, since `aux` holds the home channel in all four of its bits,
-and the type is 0x8 because that is the one base with both low bits clear
-whose four codes, 0x8 to 0xB, are all free: 0x0 would give 0x3, the ACK,
-0x4 would give DATA's 0x5, and 0xC would give 0xF, the bench frames.
-A third flag takes the third bit, and 0x8 is
-the one base whose eight codes, 0x8 to 0xF, miss the ACK, the NACK and
-DATA; the bench frames move to 0x6, which no flag can reach. The
-heartbeat has no spare bits elsewhere: its position fills the four bytes
-after the ID ([position and time](#position-and-time)).
-A
-heartbeat does not say where its sender's position came from: no
-receiver needs to know.
+The heartbeat's flags tell others how to treat its sender. They are in
+its type, since `aux` holds the home channel in all four of its bits and
+the position fills the four bytes after the ID. The three flags take the
+type's three low bits, and 0x8 is the one base whose eight codes, 0x8 to
+0xF, miss the ACK, the NACK and DATA; the bench frames are at 0x6, which
+no flag reaches. A heartbeat does not say where its sender's position
+came from: no receiver needs to know.
 
 - **Sleepy**: "I sleep. Reach me cheaply in my window after my beat,
   or at any time with the long preamble." ([sleepy nodes](#sleepy-nodes), [delivery](#delivery),
@@ -2038,16 +2033,13 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM budget (256 KiB):** neighbour table 64 × 64 B = 4.0 KiB; heard table
-256 × 32 B = 8.0 KiB; delivery queue 41 × 264 B = 10.6 KiB; message records
-([message records](#message-records)) 1855 × 32 B = 58.0 KiB; send queue (40 + 254) × 280 B = 80.4 KiB, a place holding a frame of up to 255 bytes and its bookkeeping;
-delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
-1 KiB; 162.9 KiB in all, measured, for a relay; a sleepy node keeps the heard
-table and the delivery queue empty ([sleepy nodes](#sleepy-nodes)), and
-every board holds them, since it turns a relay on USB (roadmap D71).
-BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
-application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
-the panic message (`bark-fw/memory.x`).
+**RAM (256 KiB):** the table sizes follow from the sections that set
+them; `core-interface.md`, Memory, has them as built. Every board holds a
+relay's tables, the heard table and the delivery queue included, since
+every node may turn relay (roadmap D71); a sleepy node keeps those two
+empty ([sleepy nodes](#sleepy-nodes)). Embassy and the stacks take
+≈16 KiB. The application has 255 KiB; 1 KiB at the bottom is kept for the
+boot record and the panic message (`bark-fw/memory.x`).
 
 **Bring-up order** (each step is a milestone on real boards):
 
