@@ -152,7 +152,7 @@ SF5 carries about 3× the bytes per unit of airtime of SF7 (the common LoRa
 default) for a quarter less range. LoRa brings an existing driver, hardware
 error correction, CRC and whitening, CAD, and ~15 dB of processing gain
 against the key fobs and LPD433 handhelds that share the band. Why not
-GFSK: [capacity and sizing](#capacity-and-sizing).
+GFSK: [what the protocol omits](#what-the-protocol-omits).
 
 SF is network-wide because an SX1262 receives one SF at a time, so a
 mixed-SF network splits into parts that cannot hear each other. Starting
@@ -224,7 +224,8 @@ f_k = 433.170 MHz + k × 0.125 MHz,   k = 0..12
 
 Channels are not assigned by a fixed grid or derived from position: each
 node measures how busy each channel is and chooses
-([home channel selection](#home-channel-selection)); why not a grid: [capacity and sizing](#capacity-and-sizing). Channel 6 is
+([home channel selection](#home-channel-selection)); why not a grid:
+[what the protocol omits](#what-the-protocol-omits). Channel 6 is
 centred on 433.920 MHz, the busiest spot in the band (key fobs, sensors);
 the choice avoids it wherever it is busy.
 
@@ -1860,30 +1861,15 @@ routing. This is the scope stated at the top.
 
 ---
 
-## What the protocol omits
-
-Common mesh mechanisms left out, and why.
-
-| Omitted | Instead | Why |
-|---|---|---|
-| Neighbour lists in heartbeats and a network-wide node table | 9-byte heartbeat of ID, short position and channel; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
-| Sequence numbers in heartbeats | none | they exist to age shared tables; without those they carry nothing |
-| Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
-| Cooperative position estimation | every node knows its position from GPS or a map point set in the app | [position](#position) |
-| Heartbeats on one fixed channel | rotating channel, a fixed 5–15 s interval per node | [heartbeat](#heartbeat) |
-| Addressing by ID with a lookup | position + node ID; the owner resolves the ID locally | [forwarding](#forwarding) |
-
----
-
 ## Capacity and sizing
 
 Rationale, not specification.
 
 Kyiv model: ≈840 km², ≈400 km² built-up, ≈3 M people. Indoor coverage
 needs ≈9.6 relays/km² (≈3,800 relays); outdoor-only ≈1.9/km² (≈750).
-Rooftop relays hear ≈3 km ([physical layer](#physical-layer)), so a collision domain, the area within which
-transmissions interfere, is ≈28 km² with ≈270 relays, ≈14 domains across
-the built-up city.
+Rooftop relays hear ≈3 km ([physical layer](#physical-layer)), so a
+collision domain, the area within which transmissions interfere, is
+≈28 km² with ≈270 relays, ≈14 domains across the built-up city.
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
@@ -1897,61 +1883,35 @@ and its ACK (14.4 ms).
 | **13 channels, measured selection, rotating heartbeat (this design)** | **≈2.5%** | **≈85 kB/s** | **≈80** | **≈23** |
 
 These are orders of magnitude; the hearing radius and hop count are each
-uncertain by 2×. The city centre is the hot spot, and the per-relay 10%
-cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
+uncertain by 2×. The table assumes a text crosses the city. The city
+centre is the hot spot, and the per-relay 10% cap
+([duty cycle cap](#duty-cycle-cap)) binds there first.
 
-Sleepy nodes' beats cost what [beats](#beats) lists, 189 ms an hour each, and
-relays nothing for them. Summed over the domain's 20 000 sleepy nodes
-they take 1.05 s of airtime a second, 8 % of one channel's time over the
-13, where every relay hears every other.
+Sleepy nodes' beats cost what [beats](#beats) lists, 189 ms an hour
+each, and relays nothing for them. Summed over the domain's 20 000
+sleepy nodes they take 1.05 s of airtime a second, 8 % of one channel's
+time over the 13, where every relay hears every other. A sleepy node in
+anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
+its long beats, a relay's answers, and the long preamble on every DATA
+to it.
 
-A sleepy node in anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
-its long beats, a relay's answers, and the long preamble on every DATA to
-it. In the simulated domain, booted together with its
-relays, about one sleepy node in thirty heard no relay in its boot listen
-and spent a median of seven minutes in that mode; the domain carried
-1.3 points less and spent half again as much airtime as when such nodes
-listened until they heard one (roadmap D51). Switched on over half an hour
-among relays switched on over ten minutes, one in forty did, nearly all
-in the first minutes, and the domain carried 1.2 points more than booted
-together (roadmap D52).
+---
 
-The table assumes a text crosses the city. Simulated so, three domains
-side by side, a centre of twice the people in the middle one and texts
-to anyone in the three, carried half the table's rate, 91 % at every
-distance, and collapsed at the rate itself within half an hour, the
-middle domain's relays at their duty cap (roadmap D52). One domain with
-texts kept inside it carries the rate (92.5 %) and slides into collapse
-within an hour at twice it.
+## What the protocol omits
 
-Common proposals that do not fit:
+Common mesh and radio mechanisms left out, and why.
 
-- **GFSK at 50 kbps:** 3× more per channel than SF5, at 40% of the range,
-  and needs a modem driver and error correction written from scratch.
-  Revisit only if relays saturate at SF5; nothing above the modem would
-  change.
-- **Spreading one signal over the whole band (DSSS/CDMA):** the SX1262 has
-  no I/Q path; a correlator board costs an order of magnitude more and
-  draws 100+ mA; at 1.74 MHz and 15 kbps the processing gain is 20 dB, so
-  a transmitter 300 m away drowns a wanted one 1 km away. Weber–Andrews:
-  in random meshes without power control, M channels beat M-chip spreading
-  by M^(1−2/α), 5–10× here. Surviving that distance ratio would need
-  ≈37 dB of processing gain, which this band cannot give.
-- **Frequency hopping (FHSS):** hopping on a common schedule has the
-  capacity of one channel; per-receiver schedules equal fixed channels
-  plus time sync; random channels per packet with scanning receivers cost
-  ≥20 ms preambles on every packet. No regulatory benefit at 433 MHz
-  (the duty cycle applies to any modulation).
-- **A fixed hexagonal channel grid with heartbeats on all channels:** 49%
-  of every channel at indoor density. Where a rooftop relay hears ~3 km
-  and a relay covers ~700 m, a grid only spreads load evenly, which
-  measurement does as well while adapting to hot spots and foreign
-  interference.
-- **Home-relay registration (Mobile IP style):** registration traffic
-  grows with users; position addressing needs none.
-- **Sleepy nodes heartbeating as relays do, every 10 s:** collisions
-  happen at the shared relay whatever the sleepy node's range; 72% of a
-  channel at 400 sleepy nodes per relay.
+| Omitted | Instead | Why |
+|---|---|---|
+| Neighbour lists in heartbeats and a network-wide node table | a 9-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Addressing by ID with a lookup, or registration with a home relay | position + node ID; the owner resolves the ID locally ([forwarding](#forwarding)) | registration traffic grows with users; position addressing needs none |
+| Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
+| Cooperative position estimation | GPS or a map point ([position](#position)) | every node knows its own position |
+| A fixed channel grid, heartbeats on all channels | a measured home channel and a rotating heartbeat ([home channel selection](#home-channel-selection)) | 49% of every channel at indoor density; where a rooftop relay hears ~3 km and a relay covers ~700 m, a grid only spreads load evenly, which measurement does as well while adapting to hot spots and foreign interference |
+| GFSK at 50 kbps | LoRa at SF5 ([physical layer](#physical-layer)) | 3× more per channel than SF5 at 40% of the range, and needs a modem driver and error correction written from scratch; revisit only if relays saturate at SF5, since nothing above the modem would change |
+| Spreading one signal over the whole band (DSSS/CDMA) | 13 separate channels | the SX1262 cannot, and in random meshes without power control separate channels carry 5–10× more (Weber et al., [sources](#sources)) |
+| Frequency hopping | measured home channels | hopping on a common schedule has the capacity of one channel; per-receiver schedules are fixed channels plus time sync; random channels per packet need ≥20 ms preambles on every packet; no regulatory benefit at 433 MHz |
+| Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | collisions happen at the shared relay whatever the sleepy node's range: 72% of a channel at 400 sleepy nodes per relay |
 
 ---
 
