@@ -461,10 +461,8 @@ impl Sim {
                 } else {
                     fate.unwrap_or(f::OTHER)
                 };
-                let elsewhere = !received
-                    && got
-                        .iter()
-                        .any(|g| g.0 != h && !self.relay(g.0).config().sleepy);
+                let elsewhere =
+                    !received && got.iter().any(|g| g.0 != h && !self.relay(g.0).sleepy());
                 self.watch_note(h, id, fate, elsewhere);
             }
         }

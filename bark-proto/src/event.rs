@@ -113,6 +113,13 @@ pub enum AppCommand<'a> {
         /// Where the fix puts the node.
         position: Position,
     },
+    /// Whether external power, USB, is present: at boot and at every
+    /// change (spec "Hardware", roadmap D71). It sets the node's role: on
+    /// external power a relay, on battery sleepy.
+    Power {
+        /// External power is present.
+        external: bool,
+    },
 }
 
 /// Why a node dropped a message, or refused one (spec "Forwarding"). The network
@@ -151,6 +158,9 @@ pub enum DropReason {
     /// application, which may offer it again after that wait
     /// (spec "A sleepy node's own message").
     Pushback,
+    /// Held for a sleepy node by a node that turned sleepy itself, which
+    /// holds nothing (spec "Delivery queue").
+    Unplugged,
 }
 
 /// Events for the application side: a message for it, and a sleepy
@@ -347,6 +357,12 @@ pub enum Trace {
     /// A sleepy node's anchor turned carried, and the node leaves it
     /// (spec "Relay choice").
     AnchorCarried,
+    /// The node turned sleepy, or a relay, by its power
+    /// (spec "Sleepy nodes"); not while it boots.
+    Role {
+        /// Sleepy now; else a relay.
+        sleepy: bool,
+    },
     /// A sleepy node that sleeps listens a rotation to check its anchor
     /// (spec "Relay choice").
     AnchorCheck,

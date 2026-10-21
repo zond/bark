@@ -26,9 +26,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoleSpec {
-    /// Relay core.
+    /// A node on external power at boot: a relay.
     Relay,
-    /// A sleepy node (`Config::sleepy`); the name is the file format's.
+    /// A node on battery at boot: sleepy; the name is the file format's.
     Leaf,
 }
 

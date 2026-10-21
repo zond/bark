@@ -1054,7 +1054,6 @@ impl Sim {
         let config_for = |i: usize| Config {
             position: positions[i],
             node_id: ids[i],
-            sleepy: i >= n_relays as usize,
             home_override: homes[i],
             ..base
         };
@@ -2340,7 +2339,7 @@ impl Sim {
                     Trace::HeartbeatSkipped { channel } => {
                         c.heartbeats_skipped += 1;
                         let r = &self.relays[node as usize];
-                        if r.config().sleepy && r.anchor().is_some() && channel == r.home() {
+                        if r.sleepy() && r.anchor().is_some() && channel == r.home() {
                             let id = key(r.id());
                             for h in self.holders_waiting(id) {
                                 self.watch_note(h, id, beat_fate::SKIPPED, false);
@@ -3730,8 +3729,20 @@ impl Sim {
                 self.push(self.now + first, Ev::Availability(node));
             }
         }
-        // Power-on is delivered as a wakeup (docs/core-interface.md §2).
+        self.power_on(node);
+    }
+
+    /// Power-on is delivered as a wakeup (docs/core-interface.md §2), and
+    /// then the power the node has (§4).
+    fn power_on(&mut self, node: u32) {
         self.deliver(node, Event::Wakeup);
+        let external = self.external(node);
+        self.deliver(node, Event::App(AppCommand::Power { external }));
+    }
+
+    /// Whether `node` is on external power now: the nodes placed as relays.
+    fn external(&self, node: u32) -> bool {
+        node < self.n_relays
     }
 
     /// Power a node off and on again: it boots afresh with every table
@@ -3750,8 +3761,7 @@ impl Sim {
         let seed = stream_seed(self.seed, Purpose::CoreSeed, index);
         let r = &mut self.relays[node as usize];
         *r = Relay::new(*r.config(), seed);
-        // Power-on is delivered as a wakeup (docs/core-interface.md §2).
-        self.deliver(node, Event::Wakeup);
+        self.power_on(node);
     }
 
     fn power_off(&mut self, node: u32, why: &str) {

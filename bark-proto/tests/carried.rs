@@ -20,23 +20,20 @@ fn pos(east: f64) -> Position {
     Position::from_degrees(lat, lon + east / (m_per_deg * lat.to_radians().cos()))
 }
 
-/// A node at `east`, with the short boot listen of `tests/sleepy.rs` for
-/// one that is not sleepy.
-fn node(east: f64, sleepy: bool, seed: u64) -> Relay {
+/// A node at `east`, and whether it is on external power, with the short
+/// boot listen of `tests/sleepy.rs` for one that is not sleepy.
+fn node(east: f64, sleepy: bool, seed: u64) -> (Relay, bool) {
     let config = Config {
         fixed_after: secs(600),
         ..Config::default()
     };
     let boot_listen = if sleepy { config.boot_listen } else { secs(5) };
-    Relay::new(
-        Config {
-            position: pos(east),
-            boot_listen,
-            sleepy,
-            ..config
-        },
-        seed,
-    )
+    let config = Config {
+        position: pos(east),
+        boot_listen,
+        ..config
+    };
+    (Relay::new(config, seed), !sleepy)
 }
 
 fn at(s: u64) -> Instant {
@@ -103,7 +100,7 @@ fn flagged(h: &Harness<Relay>, i: usize) -> bool {
 #[test]
 fn a_relay_turns_carried_after_a_run_of_far_fixes_and_fixed_after_staying() {
     let r = 0;
-    let mut h = Harness::new(vec![node(0.0, false, 1)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 1)]);
     h.run_until(at(100), |_| false);
     let home = h.nodes[r].core.config().position;
     fix(&mut h, r, 40.0);
@@ -154,7 +151,7 @@ fn a_relay_turns_carried_after_a_run_of_far_fixes_and_fixed_after_staying() {
 /// A sleepy node takes each fix as before.
 #[test]
 fn a_sleepy_node_takes_each_fix() {
-    let mut h = Harness::new(vec![node(0.0, true, 2)]);
+    let mut h = Harness::powered(vec![node(0.0, true, 2)]);
     h.run_until(at(10), |_| false);
     fix(&mut h, 0, 500.0);
     assert_eq!(h.nodes[0].core.config().position, pos(500.0));
@@ -169,7 +166,7 @@ fn a_sleepy_node_takes_each_fix() {
 fn the_first_far_fix_flushes_the_delivery_queue_once() {
     for lost in [false, true] {
         let (r, o, s) = (0, 1, 2);
-        let mut h = Harness::new(vec![
+        let mut h = Harness::powered(vec![
             node(0.0, false, 11),
             node(300.0, false, 12),
             node(20.0, true, 13),
@@ -232,7 +229,7 @@ fn the_first_far_fix_flushes_the_delivery_queue_once() {
 fn a_carried_node_queues_mail_for_nobody() {
     for carried in [false, true] {
         let (r, o) = (0, 1);
-        let mut h = Harness::new(vec![node(0.0, false, 21), node(300.0, false, 22)]);
+        let mut h = Harness::powered(vec![node(0.0, false, 21), node(300.0, false, 22)]);
         h.link(r, o);
         h.run_until(at(400), |_| false);
         if carried {
@@ -261,7 +258,7 @@ fn a_carried_node_queues_mail_for_nobody() {
 fn a_sleepy_node_leaves_an_anchor_that_turns_carried() {
     for other in [true, false] {
         let (first, second, s) = (0, 1, 2);
-        let mut h = Harness::new(vec![
+        let mut h = Harness::powered(vec![
             node(0.0, false, 31),
             node(300.0, false, 32),
             node(50.0, true, 33),
@@ -305,7 +302,7 @@ fn a_sleepy_node_leaves_an_anchor_that_turns_carried() {
 #[test]
 fn mail_for_a_node_heard_as_a_relay_goes_to_it() {
     let (r, o, x) = (0, 1, 2);
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, false, 41),
         node(300.0, false, 42),
         node(30.0, false, 43),
@@ -336,7 +333,7 @@ fn mail_for_a_node_heard_as_a_relay_goes_to_it() {
 #[test]
 fn an_anchor_carried_while_its_node_chooses() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 51), node(50.0, true, 52)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 51), node(50.0, true, 52)]);
     h.link(r, s);
     h.start_at(s, at(10));
     assert!(h.run_until(at(1000), |h| h.nodes[s].core.anchor().is_some()));

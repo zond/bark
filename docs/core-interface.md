@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -16,10 +16,11 @@ fn next_wakeup(&self) -> Option<Instant>;
 fn accepts_send(&self, now: Instant) -> bool;
 ```
 
-One struct, `Node`, for every node; `Config::sleepy` makes it a sleepy node
-(spec "Sleepy nodes"). `Relay` is the node with its heard table and delivery queue, and
-`SleepyNode` the node without them, which a sleepy node does not keep; a `Relay` set up
-sleepy keeps them empty and behaves the same (§6). A sleepy node's radio receives
+One struct, `Node`, for every node; its power makes it a relay or a sleepy node
+(`AppCommand::Power`, §4; spec "Hardware", "Sleepy nodes"). `Relay` is the node with its
+heard table and delivery queue, and `SleepyNode` the node without them, which a sleepy
+node does not keep: it is sleepy whatever its power, for a driver whose node never
+switches, and a `Relay` on battery keeps them empty and behaves the same (§6). `Node::sleepy()` says which it is now. A sleepy node's radio receives
 duty-cycled whenever the node is not in a window or listening for its anchor's heartbeat;
 when and until when, the core says with `Action::Sniff` (§3 rule 10). `Node::anchorless()`
 says whether it is a sleepy node without an anchor (spec "Sleepy nodes alone").
@@ -40,6 +41,8 @@ core and no timer identifiers cross the boundary.
 
 Boot: the first `handle` call a core receives is `Event::Wakeup`, delivered at start
 whatever `next_wakeup()` says. The core's boot listen (spec "Channel at boot") starts there.
+The driver then reports the power at once, at the same instant (§4); until it does, a
+`Relay` takes itself to be on external power.
 
 ## 3. Radio
 
@@ -103,8 +106,9 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 ## 4. Application
 
 Every node has the same application interface: the readiness query
-`accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition` and
-`AppCommand::Fix`, and the events `AppEvent::Message` and `AppEvent::GivenBack`.
+`accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
+`AppCommand::Fix` and `AppCommand::Power`, and the events `AppEvent::Message` and
+`AppEvent::GivenBack`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -141,7 +145,14 @@ the core a GPS fix that passed the driver's plausibility checks; the driver hand
 and none while a map point is set. A sleepy node takes each fix; a node that is not sleepy
 keeps its position while it is fixed and decides from the fixes whether it is carried, and
 takes each fix once it is (roadmap D70). A node's address changes with its
-position, and a relay's sleepy nodes' with it (spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
+position, and a relay's sleepy nodes' with it (spec "Node identity").
+
+`AppCommand::Power` says whether external power, USB, is present. The driver sends it
+right after the boot wakeup and at every change, and may repeat it. On external power
+the node is a relay, on battery sleepy (spec "Hardware"): while it boots, from the report
+on; running, from the change on, as spec "Sleepy nodes" says.
+
+`AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
 ## 5. What the driver must simulate or implement

@@ -67,7 +67,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver hands a GPS fix that passed its checks (module
     /// documentation). Returns whether the node took it as its position.
     pub(super) fn fix(&mut self, at: Position, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        if self.config.sleepy {
+        if self.sleepy {
             self.set_position(at);
             return true;
         }

@@ -209,6 +209,11 @@ impl<const N: usize> DeliveryQueue<N> {
         self.entries.as_mut_slice().iter_mut()
     }
 
+    /// Empty the queue.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     /// Take the oldest message for `node`.
     pub fn pop_for(&mut self, node: NodeId) -> Option<Queued> {
         let i = self.iter().position(|q| q.node == node)?;

@@ -23,24 +23,22 @@ fn pos(east: f64, north: f64) -> Position {
     )
 }
 
-/// A node at `east`, sleepy or not. The boot listen is a full rotation in
-/// the design (spec "Channel at boot"); a short one keeps the tests quick,
-/// except for a sleepy node, which chooses its anchor at its end.
-fn node(east: f64, sleepy: bool, seed: u64) -> Relay {
+/// A node at `east`, sleepy, on battery, or not, and whether it is on
+/// external power. The boot listen is a full rotation in the design (spec
+/// "Channel at boot"); a short one keeps the tests quick, except for a
+/// sleepy node, which chooses its anchor at its end.
+fn node(east: f64, sleepy: bool, seed: u64) -> (Relay, bool) {
     node_with(east, sleepy, seed, Config::default())
 }
 
-fn node_with(east: f64, sleepy: bool, seed: u64, config: Config) -> Relay {
+fn node_with(east: f64, sleepy: bool, seed: u64, config: Config) -> (Relay, bool) {
     let boot_listen = if sleepy { config.boot_listen } else { secs(5) };
-    Relay::new(
-        Config {
-            position: pos(east, 0.0),
-            boot_listen,
-            sleepy,
-            ..config
-        },
-        seed,
-    )
+    let config = Config {
+        position: pos(east, 0.0),
+        boot_listen,
+        ..config
+    };
+    (Relay::new(config, seed), !sleepy)
 }
 
 fn at(s: u64) -> Instant {
@@ -89,7 +87,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
 #[test]
 fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
     let (strong, weak, s) = (0, 1, 2);
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, false, 1),
         node(300.0, false, 2),
         node(50.0, true, 3),
@@ -138,7 +136,7 @@ fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
 fn a_sleepy_node_anchors_at_the_first_relay_and_then_takes_the_strongest() {
     for late in [false, true] {
         let (weak, strong, s) = (0, 1, 2);
-        let mut h = Harness::new(vec![
+        let mut h = Harness::powered(vec![
             node(0.0, false, 4),
             node(300.0, false, 5),
             node(50.0, true, 6),
@@ -188,7 +186,7 @@ fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
             sleepy_listens: listens,
             ..Config::default()
         };
-        let mut h = Harness::new(vec![
+        let mut h = Harness::powered(vec![
             node_with(0.0, false, 11, config),
             node_with(50.0, true, 12, config),
         ]);
@@ -261,7 +259,7 @@ fn a_sleepy_node_is_a_last_resort() {
         home_override: bark_proto::Channel::new(4),
         ..Config::default()
     };
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node_with(0.0, false, 21, one),
         node_with(400.0, false, 22, one),
         node(500.0, true, 23),
@@ -318,7 +316,7 @@ fn a_sleepy_node_is_a_last_resort() {
 /// (spec "Sleepy nodes alone").
 #[test]
 fn sleepy_nodes_alone_meet_and_route() {
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, true, 31),
         node(400.0, true, 32),
         node(800.0, true, 33),
@@ -394,7 +392,7 @@ fn sleepy_nodes_alone_meet_and_route() {
 #[test]
 fn an_anchorless_node_is_no_anchor() {
     let (s1, s2, r) = (0, 1, 2);
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, true, 34),
         node(400.0, true, 35),
         node(800.0, false, 36),
@@ -416,7 +414,7 @@ fn an_anchorless_node_is_no_anchor() {
 #[test]
 fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
     let (s, r) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, true, 37), node(400.0, false, 38)]);
+    let mut h = Harness::powered(vec![node(0.0, true, 37), node(400.0, false, 38)]);
     h.link(s, r);
     h.start_at(r, at(600));
     let rotation = anchorless_beat_period(Config::default().delivery_ttl)
@@ -471,7 +469,7 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
 /// until its time runs out (spec "Receiving DATA").
 #[test]
 fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
-    let mut h = Harness::new(vec![node(0.0, true, 41)]);
+    let mut h = Harness::powered(vec![node(0.0, true, 41)]);
     h.run_until(at(400), |_| false);
     let text = b"nobody there";
     let (dst_pos, dst_id) = (pos(500.0, 0.0), NodeId([9; 4]));
@@ -513,7 +511,7 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
         home_override: bark_proto::Channel::new(home),
         ..Config::default()
     };
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node_with(0.0, false, 51, quiet(3)),
         node_with(300.0, false, 52, quiet(7)),
         node_with(
@@ -576,7 +574,7 @@ fn sniffed(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> Duration
 #[test]
 fn a_sleepy_node_receives_duty_cycled_between_its_windows() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 61), node(50.0, true, 62)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 61), node(50.0, true, 62)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -635,7 +633,7 @@ fn a_sleepy_node_receives_duty_cycled_between_its_windows() {
 #[test]
 fn a_sleeping_node_hears_the_ack_to_its_own_message() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 71), node(50.0, true, 72)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 71), node(50.0, true, 72)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -669,7 +667,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
     use bark_proto::wire::Ack;
     use bark_proto::{Frame, MAX_FRAME};
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 75), node(50.0, true, 76)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 75), node(50.0, true, 76)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -737,7 +735,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
 #[test]
 fn a_burst_goes_on_one_beat_and_the_node_sniffs_a_hand_over_after_the_last() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 81), node(50.0, true, 82)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 81), node(50.0, true, 82)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -799,7 +797,7 @@ fn a_burst_goes_on_one_beat_and_the_node_sniffs_a_hand_over_after_the_last() {
 #[test]
 fn a_sleeping_node_hears_its_anchor_every_rotation() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 111), node(50.0, true, 112)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 111), node(50.0, true, 112)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(3000), |_| false);
@@ -834,7 +832,7 @@ fn heartbeats_out_of_slot_do_not_move_the_watch() {
     use bark_proto::wire::Heartbeat;
     use bark_proto::{Frame, MAX_FRAME};
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 131), node(50.0, true, 132)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 131), node(50.0, true, 132)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -885,7 +883,7 @@ fn heartbeats_out_of_slot_do_not_move_the_watch() {
 #[test]
 fn a_node_whose_anchor_is_gone_chooses_again() {
     let (first, second, s) = (0, 1, 2);
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, false, 101),
         node(300.0, false, 102),
         node(50.0, true, 103),
@@ -923,7 +921,7 @@ fn a_node_whose_anchor_is_gone_chooses_again() {
 #[test]
 fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 121), node(50.0, true, 122)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 121), node(50.0, true, 122)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -981,7 +979,7 @@ fn a_holder_that_moves_sends_on_its_new_channel_to_who_listens() {
         sleepy_listens: true,
         ..Config::default()
     };
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node_with(0.0, false, 121, config),
         node_with(50.0, true, 122, config),
     ]);
@@ -1019,7 +1017,7 @@ fn a_holder_that_moves_sends_on_its_new_channel_to_who_listens() {
 #[test]
 fn a_node_out_of_reach_keeps_its_anchor() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 131), node(50.0, true, 132)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 131), node(50.0, true, 132)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -1049,7 +1047,7 @@ fn a_node_out_of_reach_keeps_its_anchor() {
 #[test]
 fn an_unanswered_delivery_waits_for_the_next_beat() {
     let (r, s) = (0, 1);
-    let mut h = Harness::new(vec![node(0.0, false, 141), node(50.0, true, 142)]);
+    let mut h = Harness::powered(vec![node(0.0, false, 141), node(50.0, true, 142)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
@@ -1099,7 +1097,7 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
         home_override: bark_proto::Channel::new(c),
         ..Config::default()
     };
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node_with(0.0, false, 151, on(3)),
         node(400.0, true, 152),
         node_with(800.0, true, 153, on(9)),
@@ -1187,7 +1185,7 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
     use bark_proto::radio::MIN_PREAMBLE_SYMBOLS;
     use bark_proto::{Frame, MAX_FRAME};
     let (r, q, s) = (0, 1, 2);
-    let mut h = Harness::new(vec![
+    let mut h = Harness::powered(vec![
         node(0.0, false, 161),
         node(-300.0, false, 162),
         node(50.0, true, 163),

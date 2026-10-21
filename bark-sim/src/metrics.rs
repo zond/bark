@@ -490,6 +490,16 @@ pub struct DropCounts {
     /// A sleepy node's own message given back to its application with a
     /// wait (spec "A sleepy node's own message").
     pub pushback: u64,
+    /// Held for a sleepy node by a node that turned sleepy (spec
+    /// "Delivery queue"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unplugged: u64,
+}
+
+/// Whether a counter is zero: counters of what only some scenarios do are
+/// left out of the others' output.
+pub(crate) fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl DropCounts {
@@ -508,6 +518,7 @@ impl DropCounts {
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::Pushback => &mut self.pushback,
+            DropReason::Unplugged => &mut self.unplugged,
         };
         *c += 1;
     }
@@ -526,6 +537,7 @@ impl DropCounts {
             + self.delivery_full
             + self.payload_too_long
             + self.pushback
+            + self.unplugged
     }
 }
 

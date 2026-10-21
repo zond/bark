@@ -242,6 +242,11 @@ impl<const N: usize> Heard<N> {
         }
     }
 
+    /// Empty the table.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+    }
+
     /// Remove every entry of a node not heard for two beat periods at `now`.
     pub fn expire(&mut self, now: Instant) {
         // Called on every event, mostly of an empty table.

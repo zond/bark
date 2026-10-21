@@ -72,6 +72,9 @@ pub struct SimNode<C: Core> {
     deaf_until: Instant,
     wakeup: Option<Instant>,
     started: bool,
+    /// The power its driver reports right after the boot wakeup, if any
+    /// (`docs/core-interface.md` §4).
+    power: Option<bool>,
     /// Every transmission: start and airtime.
     pub airtime: Vec<(Instant, Duration)>,
     /// Every CAD and RSSI check as it began: start, end, the action, and
@@ -119,6 +122,7 @@ impl<C: Core> Harness<C> {
                 deaf_until: Instant::ZERO,
                 wakeup: Some(Instant::ZERO),
                 started: false,
+                power: None,
                 airtime: Vec::new(),
                 checks: Vec::new(),
                 app: Vec::new(),
@@ -138,6 +142,18 @@ impl<C: Core> Harness<C> {
             excursions: 0,
             lose: None,
         }
+    }
+
+    /// Cores each with whether external power is present at boot, which
+    /// the harness reports right after the boot wakeup, as a driver does
+    /// (`docs/core-interface.md` §4).
+    pub fn powered(cores: Vec<(C, bool)>) -> Self {
+        let power: Vec<bool> = cores.iter().map(|c| c.1).collect();
+        let mut h = Harness::new(cores.into_iter().map(|c| c.0).collect());
+        for (n, p) in h.nodes.iter_mut().zip(power) {
+            n.power = Some(p);
+        }
+        h
     }
 
     pub fn link(&mut self, a: usize, b: usize) {
@@ -337,8 +353,11 @@ impl<C: Core> Harness<C> {
         for i in 0..self.nodes.len() {
             let n = &self.nodes[i];
             if n.alive && n.wakeup.is_some_and(|w| w <= now) {
-                self.nodes[i].started = true;
+                let boot = !std::mem::replace(&mut self.nodes[i].started, true);
                 self.deliver(i, Event::Wakeup);
+                if let Some(external) = self.nodes[i].power.filter(|_| boot) {
+                    self.deliver(i, Event::App(AppCommand::Power { external }));
+                }
             }
         }
     }

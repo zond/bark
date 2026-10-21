@@ -103,7 +103,6 @@ pub fn config() -> Config {
     Config {
         position,
         node_id: NodeId(embassy_nrf::pac::FICR.deviceid(0).read().to_be_bytes()),
-        sleepy: cfg!(feature = "sleepy"),
         tx_power_dbm: MAX_TX_DBM,
         ..Config::default()
     }
@@ -123,7 +122,11 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 /// Run the core forever.
 pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp, dbm);
+    let core = Static {
+        core,
+        booted: false,
+    };
+    let mut driver = Driver::new(core, radio, Monotonic, LogApp, dbm);
     log::info!(
         "{} id={:02x?} at {} {} power_dbm={}",
         if cfg!(feature = "sleepy") {
@@ -173,18 +176,28 @@ impl embassy_usb_logger::ReceiverHandler for IgnoreInput {
 
 /// The core in static memory: at 150 KiB a relay is kept out of every
 /// task's future and stack.
-struct Static(&'static mut Role);
+struct Static {
+    core: &'static mut Role,
+    booted: bool,
+}
 
 impl Core for Static {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(bark_proto::Action)) {
-        self.0.handle(event, now, emit)
+        self.core.handle(event, now, emit);
+        if !core::mem::replace(&mut self.booted, true) {
+            // The power the image is built for, reported at boot
+            // (docs/core-interface.md §4).
+            let external = !cfg!(feature = "sleepy");
+            let power = Event::App(bark_proto::AppCommand::Power { external });
+            self.core.handle(power, now, emit);
+        }
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
-        self.0.next_wakeup()
+        self.core.next_wakeup()
     }
 
     fn accepts_send(&self, now: Instant) -> bool {
-        self.0.accepts_send(now)
+        self.core.accepts_send(now)
     }
 }

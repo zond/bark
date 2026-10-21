@@ -1,9 +1,9 @@
 //! The protocol core: configuration, the node, and the `Core` trait that
 //! the driver programs against.
 //!
-//! There is one node, [`Relay`], in `node/relay.rs` and `node/relay/`, and
-//! one setting that changes what it does: [`Config::sleepy`]
-//! (spec "Sleepy nodes", roadmap D46). It uses the
+//! There is one node, [`Relay`], in `node/relay.rs` and `node/relay/`,
+//! sleepy or a relay by its power (spec "Hardware", "Sleepy nodes",
+//! roadmap D46, D71). It uses the
 //! radio discipline of `node/mac.rs` and the per-hop transfer of
 //! `node/transfer.rs`.
 
@@ -30,19 +30,6 @@ pub struct Config {
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
     /// its seed.
     pub node_id: NodeId,
-    /// The node is a carried node on battery (spec "Sleepy nodes"). It
-    /// heartbeats only on its home channel, at most every beat period
-    /// (`tables::heard::beat_period`, 300 s); its home is the channel of
-    /// the strongest node that is not sleepy it hears, and its address that
-    /// node's position; a node holding a message for it sends it while it
-    /// listens after a beat. Between its windows it receives duty-cycled,
-    /// a next hop only as a last resort, with the long preamble; it holds
-    /// mail for nobody and forwards at once. Without such a node it is
-    /// anchorless: it beats about every 46 s on the rotating channel with the
-    /// long preamble and has no window (spec "Sleepy nodes alone"). It does
-    /// not choose its channel by how busy channels are, and sweeps them
-    /// only while it boots.
-    pub sleepy: bool,
     /// Research switch: holders send to a sleepy node whenever they hold a
     /// message for it, as if it listened all the time, instead of only
     /// while it listens after a beat. The simulator's sleepy nodes listen
@@ -194,7 +181,6 @@ impl Config {
     pub const DEFAULT: Config = Config {
         position: Position { lat: 0, lon: 0 },
         node_id: NodeId::NONE,
-        sleepy: false,
         sleepy_listens: false,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),

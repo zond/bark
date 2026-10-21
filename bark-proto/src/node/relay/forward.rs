@@ -374,7 +374,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// documentation), nor does a carried one: it holds mail for nobody,
     /// and a neighbour that is carried keeps no other from owning.
     fn owns(&self, dst: Position, now: Instant) -> bool {
-        if self.config.sleepy || self.motion.carried {
+        if self.sleepy || self.motion.carried {
             return false;
         }
         if dst == self.config.position {
@@ -1048,7 +1048,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Routed::Wait(t);
         }
         let alone = self.neighbours.live(now).next().is_none();
-        if self.config.sleepy && self.own == Some(id) && alone {
+        if self.sleepy && self.own == Some(id) && alone {
             // Until its time runs out (`expire`).
             return Routed::Wait(now + self.config.fade_retry);
         }
@@ -1382,7 +1382,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.neighbours.answered(by, now);
             self.neighbours.refused(by, now + wait);
         }
-        if self.config.sleepy && self.own == Some(msg_id) && out.kind == Kind::Forward {
+        if self.sleepy && self.own == Some(msg_id) && out.kind == Kind::Forward {
             // A sleepy node's own message goes back to its application,
             // which may offer it again once the wait is over: refused at
             // the origin, it does not age here (spec "A sleepy node's own message").
@@ -1491,7 +1491,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     to: d.dst_hop,
                 }));
                 self.count_failure(d.dst_hop, now, emit);
-                if self.config.sleepy && d.hops == 0 {
+                if self.sleepy && d.hops == 0 {
                     // A sleepy node's own message tries its anchor again a
                     // fade later, doubled for each silence in a row
                     // (spec "A sleepy node's own message"): the ban's ladder would
