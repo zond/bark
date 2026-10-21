@@ -227,11 +227,8 @@ node measures how busy each channel is and chooses
 ([home channel selection](#home-channel-selection)); why not a grid:
 [what the protocol omits](#what-the-protocol-omits). Channel 6 is
 centred on 433.920 MHz, the busiest spot in the band (key fobs, sensors);
-the choice avoids it wherever it is busy.
-
-**Bench item C1:** verify SX1262 adjacent-channel rejection at 125 kHz
-spacing with a neighbour at full power. If it is inadequate, fall back to
-11 channels at 150 kHz spacing (same end centres, 433.170–434.670 MHz).
+the choice avoids it wherever it is busy. Whether 125 kHz spacing is
+enough is open item O5 ([open items](#open-items)).
 
 ---
 
@@ -2042,8 +2039,7 @@ boot record and the panic message (`bark-fw/memory.x`).
 **Bring-up order** (each step is a milestone on real boards):
 
 1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, CAD,
-   RSSI read, retune time measured. **Bench item C1** (adjacent-channel
-   rejection) here.
+   RSSI read, retune time measured; adjacent-channel rejection (O5).
 2. Listen-before-talk + rotating heartbeat + neighbour table on three
    boards: each board lists the other two with channel and position within
    one rotation.
@@ -2070,21 +2066,16 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 
 ## Open items
 
+Resolved items keep their numbers and are in `roadmap.md`.
+
 | # | Item | Owner/when |
 |---|---|---|
 | O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
-| O2 | Finalise packet formats ([packet formats](#packet-formats)) | resolved: the formats are implemented and tested (`bark-proto/src/wire.rs`); they change only with a decision |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
-| O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule ([neighbour table](#neighbour-table)) | resolved: measured 2026-10-21 (`neighbour-table-2026-10-21.md`), not adopted (roadmap D69) |
-| O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
+| O5 | Adjacent-channel rejection of the SX1262 at 125 kHz spacing, with a neighbour at full power; if inadequate, 11 channels at 150 kHz spacing, the same end centres, 433.170–434.670 MHz ([channel plan](#channel-plan)) | step 1 |
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
-| O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | resolved: measured 2026-10-15/16 (`power-research-2026-10-15.md`), not adopted (roadmap D40) |
-| O9 | Repository/crate layout | resolved: roadmap D7 |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O13 | A one-round question from an owner to its neighbours, whether they hear a node | resolved 2026-10-18: not built, removed from [owner](#owner); an owner that does not hear the node queues for it |
-| O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, [retry wait](#retry-wait) |
-| O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | resolved: roadmap D29 rule 1, [receiving DATA](#receiving-data), [send queue](#send-queue) |
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([nodes](#nodes), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
 
