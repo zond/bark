@@ -1,6 +1,6 @@
-//! The protocol core on the board, a relay, or a sleepy node with the
-//! `sleepy` feature (spec "Sleepy nodes"),
-//! driven by `bark_driver::Driver` against the SX1262. Its node ID is the
+//! The protocol core on the board, a relay on USB and sleepy on battery
+//! (`power.rs`, spec "Hardware"), driven by `bark_driver::Driver` against
+//! the SX1262. Its node ID is the
 //! low word of the chip's factory device ID (nRF52840 Product
 //! Specification, FICR DEVICEID), the same at every boot.
 //!
@@ -16,14 +16,8 @@ use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
 
-/// The node this image runs: a relay.
-#[cfg(not(feature = "sleepy"))]
+/// The node: every board runs the full one, which can be a relay.
 pub type Role = bark_proto::Relay;
-/// The node this image runs with the `sleepy` feature: a sleepy node,
-/// without the heard table and the delivery queue it does not keep (spec
-/// "Sleepy nodes").
-#[cfg(feature = "sleepy")]
-pub type Role = bark_proto::SleepyNode;
 
 /// How often the driver's counters are logged; the uptime line's period.
 const REPORT_EVERY: Duration = Duration::from_secs(10);
@@ -49,12 +43,17 @@ impl Clock for Monotonic {
 }
 
 /// No application yet (BLE comes later, roadmap D5): nothing to send, and
-/// what the core tells the application goes to the log.
+/// what the core tells the application goes to the log. The power comes
+/// from USB (`power.rs`).
 pub struct LogApp;
 
 impl App for LogApp {
-    async fn ready(&mut self) {
-        core::future::pending().await
+    async fn ready(&mut self, _offer: bool) {
+        crate::power::FOR_CORE.wait().await
+    }
+
+    fn power(&mut self) -> Option<bool> {
+        Some(crate::power::reported())
     }
 
     fn take(&mut self, _: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -122,22 +121,14 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 /// Run the core forever.
 pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let core = Static {
-        core,
-        booted: false,
-    };
-    let mut driver = Driver::new(core, radio, Monotonic, LogApp, dbm);
+    let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp, dbm);
     log::info!(
-        "{} id={:02x?} at {} {} power_dbm={}",
-        if cfg!(feature = "sleepy") {
-            "sleepy node"
-        } else {
-            "node"
-        },
+        "node id={:02x?} at {} {} power_dbm={} usb={}",
         config.node_id.0,
         config.position.lat_deg(),
         config.position.lon_deg(),
-        dbm
+        dbm,
+        crate::power::reported()
     );
     let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
     loop {
@@ -176,28 +167,18 @@ impl embassy_usb_logger::ReceiverHandler for IgnoreInput {
 
 /// The core in static memory: at 150 KiB a relay is kept out of every
 /// task's future and stack.
-struct Static {
-    core: &'static mut Role,
-    booted: bool,
-}
+struct Static(&'static mut Role);
 
 impl Core for Static {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(bark_proto::Action)) {
-        self.core.handle(event, now, emit);
-        if !core::mem::replace(&mut self.booted, true) {
-            // The power the image is built for, reported at boot
-            // (docs/core-interface.md §4).
-            let external = !cfg!(feature = "sleepy");
-            let power = Event::App(bark_proto::AppCommand::Power { external });
-            self.core.handle(power, now, emit);
-        }
+        self.0.handle(event, now, emit)
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
-        self.core.next_wakeup()
+        self.0.next_wakeup()
     }
 
     fn accepts_send(&self, now: Instant) -> bool {
-        self.core.accepts_send(now)
+        self.0.accepts_send(now)
     }
 }

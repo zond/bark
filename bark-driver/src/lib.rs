@@ -7,9 +7,10 @@
 //! on the host against a fake radio in a test.
 //!
 //! The driver does one thing at a time: wait for the radio, the core's
-//! wakeup or the application; hand the core the event; then perform the one
-//! excursion the core may have asked for and hand it the completion. While
-//! the core runs, the radio keeps receiving on its own.
+//! wakeup, the application or a change of power; hand the core the event;
+//! then perform the one excursion the core may have asked for and hand it
+//! the completion. While the core runs, the radio keeps receiving on its
+//! own.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -123,8 +124,9 @@ pub struct Outgoing {
 /// The application side of the node (core-interface §4).
 pub trait App {
     /// Resolves when a message waits to be sent, at once if one already
-    /// does. Cancel-safe.
-    async fn ready(&mut self);
+    /// does, if `offer`; and when the power may have changed since
+    /// [`App::power`] last answered. Cancel-safe.
+    async fn ready(&mut self, offer: bool);
 
     /// Hand over the waiting message: its payload into `payload`, the rest
     /// returned. The driver calls this only while the core accepts a
@@ -134,6 +136,11 @@ pub trait App {
     /// What the core tells the application: a message for it, or its own
     /// message given back with when to offer it again (core-interface §4).
     fn message(&mut self, event: &AppEvent);
+
+    /// Whether external power, USB, is present now, if the node can tell:
+    /// the driver reports it to the core right after the boot wakeup and
+    /// at every change (core-interface §4).
+    fn power(&mut self) -> Option<bool>;
 }
 
 /// Counters for the log, and the timings that say whether the loop keeps
@@ -168,6 +175,8 @@ pub struct Driver<C, R, K, A> {
     app: A,
     tx_dbm: i8,
     booted: bool,
+    /// The power last reported to the core.
+    power: Option<bool>,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
     /// Until when the core lets the radio receive duty-cycled
@@ -200,6 +209,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             app,
             tx_dbm,
             booted: false,
+            power: None,
             resting: None,
             sniff_until: None,
             listening: None,
@@ -245,7 +255,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         // The first event a core receives is a wakeup (core-interface §2).
         if !self.booted {
             self.booted = true;
-            return self.deliver(Event::Wakeup).await;
+            self.deliver(Event::Wakeup).await?;
+            return self.report_power().await;
         }
         self.listen_resting().await?;
         let now = self.clock.now();
@@ -269,14 +280,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 None => pending().await,
             }
         };
-        let app = &mut self.app;
-        let ready = async {
-            match offer {
-                true => app.ready().await,
-                false => pending().await,
-            }
-        };
-        let woke = select3(timer, self.radio.wait(), ready).await;
+        let woke = select3(timer, self.radio.wait(), self.app.ready(offer)).await;
 
         let start = self.clock.now();
         let listening = self.listening;
@@ -288,7 +292,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             },
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
-            Either3::Third(()) => self.offer().await,
+            Either3::Third(()) => match self.report_power().await {
+                Ok(()) => self.offer().await,
+                e => e,
+            },
         };
         if listening.is_some() && self.listening == listening {
             let away = self.clock.now().since(start);
@@ -361,6 +368,19 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             }
         }
         Ok(())
+    }
+
+    /// Report the power to the core if the application can tell it and it
+    /// is not what the core was last told.
+    async fn report_power(&mut self) -> Result<(), R::Error> {
+        let power = self.app.power();
+        if power.is_none() || power == self.power {
+            return Ok(());
+        }
+        self.power = power;
+        let external = power.unwrap_or_default();
+        self.deliver(Event::App(AppCommand::Power { external }))
+            .await
     }
 
     async fn offer(&mut self) -> Result<(), R::Error> {

@@ -289,8 +289,10 @@ pub type Relay = Node<HEARD, DELIVERY_QUEUE>;
 
 /// A node built only to be sleepy: no heard table and no delivery queue,
 /// which a sleepy node does not keep (spec "Sleepy nodes"), so that a
-/// driver of a sleepy node does not spend their memory. A [`Relay`] set up
-/// sleepy behaves the same and keeps them empty.
+/// driver of a node that never switches to a relay does not spend their
+/// memory; it stays sleepy whatever its power (`relay/power.rs`). A
+/// [`Relay`] on battery behaves the same and keeps them empty. The board
+/// runs a [`Relay`], since its node turns a relay on USB.
 pub type SleepyNode = Node<0, 0>;
 
 /// The node, with room for `H` sleepy nodes heard and `Q` messages for

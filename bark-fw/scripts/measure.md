@@ -212,13 +212,14 @@ Also needs the core. What the console measures for step 3:
 
 ## Step 5: a sleepy node, duty-cycled receive and current (spec "Implementation notes" step 5)
 
-Board S runs the sleepy image (`cargo build --release --features sleepy`),
+Board S runs the node built to report battery on the bench's USB
+(`BARK_ON_BATTERY=1 cargo build --release`), so that it is sleepy and logs;
 board A the console. With no node of the protocol near it, S hears no
 relay and stays without an anchor (spec "Sleepy nodes alone"): after its
 boot listen it receives duty-cycled at all times but its own beats. S's
 log gives what the step needs:
 
-- `sleepy node id=[..] at ...` at start, and `HomeChannelMoved { from, to }`
+- `node id=[..] at ... usb=false` at start, and `HomeChannelMoved { from, to }`
   when the boot listen ends: `to` is the channel S receives on, h below.
 - The `driver` line, at the first event 10 s or more after the last:
   `frames` counts every frame with a good CRC, the console's bench frames
@@ -227,8 +228,10 @@ log gives what the step needs:
 - A rising `sniffs` with no frames on air shows the image receives
   duty-cycled at all.
 
-S logs only when it booted on USB power (README, The sleepy image's
-current); 5.1 and 5.2 run with S on USB, 5.3 on its battery.
+S logs only when it booted on USB power (README, The current on
+battery); 5.1 and 5.2 run with S on USB, 5.3 on its battery. A board
+built without `BARK_ON_BATTERY` is a relay on USB and turns sleepy an
+hour after the cable goes (spec "Sleepy nodes").
 
 ### 5.1 Every long preamble is caught
 

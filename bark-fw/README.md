@@ -3,20 +3,28 @@
 Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
-Current state (2026-10-20). The firmware blinks the green LED at 1 Hz
-(except the sleepy image, below), logs over USB CDC-ACM (a banner with
-the firmware version and constants from `bark-proto`, the previous boot's
-panic message if there was one, an uptime line every 10 s but in the
-sleepy image), powers up the SX1262 at bark's modulation (SF5,
-125 kHz, CR 4/5, CRC on, private sync word, the receiver set for the
-1396-symbol long preamble) and then
-does one of three things, chosen when it is built:
+Current state (2026-10-21). The firmware blinks the green LED at 1 Hz
+while on USB, logs over USB CDC-ACM (a banner with the firmware version
+and constants from `bark-proto`, the previous boot's panic message if
+there was one, an uptime line every 10 s while on USB), powers up the
+SX1262 at bark's modulation (SF5, 125 kHz, CR 4/5, CRC on, private sync
+word, the receiver set for the 1396-symbol long preamble) and then does
+one of two things, chosen when it is built:
 
 | Build | Runs |
 |---|---|
-| `cargo build --release` | the protocol core as a relay |
-| `cargo build --release --features sleepy` | the protocol core as a sleepy node |
+| `cargo build --release` | the protocol core: a relay on USB, sleepy on battery |
 | `cargo build --release --features console` | the measurement console (below) |
+
+Every board runs the same node. Its role is not a setting: the firmware
+reads whether USB power is present from the nRF52840's VBUS detection
+(Product Specification, POWER, USB supply: `USBREGSTATUS.VBUSDETECT`,
+and the `USBDETECTED` and `USBREMOVED` events) and reports it to the core
+at boot and at every change (`AppCommand::Power`, `src/power.rs`); the core
+is a relay on USB and turns sleepy on battery after its grace (spec
+"Sleepy nodes"). For bench work, `BARK_ON_BATTERY=1` at build time
+reports battery whatever USB says, so that a board on the bench's USB runs
+sleepy and still logs (`scripts/measure.md` step 5).
 
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
@@ -46,16 +54,15 @@ driver's source, and have only been compiled.
 Verified on the host:
 
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
-  with each of the three builds.
+  with each of the two builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The relay image is 315 KiB of
-  flash (`llvm-size -A`, `.text`, `.rodata` and `.data`), 162 KiB of it
+  initial stack pointer is `0x20040000`. The image is 319 KiB of
+  flash (`.text`, `.rodata` and `.data`), 163 KiB of it
   the node's empty tables, which start in flash and are copied to RAM at
-  boot; it uses 170 KiB of RAM before the stack (`.data` and `.bss`),
-  which leaves 85 KiB for the stack. The sleepy image keeps no heard
-  table and no delivery queue: 291 KiB of flash and 152 KiB of RAM,
-  which leaves 103 KiB for the stack (2026-10-20; duty-cycled receive
-  added 3 KiB of flash to each, from 312 and 289 KiB). Its deepest single stack frame, the
+  boot; it uses 171 KiB of RAM before the stack (`.data` and `.bss`),
+  which leaves 84 KiB for the stack (2026-10-21, one image, roadmap D71;
+  the relay image was 317 KiB and 170 KiB, and the sleepy image, without
+  the heard table and the delivery queue, 292 KiB and 152 KiB). Its deepest single stack frame, the
   largest stack adjustment in the disassembly (`llvm-objdump`), is 23 KiB,
   in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
   28 KiB for the image before D46, where this file said 18 KiB.
@@ -74,9 +81,14 @@ Unverified, in the order they will fail if wrong:
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
 - The 32 MHz crystal starts (USB needs it) when a node boots on USB
-  power; a node booted on battery starts none, and its USB is expected to
-  work only after a reset with the cable in; the low-frequency clock uses the
-  internal RC oscillator so no 32.768 kHz crystal is assumed.
+  power or the cable comes, and stops when it goes; whether USB enumerates
+  when the cable comes after a boot on battery is not known; the
+  low-frequency clock uses the internal RC oscillator so no 32.768 kHz
+  crystal is assumed.
+- VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
+  POWER interrupt comes at each change with the USB driver's handler
+  bound beside the node's, so that the core is told within an event's
+  time and the node turns a relay on the cable at once.
 - The green LED is on P0.15 and active low.
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
 - A panic message survives the soft reset through the bootloader (PANDUMP in
@@ -154,7 +166,7 @@ below. `memory.x` has the full map.
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
    appears on the host, and once it is opened the log shows
-   `radio up in N us`, then `node at ...` (or `sleepy node at ...`), or
+   `radio up in N us`, then `node id=... at ... usb=true`, or
    `console ready` from a console build.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
@@ -296,27 +308,30 @@ after every CAD, which ends in STDBY_RC whatever the driver asks
 falls inside the CAD (the console's `cad_us`), not inside the next
 operation.
 
-## The sleepy image's current
+## The current on battery
 
-The sleepy image is the one to measure a carried node's current with.
+On battery the node is sleepy, and its current is what matters.
 Between the core's wakeups and the radio's interrupts nothing runs: the
 driver's loop waits on one embassy timer (the core's next wakeup, the end
-of a sniff or of a hold), DIO1 through GPIOTE, and an application that
-has nothing to send, and the embassy executor sleeps in `wfe` meanwhile.
-The USB device waits for VBUS and the log for the host to open the port,
-both on interrupts. Three things that would keep the board awake are
-gone from this image:
+of a sniff or of a hold), DIO1 through GPIOTE, an application that
+has nothing to send and a change of USB power, and the embassy executor
+sleeps in `wfe` meanwhile. The USB device waits for VBUS and the log for
+the host to open the port, both on interrupts. Three things that would
+keep the board awake stop while it is on battery, and start again on USB:
 
 - The LED blink: the LED stays dark, and the CPU is not woken twice a
   second.
 - TIMER1, the console's 1 µs stopwatch: a running TIMER keeps the
   high-frequency clock requested while the CPU sleeps (nRF52840 Product
   Specification, TIMER and CLOCK). A node's timings come from the embassy
-  clock, to 30.5 µs. (So in the relay image too.)
-- The 32 MHz crystal, once started, runs on while the CPU sleeps; a node
-  starts it only when it boots on USB power, which USB needs (the
-  console always does). On battery the high-frequency clock is the
-  internal oscillator, started only while something needs it.
+  clock, to 30.5 µs, on USB too.
+- The 32 MHz crystal, once started, runs on while the CPU sleeps. A node
+  starts it at boot on USB power and whenever USB comes, which USB
+  needs (the console always does), and stops it when USB goes. On
+  battery the high-frequency clock is the internal oscillator, started
+  only while something needs it. Unverified: that USB enumerates when
+  the cable comes after a boot on battery, the crystal started on the
+  power event (Unverified, below).
 
 What stays, and is not this firmware's to fix without a board:
 

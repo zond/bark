@@ -286,15 +286,25 @@ impl Radio for FakeRadio {
 struct TestApp {
     outgoing: Option<(Outgoing, Vec<u8>)>,
     messages: Vec<AppEvent>,
+    /// The power the application tells, and the one the driver last read.
+    power: Option<bool>,
+    read: Option<bool>,
 }
 
 impl App for TestApp {
-    async fn ready(&mut self) {
-        poll_fn(|_| match self.outgoing.is_some() {
-            true => Poll::Ready(()),
-            false => Poll::Pending,
-        })
+    async fn ready(&mut self, offer: bool) {
+        poll_fn(
+            |_| match (offer && self.outgoing.is_some()) || self.power != self.read {
+                true => Poll::Ready(()),
+                false => Poll::Pending,
+            },
+        )
         .await
+    }
+
+    fn power(&mut self) -> Option<bool> {
+        self.read = self.power;
+        self.power
     }
 
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -823,4 +833,28 @@ fn a_check_that_ends_a_sniff_waits_for_the_packet() {
         assert!(steps < 100, "the loop spins");
     }
     assert_eq!(world.ops()[2], (at_ms(50) + MAX_AIRTIME, Op::Cad(ch(3))));
+}
+
+/// The power the application tells reaches the core right after the boot
+/// wakeup, and again when it changes, once each time (core-interface §4).
+#[test]
+fn the_power_reaches_the_core_at_boot_and_at_each_change() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(100), at_ms(300)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    run_until(&mut d, &world, at_ms(100));
+    d.app_mut().power = Some(false);
+    step(&mut d, &world);
+    run_until(&mut d, &world, at_ms(300));
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (0, "App(Power { external: true })"),
+            (100_000, "wakeup"),
+            (100_000, "App(Power { external: false })"),
+            (300_000, "wakeup")
+        ]
+    );
 }

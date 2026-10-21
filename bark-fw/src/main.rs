@@ -1,11 +1,10 @@
 //! bark firmware for the LILYGO T-Echo.
 //!
-//! Blinks the green LED at 1 Hz (not in the sleepy image), logs over USB
-//! CDC-ACM, powers up the
-//! SX1262 at bark's modulation and runs the protocol core on it
-//! (`node.rs`), or with the `console` feature the bring-up measurement
-//! console (`console.rs`) on the serial port. Touches no GPS, display or
-//! BLE.
+//! Blinks the green LED at 1 Hz while on USB, logs over USB CDC-ACM,
+//! powers up the SX1262 at bark's modulation and runs the protocol core on
+//! it (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
+//! with the `console` feature the bring-up measurement console
+//! (`console.rs`) on the serial port. Touches no GPS, display or BLE.
 
 #![no_std]
 #![no_main]
@@ -16,6 +15,7 @@ mod clock;
 mod console;
 #[cfg(not(feature = "console"))]
 mod node;
+mod power;
 mod radio;
 
 use core::cell::Cell;
@@ -34,14 +34,14 @@ use panic_persist as _;
 #[cfg(feature = "console")]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => vbus_detect::InterruptHandler;
+    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
 });
 #[cfg(not(feature = "console"))]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => vbus_detect::InterruptHandler;
+    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
 });
 
@@ -158,13 +158,7 @@ async fn main(_spawner: Spawner) {
         log::error!("previous boot panicked: {}", msg);
     }
 
-    // The sleepy image is for measuring a carried node's current: the LED
-    // would dwarf the radio's, and the ticker wake the CPU twice a second.
-    // Its pin stays as reset left it, disconnected, and the LED dark.
-    #[cfg(feature = "sleepy")]
-    let blink = core::future::pending::<()>();
-    #[cfg(not(feature = "sleepy"))]
-    let blink = blink(board.leds.green);
+    let blink = on_usb_only(board.leds.green);
 
     #[cfg(feature = "console")]
     let clock = clock::Clock::new(p.TIMER1);
@@ -219,26 +213,41 @@ async fn main(_spawner: Spawner) {
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.
-#[cfg(not(feature = "sleepy"))]
 const BLINK_HALF_PERIOD: embassy_time::Duration = embassy_time::Duration::from_millis(500);
 /// Half-periods between uptime lines: 20 × 500 ms = 10 s.
-#[cfg(not(feature = "sleepy"))]
 const UPTIME_EVERY: u32 = 20;
 
-/// Blink the green LED and log the uptime, forever.
-#[cfg(not(feature = "sleepy"))]
-async fn blink(pin: embassy_nrf::Peri<'static, peripherals::P0_15>) {
+/// While on USB, blink the green LED, log the uptime and keep the 32 MHz
+/// crystal running, which USB needs (nRF52840 Product Specification,
+/// USBD). On battery none of these: the LED would dwarf the radio's
+/// current, a blink would wake the CPU twice a second, and the crystal,
+/// once started, runs on while the CPU sleeps, where the internal
+/// oscillator starts only while something needs it.
+async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P0_15>) {
+    use embassy_futures::select::{select, Either};
     use embassy_nrf::gpio::{Level, Output, OutputDrive};
     // LED assumed active low (board.rs, Leds): start dark.
     let mut green = Output::new(pin, Level::High, OutputDrive::Standard);
-    let mut ticker = embassy_time::Ticker::every(BLINK_HALF_PERIOD);
     let mut half_periods: u32 = 0;
     loop {
-        ticker.next().await;
-        green.toggle();
-        half_periods = half_periods.wrapping_add(1);
-        if half_periods.is_multiple_of(UPTIME_EVERY) {
-            log::info!("uptime {} s", Instant::now().as_secs());
+        let usb = power::usb();
+        let crystal = embassy_nrf::pac::CLOCK;
+        if !usb {
+            green.set_high();
+            if !cfg!(feature = "console") {
+                crystal.tasks_hfclkstop().write_value(1);
+            }
+            power::FOR_LED.wait().await;
+            continue;
+        }
+        crystal.tasks_hfclkstart().write_value(1);
+        let half = embassy_time::Timer::after(BLINK_HALF_PERIOD);
+        if let Either::First(()) = select(half, power::FOR_LED.wait()).await {
+            green.toggle();
+            half_periods = half_periods.wrapping_add(1);
+            if half_periods.is_multiple_of(UPTIME_EVERY) {
+                log::info!("uptime {} s", Instant::now().as_secs());
+            }
         }
     }
 }

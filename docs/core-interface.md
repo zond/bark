@@ -168,6 +168,7 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
+| Power (§4), after the boot wakeup and at each change | the power the placement gives a node | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 
 ## 6. Memory
 
@@ -191,10 +192,12 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-166 928 B (163.0 KiB, measured 2026-10-21): the tables and, in under 1 KiB around them, the
+167 008 B (163.1 KiB, measured 2026-10-21, roadmap D71): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
-waits. A `SleepyNode` is 147 912 B (144.4 KiB), without the heard table and the delivery
-queue, 18.6 KiB (roadmap D58). There is no fixed target;
+waits. Every board runs it, since every node may be a relay (spec "Hardware"). A
+`SleepyNode` is 147 992 B (144.5 KiB), without the heard table and the delivery
+queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
+tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB

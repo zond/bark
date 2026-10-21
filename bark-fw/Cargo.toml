@@ -16,8 +16,6 @@ exclude = ["vendor"]
 
 [features]
 default = []
-# Run the node sleepy (Config::sleepy), as a carried node on battery.
-sleepy = []
 # Run the bring-up measurement console (README, Console) instead of the core.
 console = []
 
