@@ -141,6 +141,7 @@ pub struct ProtocolOverrides {
     pub boot_listen_ms: Option<u64>,
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
+    pub grace_ms: Option<u64>,
 }
 
 impl ProtocolOverrides {
@@ -187,6 +188,7 @@ impl ProtocolOverrides {
         set!(boot_listen, boot_listen_ms, ms);
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
+        set!(grace, grace_ms, ms);
         c
     }
 }
@@ -479,6 +481,37 @@ impl Default for Movement {
     }
 }
 
+/// People's nodes whose power switches between USB and battery, and with
+/// it their role (spec "Hardware", roadmap D71). The simulator reports
+/// each change to the node's core. A node that does not switch keeps the
+/// power its placement gives it: a relay on USB, a sleepy node on battery.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Power {
+    /// The share of the people's nodes that neither walk nor ride whose
+    /// power switches at random, from the power its placement gives it;
+    /// 0 for none.
+    pub fraction: f64,
+    /// Mean time on USB, seconds; exponential.
+    pub usb_s: f64,
+    /// Mean time on battery, seconds; exponential.
+    pub battery_s: f64,
+    /// Every walking person's node is on battery while it walks and on USB
+    /// at its stops, as people charge where they stop.
+    pub walkers: bool,
+}
+
+impl Default for Power {
+    fn default() -> Self {
+        Power {
+            fraction: 0.0,
+            usb_s: 7200.0,
+            battery_s: 1800.0,
+            walkers: false,
+        }
+    }
+}
+
 /// Sleepy nodes carried in vehicles. A share of the sleepy nodes that do
 /// not walk ride: each stops indoors at a point of a straight route, then
 /// is driven along the route to another point drawn uniformly on it, and
@@ -620,6 +653,8 @@ pub struct Scenario {
     pub dark_groups: Vec<DarkGroup>,
     /// GPS fixes that go wrong.
     pub gps: Gps,
+    /// Whose power switches between USB and battery.
+    pub power: Power,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -664,6 +699,7 @@ impl Default for Scenario {
             shared_ids: Vec::new(),
             dark_groups: Vec::new(),
             gps: Gps::default(),
+            power: Power::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

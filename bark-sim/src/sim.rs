@@ -74,6 +74,8 @@ pub(crate) enum Ev {
     Group(u32, bool),
     /// A relay with a GPS fault takes a fix (node).
     Gps(u32),
+    /// A node whose power switches at random changes it (node).
+    Power(u32),
 }
 
 /// Kind of excursion.
@@ -640,8 +642,14 @@ pub struct Sim {
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
     positions: Vec<Position>,
-    /// Nodes `0..n_relays` are not sleepy; the rest, placed as leaves, are.
+    /// Nodes `0..n_relays` are not sleepy at boot; the rest, placed as
+    /// leaves, are.
     n_relays: u32,
+    /// Per node, whether it is on USB now (`power.rs`): at first the
+    /// relays.
+    pub(crate) external: Vec<bool>,
+    /// The nodes whose power switches, if any (`scenario::Power`).
+    pub(crate) power: Option<crate::power::PowerModel>,
     /// Every node's core.
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
@@ -662,7 +670,7 @@ pub struct Sim {
     leaf_xy: Vec<Xy>,
     /// The people's nodes, in node order: relays placed as leaves, then the
     /// sleepy nodes. They send and receive the texts.
-    people: Vec<u32>,
+    pub(crate) people: Vec<u32>,
     /// Per node, its index in `people`, or `u32::MAX`.
     person_of: Vec<u32>,
     /// Each node's address as a sender last learned it: a relay's
@@ -965,7 +973,7 @@ fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
 /// The interval of the series, µs.
 const SERIES_EVERY_US: u64 = 60_000_000;
 
-fn secs(s: f64) -> Duration {
+pub(crate) fn secs(s: f64) -> Duration {
     Duration::from_micros((s * 1e6).round() as u64)
 }
 
@@ -1133,6 +1141,8 @@ impl Sim {
             fixing: false,
             was_booting: false,
             n_relays,
+            external: (0..n as u32).map(|i| i < n_relays).collect(),
+            power: None,
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1525,7 +1535,7 @@ impl Sim {
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
         }
-        Ok(())
+        self.power_setup(&sc.power, sc.seed)
     }
 
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
@@ -1693,10 +1703,12 @@ impl Sim {
             Ev::Leg(w) => {
                 let walks = self.walks.as_mut().expect("walkers");
                 let until = walks.next_leg(w, self.now);
+                let k = &walks.walkers[w as usize];
+                let (node, walking) = (k.node, k.walking);
                 if self.now >= self.settle {
-                    let k = &walks.walkers[w as usize];
-                    self.metrics.sleep.walks[usize::from(k.walking)] += 1;
+                    self.metrics.sleep.walks[usize::from(walking)] += 1;
                 }
+                self.power_walk(node, walking);
                 self.push(until, Ev::Leg(w));
             }
             Ev::Group(k, dark) => {
@@ -1712,6 +1724,7 @@ impl Sim {
                 }
             }
             Ev::Fix(n) => self.fix(n),
+            Ev::Power(n) => self.power_toggle(n),
             Ev::Gps(n) => {
                 self.fix(n);
                 let every = match self.gps.relays_every_s {
@@ -1875,7 +1888,7 @@ impl Sim {
             }
         }
         let wake = c.next_wakeup().map(|t| clock.true_time(t));
-        if node >= self.n_relays {
+        if node >= self.n_relays || c.sleepy() {
             let anchor = c.anchor().map(|a| a.position);
             let alone = c.anchorless();
             let since = &mut self.anchorless_since[node as usize];
@@ -1894,6 +1907,7 @@ impl Sim {
                 _ => {}
             }
             self.attached(node, anchor);
+            self.power_after(node);
         }
         for a in buf.drain(..) {
             self.apply(node, a, false);
@@ -2318,14 +2332,19 @@ impl Sim {
             Action::Transmit(f) => {
                 self.note_direct(node, &f);
                 self.note_sent_again(node, &f);
-                self.note_beat_fix(node, &f, scripted);
+                // A heartbeat for a change is no beat to take a fix at.
+                if !self.power_frame(node, &f) {
+                    self.note_beat_fix(node, &f, scripted);
+                }
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
+                self.power_trace(node, &Trace::Dropped { msg_id, reason });
                 self.message_dropped(node, msg_id, reason)
             }
             Action::Trace(t) => {
+                self.power_trace(node, &t);
                 let c = &mut self.metrics.nodes[node as usize].core;
                 match t {
                     Trace::HomeChannelMoved { from, to } if !self.was_booting => {
@@ -2523,7 +2542,7 @@ impl Sim {
     /// `node` sends `f`: if it is the flush or a delivery to a node as a
     /// relay, count its airtime.
     fn note_direct(&mut self, node: u32, f: &Frame) {
-        if node >= self.n_relays || !self.relays[node as usize].sending_direct() {
+        if !self.relays[node as usize].sending_direct() {
             return;
         }
         let after = self.now >= self.settle;
@@ -3337,7 +3356,8 @@ impl Sim {
     /// A sleepy node's anchor now, as a node index.
     pub fn attached_relay(&self, leaf: u32) -> Option<u32> {
         let a = self.relays[leaf as usize].anchor()?;
-        self.relay_index.get(&key(a.id)).copied()
+        let relay = self.relay_index.get(&key(a.id)).copied();
+        relay.or_else(|| self.switcher_by_id(a.id))
     }
 
     /// Traffic tags of the messages some live core still holds, or its
@@ -3447,10 +3467,15 @@ impl Sim {
     /// boot listen, its own position. `None` for a leaf that has had
     /// neither: nobody can have its address.
     fn address_of(&mut self, node: u32) -> Option<Position> {
-        if node < self.n_relays {
+        let switches = self.switches(node);
+        if node < self.n_relays && !switches {
             return Some(self.relay_position(node));
         }
         let leaf = &self.relays[node as usize];
+        if switches && !leaf.sleepy() {
+            // On USB: its own position, which its core holds.
+            return Some(leaf.address());
+        }
         if self.n_relays == 0 {
             // No node that is not sleepy: a sleepy node's own position.
             return Some(leaf.address());
@@ -3514,7 +3539,7 @@ impl Sim {
         };
         let tag = self.origins.len() as u32;
         let reachable = self.reachable(src, dst_pos);
-        let src_pos = if src < self.n_relays {
+        let src_pos = if src < self.n_relays && !self.switches(src) {
             self.relay_position(src)
         } else {
             self.relays[src as usize].address()
@@ -3740,9 +3765,9 @@ impl Sim {
         self.deliver(node, Event::App(AppCommand::Power { external }));
     }
 
-    /// Whether `node` is on external power now: the nodes placed as relays.
+    /// Whether `node` is on external power now (`power.rs`).
     fn external(&self, node: u32) -> bool {
-        node < self.n_relays
+        self.external[node as usize]
     }
 
     /// Power a node off and on again: it boots afresh with every table
@@ -3912,9 +3937,11 @@ impl Sim {
 
     /// `n` is in reach unless its availability process or a group has it
     /// dark: bring its radio in or out of reach to match.
-    fn set_presence(&mut self, n: u32) {
+    pub(crate) fn set_presence(&mut self, n: u32) {
         let st = &self.nodes[n as usize];
-        let present = !st.avail_dark && st.group_dark == 0;
+        // A node on USB does not go dark (`power.rs`).
+        let dark = st.avail_dark && !self.external[n as usize];
+        let present = !dark && st.group_dark == 0;
         if present == st.present || !st.alive {
             return;
         }

@@ -168,7 +168,7 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
-| Power (§4), after the boot wakeup and at each change | the power the placement gives a node | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
+| Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 
 ## 6. Memory
 

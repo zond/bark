@@ -51,6 +51,8 @@ pub enum Purpose {
     RelayShare = 17,
     /// The error of each GPS fix of a relay (`scenario::Gps::error_m`).
     GpsError = 18,
+    /// Whose power switches, and when (`scenario::Power`).
+    Power = 19,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

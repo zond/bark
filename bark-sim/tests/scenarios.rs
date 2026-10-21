@@ -692,3 +692,34 @@ fn strip_places_three_domains_and_a_centre() {
     assert!((inside - 9657.0).abs() < 300.0, "{inside} in the centre");
     assert_eq!(sc.settled_s(), 2700.0);
 }
+
+/// S2 with a third of the sleepy nodes walking, on battery while they
+/// walk and on USB at their stops, and a third of the others switching
+/// at random (`[power]`, roadmap D71): nodes turn sleepy after their grace
+/// and relays at once, some power comes back within the grace, and texts
+/// still arrive or are accounted for.
+#[test]
+fn nodes_switch_with_their_power() {
+    let mut sc = scenario("s2-block.toml");
+    sc.movement.fraction = 0.3;
+    sc.movement.stop_s = 900.0;
+    sc.power.walkers = true;
+    sc.power.fraction = 0.3;
+    sc.power.usb_s = 900.0;
+    sc.power.battery_s = 600.0;
+    sc.protocol.grace_ms = Some(300_000);
+    sc.duration_s = 2.0 * 3600.0;
+    let mut sim = Sim::new(&sc).expect("S2 builds");
+    sim.run();
+    let s = sim.summary();
+    let p = s.research.power.as_ref().expect("nodes switch");
+    let to_sleepy = p.turns.iter().filter(|t| t.2).count();
+    let to_relay = p.turns.len() - to_sleepy;
+    assert!(p.switchers.len() > 30, "{} switch", p.switchers.len());
+    assert!(to_sleepy > 20 && to_relay > 20, "{to_sleepy} / {to_relay}");
+    assert!(p.back[0] > 5, "{:?} back in the grace", p.back);
+    assert!(p.graces > 10, "{} graces", p.graces);
+    let phase = &s.app.phases[1];
+    assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
+    accounted(&sim, "S2 switching");
+}

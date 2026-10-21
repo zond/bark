@@ -474,6 +474,14 @@ impl Sim {
                     delivered_by: self.delivered_by(),
                     ..c
                 }),
+                power: m
+                    .research
+                    .power
+                    .clone()
+                    .map(|p| crate::metrics::PowerMetrics {
+                        held: self.power_held(),
+                        ..p
+                    }),
                 ..m.research.clone()
             },
         }
@@ -861,6 +869,30 @@ impl Summary {
                 s,
                 "delivered by the holder: in the window {}, outside it {}, by the flush {}, to the node as a relay {}; flush frames {} ({:.1} s), to a relay {} ({:.1} s)",
                 d[0], d[1], d[2], d[3], c.flush.0, c.flush.1, c.to_relay.0, c.to_relay.1
+            );
+        }
+        if let Some(p) = &self.research.power {
+            let walking = p.switchers.iter().filter(|w| w.2).count();
+            let to_sleepy = p.turns.iter().filter(|t| t.2).count();
+            let h = p.held;
+            let _ = writeln!(
+                s,
+                "power: {} nodes switch ({} with their walks); {} changes reported; turns to sleepy {}, to relay {}; after the settle time USB back within the grace {}, during the flush {}; graces ended {}",
+                p.switchers.len(),
+                walking,
+                p.changes.len(),
+                to_sleepy,
+                p.turns.len() - to_sleepy,
+                p.back[0],
+                p.back[1],
+                p.graces
+            );
+            let _ = writeln!(
+                s,
+                "held at the end of a grace: by the flush {}, at a beat {}, to the node as a relay {}, dropped at the turn {}, otherwise {}; heartbeats for a change: flags {} ({:.1} s), position {} ({:.1} s); anchors left for one that turned sleepy {}",
+                h[0], h[1], h[2], h[3], h[4],
+                p.changed[0].0, p.changed[0].1, p.changed[1].0, p.changed[1].1,
+                p.anchors_left
             );
         }
         if let Some(r) = &self.returns {

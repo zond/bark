@@ -890,6 +890,41 @@ pub struct Research {
     /// whether or not the node was in a window.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub carried: Option<Carried>,
+    /// What the nodes whose power switches do (roadmap D71); absent
+    /// without `[power]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub power: Option<PowerMetrics>,
+}
+
+/// What the nodes whose power switches do (`Research::power`, roadmap
+/// D71). Times in seconds.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct PowerMetrics {
+    /// The nodes whose power switches: the node, whether it was placed as
+    /// a relay, and whether its power follows its walks.
+    pub switchers: Vec<(u32, bool, bool)>,
+    /// Every change of power reported to a running core: when, the node,
+    /// and whether it is on USB now.
+    pub changes: Vec<(f64, u32, bool)>,
+    /// Every turn of a running node's role: when, the node, and whether it
+    /// is sleepy now.
+    pub turns: Vec<(f64, u32, bool)>,
+    /// After the settle time, USB back at a node that still relayed:
+    /// within its grace, and during the flush after it.
+    pub back: [u64; 2],
+    /// Graces that ended after the settle time.
+    pub graces: u64,
+    /// The texts a relay held at the end of its grace after the settle
+    /// time, by how they went: by the flush, at a beat of their node in its
+    /// window or outside it, to their node as a relay, dropped at the turn
+    /// to sleepy, none of these.
+    pub held: [u64; 5],
+    /// Heartbeats for a change after the settle time, of a flag and of the
+    /// position only: how many, and their airtime.
+    pub changed: [(u64, f64); 2],
+    /// Anchor changes after the settle time of sleepy nodes whose old
+    /// anchor was sleepy, or leaving after its grace, by then.
+    pub anchors_left: u64,
 }
 
 /// What the nodes that move do (`Research::carried`, roadmap D70). Times
