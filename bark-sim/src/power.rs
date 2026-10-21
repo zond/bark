@@ -29,9 +29,9 @@ pub(crate) struct PowerModel {
     /// The texts held at the end of a grace after the settle time, and
     /// their fate so far, an index of `PowerMetrics::held`.
     held: HashMap<u32, Option<usize>>,
-    /// A node about to send a heartbeat for a change, and whether a flag
-    /// changed (`Trace::Changed`).
-    changing: HashMap<u32, bool>,
+    /// The nodes about to send a heartbeat for a change
+    /// (`Trace::Changed`).
+    changing: std::collections::HashSet<u32>,
     /// Per node, the anchor it had after its last event.
     anchors: Vec<Option<NodeId>>,
 }
@@ -57,7 +57,7 @@ impl Sim {
             switches: vec![false; n],
             index: HashMap::new(),
             held: HashMap::new(),
-            changing: HashMap::new(),
+            changing: std::collections::HashSet::new(),
             anchors: vec![None; n],
         };
         let mut metrics = PowerMetrics::default();
@@ -211,12 +211,8 @@ impl Sim {
                     p.graces += 1;
                 }
             }
-            T::Changed { flags } => {
-                self.power
-                    .as_mut()
-                    .expect("checked")
-                    .changing
-                    .insert(node, flags);
+            T::Changed => {
+                self.power.as_mut().expect("checked").changing.insert(node);
             }
             T::Delivered { msg_id, by, .. } => {
                 let fate = match by {
@@ -246,9 +242,9 @@ impl Sim {
         let Some(m) = self.power.as_mut() else {
             return false;
         };
-        let Some(flags) = m.changing.remove(&node) else {
+        if !m.changing.remove(&node) {
             return false;
-        };
+        }
         debug_assert!(matches!(
             Packet::decode(f.payload()),
             Ok(Packet::Heartbeat(_))
@@ -256,9 +252,8 @@ impl Sim {
         if self.now >= self.settle {
             let air = bark_proto::radio::time_on_air(f.len, f.preamble_symbols);
             if let Some(p) = self.metrics.research.power.as_mut() {
-                let c = &mut p.changed[usize::from(!flags)];
-                c.0 += 1;
-                c.1 += air.as_micros() as f64 / 1e6;
+                p.changed.0 += 1;
+                p.changed.1 += air.as_micros() as f64 / 1e6;
             }
         }
         true

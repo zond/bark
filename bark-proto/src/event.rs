@@ -357,13 +357,10 @@ pub enum Trace {
     /// A sleepy node's anchor turned carried, and the node leaves it
     /// (spec "Relay choice").
     AnchorCarried,
-    /// A heartbeat for a change of the node's flags or position goes out
+    /// A heartbeat for a change of the node's flags or map point goes out
     /// on its home channel (spec "Heartbeat"): the frame of the
     /// `Action::Transmit` that follows.
-    Changed {
-        /// A flag changed; else only the position.
-        flags: bool,
-    },
+    Changed,
     /// A relay's grace on battery ended: it holds no more mail, and
     /// flushes what it holds before it turns sleepy (spec "Delivery queue").
     GraceEnded,

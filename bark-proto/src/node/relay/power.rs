@@ -120,7 +120,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // It listens all the time from now on.
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
-        self.changed(true, now);
+        self.changed();
     }
 
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
@@ -157,7 +157,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Said on the channel its neighbours and sleepy nodes know it by.
         let old = self.home;
         self.beacon.change = None;
-        self.changed(true, now);
+        self.changed();
         if !self.reconsider_anchor(now, emit) {
             self.leave_anchor(now);
         }

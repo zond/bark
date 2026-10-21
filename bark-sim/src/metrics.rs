@@ -919,9 +919,9 @@ pub struct PowerMetrics {
     /// window or outside it, to their node as a relay, dropped at the turn
     /// to sleepy, none of these.
     pub held: [u64; 5],
-    /// Heartbeats for a change after the settle time, of a flag and of the
-    /// position only: how many, and their airtime.
-    pub changed: [(u64, f64); 2],
+    /// Heartbeats for a change of flags or map point after the settle
+    /// time: how many, and their airtime.
+    pub changed: (u64, f64),
     /// Anchor changes after the settle time of sleepy nodes whose old
     /// anchor was sleepy, or leaving after its grace, by then.
     pub anchors_left: u64,

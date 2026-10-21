@@ -73,9 +73,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let r2 = OWNER_RADIUS_M * OWNER_RADIUS_M;
         if self.motion.carried {
-            if at != self.config.position {
-                self.changed(false, now);
-            }
             self.set_position(at);
             let still = &mut self.motion;
             if self
@@ -88,7 +85,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 still.still_since = now;
             } else if now.since(still.still_since) >= self.config.fixed_after {
                 self.motion = Motion::FIXED;
-                self.changed(true, now);
+                self.changed();
                 emit(Action::Trace(Trace::Carried { carried: false }));
             }
             return true;
@@ -114,7 +111,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 still_at: at,
                 still_since: now,
             };
-            self.changed(true, now);
+            self.changed();
             emit(Action::Trace(Trace::Carried { carried: true }));
             return true;
         }

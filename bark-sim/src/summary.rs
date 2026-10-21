@@ -889,9 +889,9 @@ impl Summary {
             );
             let _ = writeln!(
                 s,
-                "held at the end of a grace: by the flush {}, at a beat {}, to the node as a relay {}, dropped at the turn {}, otherwise {}; heartbeats for a change: flags {} ({:.1} s), position {} ({:.1} s); anchors left for one that turned sleepy {}",
+                "held at the end of a grace: by the flush {}, at a beat {}, to the node as a relay {}, dropped at the turn {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
                 h[0], h[1], h[2], h[3], h[4],
-                p.changed[0].0, p.changed[0].1, p.changed[1].0, p.changed[1].1,
+                p.changed.0, p.changed.1,
                 p.anchors_left
             );
         }
