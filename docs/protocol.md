@@ -1419,240 +1419,249 @@ What breaks it:
 
 ## Sleepy nodes
 
-A sleepy node is a node on battery ([nodes](#nodes), roadmap D71).
-It heartbeats rarely and on one channel, listens for a
-short window after each heartbeat and after each message it takes, and
-for its anchor's heartbeat once a rotation; between those it receives
-duty-cycled ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), so that any node can
-reach it at any time with the long preamble, as a last resort
-([next hop](#next-hop)). Its **anchor** is a relay it
-chooses, and is three things: the position in its address
-([addresses](#addresses)), so the messages for it travel there; the channel it listens
-and beats on; and the heartbeat it watches to know it is still in reach.
-Who delivers to it follows from hearing: any node that holds a message for
-it and hears its beat is its **holder** ([heard table](#heard-table), [delivery](#delivery)), most
-often the anchor, where its address sends its mail, but not only. One
-that hears no relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
+A sleepy node ([nodes](#nodes), roadmap D71) heartbeats rarely and on
+one channel, its anchor's. It listens for a short window after each beat
+and each message it takes, and for its anchor's heartbeat once a
+rotation; between those it receives duty-cycled
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+so that any node can reach it at any time with the long preamble, as a
+last resort ([next hop](#next-hop)). Its anchor gives it its address
+([addresses](#addresses)), its channel, and the heartbeat it watches to
+know it is still in reach. Any node that holds a message for it and
+hears its beat is its holder ([delivery](#delivery)), most often the
+anchor, where its address sends its mail, but not only. One that hears
+no relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
 
-A sleepy node holds mail for nobody. The mailbox, the heard table and
-the delivery queue ([heard table](#heard-table), [delivery queue](#delivery-queue)), is a relay's, kept so
-that it can deliver to a sleepy node in its window without the long
-preamble. A carried relay keeps its mailbox
-but takes no new mail into it ([owner](#owner)): mail is held only where a
-sleepy node can count on finding it. A sleepy node forwards what it is given at once, through its
-send queue as any node, with the long preamble to a sleepy neighbour
-and the short one to any other. It keeps the neighbour table and the
-send queue, and nothing of the mailbox. Everything else it does as any
-node.
+A sleepy node holds mail for nobody. The mailbox
+([heard table](#heard-table), [delivery queue](#delivery-queue)) is a
+relay's, kept so that it can deliver to a sleepy node in its window
+without the long preamble. A sleepy node keeps the neighbour table and
+the send queue, and forwards what it is given at once, with the long
+preamble to a sleepy neighbour and the short one to any other.
+Everything else it does as any node. A carried relay keeps its mailbox
+but takes no new mail into it ([owner](#owner)): mail is held only where
+a sleepy node can count on finding it.
 
-A sleepy node can go **dark** for a few minutes: a phone in a pocket, a
-basement or the metro. What the network keeps for a node that does not
-answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
-node in its holder's table ([heard table](#heard-table)), and the messages waiting for
-it, which stay longer while nothing needs their place
-([delivery queue](#delivery-queue)). The network keeps a message on its way for the
-same time ([time to live](#time-to-live)).
+What the network keeps for a node that has gone dark ([nodes](#nodes))
+it keeps for the delivery TTL, 600 s: the node in its holder's table
+([heard table](#heard-table)), and the messages waiting for it, which
+stay longer while nothing needs their place
+([delivery queue](#delivery-queue)). A message on its way lives as long
+([time to live](#time-to-live)).
 
-**Plugged in and unplugged.** A node takes
-its role from its power at boot, at once (roadmap D71): nobody depends on it yet. A
-sleepy node plugged in is a relay at once: it leaves its anchor, its
-address is its own position, which it keeps as a fixed node does
-([position](#position)), and it heartbeats as a relay,
-the first time at once ([heartbeat](#heartbeat)). Its old anchor hears
-that heartbeat on its own channel, the node's home until then, and
-hands the node what it holds for it ([delivery](#delivery)).
+**Plugged in and unplugged.** At boot a node takes its role from its
+power at once (roadmap D71): nobody depends on it yet. A sleepy node
+plugged in is a relay at once. It leaves its anchor, its address becomes
+its own position, which it keeps as a fixed node does
+([position](#position)), and it heartbeats as a relay, the first time at
+once ([heartbeat](#heartbeat)). Its old anchor hears that heartbeat on
+the node's home channel until then, its own, and hands over what it
+holds for the node ([delivery](#delivery)).
 
-A relay unplugged changes nothing for a **grace** of one hour: it relays,
-owns and holds mail as before, and power back within the grace is as if
-nothing happened, so a charger moved across the room costs nobody
-anything. The grace costs the node an hour of listening, 5.8 mA
-([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), 0.68 % of the 850 mAh battery
-([hardware](#hardware)); a shorter one turns a node sleepy at every brief
-unplug, and each turn moves its sleepy nodes to other anchors and the
-addresses with them. When the grace ends, the node takes no more mail,
-owning nothing by position as a carried node ([owner](#owner)), and
-flushes its delivery queue as at a first far fix
-([delivery](#delivery)), listening all the time until each
-message has had its attempt. Then it is sleepy: it holds nothing, so
-what the flush did not deliver is dropped, and it takes as its anchor
-the strongest relay it knows, as at the end of a boot listen
-([relay choice](#relay-choice)), or is anchorless with none. A relay that
-turned carried in its grace flushed at its first far fix, and turns
-sleepy at the grace's end with nothing more to flush. Its sleepy nodes find it gone: a sleepy node hears no
-more slot heartbeats of it, and leaves it as an anchor heard sleepy
-([relay choice](#relay-choice)).
+A relay unplugged changes nothing for a **grace** of one hour: it
+relays, owns and holds mail as before, and power back within the grace
+is as if nothing happened, so a charger moved across the room costs
+nobody anything. The grace costs the node an hour of listening at
+5.8 mA
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+0.68 % of the 850 mAh battery ([hardware](#hardware)). A shorter one
+would turn a node sleepy at every brief unplug, and each turn moves its
+sleepy nodes, and their addresses, to other anchors.
+
+When the grace ends the node takes no more mail, owning nothing by
+position as a carried node does ([owner](#owner)), and flushes its
+delivery queue ([delivery](#delivery)), listening all the time until
+each message has had its attempt; a relay that turned carried in its
+grace has flushed already, at its first far fix. Then it is sleepy. It
+holds nothing, so what the flush did not deliver is dropped, and it
+takes as its anchor the strongest relay it knows, as at the end of a
+boot listen ([relay choice](#relay-choice)), or is anchorless with none.
+Its sleepy nodes hear no more slot heartbeats of it, and leave it as an
+anchor heard sleepy ([relay choice](#relay-choice)).
 
 ### Relay choice
 
 Listening on any one channel, a node hears every relay in range once per
-rotation ([heartbeat](#heartbeat)), and keeps it in its neighbour table with the
-averaged RSSI of what it heard from it ([neighbour table](#neighbour-table)).
+rotation ([heartbeat](#heartbeat)), and keeps it in its neighbour table
+with the averaged RSSI of what it heard from it
+([neighbour table](#neighbour-table)).
 
 **First choice.** A sleepy node takes as its anchor the first relay it
-hears, at once: any node that is not sleepy can be
-an anchor, so a sleepy node is anchorless only while it hears none.
-Any but a carried one: it holds no mail, and
-would carry the node's address off with it. A
-node whose last heartbeat had the anchorless bit is no anchor: it holds
-and forwards messages, but leaves that mode at the first relay
-it hears, so an address pointing at it would soon point at a node that
-holds nothing ([sleepy nodes alone](#sleepy-nodes-alone)). It then stays awake a worst-case
-rotation ([heartbeat](#heartbeat)), by when every relay in range has visited its channel,
-and takes the strongest it heard, without the margin below: few can
-have its address yet, so the move costs little. Receiving duty-cycled,
-it would hear no other relay's heartbeat, and the first relay heard would stay its
-anchor however faint. Moving to each stronger relay as it is heard
-instead chases the fading: one heartbeat of a relay no better is above
-the anchor's average half the time (roadmap D49). It listens on the
-anchor's home channel, and its address is the anchor's position and its
-own ID ([addresses](#addresses)).
+hears, at once, so it is anchorless only while it hears none. Any node
+that is neither sleepy nor carried can be an anchor: a carried one holds
+no mail and would carry the node's address off with it. Nor is a node
+whose last heartbeat had the anchorless bit: it holds and forwards
+messages but leaves that mode at the first relay it hears, so an address
+pointing at it would soon point at a node that holds nothing
+([sleepy nodes alone](#sleepy-nodes-alone)).
+
+The node then stays awake a worst-case rotation
+([heartbeat](#heartbeat)), by when every relay in range has visited its
+channel, and takes the strongest it heard, without the margin below: few
+can have its address yet, so the move costs little. Receiving
+duty-cycled, it would hear no other relay's heartbeat, and the first
+relay heard would stay its anchor however faint. Moving to each stronger
+relay as it is heard would chase the fading instead: one heartbeat of a
+relay no better is above the anchor's average half the time (roadmap
+D49). The node listens on the anchor's home channel, and its address is
+the anchor's position and its own ID ([addresses](#addresses)).
 
 **Switching.** While it listens, at its first choice and when it checks
-the anchor, it moves to another relay only when that relay has been
+the anchor, a node moves to another relay only when that relay has been
 heard over at least two heartbeats and its averaged RSSI is at least
-8 dB above the anchor's. A relay's heartbeats reach the node's channel
-about 130 s apart, longer than the 60 s the fading lasts, so they are
-nearly independent. Under fading of σ = 4 dB (the scenarios' figure) a
-mean of two heartbeats has σ/√2, and the difference of two such means
-σ√(1/2 + 1/2) = 4 dB; 8 dB is two of those standard deviations, and a
-relay that is no better takes the node on 2.3 % of comparisons. The
-neighbour table's average lets each new frame count half, which varies
-less than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more
-than two standard deviations there. A node in a vehicle does not keep
-up: the mail its holder keeps for it waits there until its place is
-needed, and is lost unless the sender learns the new address (roadmap
-D65).
+8 dB above the anchor's: two standard deviations of the difference, so
+that a relay no better takes the node on 2.3 % of comparisons. A relay's
+heartbeats reach the node's channel about 130 s apart, longer than the
+60 s the fading lasts, so they are nearly independent. Under fading of
+σ = 4 dB (the scenarios' figure) a mean of two heartbeats has σ/√2, and
+the difference of two such means σ√(1/2 + 1/2) = 4 dB. The neighbour
+table's average lets each new frame count half, which varies less than a
+mean of two (σ²/3 against σ²/2), so 8 dB is a little more than two
+standard deviations there. A node in a vehicle does not keep up: the
+mail its holder keeps for it waits there until its place is needed, and
+is lost unless the sender learns the new address (roadmap D65).
 
 **Asleep.** Between its windows a sleepy node receives duty-cycled,
-which catches no heartbeat of the ordinary preamble, so it hears the
-anchor's rotating heartbeat only
-if it listens when the rotation brings it to its channel, and it does: it
-keeps the anchor's neighbour entry whatever its age, and wakes for the
-anchor's next heartbeat on its channel, at the time the anchor's
-interval gives ([heartbeat](#heartbeat)). It keeps the time it expects from the earliest
-heartbeat heard, moved later only by the drift of two clocks, ±50 ppm
-each, since a late one says only that the anchor was busy. A heartbeat of
-the anchor heard before its watch opens, as early is defined below, is no
-slot's: an answer to a node without an anchor on its channel, or the one
-after a move ([heartbeat](#heartbeat), [channel moves](#channel-moves)).
-It shows the anchor alive and moves nothing (roadmap D62). It listens
-from as early as the heartbeat can come to as late, and goes back to
-sleep as soon as it hears it. As early is the time expected less three
-times the drift since the last heartbeat heard, at most 59 ms over a
-rotation: once for the drift itself, and twice because a heartbeat held
-up by a busy anchor may have moved the time expected a drift later
-while its slot was a drift early (roadmap D52). As late is the drift, the heartbeat's greatest delay ([heartbeat](#heartbeat)) more, and its airtime. Hearing it is how the node knows the anchor is
-alive, and how it follows it to a new home channel ([channel moves](#channel-moves)): the
-heartbeat names the anchor's home, and the next on the new channel comes
-when the rotation brings it there.
+which catches no heartbeat with the ordinary preamble, so it hears its
+anchor's rotating heartbeat only if it listens when the rotation brings
+it to its channel. It does: it keeps the anchor's neighbour entry
+whatever its age, and wakes for the anchor's next heartbeat on its
+channel, at the time the anchor's interval gives
+([heartbeat](#heartbeat)). It listens from as early as the heartbeat can
+come to as late, and sleeps again as soon as it hears it:
+
+- It keeps the time it expects from the earliest heartbeat heard, moved
+  later only by the drift of two clocks, ±50 ppm each, since a late one
+  says only that the anchor was busy.
+- As early is the time expected less three times the drift since the
+  last heartbeat heard, at most 59 ms over a rotation: once for the
+  drift itself, and twice because a heartbeat held up by a busy anchor
+  may have moved the time expected a drift later while its slot was a
+  drift early (roadmap D52). As late is the drift, the heartbeat's
+  greatest delay ([heartbeat](#heartbeat)) and its airtime more.
+- A heartbeat of the anchor heard before the watch opens is no slot's:
+  an answer to a node without an anchor on its channel
+  ([sleepy nodes alone](#sleepy-nodes-alone)), or the one after a move
+  ([channel moves](#channel-moves)). It shows the anchor alive and moves
+  nothing (roadmap D62).
+
+Hearing the heartbeat is how the node knows the anchor is alive, and how
+it follows it to a new home channel ([channel moves](#channel-moves)):
+the heartbeat names the anchor's home, and the next on the new channel
+comes when the rotation brings it there.
 
 **Checking the anchor.** Two rotations without the anchor's heartbeat
 mean it is gone: the node listens a worst-case rotation, as at its first
-choice. It keeps the anchor as soon as it hears it, else takes the
+choice, keeps the anchor as soon as it hears it, and else takes the
 strongest relay it heard. One that heard nothing at all is out of reach,
 in a pocket, a basement or the metro, not without its anchor: it keeps
 the anchor, watches for it as before, and checks again only once it has
 heard any frame again. One that heard frames but no relay keeps it too:
-giving it up and going without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)) makes
-nodes at the edge of a relay's reach switch to and fro (roadmap D51). It also checks after moving farther from where
-it last chose than takes the anchor's signal down by the switching
-margin, `r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
-scenarios' path-loss exponent of 3.6, and no less than 50 m, what two GPS
-fixes of a node that has not moved may differ by ([position](#position)).
-Between its windows a node hears no relay's heartbeat ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), so it switches by the
-rule above mainly while it checks. A node back from the dark keeps its
-anchor: a new one would strand the messages sent to the old address
-(roadmap D46, D47).
+giving it up for anchorless mode ([sleepy nodes alone](#sleepy-nodes-alone))
+makes nodes at the edge of a relay's reach switch to and fro (roadmap
+D51).
 
-**An anchor that turns carried.** A node
-that hears its anchor's heartbeat with the carried flag, or with the
-sleepy flag (roadmap D71), leaves it: for
-the strongest other relay that is live in its table and not carried, at
-once, else for the strongest a rotation's listen finds, as when it
-checks the anchor, a check the carried anchor's heartbeats do not end;
-with none, it is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)). Its
-address changes as at any switch; what was sent to the old one reaches
-it by its anchor's flush ([delivery](#delivery)), or is lost
-unless its sender learns the new address. A carried node answers no
-anchorless beat, since nobody anchors to it; nor does a relay whose grace
-on battery is over ([sleepy nodes](#sleepy-nodes)). A check that hears
-neither the anchor nor another relay leaves an anchor last heard sleepy
-or carried, where it would keep one merely unheard.
+A node also checks after moving farther from where it last chose than
+takes the anchor's signal down by the switching margin:
+`r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
+scenarios' path-loss exponent of 3.6, and no less than 50 m, the GPS
+allowance ([position](#position)). Between its windows a node hears no
+relay's heartbeat, so it switches by the rule above mainly while it
+checks. A node back from the dark keeps its anchor: a new one would
+strand the messages sent to the old address (roadmap D46, D47).
+
+**An anchor that turns carried or sleepy.** A node that hears its
+anchor's heartbeat with the carried or the sleepy flag (roadmap D71)
+leaves it: at once for the strongest other relay that is live in its
+table and not carried, else for the strongest a rotation's listen finds,
+as when it checks the anchor; with none, it is anchorless
+([sleepy nodes alone](#sleepy-nodes-alone)). The carried anchor's
+heartbeats do not end that listen. A check that hears neither the anchor
+nor another relay leaves an anchor last heard sleepy or carried, where
+it would keep one merely unheard. The node's address changes as at any
+switch; what was sent to the old one reaches it by its anchor's flush
+([delivery](#delivery)), or is lost unless its sender learns the new
+address.
 
 ### Beats
 
 A sleepy node with an anchor heartbeats on its home channel, the
-anchor's, where the anchor and any other node on that channel hear it: a
-**beat**; and on its anchorless neighbours' channels, below. The heartbeat has the sleepy bit ([packet formats](#packet-formats)): reach the
-sender cheaply in its window after its beat, which its holder does, or
-at any time with the long preamble, a last resort ([next hop](#next-hop)). Each beat
-comes a random half to one **beat period** after the last, P = 300 s:
-half the delivery TTL, so that two beats are never more than a TTL
-apart, a holder that keeps a node for a TTL loses it only after two
-lost beats, and a node that has gone is kept no longer than its messages
-([heard table](#heard-table)). The spread keeps two nodes whose beats met once from
-meeting again. After it chooses or changes its anchor it beats at once
-and once more within a heartbeat interval, 5–15 s, so that one lost
-beat does not hide it from its new holder for a period. After it follows
-its anchor to a new home channel ([channel moves](#channel-moves)) it beats there once, at
-a random time within a heartbeat interval, 0–15 s: without it, its holder
-knows only the old channel, and has no window to send in until the node's
-next beat, up to a period later. Every node of the anchor follows on the same
-heartbeat, so beating at once they would meet (roadmap D57).
+anchor's, where the anchor and any other node on that channel hear it:
+a **beat**. The heartbeat has the sleepy bit
+([packet formats](#packet-formats)): reach the sender cheaply in its
+window after its beat, which its holder does, or at any time with the
+long preamble, a last resort ([next hop](#next-hop)).
 
-A sleepy node whose neighbour table holds anchorless neighbours
-([sleepy nodes alone](#sleepy-nodes-alone)) sends each beat on each channel those neighbours
-listen on as well, with the long preamble: they receive duty-cycled and
-would not hear a short beat, and the long one tells them a last resort
-they can reach with the preamble, not an anchor, since it carries the
-sleepy bit alone. It hears them because their beats carry the long
-preamble and step through every channel ([sleepy nodes alone](#sleepy-nodes-alone)). It does so
-for a neighbour only once it has heard that neighbour's anchorless beat
-in two consecutive rotations of its beats: at least half a rotation apart,
-13 beats each at least half an anchorless beat period after the last,
-300 s, and at most a rotation and a heartbeat's lag, 601 s; it stops when
-the entry expires ([neighbour table](#neighbour-table)) or the neighbour is heard with the
+Each beat comes a random half to one **beat period** after the last,
+P = 300 s: half the delivery TTL, so that two beats are never more than
+a TTL apart. A holder that keeps a node for a TTL then loses it only
+after two lost beats, and keeps a node that has gone no longer than its
+messages ([heard table](#heard-table)). The spread keeps two nodes whose
+beats met once from meeting again. At the mean interval of 225 s a node
+beats 16 times an hour, 189 ms of airtime. The interval is random, not
+fixed, since nobody wakes for a beat: a holder hears it as it listens.
+
+After it chooses or changes its anchor a node beats at once and once
+more within a heartbeat interval, 5–15 s, so that one lost beat does not
+hide it from its new holder for a period. After it follows its anchor to
+a new home channel ([channel moves](#channel-moves)) it beats there once,
+at a random time within a heartbeat interval, 0–15 s. Without it, its
+holder knows only the old channel, and has no window to send in until
+the node's next beat, up to a period later; every node of the anchor
+follows on the same heartbeat, so beating at once they would meet
+(roadmap D57).
+
+**To anchorless neighbours.** A sleepy node whose neighbour table holds
+anchorless neighbours ([sleepy nodes alone](#sleepy-nodes-alone)) sends
+each beat also on each channel they listen on, with the long preamble.
+They receive duty-cycled and would not hear a short beat, and the long
+one, with the sleepy bit alone, tells them of a last resort they can
+reach with the long preamble, not of an anchor. It hears them because
+their beats carry the long preamble and step through every channel.
+
+It does so for a neighbour only once it has heard that neighbour's
+anchorless beat in two consecutive rotations of its beats: at least half
+a rotation apart, 13 beats each at least half an anchorless beat period
+after the last, 300 s, and at most a rotation and a heartbeat's lag,
+601 s. It stops when the entry expires
+([neighbour table](#neighbour-table)) or the neighbour is heard with the
 sleepy bit alone. A neighbour heard anchorless once may be switching on,
-and will anchor within minutes; one still anchorless a rotation later is
-in a pocket with no relay, and a pocket's nodes mostly know their way out
+and will anchor within minutes. One still anchorless a rotation later is
+in a pocket with no relay, whose nodes mostly know their way out
 already, from the time both were anchorless, so waiting a rotation costs
 them little. Each such beat is a long heartbeat, 366 ms
-([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), 5.9 s an hour per channel at sixteen
-beats (roadmap D58).
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+5.9 s an hour per channel at sixteen beats (roadmap D58).
 
 A sleepy node may have moved since its last beat, so it refreshes its
 GPS fix before each beat. GPS goes off after a fix, and off after 10
 minutes without one (searching under jamming draws ≈27 mA, ≈1.3 days).
-
-At a mean interval of 225 s a node beats 16 times an hour, 189 ms of
-airtime; a beat on an anchorless neighbour's channel is a long heartbeat
-and costs 366 ms.
-
-A sleepy node with an anchor does not move its home channel by the busy
-estimate ([channel moves](#channel-moves)), and does not sweep the channels ([busy estimate](#busy-estimate)): receiving
-duty-cycled it could not. Its beats keep a random interval, not a fixed one: nobody wakes for
-them, and a holder hears them as it listens.
+A sleepy node with an anchor does not sweep the channels
+([busy estimate](#busy-estimate)) or move its home channel by the busy
+estimate ([channel moves](#channel-moves)): receiving duty-cycled, it
+could not.
 
 ### Heard table
 
 A node that is not sleepy keeps the sleepy nodes with an anchor it hears
-beat in its **heard table** ([sleepy nodes](#sleepy-nodes)). It has
-256 entries, by ID: the node's home channel, until when it listens
-([delivery](#delivery)), whether a delivery to it went unanswered since its
-last beat, and the mean RSSI of its last two beats. An entry is kept for
-two beat periods, the delivery TTL, after the last frame heard from the
-node: a beat, its own DATA, whose `aux` also names its home channel
-([packet sender](#packet-sender)), or its ACK of a delivery. A node that answers is in reach
-whether or not its beats are heard, and a busy holder misses beats, while
-it transmits or when another frame meets the beat there. A node reached
-only in the windows its beats open renews its entry with each of them,
-but one kept awake by a flow longer than a TTL does not (roadmap D53). When the table
-is full a newcomer takes the place of an expired entry, else of the one
-heard longest ago: a node that beats now listens now, so a holder for
-more nodes than its table keeps still sends each its mail after each
-beat, and a full table does not leave the nodes it has no place for
-without their mail until it expires (roadmap D61). 256 covers ≈80
-sleepy nodes per relay expected at indoor density in Kyiv with 10 %
+beat in its **heard table**: 256 entries, by ID, each with the node's
+home channel, until when it listens ([delivery](#delivery)), whether a
+delivery to it went unanswered since its last beat, and the mean RSSI of
+its last two beats. An entry is kept for two beat periods, the delivery
+TTL, after the last frame heard from the node: a beat, its own DATA,
+whose `aux` also names its home channel ([packet sender](#packet-sender)),
+or its ACK of a delivery. A node that answers is in reach whether or not
+its beats are heard, and a busy holder misses beats, while it transmits
+or when another frame meets the beat there. A node reached only in the
+windows its beats open renews its entry with each of them, but one kept
+awake by a flow longer than a TTL does not (roadmap D53).
+
+When the table is full a newcomer takes the place of an expired entry,
+else of the one heard longest ago. A node that beats now listens now, so
+a holder for more nodes than its table keeps still sends each its mail
+after each beat, and a full table does not leave the nodes it has no
+place for without their mail until it expires (roadmap D61). 256 covers
+≈80 sleepy nodes per relay expected at indoor density in Kyiv with 10 %
 adoption, 400 at 50 % ([capacity and sizing](#capacity-and-sizing)).
 
 ### Delivery
@@ -1787,79 +1796,90 @@ mail waits there until its place is needed, and the sender is not told
 ### A sleepy node's own message
 
 A sleepy node with an anchor hands its own message to the anchor while
-the anchor is live, with count 0 ([hop count](#hop-count)), and otherwise to its next hop
-as any node does ([next hop](#next-hop)); one without an anchor sends as a relay does
-([sleepy nodes alone](#sleepy-nodes-alone)). The node that takes a message with count 0 is
-its origin and counts the sender as tried ([packet sender](#packet-sender)), so the search
-never returns to a node that sleeps. It takes it only as fresh work, into
-its regular room and only while not every neighbour of its is banned
-([receiving DATA](#receiving-data)) (roadmap D31, D34). Handed to the neighbour nearest its
-destination instead, the first hop is often a faint, far relay (roadmap
-D46). Sent
-with count 1, as a relay's own message is, it could take hop place 1 at
-its first hop, which overload must not give to fresh work.
+the anchor is live, with count 0 ([hop count](#hop-count)), and
+otherwise to its next hop as any node does ([next hop](#next-hop)); one
+without an anchor sends as a relay does
+([sleepy nodes alone](#sleepy-nodes-alone)). The node that takes a
+message with count 0 is its origin and counts the sender as tried
+([packet sender](#packet-sender)), so the search never returns to a node
+that sleeps. It takes it only as fresh work, into its regular room and
+only while not every neighbour of its is banned
+([receiving DATA](#receiving-data); roadmap D31, D34). Handed to the
+neighbour nearest its destination instead, the first hop would often be
+a faint, far relay (roadmap D46). Sent with count 1, as a relay's own
+message is, it could take hop place 1 at its first hop, which overload
+must not give to fresh work.
 
 A refused message goes back to the application with the wait the
 refusal asks for ([bans](#bans)), and the node takes no message of the
 application's until that wait is over; the application may offer it
 again then, or give it up, and tell the person either way. Held by the
-node instead, a refused message aged at its origin until its time ran out.
+node instead, a refused message aged at its origin until its time ran
+out.
+
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
 doubled for each unanswered hand-over to the anchor in a row, or when
-the anchor's ban ends if that is later: a fade lasts about a minute (the
+the anchor's ban ends if that is later. A fade lasts about a minute (the
 scenarios' correlation time), and the three attempts of one hand-over, a
 few hundred milliseconds apart, all fall inside it, where the ban's
-ladder would offer it every few seconds to a node whose channel is full.
-Silence says no more than that the channel or the anchor is full
-([bans](#bans)), so the wait doubles as
-the ban does: tried again every fade instead, a text its anchor never
-takes costs its sender three frames a minute on the anchor's channel for
-its whole TTL, where the anchor hears its other nodes' beats
-(roadmap D54). A message that finds no live neighbour at all waits
-for one, routed again every 60 s, until its time runs out
-([time to live](#time-to-live)): a carried node loses its neighbours by going dark
-and finds them again. The application is not told ([addresses](#addresses)).
+ladder would offer it every few seconds to a node whose channel is
+full. Silence says no more than that the channel or the anchor is full
+([bans](#bans)), so the wait doubles as the ban does: tried again every
+fade instead, a text its anchor never takes would cost its sender three
+frames a minute on the anchor's channel for its whole TTL, where the
+anchor hears its other nodes' beats (roadmap D54).
+
+A message that finds no live neighbour at all waits for one, routed
+again every 60 s, until its time runs out
+([time to live](#time-to-live)): a node in a pocket loses its
+neighbours by going dark and finds them again. The application is not
+told ([addresses](#addresses)).
 
 ### Sleepy nodes alone
 
 A sleepy node that hears no relay at the end of its boot listen
-([channel at boot](#channel-at-boot)) has no anchor: it is in **anchorless mode**. It knows no
-node that is not sleepy, so nobody's address can point at a node that
-holds its mail and hears its beat. Instead it is a relay of a place
-without relays: it forwards at once what it is given, with the ordinary
-time to live, its address is its own position and it owns it, and a
-DATA for it does not wait for a beat. It receives duty-cycled, as every
-sleepy node does between its windows ([sleepy nodes](#sleepy-nodes)), and has no window:
-every frame to it carries the long preamble. It keeps the home channel
-it chose at boot; it does not sweep or move.
+([channel at boot](#channel-at-boot)) has no anchor: it is in
+**anchorless mode**. It knows no node that is not sleepy, so no address
+can point at a node that holds its mail and hears its beat. Instead it
+is a relay of a place without relays: it forwards at once what it is
+given, with the ordinary time to live, its address is its own position
+and it owns it, and a DATA for it does not wait for a beat. It receives
+duty-cycled, as every sleepy node does between its windows, and has no
+window: every frame to it carries the long preamble. It keeps the home
+channel it chose at boot; it does not sweep or move.
 
 It beats with the sleepy and anchorless bits and the long preamble, each
 beat a random half to one **anchorless beat period** after the last, on
-the next channel of the rotation each time ([heartbeat](#heartbeat)), naming its own
-channel in `aux`. The period is the delivery TTL over the 13 channels,
-600 / 13 = 46.2 s: beats at most a period apart visit every channel
-within a TTL, so a relay in reach on any channel hears the node, and two
-nodes in anchorless mode find each other, before anything the network
-holds for them runs out ([sleepy nodes](#sleepy-nodes)). At the mean interval of
-34.6 s the beats cost 38 s an hour of airtime, 11 % of its budget, and
-0.34 mA at 32 mA of transmit current.
+the next channel of the rotation each time ([heartbeat](#heartbeat)),
+naming its own channel in `aux`. The period is the delivery TTL over the
+13 channels, 600 / 13 = 46.2 s: beats at most a period apart visit every
+channel within a TTL, so a relay in reach on any channel hears the node,
+and two nodes in anchorless mode find each other, before anything the
+network holds for them runs out ([sleepy nodes](#sleepy-nodes)). At the
+mean interval of 34.6 s the beats cost 38 s an hour of airtime, 11 % of
+its budget, and 0.34 mA at 32 mA of transmit current.
 
 Nodes in anchorless mode route among themselves and are a next hop like
-any other ([next hop](#next-hop)), each DATA to one with the long preamble. A relay
-that hears an anchorless beat answers: it sends a heartbeat of its own
-on the channel the beat names, with the long preamble, at once and again
-a fade later, 60 s ([a sleepy node's own message](#a-sleepy-nodes-own-message)), for two of the node's beat
-periods, so that one lost answer does not cost a rotation. A receiver
-cannot tell an answer from a heartbeat in its slot by the frame; a
-sleeping node tells them apart by the time
-([relay choice](#relay-choice), roadmap D62). The node
-takes the first relay it hears as its anchor ([relay choice](#relay-choice)), listens a
-rotation to choose the strongest, and from then on beats with the sleepy
-bit alone, on its anchor's channel, and receives duty-cycled between its
-windows ([sleepy nodes](#sleepy-nodes)). Its neighbours keep its entry, marked sleepy, a
-last resort reached with the long preamble ([next hop](#next-hop)); the anchorless
-ones behind it learn where it listens from its long beats on their
-channels ([beats](#beats)) and from the frames they exchange with it.
+any other ([next hop](#next-hop)), each DATA to one with the long
+preamble. A relay that hears an anchorless beat answers with a
+heartbeat of its own on the channel the beat names, with the long
+preamble, at once and again a fade later, 60 s
+([a sleepy node's own message](#a-sleepy-nodes-own-message)), for two of
+the node's beat periods, so that one lost answer does not cost a
+rotation. A carried node does not answer, since nobody anchors to it,
+nor does a relay whose grace on battery is over
+([sleepy nodes](#sleepy-nodes)). A receiver cannot tell an answer from
+a heartbeat in its slot by the frame; a sleeping node tells them apart
+by the time ([relay choice](#relay-choice), roadmap D62).
+
+The node takes the first relay it hears as its anchor
+([relay choice](#relay-choice)), listens a rotation to choose the
+strongest, and from then on beats with the sleepy bit alone, on its
+anchor's channel, and receives duty-cycled between its windows. Its
+neighbours keep its entry, marked sleepy, a last resort reached with the
+long preamble ([next hop](#next-hop)); the anchorless ones behind it
+learn where it listens from its long beats on their channels
+([beats](#beats)) and from the frames they exchange with it.
 
 ---
 
