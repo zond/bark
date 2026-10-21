@@ -469,6 +469,11 @@ impl Sim {
                     known_by: self.known_by(),
                     ..t
                 }),
+                carried: m.research.carried.clone().map(|c| crate::metrics::Carried {
+                    held: self.held_fates(),
+                    delivered_by: self.delivered_by(),
+                    ..c
+                }),
                 ..m.research.clone()
             },
         }
@@ -811,6 +816,51 @@ impl Summary {
                 h.with_place,
                 h.wait_us as f64 / 1e6,
                 h.wait_with_place_us as f64 / 1e6
+            );
+        }
+        if let Some(c) = &self.research.carried {
+            let walking = |v: &[bool]| v.iter().filter(|&&w| w).count();
+            let far: Vec<bool> = c.far_fixes.iter().map(|f| f.2).collect();
+            let to: Vec<bool> = c.carried.iter().map(|f| f.2).collect();
+            let back: Vec<bool> = c.fixed.iter().map(|f| f.2).collect();
+            let mut runs: Vec<f64> = c.carried.iter().map(|f| f.3).collect();
+            runs.sort_by(f64::total_cmp);
+            let p = |q: f64| {
+                let i = ((runs.len() as f64 * q).ceil() as usize).clamp(1, runs.len().max(1)) - 1;
+                runs.get(i)
+                    .map_or_else(|| "-".into(), |x| format!("{x:.0}"))
+            };
+            let _ = writeln!(
+                s,
+                "carried: first far fixes {} ({} walking); turned carried {} ({} walking), after the first far fix p50 {} s p90 {} s max {} s; fixed again {} ({} walking); sleepy nodes that left an anchor for the flag {}",
+                far.len(),
+                walking(&far),
+                to.len(),
+                walking(&to),
+                p(0.5),
+                p(0.9),
+                p(1.0),
+                back.len(),
+                walking(&back),
+                c.anchors_left
+            );
+            for (k, h) in c.held.iter().enumerate() {
+                let _ = writeln!(
+                    s,
+                    "held at a first far fix{}: by the flush {}, at a beat {}, to the node as a relay {}, not by the holder {} (reached otherwise {})",
+                    if k == 0 { "" } else { " after a turn to fixed" },
+                    h[0],
+                    h[1],
+                    h[2],
+                    h[3] + h[4],
+                    h[4]
+                );
+            }
+            let d = c.delivered_by;
+            let _ = writeln!(
+                s,
+                "delivered by the holder: in the window {}, outside it {}, by the flush {}, to the node as a relay {}; flush frames {} ({:.1} s), to a relay {} ({:.1} s)",
+                d[0], d[1], d[2], d[3], c.flush.0, c.flush.1, c.to_relay.0, c.to_relay.1
             );
         }
         if let Some(r) = &self.returns {

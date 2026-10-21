@@ -873,6 +873,43 @@ pub struct Research {
     /// absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tables: Option<Tables>,
+    /// What the nodes that move do (roadmap D70); absent where none had
+    /// a far fix, left an anchor for the flag, or delivered to its node
+    /// whether or not the node was in a window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carried: Option<Carried>,
+}
+
+/// What the nodes that move do (`Research::carried`, roadmap D70). Times
+/// in seconds.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Carried {
+    /// Every first far fix of a run: when, the relay, and whether it walks.
+    pub far_fixes: Vec<(f64, u32, bool)>,
+    /// Every turn to carried: when, the relay, whether it walks, and how
+    /// long after the first far fix of its run.
+    pub carried: Vec<(f64, u32, bool, f64)>,
+    /// Every turn to fixed again: when, the relay, and whether it walks.
+    pub fixed: Vec<(f64, u32, bool)>,
+    /// The texts a relay held in its delivery queue at a first far fix
+    /// after the settle time, by how their holder delivered them: by the
+    /// flush, at a later beat or outside the window as before, to the
+    /// node as a relay, or not at all, and of the last those that reached
+    /// their node otherwise; at the relay's first far fix, then at a
+    /// later one, after it had turned fixed again.
+    pub held: [[u64; 5]; 2],
+    /// Sleepy nodes that left an anchor that turned carried, after the
+    /// settle time.
+    pub anchors_left: u64,
+    /// Deliveries by the way they went, after the settle time: in the
+    /// window, outside it with the long preamble, by the flush, to the
+    /// node as a relay.
+    pub delivered_by: [u64; 4],
+    /// Frames of the flush, and to a node as a relay, after the settle
+    /// time: how many, and their airtime.
+    pub flush: (u64, f64),
+    /// See `flush`.
+    pub to_relay: (u64, f64),
 }
 
 /// What the neighbour tables hold (`Research::tables`), sampled once a

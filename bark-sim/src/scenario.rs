@@ -140,6 +140,7 @@ pub struct ProtocolOverrides {
     pub retry_backoff_ms: Option<u64>,
     pub boot_listen_ms: Option<u64>,
     pub sleepy_listens: Option<bool>,
+    pub fixed_after_ms: Option<u64>,
 }
 
 impl ProtocolOverrides {
@@ -185,6 +186,7 @@ impl ProtocolOverrides {
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
         set!(boot_listen, boot_listen_ms, ms);
         set!(sleepy_listens);
+        set!(fixed_after, fixed_after_ms, ms);
         c
     }
 }
@@ -562,9 +564,11 @@ pub struct GpsFault {
 
 /// GPS fixes that go wrong, and whether a node's driver applies the
 /// plausibility checks of spec "Position and time" before handing a fix to its
-/// core. A relay takes a fix every second, the receiver's usual output
-/// rate; a sleepy node one before each beat (spec "Beats"). Only nodes with
-/// a fault are handed fixes, since a true one changes nothing.
+/// core. A relay with a fault takes a fix every second, the receiver's
+/// usual output rate; one that walks, one at each heartbeat; a sleepy node
+/// one before each beat (spec "Beats"). Other nodes are handed no fixes,
+/// since a true one changes nothing, unless `relays_every_s` or
+/// `error_m` says otherwise.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Gps {
@@ -572,12 +576,22 @@ pub struct Gps {
     pub faults: Vec<GpsFault>,
     /// Whether the checks are applied.
     pub checks: bool,
-    /// The fastest a carried node may have moved between two fixes, for
-    /// the jump check, metres a second.
+    /// The fastest a node may have moved between two fixes, for the jump
+    /// check, metres a second: any node may be carried (roadmap D70).
     pub carried_speed_m_s: f64,
-    /// A relay's jump check measures from its first fix, where it was
-    /// put, rather than from the last fix handed over (roadmap D63).
-    pub relays_keep_first: bool,
+    /// Every node that is not sleepy takes a fix this often, seconds,
+    /// walking or not, and none at its heartbeats; 0 for the default
+    /// above.
+    pub relays_every_s: f64,
+    /// The error of a fix of a node that is not sleepy, metres: on each
+    /// axis a Gauss-Markov process of this standard deviation and
+    /// `error_correlation_s`, around where the node is. 0 for none. A
+    /// research model of a receiver's wander: the L76K gives 2 m CEP
+    /// under open sky (its specification), and nothing is measured for a
+    /// windowsill.
+    pub error_m: f64,
+    /// See `error_m`, seconds.
+    pub error_correlation_s: f64,
 }
 
 /// A complete scenario.

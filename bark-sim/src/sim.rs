@@ -621,6 +621,19 @@ pub struct Sim {
     gps_fault: Vec<Option<(Instant, crate::scenario::FaultKind, f64, Xy)>>,
     gps: crate::scenario::Gps,
     accepted: Vec<(Xy, Instant)>,
+    /// Per node that is not sleepy, with `[gps] error_m`, the error of its
+    /// fixes, when it was last drawn, and the stream it is drawn from.
+    gps_error: Vec<(Xy, Instant, Stream)>,
+    /// The texts held at a first far fix after the settle time (roadmap
+    /// D70): whether their holder had turned fixed again before, and how
+    /// it delivered them, an index of `metrics::Carried::held`.
+    held_far: HashMap<u32, (bool, Option<usize>)>,
+    /// Per relay, its last first far fix, and whether it has turned fixed
+    /// again since it was first carried.
+    far_at: HashMap<u32, (Instant, bool)>,
+    /// Deliveries by the way they went, after the settle time
+    /// (`metrics::Carried::delivered_by`).
+    delivered_by: [u64; 4],
     /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u32, u32>,
     /// Whether the relay a core event is being delivered to was booting
@@ -1110,6 +1123,10 @@ impl Sim {
             gps_fault: vec![None; n],
             gps: sc.gps.clone(),
             accepted: Vec::new(),
+            gps_error: Vec::new(),
+            held_far: HashMap::new(),
+            far_at: HashMap::new(),
+            delivered_by: [0; 4],
             positions,
             sites: site,
             walks,
@@ -1458,6 +1475,27 @@ impl Sim {
                 }
             }
         }
+        // Fixes of every node that is not sleepy, and their error.
+        if sc.gps.error_m > 0.0 {
+            self.gps_error = (0..self.n_relays)
+                .map(|i| {
+                    let mut r = Stream::new(sc.seed, Purpose::GpsError, i as u64);
+                    let e = Xy {
+                        x: r.normal() * sc.gps.error_m,
+                        y: r.normal() * sc.gps.error_m,
+                    };
+                    (e, Instant::ZERO, r)
+                })
+                .collect();
+        }
+        if sc.gps.relays_every_s > 0.0 {
+            for i in 0..self.n_relays {
+                if self.gps_fault[i as usize].is_none() {
+                    let at = self.boot_at[i as usize] + secs(sc.gps.relays_every_s);
+                    self.push(at, Ev::Gps(i));
+                }
+            }
+        }
         // Groups that go dark together.
         for (k, g) in sc.dark_groups.iter().enumerate() {
             let near = resolve(placed, &g.near)?;
@@ -1677,7 +1715,11 @@ impl Sim {
             Ev::Fix(n) => self.fix(n),
             Ev::Gps(n) => {
                 self.fix(n);
-                self.push(self.now + Duration::from_secs(1), Ev::Gps(n));
+                let every = match self.gps.relays_every_s {
+                    s if s > 0.0 => secs(s),
+                    _ => Duration::from_secs(1),
+                };
+                self.push(self.now + every, Ev::Gps(n));
             }
         }
     }
@@ -2275,6 +2317,7 @@ impl Sim {
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
+                self.note_direct(node, &f);
                 self.note_sent_again(node, &f);
                 self.note_beat_fix(node, &f, scripted);
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
@@ -2333,9 +2376,16 @@ impl Sim {
                             s.watch_earliest_us = s.watch_earliest_us.min(offset_us as i64);
                         }
                     }
-                    Trace::Delivered { msg_id, .. } => {
+                    Trace::Delivered { msg_id, by, .. } => {
                         c.delivered += 1;
                         self.first_try.remove(&(node, msg_id.0));
+                        self.note_delivered_by(msg_id, by);
+                    }
+                    Trace::FarFix => self.note_far_fix(node),
+                    Trace::Carried { carried } => self.note_carried(node, carried),
+                    Trace::AnchorCarried => {
+                        let after = self.now >= self.settle;
+                        self.carried_metrics().anchors_left += u64::from(after);
                     }
                     Trace::Queued { msg_id, node: to } => {
                         if let Some(&tag) = self.msg_tags.get(&msg_id.0) {
@@ -2405,6 +2455,110 @@ impl Sim {
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
+    }
+
+    /// What the nodes that move do (roadmap D70), from the first event
+    /// that shows one.
+    fn carried_metrics(&mut self) -> &mut crate::metrics::Carried {
+        self.metrics
+            .research
+            .carried
+            .get_or_insert_with(Default::default)
+    }
+
+    /// `relay` had the first far fix of a run: what it holds for its
+    /// sleepy nodes is flushed.
+    fn note_far_fix(&mut self, relay: u32) {
+        let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
+        let t = self.now;
+        let again = self.far_at.get(&relay).is_some_and(|&(_, a)| a);
+        self.far_at.insert(relay, (t, again));
+        let s = t.as_micros() as f64 / 1e6;
+        self.carried_metrics().far_fixes.push((s, relay, walks));
+        if t >= self.settle {
+            let held: Vec<u32> = self.relays[relay as usize]
+                .delivery_queue()
+                .map(|(id, _)| id.0)
+                .collect();
+            for id in held {
+                self.held_far.entry(id).or_insert((again, None));
+            }
+        }
+    }
+
+    /// `relay` turned carried, or fixed again.
+    fn note_carried(&mut self, relay: u32, carried: bool) {
+        let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
+        let t = self.now;
+        let s = t.as_micros() as f64 / 1e6;
+        if carried {
+            let since = self.far_at.get(&relay).map_or(t, |&(f, _)| f);
+            let run = t.since(since).as_micros() as f64 / 1e6;
+            self.carried_metrics().carried.push((s, relay, walks, run));
+        } else {
+            self.far_at.entry(relay).or_insert((t, true)).1 = true;
+            self.carried_metrics().fixed.push((s, relay, walks));
+        }
+    }
+
+    /// A holder delivered `msg_id` to its node `by` that way.
+    fn note_delivered_by(&mut self, msg_id: MsgId, by: bark_proto::Delivery) {
+        use bark_proto::Delivery as D;
+        let (i, fate) = match by {
+            D::Window => (0, 1),
+            D::Long => (1, 1),
+            D::Flush => (2, 0),
+            D::Relay => (3, 2),
+        };
+        if self.now >= self.settle {
+            self.delivered_by[i] += 1;
+        }
+        if matches!(by, D::Flush | D::Relay) {
+            self.carried_metrics();
+        }
+        if let Some((_, f)) = self.held_far.get_mut(&msg_id.0) {
+            f.get_or_insert(fate);
+        }
+    }
+
+    /// `node` sends `f`: if it is the flush or a delivery to a node as a
+    /// relay, count its airtime.
+    fn note_direct(&mut self, node: u32, f: &Frame) {
+        if node >= self.n_relays || !self.relays[node as usize].sending_direct() {
+            return;
+        }
+        let after = self.now >= self.settle;
+        let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
+        let c = self.carried_metrics();
+        let to = if f.preamble_symbols >= LONG_PREAMBLE_SYMBOLS {
+            &mut c.flush
+        } else {
+            &mut c.to_relay
+        };
+        if after {
+            to.0 += 1;
+            to.1 += air;
+        }
+    }
+
+    /// The fates of the texts held at a first far fix
+    /// (`metrics::Carried::held`).
+    pub(crate) fn held_fates(&self) -> [[u64; 5]; 2] {
+        let mut held = [[0; 5]; 2];
+        for (id, &(again, fate)) in &self.held_far {
+            let got = self
+                .msg_tags
+                .get(id)
+                .is_some_and(|&tag| matches!(self.origins[tag as usize].fate, Fate::Delivered));
+            let i = fate.unwrap_or(if got { 4 } else { 3 });
+            held[usize::from(again)][i] += 1;
+        }
+        held
+    }
+
+    /// Deliveries by the way they went (`metrics::Carried::delivered_by`).
+    pub(crate) fn delivered_by(&self) -> [u64; 4] {
+        self.delivered_by
     }
 
     /// A delivery by `holder` of `msg` to the node `to` waits for its next
@@ -2494,6 +2648,19 @@ impl Sim {
                 y: at.y + dir.y * off,
             };
         }
+        if let Some((e, last, r)) = self.gps_error.get_mut(n as usize) {
+            // A Gauss-Markov step from the last draw (`scenario::Gps`).
+            let tau = self.gps.error_correlation_s.max(1e-9);
+            let rho = (-(self.now.since(*last).as_micros() as f64 / 1e6) / tau).exp();
+            let fresh = self.gps.error_m * (1.0 - rho * rho).sqrt();
+            e.x = e.x * rho + fresh * r.normal();
+            e.y = e.y * rho + fresh * r.normal();
+            *last = self.now;
+            at = Xy {
+                x: at.x + e.x,
+                y: at.y + e.y,
+            };
+        }
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
         if self.gps.checks {
@@ -2503,15 +2670,11 @@ impl Sim {
             // The longest hearing radius, rooftop to rooftop (spec
             // "Physical layer").
             const HEARING_M: f32 = 3000.0;
-            let (mut last, when) = self.accepted[n as usize];
-            if n < self.n_relays && self.gps.relays_keep_first {
-                last = self.xy[n as usize];
-            }
-            let moved = if n < self.n_relays {
-                STILL_M
-            } else {
-                STILL_M + self.gps.carried_speed_m_s * self.now.since(when).as_micros() as f64 / 1e6
-            };
+            // Any node may be carried (roadmap D70); a fixed one keeps its
+            // position in its core.
+            let (last, when) = self.accepted[n as usize];
+            let moved = STILL_M
+                + self.gps.carried_speed_m_s * self.now.since(when).as_micros() as f64 / 1e6;
             let plane = bark_proto::geo::LocalPlane::new(position);
             let far = |p: Position| plane.point(p).distance_m(Default::default()) > HEARING_M;
             let mut heard = self.relays[n as usize]
@@ -2547,7 +2710,8 @@ impl Sim {
     fn note_beat_fix(&mut self, node: u32, f: &Frame, scripted: bool) {
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(node));
         let faulty = node >= self.n_relays && self.gps_fault[node as usize].is_some();
-        if scripted || !(walks || faulty) {
+        let own_fixes = node < self.n_relays && self.gps.relays_every_s > 0.0;
+        if scripted || !(walks || faulty) || own_fixes {
             return;
         }
         if let Ok(bark_proto::wire::Packet::Heartbeat(_)) =
@@ -4088,6 +4252,33 @@ mod tests {
         assert!(f[0] == 0 && f[1] > 150 && !moved, "{f:?}");
         let (f, moved) = fault(FaultKind::Drift, true);
         assert!(f[0] > 150 && f[1] + f[2] == 0 && moved, "{f:?}");
+    }
+
+    /// With an error on every relay's fixes, a relay whose fixes stray far
+    /// from where it stands for long enough turns carried, and with a
+    /// small error none does; with no fixes asked for, nothing of it is in
+    /// the summary (roadmap D70).
+    #[test]
+    fn relays_with_a_large_gps_error_turn_carried() {
+        let run = |error_m: f64, every_s: f64| {
+            let mut sc = block(7, 900.0);
+            sc.gps.checks = true;
+            sc.gps.carried_speed_m_s = 2.0;
+            sc.gps.relays_every_s = every_s;
+            sc.gps.error_m = error_m;
+            sc.gps.error_correlation_s = 300.0;
+            let mut sim = Sim::new(&sc).unwrap();
+            sim.run();
+            sim.summary().research.carried
+        };
+        let c = run(200.0, 1.0).expect("far fixes");
+        assert!(!c.far_fixes.is_empty() && !c.carried.is_empty(), "{c:?}");
+        assert!(c
+            .carried
+            .iter()
+            .all(|&(_, _, walks, run)| !walks && run >= 72.0));
+        assert!(run(1.0, 1.0).is_none());
+        assert!(run(0.0, 0.0).is_none());
     }
 
     /// An interferer reaches walkers where they are: one that walks out of
