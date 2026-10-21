@@ -466,13 +466,11 @@ its fix ([beats](#beats)). Sleeping nodes hear none of this, receiving
 duty-cycled; they learn a change at the next slot they wake for.
 
 **The 256 intervals** are 39.1 ms apart, more than two heartbeats'
-airtime, 2 × 11.8 = 23.7 ms, so the heartbeats of two nodes whose
-intervals differ meet at most once in a row, as random intervals would.
-Such nodes slide past each other by more than an overlap at every
-heartbeat; 10 s / 23.7 ms = 422 steps would do, and 256 is the largest
-power of two below it, one byte.
-
-Two nodes in reach share an interval with probability 1/256. That
+airtime, 2 × 11.8 = 23.7 ms, so two nodes whose intervals differ slide
+past each other by more than an overlap at every heartbeat and meet at
+most once in a row, as random intervals would. 10 s / 23.7 ms = 422
+steps would do, and 256 is the largest power of two below it, one byte.
+Two nodes in reach share an interval with probability 1/256, which
 matters only if they are also in step, within 23.7 ms in a 10 s
 interval, 0.24 % of such pairs; their heartbeats then meet each time
 they are on one channel, as do those of a pair in step whose intervals
@@ -543,26 +541,22 @@ is then lost no more than one time in a hundred, the datasheet's
 standard for sensitivity, after a fade of 4 dB. A neighbour without
 margin stays in the table, its heartbeats showing it alive, but is a
 next hop only when no other is left ([next hop](#next-hop)). The 4.1 dB
-follows from the radio:
-
-- A packet arrives only if every symbol does. A 255-byte frame has 541
-  symbols, the datasheet's 64-byte reference packet 156, a heartbeat 46.
-  With the symbol error rate of the modulation (32 possible symbols,
-  detected without phase), a 255-byte frame needs 0.44 dB more signal
-  than the reference packet for the same 1 % loss, and a heartbeat
-  0.46 dB less. Half of all heartbeats arrive even 3.2 dB below the full
-  frame's level, so a heartbeat says little about a full frame.
-- Sensitivity is 2.5 dB below the noise at SF5 (datasheet Table 6-1), so
-  the full frame's level is 2.5 − 0.44 = 2.06 dB below the noise floor.
-- The fade, 4 dB, is the standard deviation of fading over time and
-  channel in the simulated links, until Phase 2 measures it. A frame
-  goes out on the neighbour's channel, and this relay hears the
-  neighbour on its own, where the fading differs, so the average must
-  cover a fade it cannot see.
-- So the signal must average −2.06 + 4 = 1.94 dB above the noise floor.
-  Packet RSSI is the power in the channel, signal and noise together
-  (datasheet §13.5.3), so it reads 10 log10(1 + 10^0.194) = 4.1 dB above
-  the floor.
+follows from the radio. A packet arrives only if every symbol does: a
+255-byte frame has 541 symbols, the datasheet's 64-byte reference packet
+156, a heartbeat 46, so with the symbol error rate of the modulation (32
+possible symbols, detected without phase) a full frame needs 0.44 dB
+more signal than the reference for the same 1 % loss, and a heartbeat
+0.46 dB less. Half of all heartbeats arrive even 3.2 dB below a full
+frame's level, so a heartbeat says little about a full frame.
+Sensitivity is 2.5 dB below the noise at SF5 (datasheet Table 6-1), so a
+full frame's level is 2.5 − 0.44 = 2.06 dB below the noise floor, and
+after the fade the signal must average −2.06 + 4 = 1.94 dB above it.
+Packet RSSI is signal and noise together (datasheet §13.5.3), so it
+reads 10 log10(1 + 10^0.194) = 4.1 dB above the floor. The fade, 4 dB,
+is the standard deviation of fading over time and channel in the
+simulated links, until Phase 2 measures it. The average must cover it
+because a frame goes out on the neighbour's channel while this relay
+hears the neighbour on its own, where the fading differs.
 
 **Demotion.** A neighbour with two ACK failures in a row
 (`fail_count ≥ 2`) is demoted until it ACKs a packet from this relay or
@@ -2047,7 +2041,8 @@ A position is WGS-84 latitude and longitude in fixed point, 25 + 26 bits
 and 5 spare in 7 bytes, ≈0.6 m, the same everywhere on Earth: one firmware and one
 app, with no per-deployment origin. A 1 m grid over the Earth's
 5.1 × 10¹⁴ m² needs 49 bits, so 51 bits is within 2 bits of the minimum;
-decimetres would need 56.
+decimetres would need 56. Plain fixed point keeps the distance
+arithmetic trivial.
 
 Routing needs distances, not coordinates: each node converts every
 position it handles into metres on a flat plane centred on itself,
