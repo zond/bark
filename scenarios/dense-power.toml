@@ -1,6 +1,6 @@
 # dense-movers.toml with the people's power switching (roadmap D71,
 # docs/power-role-2026-10-21.md): a node's role follows its power, a
-# relay on USB and sleepy on battery (spec "Hardware"). Every walker's
+# relay on USB and sleepy on battery (spec "Nodes"). Every walker's
 # node is on battery while it walks and on USB at its stops, as people
 # charge where they stop; a fifth of the other people's nodes switch at
 # random, on USB for two hours and on battery for half an hour on

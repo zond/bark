@@ -1,4 +1,4 @@
-//! A node's role by its power (spec "Hardware", "Sleepy nodes", roadmap
+//! A node's role by its power (spec "Nodes", "Sleepy nodes", roadmap
 //! D71): on external power a relay, on battery sleepy, set at boot and at
 //! every change the driver reports.
 

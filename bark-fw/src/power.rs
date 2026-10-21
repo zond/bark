@@ -2,7 +2,7 @@
 //! USBREGSTATUS register's VBUSDETECT field, and the USBDETECTED and
 //! USBREMOVED events at each change (nRF52840 Product Specification,
 //! POWER, USB supply). The core takes its role from it, a relay on USB and
-//! sleepy on battery (spec "Hardware", roadmap D71); the LED and the 32 MHz
+//! sleepy on battery (spec "Nodes", roadmap D71); the LED and the 32 MHz
 //! crystal follow it too (`main.rs`).
 //!
 //! The USB driver enables the two events and its own handler clears them

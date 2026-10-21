@@ -2,7 +2,7 @@
 //! the driver programs against.
 //!
 //! There is one node, [`Relay`], in `node/relay.rs` and `node/relay/`,
-//! sleepy or a relay by its power (spec "Hardware", "Sleepy nodes",
+//! sleepy or a relay by its power (spec "Nodes", "Sleepy nodes",
 //! roadmap D46, D71). It uses the
 //! radio discipline of `node/mac.rs` and the per-hop transfer of
 //! `node/transfer.rs`.

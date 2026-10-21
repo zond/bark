@@ -25,7 +25,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, whose role follows its power (roadmap D71). **Relay**: a node on external power, mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, receives duty-cycled between and is reached then with a long preamble as a last resort; holds mail for nobody and forwards at once; without an anchor it forwards as a relay does, reached with a long preamble only. A relay that moves is **carried**: it forwards and takes each GPS fix, holds mail for nobody, and says so in its heartbeat |
+| Nodes | One kind, whose role follows its power and motion: relay on external power, sleepy on battery, carried when it moves ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -53,18 +53,48 @@ integration off the shelf at this price, and the premise is that anyone can
 buy and plant a node. ST's STM32WL55 is the European fallback but has no
 BLE.
 
-Every node runs the same protocol, and its
-role is not a setting (roadmap D71): it follows the node's power, which the node
-measures. On external power, plugged into USB on a windowsill or in a
-solar box on a roof, it is a **relay**; on battery it is **sleepy**
-([sleepy nodes](#sleepy-nodes)). The nRF52840 detects USB power itself
-(Product Specification, POWER, USB supply: `USBREGSTATUS.VBUSDETECT` and
-an event at each change), so every board runs the full node, a relay's
-tables included ([implementation notes](#implementation-notes)), and turns
-a relay on the cable. A person's node on its charger relays, and the
-same node in a pocket sleeps, with nothing to set. Every heartbeat flag
-says what the node measures of itself: sleepy that it is on battery,
-carried that its GPS says it moves ([position and time](#position-and-time)).
+---
+
+## Nodes
+
+Every node runs the same protocol and firmware. Its role is not a
+setting: it follows three things the node measures of itself, and its
+heartbeat says which hold (roadmap D70, D71).
+
+- **On battery**, past a grace of an hour, it is **sleepy**; on external
+  power, USB on a windowsill or a solar box on a roof, it is a **relay**.
+  The nRF52840 detects USB power itself (Product Specification, POWER,
+  USB supply: `USBREGSTATUS.VBUSDETECT` and an event at each change), so
+  a person's node relays on its charger and sleeps in a pocket, with
+  nothing to set.
+- **Its GPS says it moves**: a node that is not sleepy is then
+  **carried**. A relay that stays put is **fixed**.
+- **A map point set in the app** makes it fixed at once.
+
+The rest of this document uses these words:
+
+- A **relay** listens all the time, heartbeats every 5–15 s, forwards,
+  and, if fixed, holds mail for the sleepy nodes it hears.
+- A **sleepy node** heartbeats rarely, listens only briefly, receives
+  duty-cycled in between, and forwards what it is given at once.
+- A **carried** node is a relay that moves: it forwards, takes each GPS
+  fix, and holds no mail.
+- A sleepy node's **anchor** is the relay it chooses. The anchor's
+  position is the sleepy node's address, its home channel the sleepy
+  node's, and its heartbeat the one the sleepy node watches to know it
+  is still in reach. A sleepy node that hears no relay is **anchorless**.
+- A **beat** is a sleepy node's heartbeat, and its **window** the few
+  seconds after a beat, or after a message it takes, in which it
+  listens.
+- A **holder** is a relay that holds a message for a sleepy node and
+  hears its beat; most often its anchor.
+- A relay's **mailbox** is its heard table and its delivery queue: the
+  sleepy nodes it hears and the messages it holds for them.
+- The **long preamble** reaches a node that receives duty-cycled at any
+  time; it is used only where nothing else reaches.
+- A sleepy node goes **dark** when it is out of reach for minutes: a
+  pocket, a basement or the metro. What the network keeps for a node,
+  and a message on its way, it keeps for the **delivery TTL**, 600 s.
 
 ---
 
@@ -1386,7 +1416,7 @@ What breaks it:
 
 ## Sleepy nodes
 
-A sleepy node is a node on battery ([hardware](#hardware), roadmap D71).
+A sleepy node is a node on battery ([nodes](#nodes), roadmap D71).
 It heartbeats rarely and on one channel, listens for a
 short window after each heartbeat and after each message it takes, and
 for its anchor's heartbeat once a rotation; between those it receives
@@ -1827,7 +1857,7 @@ channels ([beats](#beats)) and from the frames they exchange with it.
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
 D5): characteristics for send, receive-notify, node status, position set
-(the role follows the power, [hardware](#hardware), roadmap D71). The
+(the role follows the power, [nodes](#nodes), roadmap D71). The
 app owns identity and end-to-end encryption; the node sees
 opaque payloads. The sender's address, position and node ID, travels inside the
 encrypted payload so that only the recipient learns where the sender is.
@@ -2088,7 +2118,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, [retry wait](#retry-wait) |
 | O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | resolved: roadmap D29 rule 1, [receiving DATA](#receiving-data), [send queue](#send-queue) |
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position and time](#position-and-time)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
-| O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([hardware](#hardware), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
+| O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([nodes](#nodes), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
 
 ---
 

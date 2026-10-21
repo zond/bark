@@ -17,7 +17,7 @@ fn accepts_send(&self, now: Instant) -> bool;
 ```
 
 One struct, `Node`, for every node; its power makes it a relay or a sleepy node
-(`AppCommand::Power`, §4; spec "Hardware", "Sleepy nodes"). `Relay` is the node with its
+(`AppCommand::Power`, §4; spec "Nodes", "Sleepy nodes"). `Relay` is the node with its
 heard table and delivery queue, and `SleepyNode` the node without them, which a sleepy
 node does not keep: it is sleepy whatever its power, for a driver whose node never
 switches, and a `Relay` on battery keeps them empty and behaves the same (§6). `Node::sleepy()` says which it is now. A sleepy node's radio receives
@@ -149,7 +149,7 @@ position, and a relay's sleepy nodes' with it (spec "Node identity").
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power
-the node is a relay, on battery sleepy (spec "Hardware"): while it boots, from the report
+the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
 on; running, from the change on, as spec "Sleepy nodes" says.
 
 `AppEvent::Message` delivers a payload to this node's application.
@@ -194,7 +194,7 @@ holds, whose records are never given up (spec "Message records"). The delivery q
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
 167 008 B (163.1 KiB, measured 2026-10-21, roadmap D71): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
-waits. Every board runs it, since every node may be a relay (spec "Hardware"). A
+waits. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 147 992 B (144.5 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;

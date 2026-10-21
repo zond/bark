@@ -114,7 +114,7 @@ pub enum AppCommand<'a> {
         position: Position,
     },
     /// Whether external power, USB, is present: at boot and at every
-    /// change (spec "Hardware", roadmap D71). It sets the node's role: on
+    /// change (spec "Nodes", roadmap D71). It sets the node's role: on
     /// external power a relay, on battery sleepy.
     Power {
         /// External power is present.

@@ -1,4 +1,4 @@
-//! A node's role by its power (spec "Hardware", "Sleepy nodes", roadmap
+//! A node's role by its power (spec "Nodes", "Sleepy nodes", roadmap
 //! D71).
 //!
 //! On external power a node is a relay; on battery it is sleepy. The

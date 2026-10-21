@@ -1,5 +1,5 @@
 //! People's nodes whose power switches between USB and battery, and with
-//! it their role (`scenario::Power`, spec "Hardware", roadmap D71).
+//! it their role (`scenario::Power`, spec "Nodes", roadmap D71).
 //!
 //! A node that switches at random stays on USB and on battery for
 //! exponential times of the scenario's means, from the power its

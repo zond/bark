@@ -1,5 +1,5 @@
 //! The protocol core on the board, a relay on USB and sleepy on battery
-//! (`power.rs`, spec "Hardware"), driven by `bark_driver::Driver` against
+//! (`power.rs`, spec "Nodes"), driven by `bark_driver::Driver` against
 //! the SX1262. Its node ID is the
 //! low word of the chip's factory device ID (nRF52840 Product
 //! Specification, FICR DEVICEID), the same at every boot.

@@ -482,7 +482,7 @@ impl Default for Movement {
 }
 
 /// People's nodes whose power switches between USB and battery, and with
-/// it their role (spec "Hardware", roadmap D71). The simulator reports
+/// it their role (spec "Nodes", roadmap D71). The simulator reports
 /// each change to the node's core. A node that does not switch keeps the
 /// power its placement gives it: a relay on USB, a sleepy node on battery.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
