@@ -120,6 +120,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // It listens all the time from now on.
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
+        self.changed(true, now);
     }
 
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
@@ -153,8 +154,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.beacon.reach_left = 0;
         self.unwatch();
         emit(Action::Trace(Trace::Role { sleepy: true }));
+        // Said on the channel its neighbours and sleepy nodes know it by.
+        let old = self.home;
+        self.beacon.change = None;
+        self.changed(true, now);
         if !self.reconsider_anchor(now, emit) {
             self.leave_anchor(now);
+        }
+        if self.home == old && self.anchor.is_some() {
+            // Its first beat, at once on the same channel, says it.
+            self.beacon.change = None;
         }
     }
 

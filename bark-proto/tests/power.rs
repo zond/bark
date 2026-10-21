@@ -78,6 +78,19 @@ fn beats_sleepy(h: &Harness<Relay>, i: usize) -> Option<bool> {
         })
 }
 
+/// The heartbeats node `i` sent for a change of its flags or position:
+/// whether a flag changed, in order.
+fn changes(h: &Harness<Relay>, i: usize) -> Vec<bool> {
+    h.nodes[i]
+        .traces
+        .iter()
+        .filter_map(|(_, t)| match t {
+            Trace::Changed { flags } => Some(*flags),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Node `from`'s application sends `text` to node `to` at its address now.
 fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
     let (dst_pos, dst_id) = (h.nodes[to].core.address(), h.nodes[to].core.id());
@@ -125,9 +138,10 @@ fn the_power_at_boot_sets_the_role() {
 }
 
 /// A sleepy node plugged in is a relay at once: it leaves its anchor, its
-/// address is its own position, and it heartbeats as a relay. Its old
-/// anchor, which held a message for it, hands it over once it hears it as
-/// a relay (spec "Delivery queue").
+/// address is its own position, and it heartbeats as a relay, the first
+/// time at once on its home channel, its anchor's. Its old anchor, which
+/// held a message for it, hears it and hands the message over then
+/// (spec "Heartbeat", "Delivery queue").
 #[test]
 fn a_sleepy_node_plugged_in_relays_and_gets_its_mail() {
     let (r, o, s) = (0, 1, 2);
@@ -153,7 +167,8 @@ fn a_sleepy_node_plugged_in_relays_and_gets_its_mail() {
     assert_eq!(h.nodes[s].core.anchor(), None);
     assert_eq!(h.nodes[s].core.address(), pos(20.0));
     assert_eq!(traced(&h, s, Trace::Role { sleepy: false }), 1);
-    assert!(h.run_until(h.now + secs(300), |h| delivered_at(h, s, id).is_some()));
+    assert!(h.run_until(h.now + secs(5), |h| delivered_at(h, s, id).is_some()));
+    assert_eq!(changes(&h, s), vec![true]);
     h.run_for(secs(1));
     assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
         t,
@@ -305,4 +320,66 @@ fn a_lone_relay_unplugged_is_anchorless_and_plugged_in_again_a_relay() {
     h.run_for(secs(60));
     assert_eq!(beats_sleepy(&h, r), Some(false));
     assert_eq!(h.nodes[r].core.address(), pos(0.0));
+}
+
+/// A relay that turns carried heartbeats at once on its home channel with
+/// the flag; carried, its position changes with each fix, and it
+/// heartbeats for that at most once its interval, not at each fix
+/// (spec "Heartbeat").
+#[test]
+fn a_change_heartbeats_once_and_a_carried_node_once_an_interval() {
+    let r = 0;
+    let mut h = Harness::powered(vec![node(0.0, true, 51)]);
+    h.run_until(at(400), |_| false);
+    let home = h.nodes[r].core.home();
+    let mut east = 100.0;
+    while !h.nodes[r].core.carried() {
+        fix(&mut h, r, east);
+        east += 1.4;
+        h.run_for(secs(1));
+    }
+    assert_eq!(changes(&h, r), vec![true]);
+    let flagged = h.nodes[r].sent.iter().any(|(_, f)| {
+        f.channel == home
+            && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(hb)) if hb.carried)
+    });
+    assert!(flagged, "on its home channel");
+    let from = h.now;
+    for _ in 0..300 {
+        fix(&mut h, r, east);
+        east += 1.4;
+        h.run_for(secs(1));
+    }
+    let interval = bark_proto::node::heartbeat_interval(h.nodes[r].core.id(), &Config::default());
+    let most = (h.now.since(from).as_micros() / interval.as_micros()) as usize + 1;
+    let n = changes(&h, r).len() - 1;
+    assert!(
+        n >= most - 2 && n <= most,
+        "{n} for at most {most} intervals"
+    );
+}
+
+/// A relay that turns sleepy says so on the channel it was at home on:
+/// its first heartbeat with the sleepy flag goes there, once, whatever
+/// its new anchor's channel.
+#[test]
+fn a_relay_turning_sleepy_says_so_on_its_old_channel() {
+    let (r, o) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, true, 61), node(300.0, true, 62)]);
+    h.link(r, o);
+    h.run_until(at(400), |_| false);
+    let old = h.nodes[r].core.home();
+    power(&mut h, r, false);
+    assert!(h.run_until(h.now + secs(GRACE + 5), |h| h.nodes[r].core.sleepy()));
+    h.run_for(secs(5));
+    let sleepy_on_old = h.nodes[r]
+        .sent
+        .iter()
+        .filter(|(_, f)| {
+            f.channel == old
+                && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(hb)) if hb.sleepy)
+        })
+        .count();
+    assert!(sleepy_on_old >= 1);
+    assert!(changes(&h, r).len() <= 1);
 }

@@ -228,6 +228,12 @@ struct Beacon {
     /// before the beat itself goes.
     reach_all: Option<u16>,
     reach_left: u16,
+    /// A heartbeat owed for a change of flags or position (`changed`): the
+    /// home channel when it changed, from when, and whether a flag
+    /// changed.
+    change: Option<(Channel, Instant, bool)>,
+    /// When the last heartbeat for a change went.
+    changed_at: Option<Instant>,
 }
 
 /// Which heartbeat the beacon sends.
@@ -244,6 +250,9 @@ enum Beat {
     /// A sleepy node's beat, with the long preamble, on a channel its
     /// anchorless neighbours listen on (spec "Beats").
     Reach,
+    /// The one after a change of flags or position, on the home channel
+    /// (spec "Heartbeat"): whether a flag changed.
+    Change(bool),
 }
 
 /// The move rule's timers (spec "Channel moves").
@@ -432,6 +441,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 quick: 0,
                 reach_all: None,
                 reach_left: 0,
+                change: None,
+                changed_at: None,
             },
             mover: Mover {
                 excess_since: None,
@@ -575,6 +586,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             quick: 0,
             reach_all: None,
             reach_left: 0,
+            change: None,
+            changed_at: None,
         };
         *mover = Mover::default();
         records.clear();
@@ -707,7 +720,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a sleepy node next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     fn radio_due(&self) -> Instant {
-        let beat = self.beacon.next_at.max(self.beacon.ready_at);
+        let next = self
+            .beacon
+            .change
+            .map_or(self.beacon.next_at, |c| c.1.min(self.beacon.next_at));
+        let beat = next.max(self.beacon.ready_at);
         let due = self.queue.earliest_due().map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
@@ -1382,7 +1399,30 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && (self.beacon.current.is_some()
                 || self.beacon.announce.is_some()
                 || now >= self.beacon.next_at
+                || self.beacon.change.is_some_and(|(_, at, _)| now >= at)
                 || self.answer_due().is_some_and(|(_, _, at)| now >= at))
+    }
+
+    /// The node's flags (`flags`) or its position changed: it heartbeats
+    /// on its home channel at once, outside its slots, so that the
+    /// neighbours there address it anew now and not a rotation later, and
+    /// an old anchor learns to hand over its mail (spec "Heartbeat"). One
+    /// heartbeat for any number of changes before it goes; one whose
+    /// position changes at each fix, a carried node, heartbeats for it at
+    /// most once an interval, as often as its slots come.
+    pub(super) fn changed(&mut self, flags: bool, now: Instant) {
+        if self.stage != Stage::Running {
+            return;
+        }
+        let interval = heartbeat_interval(self.id, &self.config);
+        let at = match self.beacon.changed_at {
+            Some(t) if !flags => (t + interval).max(now),
+            _ => now,
+        };
+        self.beacon.change = Some(match self.beacon.change {
+            Some((c, t, f)) => (c, t.min(at), f || flags),
+            None => (self.home, at, flags),
+        });
     }
 
     /// How many times a relay answers a beat of an anchorless node: once
@@ -1453,12 +1493,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.beacon.reach_left = all & !channel_bit(self.home);
             }
             let reach = Channel::all().find(|c| self.beacon.reach_left & channel_bit(*c) != 0);
+            let change = self.beacon.change.filter(|&(_, at, _)| now >= at);
             self.beacon.current = match (self.beacon.announce, self.answer_due()) {
                 (Some(old), _) => Some((old, Beat::Announce)),
                 _ if now >= self.beacon.next_at => match reach {
                     Some(c) => Some((c, Beat::Reach)),
                     None => Some((self.beacon.rotation, Beat::Slot)),
                 },
+                _ if change.is_some() => {
+                    self.beacon.change = None;
+                    change.map(|(c, _, flags)| (c, Beat::Change(flags)))
+                }
                 (None, Some((id, home, at))) if now >= at => Some((home, Beat::Answer(id))),
                 _ => return false,
             };
@@ -1520,6 +1565,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .start(Job::Heartbeat, Action::Rssi(f.channel), emit);
         } else {
             self.beacon.check = Check::Tx;
+            if let Some((_, Beat::Change(flags))) = self.beacon.current {
+                emit(Action::Trace(Trace::Changed { flags }));
+            }
             self.budget.record(mac::airtime(&f), now);
             self.radio.start(Job::Heartbeat, Action::Transmit(f), emit);
         }
@@ -1546,6 +1594,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Some((channel, Beat::Reach)) => {
                 self.beacon.reach_left &= !channel_bit(channel);
+                return;
+            }
+            Some((_, Beat::Change(_))) => {
+                self.beacon.changed_at = Some(now);
                 return;
             }
             _ => {}
@@ -1724,7 +1776,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let took = match cmd {
                     AppCommand::Fix { .. } => self.fix(position, now, emit),
                     _ => {
+                        let carried = self.motion.carried;
                         self.map_point(position);
+                        if !self.sleepy {
+                            self.changed(carried, now);
+                        }
                         true
                     }
                 };
@@ -1875,9 +1931,12 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 let due = if pending {
                     self.beacon.ready_at
                 } else {
-                    // A relay's answer may come before its next slot.
+                    // A relay's answer, or a heartbeat for a change, may
+                    // come before its next slot.
                     let answer = self.answer_due().map(|(_, _, at)| at);
-                    answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
+                    let change = self.beacon.change.map(|(_, at, _)| at);
+                    earlier(earlier(answer, change), Some(self.beacon.next_at))
+                        .unwrap_or(self.beacon.next_at)
                 };
                 at(due.max(self.beacon.ready_at));
             }
