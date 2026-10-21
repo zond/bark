@@ -20,15 +20,15 @@ deliberate jamming; it is designed for infrastructure loss.
 | Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
-| Medium access | Always listening on the home channel, leaving it only to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk before every transmission; transmit as soon as the channel is clear; no time slots |
-| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's on a fixed interval of 5–15 s set by its ID, on a channel that steps through all 13 in order; a sleepy node's a random 150–300 s after its last, on its home channel, and with a long preamble on its anchorless neighbours' channels; one without an anchor a random 23–46 s after its last, with a long preamble, on the next channel each time |
+| Medium access | Always listening on the home channel, leaving it only to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
+| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
-| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
+| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, whose role follows its power and motion: relay on external power, sleepy on battery, carried when it moves ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
-| Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
-| Time | No network time synchronisation of any kind |
+| Position | From GPS unless a fix fails the checks or the app sets a map point; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
+| Time | No network time, and GPS time is not used |
 
 ---
 
@@ -111,11 +111,11 @@ Both regimes allow any modulation in this band.
 | Listen-before-talk | not required | not required |
 
 The protocol keeps to them with an airtime token bucket per node that
-holds every hour within 10% ([duty cycle cap](#duty-cycle-cap)), no transmission longer than
-1 s (an SF5 packet is at most 139 ms, 493 ms with the long preamble of
-[physical layer](#physical-layer)), and a transmit power that gives
-at most +10 dBm ERP with the fitted antenna: +10 dBm at the connector
-with the stock antenna (≈0 dBd gain).
+holds every hour within 10% ([duty cycle cap](#duty-cycle-cap)), no
+transmission longer than 1 s (an SF5 packet is at most 139 ms, 493 ms
+with the long preamble, [physical layer](#physical-layer)), and +10 dBm
+at the connector, which with the stock antenna (≈0 dBd gain) is at most
++10 dBm ERP.
 
 The 868 MHz band does not work for Ukraine (no 500 mW sub-band; 868.0–868.6
 MHz is 14 dBm at <1%), and 2.4 GHz has too little range. 433 MHz is the
@@ -156,39 +156,44 @@ GFSK: [what the protocol omits](#what-the-protocol-omits).
 
 SF is network-wide because an SX1262 receives one SF at a time, so a
 mixed-SF network splits into parts that cannot hear each other. Starting
-at SF7 would force a network-wide switch later; the deployment is expected
-to start at a density where SF5 range suffices
+at SF7 would force a network-wide switch later; the deployment is
+expected to start at a density where SF5 range suffices
 ([capacity and sizing](#capacity-and-sizing)).
 
 ### Duty-cycled receive and the long preamble
 
-Every frame has the shortest preamble but those to a node whose radio
-receives duty-cycled: a sleepy node outside its windows ([sleepy nodes](#sleepy-nodes)),
-which without an anchor is at all times ([sleepy nodes alone](#sleepy-nodes-alone)). The SX1262 does this on its own (datasheet §13.1.7,
-SetRxDutyCycle): it receives for a window `rx`, takes about 1 ms to save
-and restore its state, sleeps for `sleep`, starts its oscillator (the
-TCXO, 5 ms as the firmware sets it), and receives again; a cycle of
-`C = rx + sleep + wake`, with `wake` = 6 ms. It catches a preamble only if
-a window holds `D` of it, the time the modem takes to lock, taken here as
-4 symbols (≈1 ms; measure in bring-up step 1, [implementation notes](#implementation-notes)). A preamble starting just too late for one window must
-reach `D` into the next, so it is caught wherever it starts if it is at
-least `sleep + wake + 2D` long. Once it has detected one, the radio waits
-`2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble + Theader ≤ 2 ×
-rxPeriod + sleepPeriod"), 14.25 symbols after the preamble, so the window
-must be at least `(wake + 2D + header) / 2`, and half a symbol more to
-round the preamble up to whole symbols: `rx` = 6.0 ms, in the radio's
-steps of 15.625 µs.
+Every frame has the shortest preamble except those to a node whose radio
+receives duty-cycled: a sleepy node outside its windows
+([sleepy nodes](#sleepy-nodes)), which without an anchor is always
+([sleepy nodes alone](#sleepy-nodes-alone)). The SX1262 does this on its
+own (datasheet §13.1.7, SetRxDutyCycle). It receives for a window `rx`,
+takes about 1 ms to save and restore its state, sleeps for `sleep`,
+starts its oscillator (the TCXO, 5 ms as the firmware sets it), and
+receives again: a cycle `C = rx + sleep + wake`, with `wake` = 6 ms.
+
+It catches a preamble only if a window holds `D` of it, the time the
+modem takes to lock, taken here as 4 symbols (≈1 ms; measured in
+bring-up step 1, [implementation notes](#implementation-notes)). A
+preamble that starts just too late for one window must reach `D` into
+the next, so it is caught wherever it starts if it is at least
+`sleep + wake + 2D` long. Once it has detected a preamble, the radio
+waits `2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble +
+Theader ≤ 2 × rxPeriod + sleepPeriod"), which ends 14.25 symbols after
+the preamble. So the window must be at least `(wake + 2D + header) / 2`,
+and half a symbol more to round the preamble up to whole symbols:
+`rx` = 6.0 ms, in the radio's steps of 15.625 µs.
 
 The sleep follows from the current. The node pays `I_rx (rx + wake) / C`
-for its windows, at the 5.8 mA of listening, and `I_tx C / P` for its own
-beats, each a preamble about `C` long every `P`, at 32 mA (datasheet
+for its windows, at the 5.8 mA of listening, and `I_tx C / P` for its
+own beats, each a preamble about `C` long every `P`, at 32 mA (datasheet
 Table 3-6, the least listed for the SX1262 at 434 MHz). The sum is least
 where the two are equal, `C = √(I_rx (rx + wake) P / I_tx)`: 361.1 ms at
 `P` = 60 s, the beat interval the cycle was first set for, and within
-7 % of that from 250 to 520 ms. The cycle is one for every sleepy node,
-whose beats come every 34.6 s without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)),
-where the least is 274 ms and 361.1 ms costs 4 % more, and every 225 s
-with one ([beats](#beats)), where the windows dominate whatever the cycle. So:
+7 % of that from 250 to 520 ms. Every sleepy node has the same cycle.
+Without an anchor its beats come every 34.6 s
+([sleepy nodes alone](#sleepy-nodes-alone)), where the least is 274 ms
+and 361.1 ms costs 4 % more; with one they come every 225 s
+([beats](#beats)), where the windows dominate whatever the cycle. So:
 
 | Quantity | Value |
 |---|---|
@@ -201,20 +206,21 @@ with one ([beats](#beats)), where the windows dominate whatever the cycle. So:
 | 255-byte frame with the long preamble | 492.9 ms, under the 1 s of [regulatory limits](#regulatory-limits) |
 
 A long frame costs its sender and its channel 30 times a heartbeat's
-airtime and 3.6 times a full frame's. The ordinary traffic keeps the
-shortest preamble for that reason: every node on a relay's channel would
-pay it, every frame, and a relay forwards at the 10 % cap long before its
-channel fills ([duty cycle cap](#duty-cycle-cap)). Long frames go only where the receiver
-cannot be reached otherwise: DATA to a sleepy node outside its window,
-the beats of a node without an anchor, a relay's answer to them, and a
-sleepy node's beats to its anchorless neighbours ([beats](#beats)); their cost is in
+airtime and 3.6 times a full frame's. So ordinary traffic keeps the
+shortest preamble: every node on a relay's channel would pay the long
+one on every frame, and a relay forwards at the 10 % cap long before its
+channel fills ([duty cycle cap](#duty-cycle-cap)). Long frames go only
+where the receiver cannot be reached otherwise: DATA to a sleepy node
+outside its window, the beats of a node without an anchor and a relay's
+answers to them, and a sleepy node's beats to its anchorless neighbours
+([beats](#beats)). Their cost is in
 [sleepy nodes alone](#sleepy-nodes-alone).
 
 ---
 
 ## Channel plan
 
-Thirteen channels of 125 kHz with 57.5 kHz guard at each band edge:
+Thirteen channels of 125 kHz, with 57.5 kHz of guard at each band edge:
 
 ```
 f_k = 433.170 MHz + k × 0.125 MHz,   k = 0..12
@@ -222,112 +228,114 @@ f_k = 433.170 MHz + k × 0.125 MHz,   k = 0..12
       434.045, 434.170, 434.295, 434.420, 434.545, 434.670 MHz
 ```
 
-Channels are not assigned by a fixed grid or derived from position: each
-node measures how busy each channel is and chooses
+No fixed grid assigns channels, and no position derives them: each node
+measures how busy each channel is and chooses
 ([home channel selection](#home-channel-selection)); why not a grid:
 [what the protocol omits](#what-the-protocol-omits). Channel 6 is
-centred on 433.920 MHz, the busiest spot in the band (key fobs, sensors);
-the choice avoids it wherever it is busy. Whether 125 kHz spacing is
-enough is open item O5 ([open items](#open-items)).
+centred on 433.920 MHz, the busiest spot in the band (key fobs,
+sensors); the choice avoids it wherever it is busy. Whether 125 kHz
+spacing is enough is open item O5 ([open items](#open-items)).
 
 ---
 
 ## Home channel selection
 
 Every node has one **home channel**, on which it listens whenever it is
-not transmitting. All traffic *to* a node is sent on that node's home
-channel.
+not transmitting. All traffic *to* a node is sent on its home channel.
 
 ### Busy estimate
 
-Per channel, keep `busy[c]`, an exponential moving average of a 0/1 busy
-reading:
+Per channel, a node keeps `busy[c]`, an exponential moving average of a
+0/1 busy reading:
 
-- **Sweep:** one RSSI reading per channel per second, spread evenly: one
-  reading every 1 s / 13 ≈ 77 ms, channels in turn, each taken only when
-  the modem reports no preamble detected and no packet in progress.
-  A reading is: retune (≈0.1 ms), read (≈0.3 ms after retune), retune
-  home; ≈0.5 ms, so ≈6.5 ms per second, 0.65% of the time off the home
+- **Sweep:** one RSSI reading per channel per second, spread evenly, one
+  every 1 s / 13 ≈ 77 ms, channels in turn, each taken only when the
+  modem reports no preamble detected and no packet in progress. A
+  reading is a retune (≈0.1 ms), a read (≈0.3 ms after it) and a retune
+  home, ≈0.5 ms: ≈6.5 ms a second, 0.65% of the time off the home
   channel.
-- **Cost:** while the node is away it can miss a packet. The modem needs
-  a length `D` of preamble to lock on
-  ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)). A packet is lost if its
-  preamble starts too late before the gap for the modem to have locked,
-  or too early in it to leave `D` after it: a window of `g + 2D − P` per
-  gap of length `g`, with `P` the preamble, 12 symbols (3.1 ms, [physical layer](#physical-layer)). For
-  one spread reading, 0.5 + 2.0 − 3.1 < 0: no packet is lost. One burst
-  of all 13 readings, ≈5 ms, would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals
-  per second, 0.4%. Spreading loses nothing as long as
-  `D ≤ (P − g) / 2` ≈ 1.3 ms, 5 symbols; if the bench shows the modem
-  needs more, redo this comparison.
-- **Reading:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0.
-  Average the 0/1 reading, not the dBm: what matters is the fraction of
-  time listen-before-talk would refuse.
-- **Window:** α ≈ 1/600 per sample (≈10 minutes at one sample per channel
-  per second). One sample per heartbeat interval would give 60 samples
-  per window, ±4 points on a 10% channel, as large as the differences the
-  rule acts on.
+- **Cost:** spread readings lose no packet. The modem needs a length `D`
+  of preamble to lock on
+  ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+  so a gap of length `g` loses a packet whose preamble starts too late
+  before it for the modem to have locked, or too early in it to leave
+  `D` after it: a window of `g + 2D − P`, with `P` the 12-symbol
+  preamble, 3.1 ms ([physical layer](#physical-layer)). For one spread
+  reading 0.5 + 2.0 − 3.1 < 0. One burst of all 13 readings, ≈5 ms,
+  would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals a second, 0.4%. Spreading
+  loses nothing as long as `D ≤ (P − g) / 2` ≈ 1.3 ms, 5 symbols; if the
+  bench shows the modem needs more, redo this comparison.
+- **Reading:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0. The
+  average is of the 0/1 reading, not of the dBm: what matters is the
+  fraction of time listen-before-talk would refuse.
+- **Window:** α ≈ 1/600 per sample, ≈10 minutes at one sample per
+  channel per second. One sample per heartbeat interval would give 60
+  samples per window, ±4 points on a 10% channel, as large as the
+  differences the rule acts on.
 - **Home channel:** count only what would stay behind if the node moved.
-  Packets addressed to the node (DATA), the ACKs of its own
-  hand-overs, and its own transmissions and ACKs go wherever it goes:
-  counting them would make a busy relay leave its channel for its own
-  traffic and take that traffic along. So a home reading taken while one
-  of them was on the air is set aside, and every other is the same 0/1
-  reading as on any other channel. The move rule compares home with the
-  other channels, so both must be read alike: a relay decodes packets
-  too faint for any reading to see, and counting their receive time on
-  home alone made home read busier than any other channel the more
-  traffic there was, until under load the rule moved relays over and
-  over to no gain (roadmap D55). Whether a reading fell
-  in the node's own packet is known only when that packet ends, so a home
-  reading is held until the next, one second later, longer than any
-  packet (roadmap D24). A home reading may fall inside a reception, since
-  the radio keeps receiving while it reads its own channel
-  (`core-interface.md`, Radio, rules 7 and 8): a reading inside a packet addressed
-  to the node is discarded, one inside any other packet counts. A packet
-  for the node that fails its CRC cannot be told from someone else's and
-  counts.
-- **Noise floor:** calibrate per device at boot as a low percentile of RSSI
-  readings over the first rotation; recalibrate slowly.
+  Packets addressed to the node (DATA), the ACKs of its own hand-overs,
+  and its own transmissions and ACKs go wherever it goes: counting them
+  would make a busy relay leave its channel for its own traffic and take
+  that traffic along. So a home reading taken while one of them was on
+  the air is set aside, and every other is the same 0/1 reading as on
+  any other channel. Home and the other channels must be read alike,
+  since the move rule compares them: a relay decodes packets too faint
+  for any reading to see, and counting their receive time on home alone
+  made home read busier the more traffic there was, until under load the
+  rule moved relays over and over to no gain (roadmap D55).
+  Whether a reading fell in the node's own packet is known only when
+  that packet ends, so a home reading is held until the next, one second
+  later, longer than any packet (roadmap D24). The radio keeps receiving
+  while it reads its own channel (`core-interface.md`, Radio, rules 7
+  and 8), so a home reading may fall inside a reception: inside a packet
+  addressed to the node it is discarded, inside any other it counts. A
+  packet for the node that fails its CRC cannot be told from someone
+  else's, and counts.
+- **Noise floor:** calibrated per device at boot as a low percentile of
+  RSSI readings over the first rotation, and recalibrated slowly.
 
 Foreign transmitters (key fobs, LPD433 handhelds) count exactly like
-peers. What hurts a node is busy time at its own receiver, and RSSI
-measures that directly; counting neighbours per channel would not, since
-two neighbours that hear each other share a channel cleanly.
+peers. What hurts a node is busy time at its own receiver, which RSSI
+measures directly; counting neighbours per channel would not, since two
+neighbours that hear each other share a channel cleanly.
 
 ### Channel at boot
 
-Listen on a random channel for a worst-case rotation
-([heartbeat](#heartbeat)), so that every relay in range has certainly been heard once, collecting
-sweeps and heartbeats. Then set home to `argmin busy[c]`. Channels whose
-busy value is within 0.01 of the lowest count as tied, and the choice
-among them is random, so that nodes that hear nothing do not all pick
-channel 0. A sleepy node ends the listen at the first relay it hears, which
-it takes as its anchor, and moves to the anchor's channel; one that hears
-none homes as a relay does and keeps that channel ([relay choice](#relay-choice), [sleepy nodes alone](#sleepy-nodes-alone)).
+A node listens on a random channel for a worst-case rotation
+([heartbeat](#heartbeat)), so that every relay in range has been heard
+once, collecting sweeps and heartbeats. Then it sets home to
+`argmin busy[c]`. Channels within 0.01 of the lowest count as tied, and
+the choice among them is random, so that nodes that hear nothing do not
+all pick channel 0. A config override exists for bench work.
+
 A sleepy node listens two rotations, 390 s: a relay switched on with it
 heartbeats only after a boot listen of its own, and once the node
 receives duty-cycled it hears relays only by their answers (roadmap D51,
-D52). A config override exists for bench work.
+D52). It ends the listen at the first relay it hears, takes it as its
+anchor and moves to the anchor's channel; one that hears none homes as
+a relay does and keeps that channel ([relay choice](#relay-choice),
+[sleepy nodes alone](#sleepy-nodes-alone)).
 
 ### Channel moves
 
-Move only when `busy[home] − min_c busy[c] > 0.05` continuously for
-10 minutes; then wait a random 0–5 minutes, re-check, and move to
-`argmin` with random tie-break. Immediately after retuning, send **one
-heartbeat on the old channel** (it carries the new channel): that retunes
-any neighbour parked on the old channel at once. A sleeping node anchored
-to it follows at the next heartbeat it wakes for ([relay choice](#relay-choice)), and beats on
-the new channel soon after ([beats](#beats)). A sleepy node
-listening at the time, in a window ([delivery](#delivery)), hears the heartbeat on the old
-channel and follows at once, so the moving node sends to the sleepy nodes
-of its heard table on the old channel that listen now on the new one
-([heard table](#heard-table)); the others say where they listen with that beat (roadmap D53).
-No other announcement. Neighbours that miss it learn the new channel from
-the next rotation ([heartbeat](#heartbeat)) or from ACK failure ([hand-over](#hand-over)).
+A node moves only when `busy[home] − min_c busy[c] > 0.05` continuously
+for 10 minutes; then it waits a random 0–5 minutes, checks again, and
+moves to `argmin` with random tie-break. The hysteresis keeps moves
+rare: without it, every rooftop relay in range of the same interference
+sees the same ranking, and they all jump together.
 
-The hysteresis keeps moves rare. Without it, every rooftop relay in range
-of the same interference sees the same ranking and they all jump together.
+Immediately after retuning it sends **one heartbeat on the old
+channel**, which names the new one and retunes at once any neighbour
+parked on the old channel. A sleepy node listening at the time, in a
+window ([delivery](#delivery)), hears it and follows at once, so the
+moving node sends to the sleepy nodes of its heard table on the old
+channel that now listen on the new one ([heard table](#heard-table)).
+A sleeping node anchored to it follows at the next heartbeat it wakes
+for ([relay choice](#relay-choice)) and beats on the new channel soon
+after, which tells the holder where it listens ([beats](#beats),
+roadmap D53). There is no other announcement: neighbours that miss it
+learn the new channel from the next rotation ([heartbeat](#heartbeat))
+or from ACK failure ([hand-over](#hand-over)).
 
 ---
 
@@ -389,92 +397,92 @@ protocol depends on two nodes agreeing on a clock.
 
 ## Heartbeat
 
-Every node sends heartbeats. This section describes a relay's; a sleepy
-node's are rarer, on its home channel and, with the long preamble, on
-its anchorless neighbours' ([beats](#beats)); one in anchorless mode beats with
-the long preamble on every channel in turn ([sleepy nodes alone](#sleepy-nodes-alone)).
+Every node heartbeats. This section describes a relay's; a sleepy node's
+are rarer ([beats](#beats)), and an anchorless node's carry the long
+preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x8, with flags in its low bits ([packet formats](#packet-formats)): 0x9 from a node that is sleepy ([beats](#beats)), 0xB from one that is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)); 0x4 on any of these from a node that is carried ([position](#position)) |
+| type | 4 | 0x8, with three flags in its low bits: sleepy, anchorless, carried ([packet formats](#packet-formats)) |
 | channel | 4 | home channel index 0–12 |
 | id | 32 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
-9 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)): at coding rate 4/5 the ninth
-byte fits in the eighth's block of symbols, so 9 bytes take the 20
-payload symbols of 8, and naming the sender costs no airtime.
+9 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)): at
+coding rate 4/5 the ninth byte fits in the eighth's block of symbols, so
+naming the sender costs no airtime.
 
 - **Timing:** a fixed interval T for each node, from the last byte b of
   its node ID: T = 5 s + 10 s × b / 256, mean 10 s. The first heartbeat
   comes at a random time within T after the boot listen, and each slot
-  after it T later.
+  T after the one before.
 - **Channel:** steps `k ← (k + 1) mod 13` every slot, from a random
   start, whether the heartbeat went or not. A fixed cycle reaches every
   neighbour once per 13 heartbeats, a **rotation** (≈130 s, at most
-  13 × 15 s = 195 s), where a random channel per
-  heartbeat would need ≈41 heartbeats on average to cover all 13.
-- **Procedure:** retune to channel k, listen-before-talk (CAD + RSSI,
+  13 × 15 s = 195 s); a random channel per heartbeat would need ≈41
+  heartbeats on average to cover all 13.
+- **Procedure:** retune to channel k, listen before talking (CAD + RSSI,
   ≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
   skip; send; retune home. The node is deaf for ≈15 ms per heartbeat,
   ≈0.2%.
+
+No scanning is needed: every relay's heartbeat visits all channels, so a
+node listening on any one channel hears every relay in range within one
+rotation. The heartbeat load per channel is in
+[capacity and sizing](#capacity-and-sizing).
 
 A neighbour that has heard one heartbeat of a node knows the node's
 interval from its ID, and so when its next comes to any channel: on
 channel c at time t, on channel c + j at t + j × T, and on c again at
 t + 13 × T. A sleeping node uses this to wake for its anchor's
-([relay choice](#relay-choice)). A heartbeat comes no earlier than its slot, and later by
-at most a hand-over attempt it finds under way, a full frame with the long
-preamble, to a sleepy node outside its window, and the ACK timeout ([hand-over](#hand-over)),
-and two backoffs before its last check: 492.9 + 100 + 2 × 200 = 992.9 ms. A
-check held for a reception in progress waits less, at most that frame.
+([relay choice](#relay-choice)). A heartbeat comes no earlier than its
+slot and at most 992.9 ms later: it may find a hand-over attempt under
+way, a full frame with the long preamble to a sleepy node outside its
+window and the ACK timeout ([hand-over](#hand-over)), and then back off
+twice before its last check, 492.9 + 100 + 2 × 200 ms. A check held for
+a reception in progress waits less, at most that frame.
 
-A relay also heartbeats outside its slots to answer a node without an
-anchor ([sleepy nodes alone](#sleepy-nodes-alone)).
-
-A node also heartbeats outside its slots, on
-its home channel (roadmap D71), with the ordinary preamble and listen-before-talk as
-any heartbeat, when its sleepy or carried flag changes, or, if it is not
-sleepy, its map point ([position](#position)). Its
-neighbours on that channel then address it anew at once instead of a
-rotation later, and an old anchor that holds mail for a node turned
+**Outside the slots.** A relay also heartbeats to answer a node without
+an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). And a node
+heartbeats once, on its home channel, with the ordinary preamble and
+listen-before-talk, when its sleepy or carried flag changes or, if it is
+not sleepy, its map point does ([position](#position), roadmap D71).
+Its neighbours on that channel then address it anew at once instead of
+a rotation later, and an old anchor that holds mail for a node turned
 relay hears it as a relay and hands the mail over
-([delivery](#delivery)). A node that turns sleepy sends it on
-the channel it was at home on, where its neighbours and its sleepy nodes
+([delivery](#delivery)). A node that turns sleepy sends it on the
+channel it was at home on, where its neighbours and its sleepy nodes
 know it, unless its first beat goes there anyway
-([sleepy nodes](#sleepy-nodes)). It is one heartbeat for any number of
-changes before it goes, and the flags change seldom: the sleepy flag is
-set only at the end of a grace, an hour on battery
-([sleepy nodes](#sleepy-nodes)), and the carried flag is cleared only after
-four hours still ([position](#position)). A
-position that changes with each fix, a carried node's, is not announced:
-its slots carry it every T, and a heartbeat for it each T would double a
-walking relay's heartbeats, for no message more delivered (roadmap D71).
-Nor is a sleepy node's: it is a last resort to its neighbours, and its
-beats carry its fix ([beats](#beats)). Sleeping nodes hear none of this,
-receiving duty-cycled; they learn a change at the next slot they wake
-for.
+([sleepy nodes](#sleepy-nodes)).
 
-The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
-2 × 11.8 = 23.7 ms: two nodes whose intervals differ slide past each other
-by more than an overlap at every heartbeat, so their heartbeats meet at
-most once in a row, as random intervals would; 10 s / 23.7 ms = 422
-steps would do, and 256 is the largest power of two below it, one byte.
-Two nodes in reach share an interval with probability 1/256. A shared
-interval matters only if the two are also in step, within 23.7 ms in a
-10 s interval, 0.24 % of such pairs; their heartbeats then meet each time
-they are on one channel, as do those of a pair whose intervals stand 2:1
-or 3:2 and are in step. Clock drift unlocks them: a 32.768 kHz watch
-crystal is good to about ±50 ppm, so two clocks part by up to 1 ms per
-10 s heartbeat, and an overlap of 23.7 ms ends within 24 heartbeats, four
-minutes, at that drift, longer for clocks that drift alike. Nodes that
-boot together, after a power cut, would start in step but for the random
-first phase (roadmap D47).
+It is one heartbeat for any number of changes before it goes, and the
+flags change seldom: the sleepy flag is set only after an hour's grace
+on battery ([sleepy nodes](#sleepy-nodes)), and the carried flag is
+cleared only after four hours still ([position](#position)). A position
+that changes with each fix is not announced. A carried node's slots
+carry it every T, and a heartbeat for each change would double a
+walking relay's heartbeats for no message more delivered (roadmap D71);
+a sleepy node is a last resort to its neighbours, and its beats carry
+its fix ([beats](#beats)). Sleeping nodes hear none of this, receiving
+duty-cycled; they learn a change at the next slot they wake for.
 
-No scanning is needed: every neighbour's heartbeat visits all channels,
-so a node listening on any one channel, its home or another, hears every
-relay in range within one rotation. The heartbeat load per channel is in
-[capacity and sizing](#capacity-and-sizing).
+**The 256 intervals** are 39.1 ms apart, more than two heartbeats'
+airtime, 2 × 11.8 = 23.7 ms, so the heartbeats of two nodes whose
+intervals differ meet at most once in a row, as random intervals would.
+Such nodes slide past each other by more than an overlap at every
+heartbeat; 10 s / 23.7 ms = 422 steps would do, and 256 is the largest
+power of two below it, one byte.
+
+Two nodes in reach share an interval with probability 1/256. That
+matters only if they are also in step, within 23.7 ms in a 10 s
+interval, 0.24 % of such pairs; their heartbeats then meet each time
+they are on one channel, as do those of a pair in step whose intervals
+stand 2:1 or 3:2. Clock drift unlocks them: a 32.768 kHz watch crystal
+is good to about ±50 ppm, so two clocks part by up to 1 ms per 10 s
+heartbeat, and an overlap of 23.7 ms ends within 24 heartbeats, four
+minutes, longer for clocks that drift alike. Nodes that boot together,
+after a power cut, would start in step but for the random first phase
+(roadmap D47).
 
 ---
 
