@@ -1687,7 +1687,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let started = now - heartbeat_airtime(&hb);
         // A heartbeat of the anchor that a sleeping node hears before its
         // watch opens is not in a slot: an answer to a node without an
-        // anchor, or the one after a move (spec "Heartbeat"). It shows the
+        // anchor, or the one after a move (spec "Relay choice"). It shows the
         // anchor alive but says nothing of its slots.
         let off_slot = self.anchor.is_some_and(|a| a.id == hb.id)
             && self.watch_at.is_some()

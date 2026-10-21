@@ -431,12 +431,8 @@ preamble, to a sleepy node outside its window, and the ACK timeout ([hand-over](
 and two backoffs before its last check: 492.9 + 100 + 2 × 200 = 992.9 ms. A
 check held for a reception in progress waits less, at most that frame.
 
-A relay also sends a heartbeat outside its slots, with the long
-preamble, to answer a node without an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). A
-receiver cannot tell an answer from a heartbeat in its slot by the frame;
-a sleeping node tells them apart by the time, and an answer of its anchor
-heard before it expects the anchor's next slot does not move that time
-([relay choice](#relay-choice), roadmap D62).
+A relay also heartbeats outside its slots to answer a node without an
+anchor ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 A node also heartbeats outside its slots, on
 its home channel (roadmap D71), with the ordinary preamble and listen-before-talk as
@@ -1824,7 +1820,10 @@ any other ([next hop](#next-hop)), each DATA to one with the long preamble. A re
 that hears an anchorless beat answers: it sends a heartbeat of its own
 on the channel the beat names, with the long preamble, at once and again
 a fade later, 60 s ([a sleepy node's own message](#a-sleepy-nodes-own-message)), for two of the node's beat
-periods, so that one lost answer does not cost a rotation. The node
+periods, so that one lost answer does not cost a rotation. A receiver
+cannot tell an answer from a heartbeat in its slot by the frame; a
+sleeping node tells them apart by the time
+([relay choice](#relay-choice), roadmap D62). The node
 takes the first relay it hears as its anchor ([relay choice](#relay-choice)), listens a
 rotation to choose the strongest, and from then on beats with the sleepy
 bit alone, on its anchor's channel, and receives duty-cycled between its
