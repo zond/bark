@@ -101,6 +101,49 @@ impl Rx {
 }
 
 impl Sim {
+    /// The entries of node `b`'s neighbour table: ID, whether a relay,
+    /// banned, and with margin.
+    fn entries(&self, b: u32) -> Vec<(bark_proto::ids::NodeId, bool, bool, bool)> {
+        use bark_proto::tables::neighbours::Neighbours;
+        let r = self.relay(b);
+        let floor = r.busy().noise_floor_dbm();
+        let now = self.now;
+        r.neighbours()
+            .map(|e| {
+                let banned = now < e.banned_until;
+                (e.id, e.relay(), banned, Neighbours::has_margin(e, floor))
+            })
+            .collect()
+    }
+
+    /// With `tables_on`, after the settle time: DATA from relay `src` to
+    /// the relay `to`, by margin and distance (`metrics::Tables`).
+    fn note_reach(&mut self, src: u32, to: bark_proto::ids::NodeId, tx_key: u64) {
+        use bark_proto::tables::neighbours::Neighbours;
+        if self.metrics.research.tables.is_none() || self.now < self.settle || src >= self.relays()
+        {
+            return;
+        }
+        if !self
+            .relay_index
+            .get(&key(to))
+            .is_some_and(|&r| r < self.relays())
+        {
+            return;
+        }
+        let r = self.relay(src);
+        let floor = r.busy().noise_floor_dbm();
+        let seen = r.neighbours().find(|e| e.id == to).map(|e| {
+            (
+                usize::from(Neighbours::has_margin(e, floor)),
+                crate::sim::reach_bin(e.local),
+            )
+        });
+        if let Some(s) = seen {
+            self.reach_of.insert(tx_key, s);
+        }
+    }
+
     pub(crate) fn air_start(&mut self, slot: u32, g: u32) {
         if !self.slot_valid(slot, g) {
             return;
@@ -210,6 +253,7 @@ impl Sim {
             Some(WirePacket::Data(d)) => {
                 self.answer_of
                     .insert(tx_key, (d.msg_id().0, key(d.src_hop)));
+                self.note_reach(src, d.dst_hop, tx_key);
                 if self
                     .relay_index
                     .get(&key(d.dst_hop))
@@ -499,6 +543,14 @@ impl Sim {
             }
         }
         let answer = self.answer_of.remove(&tx.key);
+        if let Some((m, b)) = self.reach_of.remove(&tx.key) {
+            let d = self.addressed.get(&tx.key).map(|a| a.0);
+            let got = d.is_some_and(|d| got.iter().any(|g| g.0 == d));
+            if let Some(t) = &mut self.metrics.research.tables {
+                t.data_by_reach[m][b][0] += 1;
+                t.data_by_reach[m][b][1] += u64::from(got);
+            }
+        }
         if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
             let fate = if got.iter().any(|g| g.0 == d) {
                 0
@@ -537,6 +589,10 @@ impl Sim {
                 _ => None,
             };
             let before = heartbeat.map(|p| self.table_holds(b, p));
+            let entries = heartbeat
+                .filter(|_| self.metrics.research.tables.is_some() && self.now >= self.settle)
+                .filter(|_| before.is_some_and(|(held, _)| !held))
+                .map(|_| self.entries(b));
             self.deliver(
                 b,
                 Event::Received {
@@ -554,6 +610,16 @@ impl Sim {
                     c.rejections += 1;
                 } else if after <= len {
                     c.evictions += 1;
+                }
+            }
+            if let Some(old) = entries {
+                let now = self.entries(b);
+                let t = self.metrics.research.tables.as_mut().expect("on");
+                for e in old.iter().filter(|e| !now.iter().any(|n| n.0 == e.0)) {
+                    let k = &mut t.made_way[usize::from(e.1)];
+                    k[0] += 1;
+                    k[1] += u64::from(e.2);
+                    k[2] += u64::from(e.3);
                 }
             }
         }

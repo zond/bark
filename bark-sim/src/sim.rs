@@ -743,6 +743,9 @@ pub struct Sim {
     /// Frames on air addressed to a relay: key to (relay, kind, state at
     /// the start), for [`crate::metrics::Addressed`].
     pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
+    /// DATA on air from a relay to a relay, with `tables_on`: key to the
+    /// margin and distance bin of [`crate::metrics::Tables::data_by_reach`].
+    pub(crate) reach_of: HashMap<u64, (usize, usize)>,
     /// DATA on air addressed to a relay: key to the ACK that would answer
     /// it, message ID and `to`.
     pub(crate) answer_of: HashMap<u64, (u32, u32)>,
@@ -771,6 +774,12 @@ fn node_id(i: u32) -> NodeId {
 fn sector(p: bark_proto::geo::Point) -> usize {
     let deg = p.east.atan2(p.north).to_degrees().rem_euclid(360.0);
     ((deg / 45.0) as usize).min(crate::metrics::SECTORS - 1)
+}
+
+/// The bin of [`crate::metrics::Tables`] of a neighbour at `p`.
+pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
+    use crate::metrics::{REACH_BINS, REACH_BIN_M};
+    ((p.distance_m(Default::default()) / REACH_BIN_M) as usize).min(REACH_BINS - 1)
 }
 
 /// A node ID as a map key.
@@ -1178,6 +1187,7 @@ impl Sim {
             component: Vec::new(),
             series: None,
             addressed: HashMap::new(),
+            reach_of: HashMap::new(),
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
             rx_data: None,
@@ -2082,6 +2092,9 @@ impl Sim {
                 let s = sector(n.local);
                 t.sectors[0][s] += 1;
                 t.sectors[1][s] += u64::from(margin);
+                if margin && n.relay() {
+                    t.margin_by_distance[reach_bin(n.local)] += 1;
+                }
             }
         }
         if (self.now.as_micros() / SERIES_EVERY_US).is_multiple_of(5) {

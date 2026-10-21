@@ -895,10 +895,28 @@ pub struct Tables {
     /// Of the same, how far the anchor's base link is below the strongest
     /// one, by whole dB from 0 to 29, 30 and more in the last.
     pub anchor_gap_db: [u64; 31],
+    /// At the end, per relay: how many running relays keep it in their
+    /// neighbour tables, and how many of those with margin.
+    pub known_by: Vec<(u32, u32)>,
+    /// Over the samples of `relays`, the entries that are relays with
+    /// margin by their distance, in bins of [`REACH_BIN_M`], the last for all farther.
+    pub margin_by_distance: [u64; REACH_BINS],
+    /// DATA from a relay to a relay after the settle time: `[margin][bin]`
+    /// by whether the sender keeps the receiver with margin and by the
+    /// distance in bins of [`REACH_BIN_M`]; sent, and received.
+    pub data_by_reach: [[[u64; 2]; REACH_BINS]; 2],
+    /// Entries that left a relay's table as a newcomer was heard: sleepy
+    /// ones, then relays; how many, of them banned then, and with margin.
+    pub made_way: [[u64; 3]; 2],
 }
 
 /// The sectors of [`Tables::sectors`].
 pub const SECTORS: usize = 8;
+
+/// The distance bins of [`Tables`], m.
+pub const REACH_BIN_M: f32 = 250.0;
+/// See [`REACH_BIN_M`]: to 3 km, and one for farther.
+pub const REACH_BINS: usize = 13;
 
 /// What dense relays do to the relays' neighbour tables
 /// (`Research::dense`).

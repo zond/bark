@@ -465,6 +465,10 @@ impl Sim {
                     known_by: self.known_by(),
                     ..d
                 }),
+                tables: m.research.tables.clone().map(|t| crate::metrics::Tables {
+                    known_by: self.known_by(),
+                    ..t
+                }),
                 ..m.research.clone()
             },
         }
