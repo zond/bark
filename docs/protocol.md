@@ -515,9 +515,13 @@ Per node, up to 64 entries, by node ID:
   table, so each entry would last about 64 / 2 ≈ 30 s and every failure
   count would be forgotten within a minute. Keeping incumbents holds an
   equally arbitrary 64, keeps their failure counts, and replaces exactly
-  the entries that are failing or silent. Choosing a set spread around
-  the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4). The relay within 50 m is kept because the
+  the entries that are failing or silent. The table is then a sample of
+  the relays heard, weighted toward the strong links, which are heard
+  first and most often; and the strong links lie where the relays are,
+  which is where destinations are, so a loaded relay whose best next hop
+  is banned finds another there. A table spread by bearing instead, with
+  places for the nearest and farthest in each direction, holds fewer of
+  those links and routes no better (roadmap D69). The relay within 50 m is kept because the
   owner rule reads from the table that no relay that near is closer to a
   destination: one turned away would have its messages claimed by its
   neighbour and queued for a node that never beats. With every person's
@@ -1914,7 +1918,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
 | O2 | Finalise packet formats ([packet formats](#packet-formats)) | resolved: the formats are implemented and tested (`bark-proto/src/wire.rs`); they change only with a decision |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
-| O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule ([neighbour table](#neighbour-table)) | simulator |
+| O4 | Neighbour-table eviction for rooftop relays that hear hundreds: whether a set spread around the relay beats D12's rule ([neighbour table](#neighbour-table)) | resolved: measured 2026-10-21 (`neighbour-table-2026-10-21.md`), not adopted (roadmap D69) |
 | O5 | Bench item C1: adjacent-channel rejection at 125 kHz spacing; fallback 11 × 150 kHz | step 1 |
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O8 | Per-packet transmit power control (prefer short hops, cut rooftop hearing radius): ≈2× capacity | resolved: measured 2026-10-15/16 (`power-research-2026-10-15.md`), not adopted (roadmap D40) |

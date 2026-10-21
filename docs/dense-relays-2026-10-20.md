@@ -2,8 +2,8 @@
 
 **Date:** 2026-10-20, roadmap D68. **Status:** measured; decided
 2026-10-21 (roadmap D68): no rule for density, full power kept, the
-hop-cap fix and candidate 4 adopted, candidate 4 as a stop-gap until the
-neighbour table is filled by sector (roadmap D69); the proposal that a
+hop-cap fix and candidate 4 adopted, candidate 4 kept when the neighbour
+table filled by sector was measured and not adopted (roadmap D69); the proposal that a
 node that moves sleeps is not adopted: a node that moves is to route but
 hold no mail (roadmap D70). Spec references are to `protocol.md`. The base is main
 `b1e1cfd` with this branch's simulator instruments, which repeat it to
