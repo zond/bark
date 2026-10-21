@@ -93,8 +93,8 @@ The rest of this document uses these words:
 - The **long preamble** reaches a node that receives duty-cycled at any
   time; it is used only where nothing else reaches.
 - A sleepy node goes **dark** when it is out of reach for minutes: a
-  pocket, a basement or the metro. What the network keeps for a node,
-  and a message on its way, it keeps for the **delivery TTL**, 600 s.
+  pocket, a basement or the metro. The network keeps what it holds for a
+  node, and a message on its way, for the **delivery TTL**, 600 s.
 
 ---
 
@@ -641,8 +641,8 @@ node is sending the message or waiting to. A node holds one message of
 its app's at a time, until its first hop takes it. It takes one while it
 is running, holds none, has room in its send queue and bucket for a
 full frame on top of what they hold ([send queue](#send-queue)), and not
-every neighbour is banned ([receiving DATA](#receiving-data)); a sleepy
-node with a live anchor needs only the anchor not banned
+every neighbour is banned ([receiving DATA](#receiving-data)), or, for a
+sleepy node with a live anchor, not the anchor
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 A node whose neighbours are busy keeps the message and offers it again
@@ -1424,18 +1424,15 @@ What breaks it:
 
 ## Sleepy nodes
 
-A sleepy node ([nodes](#nodes), roadmap D71) heartbeats rarely and on
-one channel, its anchor's. It listens for a short window after each beat
-and each message it takes, and for its anchor's heartbeat once a
-rotation; between those it receives duty-cycled
+A sleepy node ([nodes](#nodes), roadmap D71) heartbeats rarely, on its
+anchor's channel. It listens for a short window after each beat and
+each message it takes, and for its anchor's heartbeat once a rotation;
+between those it receives duty-cycled
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
 so that any node can reach it at any time with the long preamble, as a
-last resort ([next hop](#next-hop)). Its anchor gives it its address
-([addresses](#addresses)), its channel, and the heartbeat it watches to
-know it is still in reach. Any node that holds a message for it and
-hears its beat is its holder ([delivery](#delivery)), most often the
-anchor, where its address sends its mail, but not only. One that hears
-no relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
+last resort ([next hop](#next-hop)). Its holder, most often its anchor,
+delivers to it in its windows ([delivery](#delivery)). One that hears no
+relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 A sleepy node holds mail for nobody. The mailbox
 ([heard table](#heard-table), [delivery queue](#delivery-queue)) is a
@@ -1447,12 +1444,11 @@ Everything else it does as any node. A carried relay keeps its mailbox
 but takes no new mail into it ([owner](#owner)): mail is held only where
 a sleepy node can count on finding it.
 
-What the network keeps for a node that has gone dark ([nodes](#nodes))
-it keeps for the delivery TTL, 600 s: the node in its holder's table
-([heard table](#heard-table)), and the messages waiting for it, which
+For a node that has gone dark the network keeps, for the delivery TTL
+([nodes](#nodes)), the node in its holder's table
+([heard table](#heard-table)) and the messages waiting for it, which
 stay longer while nothing needs their place
-([delivery queue](#delivery-queue)). A message on its way lives as long
-([time to live](#time-to-live)).
+([delivery queue](#delivery-queue)).
 
 **Plugged in and unplugged.** At boot a node takes its role from its
 power at once (roadmap D71): nobody depends on it yet. A sleepy node
@@ -1508,8 +1504,8 @@ duty-cycled, it would hear no other relay's heartbeat, and the first
 relay heard would stay its anchor however faint. Moving to each stronger
 relay as it is heard would chase the fading instead: one heartbeat of a
 relay no better is above the anchor's average half the time (roadmap
-D49). The node listens on the anchor's home channel, and its address is
-the anchor's position and its own ID ([addresses](#addresses)).
+D49). The node listens on the anchor's home channel, and its address
+follows the anchor ([addresses](#addresses)).
 
 **Switching.** While it listens, at its first choice and when it checks
 the anchor, a node moves to another relay only when that relay has been
