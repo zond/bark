@@ -844,6 +844,7 @@ fn heartbeats_out_of_slot_do_not_move_the_watch() {
     let hb = Heartbeat {
         sleepy: false,
         anchorless: false,
+        carried: false,
         home: relay.home(),
         id: relay.id(),
         short: relay.config().position.short(),

@@ -592,6 +592,7 @@ fn a_relay_runs_through_the_loop() {
     let hb = Packet::Heartbeat(Heartbeat {
         sleepy: false,
         anchorless: false,
+        carried: false,
         home: ch(6),
         id: bark_proto::NodeId([6; 4]),
         short: other.short(),

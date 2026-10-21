@@ -1,6 +1,6 @@
 //! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x1, 0x2, 0x4, 0x6, 0x7, 0xA and 0xC to 0xE are unused (roadmap
-//! D46, D49, D58).
+//! codes 0x1, 0x2, 0x4, 0xA and 0xE are unused, and 0x6 is the
+//! firmware's bench frames (roadmap D46, D49, D58, D70).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
 //! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
@@ -12,7 +12,7 @@
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x8/0x9/0xB first id pos                               = 9
+//! HEARTBEAT 0x8 to 0xF first id pos                                = 9
 //! ACK       0x3      first msg from to                              = 13
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
 //!                    time_left payload                              = 22 + payload
@@ -43,15 +43,15 @@
 //!   places in a refuser's line are one ban apart and nothing acts faster
 //!   than a ban, so the unit keeps every place apart; 255 bans are 398 s,
 //!   and a longer wait is told as that. `aux` is zero in both.
-//! - The heartbeat's type is 0x8 with flags in its two low bits: 0x1,
-//!   sleepy (0x9), and 0x2, anchorless, only with sleepy (0xB; 0xA is
-//!   rejected): a node that listens all the time has no anchor to miss.
-//!   `aux` holds the home channel, 0 to 12, in all four of
-//!   its bits, so the flags are in the type. 0x8 is the one base with both
-//!   low bits clear whose four codes, 0x8 to 0xB, are all free: 0x0 would
-//!   give 0x3, the ACK, 0x4 would give 0x5, DATA, and 0xC would give 0xF,
-//!   the firmware's bench frames. A heartbeat says nothing of where its
-//!   position came from: no receiver needs to know.
+//! - The heartbeat's type is 0x8 with flags in its three low bits: 0x1,
+//!   sleepy, 0x2, anchorless, only with sleepy (0xA and 0xE are
+//!   rejected: a node that listens all the time has no anchor to miss),
+//!   and 0x4, carried, with or without the others. `aux` holds the home
+//!   channel, 0 to 12, in all four of its bits, so the flags are in the
+//!   type. 0x8 is the one base whose eight codes, 0x8 to 0xF, miss the
+//!   ACK, NACK and DATA, so the bench frames moved from 0xF to 0x6
+//!   (roadmap D70). A heartbeat says nothing of where its position came
+//!   from: no receiver needs to know.
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
@@ -81,17 +81,22 @@ const T_ACK: u8 = 0x3;
 // The ACK that refuses, with the wait it asks for (spec "Refusal").
 const T_NACK: u8 = 0x7;
 const T_DATA: u8 = 0x5;
-// Reserved for the firmware's bench frames (spec "Packet formats").
-const T_BENCH: u8 = 0xF;
+/// Reserved for the firmware's bench frames (spec "Packet formats"),
+/// which nodes reject as an unknown type.
+pub const T_BENCH: u8 = 0x6;
 const T_HEARTBEAT: u8 = 0x8;
-// The heartbeat's flags, in the type's two low bits.
-const HEARTBEAT_FLAGS: u8 = 0x3;
+// The heartbeat's flags, in the type's three low bits.
+const HEARTBEAT_FLAGS: u8 = 0x7;
 const HEARTBEAT_SLEEPY: u8 = 0x1;
 const HEARTBEAT_ANCHORLESS: u8 = 0x2;
-const _: () = assert!(HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS == HEARTBEAT_FLAGS);
+const HEARTBEAT_CARRIED: u8 = 0x4;
+const _: () =
+    assert!(HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS | HEARTBEAT_CARRIED == HEARTBEAT_FLAGS);
 const _: () = assert!(
-    T_HEARTBEAT | HEARTBEAT_SLEEPY == 0x9 && T_HEARTBEAT | HEARTBEAT_FLAGS == 0xB,
-    "spec \"Packet formats\": 0x8, 0x9 and 0xB"
+    T_HEARTBEAT | HEARTBEAT_SLEEPY == 0x9
+        && T_HEARTBEAT | HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS == 0xB
+        && T_HEARTBEAT | HEARTBEAT_CARRIED == 0xC,
+    "spec \"Packet formats\": 0x8, 0x9, 0xB and 0xC"
 );
 const _: () = assert!(
     T_HEARTBEAT & HEARTBEAT_FLAGS == 0
@@ -154,10 +159,13 @@ pub struct Heartbeat {
     /// beat, or at any time with the long preamble; it holds mail for
     /// nobody. Clear, it listens all the time.
     pub sleepy: bool,
-    /// Anchorless (0xB, with `sleepy`): the sender knows no node that is
-    /// not sleepy; one that is answers, so that it can anchor. Nobody
-    /// anchors to it. Encoded only with `sleepy`.
+    /// Anchorless (0xB, with `sleepy`): the sender knows no node it can
+    /// anchor to; one that can be an anchor answers. Nobody anchors to it.
+    /// Encoded only with `sleepy`.
     pub anchorless: bool,
+    /// Carried (0x4 on any of the others): the sender moves. It takes
+    /// each GPS fix and holds mail for nobody, so nobody anchors to it.
+    pub carried: bool,
     /// The sender's home channel.
     pub home: Channel,
     /// The sender.
@@ -342,7 +350,8 @@ impl Packet<'_> {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
                 let kind = T_HEARTBEAT
                     | flag(h.sleepy, HEARTBEAT_SLEEPY)
-                    | flag(h.anchorless && h.sleepy, HEARTBEAT_ANCHORLESS);
+                    | flag(h.anchorless && h.sleepy, HEARTBEAT_ANCHORLESS)
+                    | flag(h.carried, HEARTBEAT_CARRIED);
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
@@ -388,12 +397,13 @@ impl<'a> Packet<'a> {
         let aux = first & AUX_MASK;
         match kind {
             k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT
-                && k & HEARTBEAT_FLAGS != HEARTBEAT_ANCHORLESS =>
+                && k & (HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS) != HEARTBEAT_ANCHORLESS =>
             {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
                     sleepy: kind & HEARTBEAT_SLEEPY != 0,
                     anchorless: kind & HEARTBEAT_ANCHORLESS != 0,
+                    carried: kind & HEARTBEAT_CARRIED != 0,
                     home: channel(aux)?,
                     id: NodeId(get4(b, HEARTBEAT_ID)),
                     short: get_short(b, HEARTBEAT_POS),
@@ -477,12 +487,13 @@ mod tests {
         fn heartbeat_round_trips(
             sleepy: bool,
             anchorless: bool,
+            carried: bool,
             home in chan(),
             id in id(),
             position in position(),
         ) {
             let anchorless = anchorless && sleepy;
-            let hb = Heartbeat { sleepy, anchorless, home, id, short: position.short() };
+            let hb = Heartbeat { sleepy, anchorless, carried, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -581,11 +592,11 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60, 0xa0] {
+        for gone in [0x10, 0x20, 0x40, 0x60, 0xa0, 0xe0] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
-                "unused, or anchorless without sleepy"
+                "unused, the bench frames, or anchorless without sleepy"
             );
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
@@ -623,6 +634,7 @@ mod tests {
         let hb = Heartbeat {
             sleepy: false,
             anchorless: false,
+            carried: false,
             home: Channel::new(12).unwrap(),
             id: NodeId([1, 2, 3, 4]),
             short: ShortName(0x0506_0708),
@@ -644,6 +656,15 @@ mod tests {
         };
         Packet::Heartbeat(alone).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x8c, "anchorless only with sleepy");
+        for (flags, code) in [(hb, 0xc), (sleepy, 0xd), (anchorless, 0xf)] {
+            let carried = Heartbeat {
+                carried: true,
+                ..flags
+            };
+            Packet::Heartbeat(carried).encode(&mut buf).unwrap();
+            assert_eq!(buf[0], code << 4 | 0xc, "carried with any of the others");
+            assert_eq!(Packet::decode(&buf[..len]), Ok(Packet::Heartbeat(carried)));
+        }
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
             Duration::from_micros(11_840),

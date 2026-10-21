@@ -23,8 +23,8 @@
 //! status [reset]             uptime, battery, settings, counters
 //! ```
 //!
-//! Bench frames use packet type 0xF, which the protocol leaves unassigned
-//! (spec "Packet formats"): byte 0 is `0xF0 | kind`, bytes 1..5 a big-endian
+//! Bench frames use packet type 0x6, which the protocol reserves for them
+//! and nodes reject (spec "Packet formats"): byte 0 is `0x60 | kind`, bytes 1..5 a big-endian
 //! sequence number, byte 5 the sender's home channel, and the rest
 //! `byte[i] = i`.
 
@@ -32,7 +32,7 @@ use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::ACK_LEN;
+use bark_proto::wire::{ACK_LEN, T_BENCH};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -131,7 +131,7 @@ impl Lines {
 const KIND_TEST: u8 = 0;
 const KIND_PING: u8 = 1;
 const KIND_PONG: u8 = 2;
-const BENCH_TYPE: u8 = 0xF0;
+const BENCH_TYPE: u8 = T_BENCH << 4;
 /// Type byte, sequence number, home channel.
 const BENCH_HEADER: usize = 6;
 

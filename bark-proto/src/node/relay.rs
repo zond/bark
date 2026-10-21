@@ -1339,6 +1339,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let hb = Heartbeat {
             sleepy: self.config.sleepy,
             anchorless: self.config.sleepy && self.anchor.is_none(),
+            carried: false,
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
@@ -1871,6 +1872,7 @@ mod tests {
         let beat = Heartbeat {
             sleepy: true,
             anchorless: false,
+            carried: false,
             home: r.home(),
             id: other,
             short: config.position.short(),
@@ -1981,6 +1983,7 @@ mod tests {
             let hb = Heartbeat {
                 sleepy: false,
                 anchorless: false,
+                carried: false,
                 home: Channel::new(4).unwrap(),
                 id: anchor,
                 short: config.position.short(),
@@ -2634,6 +2637,7 @@ mod tests {
         let hb = Heartbeat {
             sleepy: false,
             anchorless: false,
+            carried: false,
             home: b_home,
             id: id_of(b),
             short: b.short(),
@@ -2767,6 +2771,7 @@ mod tests {
         let hb = Heartbeat {
             sleepy: false,
             anchorless: false,
+            carried: false,
             home: Channel::new(5).unwrap(),
             id: id_of(d_pos),
             short: d_pos.short(),
@@ -2894,6 +2899,7 @@ mod tests {
             &Packet::Heartbeat(Heartbeat {
                 sleepy: false,
                 anchorless: false,
+                carried: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(d_pos),
                 short: d_pos.short(),
@@ -2977,6 +2983,7 @@ mod tests {
             let hb = Heartbeat {
                 sleepy: false,
                 anchorless: false,
+                carried: false,
                 home: Channel::new(5).unwrap(),
                 id: id_of(at),
                 short: at.short(),

@@ -656,6 +656,7 @@ mod tests {
         let hb = Heartbeat {
             sleepy: false,
             anchorless: false,
+            carried: false,
             home: Channel::new(home).unwrap(),
             id: id(i),
             short: pos(i).short(),
@@ -669,6 +670,7 @@ mod tests {
         let hb = Heartbeat {
             sleepy: true,
             anchorless: true,
+            carried: false,
             ..hb
         };
         t.heard(&hb, p, rssi, &plane(), now)
