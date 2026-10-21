@@ -20,9 +20,9 @@ deliberate jamming; it is designed for infrastructure loss.
 | Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
-| Medium access | Always listening on the home channel, leaving it only to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
+| Medium access | Listen on the home channel except to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
 | Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
-| Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
+| Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, whose role follows its power and motion: relay on external power, sleepy on battery, carried when it moves ([nodes](#nodes)) |
@@ -273,24 +273,24 @@ Per channel, a node keeps `busy[c]`, an exponential moving average of a
   samples per window, ±4 points on a 10% channel, as large as the
   differences the rule acts on.
 - **Home channel:** count only what would stay behind if the node moved.
-  Packets addressed to the node (DATA), the ACKs of its own hand-overs,
-  and its own transmissions and ACKs go wherever it goes: counting them
-  would make a busy relay leave its channel for its own traffic and take
-  that traffic along. So a home reading taken while one of them was on
-  the air is set aside, and every other is the same 0/1 reading as on
-  any other channel. Home and the other channels must be read alike,
-  since the move rule compares them: a relay decodes packets too faint
-  for any reading to see, and counting their receive time on home alone
-  made home read busier the more traffic there was, until under load the
-  rule moved relays over and over to no gain (roadmap D55).
-  Whether a reading fell in the node's own packet is known only when
-  that packet ends, so a home reading is held until the next, one second
-  later, longer than any packet (roadmap D24). The radio keeps receiving
-  while it reads its own channel (`core-interface.md`, Radio, rules 7
-  and 8), so a home reading may fall inside a reception: inside a packet
-  addressed to the node it is discarded, inside any other it counts. A
-  packet for the node that fails its CRC cannot be told from someone
-  else's, and counts.
+  DATA addressed to the node, the ACKs of its own hand-overs, and its
+  own transmissions go wherever it goes: counted, they would make a busy
+  relay leave its channel for its own traffic and take that traffic
+  along. So a home reading taken while one of them was on the air is set
+  aside, and every other is the same 0/1 reading as on any other
+  channel. The move rule compares home with the others, so all are read
+  alike: a relay decodes packets too faint for any reading to see, and
+  counting their receive time on home alone made home read busier the
+  more traffic there was, so that under load relays moved over and over
+  to no gain (roadmap D55).
+- **Home readings and the node's own packets:** whether a reading fell in
+  the node's own packet is known only when that packet ends, so a home
+  reading is held until the next, one second later, longer than any
+  packet (roadmap D24). The radio keeps receiving while it reads its own
+  channel (`core-interface.md`, Radio, rules 7 and 8): a home reading
+  inside a packet addressed to the node is discarded, one inside any
+  other counts. A packet for the node that fails its CRC cannot be told
+  from someone else's, and counts.
 - **Noise floor:** calibrated per device at boot as a low percentile of
   RSSI readings over the first rotation, and recalibrated slowly.
 
@@ -347,12 +347,10 @@ relay with no sky view of its own uses one. A fix is unreliable if it is
 farther from the last accepted fix than the node can have moved since,
 if it is inconsistent with the neighbours heard, or if the satellite
 signal-to-noise ratio (C/N0) is not sane: each is a sign of jamming or
-spoofing. A spoofed fix that drifts slower than the node can move passes
-the first check; the checks are expected to grow. Two fixes of a node
-that has not moved may differ by 50 m, the allowance the [owner](#owner)
-rule and the move check of [relay choice](#relay-choice) use. A node
-whose position changes heartbeats the new one
-([node identity](#node-identity)).
+spoofing. Two fixes of a node that has not moved may differ by 50 m, the
+allowance the [owner](#owner) rule and the move check of
+[relay choice](#relay-choice) use. A node whose position changes
+heartbeats the new one ([node identity](#node-identity)).
 
 **Fixed and carried.** A sleepy node takes each fix that passes the
 checks. A relay is fixed: it keeps its first accepted fix, or its map
@@ -385,9 +383,10 @@ nodes have anchored elsewhere already (roadmap D70). A map point makes
 a node fixed at once. A node that turns sleepy is no longer carried;
 plugged in again, it is fixed at the fix it has then (roadmap D71).
 
-A spoofed fix that drifts slower than the node can move makes a relay
-carried, where D63 kept it out: the relay then gives up its sleepy
-nodes and is routed to where the spoofer says.
+A spoofed fix that drifts slower than the node can move passes the first
+check, and makes a relay carried where D63 kept it out: the relay then
+gives up its sleepy nodes and is routed to where the spoofer says. The
+checks are expected to grow.
 
 **Time.** GPS is used for position only, never for time, and there is
 no network time: every timer is local and monotonic, and nothing in the
