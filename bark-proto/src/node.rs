@@ -110,8 +110,9 @@ pub struct Config {
     pub home_override: Option<Channel>,
     /// How long the fixes of a carried node must stay within the GPS
     /// allowance of one place before it is fixed again
-    /// (spec "Position and time"). Long, so that a node that stops for a while does not take
-    /// mail it must flush again when it moves on.
+    /// (spec "Position and time": 4 h, the longer of the two measured,
+    /// roadmap D70). Long, so that a node that stops for a while does not
+    /// take mail it would strand when it moves on.
     pub fixed_after: Duration,
 }
 
@@ -218,7 +219,7 @@ impl Config {
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         home_override: None,
-        fixed_after: Duration::from_secs(3600),
+        fixed_after: Duration::from_secs(4 * 3600),
     };
 }
 
