@@ -297,6 +297,10 @@ pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
     /// Sleepy: on battery (`relay/power.rs`).
     sleepy: bool,
+    /// Since when a relay has been on battery, while its grace lasts.
+    unplugged: Option<Instant>,
+    /// Its grace is over: it flushes, and then turns sleepy.
+    leaving: bool,
     config: Config,
     /// Until when a sleepy node listens after its beat or a message it
     /// took (spec "Delivery").
@@ -405,6 +409,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: channel,
             stage: Stage::Off,
             sleepy: !Self::can_relay(),
+            unplugged: None,
+            leaving: false,
             boot_from: Instant::ZERO,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
@@ -497,6 +503,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: h,
             stage,
             sleepy,
+            unplugged,
+            leaving,
             boot_from,
             radio,
             busy,
@@ -544,6 +552,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A relay until its power says otherwise, unless it has no room
         // for a relay's mail (`relay/power.rs`).
         *sleepy = !Self::can_relay();
+        *unplugged = None;
+        *leaving = false;
         *boot_from = Instant::ZERO;
         *radio = Radio::new();
         *busy = BusyEstimator::from_config(&config);
@@ -1385,8 +1395,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The next answer a relay owes an anchorless neighbour, if any: its
     /// ID, the channel it listens on, and when.
     fn answer_due(&self) -> Option<(NodeId, Channel, Instant)> {
-        // Nobody anchors to a carried node.
-        if self.sleepy || self.motion.carried {
+        // Nobody anchors to a node that holds no mail.
+        if self.sleepy || self.motion.carried || self.leaving {
             return None;
         }
         self.neighbours
@@ -1808,6 +1818,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::App(cmd) => self.app(cmd, now, emit),
         }
         self.timers(now, emit);
+        self.power_timers(now, emit);
         self.forward_timers(now, emit);
         self.delivery_timers(now);
         self.pump(now, emit);
@@ -1842,6 +1853,9 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             at(t + self.config.boot_listen);
         }
         if let Some(t) = self.choosing {
+            at(t);
+        }
+        if let Some(t) = self.grace_ends() {
             at(t);
         }
         if let Some(t) = self.window_ends {

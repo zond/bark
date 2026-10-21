@@ -32,9 +32,10 @@
 //! Two kinds go whether or not their node is in a window, one at a time
 //! and after the windows' (`Kind::Direct`): a message for a node heard as
 //! one that is not sleepy goes to it with the ordinary preamble, done on
-//! its ACK; and once this node's last fix is far (`relay/motion.rs`), each
-//! message goes once with the long preamble, one attempt, and stays queued
-//! if unanswered (spec "Delivery queue").
+//! its ACK; and once this node's last fix is far (`relay/motion.rs`), or
+//! its grace on battery is over (`relay/power.rs`), each message goes once
+//! with the long preamble, one attempt, and stays queued if unanswered
+//! (spec "Delivery queue").
 //!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
 
@@ -212,7 +213,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.queue.iter().any(|o| o.kind == Kind::Direct) {
             return Ok(());
         }
-        let far = self.far();
+        // At a first far fix, or once its grace on battery is over.
+        let far = self.far() || self.leaving;
         let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == Some(q.msg_id));
         let Some(q) = self
             .delivery

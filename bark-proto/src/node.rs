@@ -101,6 +101,13 @@ pub struct Config {
     /// roadmap D70). Long, so that a node that stops for a while does not
     /// take mail it would strand when it moves on.
     pub fixed_after: Duration,
+    /// How long a relay whose external power has gone keeps relaying,
+    /// holding and owning, before it flushes its delivery queue and turns
+    /// sleepy (spec "Sleepy nodes", roadmap D71). Listening draws
+    /// [`crate::sniff::RX_CURRENT_UA`], 5.8 mA, so an hour of it is 0.68 %
+    /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
+    /// would turn a node sleepy at every brief unplug.
+    pub grace: Duration,
 }
 
 impl Default for Config {
@@ -206,6 +213,7 @@ impl Config {
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         home_override: None,
         fixed_after: Duration::from_secs(4 * 3600),
+        grace: Duration::from_secs(3600),
     };
 }
 

@@ -371,10 +371,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether this relay owns the destination `dst` of another node's
     /// message (spec "Owner"). A sleepy node owns none (module
-    /// documentation), nor does a carried one: it holds mail for nobody,
-    /// and a neighbour that is carried keeps no other from owning.
+    /// documentation), nor does a carried one, nor one leaving after its
+    /// grace on battery (`relay/power.rs`): they hold mail for nobody, and
+    /// a neighbour that is carried keeps no other from owning.
     fn owns(&self, dst: Position, now: Instant) -> bool {
-        if self.sleepy || self.motion.carried {
+        if self.sleepy || self.motion.carried || self.leaving {
             return false;
         }
         if dst == self.config.position {

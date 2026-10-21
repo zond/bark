@@ -17,14 +17,34 @@ fn pos(east: f64) -> Position {
     Position::from_degrees(lat, lon + east / (m_per_deg * lat.to_radians().cos()))
 }
 
+/// The grace of these tests, shorter than the design's to keep them quick.
+const GRACE: u64 = 600;
+
 /// A node at `east` with the design's boot listen, and whether it is on
 /// external power at boot.
 fn node(east: f64, external: bool, seed: u64) -> (Relay, bool) {
     let config = Config {
         position: pos(east),
+        grace: secs(GRACE),
         ..Config::default()
     };
     (Relay::new(config, seed), external)
+}
+
+fn fix(h: &mut Harness<Relay>, i: usize, east: f64) {
+    h.command(
+        i,
+        AppCommand::Fix {
+            position: pos(east),
+        },
+    );
+}
+
+fn delivered_by(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Delivery> {
+    h.nodes[i].traces.iter().find_map(|(_, t)| match t {
+        Trace::Delivered { msg_id, by, .. } if *msg_id == id => Some(*by),
+        _ => None,
+    })
 }
 
 fn at(s: u64) -> Instant {
@@ -142,17 +162,14 @@ fn a_sleepy_node_plugged_in_relays_and_gets_its_mail() {
     assert_eq!(beats_sleepy(&h, s), Some(false));
 }
 
-/// A relay unplugged turns sleepy: it holds nothing, so the message it
-/// held for a sleepy node is dropped with a trace, and it anchors to a
-/// relay it knows. Its own sleepy node leaves it for another relay
-/// (spec "Relay choice").
-#[test]
-fn a_relay_unplugged_turns_sleepy_and_holds_nothing() {
+/// A relay holding a message for its sleepy node S, out of reach, and a
+/// second relay O that S also hears, weaker.
+fn holding(seed: u64) -> (Harness<Relay>, MsgId) {
     let (r, o, s) = (0, 1, 2);
     let mut h = Harness::powered(vec![
-        node(0.0, true, 21),
-        node(300.0, true, 22),
-        node(20.0, false, 23),
+        node(0.0, true, seed),
+        node(300.0, true, seed + 1),
+        node(20.0, false, seed + 2),
     ]);
     h.link(r, o);
     h.link(r, s);
@@ -161,25 +178,115 @@ fn a_relay_unplugged_turns_sleepy_and_holds_nothing() {
     h.set_rssi(o, s, -100);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
-    let (rid, oid) = (h.nodes[r].core.id(), h.nodes[o].core.id());
+    let rid = h.nodes[r].core.id();
     assert_eq!(h.nodes[s].core.anchor().map(|a| a.id), Some(rid));
     h.unlink(r, s);
     let id = send(&mut h, o, s, b"held when the charger goes");
     h.run_for(secs(60));
     assert!(h.nodes[r].core.delivery_queue().any(|(m, _)| m == id));
-    h.link(r, s);
+    (h, id)
+}
+
+/// A relay unplugged changes nothing for its grace: it still owns and
+/// queues, and power back within it, nothing has happened.
+#[test]
+fn a_relay_unplugged_relays_through_its_grace() {
+    let (r, o, s) = (0, 1, 2);
+    let (mut h, _) = holding(21);
     power(&mut h, r, false);
-    h.run_for(secs(1));
-    assert!(h.nodes[r].core.sleepy());
-    assert_eq!(h.nodes[r].core.delivery_queue().count(), 0);
+    h.run_for(secs(GRACE / 2));
+    assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.leaving());
+    let id = send(&mut h, o, s, b"sent in the grace");
+    h.run_for(secs(30));
+    assert!(h.nodes[r].core.delivery_queue().any(|(m, _)| m == id));
+    power(&mut h, r, true);
+    h.run_for(secs(2 * GRACE));
+    assert!(!h.nodes[r].core.sleepy());
+    assert_eq!(traced(&h, r, Trace::GraceEnded), 0);
+    assert_eq!(traced(&h, r, Trace::Role { sleepy: true }), 0);
+    assert_eq!(beats_sleepy(&h, r), Some(false));
+}
+
+/// After its grace a relay takes no more mail and flushes what it holds,
+/// each message once with the long preamble; then it turns sleepy, holding
+/// nothing: what the flush did not deliver is dropped with a trace. It
+/// anchors to a relay it knows, and its own sleepy node leaves it for
+/// another (spec "Relay choice").
+#[test]
+fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
+    for lost in [false, true] {
+        let (r, o, s) = (0, 1, 2);
+        let (mut h, id) = holding(31);
+        let oid = h.nodes[o].core.id();
+        if !lost {
+            // Back in reach, but R misses its beats: S sleeps between
+            // them and hears only the long preamble.
+            h.link(r, s);
+            h.lose = Some(Box::new(move |_, from, to, bytes| {
+                from == s && to == r && matches!(Packet::decode(bytes), Ok(Packet::Heartbeat(_)))
+            }));
+        }
+        power(&mut h, r, false);
+        let off = h.now;
+        h.run_until(off + secs(GRACE) - secs(1), |_| false);
+        assert!(!h.nodes[r].core.leaving());
+        assert!(h.run_until(off + secs(GRACE + 60), |h| h.nodes[r].core.sleepy()));
+        assert_eq!(traced(&h, r, Trace::GraceEnded), 1);
+        assert_eq!(traced(&h, r, Trace::Role { sleepy: true }), 1);
+        assert_eq!(h.nodes[r].core.delivery_queue().count(), 0);
+        if lost {
+            assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
+                t,
+                Trace::Dropped { msg_id, reason: DropReason::Unplugged } if *msg_id == id
+            )));
+        } else {
+            assert_eq!(
+                delivered_by(&h, r, id),
+                Some(Delivery::Flush),
+                "lost: {lost}"
+            );
+            assert!(delivered_at(&h, s, id).is_some());
+        }
+        assert_eq!(h.nodes[r].core.anchor().map(|a| a.id), Some(oid));
+        h.link(r, s);
+        h.lose = None;
+        let moved = |h: &Harness<Relay>| h.nodes[s].core.anchor().map(|a| a.id) == Some(oid);
+        assert!(h.run_until(h.now + secs(1500), moved), "lost: {lost}");
+    }
+}
+
+/// A relay carried in its grace flushed at its first far fix: at the
+/// grace's end it turns sleepy at once, with no second flush.
+#[test]
+fn a_relay_carried_in_its_grace_turns_sleepy_without_a_second_flush() {
+    let (r, s) = (0, 2);
+    let (mut h, id) = holding(41);
+    let sid = h.nodes[s].core.id();
+    let long_to_s = |h: &Harness<Relay>| {
+        h.nodes[r]
+            .sent
+            .iter()
+            .filter(|(_, f)| {
+                matches!(Packet::decode(f.payload()), Ok(Packet::Data(d)) if d.dst_hop == sid)
+                    && f.preamble_symbols == bark_proto::sniff::LONG_PREAMBLE_SYMBOLS
+            })
+            .count()
+    };
+    power(&mut h, r, false);
+    let off = h.now;
+    let before = long_to_s(&h);
+    for k in 0..=8 {
+        fix(&mut h, r, 100.0 + 10.0 * k as f64);
+        h.run_for(secs(10));
+    }
+    assert!(h.nodes[r].core.carried());
+    assert_eq!(long_to_s(&h), before + 1, "the far fix's flush");
+    assert!(h.run_until(off + secs(GRACE + 1), |h| h.nodes[r].core.sleepy()));
+    assert_eq!(long_to_s(&h), before + 1, "no second flush");
     assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
         t,
         Trace::Dropped { msg_id, reason: DropReason::Unplugged } if *msg_id == id
     )));
-    assert_eq!(h.nodes[r].core.anchor().map(|a| a.id), Some(oid));
-    assert_eq!(traced(&h, r, Trace::Role { sleepy: true }), 1);
-    let moved = |h: &Harness<Relay>| h.nodes[s].core.anchor().map(|a| a.id) == Some(oid);
-    assert!(h.run_until(h.now + secs(1500), moved));
 }
 
 /// A relay unplugged with no other relay in reach is anchorless, and back
@@ -190,7 +297,7 @@ fn a_lone_relay_unplugged_is_anchorless_and_plugged_in_again_a_relay() {
     let mut h = Harness::powered(vec![node(0.0, true, 31)]);
     h.run_until(at(400), |_| false);
     power(&mut h, r, false);
-    h.run_for(secs(1));
+    h.run_for(secs(GRACE + 1));
     assert!(h.nodes[r].core.anchorless());
     h.run_for(secs(300));
     power(&mut h, r, true);

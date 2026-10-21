@@ -357,6 +357,9 @@ pub enum Trace {
     /// A sleepy node's anchor turned carried, and the node leaves it
     /// (spec "Relay choice").
     AnchorCarried,
+    /// A relay's grace on battery ended: it holds no more mail, and
+    /// flushes what it holds before it turns sleepy (spec "Delivery queue").
+    GraceEnded,
     /// The node turned sleepy, or a relay, by its power
     /// (spec "Sleepy nodes"); not while it boots.
     Role {
