@@ -1444,7 +1444,7 @@ what the flush did not deliver is dropped, and it takes as its anchor
 the strongest relay it knows, as at the end of a boot listen
 ([relay choice](#relay-choice)), or is anchorless with none. A relay that
 turned carried in its grace flushed at its first far fix, and turns
-sleepy at once. Its sleepy nodes find it gone: a sleepy node hears no
+sleepy at the grace's end with nothing more to flush. Its sleepy nodes find it gone: a sleepy node hears no
 more slot heartbeats of it, and leaves it as an anchor heard sleepy
 ([relay choice](#relay-choice)).
 
