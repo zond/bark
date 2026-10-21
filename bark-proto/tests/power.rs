@@ -134,7 +134,7 @@ fn the_power_at_boot_sets_the_role() {
 /// address is its own position, and it heartbeats as a relay, the first
 /// time at once on its home channel, its anchor's. Its old anchor, which
 /// held a message for it, hears it and hands the message over then
-/// (spec "Heartbeat", "Delivery queue").
+/// (spec "Heartbeat", "Delivery").
 #[test]
 fn a_sleepy_node_plugged_in_relays_and_gets_its_mail() {
     let (r, o, s) = (0, 1, 2);

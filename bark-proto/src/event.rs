@@ -199,10 +199,10 @@ pub enum Delivery {
     /// Outside its window, with the long preamble (spec "Delivery").
     Long,
     /// Once, with the long preamble, from a node that has had a far fix
-    /// (spec "Delivery queue").
+    /// (spec "Delivery").
     Flush,
     /// To the node itself heard as a node that is not sleepy, with the
-    /// ordinary preamble (spec "Delivery queue").
+    /// ordinary preamble (spec "Delivery").
     Relay,
 }
 
@@ -362,7 +362,7 @@ pub enum Trace {
     /// `Action::Transmit` that follows.
     Changed,
     /// A relay's grace on battery ended: it holds no more mail, and
-    /// flushes what it holds before it turns sleepy (spec "Delivery queue").
+    /// flushes what it holds before it turns sleepy (spec "Delivery").
     GraceEnded,
     /// The node turned sleepy, or a relay, by its power
     /// (spec "Sleepy nodes"); not while it boots.

@@ -65,11 +65,11 @@ pub struct Queued {
     /// When it was queued.
     pub enqueued: Instant,
     /// It went once with the long preamble after a far fix (spec
-    /// "Delivery queue"): it does not again.
+    /// "Delivery"): it does not again.
     pub flushed: bool,
     /// The home channel its node's heartbeat named, heard as a node that
     /// is not sleepy since the last hand-over of its messages to it went
-    /// unanswered: it goes to it there directly (spec "Delivery queue").
+    /// unanswered: it goes to it there directly (spec "Delivery").
     pub relay_home: Option<Channel>,
     len: u8,
     payload: [u8; MAX_PAYLOAD],

@@ -161,7 +161,7 @@ fn a_sleepy_node_takes_each_fix() {
 /// R holds a message for its sleepy node S, which waits for S's beat
 /// after S did not answer. R's first far fix sends it at once, with the
 /// long preamble, one attempt; lost, it is not flushed again, and waits
-/// for the beat (spec "Delivery queue").
+/// for the beat (spec "Delivery").
 #[test]
 fn the_first_far_fix_flushes_the_delivery_queue_once() {
     for lost in [false, true] {
@@ -298,7 +298,7 @@ fn a_sleepy_node_leaves_an_anchor_that_turns_carried() {
 /// R owns X's address while X, a relay, is off: the message waits in R's
 /// delivery queue. Once R hears X's heartbeat, a node that is not sleepy,
 /// it hands the message to X with the ordinary preamble, and it is done
-/// (spec "Delivery queue").
+/// (spec "Delivery").
 #[test]
 fn mail_for_a_node_heard_as_a_relay_goes_to_it() {
     let (r, o, x) = (0, 1, 2);

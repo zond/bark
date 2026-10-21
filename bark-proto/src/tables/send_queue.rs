@@ -77,7 +77,7 @@ pub enum Kind {
     /// A DATA from the delivery queue to its node whether or not it is in
     /// a window: once with the long preamble after a far fix, or with the
     /// ordinary one to a node heard as one that is not sleepy (spec
-    /// "Delivery queue"). Left in the delivery queue if it fails.
+    /// "Delivery"). Left in the delivery queue if it fails.
     Direct,
 }
 

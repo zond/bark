@@ -35,7 +35,7 @@
 //! its ACK; and once this node's last fix is far (`relay/motion.rs`), or
 //! its grace on battery is over (`relay/power.rs`), each message goes once
 //! with the long preamble, one attempt, and stays queued if unanswered
-//! (spec "Delivery queue").
+//! (spec "Delivery").
 //!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
 
@@ -203,7 +203,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Hand the send queue the next message that goes to its node whether
     /// or not the node is in a window, one at a time
-    /// (spec "Delivery queue"): to a node heard as one that is not sleepy, with the
+    /// (spec "Delivery"): to a node heard as one that is not sleepy, with the
     /// ordinary preamble on its home channel; else, once the last fix is
     /// far, each message not yet flushed, once, with the long preamble on
     /// the channel its node listens on, this node's own if it has not
@@ -275,7 +275,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// `node` was heard as a node that is not sleepy, at home on `home`:
     /// what is queued for it goes to it there directly
-    /// (spec "Delivery queue"), whether or not it has a place in the
+    /// (spec "Delivery"), whether or not it has a place in the
     /// neighbour table.
     pub(super) fn heard_as_relay(&mut self, node: NodeId, home: Channel) {
         let mut any = false;
