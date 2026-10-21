@@ -248,8 +248,12 @@ and a report at boot changes nothing but the role it sets.
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets`,
   `cargo fmt --check`, the core for `thumbv7em-none-eabihf`, and the
   firmware's clippy for its two images are clean at each commit. The
-  timing test of `bark-sim/tests/scenarios.rs` passes on an idle machine
-  within its unchanged bounds (see the end).
+  timing test of `bark-sim/tests/scenarios.rs`, bounds unchanged, alone
+  but with a load of about 3 from other work on the machine: debug 62.3 s
+  against main's 62.4 s (bound 90 s); release 21.4 to 22.9 s against
+  main's 21.1 to 21.8 s, both over the 20 s bound on this machine today
+  (D70 measured 15.2 s), the branch about 4 % slower, the same 47 458 374
+  events. It is to be run again on an idle machine before a merge.
 - `tests/power.rs`: the power at boot sets the role, with no trace and
   the role's boot listen; a sleepy node plugged in relays at once, at its
   own position, and its old anchor hands it its mail within seconds by the
