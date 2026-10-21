@@ -25,7 +25,9 @@ pub mod tables;
 pub mod time;
 pub mod wire;
 
-pub use event::{Action, AppCommand, AppEvent, DropReason, Event, Frame, Trace, MAX_FRAME};
+pub use event::{
+    Action, AppCommand, AppEvent, Delivery, DropReason, Event, Frame, Trace, MAX_FRAME,
+};
 pub use ids::{MsgId, NodeId};
 pub use node::{Config, Core, Load, Node, Relay, SleepyNode};
 pub use position::{Position, ShortName};

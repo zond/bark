@@ -26,6 +26,7 @@
 use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
 use crate::position::Position;
+use crate::radio::Channel;
 use crate::tables::fixed::FixedVec;
 use crate::tables::heard::HEARD;
 use crate::time::{Duration, Instant};
@@ -63,6 +64,13 @@ pub struct Queued {
     pub time_left: u8,
     /// When it was queued.
     pub enqueued: Instant,
+    /// It went once with the long preamble after a far fix (spec
+    /// "Delivery queue"): it does not again.
+    pub flushed: bool,
+    /// The home channel its node's heartbeat named, heard as a node that
+    /// is not sleepy since the last hand-over of its messages to it went
+    /// unanswered: it goes to it there directly (spec "Delivery queue").
+    pub relay_home: Option<Channel>,
     len: u8,
     payload: [u8; MAX_PAYLOAD],
 }
@@ -86,6 +94,8 @@ impl Queued {
             node,
             time_left,
             enqueued: now,
+            flushed: false,
+            relay_home: None,
             len: payload.len() as u8,
             payload: [0; MAX_PAYLOAD],
         };
@@ -142,6 +152,8 @@ impl<const N: usize> DeliveryQueue<N> {
             time_left: 0,
             node: NodeId::NONE,
             enqueued: Instant::ZERO,
+            flushed: false,
+            relay_home: None,
             len: 0,
             payload: [0; MAX_PAYLOAD],
         };
@@ -190,6 +202,11 @@ impl<const N: usize> DeliveryQueue<N> {
             Ok(()) => Pushed::Queued,
             Err(_) => Pushed::Full,
         }
+    }
+
+    /// Queued messages, oldest first, to change their marks.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Queued> {
+        self.entries.as_mut_slice().iter_mut()
     }
 
     /// Take the oldest message for `node`.

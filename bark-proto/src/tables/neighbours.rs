@@ -154,6 +154,10 @@ pub struct Neighbour {
     /// Whether it is sleepy and knows no node that is not (heartbeat 0xB):
     /// no anchor for a sleepy node.
     pub anchorless: bool,
+    /// Whether it moves (the heartbeat's carried flag): it holds mail for
+    /// nobody, so it is no anchor and does not keep this node from owning
+    /// a destination it is nearer (spec "Owner", "Relay choice").
+    pub carried: bool,
     /// Heartbeats heard from it, up to [`BEATS`]; of an anchorless one,
     /// the consecutive rotations of its beats in which one was heard here,
     /// up to [`BEATS`] ([`Neighbour::stays_anchorless`]).
@@ -176,9 +180,16 @@ impl Neighbour {
         self.sleepy && !self.anchorless
     }
 
-    /// Whether it can be an anchor: it is not sleepy (spec "Relay choice").
+    /// Whether it is not sleepy: it listens all the time.
     pub fn relay(&self) -> bool {
         !self.sleepy
+    }
+
+    /// Whether it holds mail: neither sleepy nor carried. Only such a
+    /// node is an anchor (spec "Relay choice"), or keeps another from
+    /// owning a destination it is nearer (spec "Owner").
+    pub fn holds_mail(&self) -> bool {
+        !self.sleepy && !self.carried
     }
 
     /// Whether it is anchorless and was heard so in two consecutive
@@ -413,6 +424,7 @@ impl Neighbours {
                 }
                 n.home = hb.home;
                 n.sleepy = hb.sleepy;
+                n.carried = hb.carried;
                 let anchorless = hb.anchorless && hb.sleepy;
                 let (min, max) = self.params.anchorless_rotations();
                 let gap = now.since(n.beat_at);
@@ -446,6 +458,7 @@ impl Neighbours {
             fail_count: 0,
             sleepy: hb.sleepy,
             anchorless: hb.anchorless && hb.sleepy,
+            carried: hb.carried,
             beats: 1,
             beat_at: now,
             beat_on: hb.home,
@@ -615,7 +628,7 @@ impl Neighbours {
     fn near_victim(&self, new: &Neighbour) -> Option<usize> {
         let r2 = OWNER_RADIUS_M * OWNER_RADIUS_M;
         let near = |n: &Neighbour| n.local.distance2(Default::default()) <= r2;
-        if !new.relay() || !near(new) {
+        if !new.holds_mail() || !near(new) {
             return None;
         }
         self.slots()

@@ -29,15 +29,23 @@
 //! Messages for a node this one does not hear wait for it all the same, as
 //! spec "Owner" has the owner queue when nobody knows the node.
 //!
+//! Two kinds go whether or not their node is in a window, one at a time
+//! and after the windows' (`Kind::Direct`): a message for a node heard as
+//! one that is not sleepy goes to it with the ordinary preamble, done on
+//! its ACK; and once this node's last fix is far (`relay/motion.rs`), each
+//! message goes once with the long preamble, one attempt, and stays queued
+//! if unanswered (spec "Delivery queue").
+//!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
 
 use super::Node;
-use crate::event::{Action, DropReason, Trace};
+use crate::event::{Action, Delivery, DropReason, Trace};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::REPLY_RESERVE;
+use crate::tables::delivery::Queued;
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Data, Packet, DATA_HEADER_LEN};
@@ -80,7 +88,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.heard.awake(node, now)
         };
         let is_for = |o: &Outgoing| {
-            o.kind == Kind::Deliver
+            o.kind.delivers()
                 && matches!(Packet::decode(o.frame.payload()), Ok(Packet::Data(d)) if d.dst_hop == node)
         };
         // Outside its window, and not known to be out of reach.
@@ -148,9 +156,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.feed_due = false;
         self.feed_at = None;
         let mut i = 0;
+        // The windows first: their nodes listen only briefly.
         loop {
             let Some(node) = self.delivery.iter().nth(i).map(|q| q.node) else {
-                return;
+                break;
             };
             let first = !self.delivery.iter().take(i).any(|q| q.node == node);
             if first {
@@ -160,6 +169,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
             }
             i += 1;
+        }
+        if let Err(at) = self.feed_direct(now) {
+            self.feed_at = at;
         }
     }
 
@@ -171,20 +183,105 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// `node` ACKed the message `msg_id` handed to it: it listens one
-    /// hand-over for the next.
+    /// `node` ACKed the message `msg_id` handed to it `by` that way: it
+    /// listens one hand-over for the next.
     pub(super) fn delivered_to(
         &mut self,
         msg_id: MsgId,
         node: NodeId,
+        by: Delivery,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
         self.delivery.remove(msg_id);
         self.delivered.insert(msg_id, now);
         self.heard.took(node, now);
-        emit(Action::Trace(Trace::Delivered { msg_id, node }));
+        emit(Action::Trace(Trace::Delivered { msg_id, node, by }));
         self.deliver_now(node, now);
+    }
+
+    /// Hand the send queue the next message that goes to its node whether
+    /// or not the node is in a window, one at a time
+    /// (spec "Delivery queue"): to a node heard as one that is not sleepy, with the
+    /// ordinary preamble on its home channel; else, once the last fix is
+    /// far, each message not yet flushed, once, with the long preamble on
+    /// the channel its node listens on, this node's own if it has not
+    /// heard it. Through the bucket as any delivery, ahead of the rest.
+    /// Returns when the bucket will fit it, if only the bucket lacks.
+    fn feed_direct(&mut self, now: Instant) -> Result<(), Option<Instant>> {
+        if self.queue.iter().any(|o| o.kind == Kind::Direct) {
+            return Ok(());
+        }
+        let far = self.far();
+        let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == Some(q.msg_id));
+        let Some(q) = self
+            .delivery
+            .iter()
+            .find(|q| (q.relay_home.is_some() || (far && !q.flushed)) && !queued(q))
+            .copied()
+        else {
+            return Ok(());
+        };
+        let (channel, preamble, tries) = if let Some(home) = q.relay_home {
+            (home, MIN_PREAMBLE_SYMBOLS, 0)
+        } else {
+            let home = self
+                .heard
+                .get(q.node)
+                .map(|n| n.home)
+                .or_else(|| self.neighbours.get(q.node).map(|n| n.home))
+                .unwrap_or(self.home);
+            // One attempt: the flush only gives each message a chance.
+            let once = self.config.hop_attempts.saturating_sub(1);
+            (home, LONG_PREAMBLE_SYMBOLS, once)
+        };
+        let data = Data {
+            sender_home: self.home,
+            dst_hop: q.node,
+            src_hop: self.me(),
+            dst_pos: q.dst_pos,
+            dst_id: q.node,
+            hops: 0,
+            time_left: q.time_left,
+            payload: q.payload(),
+        };
+        let frame = mac::frame(&Packet::Data(data), channel, preamble);
+        let airtime = mac::airtime(&frame);
+        match self.no_room_to_deliver(airtime, now) {
+            None => {}
+            Some(DropReason::SendQueueFull) => return Err(None),
+            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+        }
+        if let Some(e) = self.delivery.iter_mut().find(|e| e.msg_id == q.msg_id) {
+            e.flushed |= q.relay_home.is_none();
+        }
+        let out = Outgoing {
+            tries,
+            ..Outgoing::new(frame, Kind::Direct)
+        };
+        let _ = self.queue.push(out);
+        Ok(())
+    }
+
+    /// A hand-over to `node` as a relay went unanswered: its messages wait
+    /// for its next heartbeat heard, or its beat.
+    pub(super) fn direct_failed(&mut self, node: NodeId) {
+        for q in self.delivery.iter_mut().filter(|q| q.node == node) {
+            q.relay_home = None;
+        }
+    }
+
+    /// `node` was heard as a node that is not sleepy, at home on `home`:
+    /// what is queued for it goes to it there directly
+    /// (spec "Delivery queue"), whether or not it has a place in the
+    /// neighbour table.
+    pub(super) fn heard_as_relay(&mut self, node: NodeId, home: Channel) {
+        let mut any = false;
+        for q in self.delivery.iter_mut().filter(|q| q.node == node) {
+            q.relay_home = Some(home);
+            any = true;
+        }
+        self.feed_due |= any;
     }
 
     /// Make a place in the full delivery queue for a message arriving at
@@ -197,7 +294,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let id = q.msg_id;
         let active = !self.handover.idle();
         self.queue.retain(|current, o| {
-            (current && active) || o.kind != Kind::Deliver || o.msg_id() != Some(id)
+            (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
         });
         self.feed_due = true;
         emit(Action::Trace(Trace::Dropped {

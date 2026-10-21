@@ -100,10 +100,17 @@ pub enum AppCommand<'a> {
         /// Opaque payload; the core never looks inside.
         payload: &'a [u8],
     },
-    /// Set or update own position: a map point set in the app, or a GPS fix
-    /// that passed the plausibility checks (spec "Position and time").
+    /// Set own position from a map point set in the app, which wins over
+    /// GPS (spec "Position and time"): the node takes it and is fixed.
     SetPosition {
         /// New position.
+        position: Position,
+    },
+    /// A GPS fix that passed the driver's plausibility checks (spec
+    /// "Position and time"). A sleepy node or a carried one takes it; a
+    /// fixed node keeps its position and counts it toward turning carried.
+    Fix {
+        /// Where the fix puts the node.
         position: Position,
     },
 }
@@ -172,6 +179,21 @@ pub enum AppEvent {
         /// The end of the wait the refusal asked for.
         retry_at: Instant,
     },
+}
+
+/// How a message held for a node reached it ([`Trace::Delivered`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Delivery {
+    /// In the window after its beat (spec "Delivery").
+    Window,
+    /// Outside its window, with the long preamble (spec "Delivery").
+    Long,
+    /// Once, with the long preamble, from a node that has had a far fix
+    /// (spec "Delivery queue").
+    Flush,
+    /// To the node itself heard as a node that is not sleepy, with the
+    /// ordinary preamble (spec "Delivery queue").
+    Relay,
 }
 
 /// What the core asks the driver to do.
@@ -310,7 +332,21 @@ pub enum Trace {
         msg_id: MsgId,
         /// The node.
         node: NodeId,
+        /// How it went.
+        by: Delivery,
     },
+    /// A fixed node had a fix farther than the GPS allowance from its
+    /// position, the first of a run: it flushes its delivery queue (spec
+    /// "Position and time").
+    FarFix,
+    /// The node turned carried, or fixed again (spec "Position and time").
+    Carried {
+        /// Carried now; else fixed.
+        carried: bool,
+    },
+    /// A sleepy node's anchor turned carried, and the node leaves it
+    /// (spec "Relay choice").
+    AnchorCarried,
     /// A sleepy node that sleeps listens a rotation to check its anchor
     /// (spec "Relay choice").
     AnchorCheck,

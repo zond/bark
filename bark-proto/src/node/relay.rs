@@ -29,12 +29,14 @@
 //! # A sleepy node's home and beat (spec "Sleepy nodes")
 //!
 //! It takes as its anchor the first node it hears that is neither sleepy
-//! nor anchorless, at once, and listens on the anchor's home channel; its
+//! nor carried, at once, and listens on the anchor's home channel; its
 //! address is the anchor's position and its own ID (spec "Addresses").
 //! It stays awake for a worst-case rotation after that and then takes the
 //! strongest node it heard, without a margin; after that it moves only to
 //! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
-//! "Relay choice"). Back from the dark, it keeps its anchor. It
+//! "Relay choice"). It leaves an anchor whose heartbeat turns carried,
+//! for another or, with none, into anchorless mode (`relay/motion.rs`).
+//! Back from the dark, it keeps its anchor. It
 //! follows its anchor to a new home channel at the anchor's next heartbeat
 //! it hears, and beats there within a heartbeat interval; it does not move
 //! by the busy estimate.
@@ -84,6 +86,7 @@
 
 mod delivery;
 mod forward;
+mod motion;
 
 use crate::event::{Action, AppCommand, Event, Frame, Trace};
 use crate::geo::LocalPlane;
@@ -105,6 +108,7 @@ use crate::tables::send_queue::{Kind, SendQueue};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 use forward::OWNER_RADIUS_M;
+use motion::Motion;
 
 /// Who started the outstanding excursion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +303,8 @@ pub struct Node<const H: usize, const Q: usize> {
     sweep: Sweep,
     /// A sleepy node's anchor, kept while it hears no better one.
     anchor: Option<Anchor>,
+    /// Whether it is fixed or carried (`relay/motion.rs`).
+    motion: Motion,
     mover: Mover,
     replies: Replies,
     radio: Radio<Job>,
@@ -425,6 +431,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             anchor: None,
+            motion: Motion::FIXED,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -500,6 +507,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             replies,
             heard,
             anchor,
+            motion,
             delivery,
             delivered,
             delivery_retry_at,
@@ -557,6 +565,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *anchor = None;
+        *motion = Motion::FIXED;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -747,15 +756,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A heartbeat of the anchor outside its slots was heard: the anchor
     /// is alive, and the time its next is expected stays as it was.
     fn anchor_alive(&mut self) {
-        if self.rescan.is_some() {
+        if self.rescan.is_some() && !self.anchor_carried() {
             self.anchored();
         }
         self.misses = 0;
     }
 
+    /// Whether the anchor's last heartbeat had the carried flag: a check
+    /// does not keep it then (spec "Relay choice").
+    fn anchor_carried(&self) -> bool {
+        self.anchor
+            .and_then(|a| self.neighbours.get(a.id))
+            .is_some_and(|n| n.carried)
+    }
+
     fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor else { return };
-        if self.rescan.is_some() {
+        if self.rescan.is_some() && !self.anchor_carried() {
             // Heard while checking: it is there (spec "Relay choice").
             self.anchored();
         }
@@ -830,6 +847,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self.busy
     }
 
+    /// The messages waiting in the delivery queue for their nodes (spec
+    /// "Delivery queue"). For a driver to sample; reading it changes
+    /// nothing.
+    pub fn delivery_queue(&self) -> impl Iterator<Item = (MsgId, NodeId)> + '_ {
+        self.delivery.iter().map(|q| (q.msg_id, q.node))
+    }
+
     /// The messages this relay holds: queued to send, or waiting for
     /// their sleepy node. A driver uses it to tell a message still in the
     /// network from one lost without a trace.
@@ -880,6 +904,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .filter(|r| !r.handed(slot) && r.parent().map(|(p, _)| p) != Some(to))
             .map(|r| r.highest_hops().saturating_add(1))
             .max()
+    }
+
+    /// Whether the hand-over under way takes a message from the delivery
+    /// queue to its node whether or not the node is in a window: the
+    /// flush after a far fix, or to a node heard as a relay
+    /// (`relay/delivery.rs`). For a driver to sample; reading it changes
+    /// nothing.
+    pub fn sending_direct(&self) -> bool {
+        !self.handover.idle() && self.queue.current().is_some_and(|o| o.kind == Kind::Direct)
     }
 
     /// Whether a hand-over is under way: begun and not yet answered or
@@ -1005,14 +1038,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .anchor
             .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
             .map(|(_, n)| *n);
-        // Any node that is not sleepy or anchorless can hold a sleepy node's
-        // messages: without an anchor it takes the first it hears
+        // Any node that is neither sleepy nor carried can hold a sleepy
+        // node's messages: without an anchor it takes the first it hears
         // (spec "Relay choice").
         let strongest = |except: Option<NodeId>, beats: u8| {
             self.neighbours
                 .live(now)
                 .map(|(_, n)| n)
-                .filter(|n| n.relay() && Some(n.id) != except && n.beats >= beats)
+                .filter(|n| n.holds_mail() && Some(n.id) != except && n.beats >= beats)
                 .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
                 .copied()
         };
@@ -1023,6 +1056,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let chosen = self.choosing.is_some_and(|t| now >= t);
         if chosen {
             self.choosing = None;
+        }
+        if current.is_some_and(|a| a.carried) {
+            // It holds mail no more: another, at once if one is live,
+            // else the one a rotation's listen finds.
+            let to = strongest(None, 0);
+            if to.is_none() && self.rescan.is_some() {
+                return false;
+            }
+            if self.rescan.is_none() {
+                emit(Action::Trace(Trace::AnchorCarried));
+            }
+            match to {
+                Some(to) => self.take_anchor(&to, now, emit),
+                None if self.config.sleepy_listens => self.leave_anchor(now),
+                None => self.check_anchor(now, emit),
+            }
+            return to.is_some();
         }
         let to = match current {
             None => strongest(None, 0),
@@ -1109,6 +1159,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .pin(self.anchor.filter(|_| keep).map(|a| a.id));
     }
 
+    /// Give up an anchor that turned carried, with no other to take: the
+    /// node is anchorless (spec "Sleepy nodes alone") and beats at once.
+    fn leave_anchor(&mut self, now: Instant) {
+        self.anchor = None;
+        self.anchored();
+        self.beacon.next_at = now;
+        self.beacon.quick = 0;
+    }
+
     /// Listen a worst-case rotation, from `now`, to check the anchor of a
     /// node that sleeps (module documentation).
     pub(super) fn check_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -1123,7 +1182,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// it: take the strongest node heard that is not sleepy, or keep the
     /// anchor if none was (spec "Relay choice").
     fn anchor_checked(&mut self, since: Instant, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let heard = |n: &&Neighbour| n.relay() && n.last_heard >= since;
+        let heard = |n: &&Neighbour| n.holds_mail() && n.last_heard >= since;
         let anchor = self.anchor.map(|a| a.id);
         if self
             .neighbours
@@ -1140,8 +1199,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .filter(heard)
             .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
             .copied();
+        let carried = |id: NodeId| self.neighbours.get(id).is_some_and(|n| n.carried);
         match best {
             Some(b) => self.take_anchor(&b, now, emit),
+            // Its anchor moves, and no other holds mail here.
+            None if anchor.is_some_and(carried) => self.leave_anchor(now),
             // Nothing at all heard: the node is out of reach, in a pocket or
             // a basement, not its anchor gone; it keeps it, and checks again
             // only once it hears anything again.
@@ -1313,7 +1375,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The next answer a relay owes an anchorless neighbour, if any: its
     /// ID, the channel it listens on, and when.
     fn answer_due(&self) -> Option<(NodeId, Channel, Instant)> {
-        if self.config.sleepy {
+        // Nobody anchors to a carried node.
+        if self.config.sleepy || self.motion.carried {
             return None;
         }
         self.neighbours
@@ -1339,7 +1402,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let hb = Heartbeat {
             sleepy: self.config.sleepy,
             anchorless: self.config.sleepy && self.anchor.is_none(),
-            carried: false,
+            carried: self.motion.carried,
             home: self.home,
             id: self.id,
             short: self.config.position.short(),
@@ -1592,6 +1655,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
+        if !self.config.sleepy {
+            self.heard_as_relay(hb.id, hb.home);
+        }
         if self.config.sleepy && self.booting() {
             // An anchor ends the boot listen, which chooses a home
             // for a node that hears none (spec "Channel at boot").
@@ -1630,8 +1696,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 dst_id,
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
-            AppCommand::SetPosition { position } => {
-                self.set_position(position);
+            AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
+                let took = match cmd {
+                    AppCommand::Fix { .. } => self.fix(position, now, emit),
+                    _ => {
+                        self.map_point(position);
+                        true
+                    }
+                };
+                if !took || !self.config.sleepy {
+                    return;
+                }
                 let moved = self
                     .plane
                     .point(self.chosen_from)

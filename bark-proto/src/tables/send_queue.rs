@@ -74,6 +74,19 @@ pub enum Kind {
     /// A DATA to a sleepy node this node holds a message for (spec "Delivery"); left in the delivery queue
     /// if it fails.
     Deliver,
+    /// A DATA from the delivery queue to its node whether or not it is in
+    /// a window: once with the long preamble after a far fix, or with the
+    /// ordinary one to a node heard as one that is not sleepy (spec
+    /// "Delivery queue"). Left in the delivery queue if it fails.
+    Direct,
+}
+
+impl Kind {
+    /// Whether it carries a message from the delivery queue to its node,
+    /// which goes ahead of the rest (spec "Delivery").
+    pub fn delivers(self) -> bool {
+        matches!(self, Kind::Deliver | Kind::Direct)
+    }
 }
 
 /// A queued frame.
@@ -273,10 +286,10 @@ impl SendQueue {
             .or_else(|| self.iter().position(due))
     }
 
-    /// The first DATA to a sleepy node that is due.
+    /// The first DATA from the delivery queue that is due.
     pub fn delivery_due(&self, now: Instant) -> Option<usize> {
         self.iter()
-            .position(|o| o.kind == Kind::Deliver && o.not_before <= now)
+            .position(|o| o.kind.delivers() && o.not_before <= now)
     }
 
     /// When the earliest waiting entry is due.

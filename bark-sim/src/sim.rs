@@ -2537,7 +2537,7 @@ impl Sim {
         }
         self.accepted[n as usize] = (at, self.now);
         self.fixing = true;
-        self.deliver(n, Event::App(AppCommand::SetPosition { position }));
+        self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
     }
 

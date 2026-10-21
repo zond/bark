@@ -108,6 +108,11 @@ pub struct Config {
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
+    /// How long the fixes of a carried node must stay within the GPS
+    /// allowance of one place before it is fixed again
+    /// (spec "Position and time"). Long, so that a node that stops for a while does not take
+    /// mail it must flush again when it moves on.
+    pub fixed_after: Duration,
 }
 
 impl Default for Config {
@@ -156,6 +161,30 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 /// in the same place.
 pub const OWNER_RADIUS_M: f32 = 50.0;
 
+/// A common walking speed, metres a second: the comfortable gait of
+/// adults, about 1.3 to 1.5 m/s (Bohannon, "Comfortable and maximum
+/// walking speed of adults aged 20–79 years", Age and Ageing 26, 1997).
+pub const WALKING_SPEED_M_S: f32 = 1.4;
+
+/// How often the GPS gives a fix: once a second, the Quectel L76K's
+/// default output rate (L76K hardware design and specification).
+pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
+
+/// How long a fixed node's fixes must all be farther than the GPS
+/// allowance, [`OWNER_RADIUS_M`], from its position before it is carried
+/// (spec "Position and time"): as long as a walker takes to cross the
+/// whole width of the allowance, 2 × 50 m at [`WALKING_SPEED_M_S`],
+/// 71.4 s, in whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A
+/// still node's fix that strays past the allowance comes back within it;
+/// one that walks keeps going.
+pub const CARRY_AFTER: Duration = {
+    let walk_us = (2.0 * OWNER_RADIUS_M / WALKING_SPEED_M_S * 1e6) as u64;
+    let fix_us = FIX_INTERVAL.as_micros();
+    Duration::from_micros(walk_us.div_ceil(fix_us) * fix_us)
+};
+
+const _: () = assert!(CARRY_AFTER.as_micros() == 72_000_000);
+
 /// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
@@ -189,6 +218,7 @@ impl Config {
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         home_override: None,
+        fixed_after: Duration::from_secs(3600),
     };
 }
 

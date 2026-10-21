@@ -234,11 +234,10 @@ fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
             "{to_node:?}"
         );
         h.run_for(secs(1));
-        assert!(h.nodes[r].traces.iter().any(|(_, t)| *t
-            == Trace::Delivered {
-                msg_id: id,
-                node: h.nodes[s].core.id()
-            }));
+        assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
+            *t,
+            Trace::Delivered { msg_id, node, .. } if msg_id == id && node == h.nodes[s].core.id()
+        )));
     }
 }
 

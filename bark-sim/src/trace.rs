@@ -200,7 +200,7 @@ impl Tracer {
                         n.node(to)
                     ),
                     Trace::Demoted { neighbour } => write!(what, "demoted {}", n.node(neighbour)),
-                    Trace::Delivered { msg_id, node } => write!(
+                    Trace::Delivered { msg_id, node, .. } => write!(
                         what,
                         "delivered {} to {}",
                         self.msg(msg_id, tags),

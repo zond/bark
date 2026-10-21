@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70, proposal. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -103,8 +103,8 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 ## 4. Application
 
 Every node has the same application interface: the readiness query
-`accepts_send`, the commands `AppCommand::Send` and `AppCommand::SetPosition`, and the
-events `AppEvent::Message` and `AppEvent::GivenBack`.
+`accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition` and
+`AppCommand::Fix`, and the events `AppEvent::Message` and `AppEvent::GivenBack`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -135,9 +135,13 @@ A `Send` while `accepts_send` is false, or with a longer payload, breaks the con
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
 panic or never offer it.
 
-`AppCommand::SetPosition` updates own position, from a GPS fix that passed the plausibility
-checks or a map point set in the app (spec "Position and time"); a relay's address changes
-with it, and its sleepy nodes' (spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
+`AppCommand::SetPosition` sets own position from a map point set in the app, which wins
+over GPS: the node takes it and is fixed (spec "Position and time"). `AppCommand::Fix` hands
+the core a GPS fix that passed the driver's plausibility checks; the driver hands each one,
+and none while a map point is set. A sleepy node takes each fix; a node that is not sleepy
+keeps its position while it is fixed and decides from the fixes whether it is carried, and
+takes each fix once it is (roadmap D70, proposal). A node's address changes with its
+position, and a relay's sleepy nodes' with it (spec "Node identity"). `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
 ## 5. What the driver must simulate or implement
@@ -176,9 +180,9 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-166 880 B (163.0 KiB, measured 2026-10-20): the tables and, in under 1 KiB around them, the
+166 928 B (163.0 KiB, measured 2026-10-21): the tables and, in under 1 KiB around them, the
 medium access, the hand-over, its one owed reply and its application's message while it
-waits. A `SleepyNode` is 147 864 B (144.4 KiB), without the heard table and the delivery
+waits. A `SleepyNode` is 147 912 B (144.4 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58). There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB

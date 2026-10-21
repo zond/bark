@@ -8,7 +8,8 @@
 //! in the send queue, a hand-over like any other. A sleepy node holds mail
 //! for nobody, so it owns no other node's message and forwards it (spec
 //! "Sleepy nodes"); nor does a sleepy neighbour closer to a destination
-//! keep the owner rule from holding here.
+//! keep the owner rule from holding here. The same holds for a carried
+//! node, which also holds mail for nobody (`relay/motion.rs`).
 //!
 //! A sleepy neighbour with an anchor is a next hop only as a last resort,
 //! where no other neighbour is left that could take the message but for
@@ -138,7 +139,7 @@
 //! [`Transfer`]: crate::node::transfer::Transfer
 
 use super::{Job, Node};
-use crate::event::{Action, AppEvent, DropReason, Frame, Trace, MAX_FRAME};
+use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
 use crate::node::transfer::{Check, Missed, Owed, Reply, Step};
@@ -370,9 +371,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether this relay owns the destination `dst` of another node's
     /// message (spec "Owner"). A sleepy node owns none (module
-    /// documentation).
+    /// documentation), nor does a carried one: it holds mail for nobody,
+    /// and a neighbour that is carried keeps no other from owning.
     fn owns(&self, dst: Position, now: Instant) -> bool {
-        if self.config.sleepy {
+        if self.config.sleepy || self.motion.carried {
             return false;
         }
         if dst == self.config.position {
@@ -384,7 +386,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && !self
                 .neighbours
                 .candidates(now)
-                .any(|(_, n)| n.relay() && n.local.distance2(target) < mine)
+                .any(|(_, n)| n.holds_mail() && n.local.distance2(target) < mine)
     }
 
     /// Whether `n` is among the neighbours to choose from, `others_open`
@@ -932,6 +934,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }
                     _ => Routed::Done,
                 },
+                // Goes whether or not its node is in a window
+                // (`relay/delivery.rs`).
+                Kind::Direct => match Packet::decode(out.frame.payload()) {
+                    Ok(Packet::Data(d)) => Routed::To(out, self.expect(d.msg_id(), d.dst_hop)),
+                    _ => Routed::Done,
+                },
             };
             match routed {
                 Routed::To(out, expect) => {
@@ -972,7 +980,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(current) = self.queue.current().copied() else {
             return;
         };
-        if !waiting || current.kind == Kind::Deliver || self.queue.delivery_due(now).is_none() {
+        if !waiting || current.kind.delivers() || self.queue.delivery_due(now).is_none() {
             return;
         }
         let tries = match current.kind {
@@ -1160,6 +1168,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
         let (channel, preamble) = match Packet::decode(out.frame.payload()) {
+            // Its preamble is chosen when it is queued.
+            Ok(Packet::Data(d)) if out.kind == Kind::Direct => (self.home_of(d.dst_hop), None),
             Ok(Packet::Data(d)) if out.kind != Kind::Deliver => (
                 self.home_of(d.dst_hop),
                 self.neighbours.get(d.dst_hop).map(preamble),
@@ -1319,7 +1329,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(r) if self.anchored_sleepy() && self.own == Some(id) && r.parent().is_none() => {
                 Some(0)
             }
-            Some(r) if kind == Kind::Deliver => Some(r.highest_hops().saturating_add(1)),
+            Some(r) if kind.delivers() => Some(r.highest_hops().saturating_add(1)),
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }
@@ -1335,7 +1345,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     self.skipped |= 1 << slot;
                 }
             }
-            Kind::Return | Kind::Deliver => {
+            Kind::Return | Kind::Deliver | Kind::Direct => {
                 let (max, retry) = (self.config.hop_attempts, self.retry_unit());
                 if self.handover.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
@@ -1397,7 +1407,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.handover.cancel();
             }
             // No other receiver: wait for the ban, and let the queue move.
-            Kind::Return | Kind::Deliver => {
+            Kind::Return | Kind::Deliver | Kind::Direct => {
                 let tries = self.handover.refused();
                 self.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
@@ -1420,9 +1430,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
-        if out.kind == Kind::Deliver {
+        if out.kind.delivers() {
             self.neighbours.answered(to, now);
-            return self.delivered_to(id, to, now, emit);
+            let long = out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS;
+            let by = match (out.kind, long) {
+                (Kind::Direct, true) => Delivery::Flush,
+                (Kind::Direct, false) => Delivery::Relay,
+                (_, true) => Delivery::Long,
+                (_, false) => Delivery::Window,
+            };
+            return self.delivered_to(id, to, by, now, emit);
         }
         let slot = self.neighbours.slot_of(to);
         if slot.is_some() {
@@ -1449,7 +1466,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     hops: d.hops,
                 }
             }
-            Kind::Return | Kind::Deliver => Trace::ReturnedToParent { msg_id: id, to },
+            Kind::Return | Kind::Deliver | Kind::Direct => {
+                Trace::ReturnedToParent { msg_id: id, to }
+            }
         };
         emit(Action::Trace(trace));
     }
@@ -1465,7 +1484,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     ) {
         let id = out.msg_id().unwrap_or_default();
         let data = Packet::decode(out.frame.payload());
-        if let (Ok(Packet::Data(d)), true) = (data, out.kind != Kind::Deliver) {
+        if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
             if counted {
                 emit(Action::Trace(Trace::HandOverFailed {
                     msg_id: id,
@@ -1516,8 +1535,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let reason = match out.kind {
             Kind::Forward => return,
             Kind::Return => Some(DropReason::ReturnFailed),
-            Kind::Deliver => None,
+            Kind::Deliver | Kind::Direct => None,
         };
+        if let (Ok(Packet::Data(d)), Kind::Direct) = (data, out.kind) {
+            // Unanswered as a relay: again once it is heard again.
+            self.direct_failed(d.dst_hop);
+        }
         if let (Ok(Packet::Data(d)), Kind::Deliver) = (data, out.kind) {
             // Asleep: its messages wait for its next beat.
             self.heard.missed(d.dst_hop);
