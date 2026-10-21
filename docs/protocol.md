@@ -25,7 +25,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Neighbour discovery | Passive: a node hears every neighbour's heartbeat once per 13 heartbeats (~130 s) on its own home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that fails to answer is banned for a while, and after two failures in a row is used only as a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, whose role follows its power (**Proposal**, roadmap D71). **Relay**: a node on external power, mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, receives duty-cycled between and is reached then with a long preamble as a last resort; holds mail for nobody and forwards at once; without an anchor it forwards as a relay does, reached with a long preamble only. A relay that moves is **carried**: it forwards and takes each GPS fix, holds mail for nobody, and says so in its heartbeat |
+| Nodes | One kind, whose role follows its power (roadmap D71). **Relay**: a node on external power, mains, USB or solar, that heartbeats, forwards, and holds messages for the sleepy nodes it hears. **Sleepy node**: a node on battery that chooses a relay as its anchor, heartbeats rarely on the anchor's channel, listens briefly after each heartbeat and each message it takes, and for its anchor's heartbeat, receives duty-cycled between and is reached then with a long preamble as a last resort; holds mail for nobody and forwards at once; without an anchor it forwards as a relay does, reached with a long preamble only. A relay that moves is **carried**: it forwards and takes each GPS fix, holds mail for nobody, and says so in its heartbeat |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | WGS-84 latitude/longitude, 51-bit fixed point in 7 bytes (≈0.6 m), the same everywhere on Earth; distances computed in a flat local approximation at each node; from the node's GPS unless the fix fails the plausibility checks or the app sets a fixed map point; never used for timing |
 | Time | No network time synchronisation of any kind |
@@ -53,8 +53,8 @@ integration off the shelf at this price, and the premise is that anyone can
 buy and plant a node. ST's STM32WL55 is the European fallback but has no
 BLE.
 
-(**Proposal**, roadmap D71.) Every node runs the same protocol, and its
-role is not a setting: it follows the node's power, which the node
+Every node runs the same protocol, and its
+role is not a setting (roadmap D71): it follows the node's power, which the node
 measures. On external power, plugged into USB on a windowsill or in a
 solar box on a roof, it is a **relay**; on battery it is **sleepy**
 ([sleepy nodes](#sleepy-nodes)). The nRF52840 detects USB power itself
@@ -348,8 +348,8 @@ that stopped for less would take mail for its new sleepy nodes and strand
 it when it moves on, while a node carried by mistake loses little by
 staying so, since its sleepy nodes have anchored elsewhere already
 (roadmap D70). A map point set in the app makes
-the node fixed at once. (**Proposal**, roadmap D71.) A node that turns
-sleepy is fixed again: a sleepy node takes each fix, and plugged in, it
+the node fixed at once. A node that turns
+sleepy is fixed again (roadmap D71): a sleepy node takes each fix, and plugged in, it
 keeps the fix it has then. A spoofed fix that drifts slower than the node
 can move makes a relay carried, where D63 kept it out: the relay then
 gives up its sleepy nodes and is routed to where the spoofer says. Positions on
@@ -435,8 +435,8 @@ a sleeping node tells them apart by the time, and an answer of its anchor
 heard before it expects the anchor's next slot does not move that time
 ([relay choice](#relay-choice), roadmap D62).
 
-(**Proposal**, roadmap D71.) A node also heartbeats outside its slots, on
-its home channel, with the ordinary preamble and listen-before-talk as
+A node also heartbeats outside its slots, on
+its home channel (roadmap D71), with the ordinary preamble and listen-before-talk as
 any heartbeat, when its sleepy or carried flag changes, or, if it is not
 sleepy, its map point ([position and time](#position-and-time)). Its
 neighbours on that channel then address it anew at once instead of a
@@ -1385,8 +1385,8 @@ What breaks it:
 
 ## Sleepy nodes
 
-A sleepy node is a node on battery ([hardware](#hardware); **Proposal**,
-roadmap D71). It heartbeats rarely and on one channel, listens for a
+A sleepy node is a node on battery ([hardware](#hardware), roadmap D71).
+It heartbeats rarely and on one channel, listens for a
 short window after each heartbeat and after each message it takes, and
 for its anchor's heartbeat once a rotation; between those it receives
 duty-cycled ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), so that any node can
@@ -1419,8 +1419,8 @@ it, which stay longer while nothing needs their place
 ([delivery queue](#delivery-queue)). The network keeps a message on its way for the
 same time ([receiving DATA](#receiving-data)).
 
-(**Proposal**, roadmap D71.) **Plugged in and unplugged.** A node takes
-its role from its power at boot, at once: nobody depends on it yet. A
+**Plugged in and unplugged.** A node takes
+its role from its power at boot, at once (roadmap D71): nobody depends on it yet. A
 sleepy node plugged in is a relay at once: it leaves its anchor, its
 address is its own position, which it keeps as a fixed node does
 ([position and time](#position-and-time)), and it heartbeats as a relay,
@@ -1532,7 +1532,7 @@ anchor: a new one would strand the messages sent to the old address
 
 **An anchor that turns carried.** A node
 that hears its anchor's heartbeat with the carried flag, or with the
-sleepy flag (**Proposal**, roadmap D71), leaves it: for
+sleepy flag (roadmap D71), leaves it: for
 the strongest other relay that is live in its table and not carried, at
 once, else for the strongest a rotation's listen finds, as when it
 checks the anchor, a check the carried anchor's heartbeats do not end;
@@ -1722,7 +1722,7 @@ mail waits there until its place is needed, and the sender is not told
 
 **The flush.** From its first far fix
 ([position and time](#position-and-time)), or the end of its grace on
-battery ([sleepy nodes](#sleepy-nodes); **Proposal**, roadmap D71), a node sends each message in its
+battery ([sleepy nodes](#sleepy-nodes), roadmap D71), a node sends each message in its
 delivery queue once, as DATA with the long preamble on the channel its
 node listens on, from the heard table, or its own home if it has not
 heard the node: one attempt, ahead of the send queue as a delivery in a
@@ -1826,8 +1826,8 @@ channels ([beats](#beats)) and from the frames they exchange with it.
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
 D5): characteristics for send, receive-notify, node status, position set
-(the role follows the power, [hardware](#hardware); **Proposal**, roadmap
-D71). The app owns identity and end-to-end encryption; the node sees
+(the role follows the power, [hardware](#hardware), roadmap D71). The
+app owns identity and end-to-end encryption; the node sees
 opaque payloads. The sender's address, position and node ID, travels inside the
 encrypted payload so that only the recipient learns where the sender is.
 Encryption scheme: open item O1.
@@ -1994,7 +1994,7 @@ receiver needs to know.
 - **Sleepy**: "I sleep. Reach me cheaply in my window after my beat,
   or at any time with the long preamble." ([sleepy nodes](#sleepy-nodes), [delivery](#delivery),
   [next hop](#next-hop).) Every sleepy node sets it, a node on battery
-  past its grace (**Proposal**, roadmap D71). Clear: the sender
+  past its grace (roadmap D71). Clear: the sender
   listens all the time; reach it at any time with the short preamble.
 - **Anchorless**: "I know no node I can anchor to, one that is neither
   sleepy nor carried. If you are one, tell me." A sleepy node without
@@ -2044,8 +2044,8 @@ Crate layout is D7.
 delivered window 41 × 16 B = 0.6 KiB; busy estimates and duty budget under
 1 KiB; 162.9 KiB in all, measured, for a relay; a sleepy node keeps the heard
 table and the delivery queue empty ([sleepy nodes](#sleepy-nodes)), and
-every board holds them, since it turns a relay on USB (**Proposal**,
-roadmap D71). BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
+every board holds them, since it turns a relay on USB (roadmap D71).
+BLE controller ≈5 KiB; Embassy and stacks ≈16 KiB. The
 application has 255 KiB; 1 KiB at the bottom is kept for the boot record and
 the panic message (`bark-fw/memory.x`).
 
