@@ -85,7 +85,7 @@
 //! attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
-//! [`BAN`], so no message takes it until then (spec "Refusal", roadmap D27, D29,
+//! [`BAN`], so no message takes it until then (spec "Bans", roadmap D27, D29,
 //! D32). A forward treats it as that give-up. A return has nowhere else
 //! to go: it waits in its place for the ban to end, and the refused
 //! transmission does not count as one of its attempts.
@@ -234,7 +234,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// How long a message of `record` to `dst` would wait here for its
-    /// way on (spec "Refusal"): the rest of the ban on the neighbour it
+    /// way on (spec "Bans"): the rest of the ban on the neighbour it
     /// would go to were no neighbour banned, which is the pushback that
     /// neighbour gave. Kept per neighbour, so a direction that pushes back
     /// does not hold up the others, and it ends with the ban.
@@ -244,7 +244,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map_or(Duration::ZERO, |(_, n)| n.banned_until.since(now))
     }
 
-    /// The wait a refusal for `reason` asks for (spec "Refusal"): for want
+    /// The wait a refusal for `reason` asks for (spec "Bans"): for want
     /// of room, until the bucket holds everything queued, a frame of
     /// `airtime` and its ACK with the reply reserve left, if nothing else
     /// comes; anything else frees in one ban; and never less than the
@@ -1356,7 +1356,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
-    /// took the packet, or refused it (spec "The ACK", "Refusal"); see the module documentation.
+    /// took the packet, or refused it (spec "The ACK", "Bans"); see the module documentation.
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
@@ -1376,7 +1376,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let by = ack.from;
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
         // As long as the refuser asks: its pushback, learned per neighbour
-        // and ending with the ban (spec "Refusal").
+        // and ending with the ban (spec "Bans").
         let wait = told(ack.wait);
         let slot = self.neighbours.slot_of(by);
         if slot.is_some() {

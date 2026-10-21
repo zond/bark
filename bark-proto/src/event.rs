@@ -280,7 +280,7 @@ pub enum Trace {
         /// [`DropReason::DeliveryFull`].
         reason: DropReason,
     },
-    /// The receiver of a hand-over refused it (spec "Refusal").
+    /// The receiver of a hand-over refused it (spec "Bans").
     TurnedAway {
         /// The message.
         msg_id: MsgId,

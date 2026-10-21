@@ -1115,7 +1115,7 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
 /// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
-/// against F1 (spec "Refusal"). O bans F1: no message is offered to it until the
+/// against F1 (spec "Bans"). O bans F1: no message is offered to it until the
 /// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
 ///
 /// ```text
@@ -1300,7 +1300,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
 /// refuses O's message for L (spec "Receiving DATA", "Delivery queue"). O holds the
 /// message rather than drop it, says it takes no other, and offers it
 /// again one ban after the first refusal, two after the second, four
-/// after the third, and so on up to the bucket's refill (spec "A node's own message",
+/// after the third, and so on up to the bucket's refill (spec "Bans",
 /// `budget::hold`). Once F's messages expire F takes it, and O's
 /// application may send again; its next message starts from one ban
 /// (spec "Return to parent", roadmap D29).
@@ -1742,7 +1742,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
 /// D29). No hour holds more than 360 s, replies included (the harness
 /// checks every transmission), and no heartbeat of F is held back. The
 /// senders' frames are put on the air past their cores, which hold their
-/// own application's message for longer after each refusal (spec "A node's own message").
+/// own application's message for longer after each refusal (spec "Bans").
 #[test]
 fn replies_stay_within_the_reserve() {
     use bark_proto::radio::{DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
@@ -1971,9 +1971,9 @@ fn home_and_away_are_measured_alike() {
 /// heartbeats are never held back. The harness panics if any hour holds
 /// more than 10 %, replies included.
 ///
-/// O, refused, bans F without counting a failure (spec "Refusal"); F is its only
+/// O, refused, bans F without counting a failure (spec "Bans"); F is its only
 /// neighbour, so O holds its application's message and offers it again
-/// after its hold, and its application waits (spec "Return to parent", "A node's own message"). O and D
+/// after its hold, and its application waits (spec "Return to parent", "Bans"). O and D
 /// cannot hear each other: now and then D's ACKs to F are lost under O's
 /// frames, all four of F's attempts go unanswered, and F returns the
 /// message to O as the search requires (spec "Return to parent"). O, its bucket spent on
@@ -2238,7 +2238,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     );
 }
 
-// --- Silence is pushback (spec "Silence is pushback", roadmap D42) ---
+// --- Silence is pushback (spec "Bans", roadmap D42) ---
 
 /// When relay `from` sent a DATA of `id` to relay `to`.
 fn data_times(h: &Harness<Relay>, from: usize, to: usize, id: MsgId) -> Vec<Instant> {
@@ -2273,7 +2273,7 @@ fn entry(h: &Harness<Relay>, at: usize, of: usize) -> Neighbour {
 
 /// O, with F1 and F2 both reaching D, F1 the nearer; P behind O. Every
 /// DATA from O to F1 is lost. O's message fails at F1, which bans F1 for
-/// one ban (spec "Silence is pushback", roadmap D42), and waits for the ban. P's message, which
+/// one ban (spec "Bans", roadmap D42), and waits for the ban. P's message, which
 /// reaches O within it, goes to F2 at once and is never offered to F1:
 /// the ban holds for every message. When the ban ends O's message goes
 /// to F1 again with three fresh attempts; that second failure demotes F1

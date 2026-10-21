@@ -78,7 +78,7 @@ const AUX_MASK: u8 = 0x0f;
 
 // Type codes (spec "Packet formats").
 const T_ACK: u8 = 0x3;
-// The ACK that refuses, with the wait it asks for (spec "Refusal").
+// The ACK that refuses, with the wait it asks for (spec "Bans").
 const T_NACK: u8 = 0x7;
 const T_DATA: u8 = 0x5;
 /// Reserved for the firmware's bench frames (spec "Packet formats"),
@@ -195,7 +195,7 @@ pub struct Ack {
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
     /// For a refusal, the wait the refuser asks for, in whole bans
-    /// (spec "Refusal"); 0 in an ACK that takes.
+    /// (spec "Bans"); 0 in an ACK that takes.
     pub wait: u8,
 }
 

@@ -273,7 +273,7 @@ heartbeat heard once to be a fade above the margin (candidate A) stops
 it.
 
 **Three times S4's rate.** Here relays at the duty cap refuse and are
-banned (spec "Refusal"), and a message goes to the next best neighbour
+banned (spec "Bans"), and a message goes to the next best neighbour
 toward its destination. With sectors, routes are longer and spend more
 airtime, and every form measured loses, the sector cap alone and the
 ranking alone as much as both. What these runs show is that the table

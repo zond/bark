@@ -322,7 +322,7 @@ main (seed 1).
 anchor again a fade (60 s) later doubled for each unanswered hand-over to
 it in a row, instead of every fade; the ban after silence already
 doubles the same way (spec "A sleepy node's own message",
-"Silence is pushback"; `relay/forward.rs`, commit 2).
+"Bans"; `relay/forward.rs`, commit 2).
 
 **What it changes.** On main `8704790` at twice the rate it did not stop
 the slide: seed 2 held 84 to 85 % until 60 minutes and slid at 110

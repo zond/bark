@@ -367,7 +367,7 @@ pub struct Node<const H: usize, const Q: usize> {
     /// last refusal of its message asked for (spec "A sleepy node's own message").
     retry_at: Instant,
     /// When the bucket will have refilled what the senders it refused
-    /// were told to come back for (spec "Refusal").
+    /// were told to come back for (spec "Bans").
     promised: Instant,
     /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
     delivery_retry_at: Instant,

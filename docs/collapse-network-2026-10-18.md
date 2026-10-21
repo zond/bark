@@ -173,7 +173,7 @@ traffic, and its reading was soon as high.
 2. Each move sends its neighbours' frames to a channel it has left, for up
    to a rotation. Hand-overs fail; silence bans the neighbour, the message
    waits and is offered again, and after a second failure goes another way
-   (spec "Silence is pushback").
+   (spec "Bans").
 3. Failures whose receiver had the message split it, and the copies search
    on. Frames per text grow.
 4. More frames: receivers busy and deaf more often, more ACKs lost, more

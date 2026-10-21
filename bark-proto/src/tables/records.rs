@@ -19,7 +19,7 @@
 //! A message sent on can come back to this relay, returned or offered by
 //! a split copy, and its record must still be here then. On its way it
 //! may wait at each relay as long as a full send queue takes to drain,
-//! each entry waiting out one ban (spec "Refusal", roadmap D31):
+//! each entry waiting out one ban (spec "Bans", roadmap D31):
 //!
 //! ```text
 //! (40 + 254) places × 1.56 s = 457.3 s

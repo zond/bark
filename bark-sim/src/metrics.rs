@@ -215,7 +215,7 @@ pub struct CoreCounts {
     pub heartbeats_deferred: u64,
     /// DATA packets this relay refused, by what it lacked (spec "Receiving DATA").
     pub refused: DropCounts,
-    /// Refusals this node received, each a ban on the refuser (spec "Refusal").
+    /// Refusals this node received, each a ban on the refuser (spec "Bans").
     pub turned_away: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
