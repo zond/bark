@@ -27,8 +27,8 @@
 //! | 100 km | 0.37 % | 1.9 % |
 //! | 300 km | 1.1 % | 5.9 % |
 //!
-//! So the 0.1 % holds for a city-sized neighbourhood (a few km), not out to
-//! hundreds of km as spec "Positions on the wire" says; a hop is never more than a few km,
+//! So the 0.1 % holds for a city-sized neighbourhood, the 5 km of spec
+//! "Positions on the wire", not out to hundreds of km; a hop is never more than a few km,
 //! and for a distant destination the error is a smooth distortion that
 //! changes only near-tied greedy choices.
 //!

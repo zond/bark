@@ -913,9 +913,8 @@ ban ends, and is routed again then, at the origin or anywhere else. A
 message ends only when it is delivered, when its search runs out of
 neighbours ([return to parent](#return-to-parent)), when a return goes
 unanswered twice in a row (step 6), when its time runs out on the way
-([time to live](#time-to-live)), when its sleepy node does not take it
-within the delivery queue's TTL ([delivery queue](#delivery-queue)), at
-the hop cap ([hop count](#hop-count)), or when a node holding it dies
+([time to live](#time-to-live)), when a newer message needs its place in
+the delivery queue ([delivery queue](#delivery-queue)), at the hop cap ([hop count](#hop-count)), or when a node holding it dies
 (roadmap D31, D44).
 
 Waiting alone can lock relays up: two neighbours whose queues are full
@@ -1647,8 +1646,9 @@ whose `aux` also names its home channel ([packet sender](#packet-sender)),
 or its ACK of a delivery. A node that answers is in reach whether or not
 its beats are heard, and a busy holder misses beats, while it transmits
 or when another frame meets the beat there. A node reached only in the
-windows its beats open renews its entry with each of them, but one kept
-awake by a flow longer than a TTL does not (roadmap D53).
+windows its beats open renews its entry with each beat; one kept awake
+by a flow longer than a TTL is renewed by its ACKs, since a holder at
+its cap misses beats (roadmap D53).
 
 When the table is full a newcomer takes the place of an expired entry,
 else of the one heard longest ago. A node that beats now listens now, so
@@ -2019,8 +2019,9 @@ came from: no receiver needs to know.
   ([position](#position)). Others do not anchor to it
   ([relay choice](#relay-choice)) and do not count it as a nearer owner
   ([owner](#owner)); it is a next hop like any relay. The flag says what
-  the node is, not what it asks, so it is valid with or without the
-  other two: a sleepy node too may be on the move.
+  the node is, not what it asks, so the type accepts it with or without
+  the other two, though a node that turns sleepy is no longer carried
+  ([position](#position)).
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
