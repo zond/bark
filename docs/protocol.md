@@ -1885,20 +1885,21 @@ learn where it listens from its long beats on their channels
 
 ## Phone link
 
-BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap
-D5): characteristics for send, receive-notify, node status, position set
-(the role follows the power, [nodes](#nodes), roadmap D71). The
-app owns identity and end-to-end encryption; the node sees
-opaque payloads. The sender's address, position and node ID, travels inside the
-encrypted payload so that only the recipient learns where the sender is.
+BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
+characteristics for send, receive-notify, node status and position set;
+there is no role to set ([nodes](#nodes), roadmap D71). The app owns
+identity and end-to-end encryption; the node sees opaque payloads. The
+sender's address, position and node ID, travels inside the encrypted
+payload, so that only the recipient learns where the sender is.
 Encryption scheme: open item O1.
 
 A message has no ID field: the network identifies it by a hash of its
-destination and payload ([packet formats](#packet-formats)). Two messages to the same destination with
-identical payloads are therefore one message to every relay that still
-remembers the first, which a relay does until newer records evict its
-record ([message records](#message-records), [bounds](#bounds)), and the second is not delivered. The app must make every payload unique;
-end-to-end encryption with a fresh nonce per message does that.
+destination and payload ([packet formats](#packet-formats)). Two
+messages to one destination with identical payloads are one message to
+every relay that still keeps the first one's record
+([message records](#message-records), [bounds](#bounds)), and the second
+is not delivered. The app must make every payload unique; end-to-end
+encryption with a fresh nonce per message does that.
 
 **What the network does not defend against.** Nothing on the air is
 authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
@@ -1968,8 +1969,9 @@ Common mesh and radio mechanisms left out, and why.
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
 channel in heartbeats and type-specific flags elsewhere. A position is
 7 bytes, the heartbeat's short position 4
-([positions on the wire](#positions-on-the-wire)). A node ID is 4
-bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything.
+([positions on the wire](#positions-on-the-wire)), and a node ID 4
+([node identity](#node-identity)). The LoRa hardware CRC covers
+everything.
 
 ```
 HEARTBEAT 0x8 to 0xF: first(1) id(4) short_pos(4)                          = 9
@@ -2005,42 +2007,39 @@ type's three low bits, and 0x8 is the one base whose eight codes, 0x8 to
 no flag reaches. A heartbeat does not say where its sender's position
 came from: no receiver needs to know.
 
-- **Sleepy**: "I sleep. Reach me cheaply in my window after my beat,
-  or at any time with the long preamble." ([sleepy nodes](#sleepy-nodes), [delivery](#delivery),
-  [next hop](#next-hop).) Every sleepy node sets it, a node on battery
-  past its grace (roadmap D71). Clear: the sender
-  listens all the time; reach it at any time with the short preamble.
+- **Sleepy**: "I sleep. Reach me cheaply in my window after my beat, or
+  at any time with the long preamble." ([sleepy nodes](#sleepy-nodes),
+  [delivery](#delivery), [next hop](#next-hop).) Every sleepy node sets
+  it, a node on battery past its grace. Clear, the sender listens all
+  the time and is reached at any time with the short preamble.
 - **Anchorless**: "I know no node I can anchor to, one that is neither
-  sleepy nor carried. If you are one, tell me." A sleepy node without
-  an anchor sets it, with the sleepy bit ([sleepy nodes alone](#sleepy-nodes-alone)); a
-  relay that hears it answers with a long heartbeat, a carried one does
-  not (roadmap D70). Nobody anchors to it. That it is
-  reached with the long preamble and holds no mail follows from the
-  sleepy bit, not from this one. Anchorless without sleepy, 0xA, is not
-  a heartbeat: a node that listens all the time is a relay and has no
-  anchor to miss.
-- **Carried** (roadmap D70): "I move. I take each GPS fix
-  and hold mail for nobody." A node that is not sleepy sets it once it is
-  carried ([position](#position)). Others do not anchor
-  to it ([relay choice](#relay-choice)) and do not count it as a nearer
-  owner ([owner](#owner)); it is a next hop like any relay. The flag says
-  what the node is, not what it asks: it is valid with or without the
-  other two, since a sleepy node too may be on the move, and a sleepy
-  node holds mail for nobody whatever this flag says.
+  sleepy nor carried. If you are one, tell me." A sleepy node without an
+  anchor sets it, with the sleepy bit
+  ([sleepy nodes alone](#sleepy-nodes-alone)); a relay that hears it
+  answers with a long heartbeat. Nobody anchors to it. That it is reached
+  with the long preamble and holds no mail follows from the sleepy bit.
+  Anchorless without sleepy, 0xA, is no heartbeat: a node that listens
+  all the time is a relay and has no anchor to miss.
+- **Carried** (roadmap D70): "I move. I take each GPS fix and hold mail
+  for nobody." A node that is not sleepy sets it once it is carried
+  ([position](#position)). Others do not anchor to it
+  ([relay choice](#relay-choice)) and do not count it as a nearer owner
+  ([owner](#owner)); it is a next hop like any relay. The flag says what
+  the node is, not what it asks, so it is valid with or without the
+  other two: a sleepy node too may be on the move.
 
 The **message ID** is a 32-bit FNV-1a hash of
-`dst_pos || dst_id || payload`, computed
-by every node that handles the message; it is the same on every hop
-because none of these fields changes. DATA does not carry it; the ACK
-does, to name what it acknowledges. The app must keep payloads unique
+`dst_pos || dst_id || payload`, computed by every node that handles the
+message; it is the same on every hop because none of these fields
+changes. DATA does not carry it; the ACK does, to name what it
+acknowledges. The app must keep payloads unique
 ([phone link](#phone-link)).
 
-`dst_hop` lets every node on a channel discard packets not addressed to it
-after 5 bytes. `src_hop` names the node that sent the packet, and `aux`
-its home channel, which is where the ACK goes; routing uses them to know
-where a message came from ([routing](#routing)). The payload is at most
-255 − 22 = 233 bytes; the sender's address is inside it, encrypted
-([phone link](#phone-link)).
+`dst_hop` lets every node on a channel discard packets not addressed to
+it after 5 bytes. `src_hop` and `aux` name the sender and its home
+channel, where the ACK goes and where a return is sent
+([routing](#routing)). The payload is at most 255 − 22 = 233 bytes; the
+sender's address is inside it, encrypted ([phone link](#phone-link)).
 
 ### Positions on the wire
 
@@ -2090,7 +2089,8 @@ boot record and the panic message (`bark-fw/memory.x`).
 **Bring-up order** (each step is a milestone on real boards):
 
 1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, CAD,
-   RSSI read, retune time measured; adjacent-channel rejection (O5).
+   RSSI read; the retune time and the preamble the modem needs to lock
+   measured; adjacent-channel rejection (O5).
 2. Listen-before-talk + rotating heartbeat + neighbour table on three
    boards: each board lists the other two with channel and position within
    one rotation.
