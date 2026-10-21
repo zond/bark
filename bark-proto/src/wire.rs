@@ -223,7 +223,7 @@ pub struct Data<'a> {
     pub dst_id: NodeId,
     /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
-    /// The time the message has left, in [`TTL_UNIT`]s (spec "Receiving DATA").
+    /// The time the message has left, in [`TTL_UNIT`]s (spec "Time to live").
     pub time_left: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],

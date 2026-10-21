@@ -3248,7 +3248,7 @@ mod tests {
 
     /// A message waiting here carries its time as it is at each attempt,
     /// rounded down, and is dropped once no whole unit is left, waiting for
-    /// a ban or not; a hop place frees with it (spec "Receiving DATA").
+    /// a ban or not; a hop place frees with it (spec "Time to live").
     #[test]
     fn a_waiting_message_ends_with_its_time() {
         use crate::wire::{Data, TTL_UNIT};

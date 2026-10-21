@@ -123,7 +123,7 @@
 //! routed again every `fade_retry`, until its time runs out (below): a
 //! carried node loses its neighbours by going dark and finds them again.
 //!
-//! # Time left (spec "Receiving DATA")
+//! # Time left (spec "Time to live")
 //!
 //! A queued DATA keeps when its time runs out, from the packet it came in:
 //! the time it carried less its time on air, which passed after the
@@ -1636,7 +1636,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.expire(now, emit);
     }
 
-    /// Drop every message in the send queue whose time is gone (spec "Receiving DATA"):
+    /// Drop every message in the send queue whose time is gone (spec "Time to live"):
     /// it could no longer be sent with a whole unit left. Waiting for a
     /// ban, in a hop place or a return alike; it frees its place at once
     /// rather than when its turn comes. One whose frame is on air or waits
@@ -1725,7 +1725,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 }
 
 /// Whether `out`'s time is gone: no more than one unit is left, and a
-/// DATA carries only whole ones, rounded down (spec "Receiving DATA").
+/// DATA carries only whole ones, rounded down (spec "Time to live").
 fn gone(out: &Outgoing, now: Instant) -> bool {
     out.expires != Instant::MAX && now >= out.expires - TTL_UNIT
 }

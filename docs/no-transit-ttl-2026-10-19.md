@@ -9,7 +9,7 @@ rebased onto main `79b4313`, whose speed-ups change no output; the
 candidate built on it gives the same message table to the byte.
 
 The question: does a message still need the time left that DATA carries
-(spec "Receiving DATA", roadmap D44) now that overload is pushed back
+(spec "Time to live", roadmap D44) now that overload is pushed back
 to the application (roadmap D54, D66)? A text that ages out on its way
 is lost with nobody told; refused at its origin, or delivered late, it
 would not be.

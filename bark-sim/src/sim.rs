@@ -361,7 +361,7 @@ struct OriginRecord {
     entered_at: Option<Instant>,
     /// The time left the last DATA to its destination node carried: what
     /// that node's application learns of the message's way (spec
-    /// "Receiving DATA").
+    /// "Time to live").
     time_left: Option<Duration>,
     /// The node that queued it for its destination node
     /// (spec "Delivery queue"), the beats of that node it heard while the

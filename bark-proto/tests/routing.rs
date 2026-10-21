@@ -1507,7 +1507,7 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
 
 /// The same line, C gone. Every DATA of the message, the forward to R
 /// and R's return to P alike, carries the time its origin gave it less
-/// the time it has spent since, rounded down (spec "Receiving DATA"). With a
+/// the time it has spent since, rounded down (spec "Time to live"). With a
 /// shorter TTL at P, R's copy ends at that time while it waits for C's
 /// bans, before C's entry expires, and is never returned.
 #[test]

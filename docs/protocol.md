@@ -907,7 +907,7 @@ counted, until the earliest ban ends, and is routed again then, at the
 origin or anywhere else. A message ends only when it is delivered, when
 its search runs out of neighbours ([return to parent](#return-to-parent)), when a return goes
 unanswered twice in a row (step 6), when its time runs out on the way
-([receiving DATA](#receiving-data)), when its sleepy node does not take it within the
+([time to live](#time-to-live)), when its sleepy node does not take it within the
 delivery queue's TTL ([delivery queue](#delivery-queue)), at the hop cap
 ([hop count](#hop-count)), or when a node holding it dies (roadmap D31, D44).
 
@@ -1145,47 +1145,13 @@ updates its last-active time.
 Only cases 1, 3 and 4 end a packet without acting on it, and in each the
 message lives on: it has arrived, the packet was acted on when it first
 came, or another copy goes on. So no case ends the last copy of a
-message; only its time can (below). Nothing is sent straight back: a
+message; only its time can ([time to live](#time-to-live)). Nothing is sent straight back: a
 relay that has had the message goes on from where its own search stands, and its sender, if the relay
 has not tried it, stays a candidate and gets the message back in turn.
 A return goes from a relay to its parent, and the parents, each set when
 its record was made, lead back to the origin without a loop, so a
 message cannot go back and forth between two relays that hold none of
 it (roadmap D35).
-
-**Time left.** A message lives in the network for at most the delivery
-TTL, 600 s ([sleepy nodes](#sleepy-nodes)), from when a node took it from its application.
-Every DATA carries the time the message has left, `time_left`, in whole
-units of 2.5 s ([packet formats](#packet-formats)). That node starts it at the TTL. Each
-transmission, retries included, carries what is left at that moment,
-rounded down, so no node claims more than the message has, and a sleepy
-node's waits for its anchor count against it. A relay that takes a
-packet to send on counts the message's time from the packet: what it
-carries less the frame's time on air, since the sender stamps the time
-as the frame goes out. With one unit or less left a message can no longer be
-sent with any, and its time is gone: the relay drops it wherever it
-waits in the send queue, for its turn, for the bucket, for a ban, in a
-hop place or as a return, and one whose frame is on air at its next
-attempt. A packet that arrives with its time gone is no work: the relay
-takes it, as in cases 1, 3 and 4, and the message ends there. A message
-to deliver is not affected: at its owner the delivery queue keeps it
-until its node takes it or a newer message needs its place, whatever was
-left ([delivery queue](#delivery-queue)). A return or a copy carries the time like
-any DATA, so the parent's copy (case 5) ends by the same clock.
-
-Without an end by time, a message the network has taken lives as long
-as hand-overs to someone succeed: past the cap, long after its sender
-and its destination's queue would have given it up, keeping the relays
-at their duty cap (roadmap D42, D44).
-
-Rounding down loses up to a unit at each hand-over, a whole one at a
-hand-over that follows at once. 2.5 s is the finest unit at which one
-byte holds the TTL, as 240, so a message whose hand-overs follow each
-other at once has time for 239 of them, near the 255 of the hop cap
-([hop count](#hop-count)); at 10 s it would have time for 59, fewer than some searches
-under load take to reach their owner (roadmap D44). Rounded to the
-nearest instead, a message that stays just under half a unit at each
-relay would lose no time at all.
 
 #### Return to parent
 
@@ -1249,6 +1215,46 @@ two, and it ends the chain of hop places ([overload waits](#overload-waits)). 25
 the longest straight route across the city of [capacity and sizing](#capacity-and-sizing) (≈30 km at
 the ≈750 m street range of [physical layer](#physical-layer)) is about 40 hand-overs, leaving
 about 200 for routing around gaps.
+
+#### Time to live
+
+A message lives in the network for at most the delivery TTL, 600 s
+([nodes](#nodes)), from when a node takes it from its application.
+Without an end by time, a message the network has taken lives as long as
+hand-overs to someone succeed: past the cap, long after its sender and
+its destination's queue would have given it up, keeping the relays at
+their duty cap (roadmap D42, D44).
+
+Every DATA carries the time the message has left, `time_left`, in whole
+units of 2.5 s ([packet formats](#packet-formats)); the node that took
+the message from its application starts it at the TTL. Each
+transmission, retries included, carries what is left at that moment,
+rounded down, so no node claims more than the message has; a sleepy
+node's waits for its anchor count against it. A relay that takes a
+packet to send on counts the message's time from the packet: what it
+carries less the frame's time on air, since the sender stamps the time
+as the frame goes out.
+
+With one unit or less left, a message can no longer be sent with any,
+and its time is gone. The relay drops it wherever it waits in the send
+queue, for its turn, the bucket or a ban, in a hop place or as a return,
+and drops one whose frame is on air at its next attempt. A packet that
+arrives with its time gone is no work: the relay takes it, as in cases
+1, 3 and 4 of [receiving DATA](#receiving-data), and the message ends
+there. A return or a copy carries the time like any DATA, so the
+parent's copy (case 5) ends by the same clock. A message to deliver is
+not affected: at its owner the delivery queue keeps it until its node
+takes it or a newer message needs its place, whatever was left
+([delivery queue](#delivery-queue)).
+
+2.5 s is the finest unit at which one byte holds the TTL, as 240.
+Rounding down loses up to a unit at each hand-over, a whole one at a
+hand-over that follows at once, so such a message has time for 239
+hand-overs, near the 255 of the hop cap ([hop count](#hop-count)). At
+10 s it would have time for 59, fewer than some searches under load take
+to reach their owner (roadmap D44). Rounded to the nearest instead, a
+message that stays just under half a unit at each relay would lose no
+time at all.
 
 #### Owner
 
@@ -1353,7 +1359,7 @@ What breaks it:
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
 - **Life:** at most the delivery TTL from a node taking it from the
-  application to its owner ([receiving DATA](#receiving-data)), whatever its search and
+  application to its owner ([time to live](#time-to-live)), whatever its search and
   however long it waits, then in the owner's delivery queue until its
   node takes it or, a TTL or more after it came, a newer message needs
   its place ([delivery queue](#delivery-queue)). So it holds a place in a send queue no
@@ -1420,7 +1426,7 @@ answer, it keeps for the **delivery TTL**, 10 minutes (600 s): the
 node in its holder's table ([heard table](#heard-table)), and the messages waiting for
 it, which stay longer while nothing needs their place
 ([delivery queue](#delivery-queue)). The network keeps a message on its way for the
-same time ([receiving DATA](#receiving-data)).
+same time ([time to live](#time-to-live)).
 
 **Plugged in and unplugged.** A node takes
 its role from its power at boot, at once (roadmap D71): nobody depends on it yet. A
@@ -1662,7 +1668,7 @@ node out of its window, and its messages wait for its next beat.
 
 The DATA carries the hop count as any hand-over ([hop count](#hop-count)) and the
 time the message had left when it arrived: the delivery queue's wait
-does not count against it ([receiving DATA](#receiving-data)).
+does not count against it ([time to live](#time-to-live)).
 
 Two kinds go outside the windows, after the
 deliveries in a window and one at a time: a node's flush after a far
@@ -1685,7 +1691,7 @@ the oldest stale message makes way for it. Age alone drops nothing: a
 message dropped when no other needs its place is lost for nothing, and
 its node may yet beat, back from a pocket or a basement, or heard at
 last by a holder that missed its beats. The same TTL bounds a message's
-way through the network ([receiving DATA](#receiving-data)); the queue's starts afresh
+way through the network ([time to live](#time-to-live)); the queue's starts afresh
 when the message arrives, since it is the wait for a node that sleeps or
 is dark. When the queue is full and holds no stale message, a message
 for another node is refused ([receiving DATA](#receiving-data)): what is queued stays, and
@@ -1782,7 +1788,7 @@ takes costs its sender three frames a minute on the anchor's channel for
 its whole TTL, where the anchor hears its other nodes' beats
 (roadmap D54). A message that finds no live neighbour at all waits
 for one, routed again every 60 s, until its time runs out
-([receiving DATA](#receiving-data)): a carried node loses its neighbours by going dark
+([time to live](#time-to-live)): a carried node loses its neighbours by going dark
 and finds them again. The application is not told ([addresses](#addresses)).
 
 ### Sleepy nodes alone
@@ -1973,7 +1979,7 @@ DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
-          stamped at each transmission ([receiving DATA](#receiving-data)); 240 is the 600 s TTL
+          stamped at each transmission ([time to live](#time-to-live)); 240 is the 600 s TTL
 Types 0x1, 0x2, 0x4, 0xA and 0xE are unused; nodes reject them like any unknown type.
 Type 0x6 is reserved for the bench frames of the
 firmware's measurement console (`bark-fw/README.md`); nodes reject it like any

@@ -466,7 +466,7 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
 }
 
 /// A sleepy node's own message with no live neighbour waits for one
-/// until its time runs out (spec "Receiving DATA").
+/// until its time runs out (spec "Time to live").
 #[test]
 fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
     let mut h = Harness::powered(vec![node(0.0, true, 41)]);
