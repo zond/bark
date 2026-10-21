@@ -547,15 +547,13 @@ impl Sim {
                 },
             );
             if let (Some(p), Some((false, len))) = (heartbeat, before) {
-                use bark_proto::tables::neighbours::NEIGHBOURS;
-                if len >= NEIGHBOURS {
-                    let added = self.table_holds(b, p).0;
-                    let c = &mut self.metrics.nodes[b as usize].core;
-                    if added {
-                        c.evictions += 1;
-                    } else {
-                        c.rejections += 1;
-                    }
+                // Added without growing the table, it took a place.
+                let (added, after) = self.table_holds(b, p);
+                let c = &mut self.metrics.nodes[b as usize].core;
+                if !added {
+                    c.rejections += 1;
+                } else if after <= len {
+                    c.evictions += 1;
                 }
             }
         }

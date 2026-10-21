@@ -767,6 +767,12 @@ fn node_id(i: u32) -> NodeId {
     NodeId((i + 1).wrapping_mul(0x9e37_79b1).to_be_bytes())
 }
 
+/// The 45° sector of the bearing to `p`, north first and clockwise.
+fn sector(p: bark_proto::geo::Point) -> usize {
+    let deg = p.east.atan2(p.north).to_degrees().rem_euclid(360.0);
+    ((deg / 45.0) as usize).min(crate::metrics::SECTORS - 1)
+}
+
 /// A node ID as a map key.
 pub(crate) fn key(id: NodeId) -> u32 {
     u32::from_be_bytes(id.0)
@@ -1632,6 +1638,7 @@ impl Sim {
                     self.sample_anchors();
                     self.sample_anchorless();
                     self.sample_dense();
+                    self.sample_tables();
                 }
                 let c = self.cadence.expect("sampling on");
                 self.push(self.now + c, Ev::Sample);
@@ -2040,6 +2047,103 @@ impl Sim {
             .dense
             .get_or_insert_with(Default::default);
         d.unknown.push((t, none, faint));
+    }
+
+    /// Sample what the neighbour tables hold (`metrics::Tables`), for the
+    /// JSON summary.
+    pub fn tables_on(&mut self) {
+        self.metrics.research.tables = Some(crate::metrics::Tables {
+            relays: vec![(0, 0, 0); self.n_relays as usize],
+            ..Default::default()
+        });
+    }
+
+    /// Once a minute after the settle time, with `tables_on`: what the
+    /// running relays' tables hold; every five minutes, whether each
+    /// sleepy node's anchor is the strongest relay it hears.
+    fn sample_tables(&mut self) {
+        use bark_proto::tables::neighbours::Neighbours;
+        if self.metrics.research.tables.is_none() || self.now < self.settle {
+            return;
+        }
+        let mut t = self.metrics.research.tables.take().expect("on");
+        for i in 0..self.n_relays as usize {
+            let r = &self.relays[i];
+            if !self.nodes[i].alive || r.booting() {
+                continue;
+            }
+            let floor = r.busy().noise_floor_dbm();
+            let e = &mut t.relays[i];
+            e.0 += 1;
+            for n in r.neighbours() {
+                let margin = Neighbours::has_margin(n, floor);
+                e.1 += 1;
+                e.2 += u64::from(margin && n.relay());
+                let s = sector(n.local);
+                t.sectors[0][s] += 1;
+                t.sectors[1][s] += u64::from(margin);
+            }
+        }
+        if (self.now.as_micros() / SERIES_EVERY_US).is_multiple_of(5) {
+            self.sample_anchor_fit(&mut t);
+        }
+        self.metrics.research.tables = Some(t);
+    }
+
+    /// See `sample_tables`.
+    fn sample_anchor_fit(&self, t: &mut crate::metrics::Tables) {
+        let n = self.n_relays as usize;
+        if self.relays.len() == n {
+            return;
+        }
+        // Per sleepy node, the strongest running relay it hears and its
+        // anchor's link, dBm.
+        let mut best = vec![(f32::NEG_INFINITY, u32::MAX); self.relays.len() - n];
+        let mut anchor = vec![f32::NEG_INFINITY; self.relays.len() - n];
+        let anchors: Vec<Option<u32>> = (n..self.relays.len())
+            .map(|s| self.attached_relay(s as u32))
+            .collect();
+        for a in 0..n {
+            if !self.nodes[a].alive || self.relays[a].booting() {
+                continue;
+            }
+            for l in self.links.row(a as u32) {
+                let Some(k) = (l.rx as usize).checked_sub(n) else {
+                    continue;
+                };
+                if (l.base_dbm as f64) < self.sens_dbm {
+                    continue;
+                }
+                if l.base_dbm > best[k].0 {
+                    best[k] = (l.base_dbm, a as u32);
+                }
+                if anchors[k] == Some(a as u32) {
+                    anchor[k] = l.base_dbm;
+                }
+            }
+        }
+        for k in 0..best.len() {
+            let s = n + k;
+            let walks = self.walks.as_ref().and_then(|w| w.walker(s as u32));
+            if anchors[k].is_none()
+                || !self.nodes[s].alive
+                || !self.nodes[s].present
+                || walks.is_some()
+            {
+                continue;
+            }
+            let (dbm, b) = best[k];
+            if b == u32::MAX {
+                continue;
+            }
+            let id = self.relays[b as usize].id();
+            let held = self.relays[s].neighbours().any(|e| e.id == id);
+            t.anchors.0 += 1;
+            t.anchors.1 += u64::from(anchors[k] == Some(b));
+            t.anchors.2 += u64::from(held);
+            let gap = (dbm - anchor[k]).max(0.0);
+            t.anchor_gap_db[(gap as usize).min(30)] += 1;
+        }
     }
 
     /// Once a minute after the settle time: sleepy nodes whose anchor would

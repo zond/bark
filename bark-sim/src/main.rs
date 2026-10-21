@@ -1,15 +1,16 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
 //! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE] [--message-minutes FILE]`. Prints a short table; writes the JSON summary, the CSV
+//! [--series FILE] [--message-minutes FILE] [--tables]`. Prints a short table; writes the JSON summary, the CSV
 //! time series, the per-message CSV, the per-node event trace, the links
-//! between relays and the per-minute series of every relay when asked.
+//! between relays and the per-minute series of every relay when asked;
+//! `--tables` adds what the neighbour tables hold to the JSON summary.
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--tables]";
 
 fn main() -> ExitCode {
     match run() {
@@ -26,6 +27,7 @@ fn run() -> Result<(), String> {
     let mut path = None;
     let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
     let (mut messages, mut links, mut series, mut minutes) = (None, None, None, None);
+    let mut tables = false;
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -53,6 +55,7 @@ fn run() -> Result<(), String> {
             "--links" => links = Some(PathBuf::from(val("--links")?)),
             "--series" => series = Some(PathBuf::from(val("--series")?)),
             "--message-minutes" => minutes = Some(PathBuf::from(val("--message-minutes")?)),
+            "--tables" => tables = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -83,6 +86,9 @@ fn run() -> Result<(), String> {
     }
     if minutes.is_some() {
         sim.message_minutes_on();
+    }
+    if tables {
+        sim.tables_on();
     }
     let built = t0.elapsed();
     sim.run();

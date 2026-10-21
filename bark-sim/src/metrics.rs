@@ -256,10 +256,10 @@ pub struct CoreCounts {
     /// would have started (spec "Delivery queue").
     pub deliveries_late: u64,
     /// Heartbeats from a relay not in the table that took the place of
-    /// one that was (D12).
+    /// one that was (spec "Neighbour table").
     pub evictions: u64,
-    /// Heartbeats from a relay not in the full table that found no place
-    /// (D12).
+    /// Heartbeats from a relay not in the table that found no place
+    /// (spec "Neighbour table").
     pub rejections: u64,
 }
 
@@ -869,7 +869,36 @@ pub struct Research {
     /// density does to the relays' tables; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dense: Option<Dense>,
+    /// What the neighbour tables hold, when asked for (`Sim::tables_on`);
+    /// absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tables: Option<Tables>,
 }
+
+/// What the neighbour tables hold (`Research::tables`), sampled once a
+/// minute after the settle time.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Tables {
+    /// Per relay: the samples it was running in, and its entries and its
+    /// entries that are relays with margin, summed over them.
+    pub relays: Vec<(u32, u64, u64)>,
+    /// Over the same samples, the entries of every relay's table by the
+    /// sector of the bearing to them, north first and clockwise, and
+    /// those with margin.
+    pub sectors: [[u64; SECTORS]; 2],
+    /// Every five minutes, of the sleepy nodes with an anchor that do not
+    /// walk or ride: how many,
+    /// whose anchor is the strongest relay they hear (base link above
+    /// sensitivity, before fading), and whose strongest is in their
+    /// neighbour table.
+    pub anchors: (u64, u64, u64),
+    /// Of the same, how far the anchor's base link is below the strongest
+    /// one, by whole dB from 0 to 29, 30 and more in the last.
+    pub anchor_gap_db: [u64; 31],
+}
+
+/// The sectors of [`Tables::sectors`].
+pub const SECTORS: usize = 8;
 
 /// What dense relays do to the relays' neighbour tables
 /// (`Research::dense`).
