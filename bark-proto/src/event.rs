@@ -101,13 +101,13 @@ pub enum AppCommand<'a> {
         payload: &'a [u8],
     },
     /// Set own position from a map point set in the app, which wins over
-    /// GPS (spec "Position and time"): the node takes it and is fixed.
+    /// GPS (spec "Position"): the node takes it and is fixed.
     SetPosition {
         /// New position.
         position: Position,
     },
     /// A GPS fix that passed the driver's plausibility checks (spec
-    /// "Position and time"). A sleepy node or a carried one takes it; a
+    /// "Position"). A sleepy node or a carried one takes it; a
     /// fixed node keeps its position and counts it toward turning carried.
     Fix {
         /// Where the fix puts the node.
@@ -347,9 +347,9 @@ pub enum Trace {
     },
     /// A fixed node had a fix farther than the GPS allowance from its
     /// position, the first of a run: it flushes its delivery queue (spec
-    /// "Position and time").
+    /// "Position").
     FarFix,
-    /// The node turned carried, or fixed again (spec "Position and time").
+    /// The node turned carried, or fixed again (spec "Position").
     Carried {
         /// Carried now; else fixed.
         carried: bool,

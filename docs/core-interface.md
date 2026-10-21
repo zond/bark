@@ -32,7 +32,7 @@ behaviour is a function of its config, its seed and its event sequence.
 ## 2. Time
 
 `Instant` and `Duration` are integer microseconds; there is no other time unit to mix
-them up with. `now` never decreases across calls on one core. Different cores have unrelated clocks; the protocol has no network time (spec "Position and time").
+them up with. `now` never decreases across calls on one core. Different cores have unrelated clocks; the protocol has no network time (spec "Position").
 
 Wakeups: after every `handle` the driver reads `next_wakeup()`. When its clock reaches that
 instant it calls `handle(Event::Wakeup, now)`. Late is allowed; early is not. The core keeps
@@ -140,7 +140,7 @@ a second outstanding excursion: the core ignores it, and the test and simulator 
 panic or never offer it.
 
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
-over GPS: the node takes it and is fixed (spec "Position and time"). `AppCommand::Fix` hands
+over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::Fix` hands
 the core a GPS fix that passed the driver's plausibility checks; the driver hands each one,
 and none while a map point is set. A sleepy node takes each fix; a node that is not sleepy
 keeps its position while it is fixed and decides from the fixes whether it is carried, and
@@ -219,7 +219,7 @@ action at a time, and the core never allocates.
 
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
-- Short position (spec "Position and time", roadmap D14): the low 16 bits of the latitude count, then
+- Short position (spec "Positions on the wire", roadmap D14): the low 16 bits of the latitude count, then
   the low 16 bits of the longitude count, big-endian (`ShortName` in `position.rs`). The
   receiver rebuilds the full position from its own as the one candidate within half a
   period (32 768 counts) on each axis; both axes wrap as their wire fields do.

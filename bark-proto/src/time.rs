@@ -1,6 +1,6 @@
 //! Local monotonic time in integer microseconds.
 //!
-//! The protocol has no network time (spec "Position and time"); every node has its own
+//! The protocol has no network time (spec "Position"); every node has its own
 //! clock and nothing depends on two clocks agreeing. One integer unit
 //! everywhere, so that a millisecond can never be added to a tick.
 

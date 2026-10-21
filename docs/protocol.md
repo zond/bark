@@ -333,87 +333,59 @@ of the same interference sees the same ranking and they all jump together.
 
 ---
 
-## Position and time
+## Position
 
-**Position.** A node's position comes from its GPS (L76K), which is
-used for position only, unless the fix is judged unreliable or the app
-sets a fixed map point. A map point set in the app wins over GPS; a
-rooftop relay without a sky view of its own uses one. A relay does not
-move: it keeps its first accepted fix, or its map point, for as long as it
-runs, so no later fix, true or spoofed, moves it (roadmap D63). A sleepy
-node is carried and takes each fix that passes a plausibility check: it
-is no farther from the last accepted fix than the node can have moved
-since, it is consistent with the neighbours heard, and the satellite
-signal-to-noise C/N0 is sane; failing one is a sign of jamming or
-spoofing, and an unreliable fix is not used. A spoofed fix that drifts
-slower than the node can move passes the first check; the checks are
-expected to grow. Two fixes of a node that has not moved may differ by
-50 m, the allowance the [owner](#owner) rule and the move check of
-[relay choice](#relay-choice) use. A node whose position changes heartbeats the new one
+A node's position comes from its GPS (L76K), unless the fix is
+unreliable or the app sets a map point, which wins over GPS; a rooftop
+relay with no sky view of its own uses one. A fix is unreliable if it is
+farther from the last accepted fix than the node can have moved since,
+if it is inconsistent with the neighbours heard, or if the satellite
+signal-to-noise ratio (C/N0) is not sane: each is a sign of jamming or
+spoofing. A spoofed fix that drifts slower than the node can move passes
+the first check; the checks are expected to grow. Two fixes of a node
+that has not moved may differ by 50 m, the allowance the [owner](#owner)
+rule and the move check of [relay choice](#relay-choice) use. A node
+whose position changes heartbeats the new one
 ([node identity](#node-identity)).
 
-**Fixed and carried.** A node that is not
-sleepy is fixed or carried. Fixed, it keeps its first fix or its map
-point, as above; D63 keeps the first fix for fixed nodes only. An
-accepted fix farther than the 50 m allowance from its position is a
-**far fix**. At the first far fix of a run the node flushes its
-delivery queue ([delivery queue](#delivery-queue)): a node that is leaving
-will soon hear none of its sleepy nodes' beats. After far fixes for 72 s
-with none within the allowance between, it is **carried**. 72 s is how
-long a walker at 1.4 m/s, a common walking pace, takes to cross the
-whole width of the allowance, 2 × 50 m, in whole fixes of the L76K's one
-a second: a still node's fix that strays past the allowance comes back
-within it, one that walks keeps going. A carried node takes each fix
-that passes the checks, as a sleepy node does, so its heartbeats carry
-where it is and its neighbours route to it there; it sets the carried
-flag ([packet formats](#packet-formats)), owns nothing by position
-([owner](#owner)), and is nobody's anchor ([relay choice](#relay-choice)).
-It holds no mail because nobody's mail could rely on it: it would leave
-its sleepy nodes behind, and nobody can address it at a position it
-will keep, so its own senders must learn where it is at the app layer
-([addresses](#addresses)). It is fixed again only once its fixes have
-stayed within the allowance of one place for four hours, and keeps the
-fix it has then. The way back is much slower than the way in: a node
-that stopped for less would take mail for its new sleepy nodes and strand
-it when it moves on, while a node carried by mistake loses little by
-staying so, since its sleepy nodes have anchored elsewhere already
-(roadmap D70). A map point set in the app makes
-the node fixed at once. A node that turns
-sleepy is fixed again (roadmap D71): a sleepy node takes each fix, and plugged in, it
-keeps the fix it has then. A spoofed fix that drifts slower than the node
-can move makes a relay carried, where D63 kept it out: the relay then
-gives up its sleepy nodes and is routed to where the spoofer says.
+**Fixed and carried.** A sleepy node takes each fix that passes the
+checks. A relay is fixed: it keeps its first accepted fix, or its map
+point, so that no later fix, true or spoofed, moves it (roadmap D63). An
+accepted fix farther than the allowance from that position is a **far
+fix**. At the first far fix of a run the relay flushes its delivery
+queue ([delivery queue](#delivery-queue)): a node that is leaving will soon hear
+none of its sleepy nodes' beats. After far fixes for 72 s with none
+within the allowance between, it is carried. 72 s is how long a walker
+at 1.4 m/s, a common walking pace, takes to cross the allowance's whole
+width, 2 × 50 m, in whole fixes of the L76K's one a second: a still
+node's stray fix comes back within the allowance, a walker's keeps
+going.
 
-**Encoding.** Positions on the wire are WGS-84 latitude and longitude as fixed point, 25 + 26 bits in
-7 bytes, ≈0.6 m. Routing needs distances, not coordinates: each node
-converts every position it handles into metres on a flat plane centred on
-itself, `Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
-`cos(lat_self)` a per-node constant. The error grows with
-Δlat · tan(lat): at 50° N it is 0.1% at 5 km and 0.4% at 20 km, enough to
-reorder only near-ties between candidate hops. Every node knows its own
-position; nothing is estimated cooperatively.
+A carried node takes each fix as a sleepy node does, so its heartbeats
+say where it is and its neighbours route to it there. It sets the
+carried flag ([packet formats](#packet-formats)), owns nothing by
+position ([owner](#owner)) and is nobody's anchor
+([relay choice](#relay-choice)). It holds no mail, since nobody's mail
+can rely on it: it would leave its sleepy nodes behind, and it has no
+position at which anyone can address it for long, so its senders learn
+where it is at the app layer ([addresses](#addresses)).
 
-The position is global: one firmware and one app everywhere, no
-per-deployment origin. A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs
-49 bits, so 51 bits in 7 bytes is within 2 bits of the minimum;
-decimetre precision would need 56 bits. Plain fixed-point latitude and
-longitude keeps distance math trivial.
+A carried node is fixed again once its fixes have stayed within the
+allowance of one place for four hours, and keeps the fix it has then.
+The way back is much slower than the way in: a node that stopped for
+less would take mail for new sleepy nodes and strand it when it moved
+on, while a node carried by mistake loses little, since its sleepy
+nodes have anchored elsewhere already (roadmap D70). A map point makes
+a node fixed at once. A node that turns sleepy is no longer carried;
+plugged in again, it is fixed at the fix it has then (roadmap D71).
 
-**Short position.** The heartbeat carries a node's position in 4 bytes:
-the low 16 bits of its latitude count followed by the low 16 bits of its
-longitude count, big-endian. One count is 180° / 2²⁵ ≈ 0.6 m, and the
-low 16 bits repeat every 65 536 counts: 39 km of latitude, and
-39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
-hearing radius (≈3 km, [physical layer](#physical-layer)). A receiver rebuilds the full
-position as the one candidate within half a period of its own on each
-axis. That holds down to latitudes near 80° N or S, where the east-west
-period shrinks toward the hearing radius. DATA `dst_pos` stays 7 bytes
-because in a large city a node may be more than half a period from the
-destination (roadmap D14).
+A spoofed fix that drifts slower than the node can move makes a relay
+carried, where D63 kept it out: the relay then gives up its sleepy
+nodes and is routed to where the spoofer says.
 
-**Time.** No network time. GPS time is never used. All timers are local
-monotonic. Nothing in the protocol depends on two nodes agreeing on a
-clock.
+**Time.** GPS is used for position only, never for time, and there is
+no network time: every timer is local and monotonic, and nothing in the
+protocol depends on two nodes agreeing on a clock.
 
 ---
 
@@ -426,10 +398,10 @@ the long preamble on every channel in turn ([sleepy nodes alone](#sleepy-nodes-a
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x8, with flags in its low bits ([packet formats](#packet-formats)): 0x9 from a node that is sleepy ([beats](#beats)), 0xB from one that is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)); 0x4 on any of these from a node that is carried ([position and time](#position-and-time)) |
+| type | 4 | 0x8, with flags in its low bits ([packet formats](#packet-formats)): 0x9 from a node that is sleepy ([beats](#beats)), 0xB from one that is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)); 0x4 on any of these from a node that is carried ([position](#position)) |
 | channel | 4 | home channel index 0–12 |
 | id | 32 | the node's ID ([node identity](#node-identity)) |
-| position | 32 | the node's short position ([position and time](#position-and-time)) |
+| position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
 9 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)): at coding rate 4/5 the ninth
 byte fits in the eighth's block of symbols, so 9 bytes take the 20
@@ -469,7 +441,7 @@ heard before it expects the anchor's next slot does not move that time
 A node also heartbeats outside its slots, on
 its home channel (roadmap D71), with the ordinary preamble and listen-before-talk as
 any heartbeat, when its sleepy or carried flag changes, or, if it is not
-sleepy, its map point ([position and time](#position-and-time)). Its
+sleepy, its map point ([position](#position)). Its
 neighbours on that channel then address it anew at once instead of a
 rotation later, and an old anchor that holds mail for a node turned
 relay hears it as a relay and hands the mail over
@@ -480,7 +452,7 @@ know it, unless its first beat goes there anyway
 changes before it goes, and the flags change seldom: the sleepy flag is
 set only at the end of a grace, an hour on battery
 ([sleepy nodes](#sleepy-nodes)), and the carried flag is cleared only after
-four hours still ([position and time](#position-and-time)). A
+four hours still ([position](#position)). A
 position that changes with each fix, a carried node's, is not announced:
 its slots carry it every T, and a heartbeat for it each T would double a
 walking relay's heartbeats, for no message more delivered (roadmap D71).
@@ -525,7 +497,7 @@ matters only among the nodes one node keeps in its tables, 64 neighbours
 and 256 sleepy nodes ([heard table](#heard-table)), 1.2 × 10⁻⁵.
 
 The ID, not the position, is a node's identity: a node whose position
-changes keeps its ID ([position and time](#position-and-time)). Its address changes
+changes keeps its ID ([position](#position)). Its address changes
 with it ([addresses](#addresses)), and so does that of every sleepy node anchored to it.
 Two nodes at one position are two nodes.
 
@@ -536,7 +508,7 @@ Per node, up to 64 entries, by node ID:
 | Field | Content |
 |---|---|
 | id | from its heartbeat; the entry key |
-| position | from its heartbeat, rebuilt from the short position ([position and time](#position-and-time)), and its local form for distances |
+| position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's type ([packet formats](#packet-formats)): a sleepy neighbour is a next hop only as a last resort, sent to with the long preamble ([next hop](#next-hop)); an anchorless one is no anchor ([relay choice](#relay-choice)) |
 | carried | from its heartbeat's type: a next hop like any relay, but no anchor ([relay choice](#relay-choice)), and it does not keep this node from owning a destination it is nearer ([owner](#owner)) |
 | channel | the channel to transmit to this neighbour on: from its heartbeat, or from `aux` of a DATA packet it sent ([packet sender](#packet-sender)), whichever came last |
@@ -1053,7 +1025,7 @@ the anchor is live ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 The **order** is: neighbours with margin ([neighbour table](#neighbour-table)) before those
 without; within each, neighbours that are not demoted before demoted
 ones; within each, distance to the destination position in the local
-plane ([position and time](#position-and-time)), nearest first; equal distances are ordered by
+plane ([positions on the wire](#positions-on-the-wire)), nearest first; equal distances are ordered by
 ID. The relay sends to the first candidate. If there is none but
 neighbours that are only banned, the message waits until the earliest
 ban ends and is routed again then ([overload waits](#overload-waits)). If there is none at all,
@@ -1286,7 +1258,7 @@ A node **owns** a message's destination when:
 - its own position is `dst_pos`; or
 - it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
   closer to it than itself. The relay at that position has then probably
-  died or moved; 50 m is the distance [position and time](#position-and-time) allows between
+  died or moved; 50 m is the distance [position](#position) allows between
   two GPS fixes of a node that has not moved, so a relay this close is,
   for the radio, in the same place.
 
@@ -1295,7 +1267,7 @@ owner, and the search goes on ([next hop](#next-hop)). A sleepy node owns only
 what is addressed to its ID: it holds mail for nobody ([sleepy nodes](#sleepy-nodes)),
 so it sends anything else on, and a sleepy neighbour closer to `dst_pos`
 does not keep a node from owning it. So too
-a carried node ([position and time](#position-and-time)): its position
+a carried node ([position](#position)): its position
 moves with it and is nobody's address to hold mail at, and a carried
 neighbour closer to `dst_pos` does not keep a node from owning it.
 
@@ -1454,7 +1426,7 @@ same time ([receiving DATA](#receiving-data)).
 its role from its power at boot, at once (roadmap D71): nobody depends on it yet. A
 sleepy node plugged in is a relay at once: it leaves its anchor, its
 address is its own position, which it keeps as a fixed node does
-([position and time](#position-and-time)), and it heartbeats as a relay,
+([position](#position)), and it heartbeats as a relay,
 the first time at once ([heartbeat](#heartbeat)). Its old anchor hears
 that heartbeat on its own channel, the node's home until then, and
 hands the node what it holds for it ([delivery queue](#delivery-queue)).
@@ -1555,7 +1527,7 @@ nodes at the edge of a relay's reach switch to and fro (roadmap D51). It also ch
 it last chose than takes the anchor's signal down by the switching
 margin, `r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
 scenarios' path-loss exponent of 3.6, and no less than 50 m, what two GPS
-fixes of a node that has not moved may differ by ([position and time](#position-and-time)).
+fixes of a node that has not moved may differ by ([position](#position)).
 Between its windows a node hears no relay's heartbeat ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)), so it switches by the
 rule above mainly while it checks. A node back from the dark keeps its
 anchor: a new one would strand the messages sent to the old address
@@ -1752,7 +1724,7 @@ mail waits there until its place is needed, and the sender is not told
 ([addresses](#addresses)).
 
 **The flush.** From its first far fix
-([position and time](#position-and-time)), or the end of its grace on
+([position](#position)), or the end of its grace on
 battery ([sleepy nodes](#sleepy-nodes), roadmap D71), a node sends each message in its
 delivery queue once, as DATA with the long preamble on the channel its
 node listens on, from the heard table, or its own home if it has not
@@ -1888,7 +1860,7 @@ Common mesh mechanisms left out, and why.
 | Neighbour lists in heartbeats and a network-wide node table | 9-byte heartbeat of ID, short position and channel; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
 | Sequence numbers in heartbeats | none | they exist to age shared tables; without those they carry nothing |
 | Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
-| Cooperative position estimation | every node knows its position from GPS or a map point set in the app | [position and time](#position-and-time) |
+| Cooperative position estimation | every node knows its position from GPS or a map point set in the app | [position](#position) |
 | Heartbeats on one fixed channel | rotating channel, a fixed 5–15 s interval per node | [heartbeat](#heartbeat) |
 | Addressing by ID with a lookup | position + node ID; the owner resolves the ID locally | [forwarding](#forwarding) |
 
@@ -1977,9 +1949,9 @@ Common proposals that do not fit:
 ## Packet formats
 
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
-channel in heartbeats and type-specific flags elsewhere. Positions are
-7 bytes: 25-bit latitude, 26-bit longitude, 5 spare bits; the heartbeat
-carries the 4-byte short position ([position and time](#position-and-time)). A node ID is 4
+channel in heartbeats and type-specific flags elsewhere. A position is
+7 bytes, the heartbeat's short position 4
+([positions on the wire](#positions-on-the-wire)). A node ID is 4
 bytes ([node identity](#node-identity)). The LoRa hardware CRC covers everything.
 
 ```
@@ -2032,7 +2004,7 @@ came from: no receiver needs to know.
   anchor to miss.
 - **Carried** (roadmap D70): "I move. I take each GPS fix
   and hold mail for nobody." A node that is not sleepy sets it once it is
-  carried ([position and time](#position-and-time)). Others do not anchor
+  carried ([position](#position)). Others do not anchor
   to it ([relay choice](#relay-choice)) and do not count it as a nearer
   owner ([owner](#owner)); it is a next hop like any relay. The flag says
   what the node is, not what it asks: it is valid with or without the
@@ -2052,6 +2024,33 @@ its home channel, which is where the ACK goes; routing uses them to know
 where a message came from ([routing](#routing)). The payload is at most
 255 − 22 = 233 bytes; the sender's address is inside it, encrypted
 ([phone link](#phone-link)).
+
+### Positions on the wire
+
+A position is WGS-84 latitude and longitude in fixed point, 25 + 26 bits
+and 5 spare in 7 bytes, ≈0.6 m, the same everywhere on Earth: one firmware and one
+app, with no per-deployment origin. A 1 m grid over the Earth's
+5.1 × 10¹⁴ m² needs 49 bits, so 51 bits is within 2 bits of the minimum;
+decimetres would need 56.
+
+Routing needs distances, not coordinates: each node converts every
+position it handles into metres on a flat plane centred on itself,
+`Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
+`cos(lat_self)` a per-node constant. The error grows with
+Δlat · tan(lat): at 50° N it is 0.1 % at 5 km and 0.4 % at 20 km, enough
+to reorder only near-ties between candidate hops.
+
+**Short position.** The heartbeat carries a node's position in 4 bytes:
+the low 16 bits of its latitude count, then the low 16 bits of its
+longitude count, big-endian. One count is 180° / 2²⁵ ≈ 0.6 m, so the low
+16 bits repeat every 65 536 counts: 39 km of latitude and
+39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
+hearing radius (≈3 km, [physical layer](#physical-layer)). A receiver
+rebuilds the full position as the one candidate within half a period of
+its own on each axis. That holds to latitudes near 80°, where the
+east-west period shrinks toward the hearing radius. DATA `dst_pos` stays
+7 bytes because in a large city a node may be more than half a period
+from the destination (roadmap D14).
 
 ---
 
@@ -2117,7 +2116,7 @@ source (a fourth board is fine), a USB logic/UART sniffer for timing.
 | O13 | A one-round question from an owner to its neighbours, whether they hear a node | resolved 2026-10-18: not built, removed from [owner](#owner); an owner that does not hear the node queues for it |
 | O14 | Hidden terminals: the 0–50 ms retry backoff was shorter than a full frame (139 ms), so two senders that cannot hear each other and collided once collided again on every retry | resolved: roadmap D22, [retry wait](#retry-wait) |
 | O15 | A relay at its duty-cycle cap refuses only when its send queue is full, and its queue then drains at the bucket's rate: a packet can wait ≈23 s there (with three frames a message, 72 s median in the three-hour test) where the sender could have chosen another next hop at once. Whether to bound the queue by its drain time at the bucket's rate, and how | resolved: roadmap D29 rule 1, [receiving DATA](#receiving-data), [send queue](#send-queue) |
-| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position and time](#position-and-time)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
+| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([nodes](#nodes), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
 
 ---

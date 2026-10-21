@@ -82,7 +82,7 @@ lower power.
   fewer relays turned away by full tables, the fault found above, which
   candidate 4 mends at no airtime: 99.6 %. The heartbeat no longer has
   spare bits: since it carries the 4-byte short
-  position (spec "Position and time") the power takes a tenth byte, 1.28
+  position (spec "Positions on the wire") the power takes a tenth byte, 1.28
   ms on every heartbeat. With power lowered by nothing, the field has
   nothing to serve.
 - **Standing down is neutral.** Where it settles at 5317 relays and
@@ -237,7 +237,7 @@ With every node a relay, 20 269 relays, target 16:
 ### Moving relays, 5317 relays, 1004 of them walking
 
 A walking relay takes a fix at each heartbeat, through the driver's
-checks (spec "Position and time"). Keeping the first fix is roadmap D63:
+checks (spec "Position"). Keeping the first fix is roadmap D63:
 past 50 m from it every fix is refused, and the relay heartbeats where it
 was. Taking each fix lets it through when it is within 50 m of the last.
 The third run is a city of the same make with the walkers' nodes sleepy:

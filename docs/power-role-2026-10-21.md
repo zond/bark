@@ -81,7 +81,7 @@ recommended.
 | Firmware: one image, the role from USB power | The `sleepy` feature goes; every board runs `Relay` (167 008 B; the image 319 KiB of flash and 171 KiB of RAM, 84 KiB left for the stack, against 317 / 170 KiB for the old relay image). `bark-fw/src/power.rs` reads `USBREGSTATUS.VBUSDETECT` again at each POWER interrupt, bound beside the USB driver's handler; `bark-driver`'s `App::power()` is reported after the boot wakeup and whenever `App::ready` wakes for a change. The LED blinks and the 32 MHz crystal runs only on USB. `BARK_ON_BATTERY=1` keeps a board sleepy on the bench's USB. `bark-fw/README.md`, `scripts/measure.md` step 5, `core-interface.md` §1, §2, §4, §5, §6. |
 | Simulator: power that switches, and what the switches do | `[power]` (`walkers`, `fraction`, `usb_s`, `battery_s`), `[protocol] grace_ms`, `research.power`, `scenarios/dense-power.toml`; a node on USB does not go dark; a sender learns a switching node's address from its core. |
 | Core: no heartbeat for a position a fix changes (measured, not adopted) | The position part of the heartbeat on change goes, with its bound; a flag or the map point still sends one. |
-| Spec | Spec "Hardware", "Heartbeat", "Position and time", "Sleepy nodes", "Relay choice", "Delivery queue", "Packet formats", "Phone link", "Implementation notes", the summary's "Nodes" row, open item O17. README. |
+| Spec | Spec "Hardware", "Heartbeat", "Position", "Sleepy nodes", "Relay choice", "Delivery queue", "Packet formats", "Phone link", "Implementation notes", the summary's "Nodes" row, open item O17. README. |
 
 Found on the way, before any run counted: the simulator kept a sleepy
 node's anchor bookkeeping by its index, so a node placed as a relay that

@@ -7,7 +7,7 @@
 //! `src_hop`, ACK `from` and `to`) carry it. DATA `dst_pos` locates a place
 //! and is the 7-byte form of [`Position::encode`]; the heartbeat carries
 //! the sender's position in the 4-byte short form of [`ShortName`], which
-//! the receiver rebuilds from its own (spec "Position and time", roadmap D14). DATA carries no
+//! the receiver rebuilds from its own (spec "Positions on the wire", roadmap D14). DATA carries no
 //! message ID: every node computes [`Data::msg_id`] (D15). Search state
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!

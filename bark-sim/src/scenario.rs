@@ -574,7 +574,7 @@ pub enum FaultKind {
 }
 
 /// Nodes whose GPS gives wrong fixes from a time on
-/// (spec "Position and time"), drawn from the run's seed among the relays or among the sleepy
+/// (spec "Position"), drawn from the run's seed among the relays or among the sleepy
 /// nodes that do not move, each in its own random direction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -596,7 +596,7 @@ pub struct GpsFault {
 }
 
 /// GPS fixes that go wrong, and whether a node's driver applies the
-/// plausibility checks of spec "Position and time" before handing a fix to its
+/// plausibility checks of spec "Position" before handing a fix to its
 /// core. A relay with a fault takes a fix every second, the receiver's
 /// usual output rate; one that walks, one at each heartbeat; a sleepy node
 /// one before each beat (spec "Beats"). Other nodes are handed no fixes,

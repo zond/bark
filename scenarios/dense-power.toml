@@ -10,7 +10,7 @@
 #
 # dense.toml with a fifth of the people's relays walking, as a node on a
 # power bank in a bag does (roadmap D68, docs/dense-relays-2026-10-20.md),
-# and the driver's GPS checks of spec "Position and time" on: the driver
+# and the driver's GPS checks of spec "Position" on: the driver
 # hands a node each fix that a walker at the carried speed can reach, and
 # the core decides whether a relay keeps its first fix (roadmap D63, D70).
 

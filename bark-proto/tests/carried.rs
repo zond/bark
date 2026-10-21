@@ -1,4 +1,4 @@
-//! A node that moves (spec "Position and time", roadmap D70): a fixed
+//! A node that moves (spec "Position", roadmap D70): a fixed
 //! node keeps its position until a run of far fixes makes it carried; a
 //! carried node takes each fix, flags its heartbeats, owns nothing by
 //! position, and nobody anchors to it; the first far fix flushes the

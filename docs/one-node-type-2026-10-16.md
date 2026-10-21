@@ -453,7 +453,7 @@ What the rebase and the review changed:
   relays are, the village delivers every text again.
 - **Position.** A node's position is its GPS fix unless the fix fails
   the plausibility checks or the app sets a map point; a relay's no
-  longer freezes at its first fix (spec "Position and time").
+  longer freezes at its first fix (spec "Position").
 
 Measured as before, three simulators paired by seed: **main**
 (`994e1ce`, with the same count of lost frames that had a presence frame

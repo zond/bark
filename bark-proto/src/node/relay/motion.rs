@@ -1,4 +1,4 @@
-//! A node that moves (spec "Position and time", roadmap D70).
+//! A node that moves (spec "Position", roadmap D70).
 //!
 //! A sleepy node takes each GPS fix the driver hands it. A node that is not
 //! sleepy is fixed or carried. Fixed, it keeps its first fix or its map

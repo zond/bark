@@ -2642,7 +2642,7 @@ impl Sim {
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
-    /// the checks on (spec "Position and time"), a fix farther from the
+    /// the checks on (spec "Position"), a fix farther from the
     /// last one handed to the core than the node can have moved since,
     /// 50 m for a relay and the carried speed's worth more for a sleepy
     /// node, or farther than the longest hearing radius from every
@@ -2683,7 +2683,7 @@ impl Sim {
         let k = usize::from(n >= self.n_relays);
         if self.gps.checks {
             // Two fixes of a node that has not moved may differ by this
-            // much (spec "Position and time").
+            // much (spec "Position").
             const STILL_M: f64 = 50.0;
             // The longest hearing radius, rooftop to rooftop (spec
             // "Physical layer").

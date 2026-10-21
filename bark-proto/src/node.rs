@@ -97,7 +97,7 @@ pub struct Config {
     pub home_override: Option<Channel>,
     /// How long the fixes of a carried node must stay within the GPS
     /// allowance of one place before it is fixed again
-    /// (spec "Position and time": 4 h, the longer of the two measured,
+    /// (spec "Position": 4 h, the longer of the two measured,
     /// roadmap D70). Long, so that a node that stops for a while does not
     /// take mail it would strand when it moves on.
     pub fixed_after: Duration,
@@ -151,7 +151,7 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 
 /// A relay within this distance of a destination that is not its own
 /// position, with no live, undemoted neighbour closer, owns it
-/// (spec "Owner"): 50 m is what spec "Position and time" allows between two GPS fixes of a relay that
+/// (spec "Owner"): 50 m is what spec "Position" allows between two GPS fixes of a relay that
 /// has not moved, so the addressed relay and this one are, for the radio,
 /// in the same place.
 pub const OWNER_RADIUS_M: f32 = 50.0;
@@ -167,7 +167,7 @@ pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How long a fixed node's fixes must all be farther than the GPS
 /// allowance, [`OWNER_RADIUS_M`], from its position before it is carried
-/// (spec "Position and time"): as long as a walker takes to cross the
+/// (spec "Position"): as long as a walker takes to cross the
 /// whole width of the allowance, 2 × 50 m at [`WALKING_SPEED_M_S`],
 /// 71.4 s, in whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A
 /// still node's fix that strays past the allowance comes back within it;

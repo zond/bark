@@ -216,7 +216,7 @@ fn citations_parse() {
             "Bounds"
         ]
     );
-    assert_eq!(anchor("Position and time"), "position-and-time");
+    assert_eq!(anchor("Positions on the wire"), "positions-on-the-wire");
     assert_eq!(anchor("Hand-over"), "hand-over");
 }
 
