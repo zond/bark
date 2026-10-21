@@ -65,7 +65,7 @@
 //!    has certainly missed a heartbeat on our channel; else
 //! 3. for a relay within the owner radius (spec "Owner"), the least
 //!    recently heard relay beyond it, since the owner rule reads from the
-//!    table that no relay that near is closer (proposal, roadmap D68); else
+//!    table that no relay that near is closer (roadmap D68); else
 //! 4. nothing: the newcomer is not added.
 //!
 //! Least-recently-heard eviction fails on a rooftop relay that hears ≈270

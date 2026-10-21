@@ -57,14 +57,6 @@ Every node runs the same protocol with one runtime setting, **sleepy**.
 Carried on battery: sleepy ([sleepy nodes](#sleepy-nodes)). Plugged into USB on a
 windowsill, or in a solar box on a roof: not sleepy, a **relay**.
 
-**Proposal** (roadmap D68): a node on USB power is a relay only while it
-stays where it was: within 50 m of its first fix as a relay, what two
-fixes of a node that has not moved may differ by
-([position and time](#position-and-time)). Once a fix is farther it is
-sleepy, as a carried node is. A relay's position is how its neighbours
-reach it and its sleepy nodes' address, so one that moves strands both;
-a sleepy node's address is its anchor's, which stays.
-
 ---
 
 ## Regulatory limits
@@ -514,14 +506,10 @@ Per node, up to 64 entries, by node ID:
   newcomer replaces the least recently heard demoted entry; failing that,
   the least recently heard entry if it has not been heard for a
   worst-case rotation ([heartbeat](#heartbeat)), so it has certainly missed
-  a heartbeat on this channel; failing that, the newcomer is not added
-  (roadmap D12). **Proposal** (roadmap D68): failing those, a relay
-  within 50 m, the owner radius ([owner](#owner)), takes the place of the
-  least recently heard relay beyond it. The owner rule reads from the
-  table that no relay that near is closer to a destination; one turned
-  away would have its messages claimed by its neighbour and queued for a
-  node that never beats. With every person's node a relay, 714 per km²,
-  5.6 are within 50 m on average (714 × π × 0.05²), well within 64. Replacing the least recently heard entry outright does
+  a heartbeat on this channel; failing that, a relay within 50 m, the
+  owner radius ([owner](#owner)), takes the place of the least recently
+  heard relay beyond it (roadmap D68); failing that, the newcomer is not
+  added (roadmap D12). Replacing the least recently heard entry outright does
   not work for a rooftop relay that hears ≈270 relays ([capacity and sizing](#capacity-and-sizing)): about two
   heartbeats a second arrive on its channel, most from relays not in the
   table, so each entry would last about 64 / 2 ≈ 30 s and every failure
@@ -529,7 +517,12 @@ Per node, up to 64 entries, by node ID:
   equally arbitrary 64, keeps their failure counts, and replaces exactly
   the entries that are failing or silent. Choosing a set spread around
   the relay, which would serve greedy routing better, is left to the
-  simulator (open item O4). A sleepy node with an anchor heard when the
+  simulator (open item O4). The relay within 50 m is kept because the
+  owner rule reads from the table that no relay that near is closer to a
+  destination: one turned away would have its messages claimed by its
+  neighbour and queued for a node that never beats. With every person's
+  node a relay, 714 per km², 5.6 are within 50 m on average
+  (714 × π × 0.05²). A sleepy node with an anchor heard when the
   table is full replaces no entry: it is a last resort ([next hop](#next-hop)), and a
   relay hears the beats of every sleepy node on its channel, often more
   than 64, so making way for them would push out the neighbours it routes
