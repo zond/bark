@@ -378,23 +378,29 @@ allowance the [owner](#owner) rule and the move check of
 [relay choice](#relay-choice) use. A node whose position changes
 heartbeats the new one ([node identity](#node-identity)).
 
-**Fixed and carried.** A sleepy node takes each fix that passes the
-checks. A relay is fixed: it keeps its first accepted fix, or its map
-point, so that no later fix, true or spoofed, moves it (roadmap D63). An
-accepted fix farther than the allowance from that position is a **far
-fix**. At the first far fix of a run the relay flushes its delivery
-queue ([delivery](#delivery)): a node that is leaving will soon hear
-none of its sleepy nodes' beats. After far fixes for 72 s with none
-within the allowance between, it is carried. 72 s is how long a walker
-at 1.4 m/s, a common walking pace, takes to cross the allowance's whole
-width, 2 × 50 m, in whole fixes of the L76K's one a second: a still
-node's stray fix comes back within the allowance, a walker's keeps
-going.
+**Fixed and carried.** Every node measures from its fixes whether it is
+carried, the same way whether it is sleepy or not. A fixed node's fixes
+are compared with the place it stands: its first accepted fix, its map
+point, or the fix it had when it was last made fixed. An accepted fix
+farther than the allowance from that place is a **far fix**. After far
+fixes for 72 s with none within the allowance between, the node is
+carried. 72 s is how long a walker at 1.4 m/s, a common walking pace,
+takes to cross the allowance's whole width, 2 × 50 m, in whole fixes of
+the L76K's one a second: a still node's stray fix comes back within the
+allowance, a walker's keeps going. A sleepy node takes a fix only before
+each beat ([beats](#beats)), so for it the 72 s are two far fixes a beat
+apart.
 
-A carried node takes each fix as a sleepy node does, so its heartbeats
-say where it is and its neighbours route to it there. It sets the
-carried flag ([packet formats](#packet-formats)), owns nothing by
-position ([owner](#owner)) and is nobody's anchor
+A node that is neither sleepy nor carried keeps that place as its
+position, so that no later fix, true or spoofed, moves it (roadmap D63).
+A sleepy or carried node takes each fix as its position, so its
+heartbeats say where it is and its neighbours route to it there. At the
+first far fix of a run a relay that holds mail flushes its delivery
+queue ([delivery](#delivery)): a node that is leaving will soon hear
+none of its sleepy nodes' beats.
+
+A carried node sets the carried flag ([packet formats](#packet-formats)),
+owns nothing by position ([owner](#owner)) and is nobody's anchor
 ([relay choice](#relay-choice)). It holds no mail, since nobody's mail
 can rely on it: it would leave its sleepy nodes behind, and it has no
 position at which anyone can address it for long, so its senders learn
@@ -406,8 +412,10 @@ The way back is much slower than the way in: a node that stopped for
 less would take mail for new sleepy nodes and strand it when it moved
 on, while a node carried by mistake loses little, since its sleepy
 nodes have anchored elsewhere already (roadmap D70). A map point makes
-a node fixed at once. A node that turns sleepy is no longer carried;
-plugged in again, it is fixed at the fix it has then (roadmap D71).
+a node fixed at once. Power does not change whether a node is carried: a
+carried node plugged in is a carried relay until it has stayed four
+hours, and a fixed node plugged in keeps as its position the fix it has
+then (roadmap D72).
 
 A spoofed fix that drifts slower than the node can move passes the first
 check, and makes a relay carried where D63 kept it out: the relay then
@@ -468,10 +476,13 @@ twice before its last check, 492.9 + 100 + 2 × 200 ms. A check held for
 a reception in progress waits less, at most that frame.
 
 **Outside the slots.** A relay also heartbeats to answer a node without
-an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). And a node
-heartbeats once, on its home channel, with the ordinary preamble and
-listen-before-talk, when its sleepy or carried flag changes or, if it is
-not sleepy, its map point does ([position](#position), roadmap D71).
+an anchor ([sleepy nodes alone](#sleepy-nodes-alone)). And a node,
+sleepy or not, heartbeats once, on its home channel, with the ordinary
+preamble, the long one if it is anchorless, and listen-before-talk, when
+its sleepy or carried flag changes or, if it is not sleepy, its map
+point does ([position](#position), roadmap D71, D72). A sleepy node's,
+on its anchor's channel, is a beat to its holder, and its window follows
+([delivery](#delivery)).
 Its neighbours on that channel then address it anew at once instead of
 a rotation later, and an old anchor that holds mail for a node turned
 relay hears it as a relay and hands the mail over
@@ -484,11 +495,11 @@ It is one heartbeat for any number of changes before it goes, and the
 flags change seldom: the sleepy flag is set only after an hour's grace
 on battery ([sleepy nodes](#sleepy-nodes)), and the carried flag is
 cleared only after four hours still ([position](#position)). A position
-that changes with each fix is not announced. A carried node's slots
+that changes with each fix is not announced. A carried relay's slots
 carry it every T, and a heartbeat for each change would double a
 walking relay's heartbeats for no message more delivered (roadmap D71);
-a sleepy node is a last resort to its neighbours, and its beats carry
-its fix ([beats](#beats)). Sleeping nodes hear none of this, receiving
+a sleepy node, carried or not, is a last resort to its neighbours, and
+its beats carry its fix ([beats](#beats)). Sleeping nodes hear none of this, receiving
 duty-cycled; they learn a change at the next slot they wake for.
 
 **The 256 intervals** are 39.1 ms apart, more than two heartbeats'
@@ -536,7 +547,7 @@ Per node, up to 64 entries, by node ID:
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's type ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless one is no anchor ([relay choice](#relay-choice)) |
-| carried | from its heartbeat's type: a next hop like any relay, but no anchor and no nearer owner ([owner](#owner)) |
+| carried | from its heartbeat's type: no anchor and no nearer owner ([owner](#owner)); otherwise a next hop as its sleepy flag says |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it, each new frame counting half; says whether it has margin |
@@ -1468,10 +1479,10 @@ For a node that has gone dark the network keeps, for the delivery TTL
 stay longer while nothing needs their place
 ([delivery queue](#delivery-queue)).
 
-**Plugged in and unplugged.** At boot a node takes its role from its
+**Plugged in and unplugged.** At boot a node is sleepy or not by its
 power at once (roadmap D71): nobody depends on it yet. A sleepy node
 plugged in is a relay at once. It leaves its anchor, its address becomes
-its own position, which it keeps as a fixed node does
+its own position, which it keeps from then on unless it is carried
 ([position](#position)), and it heartbeats as a relay, the first time at
 once ([heartbeat](#heartbeat)). Its old anchor hears that heartbeat on
 the node's home channel until then, its own, and hands over what it
@@ -1495,8 +1506,9 @@ grace has flushed already, at its first far fix. Then it is sleepy. It
 holds nothing, so what the flush did not deliver is dropped, and it
 takes as its anchor the strongest relay it knows, as at the end of a
 boot listen ([relay choice](#relay-choice)), or is anchorless with none.
-Its sleepy nodes hear no more slot heartbeats of it, and leave it as an
-anchor heard sleepy ([relay choice](#relay-choice)).
+It stays carried or fixed as it was ([position](#position)). Its sleepy
+nodes hear no more slot heartbeats of it, and leave it as an anchor
+heard sleepy ([relay choice](#relay-choice)).
 
 ### Relay choice
 
@@ -1857,11 +1869,11 @@ told ([addresses](#addresses)).
 
 ### Sleepy nodes alone
 
-A sleepy node that hears no relay at the end of its boot listen
+A sleepy node that hears no fixed relay at the end of its boot listen
 ([channel at boot](#channel-at-boot)) has no anchor: it is in
-**anchorless mode**. It knows no node that is not sleepy, so no address
+**anchorless mode**. It knows no node that holds mail, so no address
 can point at a node that holds its mail and hears its beat. Instead it
-is a relay of a place without relays: it forwards at once what it is
+does a relay's work where there is none: it forwards at once what it is
 given, with the ordinary time to live, its address is its own position
 and it owns it, and a DATA for it does not wait for a beat. It receives
 duty-cycled, as every sleepy node does between its windows, and has no
@@ -1907,7 +1919,7 @@ learn where it listens from its long beats on their channels
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
 characteristics for send, receive-notify, node status and position set;
-there is no role to set ([nodes](#nodes), roadmap D71). The app owns
+there is no sleepy or carried setting ([nodes](#nodes), roadmap D71). The app owns
 identity and end-to-end encryption; the node sees opaque payloads. The
 sender's address, position and node ID, travels inside the encrypted
 payload, so that only the recipient learns where the sender is.
@@ -1997,7 +2009,7 @@ everything.
 HEARTBEAT 0x8 to 0xF: first(1) id(4) short_pos(4)                          = 9
           type bit 0 = sleepy (0x9); bit 1 = anchorless, only with sleepy
           (0xB); bit 2 = carried, with any of these (0xC, 0xD, 0xF;
-          roadmap D70); aux = home channel, 0 to 12, in all
+          roadmap D70, D72); aux = home channel, 0 to 12, in all
           four bits
 ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
           the answer to a DATA that takes it; sent on the channel in
@@ -2035,19 +2047,22 @@ came from: no receiver needs to know.
 - **Anchorless**: "I know no node I can anchor to, one that is neither
   sleepy nor carried. If you are one, tell me." A sleepy node without an
   anchor sets it, with the sleepy bit
-  ([sleepy nodes alone](#sleepy-nodes-alone)); a relay that hears it
-  answers with a long heartbeat. Nobody anchors to it. That it is reached
+  ([sleepy nodes alone](#sleepy-nodes-alone)); a fixed relay that hears
+  it answers with a long heartbeat. Nobody anchors to it. That it is reached
   with the long preamble and holds no mail follows from the sleepy bit.
   Anchorless without sleepy, 0xA, is no heartbeat: a node that listens
   all the time is a relay and has no anchor to miss.
-- **Carried** (roadmap D70): "I move. I take each GPS fix and hold mail
-  for nobody." A node that is not sleepy sets it once it is carried
-  ([position](#position)). Others do not anchor to it
+- **Carried** (roadmap D70, D72): "I move. I take each GPS fix and hold
+  mail for nobody." Any node sets it once it is carried
+  ([position](#position)), sleepy or not. Others do not anchor to it
   ([relay choice](#relay-choice)) and do not count it as a nearer owner
-  ([owner](#owner)); it is a next hop like any relay. The flag says what
-  the node is, not what it asks, so the type accepts it with or without
-  the other two, though a node that turns sleepy is no longer carried
-  ([position](#position)).
+  ([owner](#owner)); otherwise it is reached as its sleepy flag says.
+  Nothing reads it in a sleepy node's beat beyond that, since a sleepy
+  node is no anchor and no owner already.
+
+The flags say what the node is, not what it asks, so each is set on its
+own, except that anchorless needs sleepy: 0xC is a relay on the move,
+and 0xD and 0xF a sleepy node on the move, with an anchor and without.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the

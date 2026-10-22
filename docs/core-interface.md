@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -142,9 +142,9 @@ panic or never offer it.
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
 over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::Fix` hands
 the core a GPS fix that passed the driver's plausibility checks; the driver hands each one,
-and none while a map point is set. A sleepy node takes each fix; a node that is not sleepy
-keeps its position while it is fixed and decides from the fixes whether it is carried, and
-takes each fix once it is (roadmap D70). A node's address changes with its
+and none while a map point is set. Every node, sleepy or not, decides from the fixes
+whether it is carried; a sleepy or carried node takes each fix, and one that is neither
+keeps its position (roadmap D70, D72). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
