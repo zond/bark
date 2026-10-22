@@ -264,9 +264,10 @@ fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
 }
 
 /// A relay carried in its grace flushed at its first far fix: at the
-/// grace's end it turns sleepy at once, with no second flush.
+/// grace's end it turns sleepy at once, with no second flush, and stays
+/// carried: its beats are flagged sleepy and carried (roadmap D72).
 #[test]
-fn a_relay_carried_in_its_grace_turns_sleepy_without_a_second_flush() {
+fn a_relay_carried_in_its_grace_turns_sleepy_carried_without_a_second_flush() {
     let (r, s) = (0, 2);
     let (mut h, id) = holding(41);
     let sid = h.nodes[s].core.id();
@@ -291,6 +292,17 @@ fn a_relay_carried_in_its_grace_turns_sleepy_without_a_second_flush() {
     assert_eq!(long_to_s(&h), before + 1, "the far fix's flush");
     assert!(h.run_until(off + secs(GRACE + 1), |h| h.nodes[r].core.sleepy()));
     assert_eq!(long_to_s(&h), before + 1, "no second flush");
+    assert!(h.nodes[r].core.carried());
+    h.run_for(secs(5));
+    let last = h.nodes[r]
+        .sent
+        .iter()
+        .rev()
+        .find_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Heartbeat(hb)) => Some(hb),
+            _ => None,
+        });
+    assert!(last.is_some_and(|hb| hb.sleepy && hb.carried), "{last:?}");
     assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
         t,
         Trace::Dropped { msg_id, reason: DropReason::Unplugged } if *msg_id == id
@@ -315,14 +327,22 @@ fn a_lone_relay_unplugged_is_anchorless_and_plugged_in_again_a_relay() {
     assert_eq!(h.nodes[r].core.address(), pos(0.0));
 }
 
-/// A relay that turns carried heartbeats at once on its home channel with
-/// the flag; carried, its position changes with each fix, and it sends no
-/// heartbeat for that beyond its slots (spec "Heartbeat").
+/// A node that turns carried, a relay or a sleepy node, heartbeats at
+/// once on its home channel with the flag; carried, its position changes
+/// with each fix, and it sends no heartbeat for that beyond its slots or
+/// beats (spec "Heartbeat", roadmap D72).
 #[test]
 fn a_change_of_flag_heartbeats_at_once_and_a_carried_node_s_fixes_do_not() {
+    for external in [true, false] {
+        a_change_of_flag_heartbeats_at_once(external);
+    }
+}
+
+fn a_change_of_flag_heartbeats_at_once(external: bool) {
     let r = 0;
-    let mut h = Harness::powered(vec![node(0.0, true, 51)]);
+    let mut h = Harness::powered(vec![node(0.0, external, 51)]);
     h.run_until(at(400), |_| false);
+    let start = h.now;
     let home = h.nodes[r].core.home();
     let mut east = 100.0;
     while !h.nodes[r].core.carried() {
@@ -330,12 +350,15 @@ fn a_change_of_flag_heartbeats_at_once_and_a_carried_node_s_fixes_do_not() {
         east += 1.4;
         h.run_for(secs(1));
     }
+    h.run_for(secs(1));
     assert_eq!(changes(&h, r), 1);
-    let flagged = h.nodes[r].sent.iter().any(|(_, f)| {
-        f.channel == home
-            && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(hb)) if hb.carried)
+    let flagged = h.nodes[r].sent.iter().any(|(t, f)| {
+        *t > start
+            && f.channel == home
+            && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(hb))
+                if hb.carried && hb.sleepy == !external)
     });
-    assert!(flagged, "on its home channel");
+    assert!(flagged, "on its home channel, external: {external}");
     for _ in 0..300 {
         fix(&mut h, r, east);
         east += 1.4;
