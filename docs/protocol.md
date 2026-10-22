@@ -1,6 +1,6 @@
 # bark protocol: Civilian 433 MHz Mesh
 
-**Status:** live specification, 2026-10-21. Decisions that refine it are in
+**Status:** live specification, 2026-10-22. Decisions that refine it are in
 `roadmap.md` with D-numbers; [open items](#open-items) lists what is still to be decided or
 measured. Where the code and this text disagree, one of them is wrong and
 the fix is a commit to both.
@@ -25,7 +25,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; no scanning, no schedules |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, whose role follows its power and motion: relay on external power, sleepy on battery, carried when it moves ([nodes](#nodes)) |
+| Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery, carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | From GPS unless a fix fails the checks or the app sets a map point; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
 | Time | No network time, and GPS time is not used |
@@ -57,32 +57,58 @@ BLE.
 
 ## Nodes
 
-Every node runs the same protocol and firmware. Its role is not a
-setting: it follows three things the node measures of itself, and its
-heartbeat says which hold (roadmap D70, D71).
+Every node runs the same protocol and firmware. What it does is not a
+setting: it follows two properties the node measures of itself, each on
+its own, and its heartbeat publishes each as a flag (roadmap D70, D71,
+D72).
 
-- **On battery**, past a grace of an hour, it is **sleepy**; on external
-  power, USB on a windowsill or a solar box on a roof, it is a **relay**.
-  The nRF52840 detects USB power itself (Product Specification, POWER,
-  USB supply: `USBREGSTATUS.VBUSDETECT` and an event at each change), so
-  a person's node relays on its charger and sleeps in a pocket, with
+- **Sleepy**: it is on battery, past a grace of an hour
+  ([sleepy nodes](#sleepy-nodes)). On external power, USB on a
+  windowsill or a solar box on a roof, a node is not sleepy. The
+  nRF52840 detects USB power itself (Product Specification, POWER, USB
+  supply: `USBREGSTATUS.VBUSDETECT` and an event at each change), so a
+  person's node relays on its charger and sleeps in a pocket, with
   nothing to set.
-- **Its GPS says it moves**: a node that is not sleepy is then
-  **carried**. A relay that stays put is **fixed**.
-- **A map point set in the app** makes it fixed at once.
+- **Carried**: its GPS says it moves ([position](#position)). A map
+  point set in the app makes it not carried at once.
+
+The two combine in four ways, all of them real, and each flag means the
+same whatever the other is:
+
+| | not carried | carried |
+|---|---|---|
+| **not sleepy** | a node on USB at a window | a node on USB in a car |
+| **sleepy** | a node on battery left somewhere | a node on battery in a pocket |
+
+Holding mail for sleepy nodes, owning a destination by its position
+([owner](#owner)) and being a sleepy node's anchor need neither flag;
+each flag takes all three away.
+
+- **Sleepy** decides how the node uses its radio: it beats rarely
+  instead of heartbeating, listens only in a window after each beat,
+  receives duty-cycled between, forwards what it is given at once,
+  anchors to a fixed relay, and keeps no mailbox.
+- **Carried** decides how the node uses its GPS: it takes each fix as
+  its position, as a sleepy node does too, so that it can be routed to
+  where it is, and since that position moves it owns nothing by
+  position, holds no mail and is nobody's anchor. A carried node that is not sleepy is otherwise like
+  any other that is not: it listens all the time, heartbeats every
+  5–15 s on every channel, and forwards.
 
 The rest of this document uses these words:
 
-- A **relay** listens all the time, heartbeats every 5–15 s, forwards,
-  and, if fixed, holds mail for the sleepy nodes it hears.
+- A **relay** is a node that is not sleepy, carried or not. It listens
+  all the time, heartbeats every 5–15 s, forwards, and, if it is not
+  carried, holds mail for the sleepy nodes it hears. Like "anchor" and
+  "holder", the word names a state a node is in, not a kind of node.
+- A **fixed** node is one that is not carried.
 - A **sleepy node** heartbeats rarely, listens only briefly, receives
   duty-cycled in between, and forwards what it is given at once.
-- A **carried** node is a relay that moves: it forwards, takes each GPS
-  fix, and holds no mail.
-- A sleepy node's **anchor** is the relay it chooses. The anchor's
-  position is the sleepy node's address, its home channel the sleepy
-  node's, and its heartbeat the one the sleepy node watches to know it
-  is still in reach. A sleepy node that hears no relay is **anchorless**.
+- A sleepy node's **anchor** is the relay it chooses, a fixed one. The
+  anchor's position is the sleepy node's address, its home channel the
+  sleepy node's, and its heartbeat the one the sleepy node watches to
+  know it is still in reach. A sleepy node that hears no fixed relay is
+  **anchorless**.
 - A **beat** is a sleepy node's heartbeat, and its **window** the few
   seconds after a beat, or after a message it takes, in which it
   listens.
