@@ -393,6 +393,9 @@ struct OriginRecord {
     src_moving: bool,
     /// Its destination's anchor then, if it had one.
     dst_anchor: Option<u32>,
+    /// Whether its destination was sleepy then, and carried.
+    dst_sleepy: bool,
+    dst_carried: bool,
 }
 
 /// One originated message, for the per-message table (`Sim::message_rows`).
@@ -438,6 +441,10 @@ pub struct MessageRow {
     pub src_moving: bool,
     /// Its destination's anchor then, if it had one.
     pub dst_anchor: Option<u32>,
+    /// Whether its destination was sleepy when it was sent, and carried.
+    pub dst_sleepy: bool,
+    /// See `dst_sleepy`.
+    pub dst_carried: bool,
     /// Origination to the first DATA of it from a node other than its
     /// origin, seconds.
     pub entered_s: Option<f64>,
@@ -633,6 +640,13 @@ pub struct Sim {
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
     far_at: HashMap<u32, (Instant, bool)>,
+    /// The sleepy nodes whose carried flag changed since their last
+    /// heartbeat for a change.
+    carried_flip: std::collections::HashSet<u32>,
+    /// The nodes about to send a heartbeat for a change
+    /// (`Trace::Changed`), and whether it says a sleepy node's carried
+    /// flag.
+    changing: HashMap<u32, bool>,
     /// Deliveries by the way they went, after the settle time
     /// (`metrics::Carried::delivered_by`).
     delivered_by: [u64; 4],
@@ -1133,6 +1147,8 @@ impl Sim {
             gps_error: Vec::new(),
             held_far: HashMap::new(),
             far_at: HashMap::new(),
+            carried_flip: Default::default(),
+            changing: HashMap::new(),
             delivered_by: [0; 4],
             positions,
             sites: site,
@@ -2332,9 +2348,11 @@ impl Sim {
             Action::Transmit(f) => {
                 self.note_direct(node, &f);
                 self.note_sent_again(node, &f);
+                self.note_carried_beat(&f);
                 // A heartbeat for a change is no beat to take a fix at.
-                if !self.power_frame(node, &f) {
-                    self.note_beat_fix(node, &f, scripted);
+                match self.changing.remove(&node) {
+                    Some(flip) => self.note_changed(&f, flip),
+                    None => self.note_beat_fix(node, &f, scripted),
                 }
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
@@ -2400,12 +2418,23 @@ impl Sim {
                         self.note_delivered_by(msg_id, by);
                     }
                     Trace::FarFix => self.note_far_fix(node),
+                    Trace::Changed => {
+                        let flip = self.carried_flip.remove(&node);
+                        self.changing.insert(node, flip);
+                    }
+                    Trace::Role { sleepy: false } if self.relays[node as usize].carried() => {
+                        let after = self.now >= self.settle;
+                        self.carried_metrics().plugged_in += u64::from(after);
+                    }
                     Trace::Carried { carried } => self.note_carried(node, carried),
                     Trace::AnchorCarried => {
                         let after = self.now >= self.settle;
                         self.carried_metrics().anchors_left += u64::from(after);
                     }
                     Trace::Queued { msg_id, node: to } => {
+                        if self.relays[node as usize].carried() {
+                            self.carried_metrics().queued += 1;
+                        }
                         if let Some(&tag) = self.msg_tags.get(&msg_id.0) {
                             let r = &self.relays[node as usize];
                             let dst = self.origins[tag as usize].dst as usize;
@@ -2507,15 +2536,51 @@ impl Sim {
     /// `relay` turned carried, or fixed again.
     fn note_carried(&mut self, relay: u32, carried: bool) {
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
+        let sleepy = self.relays[relay as usize].sleepy();
+        if sleepy && !self.carried_flip.remove(&relay) {
+            self.carried_flip.insert(relay);
+        }
         let t = self.now;
         let s = t.as_micros() as f64 / 1e6;
         if carried {
             let since = self.far_at.get(&relay).map_or(t, |&(f, _)| f);
             let run = t.since(since).as_micros() as f64 / 1e6;
-            self.carried_metrics().carried.push((s, relay, walks, run));
+            self.carried_metrics()
+                .carried
+                .push((s, relay, walks, run, sleepy));
         } else {
             self.far_at.entry(relay).or_insert((t, true)).1 = true;
-            self.carried_metrics().fixed.push((s, relay, walks));
+            self.carried_metrics().fixed.push((s, relay, walks, sleepy));
+        }
+    }
+
+    /// A heartbeat for a change goes out: counted with the power's, and,
+    /// if it says a sleepy node's carried flag, on its own.
+    fn note_changed(&mut self, f: &Frame, flip: bool) {
+        self.power_changed(f);
+        if flip && self.now >= self.settle {
+            let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
+            let c = &mut self.carried_metrics().sleepy_changed;
+            c.0 += 1;
+            c.1 += air;
+        }
+    }
+
+    /// A heartbeat flagged sleepy and carried after the settle time,
+    /// counted.
+    fn note_carried_beat(&mut self, f: &Frame) {
+        if self.now < self.settle {
+            return;
+        }
+        if let Ok(bark_proto::wire::Packet::Heartbeat(hb)) =
+            bark_proto::wire::Packet::decode(f.payload())
+        {
+            if hb.sleepy && hb.carried {
+                let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
+                let c = &mut self.carried_metrics().beats;
+                c.0 += 1;
+                c.1 += air;
+            }
         }
     }
 
@@ -3253,6 +3318,8 @@ impl Sim {
                 to_twin: o.to_twin,
                 src_moving: o.src_moving,
                 dst_anchor: o.dst_anchor,
+                dst_sleepy: o.dst_sleepy,
+                dst_carried: o.dst_carried,
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 time_left_s: o.time_left.map(|d| d.as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
@@ -3279,7 +3346,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
         );
         for n in beat_fate::NAMES {
             s.push_str(",b_");
@@ -3335,6 +3402,7 @@ impl Sim {
             ));
             let dbm = |d: Option<f32>| d.map(|d| format!("{d:.1}")).unwrap_or_default();
             s.push_str(&format!(",{},{}", dbm(w.holder_dbm), dbm(w.best_dbm)));
+            s.push_str(&format!(",{},{}", r.dst_sleepy, r.dst_carried));
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
@@ -3581,6 +3649,8 @@ impl Sim {
             dst_anchor: (dst >= self.n_relays)
                 .then(|| self.attached_relay(dst))
                 .flatten(),
+            dst_sleepy: self.relays[dst as usize].sleepy(),
+            dst_carried: self.relays[dst as usize].carried(),
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -4313,7 +4383,7 @@ mod tests {
         assert!(c
             .carried
             .iter()
-            .all(|&(_, _, walks, run)| !walks && run >= 72.0));
+            .all(|&(_, _, walks, run, _)| !walks && run >= 72.0));
         assert!(run(1.0, 1.0).is_none());
         assert!(run(0.0, 0.0).is_none());
     }
@@ -4398,6 +4468,8 @@ mod tests {
                 to_twin: false,
                 src_moving: false,
                 dst_anchor: None,
+                dst_sleepy: true,
+                dst_carried: false,
             });
             sim.msg_tags.insert(id, tag);
         }

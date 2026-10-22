@@ -933,11 +933,12 @@ pub struct PowerMetrics {
 pub struct Carried {
     /// Every first far fix of a run: when, the relay, and whether it walks.
     pub far_fixes: Vec<(f64, u32, bool)>,
-    /// Every turn to carried: when, the relay, whether it walks, and how
-    /// long after the first far fix of its run.
-    pub carried: Vec<(f64, u32, bool, f64)>,
-    /// Every turn to fixed again: when, the relay, and whether it walks.
-    pub fixed: Vec<(f64, u32, bool)>,
+    /// Every turn to carried: when, the node, whether it walks, how long
+    /// after the first far fix of its run, and whether it is sleepy.
+    pub carried: Vec<(f64, u32, bool, f64, bool)>,
+    /// Every turn to fixed again: when, the node, whether it walks, and
+    /// whether it is sleepy.
+    pub fixed: Vec<(f64, u32, bool, bool)>,
     /// The texts a relay held in its delivery queue at a first far fix
     /// after the settle time, by how their holder delivered them: by the
     /// flush, at a later beat or outside the window as before, to the
@@ -957,6 +958,17 @@ pub struct Carried {
     pub flush: (u64, f64),
     /// See `flush`.
     pub to_relay: (u64, f64),
+    /// Heartbeats flagged sleepy and carried after the settle time: how
+    /// many, and their airtime (roadmap D72).
+    pub beats: (u64, f64),
+    /// Heartbeats for a change sent by sleepy nodes whose carried flag
+    /// changed, after the settle time: how many, and their airtime.
+    pub sleepy_changed: (u64, f64),
+    /// Nodes plugged in while carried, after the settle time.
+    pub plugged_in: u64,
+    /// Texts queued for a sleepy node at a node while it was carried: none
+    /// is, since a carried node owns nothing by position.
+    pub queued: u64,
 }
 
 /// What the neighbour tables hold (`Research::tables`), sampled once a

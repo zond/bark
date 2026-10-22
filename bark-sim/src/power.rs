@@ -29,9 +29,6 @@ pub(crate) struct PowerModel {
     /// The texts held at the end of a grace after the settle time, and
     /// their fate so far, an index of `PowerMetrics::held`.
     held: HashMap<u32, Option<usize>>,
-    /// The nodes about to send a heartbeat for a change
-    /// (`Trace::Changed`).
-    changing: std::collections::HashSet<u32>,
     /// Per node, the anchor it had after its last event.
     anchors: Vec<Option<NodeId>>,
 }
@@ -57,7 +54,6 @@ impl Sim {
             switches: vec![false; n],
             index: HashMap::new(),
             held: HashMap::new(),
-            changing: std::collections::HashSet::new(),
             anchors: vec![None; n],
         };
         let mut metrics = PowerMetrics::default();
@@ -211,9 +207,6 @@ impl Sim {
                     p.graces += 1;
                 }
             }
-            T::Changed => {
-                self.power.as_mut().expect("checked").changing.insert(node);
-            }
             T::Delivered { msg_id, by, .. } => {
                 let fate = match by {
                     Delivery::Flush => 0,
@@ -236,15 +229,8 @@ impl Sim {
         }
     }
 
-    /// `node` transmits `f`: whether it is a heartbeat for a change, and
-    /// if so its airtime counted.
-    pub(crate) fn power_frame(&mut self, node: u32, f: &Frame) -> bool {
-        let Some(m) = self.power.as_mut() else {
-            return false;
-        };
-        if !m.changing.remove(&node) {
-            return false;
-        }
+    /// A heartbeat for a change, `f`, goes out: its airtime counted.
+    pub(crate) fn power_changed(&mut self, f: &Frame) {
         debug_assert!(matches!(
             Packet::decode(f.payload()),
             Ok(Packet::Heartbeat(_))
@@ -256,7 +242,6 @@ impl Sim {
                 p.changed.1 += air.as_micros() as f64 / 1e6;
             }
         }
-        true
     }
 
     /// The fates of the texts held at the end of a grace

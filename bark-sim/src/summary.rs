@@ -864,6 +864,18 @@ impl Summary {
                     h[4]
                 );
             }
+            let _ = writeln!(
+                s,
+                "carried sleepy nodes: turned carried {}, fixed again {}; beats flagged sleepy and carried {} ({:.1} s); heartbeats for their change {} ({:.1} s); plugged in while carried {}; texts queued at a carried node {}",
+                c.carried.iter().filter(|f| f.4).count(),
+                c.fixed.iter().filter(|f| f.3).count(),
+                c.beats.0,
+                c.beats.1,
+                c.sleepy_changed.0,
+                c.sleepy_changed.1,
+                c.plugged_in,
+                c.queued
+            );
             let d = c.delivered_by;
             let _ = writeln!(
                 s,
