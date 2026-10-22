@@ -453,7 +453,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             anchor: None,
-            motion: Motion::FIXED,
+            motion: Motion::fixed(config.position),
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -594,7 +594,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *anchor = None;
-        *motion = Motion::FIXED;
+        *motion = Motion::fixed(config.position);
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -1400,9 +1400,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// home channel at once, outside its slots, so that the neighbours
     /// there address it anew now and not a rotation later, and an old
     /// anchor learns to hand over its mail (spec "Heartbeat"). One
-    /// heartbeat for any number of changes before it goes. A position
-    /// that changes with each fix, a carried node's, is not announced:
-    /// its slots carry it (roadmap D71).
+    /// heartbeat for any number of changes before it goes, sleepy or not
+    /// (roadmap D72). A position that changes with each fix, a sleepy or
+    /// carried node's, is not announced: its slots or beats carry it
+    /// (roadmap D71).
     pub(super) fn changed(&mut self) {
         if self.stage == Stage::Running {
             self.beacon.change.get_or_insert(self.home);
@@ -1755,8 +1756,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let took = match cmd {
                     AppCommand::Fix { .. } => self.fix(position, now, emit),
                     _ => {
-                        self.map_point(position);
-                        if !self.sleepy {
+                        // A sleepy node's position is no news, but a
+                        // change of its carried flag is.
+                        if self.map_point(position) || !self.sleepy {
                             self.changed();
                         }
                         true

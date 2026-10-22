@@ -10,6 +10,11 @@
 //! Running, a node plugged in is a relay at once: it leaves its anchor,
 //! its address is its own position, and it heartbeats as a relay.
 //!
+//! The power changes only whether the node is sleepy. Whether it is
+//! carried is measured from its fixes alike in either role
+//! (`relay/motion.rs`): a carried node plugged in is a carried relay, and
+//! a fixed one is fixed where it is then.
+//!
 //! A relay unplugged changes nothing for [`Config::grace`], so that a
 //! charger moved across the room costs nobody anything; power back within
 //! it, nothing happened. Then it takes no more mail, as a carried node
@@ -28,7 +33,6 @@
 use super::{Mover, Node, Stage};
 use crate::event::{Action, DropReason, Trace};
 use crate::node::heartbeat_interval;
-use crate::node::relay::motion::Motion;
 use crate::time::{Duration, Instant};
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
@@ -109,6 +113,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Plugged in: a relay at once, with its own position as its address.
     fn turn_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = false;
+        self.fixed_here();
         self.anchor = None;
         self.unwatch();
         self.neighbours.pin(None);
@@ -147,7 +152,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }));
             }
         }
-        self.motion = Motion::FIXED;
         self.mover = Mover::default();
         self.beacon.announce = None;
         self.beacon.reach_all = None;

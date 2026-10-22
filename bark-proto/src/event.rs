@@ -107,8 +107,9 @@ pub enum AppCommand<'a> {
         position: Position,
     },
     /// A GPS fix that passed the driver's plausibility checks (spec
-    /// "Position"). A sleepy node or a carried one takes it; a
-    /// fixed node keeps its position and counts it toward turning carried.
+    /// "Position"). Every node counts it toward turning carried or fixed
+    /// again; a sleepy or carried node takes it as its position, and one
+    /// that is neither keeps its own.
     Fix {
         /// Where the fix puts the node.
         position: Position,

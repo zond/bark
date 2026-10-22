@@ -166,7 +166,7 @@ pub const WALKING_SPEED_M_S: f32 = 1.4;
 pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How long a fixed node's fixes must all be farther than the GPS
-/// allowance, [`OWNER_RADIUS_M`], from its position before it is carried
+/// allowance, [`OWNER_RADIUS_M`], from the place it stands before it is carried
 /// (spec "Position"): as long as a walker takes to cross the
 /// whole width of the allowance, 2 × 50 m at [`WALKING_SPEED_M_S`],
 /// 71.4 s, in whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A
