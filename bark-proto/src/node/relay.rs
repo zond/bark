@@ -34,8 +34,8 @@
 //! It stays awake for a worst-case rotation after that and then takes the
 //! strongest node it heard, without a margin; after that it moves only to
 //! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
-//! "Relay choice"). It leaves an anchor whose heartbeat turns carried,
-//! for another or, with none, into anchorless mode (`relay/motion.rs`).
+//! "Relay choice"). It leaves an anchor whose heartbeat turns carried or
+//! sleepy, for another or, with none, into anchorless mode.
 //! Back from the dark, it keeps its anchor. It
 //! follows its anchor to a new home channel at the anchor's next heartbeat
 //! it hears, and beats there within a heartbeat interval; it does not move

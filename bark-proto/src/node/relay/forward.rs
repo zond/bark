@@ -121,7 +121,7 @@
 //! D34), and the search never returns to a node that sleeps. A sleepy
 //! node's own message that finds no live neighbour at all waits for one,
 //! routed again every `fade_retry`, until its time runs out (below): a
-//! carried node loses its neighbours by going dark and finds them again.
+//! node in a pocket loses its neighbours by going dark and finds them again.
 //!
 //! # Time left (spec "Time to live")
 //!
