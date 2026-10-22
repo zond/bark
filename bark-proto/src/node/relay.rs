@@ -1579,7 +1579,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.beacon.reach_left &= !channel_bit(channel);
                 return;
             }
-            Some((_, Beat::Change)) => return,
+            Some((channel, Beat::Change)) => {
+                // A sleepy node's heartbeat on its anchor's channel is a
+                // beat to whoever hears it: its window follows.
+                if sent && self.anchored_sleepy() && channel == self.home {
+                    self.awake_until = now + self.heard.params().awake;
+                }
+                return;
+            }
             _ => {}
         }
         // The next beat takes its anchorless neighbours' channels afresh.
