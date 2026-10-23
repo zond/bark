@@ -36,8 +36,7 @@ deliberate jamming; it is designed for infrastructure loss.
 
 **LILYGO T-Echo, 433 MHz build.** nRF52840 (Nordic, Norway), SX1262
 (Semtech, US, EAR99), Quectel L76K GNSS, 1.54" e-ink, BLE 5.0, 850 mAh
-Li-ion, USB-C charging, UF2 bootloader. About $54 direct, ~€116 from EU
-stock. Check that the LoRa module is the 433 MHz build, not the 868/915
+Li-ion, USB-C charging, UF2 bootloader. Check that the LoRa module is the 433 MHz build, not the 868/915
 build: the 868 board's antenna matching makes 433 MHz operation lossy and
 out of spec.
 
@@ -48,10 +47,9 @@ Same chipset, same firmware, for rooftop relays:
 - **RAK WisMesh Repeater Mini V2** (solar + 3200 mAh), if a 433 MHz build
   is available (O12).
 
-The SX1262 is not European. No European part offers nRF52840 + SX1262
-integration off the shelf at this price, and the premise is that anyone can
-buy and plant a node. ST's STM32WL55 is the European fallback but has no
-BLE.
+The SX1262 is not European, but anyone must be able to buy and plant a
+node, and no European part offers nRF52840 + SX1262 integration off the
+shelf (ST's STM32WL55, the European fallback, has no BLE).
 
 ---
 
@@ -144,9 +142,9 @@ with the long preamble, [physical layer](#physical-layer)), and +10 dBm
 at the connector, which with the stock antenna (≈0 dBd gain) is at most
 +10 dBm ERP.
 
-The 868 MHz band does not work for Ukraine (no 500 mW sub-band; 868.0–868.6
-MHz is 14 dBm at <1%), and 2.4 GHz has too little range. 433 MHz is the
-only band with identical rules in both jurisdictions.
+433 MHz is the only band with identical rules in both jurisdictions and
+enough range: 868 MHz has no 500 mW sub-band in Ukraine, and 2.4 GHz too
+little range.
 
 ---
 
