@@ -533,8 +533,8 @@ twice before its last check, 492.9 + 100 + 2 × 200 ms. A check held for
 a reception in progress waits less, at most that frame.
 
 **The burst.** A relay's first rotation reaches every neighbour within
-13 burst gaps of its first heartbeat, about 15 s, where its later
-rotations take up to 195 s; the 13 heartbeats cost no more airtime than
+12 burst gaps of its first heartbeat, 14.5 s, where its later rotations
+take up to 195 s; the 13 heartbeats cost no more airtime than
 any rotation's. The anchorless flag on them asks the relays that hear
 one to answer it (below), so that the new relay learns its neighbours
 as fast as they learn it, and tells every receiver that the heartbeat
