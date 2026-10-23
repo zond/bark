@@ -1215,41 +1215,33 @@ takes or refuses it, and only when it owes no other reply
 packet gives it to do:
 
 - **Something to send on.** It takes the packet into the regular room
-  of its send queue only if the room has a place and the bucket
-  ([duty cycle cap](#duty-cycle-cap)) holds, as it stands, the ACK, the
-  airtime of every frame in the send queue and of the new one, and the
-  reply reserve; failing that, into a hop place
-  ([send queue](#send-queue)), whatever the bucket holds. So it refuses a
-  message already in the network only when the hop places it may use
+  of its send queue only if the room has a place and the bucket holds,
+  as it stands, the ACK, the airtime of every frame in the send queue
+  and of the new one, and the reply reserve
+  ([duty cycle cap](#duty-cycle-cap)); failing that, into a hop place
+  ([send queue](#send-queue)), whatever the bucket holds. So it refuses
+  a message already in the network only when the hop places it may use
   are taken too, whatever its bans:
   [overload waits](#overload-waits) needs every such message to move on
   (roadmap D34).
 - **A message entering the network here**, a sleepy node's own (count
-  0, [hop count](#hop-count)) or the node's own application's, also needs
-  a neighbour the relay
-  could hand it to now: a live one that is not banned
-  ([next hop](#next-hop)), demoted or not, since the message has tried
-  none. A relay whose neighbours are all banned would only hold the
-  message until a ban ends, and its offer could be refused again;
-  refused here, the message waits at its origin, where the application
-  sees it. A relay with no live neighbour at all takes it, and the
-  search ends as in [return to parent](#return-to-parent). So a relay
-  takes from sleepy nodes and its own application no more than it can
-  start sending now (roadmap D34). It also refuses such a message while
-  the neighbour it would go to, were none banned, is banned: the way on
-  has pushed back, and the message would only wait and age here. Each
-  neighbour's pushback is its own ban, so it does not hold up the other
-  ways, and it ends with the ban. A message already in the network is
-  not refused for that: its sender would send it round the pushback, and
-  around a ring of relays such refusals kept each other up (roadmap
-  D54). From its own application a node takes one message at a time,
-  until its first hop takes it: while it is running, holds none, and has
-  room in its send queue and bucket for a full frame on top of what they
-  hold, and not every neighbour is banned, or,
-  for a sleepy node with a live anchor, not the anchor
-  ([a sleepy node's own message](#a-sleepy-nodes-own-message)). A
-  message from its own application for a sleepy node it holds for, when
-  the delivery queue is full, is kept aside until the queue has a place.
+  0, [hop count](#hop-count)) or the node's own application's, also
+  needs a neighbour the relay could hand it to now: a live one that is
+  not banned ([next hop](#next-hop)), demoted or not, since the message
+  has tried none. A relay with no live neighbour at all takes it, and
+  the search ends as in [return to parent](#return-to-parent). It also
+  refuses such a message while the neighbour it would go to, were none
+  banned, is banned: the way on has pushed back. A message already in
+  the network is not refused for that.
+  - From its own application a node takes one message at a time, until
+    its first hop takes it: while it is running, holds none, and has
+    room in its send queue and bucket for a full frame on top of what
+    they hold, and not every neighbour is banned, or, for a sleepy node
+    with a live anchor, not the anchor
+    ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+  - A message from its own application for a sleepy node it holds for,
+    when the delivery queue is full, is kept aside until the queue has a
+    place.
 - **Something to deliver.** It takes the packet only if its bucket holds
   the reply reserve and an ACK and, for another node, its delivery
   queue has room ([delivery queue](#delivery-queue)).
@@ -1263,32 +1255,44 @@ once or waits ([bans](#bans)). A relay that cannot afford even the
 reply stays silent, and its sender retries as for a lost ACK (roadmap
 D27, D29).
 
+*Why fresh work needs a free way on.* A relay whose neighbours are all
+banned would only hold the message until a ban ends, and its offer could
+be refused again; refused here, the message waits at its origin, where
+the application sees it. So a relay takes from sleepy nodes and its own
+application no more than it can start sending now (roadmap D34).
+
+*Why pushback refuses only fresh work.* Taken against the pushback, the
+message would only wait and age here. Each neighbour's pushback is its
+own ban, so it does not hold up the other ways, and it ends with the
+ban. A message already in the network is spared because its sender
+would send it round the pushback, and around a ring of relays such
+refusals kept each other up (roadmap D54).
+
 The packet is one of the following, tested in this order:
 
 1. **Arrived:** the relay has delivered the message or holds it for a
-   sleepy node, or its record says
-   the message has arrived ([message records](#message-records)). ACK
-   only.
+   sleepy node, or its record says the message has arrived
+   ([message records](#message-records)). ACK only.
 2. **New:** the relay has no record for the message. It creates one,
    with the sender as parent (none if `hops = 0`). If it owns the
-   destination ([owner](#owner)) it delivers; otherwise it chooses a next
-   hop and sends.
+   destination ([owner](#owner)) it delivers; otherwise it chooses a
+   next hop and sends.
 3. **A retransmission:** the sender and the count are those of the last
    packet of the message the relay received: the sender's ACK was lost
    and it sent the same packet again. ACK only.
 4. **A copy while the relay holds one:** the message waits in its send
-   queue or is set aside (above). ACK
-   only: the two copies merge, and the relay's goes on. A hand-over
-   whose frame has gone out does not count as holding one: its receiver
-   may have taken it with only the ACK lost, and this packet may be that
-   copy come back.
+   queue or is set aside (above). ACK only: the two copies merge, and
+   the relay's goes on. A hand-over whose frame has gone out does not
+   count as holding one: its receiver may have taken it with only the
+   ACK lost, and this packet may be that copy come back.
 5. **A copy, and the relay holds none:** the relay takes it and goes on
    with its own search from its record. It checks ownership again (a
    closer neighbour may have been demoted since), then sends to its next
-   candidate, returns the message to its parent, or, at the origin, drops it.
-   From a neighbour it handed the message to, this is that neighbour's
-   return. From the neighbour it is still handing the message to, it
-   also ends that hand-over: the neighbour has the message.
+   candidate, returns the message to its parent, or, at the origin,
+   drops it. From a neighbour it handed the message to, this is that
+   neighbour's return. From the neighbour it is still handing the
+   message to, it also ends that hand-over: the neighbour has the
+   message.
 
 In every case the relay records the packet's sender and count as the
 last packet, raises its highest count if the packet's is higher, and
@@ -1297,12 +1301,13 @@ updates its last-active time.
 Cases 1, 3 and 4 end a packet without acting on it, and in each the
 message lives on: it has arrived, the packet was acted on when it first
 came, or another copy goes on, so no case ends the last copy of a
-message ([overload waits](#overload-waits) lists what does). Nothing is
-sent straight back: a relay that has had the message goes on from where
-its own search stands, and its sender, if not tried, stays a candidate
-and gets the message back in turn. A return goes from a relay to its
-parent, and the parents, each set when its record was made, lead back
-to the origin without a loop, so a message cannot go back and forth
+message ([overload waits](#overload-waits) lists what does).
+
+Nothing is sent straight back: a relay that has had the message goes on
+from where its own search stands, and its sender, if not tried, stays a
+candidate and gets the message back in turn. A return goes from a relay
+to its parent, and the parents, each set when its record was made, lead
+back to the origin without a loop, so a message cannot go back and forth
 between two relays that hold none of it (roadmap D35).
 
 #### Return to parent
@@ -1310,12 +1315,12 @@ between two relays that hold none of it (roadmap D35).
 When [next hop](#next-hop) finds no candidate, every neighbour having
 been tried or set aside, the relay sends the message back to its parent:
 DATA with `dst_hop` the parent's ID from the record, on the parent's
-home channel as the neighbour table has it at the moment of sending, so
+home channel as the neighbour table has it at the moment of sending. So
 a return follows a parent that has moved home since
 ([channel moves](#channel-moves)). Only a parent no longer in the table
 is sent to on the channel in the record. The parent takes it as a
-return ([receiving DATA](#receiving-data), case 5) and continues with its
-next neighbour.
+return ([receiving DATA](#receiving-data), case 5) and continues with
+its next neighbour.
 
 The origin has no parent. With no candidate left it drops the message:
 no relay that can be reached from it through neighbours that answer owns
@@ -1334,21 +1339,27 @@ refuses the return has not failed.
 
 #### Hop count
 
-`hops` in the DATA header counts hand-overs. A sleepy node with an
-anchor sends its own message with 0
-([a sleepy node's own message](#a-sleepy-nodes-own-message)): the node
-that takes it is its origin, the message has no parent, and the sender
-counts as tried, so the search never returns to a node that sleeps. Sent
-with 1, the message could take hop place 1 at its first hop, which
-overload must not give to fresh work ([send queue](#send-queue)). A relay
-sending for its own application sends 1, as if it had received the
-message at 0, since 0 means "a sleepy node's own, start the search
-here". A relay sends its record's highest
-count plus one ([message records](#message-records)), whether forwarding
-or returning to its parent. The count is set when a hand-over's first
-frame goes out, and its retries repeat it ([hand-over](#hand-over)); a
-frame that waited in the send queue, or goes to another neighbour after
-a failed hand-over, carries the count as it stands when it goes.
+`hops` in the DATA header counts hand-overs:
+
+- A sleepy node with an anchor sends its own message with 0
+  ([a sleepy node's own message](#a-sleepy-nodes-own-message)): the node
+  that takes it is its origin, the message has no parent, and the sender
+  counts as tried, so the search never returns to a node that sleeps.
+- A relay sending for its own application sends 1, as if it had received
+  the message at 0, since 0 means "a sleepy node's own, start the search
+  here".
+- A relay sends its record's highest count plus one
+  ([message records](#message-records)), whether forwarding or returning
+  to its parent.
+
+The count is set when a hand-over's first frame goes out, and its
+retries repeat it ([hand-over](#hand-over)); a frame that waited in the
+send queue, or goes to another neighbour after a failed hand-over,
+carries the count as it stands when it goes.
+
+*Why not start higher.* Sent with 1, the message could take hop
+place 1 at its first hop, which overload must not give to fresh work
+([send queue](#send-queue)).
 
 So along the path of a message the count only grows, and a relay sends
 a count for a message once, but in retries: to send another packet of
@@ -1364,8 +1375,9 @@ A relay that would have to send a count above 255, the largest the
 one-byte field holds, drops the message, except an owner delivering it
 to its node ([delivery](#delivery)), which sends 255: the search has
 ended there, and dropping the message at the last step would leave it
-in the delivery queue to be dropped again at every try. A search that
-keeps its records ends on its own
+in the delivery queue to be dropped again at every try.
+
+*Why the cap.* A search that keeps its records ends on its own
 ([why the search finds a path](#why-the-search-finds-a-path)); the cap
 ends one that has lost its way because a record was replaced or the
 message split in two, and it ends the chain of hop places
