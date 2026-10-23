@@ -402,12 +402,15 @@ Its sleepy nodes follow it:
 A node's position is its GPS fix, unless the app sets a map point, which
 wins. A rooftop relay with no sky view uses one.
 
-A fix is dropped as unreliable, a sign of jamming or spoofing, when:
+A fix is dropped as unreliable, a sign of spoofing, when:
 
-- it is farther from the last accepted fix than the node can have moved
-  since;
-- it disagrees with the neighbours heard;
-- the satellite signal-to-noise ratio (C/N0) is not sane.
+- it is farther than the hearing radius, 3 km
+  ([physical layer](#physical-layer)), from every relay the node knows;
+  a node that knows none takes it;
+- the carrier-to-noise densities (C/N0) of the satellites used in it are
+  not what a real sky gives; the band is a bench number (O18).
+
+A jammed receiver gives no fix, and the node keeps the position it has.
 
 Two fixes of a still node may differ by 50 m. That is the **allowance**
 the [owner](#owner) rule and the anchor's move check
@@ -442,10 +445,14 @@ sleepy nodes and strand it when it moved on. A node carried by mistake
 loses little, since its sleepy nodes have anchored elsewhere already
 (roadmap D70).
 
-*What the checks miss.* A spoofed fix that drifts slower than the node
-can move passes the first check and makes a relay carried where D63 kept
-it fixed; it then gives up its sleepy nodes and is routed to where the
-spoofer says. The checks are expected to grow.
+*Why no bound on the distance from the last fix.* Such a bound holds a
+node wherever one wrong rejection leaves it, since every true fix after
+it is far from the last accepted one too. And a sleepy node fixes once a
+beat, so in a car it moves farther between fixes than any bound a walker
+passes allows, and the bound would hide the motion the carried rule
+looks for. A spoofed jump beyond the hearing radius the neighbour check
+catches; a spoofed drift inside it no bound on distance catches, only
+the C/N0 check or a map point (roadmap D63, D74).
 
 **Time.** GPS is for position only. There is no network time: every
 timer is local and monotonic, and nothing depends on two nodes agreeing
@@ -2294,6 +2301,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([nodes](#nodes), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
+| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 
 ---
 

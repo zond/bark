@@ -873,10 +873,10 @@ pub struct Research {
     /// The nodes with a GPS fault (`scenario::GpsFault`), relays and
     /// sleepy nodes.
     pub gps_nodes: [Vec<u32>; 2],
-    /// Their fixes after the fault began: handed to the core, rejected for
-    /// a jump, rejected as inconsistent with the neighbours heard; relays
-    /// and sleepy nodes.
-    pub fixes: [[u64; 3]; 2],
+    /// Their fixes after the fault began: handed to the core, and rejected
+    /// as beyond the hearing radius of every neighbour; relays and sleepy
+    /// nodes.
+    pub fixes: [[u64; 2]; 2],
     /// With relays among the people (`scenario` `relay_share`), what their
     /// density does to the relays' tables; absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]

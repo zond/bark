@@ -626,10 +626,9 @@ pub struct Sim {
     /// The forced pairs, and whether each shares its ID (`SharedIds`).
     pub(crate) pairs: Vec<crate::metrics::Pair>,
     /// Per node, its GPS fault: from when, how, and in which direction;
-    /// whether fixes are checked; the last fix handed to its core and when.
+    /// whether fixes are checked.
     gps_fault: Vec<Option<(Instant, crate::scenario::FaultKind, f64, Xy)>>,
     gps: crate::scenario::Gps,
-    accepted: Vec<(Xy, Instant)>,
     /// Per node that is not sleepy, with `[gps] error_m`, the error of its
     /// fixes, when it was last drawn, and the stream it is drawn from.
     gps_error: Vec<(Xy, Instant, Stream)>,
@@ -1143,7 +1142,6 @@ impl Sim {
             pairs,
             gps_fault: vec![None; n],
             gps: sc.gps.clone(),
-            accepted: Vec::new(),
             gps_error: Vec::new(),
             held_far: HashMap::new(),
             far_at: HashMap::new(),
@@ -1461,7 +1459,6 @@ impl Sim {
             self.push(until, Ev::Leg(w as u32));
         }
         // GPS faults.
-        self.accepted = (0..n).map(|i| (self.xy[i], Instant::ZERO)).collect();
         for (k, f) in sc.gps.faults.iter().enumerate() {
             let mut r = Stream::new(sc.seed, Purpose::Gps, k as u64);
             let walks = self.walks.as_ref();
@@ -2707,12 +2704,10 @@ impl Sim {
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
-    /// the checks on (spec "Position"), a fix farther from the
-    /// last one handed to the core than the node can have moved since,
-    /// 50 m for a relay and the carried speed's worth more for a sleepy
-    /// node, or farther than the longest hearing radius from every
-    /// neighbour it keeps, is not handed over. The check of the satellite
-    /// signal-to-noise cannot be modelled: the simulator has no satellites.
+    /// the checks on (spec "Position"), a fix farther than the longest
+    /// hearing radius from every neighbour the node keeps is not handed
+    /// over. The check of the satellites' C/N0 cannot be modelled: the
+    /// simulator has no satellites.
     fn fix(&mut self, n: u32) {
         if !self.nodes[n as usize].alive {
             return;
@@ -2747,17 +2742,9 @@ impl Sim {
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
         if self.gps.checks {
-            // Two fixes of a node that has not moved may differ by this
-            // much (spec "Position").
-            const STILL_M: f64 = 50.0;
             // The longest hearing radius, rooftop to rooftop (spec
             // "Physical layer").
             const HEARING_M: f32 = 3000.0;
-            // Any node may be carried (roadmap D70); a fixed one keeps its
-            // position in its core.
-            let (last, when) = self.accepted[n as usize];
-            let moved = STILL_M
-                + self.gps.carried_speed_m_s * self.now.since(when).as_micros() as f64 / 1e6;
             let plane = bark_proto::geo::LocalPlane::new(position);
             let far = |p: Position| plane.point(p).distance_m(Default::default()) > HEARING_M;
             let mut heard = self.relays[n as usize]
@@ -2765,15 +2752,9 @@ impl Sim {
                 .map(|e| e.position)
                 .peekable();
             let alone = heard.peek().is_some() && heard.all(far);
-            if at.dist(last) > moved {
-                if fault.is_some() {
-                    self.metrics.research.fixes[k][1] += 1;
-                }
-                return;
-            }
             if alone {
                 if fault.is_some() {
-                    self.metrics.research.fixes[k][2] += 1;
+                    self.metrics.research.fixes[k][1] += 1;
                 }
                 return;
             }
@@ -2781,7 +2762,6 @@ impl Sim {
         if fault.is_some() {
             self.metrics.research.fixes[k][0] += 1;
         }
-        self.accepted[n as usize] = (at, self.now);
         self.fixing = true;
         self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
@@ -4330,20 +4310,22 @@ mod tests {
         }
     }
 
-    /// A relay whose GPS jumps is handed the fix unchecked, and with the
-    /// checks the jump is refused; a drift slower than 50 m a second
-    /// passes the jump check fix by fix.
+    /// A relay whose GPS jumps beyond the hearing radius is handed the fix
+    /// unchecked, and with the checks the jump is refused as far from every
+    /// neighbour; a drift inside the radius passes (roadmap D74). The
+    /// fault begins once the relays know each other: a node that knows no
+    /// relay takes every fix.
     #[test]
-    fn checks_refuse_a_jump_and_pass_a_slow_drift() {
+    fn checks_refuse_a_far_jump_and_pass_a_drift() {
         use crate::scenario::{FaultKind, GpsFault};
         let fault = |kind, checks| {
-            let mut sc = block(5, 300.0);
+            let mut sc = block(5, 600.0);
             sc.gps.checks = checks;
             sc.gps.faults.push(GpsFault {
                 kind,
                 sleepy: false,
                 count: 1,
-                at_s: 100.0,
+                at_s: 400.0,
                 distance_m: 5000.0,
                 speed_m_s: 1.0,
             });
@@ -4354,11 +4336,11 @@ mod tests {
             (sim.metrics.research.fixes[0], moved)
         };
         let (f, moved) = fault(FaultKind::Jump, false);
-        assert!(f[0] > 150 && f[1] + f[2] == 0 && moved, "{f:?}");
+        assert!(f[0] > 150 && f[1] == 0 && moved, "{f:?}");
         let (f, moved) = fault(FaultKind::Jump, true);
         assert!(f[0] == 0 && f[1] > 150 && !moved, "{f:?}");
         let (f, moved) = fault(FaultKind::Drift, true);
-        assert!(f[0] > 150 && f[1] + f[2] == 0 && moved, "{f:?}");
+        assert!(f[0] > 150 && f[1] == 0 && moved, "{f:?}");
     }
 
     /// With an error on every relay's fixes, a relay whose fixes stray far
@@ -4370,7 +4352,6 @@ mod tests {
         let run = |error_m: f64, every_s: f64| {
             let mut sc = block(7, 900.0);
             sc.gps.checks = true;
-            sc.gps.carried_speed_m_s = 2.0;
             sc.gps.relays_every_s = every_s;
             sc.gps.error_m = error_m;
             sc.gps.error_correlation_s = 300.0;

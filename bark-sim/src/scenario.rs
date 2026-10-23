@@ -609,9 +609,6 @@ pub struct Gps {
     pub faults: Vec<GpsFault>,
     /// Whether the checks are applied.
     pub checks: bool,
-    /// The fastest a node may have moved between two fixes, for the jump
-    /// check, metres a second: any node may be carried (roadmap D70).
-    pub carried_speed_m_s: f64,
     /// Every node that is not sleepy takes a fix this often, seconds,
     /// walking or not, and none at its heartbeats; 0 for the default
     /// above.

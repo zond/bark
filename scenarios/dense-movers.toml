@@ -1,7 +1,7 @@
 # dense.toml with a fifth of the people's relays walking, as a node on a
 # power bank in a bag does (roadmap D68, docs/dense-relays-2026-10-20.md),
 # and the driver's GPS checks of spec "Position" on: the driver
-# hands a node each fix that a walker at the carried speed can reach, and
+# hands a node each fix within the hearing radius of a relay it knows, and
 # the core decides whether a relay keeps its first fix (roadmap D63, D70).
 
 name = "dense-movers"
@@ -133,9 +133,5 @@ cadence_s = 1.0
 observers = ["relay:*"]
 per_node = true
 
-# A walker at 1.4 m/s takes a fix at each heartbeat, at most 15 s apart for
-# a relay and 300 s for a sleepy node, 21 and 420 m, within 50 m and
-# 2 m/s.
 [gps]
 checks = true
-carried_speed_m_s = 2.0
