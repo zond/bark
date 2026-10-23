@@ -1146,10 +1146,11 @@ bit alone ([packet formats](#packet-formats)), is a **last resort**: a
 candidate only when the search would otherwise end here, with no other
 candidate left and none that is only banned, so that the message would
 go back to its parent or be dropped
-([return to parent](#return-to-parent)). It is sent to with the long
-preamble. An anchorless neighbour is a candidate like any other, sent to
-with the long preamble. The first hop of a sleepy node's own message is
-its anchor while the anchor is live
+([return to parent](#return-to-parent)).
+
+It is sent to with the long preamble. An anchorless neighbour is a
+candidate like any other, sent to with the long preamble. The first hop
+of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
@@ -1177,20 +1178,23 @@ neighbour with margin, demoted ones included, because fading lets a
 relay hear the 9-byte heartbeat of a neighbour whose link usually cannot
 carry a full DATA frame. Such a neighbour is often the farthest, so the
 nearest to the destination; without this rule every message would try
-it first, three DATA frames unanswered. It stays a last resort rather
-than left out, because on a sparse line it may be the only way on, and a
-weak link still carries some frames; when it takes one, its ACK counts
-toward its margin (roadmap D38).
+it first, three DATA frames unanswered.
+
+It stays a last resort rather than left out, because on a sparse line it
+may be the only way on, and a weak link still carries some frames; when
+it takes one, its ACK counts toward its margin (roadmap D38).
 
 *Why a demoted neighbour is still tried.* A demoted neighbour with
 margin is likewise tried only when every other has been, its failures
 counted as usual. Demotion keeps a failing link from costing every
 message its attempts while another route exists; it should not drop a
-message whose only route is that link. Two hand-overs lost to collisions
-demote a neighbour that works, and on a line it is the only route, so
-without the last resort every message would be dropped until the
-demotion lapsed, six and a half minutes. What a neighbour that is really
-gone costs is in [bounds](#bounds) (roadmap D25, D36, D42).
+message whose only route is that link.
+
+Two hand-overs lost to collisions demote a neighbour that works, and on
+a line it is the only route, so without the last resort every message
+would be dropped until the demotion lapsed, six and a half minutes. What
+a neighbour that is really gone costs is in [bounds](#bounds) (roadmap
+D25, D36, D42).
 
 *Why the next hop need not be closer.* Nothing requires the next hop to
 be closer to the destination than the relay itself. After the message
@@ -1315,8 +1319,9 @@ between two relays that hold none of it (roadmap D35).
 When [next hop](#next-hop) finds no candidate, every neighbour having
 been tried or set aside, the relay sends the message back to its parent:
 DATA with `dst_hop` the parent's ID from the record, on the parent's
-home channel as the neighbour table has it at the moment of sending. So
-a return follows a parent that has moved home since
+home channel as the neighbour table has it at the moment of sending.
+
+So a return follows a parent that has moved home since
 ([channel moves](#channel-moves)). Only a parent no longer in the table
 is sent to on the channel in the record. The parent takes it as a
 return ([receiving DATA](#receiving-data), case 5) and continues with
@@ -1536,11 +1541,13 @@ What breaks it:
 to each neighbour at most once per record, in at most 3 attempts. A
 neighbour that does not answer costs 3 attempts each time it is offered
 a message, and each failure bans it for every message, the ban doubling
-up to 61 s ([bans](#bans)). So a dead neighbour costs a relay that many
-failed hand-overs before it leaves the table 390 s after its last
-heartbeat or ACK: the bans 1.56, 3.11, 6.2, 12.5, 24.9 and 49.8 s add up
-to 98 s, and 61 s bans fill the rest. After two failures it is a last
-resort ([neighbour table](#neighbour-table)).
+up to 61 s ([bans](#bans)).
+
+So a dead neighbour costs a relay that many failed hand-overs before it
+leaves the table 390 s after its last heartbeat or ACK: the bans 1.56,
+3.11, 6.2, 12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the
+rest. After two failures it is a last resort
+([neighbour table](#neighbour-table)).
 
 *What a search costs.* In the usual case it is two hand-overs in all
 per link; a split adds a round trip on the link whose ACKs were lost. A
@@ -1561,8 +1568,9 @@ held, and this bound covers the wait behind refusals only (roadmap D42).
 Every message a relay handles costs at least an ACK (13 bytes, 14.4 ms)
 and one DATA packet with no payload (22 bytes, 18.2 ms: at SF5 and
 coding rate 4/5 the 22nd byte fits in the 21st's block of symbols,
-[physical layer](#physical-layer)), together 32.6 ms. Any 457.3 s
-carries at most a full bucket and its refill,
+[physical layer](#physical-layer)), together 32.6 ms.
+
+Any 457.3 s carries at most a full bucket and its refill,
 6 s + 9.83% × 457.3 s = 51.0 s of airtime
 ([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1561
 messages in that time. The records of held messages are never evicted
@@ -1661,12 +1669,13 @@ heard over at least two heartbeats and its averaged RSSI is at least
 *Why that margin.* It is two standard deviations of the difference, so
 that a relay no better takes the node on 2.3 % of comparisons. A relay's
 heartbeats reach the node's channel about 130 s apart, longer than the
-60 s the fading lasts, so they are nearly independent. Under fading of
-σ = 4 dB (the scenarios' figure) a mean of two heartbeats has σ/√2, and
-the difference of two such means σ√(1/2 + 1/2) = 4 dB. The neighbour
-table's average lets each new frame count half, which varies less than a
-mean of two (σ²/3 against σ²/2), so 8 dB is a little more than two
-standard deviations there.
+60 s the fading lasts, so they are nearly independent.
+
+Under fading of σ = 4 dB (the scenarios' figure) a mean of two
+heartbeats has σ/√2, and the difference of two such means
+σ√(1/2 + 1/2) = 4 dB. The neighbour table's average lets each new
+frame count half, which varies less than a mean of two (σ²/3 against
+σ²/2), so 8 dB is a little more than two standard deviations there.
 
 **Asleep.** A sleepy node keeps its anchor's neighbour entry whatever
 its age, and wakes for the anchor's next heartbeat on its channel, at
