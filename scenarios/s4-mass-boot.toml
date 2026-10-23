@@ -1,0 +1,128 @@
+# S4 with every node switched on at once, as after a power cut that ends
+# for the whole domain in one second (roadmap D73): the hardest boot.
+# Everything else is `s4-capacity.toml`, whose comments say where its
+# numbers come from.
+name = "s4-mass-boot"
+seed = 1
+# One settled hour after the settle time: 900 + 3600 s.
+duration_s = 4500.0
+# After it is switched on, a relay chooses a home channel after its 195 s
+# boot listen (spec "Channel at boot") and a sleepy node takes an anchor
+# within its two-rotation boot listen and chooses within a rotation more
+# (spec "Relay choice"); the move rule acts only on ten minutes of
+# measurement (spec "Channel moves"), so a relay's first moves come 795 s
+# after it is switched on. The run has settled this long after the last
+# switch-on, 1800 + 900 s.
+settle_s = 900.0
+# A node's ID is its chip's factory ID (spec "Node identity"), effectively
+# random, so two nodes share a heartbeat interval by chance; "sequence"
+# spreads the intervals evenly, as before roadmap D52.
+ids = "random"
+
+# Nobody switches a city's nodes on in the same second. The network comes
+# up when a power cut ends or in the morning: relays on the mains come back
+# as their district's supply is restored, feeder by feeder, and solar ones
+# as the light reaches their panels; people switch theirs on when an alert
+# or the morning reaches them. Ten minutes for the relays and half an hour
+# for the people are the short end of that, the hardest boot short of all
+# at once. `relays_s = 0` and `sleepy_s = 0` switch everything on at once,
+# as the measurements before roadmap D52 did.
+[boot]
+relays_s = 0.0
+sleepy_s = 0.0
+
+# Each node's clock runs off true time by up to the ±50 ppm of a watch
+# crystal (spec "Heartbeat"), uniformly: the tolerance bounds the error
+# and says nothing of its spread, and a uniform spread puts more clocks
+# near the bound than one that clusters at zero would.
+[clocks]
+drift_ppm = 50.0
+
+# A fifth of the people walk somewhere now and then, as people do in a
+# city whose transport has stopped. A walk is a kilometre on average,
+# twelve minutes at a common walking speed, between stops of an hour: a
+# walker is in the street a sixth of the time, so 3 % of all sleepy nodes
+# are at any moment, about the half hour a day of its waking hours a
+# person spends walking. Stops are indoors and walks outdoors, without
+# the wall. Relays never move.
+[movement]
+fraction = 0.2
+speed_m_s = 1.4
+trip_m = 1000.0
+stop_s = 3600.0
+shadow_decorrelation_m = 50.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+# S2's fit to the ranges of spec "Physical layer" at SF5, 10 dBm and the -119 dBm
+# default sensitivity, 129 dB of budget, with free-space loss at 1 m of
+# 25.2 dB: 750 m to a handheld in the street gives n = 3.6, and 300 m to
+# one indoors leaves 14.4 dB for the wall. A windowsill relay counts as
+# outdoors: with a wall at both ends a relay would reach a leaf 120 m
+# away, and spec "Capacity and sizing"'s 9.6 relays per km² would leave most leaves without one.
+exponent = 3.6
+indoor_loss_db = 14.4
+# Rooftop relays hear about 3 km (spec "Physical layer", "Capacity and sizing"): 129 - 25.2 - 36 log10(3000)
+# = -21.4 dB, so a link between two rooftops has 21.4 dB less loss than
+# the same link in the clutter. A rooftop relay's link to anything
+# below the roofs gets no bonus.
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+# A square of 28 km² (spec "Capacity and sizing"): side 5291.5 m.
+#
+# Relays at spec "Capacity and sizing"'s 9.6 per km² for indoor coverage. Spec "Capacity and sizing" gives no rooftop
+# share; the rooftop ones here are its outdoor-only density, 1.9 per km²,
+# the relays a city would put up first, 53 of the 269.
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 7.7
+
+# 20 000 phones with their leaves (spec "Capacity and sizing": 300 000 users over 14 domains),
+# all indoors.
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 714.2857
+indoor = true
+
+# 23 texts per user per day (spec "Capacity and sizing"), 100 bytes each (spec "Capacity and sizing"'s text), to any
+# other leaf in the domain alike.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.9583333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+# As S2: dark five minutes in an hour on average (spec "Delivery queue").
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 1.0
+observers = ["relay:*"]
+per_node = true

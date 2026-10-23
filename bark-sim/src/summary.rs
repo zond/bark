@@ -275,8 +275,13 @@ pub struct Summary {
     /// Sleepy nodes, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<SleepSummary>,
-    /// Heartbeats at their receivers.
+    /// Heartbeats at their receivers, after the settle time.
     pub heartbeats: crate::metrics::HeartbeatFates,
+    /// The same in the run's first minute (`metrics::BOOT_MINUTE`).
+    pub boot_heartbeats: crate::metrics::HeartbeatFates,
+    /// How soon nodes switched on took part, by what switched them on and
+    /// their role (`boots.rs`).
+    pub boots: Vec<crate::boots::BootRow>,
     /// Pairs of nodes that are not sleepy and are in reach of each other,
     /// and of those, ones with the same heartbeat interval
     /// (`bark_proto::node::heartbeat_interval`).
@@ -452,6 +457,8 @@ impl Sim {
             }),
             sleep: self.sleep_summary(),
             heartbeats: m.heartbeats,
+            boot_heartbeats: m.boot_heartbeats,
+            boots: self.boot_rows(),
             interval_pairs: self.interval_pairs(),
             hop_places: m.hop_places,
             records_lost: m.records_lost.clone(),
@@ -815,6 +822,17 @@ impl Summary {
             "heartbeats: {} at their receivers, {} received, {} lost with another heartbeat on the air; {} pairs in reach, {} with the same interval",
             b.candidates, b.received, b.lost_with_heartbeat, self.interval_pairs.0, self.interval_pairs.1
         );
+        let b = &self.boot_heartbeats;
+        if b.candidates > 0 {
+            let _ = writeln!(
+                s,
+                "heartbeats in the first minute: {} at their receivers, {} received, {} lost with another heartbeat on the air, {} to collisions",
+                b.candidates, b.received, b.lost_with_heartbeat, b.lost_collided
+            );
+        }
+        for r in &self.boots {
+            s.push_str(&r.lines());
+        }
         let h = &self.hop_places;
         if h.refusals > 0 {
             let _ = writeln!(

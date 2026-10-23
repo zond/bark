@@ -1,0 +1,562 @@
+# S4 with boots in its settled hour (roadmap D73): relays and sleepy nodes
+# planted in the running network, and relays restarted with their stored
+# state and wiped, a dozen of each, one every 300 s from 2750 s, each kind
+# at its own offset. Every scripted boot's application offers a text at
+# once to a relay chosen at random (`bark-sim/src/boots.rs`). Everything
+# else is `s4-capacity.toml`, whose comments say where its numbers come
+# from.
+name = "s4-boot"
+seed = 1
+# One settled hour after the settle time: 2700 + 3600 s.
+duration_s = 6300.0
+# After it is switched on, a relay chooses a home channel after its 195 s
+# boot listen (spec "Channel at boot") and a sleepy node takes an anchor
+# within its two-rotation boot listen and chooses within a rotation more
+# (spec "Relay choice"); the move rule acts only on ten minutes of
+# measurement (spec "Channel moves"), so a relay's first moves come 795 s
+# after it is switched on. The run has settled this long after the last
+# switch-on, 1800 + 900 s.
+settle_s = 900.0
+# A node's ID is its chip's factory ID (spec "Node identity"), effectively
+# random, so two nodes share a heartbeat interval by chance; "sequence"
+# spreads the intervals evenly, as before roadmap D52.
+ids = "random"
+
+# Nobody switches a city's nodes on in the same second. The network comes
+# up when a power cut ends or in the morning: relays on the mains come back
+# as their district's supply is restored, feeder by feeder, and solar ones
+# as the light reaches their panels; people switch theirs on when an alert
+# or the morning reaches them. Ten minutes for the relays and half an hour
+# for the people are the short end of that, the hardest boot short of all
+# at once. `relays_s = 0` and `sleepy_s = 0` switch everything on at once,
+# as the measurements before roadmap D52 did.
+[boot]
+relays_s = 600.0
+sleepy_s = 1800.0
+
+# Each node's clock runs off true time by up to the ±50 ppm of a watch
+# crystal (spec "Heartbeat"), uniformly: the tolerance bounds the error
+# and says nothing of its spread, and a uniform spread puts more clocks
+# near the bound than one that clusters at zero would.
+[clocks]
+drift_ppm = 50.0
+
+# A fifth of the people walk somewhere now and then, as people do in a
+# city whose transport has stopped. A walk is a kilometre on average,
+# twelve minutes at a common walking speed, between stops of an hour: a
+# walker is in the street a sixth of the time, so 3 % of all sleepy nodes
+# are at any moment, about the half hour a day of its waking hours a
+# person spends walking. Stops are indoors and walks outdoors, without
+# the wall. Relays never move.
+[movement]
+fraction = 0.2
+speed_m_s = 1.4
+trip_m = 1000.0
+stop_s = 3600.0
+shadow_decorrelation_m = 50.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+# S2's fit to the ranges of spec "Physical layer" at SF5, 10 dBm and the -119 dBm
+# default sensitivity, 129 dB of budget, with free-space loss at 1 m of
+# 25.2 dB: 750 m to a handheld in the street gives n = 3.6, and 300 m to
+# one indoors leaves 14.4 dB for the wall. A windowsill relay counts as
+# outdoors: with a wall at both ends a relay would reach a leaf 120 m
+# away, and spec "Capacity and sizing"'s 9.6 relays per km² would leave most leaves without one.
+exponent = 3.6
+indoor_loss_db = 14.4
+# Rooftop relays hear about 3 km (spec "Physical layer", "Capacity and sizing"): 129 - 25.2 - 36 log10(3000)
+# = -21.4 dB, so a link between two rooftops has 21.4 dB less loss than
+# the same link in the clutter. A rooftop relay's link to anything
+# below the roofs gets no bonus.
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+# A square of 28 km² (spec "Capacity and sizing"): side 5291.5 m.
+#
+# Relays at spec "Capacity and sizing"'s 9.6 per km² for indoor coverage. Spec "Capacity and sizing" gives no rooftop
+# share; the rooftop ones here are its outdoor-only density, 1.9 per km²,
+# the relays a city would put up first, 53 of the 269.
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 7.7
+
+# 20 000 phones with their leaves (spec "Capacity and sizing": 300 000 users over 14 domains),
+# all indoors.
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 5291.5
+height_m = 5291.5
+per_km2 = 714.2857
+indoor = true
+
+# 23 texts per user per day (spec "Capacity and sizing"), 100 bytes each (spec "Capacity and sizing"'s text), to any
+# other leaf in the domain alike.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 0.9583333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+# As S2: dark five minutes in an hour on average (spec "Delivery queue").
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 1.0
+observers = ["relay:*"]
+per_node = true
+
+# The planted nodes: windowsill relays, outdoors as the other windowsill
+# relays are, and people's nodes indoors, at points drawn uniformly over
+# the square away from its edges.
+
+[[nodes]]
+place = "point"
+name = "planted-relay-0"
+role = "relay"
+x = 1612.8
+y = 2655.8
+
+[[nodes]]
+place = "point"
+name = "planted-relay-1"
+role = "relay"
+x = 2946.7
+y = 2462.6
+
+[[nodes]]
+place = "point"
+name = "planted-relay-2"
+role = "relay"
+x = 3052.7
+y = 2585.9
+
+[[nodes]]
+place = "point"
+name = "planted-relay-3"
+role = "relay"
+x = 2729.7
+y = 1248.8
+
+[[nodes]]
+place = "point"
+name = "planted-relay-4"
+role = "relay"
+x = 817.9
+y = 1496.8
+
+[[nodes]]
+place = "point"
+name = "planted-relay-5"
+role = "relay"
+x = 3958.5
+y = 419.2
+
+[[nodes]]
+place = "point"
+name = "planted-relay-6"
+role = "relay"
+x = 1952.3
+y = 2281.5
+
+[[nodes]]
+place = "point"
+name = "planted-relay-7"
+role = "relay"
+x = 2894.7
+y = 2333.9
+
+[[nodes]]
+place = "point"
+name = "planted-relay-8"
+role = "relay"
+x = 4313.2
+y = 4697.2
+
+[[nodes]]
+place = "point"
+name = "planted-relay-9"
+role = "relay"
+x = 2968.1
+y = 1249.9
+
+[[nodes]]
+place = "point"
+name = "planted-relay-10"
+role = "relay"
+x = 4405.3
+y = 4314.3
+
+[[nodes]]
+place = "point"
+name = "planted-relay-11"
+role = "relay"
+x = 2478.0
+y = 4043.6
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-0"
+role = "leaf"
+x = 4449.1
+y = 4761.2
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-1"
+role = "leaf"
+x = 1374.3
+y = 1319.5
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-2"
+role = "leaf"
+x = 4066.0
+y = 1571.0
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-3"
+role = "leaf"
+x = 1587.1
+y = 529.6
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-4"
+role = "leaf"
+x = 3875.9
+y = 1411.4
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-5"
+role = "leaf"
+x = 1097.9
+y = 3177.8
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-6"
+role = "leaf"
+x = 695.4
+y = 3980.0
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-7"
+role = "leaf"
+x = 684.3
+y = 4860.0
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-8"
+role = "leaf"
+x = 918.8
+y = 968.8
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-9"
+role = "leaf"
+x = 2468.7
+y = 3892.9
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-10"
+role = "leaf"
+x = 2585.2
+y = 3624.6
+indoor = true
+
+[[nodes]]
+place = "point"
+name = "planted-sleepy-11"
+role = "leaf"
+x = 1434.5
+y = 4325.3
+indoor = true
+
+# The boots, from 2750 s, past the settle time (900 s after the last
+# switch-on at 1800 s), 300 s apart in each kind: a planted relay at
+# 2750 + 300 k, a planted sleepy node 75 s later, a windowsill relay
+# restarted 150 s later and another wiped 225 s later. The relays
+# restarted and wiped are every eighteenth windowsill one, relay:53 being
+# the first of them in file order.
+
+[[events]]
+at_s = 2750.0
+node = "planted-relay-0"
+action = "start"
+
+[[events]]
+at_s = 2825.0
+node = "planted-sleepy-0"
+action = "start"
+
+[[events]]
+at_s = 2900.0
+node = "relay:53"
+action = "restart"
+
+[[events]]
+at_s = 2975.0
+node = "relay:62"
+action = "wipe"
+
+[[events]]
+at_s = 3050.0
+node = "planted-relay-1"
+action = "start"
+
+[[events]]
+at_s = 3125.0
+node = "planted-sleepy-1"
+action = "start"
+
+[[events]]
+at_s = 3200.0
+node = "relay:71"
+action = "restart"
+
+[[events]]
+at_s = 3275.0
+node = "relay:80"
+action = "wipe"
+
+[[events]]
+at_s = 3350.0
+node = "planted-relay-2"
+action = "start"
+
+[[events]]
+at_s = 3425.0
+node = "planted-sleepy-2"
+action = "start"
+
+[[events]]
+at_s = 3500.0
+node = "relay:89"
+action = "restart"
+
+[[events]]
+at_s = 3575.0
+node = "relay:98"
+action = "wipe"
+
+[[events]]
+at_s = 3650.0
+node = "planted-relay-3"
+action = "start"
+
+[[events]]
+at_s = 3725.0
+node = "planted-sleepy-3"
+action = "start"
+
+[[events]]
+at_s = 3800.0
+node = "relay:107"
+action = "restart"
+
+[[events]]
+at_s = 3875.0
+node = "relay:116"
+action = "wipe"
+
+[[events]]
+at_s = 3950.0
+node = "planted-relay-4"
+action = "start"
+
+[[events]]
+at_s = 4025.0
+node = "planted-sleepy-4"
+action = "start"
+
+[[events]]
+at_s = 4100.0
+node = "relay:125"
+action = "restart"
+
+[[events]]
+at_s = 4175.0
+node = "relay:134"
+action = "wipe"
+
+[[events]]
+at_s = 4250.0
+node = "planted-relay-5"
+action = "start"
+
+[[events]]
+at_s = 4325.0
+node = "planted-sleepy-5"
+action = "start"
+
+[[events]]
+at_s = 4400.0
+node = "relay:143"
+action = "restart"
+
+[[events]]
+at_s = 4475.0
+node = "relay:152"
+action = "wipe"
+
+[[events]]
+at_s = 4550.0
+node = "planted-relay-6"
+action = "start"
+
+[[events]]
+at_s = 4625.0
+node = "planted-sleepy-6"
+action = "start"
+
+[[events]]
+at_s = 4700.0
+node = "relay:161"
+action = "restart"
+
+[[events]]
+at_s = 4775.0
+node = "relay:170"
+action = "wipe"
+
+[[events]]
+at_s = 4850.0
+node = "planted-relay-7"
+action = "start"
+
+[[events]]
+at_s = 4925.0
+node = "planted-sleepy-7"
+action = "start"
+
+[[events]]
+at_s = 5000.0
+node = "relay:179"
+action = "restart"
+
+[[events]]
+at_s = 5075.0
+node = "relay:188"
+action = "wipe"
+
+[[events]]
+at_s = 5150.0
+node = "planted-relay-8"
+action = "start"
+
+[[events]]
+at_s = 5225.0
+node = "planted-sleepy-8"
+action = "start"
+
+[[events]]
+at_s = 5300.0
+node = "relay:197"
+action = "restart"
+
+[[events]]
+at_s = 5375.0
+node = "relay:206"
+action = "wipe"
+
+[[events]]
+at_s = 5450.0
+node = "planted-relay-9"
+action = "start"
+
+[[events]]
+at_s = 5525.0
+node = "planted-sleepy-9"
+action = "start"
+
+[[events]]
+at_s = 5600.0
+node = "relay:215"
+action = "restart"
+
+[[events]]
+at_s = 5675.0
+node = "relay:224"
+action = "wipe"
+
+[[events]]
+at_s = 5750.0
+node = "planted-relay-10"
+action = "start"
+
+[[events]]
+at_s = 5825.0
+node = "planted-sleepy-10"
+action = "start"
+
+[[events]]
+at_s = 5900.0
+node = "relay:233"
+action = "restart"
+
+[[events]]
+at_s = 5975.0
+node = "relay:242"
+action = "wipe"
+
+[[events]]
+at_s = 6050.0
+node = "planted-relay-11"
+action = "start"
+
+[[events]]
+at_s = 6125.0
+node = "planted-sleepy-11"
+action = "start"
+
+[[events]]
+at_s = 6200.0
+node = "relay:251"
+action = "restart"
+
+[[events]]
+at_s = 6275.0
+node = "relay:260"
+action = "wipe"

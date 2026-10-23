@@ -14,6 +14,7 @@
 //!
 //! The reception model is in `radio.rs`.
 
+use crate::boots::{BootKind, Boots};
 use crate::geo::{Grid, Origin, Xy};
 use crate::links::{LinkTable, NodeRadio, Site};
 use crate::metrics::{DropReason, FirstTry, Metrics, Observer, Outcome, AFTER_BEAT, AFTER_TAKE};
@@ -795,6 +796,10 @@ pub struct Sim {
     /// Refused messages not yet sent again: (sender, message) to the
     /// refusal's time and whether a hop place was free for another.
     refused_at: HashMap<(u32, u32), (Instant, bool)>,
+    /// Every boot, watched until the node takes part (`boots.rs`).
+    boots: Boots,
+    /// The destinations of the texts offered at scripted boots.
+    boot_rng: Stream,
 }
 
 /// The ID the simulator gives node `i`: `i + 1` times an odd constant,
@@ -985,6 +990,10 @@ fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
 
 /// The interval of the series, µs.
 const SERIES_EVERY_US: u64 = 60_000_000;
+
+/// The text a node's application offers at a scripted boot: the length
+/// of the texts of spec "Capacity and sizing".
+const BOOT_TEXT_BYTES: u8 = 100;
 
 pub(crate) fn secs(s: f64) -> Duration {
     Duration::from_micros((s * 1e6).round() as u64)
@@ -1233,6 +1242,8 @@ impl Sim {
             rx_data: None,
             recorded: std::collections::HashSet::new(),
             refused_at: HashMap::new(),
+            boots: Boots::new(n),
+            boot_rng: Stream::new(sc.seed, Purpose::BootText, 0),
         };
         sim.component = sim.components();
         sim.setup(sc, &placed)?;
@@ -1664,7 +1675,7 @@ impl Sim {
         match ev {
             Ev::Boot(n) => {
                 if std::mem::take(&mut self.pending_boot[n as usize]) {
-                    self.start(n);
+                    self.start(n, BootKind::Initial);
                 }
             }
             Ev::AirStart(slot, g) => self.air_start(slot, g),
@@ -1894,7 +1905,14 @@ impl Sim {
         }
         let c = &mut self.relays[node as usize];
         self.was_booting = c.booting();
+        let received = matches!(ev, Event::Received { .. });
         c.handle(ev, clock.local(now), &mut |a| buf.push(a));
+        let relays = &self.relays;
+        self.boots
+            .after_event(node, &relays[node as usize], now, received, |n| {
+                relays[n as usize].home()
+            });
+        let c = &mut self.relays[node as usize];
         if let Some((at, id, _, _)) = rx {
             if c.knows(MsgId(id)) {
                 self.recorded.insert((at, id));
@@ -3754,7 +3772,11 @@ impl Sim {
         let e = &self.script[k as usize];
         let (node, action, channel, len, preamble) =
             (e.node, e.action, e.channel, e.len, e.preamble);
-        if matches!(action, ScriptAction::Remove | ScriptAction::Restart) && node < self.n_relays {
+        let removes = matches!(
+            action,
+            ScriptAction::Remove | ScriptAction::Restart | ScriptAction::Wipe
+        );
+        if removes && node < self.n_relays {
             let id = self.relays[node as usize].id();
             for n in self.n_relays..self.node_count() as u32 {
                 if self.relays[n as usize].anchor().is_some_and(|a| a.id == id) {
@@ -3765,7 +3787,8 @@ impl Sim {
         match action {
             ScriptAction::Remove => self.remove(node),
             ScriptAction::Restart => self.restart(node),
-            ScriptAction::Start => self.start(node),
+            ScriptAction::Wipe => self.wipe(node),
+            ScriptAction::Start => self.start(node, BootKind::Start),
             ScriptAction::Sniff => self.apply(node, Action::Sniff(self.end), true),
             ScriptAction::Listen => self.listen(node, channel.expect("validated")),
             ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
@@ -3791,7 +3814,7 @@ impl Sim {
     }
 
     /// Power on a node that has been off since the start: it boots.
-    pub fn start(&mut self, node: u32) {
+    pub fn start(&mut self, node: u32, kind: BootKind) {
         if self.nodes[node as usize].alive {
             return;
         }
@@ -3805,6 +3828,54 @@ impl Sim {
             }
         }
         self.power_on(node);
+        self.watch_boot(node, kind);
+    }
+
+    /// Watch the boot of `node` (`boots.rs`). A scripted boot's application
+    /// offers a text at once, to a relay chosen at random, so that what
+    /// the boot does to it is not mixed with how a sleepy node is reached.
+    fn watch_boot(&mut self, node: u32, kind: BootKind) {
+        let sleepy = self.relays[node as usize].sleepy();
+        let in_range: Vec<u32> = if sleepy {
+            Vec::new()
+        } else {
+            self.links
+                .row(node)
+                .iter()
+                .filter(|l| l.base_dbm as f64 >= self.sens_dbm)
+                .map(|l| l.rx)
+                .filter(|&b| {
+                    b != node && self.nodes[b as usize].alive && !self.relays[b as usize].sleepy()
+                })
+                .collect()
+        };
+        let id = self.relays[node as usize].id();
+        let k = self
+            .boots
+            .begin(node, id, kind, sleepy, self.now, &in_range);
+        if kind == BootKind::Initial {
+            return;
+        }
+        let relays: Vec<u32> = (0..self.n_relays)
+            .filter(|&r| {
+                r != node && self.nodes[r as usize].alive && !self.relays[r as usize].sleepy()
+            })
+            .collect();
+        if relays.is_empty() {
+            return;
+        }
+        let dst = relays[self.boot_rng.range(0, relays.len() as u64 - 1) as usize];
+        let tag = self.origins.len() as u32;
+        self.originate(node, dst, BOOT_TEXT_BYTES);
+        if self.origins.len() as u32 > tag {
+            self.boots.text(k, tag);
+        }
+    }
+
+    /// The boots so far, by kind and role (`boots.rs`).
+    pub(crate) fn boot_rows(&self) -> Vec<crate::boots::BootRow> {
+        self.boots
+            .summary(|tag| self.origins.get(tag as usize).and_then(|o| o.delivered_at))
     }
 
     /// Power-on is delivered as a wakeup (docs/core-interface.md §2), and
@@ -3821,10 +3892,21 @@ impl Sim {
     }
 
     /// Power a node off and on again: it boots afresh with every table
-    /// lost and its ID and position kept. Its
-    /// new core draws from a new random stream, as a board's hardware
-    /// generator would after a reboot.
+    /// lost and its ID and position kept.
     pub fn restart(&mut self, node: u32) {
+        self.reboot(node, BootKind::Restart);
+    }
+
+    /// As [`Sim::restart`], with the node's stored state erased: a fresh
+    /// board in its place. A core keeps no store yet, so it is a restart.
+    pub fn wipe(&mut self, node: u32) {
+        self.reboot(node, BootKind::Wipe);
+    }
+
+    /// Power a node off and on again. Its new core draws from a new
+    /// random stream, as a board's hardware generator would after a
+    /// reboot.
+    fn reboot(&mut self, node: u32, kind: BootKind) {
         if !self.nodes[node as usize].alive {
             return;
         }
@@ -3837,6 +3919,7 @@ impl Sim {
         let r = &mut self.relays[node as usize];
         *r = Relay::new(*r.config(), seed);
         self.power_on(node);
+        self.watch_boot(node, kind);
     }
 
     fn power_off(&mut self, node: u32, why: &str) {

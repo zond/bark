@@ -30,7 +30,7 @@
 //! first brought up to the present (`settle`), and a loss found then is
 //! dated to when the budget ran out.
 
-use crate::metrics::{FirstTry, Outcome};
+use crate::metrics::{FirstTry, Outcome, BOOT_MINUTE};
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim, ToSleepy};
 use crate::walk::MovingLink;
@@ -190,7 +190,9 @@ impl Sim {
                 self.watch_beat(slot, key(h.id), h.anchorless);
             }
         }
-        if matches!(decoded, Some(WirePacket::Heartbeat(h)) if !h.sleepy) && self.now >= self.settle
+        if matches!(decoded, Some(WirePacket::Heartbeat(h)) if !h.sleepy)
+            && (self.now >= self.settle
+                || self.now < Instant::ZERO + BOOT_MINUTE.min(self.settle.since(Instant::ZERO)))
         {
             self.beat_losses.insert(tx_key, Vec::new());
         }
@@ -502,7 +504,8 @@ impl Sim {
             Ok(WirePacket::Heartbeat(h)) if !h.sleepy
         );
         let losses = self.beat_losses.remove(&tx.key).unwrap_or_default();
-        if heartbeat && self.now >= self.settle {
+        let first_minute = tx.start < self.settle && tx.start < Instant::ZERO + BOOT_MINUTE;
+        if heartbeat && (tx.start >= self.settle || first_minute) {
             let (start, end, c) = (tx.start, tx.end, ch.index());
             let src_id = self.relay(tx.src).id();
             for i in 0..receivers {
@@ -523,7 +526,11 @@ impl Sim {
                 if !audible || off || st.resting != Some(ch) {
                     continue;
                 }
-                let h = &mut self.metrics.heartbeats;
+                let h = if first_minute {
+                    &mut self.metrics.boot_heartbeats
+                } else {
+                    &mut self.metrics.heartbeats
+                };
                 h.candidates += 1;
                 if got.iter().any(|g| g.0 == b) {
                     h.received += 1;

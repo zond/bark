@@ -647,6 +647,11 @@ pub struct AppMetrics {
     pub latencies_us: Vec<u64>,
 }
 
+/// The start of a run in which the heartbeats of nodes switched on
+/// together are followed (`Metrics::boot_heartbeats`): a minute, the
+/// first rotation's quick heartbeats and their answers (roadmap D73).
+pub const BOOT_MINUTE: bark_proto::Duration = bark_proto::Duration::from_secs(60);
+
 /// Heartbeats of nodes that are not sleepy, after the settle time, at the
 /// nodes listening on their channel: how many arrived, and how many were
 /// lost with another heartbeat on the air there.
@@ -1060,8 +1065,11 @@ pub struct Metrics {
     pub returns: LeafReturns,
     /// What sleeping does to sleepy nodes and their holders.
     pub sleep: SleepMetrics,
-    /// Heartbeats at their receivers.
+    /// Heartbeats at their receivers, after the settle time.
     pub heartbeats: HeartbeatFates,
+    /// The same in the run's first [`BOOT_MINUTE`], before the settle
+    /// time: what nodes switched on together meet (roadmap D73).
+    pub boot_heartbeats: HeartbeatFates,
     /// Frames addressed to a relay, by fate.
     pub addressed: Addressed,
     /// Refusals for room, and the hop places free at them.

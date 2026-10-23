@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod boots;
 pub mod geo;
 pub mod links;
 pub mod metrics;

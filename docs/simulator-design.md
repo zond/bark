@@ -155,6 +155,8 @@ S3 are the twins of bring-up steps 4, 5 and 3 (roadmap, Phase 2).
 | `dense.toml` | S4 with a quarter of the people's nodes as relays, 5317 in all | relays among the people, as on USB power; `dense-relays-2026-10-20.md` |
 | `dense-movers.toml` | `dense.toml` with a fifth of the people's relays walking and the GPS checks on | relays that move; `dense-relays-2026-10-20.md`, `carried-2026-10-21.md` |
 | `dense-power.toml` | `dense-movers.toml` with every walker on battery while it walks and on USB at its stops, and a fifth of the other people's nodes switching at random | a role that follows the power; `power-role-2026-10-21.md` |
+| `s4-boot.toml` | S4 with a dozen relays and a dozen sleepy nodes planted in its settled hour, and two dozen relays restarted, half with their stored state and half wiped | how soon a node switched on takes part; `fast-boot-2026-10-23.md` |
+| `s4-mass-boot.toml` | S4 with every node switched on in the same second | the boot after a power cut; `fast-boot-2026-10-23.md` |
 | `dark-groups.toml` | four square kilometres at S4's densities, a relay at the centre and a building of 400 people beside it; a run adds the group that goes dark | the delivery queue while a group is dark; `unproven-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's
@@ -198,7 +200,19 @@ node keeps its ID and position, and
 loses everything else, as a solar relay does after a night. Its core is
 built afresh with a new random seed and boots: a relay listens before
 choosing a home channel (spec "Channel at boot") and takes no traffic until then,
-while its neighbours still list it.
+while its neighbours still list it. A scripted `wipe` does the same with
+the node's stored state erased, as a fresh board in its place.
+
+**Boots.** Every boot, a node's switch-on and every scripted `start`,
+`restart` and `wipe`, is followed until the node takes part: when it
+first knows a neighbour; a sleepy node, when it first has an anchor; a
+relay, when each relay in its range, one that receives its heartbeat at
+or above sensitivity on average, first holds it in its neighbour table
+with the home channel it listens on then. At a scripted boot the node's
+application offers a text at once, to a relay chosen at random, and the
+summary gives when it arrived. The heartbeats of the run's first minute,
+before the settle time, are counted apart from the settled ones, for
+nodes switched on together (`bark-sim/src/boots.rs`).
 
 **Pushback.** Each origin's application holds at most one message. The
 traffic model's message is handed to the origin's core at the first

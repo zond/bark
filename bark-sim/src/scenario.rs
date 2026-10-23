@@ -302,6 +302,9 @@ pub enum ScriptAction {
     /// Power on a node that is off: a node with a `start` event is off
     /// until it, and then boots, as a relay planted during the run does.
     Start,
+    /// As `restart`, with the node's stored state erased: a fresh board
+    /// in its place (roadmap D73).
+    Wipe,
 }
 
 /// A scripted event.
