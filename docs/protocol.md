@@ -306,10 +306,7 @@ Per channel, a node keeps `busy[c]`, an exponential moving average of a
   along. So a home reading taken while one of them was on the air is set
   aside, and every other is the same 0/1 reading as on any other
   channel. The move rule compares home with the others, so all are read
-  alike: a relay decodes packets too faint for any reading to see, and
-  counting their receive time on home alone made home read busier the
-  more traffic there was, so that under load relays moved over and over
-  to no gain (roadmap D55).
+  alike (roadmap D55).
 - **Home readings and the node's own packets:** whether a reading fell in
   the node's own packet is known only when that packet ends, so a home
   reading is held until the next, one second later, longer than any
@@ -487,8 +484,7 @@ flags change seldom: the sleepy flag is set only after an hour's grace
 on battery ([sleepy nodes](#sleepy-nodes)), and the carried flag is
 cleared only after four hours still ([position](#position)). A position
 that changes with each fix is not announced. A carried relay's slots
-carry it every T, and a heartbeat for each change would double a
-walking relay's heartbeats for no message more delivered (roadmap D71);
+carry it every T (roadmap D71);
 a sleepy node, carried or not, is a last resort to its neighbours, and
 its beats carry its fix ([beats](#beats)). Sleeping nodes hear none of this, receiving
 duty-cycled; they learn a change at the next slot they wake for.
@@ -854,12 +850,9 @@ wait cannot grow from relay to relay around a ring.
 
 The places in line are one ban apart and nothing in the protocol acts
 sooner, so the ban is the unit; a coarser one would merge neighbouring
-places. A byte holds 255 bans, 398 s. A relay at its cap with a hundred
-sleepy nodes in line asks for minutes, and a longer wait is told as the
-longest, the sender coming back early to be refused again. The delivery
-TTL bounds the range a sender can use and the ban its resolution, so a
-geometric scale would buy range that cannot be used and lose the places
-the line exists for (roadmap D54).
+places. A byte holds 255 bans, 398 s; a longer wait is told as the
+longest, the sender coming back early to be refused again (roadmap
+D54).
 
 **Silence doubles the ban from 1.56 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.56 s doubled k − 1 times: 1.56 s, 3.11 s,
@@ -1527,9 +1520,7 @@ heartbeats reach the node's channel about 130 s apart, longer than the
 the difference of two such means σ√(1/2 + 1/2) = 4 dB. The neighbour
 table's average lets each new frame count half, which varies less than a
 mean of two (σ²/3 against σ²/2), so 8 dB is a little more than two
-standard deviations there. A node in a vehicle does not keep up: the
-mail its holder keeps for it waits there until its place is needed, and
-is lost unless the sender learns the new address (roadmap D65).
+standard deviations there.
 
 **Asleep.** Between its windows a sleepy node receives duty-cycled,
 which catches no heartbeat with the ordinary preamble, so it hears its
