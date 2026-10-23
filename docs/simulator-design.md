@@ -138,7 +138,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 The files in `scenarios/` are the ones the tests and the roadmap's
 measurements use. Each file says in its header what it is for, and S1 to
-S3 are the twins of spec "Implementation notes" steps 4, 5 and 3.
+S3 are the twins of bring-up steps 4, 5 and 3 (roadmap, Phase 2).
 
 | File | What it is | What it checks |
 |---|---|---|

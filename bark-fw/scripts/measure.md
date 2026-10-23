@@ -29,7 +29,7 @@ values into a scenario's `[radio]` table (see the end).
 Repeat every timing measurement at least 10 times and record median and
 range; the stopwatch resolves 1 µs.
 
-## Step 1: transmit, receive, CAD, RSSI, retune (spec "Implementation notes" step 1)
+## Step 1: transmit, receive, CAD, RSSI, retune (roadmap Phase 2, step 1)
 
 ### 1.1 Transmit and receive
 
@@ -188,7 +188,7 @@ If rejection at ±1 channel is well below the 60 dB the simulator
 assumes, run the simulator with the measured value; if the network
 suffers, the fallback is 11 channels at 150 kHz (spec "Channel plan").
 
-## Step 2: listen-before-talk, heartbeat, neighbour table (spec "Implementation notes" step 2)
+## Step 2: listen-before-talk, heartbeat, neighbour table (roadmap Phase 2, step 2)
 
 The heartbeat and neighbour table need the protocol core, which the
 default build runs and the console does not (README). What the console
@@ -199,7 +199,7 @@ measures for step 2:
 - That all three pairs of boards hear each other: `ping` each way
   between each pair, on different home channels.
 
-## Step 3: busy estimate and home channel (spec "Implementation notes" step 3)
+## Step 3: busy estimate and home channel (roadmap Phase 2, step 3)
 
 Also needs the core. What the console measures for step 3:
 
@@ -207,10 +207,10 @@ Also needs the core. What the console measures for step 3:
   threshold (floor + 6 dB, spec "Busy estimate"; O3, O11).
 - The cost of the sweep (1.4).
 - An interferer: a fourth board running `beacon k 1390 255` occupies
-  channel k 10 % of the time. A continuous-wave interferer (spec "Implementation notes" step 3)
+  channel k 10 % of the time. A continuous-wave interferer (roadmap Phase 2, step 3)
   is not in this console.
 
-## Step 5: a sleepy node, duty-cycled receive and current (spec "Implementation notes" step 5)
+## Step 5: a sleepy node, duty-cycled receive and current (roadmap Phase 2, step 5)
 
 Board S runs the node built to report battery on the bench's USB
 (`BARK_ON_BATTERY=1 cargo build --release`), so that it is sleepy and logs;

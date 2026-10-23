@@ -96,7 +96,17 @@ The radio's unknowns, adjacent-channel rejection, SF5 sensitivity, fading and th
 
 ### Phase 2: bring-up (boards around 2026-11-04)
 
-Four T-Echo 433 boards are expected around 2026-11-04. The firmware runs the core, a relay on USB and sleepy on battery (D71), or a measurement console; it has been built but not yet run on a board (`bark-fw/README.md`). Spec "Implementation notes" steps 1 to 3 come first: transmit and receive at SF5, channel activity detection (CAD), signal strength (RSSI), retune and sweep times, noise floor, adjacent-channel rejection with two boards and attenuators. Every measurement goes back into the simulator. Toolchain: the `thumbv7em-none-eabihf` target, a UF2 converter, text logging over USB serial (no debug probe).
+Four T-Echo 433 boards are expected around 2026-11-04. The firmware runs the core, a relay on USB and sleepy on battery (D71), or a measurement console; it has been built but not yet run on a board (`bark-fw/README.md`). Toolchain: the `thumbv7em-none-eabihf` target, a UF2 converter, text logging over USB serial (no debug probe). Test rig: at least three T-Echo 433, SMA attenuators, one interferer source (a fourth board is fine), a USB logic/UART sniffer for timing.
+
+The bring-up order. Each step is a milestone on real boards; steps 1 to 3 come first, the rest are Phase 3. Every measurement goes back into the simulator.
+
+1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, channel activity detection (CAD), signal strength (RSSI); retune and sweep times, the noise floor and the preamble the modem needs to lock measured; adjacent-channel rejection with two boards and attenuators (O5).
+2. Listen-before-talk + rotating heartbeat + neighbour table on three boards: each board lists the other two with channel and position within one rotation.
+3. Busy estimate + home-channel selection: put a continuous-wave interferer on one channel, watch boards avoid it; check that three boards that all hear each other do not keep switching.
+4. Greedy forwarding + per-hop ACK across three relays in a line, with attenuators or distance so A cannot hear C. Demotion when the middle relay is powered off.
+5. Sleepy node: anchor, beats, delivery in the window, queue, the watch for the anchor's heartbeat, and duty-cycled receive between the windows with the long preamble (`Action::Sniff`, `core-interface.md`): a long-preamble frame sent to a board checking every 361 ms, 100 times, caught every time. **This is the loop every user feels; prototype it before anything clever.**
+6. BLE GATT + minimal phone app.
+7. Field test: a dozen relays on windowsills across a few blocks.
 
 The bench list, with what each number is expected to be and where it goes. `bark-fw/scripts/measure.md` says how to take each; the console (`bark-fw --features console`) prints the timing ones.
 
@@ -120,7 +130,7 @@ The bench list, with what each number is expected to be and where it goes. `bark
 
 ### Phase 3: protocol on hardware
 
-Spec "Implementation notes" steps 4 and 5 on four boards, three relays in a line and a sleepy node; then step 6, the BLE link of spec "Phone link" and a minimal app for it. The field test, step 7, needs more boards or RAK4631 EU433 relays (spec "Hardware", O12).
+Bring-up steps 4 and 5 (Phase 2) on four boards, three relays in a line and a sleepy node; then step 6, the BLE link of spec "Phone link" and a minimal app for it. The field test, step 7, needs more boards or RAK4631 EU433 relays (spec "Hardware", O12).
 
 ## Questions settled
 

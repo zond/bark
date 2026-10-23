@@ -200,7 +200,7 @@ receives again: a cycle `C = rx + sleep + wake`, with `wake` = 6 ms.
 
 It catches a preamble only if a window holds `D` of it, the time the
 modem takes to lock, taken here as 4 symbols (≈1 ms; measured in
-bring-up step 1, [implementation notes](#implementation-notes)). A
+bring-up step 1, `roadmap.md` Phase 2). A
 preamble that starts just too late for one window must reach `D` into
 the next, so it is caught wherever it starts if it is at least
 `sleep + wake + 2D` long. Once it has detected a preamble, the radio
@@ -2076,46 +2076,21 @@ stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
-**RAM (256 KiB):** the table sizes follow from the sections that set
-them; `core-interface.md`, Memory, has them as built. Every board holds a
-relay's tables, the heard table and the delivery queue included, since
-every node may turn relay (roadmap D71); a sleepy node keeps those two
-empty ([sleepy nodes](#sleepy-nodes)). Embassy and the stacks take
-≈16 KiB. The application has 255 KiB; 1 KiB at the bottom is kept for the
-boot record and the panic message (`bark-fw/memory.x`).
+**RAM (256 KiB):** every board holds a relay's tables, the heard table
+and the delivery queue included, since every node may turn relay
+(roadmap D71); their sizes, and how they fit beside Embassy and the
+stacks (≈16 KiB) in the 255 KiB the application has once 1 KiB is kept
+for the boot record and the panic message (`bark-fw/memory.x`), are in
+`core-interface.md`, Memory.
 
-**Bring-up order** (each step is a milestone on real boards):
-
-1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, CAD,
-   RSSI read; the retune time and the preamble the modem needs to lock
-   measured; adjacent-channel rejection (O5).
-2. Listen-before-talk + rotating heartbeat + neighbour table on three
-   boards: each board lists the other two with channel and position within
-   one rotation.
-3. Busy estimate + home-channel selection: put a continuous-wave
-   interferer on one channel, watch boards avoid it; check that three
-   boards that all hear each other do not keep switching.
-4. Greedy forwarding + per-hop ACK across three relays in a line, with
-   attenuators or distance so A cannot hear C. Demotion when the middle
-   relay is powered off.
-5. Sleepy node: anchor, beats, delivery in the window, queue, the watch
-   for the anchor's heartbeat, and duty-cycled receive between the
-   windows with the long preamble
-   (`Action::Sniff`, `core-interface.md`): a long-preamble frame sent to
-   a board checking every 361 ms, 100 times, caught every time.
-   **This is the loop every user feels; prototype it before anything
-   clever.**
-6. BLE GATT + minimal phone app.
-7. Field test: a dozen relays on windowsills across a few blocks.
-
-**Test rig:** at least three T-Echo 433, SMA attenuators, one interferer
-source (a fourth board is fine), a USB logic/UART sniffer for timing.
+The bring-up order and the test rig are in `roadmap.md`, Phase 2.
 
 ---
 
 ## Open items
 
-Resolved items keep their numbers and are in `roadmap.md`.
+Resolved items keep their numbers and are in `roadmap.md`. The steps
+are those of the bring-up order, `roadmap.md` Phase 2.
 
 | # | Item | Owner/when |
 |---|---|---|
