@@ -181,16 +181,17 @@ on the channel; it works below the noise floor.
 | Range, relay↔handheld, indoors | ≈300 m at SF5, ≈400 m at SF7 | |
 | Range, rooftop↔rooftop | several km | rooftop relays hear ≈3 km; this sets the size of a collision domain ([capacity and sizing](#capacity-and-sizing)) |
 
-SF5 carries about 3× the bytes per unit of airtime of SF7 (the common LoRa
-default) for a quarter less range. LoRa brings an existing driver, hardware
-error correction, CRC and whitening, CAD, and ~15 dB of processing gain
-against the key fobs and LPD433 handhelds that share the band. Why not
-GFSK: [what the protocol omits](#what-the-protocol-omits).
+*Why SF5.* It carries about 3× the bytes per unit of airtime of SF7
+(the common LoRa default) for a quarter less range. LoRa brings an
+existing driver, hardware error correction, CRC and whitening, CAD, and
+~15 dB of processing gain against the key fobs and LPD433 handhelds that
+share the band. Why not GFSK:
+[what the protocol omits](#what-the-protocol-omits).
 
-SF is network-wide because an SX1262 receives one SF at a time, so a
-mixed-SF network splits into parts that cannot hear each other. Starting
-at SF7 would force a network-wide switch later; the deployment is
-expected to start at a density where SF5 range suffices
+*Why network-wide.* An SX1262 receives one SF at a time, so a mixed-SF
+network splits into parts that cannot hear each other. Starting at SF7
+would force a network-wide switch later; the deployment is expected to
+start at a density where SF5 range suffices
 ([capacity and sizing](#capacity-and-sizing)).
 
 ### Duty-cycled receive and the long preamble
@@ -198,34 +199,21 @@ expected to start at a density where SF5 range suffices
 Every frame has the shortest preamble except those to a node whose radio
 receives duty-cycled: a sleepy node outside its windows
 ([sleepy nodes](#sleepy-nodes)), which without an anchor is always
-([sleepy nodes alone](#sleepy-nodes-alone)). The SX1262 does this on its
-own (datasheet §13.1.7, SetRxDutyCycle). It receives for a window `rx`,
-takes about 1 ms to save and restore its state, sleeps for `sleep`,
-starts its oscillator (the TCXO, 5 ms as the firmware sets it), and
-receives again: a cycle `C = rx + sleep + wake`, with `wake` = 6 ms.
+([sleepy nodes alone](#sleepy-nodes-alone)). Long frames go only where
+the receiver cannot be reached otherwise:
 
-It catches a preamble only if a window holds `D` of it, the time the
-modem takes to lock, taken here as 4 symbols (≈1 ms; measured in
-bring-up step 1, `roadmap.md` Phase 2). A
-preamble that starts just too late for one window must reach `D` into
-the next, so it is caught wherever it starts if it is at least
-`sleep + wake + 2D` long. Once it has detected a preamble, the radio
-waits `2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble +
-Theader ≤ 2 × rxPeriod + sleepPeriod"), which ends 14.25 symbols after
-the preamble. So the window must be at least `(wake + 2D + header) / 2`,
-and half a symbol more to round the preamble up to whole symbols:
-`rx` = 6.0 ms, in the radio's steps of 15.625 µs.
+- DATA to a sleepy node outside its window;
+- the beats of a node without an anchor, and a relay's answers to them;
+- a sleepy node's beats to its anchorless neighbours.
 
-The sleep follows from the current. The node pays `I_rx (rx + wake) / C`
-for its windows, at the 5.8 mA of listening, and `I_tx C / P` for its
-own beats, each a preamble about `C` long every `P`, at 32 mA (datasheet
-Table 3-6, the least listed for the SX1262 at 434 MHz). The sum is least
-where the two are equal, `C = √(I_rx (rx + wake) P / I_tx)`: 361.1 ms at
-`P` = 60 s, the beat interval the cycle was first set for, and within
-7 % of that from 250 to 520 ms. Every sleepy node has the same cycle.
-Without an anchor its beats come every 34.6 s, where the least is 274 ms
-and 361.1 ms costs 4 % more; with one they come every 225 s
-([beats](#beats)), where the windows dominate whatever the cycle. So:
+Their cost is in [sleepy nodes alone](#sleepy-nodes-alone).
+
+The SX1262 receives duty-cycled on its own (datasheet §13.1.7,
+SetRxDutyCycle). It receives for a window `rx`, takes about 1 ms to
+save and restore its state, sleeps for `sleep`, starts its oscillator
+(the TCXO, 5 ms as the firmware sets it), and receives again: a cycle
+`C = rx + sleep + wake`, with `wake` = 6 ms. Every sleepy node has the
+same cycle:
 
 | Quantity | Value |
 |---|---|
@@ -237,16 +225,38 @@ and 361.1 ms costs 4 % more; with one they come every 225 s
 | Heartbeat with the long preamble | 366.1 ms |
 | 255-byte frame with the long preamble | 492.9 ms, under the 1 s of [regulatory limits](#regulatory-limits) |
 
-A long frame costs its sender and its channel 30 times a heartbeat's
-airtime and 3.6 times a full frame's. So ordinary traffic keeps the
-shortest preamble: every node on a relay's channel would pay the long
-one on every frame, and a relay forwards at the 10 % cap long before its
-channel fills ([duty cycle cap](#duty-cycle-cap)). Long frames go only
-where the receiver cannot be reached otherwise: DATA to a sleepy node
-outside its window, the beats of a node without an anchor and a relay's
-answers to them, and a sleepy node's beats to its anchorless neighbours.
-Their cost is in
-[sleepy nodes alone](#sleepy-nodes-alone).
+*Why the long preamble is that long.* The radio catches a preamble only
+if a window holds `D` of it, the time the modem takes to lock, taken
+here as 4 symbols (≈1 ms; measured in bring-up step 1, `roadmap.md`
+Phase 2). A preamble that starts just too late for one window must reach
+`D` into the next, so it is caught wherever it starts if it is at least
+`sleep + wake + 2D` long.
+
+*Why that window.* Once it has detected a preamble, the radio waits
+`2 rx + sleep` for the header (datasheet §13.1.7: "Tpreamble + Theader ≤
+2 × rxPeriod + sleepPeriod"), which ends 14.25 symbols after the
+preamble. So the window must be at least `(wake + 2D + header) / 2`, and
+half a symbol more to round the preamble up to whole symbols: `rx` =
+6.0 ms, in the radio's steps of 15.625 µs.
+
+*Why that sleep.* The sleep follows from the current. The node pays
+`I_rx (rx + wake) / C` for its windows, at the 5.8 mA of listening, and
+`I_tx C / P` for its own beats, each a preamble about `C` long every
+`P`, at 32 mA (datasheet Table 3-6, the least listed for the SX1262 at
+434 MHz). The sum is least where the two are equal,
+`C = √(I_rx (rx + wake) P / I_tx)`: 361.1 ms at `P` = 60 s, the beat
+interval the cycle was first set for, and within 7 % of that from 250 to
+520 ms.
+
+Without an anchor a node's beats come every 34.6 s, where the least is
+274 ms and 361.1 ms costs 4 % more; with one they come every 225 s
+([beats](#beats)), where the windows dominate whatever the cycle.
+
+*Why ordinary traffic keeps the shortest preamble.* A long frame costs
+its sender and its channel 30 times a heartbeat's airtime and 3.6 times
+a full frame's. Every node on a relay's channel would pay the long one
+on every frame, and a relay forwards at the 10 % cap long before its
+channel fills ([duty cycle cap](#duty-cycle-cap)).
 
 ---
 
