@@ -1,6 +1,6 @@
 # Simulator design
 
-**Status:** 2026-10-21. The simulator in `bark-sim` as it is. Spec references are to
+**Status:** 2026-10-24. The simulator in `bark-sim` as it is. Spec references are to
 `protocol.md`.
 
 ## 1. Purpose
@@ -127,7 +127,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (spec "Packet formats") | 1855 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
+| message records | message ID (spec "Packet formats") | 1648 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 4-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
 | `tables::heard` | 4-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
 | `tables::delivery` | message ID | 41 messages; when the queue is full, the oldest queued 10 min or longer makes way for a new one (spec "Delivery queue") | messages waiting for a sleepy node |
@@ -175,15 +175,17 @@ own. S4 switches its relays on over 10 minutes and its sleepy nodes over
 on at once, as every measurement before roadmap D52 did.
 
 **Node IDs.** With `ids = "random"` each node's ID is drawn from the
-run's seed, as a chip's factory ID is random (spec "Node identity"), so
-two nodes in reach share a heartbeat interval, set by the ID's last byte
-(spec "Heartbeat"), at the chance rate of one pair in 256. A draw that is
+run's seed, as a chip's factory ID is taken to be random
+(spec "Node identity"): the low 48 bits of a 64-bit draw, so two nodes in reach
+share a heartbeat interval, set by the ID's last byte (spec
+"Heartbeat"), at the chance rate of one pair in 256. A draw that is
 zero or another node's ID is drawn again, since the simulator keys its
-own tables by ID; among a domain's 20 000 nodes two would share one about
-one run in twenty. The default, `"sequence"`, gives node `i` the ID
-`(i + 1) × 0x9e3779b1`, whose last bytes go through all 256 values in
-turn, so that relays share an interval about a sixteenth as often as by
-chance.
+own tables by ID; among a domain's 20 000 nodes two would share one
+about one run in a million and a half. The default, `"sequence"`, gives
+node `i` the ID `(i + 1) × 0x9e3779b97f4b` modulo 2⁴⁸, an odd multiplier near
+2⁴⁸ over the golden ratio, whose last bytes go through all 256 values
+in turn, so that relays share an interval about a sixteenth as often
+as by chance.
 
 **Clocks.** The simulator's time is true time. With `[clocks]
 drift_ppm` each node's clock runs at its own rate, drawn from the run's

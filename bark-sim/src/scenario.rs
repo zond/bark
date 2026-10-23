@@ -367,7 +367,7 @@ pub enum Ids {
     /// and the last bytes, which set heartbeat intervals, spread evenly.
     #[default]
     Sequence,
-    /// Drawn from the run's seed, as the chip's factory ID is random:
+    /// Drawn from the run's seed, as the chip's factory ID is taken to be random:
     /// last bytes shared at their chance rate. Two nodes never get one ID.
     Random,
 }

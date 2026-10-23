@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -113,7 +113,7 @@ Every node has the same application interface: the readiness query
 `Config::stored`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -190,41 +190,41 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-17 (roadmap D47), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-24 (roadmap D75), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 64 B | 4.0 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 72 B | 4.5 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 1855 × 32 B | 58.0 KiB |
-| Send queue (spec "Send queue") | (40 + 254) × 280 B | 80.4 KiB |
+| Message records (spec "Message records") | 1648 × 40 B | 64.4 KiB |
+| Send queue (spec "Send queue") | (39 + 254) × 280 B | 80.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **162.1 KiB** |
+| **All** | | **168.7 KiB** |
 
-The send queue's 40 regular places follow from the duty bucket, and its 254 hop places, one
+The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Send queue", roadmap D31). The records hold the 1561 messages a relay can handle in the
-457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
+(spec "Send queue", roadmap D31). The records hold the 1355 messages a relay can handle in the
+459.6 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-167 032 B (163.1 KiB, measured 2026-10-24, roadmap D73): the tables and, in about 1 KiB around them, the
+173 840 B (169.8 KiB, measured 2026-10-24, roadmap D75): the tables and, in about 1 KiB around them, the
 medium access, the hand-over, its one owed reply, its application's message while it
 waits, and its stored state as handed back and as last kept, 56 B. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 148 016 B (144.5 KiB), without the heard table and the delivery
+`SleepyNode` is 154 824 B (151.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-fw/memory.x`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 71 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 64 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target it takes 174 KiB of stack to build one (measured
-2026-10-15 in the firmware's release build), more than the 93 KiB left beside a
+2026-10-15 in the firmware's release build), more than the 85 KiB left beside a
 relay in static memory. So `Relay::UNSET`, a relay with empty tables, is a constant a driver
 can keep in a static, built at compile time, and `Relay::reset(config, seed)` sets it up in
 place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
@@ -241,20 +241,22 @@ action at a time, and the core never allocates.
   the low 16 bits of the longitude count, big-endian (`ShortName` in `position.rs`). The
   receiver rebuilds the full position from its own as the one candidate within half a
   period (32 768 counts) on each axis; both axes wrap as their wire fields do.
-- Node ID (spec "Node identity"): four opaque bytes; the firmware takes the low word of the
-  chip's FICR DEVICEID, the simulator gives node `i` the ID `(i + 1) × 0x9E3779B1`.
+- Node ID (spec "Node identity"): six opaque bytes; the firmware takes the low 48 bits of the
+  chip's FICR DEVICEID, all of DEVICEID[0] and the low 16 bits of DEVICEID[1]; the
+  simulator gives node `i` the ID `(i + 1) × 0x9E3779B97F4B` modulo 2⁴⁸, or one drawn from
+  the run's seed (`ids = "random"`).
 - Message ID (spec "Packet formats", D15): 32-bit FNV-1a over `dst_pos || dst_id || payload`,
   `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`; `Data::msg_id` on a decoded
   DATA).
 - Everything else in spec "Packet formats" is encoded by the codecs in `wire.rs`. Choices made
   there, 2026-10-14:
-  - Multi-byte integers (short positions, message IDs) are big-endian; a node ID is four
+  - Multi-byte integers (short positions, message IDs) are big-endian; a node ID is six
     opaque bytes in order, compared whole.
   - ACK `to` of a DATA is its `src_hop`.
   - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
     sends `hops` 1, as if it had received the message from the application at 0: a
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
-  - Application payload at most 233 bytes, what remains of 255 after the 22-byte DATA
+  - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
     header; the decoder rejects anything longer.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
@@ -262,6 +264,6 @@ action at a time, and the core never allocates.
   - Types 0x1, 0x2 and 0x4 are unused and rejected, and so is 0x6, the
     firmware's bench frames (roadmap D70). 0xA and 0xE are heartbeats of a relay in its
     first rotation's burst (roadmap D73).
-  - A refusal is a NACK, type 0x7, 14 bytes: the ACK's 13 and the wait it asks for in
-    bans of 1.56 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
+  - A refusal is a NACK, type 0x7, 18 bytes: the ACK's 17 and the wait it asks for in
+    bans of 1.57 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
     receipt. A fixed-size packet with trailing bytes is rejected.
