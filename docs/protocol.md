@@ -470,19 +470,18 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 coding rate 4/5 the ninth byte fits in the eighth's block of symbols, so
 naming the sender costs no airtime.
 
-- **Timing:** a fixed interval T for each node, from the last byte b of
-  its node ID: T = 5 s + 10 s × b / 256, mean 10 s. The first heartbeat
-  comes at a random time within T after the boot listen, and each slot
-  T after the one before.
-- **Channel:** steps `k ← (k + 1) mod 13` every slot, from a random
-  start, whether the heartbeat went or not. A fixed cycle reaches every
-  neighbour once per 13 heartbeats, a **rotation** (≈130 s, at most
-  13 × 15 s = 195 s); a random channel per heartbeat would need ≈41
-  heartbeats on average to cover all 13.
-- **Procedure:** retune to channel k, listen before talking (CAD + RSSI,
-  ≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
-  skip; send; retune home. The node is deaf for ≈15 ms per heartbeat,
-  ≈0.2%.
+| | |
+|---|---|
+| interval | a fixed T for each node, from the last byte b of its node ID: T = 5 s + 10 s × b / 256, mean 10 s |
+| first heartbeat | at a random time within T after the boot listen, and each slot T after the one before |
+| channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
+| **rotation** | 13 heartbeats, which reach every neighbour once: ≈130 s, at most 13 × 15 s = 195 s |
+| lateness | none early; at most 992.9 ms after its slot |
+| deaf time | ≈15 ms per heartbeat, ≈0.2% |
+
+**Procedure.** Retune to channel k, listen before talking (CAD + RSSI,
+≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
+skip; send; retune home.
 
 No scanning is needed: every relay's heartbeat visits all channels, so a
 node listening on any one channel hears every relay in range within one
@@ -493,54 +492,64 @@ A neighbour that has heard one heartbeat of a node knows the node's
 interval from its ID, and so when its next comes to any channel: on
 channel c at time t, on channel c + j at t + j × T, and on c again at
 t + 13 × T. A sleeping node uses this to wake for its anchor's
-([relay choice](#relay-choice)). A heartbeat comes no earlier than its
-slot and at most 992.9 ms later: it may find a hand-over attempt under
+([relay choice](#relay-choice)).
+
+*Why a fixed cycle.* A fixed cycle reaches every neighbour once per
+rotation; a random channel per heartbeat would need ≈41 heartbeats on
+average to cover all 13.
+
+*Why a heartbeat can be late.* It may find a hand-over attempt under
 way, a full frame with the long preamble to a sleepy node outside its
 window and the ACK timeout ([hand-over](#hand-over)), and then back off
 twice before its last check, 492.9 + 100 + 2 × 200 ms. A check held for
 a reception in progress waits less, at most that frame.
 
 **Outside the slots.** A relay also heartbeats to answer a node without
-an anchor. And a node,
-sleepy or not, heartbeats once, on its home channel, with the ordinary
-preamble, the long one if it is anchorless, and listen-before-talk, when
-its sleepy or carried flag changes or, if it is not sleepy, its map
-point does ([position](#position), roadmap D71, D72). A sleepy node's,
-on its anchor's channel, is a beat to its holder, and its window follows
-([delivery](#delivery)).
-Its neighbours on that channel then address it anew at once instead of
-a rotation later, and an old anchor that holds mail for a node turned
-relay hears it as a relay and hands the mail over. A node that turns
-sleepy sends it on the
-channel it was at home on, where its neighbours and its sleepy nodes
-know it, unless its first beat goes there anyway
-([sleepy nodes](#sleepy-nodes)).
+an anchor. And a node, sleepy or not, heartbeats once when its sleepy or
+carried flag changes or, if it is not sleepy, its map point does
+([position](#position), roadmap D71, D72). That heartbeat:
 
-It is one heartbeat for any number of changes before it goes, and the
-flags change seldom: the sleepy flag is set only after an hour's grace
-on battery, and the carried flag is
-cleared only after four hours still. A position
-that changes with each fix is not announced. A carried relay's slots
-carry it every T (roadmap D71);
-a sleepy node, carried or not, is a last resort to its neighbours, and
-its beats carry its fix. Sleeping nodes hear none of this, receiving
-duty-cycled; they learn a change at the next slot they wake for.
+- goes on its home channel, with the ordinary preamble, the long one if
+  it is anchorless, and listen-before-talk;
+- from a sleepy node, on its anchor's channel, is a beat to its holder,
+  and its window follows ([delivery](#delivery));
+- from a node that turns sleepy, goes on the channel it was at home on,
+  where its neighbours and its sleepy nodes know it, unless its first
+  beat goes there anyway ([sleepy nodes](#sleepy-nodes));
+- is one heartbeat for any number of changes before it goes.
+
+A position that changes with each fix is not announced. Sleeping nodes
+hear none of this, receiving duty-cycled; they learn a change at the
+next slot they wake for.
+
+*Why a heartbeat at a change.* Its neighbours on that channel then
+address it anew at once instead of a rotation later, and an old anchor
+that holds mail for a node turned relay hears it as a relay and hands
+the mail over. The flags change seldom: the sleepy flag is set only
+after an hour's grace on battery, and the carried flag is cleared only
+after four hours still.
+
+*Why not at each fix.* A carried relay's slots carry its position every
+T (roadmap D71); a sleepy node, carried or not, is a last resort to its
+neighbours, and its beats carry its fix.
 
 **The 256 intervals** are 39.1 ms apart, more than two heartbeats'
 airtime, 2 × 11.8 = 23.7 ms, so two nodes whose intervals differ slide
 past each other by more than an overlap at every heartbeat and meet at
 most once in a row, as random intervals would. 10 s / 23.7 ms = 422
 steps would do, and 256 is the largest power of two below it, one byte.
-Two nodes in reach share an interval with probability 1/256, which
-matters only if they are also in step, within 23.7 ms in a 10 s
-interval, 0.24 % of such pairs; their heartbeats then meet each time
-they are on one channel, as do those of a pair in step whose intervals
-stand 2:1 or 3:2. Clock drift unlocks them: a 32.768 kHz watch crystal
-is good to about ±50 ppm, so two clocks part by up to 1 ms per 10 s
-heartbeat, and an overlap of 23.7 ms ends within 24 heartbeats, four
-minutes, longer for clocks that drift alike. Nodes that boot together,
-after a power cut, would start in step but for the random first phase
-(roadmap D47).
+
+*Why a shared interval does little harm.* Two nodes in reach share an
+interval with probability 1/256, which matters only if they are also in
+step, within 23.7 ms in a 10 s interval, 0.24 % of such pairs; their
+heartbeats then meet each time they are on one channel, as do those of a
+pair in step whose intervals stand 2:1 or 3:2.
+
+Clock drift unlocks them: a 32.768 kHz watch crystal is good to about
+±50 ppm, so two clocks part by up to 1 ms per 10 s heartbeat, and an
+overlap of 23.7 ms ends within 24 heartbeats, four minutes, longer for
+clocks that drift alike. Nodes that boot together, after a power cut,
+would start in step but for the random first phase (roadmap D47).
 
 ---
 
