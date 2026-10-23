@@ -2068,20 +2068,21 @@ exchange with it.
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
 characteristics for send, receive-notify, node status and position set;
-there is no sleepy or carried setting ([nodes](#nodes), roadmap D71). The
-app owns
-identity and end-to-end encryption; the node sees opaque payloads. The
-sender's address, position and node ID, travels inside the encrypted
-payload, so that only the recipient learns where the sender is.
-Encryption scheme: open item O1.
+there is no sleepy or carried setting ([nodes](#nodes), roadmap D71).
+The app owns identity and end-to-end encryption; the node sees opaque
+payloads. The sender's address, position and node ID, travels inside
+the encrypted payload, so that only the recipient learns where the
+sender is. Encryption scheme: open item O1.
 
 A message has no ID field: the network identifies it by a hash of its
-destination and payload ([packet formats](#packet-formats)). Two
-messages to one destination with identical payloads are one message to
-every relay that still keeps the first one's record
+destination and payload ([packet formats](#packet-formats)). The app
+must make every payload unique; end-to-end encryption with a fresh nonce
+per message does that.
+
+*Why unique.* Two messages to one destination with identical payloads
+are one message to every relay that still keeps the first one's record
 ([message records](#message-records), [bounds](#bounds)), and the second
-is not delivered. The app must make every payload unique; end-to-end
-encryption with a fresh nonce per message does that.
+is not delivered.
 
 **What the network does not defend against.** Nothing on the air is
 authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
