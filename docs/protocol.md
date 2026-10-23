@@ -21,11 +21,11 @@ deliberate jamming; it is designed for infrastructure loss.
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
 | Medium access | Listen on the home channel except to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
-| Heartbeat | A node's periodic 9-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.2 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
+| Heartbeat | A node's periodic 11-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.2 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
 | Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; a relay just switched on is heard by all within ~15 s, and those that hear it answer; no scanning, no schedules |
 | Boot | A node takes traffic from the second it is switched on, and keeps its home channel and a sleepy node's anchor across a reboot |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
-| Addressing | A position plus a 4-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
+| Addressing | A position plus a 6-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery, carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | From GPS unless a fix fails the checks or the app sets a map point; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
@@ -225,7 +225,7 @@ same cycle:
 | Cycle | 361.1 ms |
 | Long preamble | 1396 symbols, 357.4 ms |
 | Mean current while receiving duty-cycled | 0.194 mA (the sleep at 1.2 µA, Table 3-5) |
-| Heartbeat with the long preamble | 366.1 ms |
+| Heartbeat with the long preamble | 367.4 ms |
 | 255-byte frame with the long preamble | 492.9 ms, under the 1 s of [regulatory limits](#regulatory-limits) |
 
 *Why the long preamble is that long.* The radio catches a preamble only
@@ -256,7 +256,7 @@ Without an anchor a node's beats come every 34.6 s, where the least is
 ([beats](#beats)), where the windows dominate whatever the cycle.
 
 *Why ordinary traffic keeps the shortest preamble.* A long frame costs
-its sender and its channel 30 times a heartbeat's airtime and 3.6 times
+its sender and its channel 28 times a heartbeat's airtime and 3.6 times
 a full frame's. Every node on a relay's channel would pay the long one
 on every frame, and a relay forwards at the 10 % cap long before its
 channel fills ([duty cycle cap](#duty-cycle-cap)).
@@ -490,12 +490,10 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 |---|---|---|
 | type | 4 | 0x8, with three flags in its low bits: sleepy, anchorless, carried ([packet formats](#packet-formats)) |
 | channel | 4 | home channel index 0–12 |
-| id | 32 | the node's ID ([node identity](#node-identity)) |
+| id | 48 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
-9 bytes, 11.8 ms on air at SF5 ([physical layer](#physical-layer)): at
-coding rate 4/5 the ninth byte fits in the eighth's block of symbols, so
-naming the sender costs no airtime.
+11 bytes, 13.1 ms on air at SF5 ([physical layer](#physical-layer)).
 
 | | |
 |---|---|
@@ -505,7 +503,7 @@ naming the sender costs no airtime.
 | channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
 | **rotation** | 13 heartbeats, which reach every neighbour once: ≈130 s, at most 13 × 15 s = 195 s |
 | lateness | none early; at most 992.9 ms after its slot |
-| deaf time | ≈15 ms per heartbeat, ≈0.2% |
+| deaf time | ≈16 ms per heartbeat, ≈0.2% |
 
 **Procedure.** Retune to channel k, listen before talking (CAD + RSSI,
 ≈1 ms), up to three checks a random 0–200 ms apart; if every check is
@@ -543,7 +541,7 @@ without the flag.
 
 *Why 1.2 s.* The answers to one heartbeat of the burst come within a
 backoff of it, 200 ms, and may then wait as long behind their slot as
-any heartbeat, 992.9 ms, and take a heartbeat's airtime, 11.8 ms: 1204.7
+any heartbeat, 992.9 ms, and take a heartbeat's airtime, 13.1 ms: 1206.0
 ms. The next heartbeat goes after them, so that the node is on its home
 when they arrive.
 
@@ -595,22 +593,23 @@ T (roadmap D71); a sleepy node, carried or not, is a last resort to its
 neighbours, and its beats carry its fix.
 
 **The 256 intervals** are 39.1 ms apart, more than two heartbeats'
-airtime, 2 × 11.8 = 23.7 ms, so two nodes whose intervals differ slide
+airtime, 2 × 13.1 = 26.2 ms, so two nodes whose intervals differ slide
 past each other by more than an overlap at every heartbeat and meet at
-most once in a row, as random intervals would. 10 s / 23.7 ms = 422
+most once in a row, as random intervals would. 10 s / 26.2 ms = 381
 steps would do, and 256 is the largest power of two below it, one byte.
 
 *Why a shared interval does little harm.* Two nodes in reach share an
 interval with probability 1/256, which matters only if they are also in
-step, within 23.7 ms in a 10 s interval, 0.24 % of such pairs; their
+step, within 26.2 ms in a 10 s interval, 0.26 % of such pairs; their
 heartbeats then meet each time they are on one channel, as do those of a
 pair in step whose intervals stand 2:1 or 3:2.
 
 Clock drift unlocks them: a 32.768 kHz watch crystal is good to about
 ±50 ppm, so two clocks part by up to 1 ms per 10 s heartbeat, and an
-overlap of 23.7 ms ends within 24 heartbeats, four minutes, longer for
-clocks that drift alike. Nodes that boot together, after a power cut,
-would start in step but for the random first phase (roadmap D47).
+overlap of 26.2 ms ends within 27 heartbeats, four and a half minutes,
+longer for clocks that drift alike. Nodes that boot together, after a
+power cut, would start in step but for the random first phase (roadmap
+D47).
 
 ---
 
@@ -618,16 +617,39 @@ would start in step but for the random first phase (roadmap D47).
 
 ### Node identity
 
-Every node has a 4-byte **node ID**: the low word of its chip's factory
-device ID (nRF52840 FICR DEVICEID), the same at every boot, with no
-setup step. It names the node wherever a packet names one: DATA
-`dst_hop`, `src_hop` and `dst_id`, ACK `from` and `to`
+Every node has a 6-byte **node ID**: the low 48 bits of its chip's
+factory device ID (nRF52840 FICR DEVICEID: the 32 bits of DEVICEID[0]
+and the low 16 of DEVICEID[1]), the same at every boot, with no setup
+step. It names the node wherever a packet names one: DATA `dst_hop`,
+`src_hop` and `dst_id`, ACK `from` and `to`
 ([packet formats](#packet-formats)).
 
-*Why four bytes are enough.* Two of n nodes share an ID with probability
-about n² / 2³³. That matters only among the nodes one node keeps in its
-tables, 64 neighbours and 256 sleepy nodes
-([heard table](#heard-table)): 1.2 × 10⁻⁵.
+*Why six bytes.* An ID must be unique only among nodes close enough
+that one relay hears them together; a pair that shares one there loses
+about a quarter of its mail to each other (roadmap D59). At the density
+of [capacity and sizing](#capacity-and-sizing), 714 nodes per km² in a
+city of N = 300 000, a node has ρπr² others within a hearing range r
+([physical layer](#physical-layer)), and the city N ρπr² / 2 such pairs:
+
+| | indoors, r = 300 m | street, r = 750 m |
+|---|---|---|
+| nodes within r of a node | 200 | 1 260 |
+| pairs within r in the city | 3.0 × 10⁷ | 1.9 × 10⁸ |
+| chance that one pair shares a 4-byte ID | 0.7 % | 4.4 % |
+| chance that one pair shares a 6-byte ID | 1.1 × 10⁻⁷ | 6.7 × 10⁻⁷ |
+
+So with four bytes a city at the design density has such a pair about
+one time in fifty, and with six one time in millions. Eight would make
+it rarer for nothing and cost as much again: each two bytes in the ID
+fields add about 6 % to a text's channel time, 83.8 → 89.0 → 94.1 ms a
+hop for four, six and eight bytes ([capacity and sizing](#capacity-and-sizing)).
+
+*The low bits are assumed random.* The chip's documentation promises a
+unique 64-bit device ID, not 48 random low bits. This section, and the
+heartbeat interval taken from the ID's last byte
+([heartbeat](#heartbeat)), assume they spread as random bits would; the
+bench boards' IDs are checked for structure, such as IDs sequential
+within a lot (`roadmap.md` Phase 2).
 
 The ID, not the position, is a node's identity: a node whose position
 changes keeps its ID ([position](#position)). Its address changes with
@@ -685,10 +707,10 @@ in a hundred, the datasheet's standard for sensitivity, after a fade of
 
 The 4.1 dB follows from the radio. A packet arrives only if every symbol
 does: a 255-byte frame has 541 symbols, the datasheet's 64-byte
-reference packet 156, a heartbeat 46, so with the symbol error rate of
+reference packet 156, a heartbeat 51, so with the symbol error rate of
 the modulation (32 possible symbols, detected without phase) a full
 frame needs 0.44 dB more signal than the reference for the same 1 %
-loss, and a heartbeat 0.46 dB less. Half of all heartbeats arrive even
+loss, and a heartbeat 0.42 dB less. Half of all heartbeats arrive even
 3.2 dB below a full frame's level, so a heartbeat says little about a
 full frame.
 
@@ -819,17 +841,18 @@ the hour, so that a burst cannot carry an hour over the limit.
 it is not dropped. Two reserves stay in the bucket:
 
 - Replies, ACKs that take or refuse, leave one heartbeat's airtime,
-  11.8 ms. The bucket refills that in 120 ms, far less than the 5 s
+  13.1 ms. The bucket refills that in 133 ms, far less than the 5 s
   between heartbeats ([heartbeat](#heartbeat)), so heartbeats always go.
 - Forwarding, and the ACK that takes on a packet, leave the **reply
-  reserve**, 242 ms: the heartbeat, and the refusals the bucket refills
+  reserve**, 234 ms: the heartbeat, and the refusals the bucket refills
   while a sender retries an unanswered hand-over.
 
-*Why the reply reserve.* The retrying takes 2.39 s: the two retry
-waits, 306 + 612 ms, and two more attempts, each up to 500 ms of
+*Why the reply reserve.* The retrying takes 2.40 s: the two retry
+waits, 308 + 617 ms, and two more attempts, each up to 500 ms of
 listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
-([hand-over](#hand-over)). The bucket refills 9.83 % × 2.39 s =
-235.5 ms of it, ⌊235.5 / 14.4⌋ = 16 refusals.
+([hand-over](#hand-over)). The bucket refills 9.83 % × 2.40 s =
+236.3 ms of it, ⌊236.3 / 17.0⌋ = 13 refusals of 17.0 ms
+([the ACK](#the-ack)).
 
 A relay takes new work into the regular room of its send queue only if
 its bucket holds the reply reserve on top of the work's ACK and of
@@ -872,7 +895,7 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
-   14.4 ms plus the receiver's retune and listen-before-talk).
+   15.7 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
    neighbour (demoted after two in a row) and ban it
@@ -889,13 +912,13 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
 #### Retry wait
 
 The wait before the retry after the k-th unanswered transmission is
-uniform in [0, 2^k × 153.0 ms]: 0–306 ms, then 0–612 ms. For a hand-over
-whose frame has the long preamble the unit is 507.3 ms. The
+uniform in [0, 2^k × 154.2 ms]: 0–308 ms, then 0–617 ms. For a hand-over
+whose frame has the long preamble the unit is 508.5 ms. The
 listen-before-talk backoff of step 2 stays short: it waits for a channel
 the sender can hear to clear, and checks again (roadmap D22).
 
-*Why that unit.* 153.0 ms is how long one hand-over holds its receiver,
-a full frame (138.6 ms) and its ACK (14.4 ms). A hand-over whose frame
+*Why that unit.* 154.2 ms is how long one hand-over holds its receiver,
+a full frame (138.6 ms) and its ACK (15.7 ms). A hand-over whose frame
 has the long preamble holds its receiver longer by as much as its frame
 is longer, 354.3 ms
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
@@ -913,11 +936,11 @@ senders.
 
 The receiver retunes to the sender's channel, listens before talking,
 sends the ACK, and retunes home. The ACK is the first byte, the message
-ID, and the IDs of the answering and the answered node: 13 bytes,
-14.4 ms ([packet formats](#packet-formats)). One that refuses is a
-**NACK**, the same and a byte for the wait it asks ([bans](#bans)): 14
-bytes at the same 14.4 ms, since at SF5 the 14th byte fits in the 13th's
-block of symbols. Below, an ACK is either unless it says so.
+ID, and the IDs of the answering and the answered node: 17 bytes,
+15.7 ms ([packet formats](#packet-formats)). One that refuses is a
+**NACK**, the same and a byte for the wait it asks ([bans](#bans)): 18
+bytes, 17.0 ms: at SF5 the 18th byte takes one more block of symbols.
+Below, an ACK is either unless it says so.
 
 The sender matches the ID and both names against its outstanding
 hand-over. An ACK resets the neighbour's failure count and refreshes its
@@ -957,7 +980,7 @@ hand the message to someone else as well.
 So ACKs too arrive on the home channel, which a node leaves only to
 transmit ([home channel selection](#home-channel-selection)). A sleepy
 node's home channel is its anchor's, so traffic between them never
-retunes. A node is deaf for ≈15 ms per packet it forwards or ACKs; a
+retunes. A node is deaf for ≈17 ms per packet it forwards or ACKs; a
 sender that gets no ACK retries. That is the cost of one radio.
 
 #### Bans
@@ -975,17 +998,17 @@ is chosen at once. A return to the parent has no other candidate: it
 waits in the send queue until the ban ends and goes again, the refused
 transmission not counting as one of its attempts.
 
-The ban is never shorter than 1.56 s, the time the refuser's bucket
+The ban is never shorter than 1.57 s, the time the refuser's bucket
 takes to refill what the refused packet would have cost; trying sooner
 would only cost it another reply (roadmap D29).
 
 *Where the shortest ban comes from.* A relay refuses a packet to send on
 when its frame and the ACK that would take it, at most
-138.6 + 14.4 = 153.0 ms, do not fit in its bucket and no hop place takes
-it, and the bucket refills that in 153.0 ms / 9.83 % = 1.56 s
+138.6 + 15.7 = 154.2 ms, do not fit in its bucket and no hop place takes
+it, and the bucket refills that in 154.2 ms / 9.83 % = 1.57 s
 ([duty cycle cap](#duty-cycle-cap)).
 
-The NACK tells the wait in whole bans of 1.56 s, rounded down
+The NACK tells the wait in whole bans of 1.57 s, rounded down
 ([packet formats](#packet-formats)):
 
 - For want of room it is the time until the bucket holds everything
@@ -997,16 +1020,16 @@ The NACK tells the wait in whole bans of 1.56 s, rounded down
 - A refusal of fresh work for the way on asks for the rest of the ban on
   that way, as learned, without a place in line: passed on so, a wait
   cannot grow from relay to relay around a ring.
-- A byte holds 255 bans, 398 s; a longer wait is told as the longest,
+- A byte holds 255 bans, 400 s; a longer wait is told as the longest,
   the sender coming back early to be refused again (roadmap D54).
 
 *Why the ban is the unit.* The places in line are one ban apart and
 nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
 
-**Silence doubles the ban from 1.56 s to 61 s.** The ban after the k-th
-failed hand-over in a row is 1.56 s doubled k − 1 times: 1.56 s, 3.11 s,
-6.2 s and so on, up to 61 s, the longest anything waits for a bucket. An
+**Silence doubles the ban from 1.57 s to 61 s.** The ban after the k-th
+failed hand-over in a row is 1.57 s doubled k − 1 times: 1.57 s, 3.14 s,
+6.3 s and so on, up to 61 s, the longest anything waits for a bucket. An
 ACK from the neighbour resets its failure count and so the ladder
 (roadmap D42).
 
@@ -1041,14 +1064,14 @@ of the silence ladder, and starts again from one ban once it is taken or
 dropped. A sleepy node's own message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
-*Why a ladder here too.* Offered again every 1.56 s, the message would
+*Why a ladder here too.* Offered again every 1.57 s, the message would
 put a full frame on the refusing neighbour's channel that often, 9 % of
 it, hiding its ACKs, and spend that neighbour's bucket as fast as it
 refills.
 
 #### Send queue
 
-The send queue has a regular room of 40 places and one hop place for
+The send queue has a regular room of 39 places and one hop place for
 each count from 1 to 254; the packet being handed over keeps its place.
 A packet to send on enters the regular room only if it fits in the
 bucket with everything queued ([receiving DATA](#receiving-data)), so it
@@ -1056,12 +1079,12 @@ waits for the hand-overs ahead of it, not for the bucket to refill. A
 delivery in its node's window, which goes ahead of them all, needs only
 its own frame ([delivery queue](#delivery-queue)).
 
-*What sets the 40.* The bucket holds at most 6 s
+*What sets the 39.* The bucket holds at most 6 s
 ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
-took it on cost 138.6 + 14.4 = 153.0 ms, so ⌈6 s / 153.0 ms⌉ = 40. With
+took it on cost 138.6 + 15.7 = 154.2 ms, so ⌈6 s / 154.2 ms⌉ = 39. With
 the reply reserve left in, a full bucket takes at most 37 full frames,
-so for full frames the bucket is the limit; shorter frames fill the 40
-places first, and forty hand-overs of them go out within a few seconds.
+so for full frames the bucket is the limit; shorter frames fill the 39
+places first, and 39 hand-overs of them go out within a few seconds.
 
 A packet received with count h that the regular room refuses takes the
 highest free hop place numbered h or lower, and keeps it until it leaves
@@ -1184,7 +1207,7 @@ of recent IDs.
 its place; a new record then replaces the least recently active one
 whose message the relay does not hold. A relay holds a message while it
 is in its send queue ([send queue](#send-queue)), the hand-over included,
-or set aside for a full delivery queue. The table holds 1855 records
+or set aside for a full delivery queue. The table holds 1648 records
 ([bounds](#bounds)). Without its record the message could not be routed
 when its turn comes, so a message is never lost for want of room
 (roadmap D31).
@@ -1236,7 +1259,7 @@ message to its parent.
 
 *Why margin comes first.* Neighbours without margin come after every
 neighbour with margin, demoted ones included, because fading lets a
-relay hear the 9-byte heartbeat of a neighbour whose link usually cannot
+relay hear the 11-byte heartbeat of a neighbour whose link usually cannot
 carry a full DATA frame. Such a neighbour is often the farthest, so the
 nearest to the destination; without this rule every message would try
 it first, three DATA frames unanswered.
@@ -1607,7 +1630,7 @@ What breaks it:
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
 | life | at most the delivery TTL in the network, whatever its search and waits ([time to live](#time-to-live)), so no longer than that in a send queue; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
 | cost of a search | each link between two relays at most two hand-overs that succeed from each end: a send and a return |
-| message records | at most 1855 per relay ([message records](#message-records)) |
+| message records | at most 1648 per relay ([message records](#message-records)) |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
 *What a neighbour that does not answer costs.* A relay hands the message
@@ -1617,8 +1640,8 @@ a message, and each failure bans it for every message, the ban doubling
 up to 61 s ([bans](#bans)).
 
 So a dead neighbour costs a relay that many failed hand-overs before it
-leaves the table 390 s after its last heartbeat or ACK: the bans 1.56,
-3.11, 6.2, 12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the
+leaves the table 390 s after its last heartbeat or ACK: the bans 1.57,
+3.14, 6.3, 12.5, 25.1 and 50.2 s add up to 99 s, and 61 s bans fill the
 rest. After two failures it is a last resort
 ([neighbour table](#neighbour-table)).
 
@@ -1633,22 +1656,21 @@ that led into the gap.
 *Why that many records.* A message sent on can come back, returned by a
 child or offered by a split copy, and its record must still be here
 then. On its way it may wait at each relay as long as a full send queue
-takes to drain, each of the 294 places waiting out one ban of 1.56 s:
-457.3 s. A ban after silence lasts up to 61 s, so where every way on is
+takes to drain, each of the 293 places waiting out one ban of 1.57 s:
+459.6 s. A ban after silence lasts up to 61 s, so where every way on is
 silent a message can wait longer; its own record is kept while it is
 held, and this bound covers the wait behind refusals only (roadmap D42).
 
-Every message a relay handles costs at least an ACK (13 bytes, 14.4 ms)
-and one DATA packet with no payload (22 bytes, 18.2 ms: at SF5 and
-coding rate 4/5 the 22nd byte fits in the 21st's block of symbols,
-[physical layer](#physical-layer)), together 32.6 ms.
+Every message a relay handles costs at least an ACK (17 bytes, 15.7 ms)
+and one DATA packet with no payload (28 bytes, 22.1 ms,
+[physical layer](#physical-layer)), together 37.8 ms.
 
-Any 457.3 s carries at most a full bucket and its refill,
-6 s + 9.83% × 457.3 s = 51.0 s of airtime
-([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1561
+Any 459.6 s carries at most a full bucket and its refill,
+6 s + 9.83% × 459.6 s = 51.2 s of airtime
+([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1355
 messages in that time. The records of held messages are never evicted
-and may be older, so the table has room for the 294 a send queue holds
-on top: 1855.
+and may be older, so the table has room for the 293 a send queue holds
+on top: 1648.
 
 ---
 
@@ -1838,7 +1860,7 @@ long preamble, a last resort ([next hop](#next-hop)).
 
 Each beat comes a random half to one **beat period** after the last,
 P = 300 s. At the mean interval of 225 s a node beats 16 times an hour,
-189 ms of airtime.
+210 ms of airtime.
 
 *Why that period.* It is half the delivery TTL, so that two beats are
 never more than a TTL apart. A holder that keeps a node for a TTL then
@@ -1863,7 +1885,7 @@ so beating at once they would meet (roadmap D57).
 **To anchorless neighbours.** A sleepy node whose neighbour table holds
 anchorless neighbours ([sleepy nodes alone](#sleepy-nodes-alone)) sends
 each beat also on each channel they listen on, with the long preamble.
-Each such beat is a long heartbeat, 366 ms
+Each such beat is a long heartbeat, 367 ms
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
 5.9 s an hour per channel at sixteen beats (roadmap D58).
 
@@ -1941,17 +1963,17 @@ the bucket, steps aside for it and keeps its place; a return keeps the
 attempts it has made.
 
 **The window.** A delivery goes only while the node listens: for a
-window of 3.37 s from each beat the holder hears. A node whose beat
+window of 3.38 s from each beat the holder hears. A node whose beat
 brought nothing goes back to receiving duty-cycled after that.
 
 *Why that window.* It is long enough for one hand-over of a DATA that
 goes first to complete. That is the attempt the holder may have under
 way, a full frame and the ACK timeout, 238.6 ms, then the DATA's
-hand-over with all its attempts and retry waits, 3.13 s
+hand-over with all its attempts and retry waits, 3.14 s
 ([retry wait](#retry-wait)). A hand-over cut short by the window would
 leave its message to wait a beat period (roadmap D50).
 
-Having answered a DATA, the node listens one hand-over more, 3.13 s, and
+Having answered a DATA, the node listens one hand-over more, 3.14 s, and
 its holder knows it does: nothing is under way ahead of the next message
 for it, which goes then. The node goes back to receiving duty-cycled
 once a hand-over passes with no DATA for it.
@@ -1973,7 +1995,7 @@ delivery queue does not count against it
 ([time to live](#time-to-live)).
 
 So a message waits for its node a mean of about two minutes, at most a
-beat period. A node listens 3.37 s after each beat, 54 s an hour, 3.13 s
+beat period. A node listens 3.38 s after each beat, 54 s an hour, 3.14 s
 after each message it takes, and for its anchor's heartbeat, under a
 second a rotation, and receives duty-cycled between
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
@@ -2201,23 +2223,27 @@ collision domain, the area within which transmissions interfere, is
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.67 s of channel time: per hop a 122-byte DATA packet (69.4 ms)
-and its ACK (14.4 ms).
+takes ≈0.71 s of channel time: per hop a 128-byte DATA packet (73.3 ms)
+and its ACK (15.7 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
-| Single channel, 60 s heartbeats | 8% | 7 kB/s | 7 | 2 |
-| 7-colour fixed grid, heartbeats on all colours | 11–14% | 37 kB/s | 37 | 11 |
-| **13 channels, measured selection, rotating heartbeat (this design)** | **≈2.5%** | **≈85 kB/s** | **≈80** | **≈23** |
+| Single channel, 60 s heartbeats | 6% | 7 kB/s | 7 | 2 |
+| 7-colour fixed grid, heartbeats on all colours | 11–14% | 35 kB/s | 35 | 10 |
+| **13 channels, measured selection, rotating heartbeat (this design)** | **≈2.7%** | **≈80 kB/s** | **≈75** | **≈22** |
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The table assumes a text crosses the city. The city
 centre is the hot spot, and the per-relay 10% cap
-([duty cycle cap](#duty-cycle-cap)) binds there first.
+([duty cycle cap](#duty-cycle-cap)) binds there first. The heartbeat
+load is a domain's 270 relays' heartbeats, 13.1 ms each, on the
+channels they visit. The design rate used elsewhere is 23 texts per
+user per day ([delivery queue](#delivery-queue)); within this table's
+uncertainty it and the 22 here are one figure.
 
-Sleepy nodes' beats cost what [beats](#beats) lists, 189 ms an hour
+Sleepy nodes' beats cost what [beats](#beats) lists, 210 ms an hour
 each, and relays nothing for them. Summed over the domain's 20 000
-sleepy nodes they take 1.05 s of airtime a second, 8 % of one channel's
+sleepy nodes they take 1.17 s of airtime a second, 9 % of one channel's
 time over the 13, where every relay hears every other. A sleepy node in
 anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
 its long beats, a relay's answers, and the long preamble on every DATA
@@ -2231,15 +2257,15 @@ Common mesh and radio mechanisms left out, and why.
 
 | Omitted | Instead | Why |
 |---|---|---|
-| Neighbour lists in heartbeats and a network-wide node table | a 9-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Neighbour lists in heartbeats and a network-wide node table | an 11-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
 | Addressing by ID with a lookup, or registration with a home relay | position + node ID; the owner resolves the ID locally ([forwarding](#forwarding)) | registration traffic grows with users; position addressing needs none |
 | Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
 | Cooperative position estimation | GPS or a map point ([position](#position)) | every node knows its own position |
-| A fixed channel grid, heartbeats on all channels | a measured home channel and a rotating heartbeat ([home channel selection](#home-channel-selection)) | 49% of every channel at indoor density; where a rooftop relay hears ~3 km and a relay covers ~700 m, a grid only spreads load evenly, which measurement does as well while adapting to hot spots and foreign interference |
+| A fixed channel grid, heartbeats on all channels | a measured home channel and a rotating heartbeat ([home channel selection](#home-channel-selection)) | 35% of every channel at indoor density, 270 relays × 13.1 ms every 10 s; where a rooftop relay hears ~3 km and a relay covers ~700 m, a grid only spreads load evenly, which measurement does as well while adapting to hot spots and foreign interference |
 | GFSK at 50 kbps | LoRa at SF5 ([physical layer](#physical-layer)) | 3× more per channel than SF5 at 40% of the range, and needs a modem driver and error correction written from scratch; revisit only if relays saturate at SF5, since nothing above the modem would change |
 | Spreading one signal over the whole band (DSSS/CDMA) | 13 separate channels | the SX1262 cannot, and in random meshes without power control separate channels carry 5–10× more (Weber et al., [sources](#sources)) |
 | Frequency hopping | measured home channels | hopping on a common schedule has the capacity of one channel; per-receiver schedules are fixed channels plus time sync; random channels per packet need ≥20 ms preambles on every packet; no regulatory benefit at 433 MHz |
-| Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | collisions happen at the shared relay whatever the sleepy node's range: 72% of a channel at 400 sleepy nodes per relay |
+| Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | collisions happen at the shared relay whatever the sleepy node's range: 52% of a channel at 400 sleepy nodes per relay, 400 × 13.1 ms every 10 s |
 
 ---
 
@@ -2248,26 +2274,26 @@ Common mesh and radio mechanisms left out, and why.
 The first byte of every packet is `type:4 | aux:4`; `aux` is the home
 channel in heartbeats and type-specific flags elsewhere. A position is
 7 bytes, the heartbeat's short position 4
-([positions on the wire](#positions-on-the-wire)), and a node ID 4
+([positions on the wire](#positions-on-the-wire)), and a node ID 6
 ([node identity](#node-identity)). The LoRa hardware CRC covers
 everything.
 
 ```
-HEARTBEAT 0x8 to 0xF: first(1) id(4) short_pos(4)                          = 9
+HEARTBEAT 0x8 to 0xF: first(1) id(6) short_pos(4)                          = 11
           type bit 0 = sleepy (0x9); bit 1 = anchorless (0xA, 0xB);
           bit 2 = carried, with any of these (0xC to 0xF; roadmap
           D70, D72, D73); aux = home channel, 0 to 12, in all four
           bits
-ACK       0x3: first(1) id(4) from(4) to(4)                                 = 13
+ACK       0x3: first(1) id(4) from(6) to(6)                                 = 17
           the answer to a DATA that takes it; sent on the channel in
           the answered packet's aux; aux = 0
           from, to = the IDs of the answering and the answered node
-NACK      0x7: first(1) id(4) from(4) to(4) wait(1)                         = 14
+NACK      0x7: first(1) id(4) from(6) to(6) wait(1)                         = 18
           the answer to a DATA that refuses it, as the ACK; wait = how
-          long the refuser asks its sender to wait, in bans of 1.56 s,
+          long the refuser asks its sender to wait, in bans of 1.57 s,
           rounded down ([bans](#bans)); aux = 0
-DATA      0x5: first(1) dst_hop(4) src_hop(4) dst_pos(7) dst_id(4) hops(1)
-               time_left(1) payload                                         = 22 + payload
+DATA      0x5: first(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6) hops(1)
+               time_left(1) payload                                         = 28 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
@@ -2311,9 +2337,9 @@ acknowledges. The app must keep payloads unique
 ([phone link](#phone-link)).
 
 `dst_hop` lets every node on a channel discard packets not addressed to
-it after 5 bytes. `src_hop` and `aux` name the sender and its home
+it after 7 bytes. `src_hop` and `aux` name the sender and its home
 channel, where the ACK goes and where a return is sent
-([routing](#routing)). The payload is at most 255 − 22 = 233 bytes; the
+([routing](#routing)). The payload is at most 255 − 28 = 227 bytes; the
 sender's address is inside it, encrypted.
 
 ### Positions on the wire

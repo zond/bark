@@ -161,7 +161,7 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 /// that the next says whether one did. An answer goes within a
 /// listen-before-talk backoff of the heartbeat, then waits behind its
 /// slot as any heartbeat may, [`heartbeat_lag`], and is on the air for a
-/// heartbeat's airtime: 200 + 992.86 + 11.84 ms = 1204.70 ms.
+/// heartbeat's airtime: 200 + 992.86 + 13.12 ms = 1205.98 ms.
 pub const fn burst_gap(config: &Config) -> Duration {
     let airtime = time_on_air(HEARTBEAT_LEN as u8, crate::radio::MIN_PREAMBLE_SYMBOLS);
     Duration::from_micros(
