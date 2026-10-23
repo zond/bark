@@ -399,55 +399,57 @@ Its sleepy nodes follow it:
 
 ## Position
 
-A node's position comes from its GPS (L76K), unless the fix is
-unreliable or the app sets a map point, which wins over GPS; a rooftop
-relay with no sky view of its own uses one. A fix is unreliable if it is
-farther from the last accepted fix than the node can have moved since,
-if it is inconsistent with the neighbours heard, or if the satellite
-signal-to-noise ratio (C/N0) is not sane: each is a sign of jamming or
-spoofing. Two fixes of a node that has not moved may differ by 50 m, the
-allowance the [owner](#owner) rule and the move check of
-[relay choice](#relay-choice) use. A node whose position changes
-heartbeats the new one ([node identity](#node-identity)).
+A node's position is its GPS fix, unless the app sets a map point, which
+wins. A rooftop relay with no sky view uses one.
 
-**Fixed and carried.** Every node measures from its fixes whether it is
-carried, the same way whether it is sleepy or not. A fixed node's fixes
-are compared with the place it stands: its first accepted fix, its map
-point, or the fix it had when it was last made fixed. An accepted fix
-farther than the allowance from that place is a **far fix**. After far
-fixes for 72 s with none within the allowance between, the node is
-carried. 72 s is how long a walker at 1.4 m/s, a common walking pace,
-takes to cross the allowance's whole width, 2 × 50 m, in whole fixes of
-the L76K's one a second: a still node's stray fix comes back within the
-allowance, a walker's keeps going. A sleepy node takes a fix only before
-each beat ([beats](#beats)), so for it the 72 s are two far fixes a beat
-apart.
+A fix is dropped as unreliable, a sign of jamming or spoofing, when:
+
+- it is farther from the last accepted fix than the node can have moved
+  since;
+- it disagrees with the neighbours heard;
+- the satellite signal-to-noise ratio (C/N0) is not sane.
+
+Two fixes of a still node may differ by 50 m. That is the **allowance**
+the [owner](#owner) rule and the anchor's move check
+([relay choice](#relay-choice)) use.
+
+**Fixed and carried.** Every node, sleepy or not, measures from its fixes
+whether it moves:
+
+| | |
+|---|---|
+| the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
+| far fix | an accepted fix more than the allowance from that place |
+| carried | after 72 s of far fixes with none near between |
+| fixed again | after four hours of fixes within the allowance of one place; it keeps the fix it has then |
+| map point | fixed at once |
+| power | changes nothing: a carried node plugged in is a carried relay until it has stayed four hours, a fixed one keeps the fix it has then (roadmap D72) |
 
 Which fixes a node takes as its position, and what a carried node gives
-up, is in [nodes](#nodes). At the first far fix of a run a relay that
-holds mail flushes its delivery queue
-([delivery](#delivery)): a node that is leaving will soon hear none of
-its sleepy nodes' beats.
+up, is in [nodes](#nodes). A node whose position changes heartbeats the
+new one ([node identity](#node-identity)). At its first far fix a relay
+that holds mail flushes its delivery queue ([delivery](#delivery)), since
+once it has left it will hear none of its sleepy nodes' beats.
 
-A carried node is fixed again once its fixes have stayed within the
-allowance of one place for four hours, and keeps the fix it has then.
-The way back is much slower than the way in: a node that stopped for
-less would take mail for new sleepy nodes and strand it when it moved
-on, while a node carried by mistake loses little, since its sleepy
-nodes have anchored elsewhere already (roadmap D70). A map point makes
-a node fixed at once. Power does not change whether a node is carried: a
-carried node plugged in is a carried relay until it has stayed four
-hours, and a fixed node plugged in keeps as its position the fix it has
-then (roadmap D72).
+*Why 72 s.* A walker at 1.4 m/s, a common walking pace, crosses the
+allowance's whole width, 2 × 50 m, in 72 of the L76K's one-a-second
+fixes. A still node's stray fix comes back inside; a walker's keeps
+going. A sleepy node takes a fix only before each beat ([beats](#beats)),
+so for it 72 s is two far fixes a beat apart.
 
-A spoofed fix that drifts slower than the node can move passes the first
-check, and makes a relay carried where D63 kept it out: the relay then
-gives up its sleepy nodes and is routed to where the spoofer says. The
-checks are expected to grow.
+*Why four hours.* A node that stopped for less would take mail for new
+sleepy nodes and strand it when it moved on. A node carried by mistake
+loses little, since its sleepy nodes have anchored elsewhere already
+(roadmap D70).
 
-**Time.** GPS is used for position only, never for time, and there is
-no network time: every timer is local and monotonic, and nothing in the
-protocol depends on two nodes agreeing on a clock.
+*What the checks miss.* A spoofed fix that drifts slower than the node
+can move passes the first check and makes a relay carried where D63 kept
+it fixed; it then gives up its sleepy nodes and is routed to where the
+spoofer says. The checks are expected to grow.
+
+**Time.** GPS is for position only. There is no network time: every
+timer is local and monotonic, and nothing depends on two nodes agreeing
+on a clock.
 
 ---
 
