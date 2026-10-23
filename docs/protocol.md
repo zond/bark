@@ -746,16 +746,10 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    and is offered to the same neighbour again, with three fresh attempts.
    Once a failure has demoted the neighbour, the message instead chooses
    the next hop at once ([next hop](#next-hop)): the neighbour is set aside
-   for this hand-over, as in step 2, but not counted as tried. An attempt
-   is lost to a collision at the receiver far more often than its ACK
-   goes astray (roadmap D34), so the neighbour most likely does not have
-   the message, and it stays a candidate once its ban has ended. If it
-   did take it, the next offer costs one round trip: it holds the message
-   and only ACKs, or has finished with it and returns it
-   ([receiving DATA](#receiving-data); roadmap D36). A return waits for its
-   parent the same way and is dropped when a failure demotes the parent
-   ([return to parent](#return-to-parent)). The delivery queue keeps a
-   delivery whatever happens to its hand-over
+   for this hand-over, as in step 2, but not counted as tried. A return
+   waits for its parent the same way and is dropped when a failure
+   demotes the parent ([return to parent](#return-to-parent)). The
+   delivery queue keeps a delivery whatever happens to its hand-over
    ([delivery queue](#delivery-queue)).
 
 #### Retry wait
@@ -882,7 +876,13 @@ loop is what breaks first.
 The message whose hand-over failed waits for the same neighbour (step 6)
 rather than going to the next, which is usually a longer way round on
 the same full channels: going there at once undoes what the ban gains
-(roadmap D42). Two silences in a row demote the neighbour, so a link
+(roadmap D42). Nor is the neighbour counted as tried: an attempt is lost
+to a collision at the receiver far more often than its ACK goes astray
+(roadmap D34), so the neighbour most likely does not have the message,
+and it stays a candidate once its ban has ended. If it did take it, the
+next offer costs one round trip: it holds the message and only ACKs, or
+has finished with it and returns it ([receiving DATA](#receiving-data);
+roadmap D36). Two silences in a row demote the neighbour, so a link
 that is really gone costs one ban and one more hand-over before the
 message moves on. A neighbour that is gone is tried again after each ban
 until its entry expires; [bounds](#bounds) adds up what that costs.
