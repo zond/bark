@@ -1833,41 +1833,44 @@ indoor density in Kyiv with 10 % adoption, 400 at 50 %
 A message that reaches the owner of its position ([owner](#owner)) and is
 for another node waits in the owner's delivery queue
 ([delivery queue](#delivery-queue)); while the owner hears that node
-beat, it is the node's holder. It goes to the node as DATA addressed to
-the node's ID, in `dst_hop` and `dst_id` alike, on the node's home
-channel from the heard table, with the ordinary preamble, and the node
-answers with an ordinary ACK ([the ACK](#the-ack)). Admission is
-unchanged: the last hop is not fresh work
-([receiving DATA](#receiving-data)).
+beat, it is the node's holder. Admission is unchanged: the last hop is
+not fresh work ([receiving DATA](#receiving-data)).
 
-A delivery goes through the send queue as any hand-over
-([hand-over](#hand-over)), but ahead of the rest of the queue. A
-hand-over waiting between its attempts, for the channel, a retry or the
-bucket, steps aside for it and keeps its place; a return keeps the
+It goes to the node as DATA addressed to the node's ID, in `dst_hop` and
+`dst_id` alike, on the node's home channel from the heard table, with
+the ordinary preamble, and the node answers with an ordinary ACK
+([the ACK](#the-ack)). A delivery goes through the send queue as any
+hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue.
+A hand-over waiting between its attempts, for the channel, a retry or
+the bucket, steps aside for it and keeps its place; a return keeps the
 attempts it has made.
 
 **The window.** A delivery goes only while the node listens: for a
-window of 3.37 s from each beat the holder hears, long enough for one
-hand-over of a DATA that goes first to complete. That is the attempt the
-holder may have under way, a full frame and the ACK timeout, 238.6 ms,
-then the DATA's hand-over with all its attempts and retry waits, 3.13 s
-([hand-over](#hand-over), [retry wait](#retry-wait)). A hand-over cut
-short by the window would leave its message to wait a beat period
-(roadmap D50). A node whose beat brought nothing goes back to receiving
-duty-cycled after that.
+window of 3.37 s from each beat the holder hears. A node whose beat
+brought nothing goes back to receiving duty-cycled after that.
+
+*Why that window.* It is long enough for one hand-over of a DATA that
+goes first to complete. That is the attempt the holder may have under
+way, a full frame and the ACK timeout, 238.6 ms, then the DATA's
+hand-over with all its attempts and retry waits, 3.13 s
+([retry wait](#retry-wait)). A hand-over cut short by the window would
+leave its message to wait a beat period (roadmap D50).
 
 Having answered a DATA, the node listens one hand-over more, 3.13 s, and
 its holder knows it does: nothing is under way ahead of the next message
 for it, which goes then. The node goes back to receiving duty-cycled
-once a hand-over passes with no DATA for it. So the holder sends what it
-holds one after the other on one beat, a message that arrives meanwhile
-goes at once, and a flow to the node less than a hand-over apart keeps
-it awake while it lasts. A repeat of a DATA whose ACK was lost finds the
-node still listening. Only the holder's bucket caps a burst
-([duty cycle cap](#duty-cycle-cap)): once the bucket would keep the next
-message past the hand-over, the node leaves its window and the rest wait
-for its next beat. A delivery that goes unanswered marks the node out of
-its window, and its messages wait for its next beat.
+once a hand-over passes with no DATA for it.
+
+So the holder sends what it holds one after the other on one beat, a
+message that arrives meanwhile goes at once, and a flow to the node less
+than a hand-over apart keeps it awake while it lasts. A repeat of a DATA
+whose ACK was lost finds the node still listening.
+
+Only the holder's bucket caps a burst ([duty cycle cap](#duty-cycle-cap)):
+once the bucket would keep the next message past the hand-over, the node
+leaves its window and the rest wait for its next beat. A delivery that
+goes unanswered marks the node out of its window, and its messages wait
+for its next beat.
 
 The DATA carries the hop count as any hand-over ([hop count](#hop-count))
 and the time the message had left when it arrived: the wait in the
@@ -1890,61 +1893,72 @@ after the deliveries in a window and one at a time.
   D71), a node sends each message in its delivery queue once, as DATA
   with the long preamble on the channel its node listens on, from the
   heard table, or on its own home channel if it has not heard the node.
-  It is one attempt, through the bucket as any send. A message whose
-  ACK comes is done; the rest stay and go at beats as before until their
-  place is needed. The node is leaving: once it has gone its sleepy
-  nodes' beats no longer reach it, and the long preamble reaches them
-  now, whatever their windows. Each message is flushed once, so a still
-  node whose fixes stray past the allowance again pays no more. The
-  cost is bounded: a full queue, 41 messages of 492.9 ms, is 20.2 s of
-  airtime, three and a half buckets, paced by the bucket.
+  It is one attempt, through the bucket as any send. A message whose ACK
+  comes is done; the rest stay and go at beats as before until their
+  place is needed.
 - **A node heard as a relay.** A holder that hears a heartbeat without
   the sleepy flag from a node it holds messages for, carried or not,
-  sends them at once, one after the other, with the ordinary preamble
-  on the home channel the heartbeat names. Each is done on its ACK;
-  unanswered ones wait for the node's next heartbeat or beat heard. Such
-  a node listens all the time and opens no window, so its messages
-  would otherwise wait until their place is needed (roadmap D66). It is
-  a node that slept and now relays, or a relay whose messages a
-  neighbour within 50 m owned because it did not keep it in its table
-  ([neighbour table](#neighbour-table)).
+  sends them at once, one after the other, with the ordinary preamble on
+  the home channel the heartbeat names. Each is done on its ACK;
+  unanswered ones wait for the node's next heartbeat or beat heard.
+
+*Why the flush.* The node is leaving: once it has gone its sleepy nodes'
+beats no longer reach it, and the long preamble reaches them now,
+whatever their windows. Each message is flushed once, so a still node
+whose fixes stray past the allowance again pays no more. The cost is
+bounded: a full queue, 41 messages of 492.9 ms, is 20.2 s of airtime,
+three and a half buckets, paced by the bucket.
+
+*Why a node heard as a relay.* Such a node listens all the time and
+opens no window, so its messages would otherwise wait until their place
+is needed (roadmap D66). It is a node that slept and now relays, or a
+relay whose messages a neighbour within 50 m owned because it did not
+keep it in its table ([neighbour table](#neighbour-table)).
 
 ### Delivery queue
 
 Kept by nodes that are not sleepy, up to 41 messages per node. A message
 queued the delivery TTL ago or longer is **stale**: it stays, and goes at
 its node's next beat as any other, until a message arrives at a full
-queue; then the oldest stale message makes way for it. Age alone drops
-nothing: a message dropped when no other needs its place is lost for
-nothing, and its node may yet beat, back from a pocket or a basement, or
-heard at last by a holder that missed its beats. The queue's TTL starts
-afresh when the message arrives: it is the wait for a node that sleeps
-or is dark, not the way there ([time to live](#time-to-live)). When the
-queue is full and holds no stale message, a message for another node is
-refused ([receiving DATA](#receiving-data)): what is queued stays, and
-the sender learns at once.
+queue; then the oldest stale message makes way for it. When the queue is
+full and holds no stale message, a message for another node is refused
+([receiving DATA](#receiving-data)): what is queued stays, and the
+sender learns at once.
+
+The queue's TTL starts afresh when the message arrives: it is the wait
+for a node that sleeps or is dark, not the way there
+([time to live](#time-to-live)).
+
+*Why age alone drops nothing.* A message dropped when no other needs its
+place is lost for nothing, and its node may yet beat, back from a pocket
+or a basement, or heard at last by a holder that missed its beats.
 
 A queued message goes to the send queue one per node at a time, oldest
 first: when it arrives, when the node beats, when the node takes the one
 before, and whenever a hand-over ends and leaves room in the send queue;
 there it goes first ([delivery](#delivery)). In the node's window it
-needs a place in the regular room ([send queue](#send-queue)) and, in the
-bucket, its own frame and the reply reserve, not the airtime of
-everything queued, which it goes ahead of. Counted behind the forwards,
-it would be kept out by a holder at its cap while the node listens, and
-wait a beat period or expire (roadmap D55). One the bucket cannot fit yet
-goes the moment the bucket will. One whose node has stopped listening by
-the time its hand-over would start waits for the next beat. A failed
-delivery counts no failure against anyone: the node is not a neighbour
-the holder routes through.
+needs a place in the regular room ([send queue](#send-queue)) and, in
+the bucket, its own frame and the reply reserve, not the airtime of
+everything queued, which it goes ahead of.
 
-Nodes in one train or one basement go dark together, so the queue holds
-what arrives in a TTL for every node a holder can keep, its heard
-table's 256 ([heard table](#heard-table)), at the 23 texts a day each
-that the network carries ([capacity and sizing](#capacity-and-sizing)):
-256 × 23 / 144 ten-minute TTLs in a day = 40.9, so 41 messages. A flow
-to one node that pauses longer than a hand-over waits for the next beat,
-at most 41 messages a period, and loses what does not fit.
+*Why not behind the forwards.* Counted behind them, it would be kept out
+by a holder at its cap while the node listens, and wait a beat period or
+expire (roadmap D55).
+
+One the bucket cannot fit yet goes the moment the bucket will. One whose
+node has stopped listening by the time its hand-over would start waits
+for the next beat. A failed delivery counts no failure against anyone:
+the node is not a neighbour the holder routes through.
+
+*Why that size.* Nodes in one train or one basement go dark together, so
+the queue holds what arrives in a TTL for every node a holder can keep,
+its heard table's 256 ([heard table](#heard-table)), at the 23 texts a
+day each that the network carries
+([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute
+TTLs in a day = 40.9, so 41 messages.
+
+A flow to one node that pauses longer than a hand-over waits for the
+next beat, at most 41 messages a period, and loses what does not fit.
 
 The owner remembers 41 delivered message IDs
 ([packet formats](#packet-formats)) and ACKs a repeat without delivering
@@ -1963,12 +1977,13 @@ A sleepy node with an anchor hands its own message to the anchor while
 the anchor is live, with count 0 ([hop count](#hop-count)), and
 otherwise to its next hop as any node does ([next hop](#next-hop)); one
 without an anchor sends as a relay does
-([sleepy nodes alone](#sleepy-nodes-alone)). Handed to the neighbour
-nearest its destination instead, the first hop would often be a faint,
-far relay (roadmap D46). The anchor takes it only as fresh work
-([receiving DATA](#receiving-data); roadmap D31, D34), and the node
-takes a message from its application only while the anchor is not
-banned.
+([sleepy nodes alone](#sleepy-nodes-alone)). The anchor takes it only as
+fresh work ([receiving DATA](#receiving-data); roadmap D31, D34), and
+the node takes a message from its application only while the anchor is
+not banned.
+
+*Why the anchor.* Handed to the neighbour nearest its destination
+instead, the first hop would often be a faint, far relay (roadmap D46).
 
 A refused message goes back to the application with the wait the
 refusal asks for ([bans](#bans)), and the node takes no message of the
@@ -1979,12 +1994,15 @@ out.
 
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
 doubled for each unanswered hand-over to the anchor in a row, or when
-the anchor's ban ends if that is later. A fade lasts about a minute (the
-scenarios' correlation time), and the three attempts of one hand-over, a
-few hundred milliseconds apart, all fall inside it, where the ban's
-ladder would offer it every few seconds to a node whose channel is
-full. Silence says no more than that the channel or the anchor is full, so
-the wait doubles as the ban does: tried again every
+the anchor's ban ends if that is later.
+
+*Why a fade.* A fade lasts about a minute (the scenarios' correlation
+time), and the three attempts of one hand-over, a few hundred
+milliseconds apart, all fall inside it, where the ban's ladder would
+offer it every few seconds to a node whose channel is full.
+
+*Why it doubles.* Silence says no more than that the channel or the
+anchor is full, so the wait doubles as the ban does: tried again every
 fade instead, a text its anchor never takes would cost its sender three
 frames a minute on the anchor's channel for its whole TTL, where the
 anchor hears its other nodes' beats (roadmap D54).
@@ -2001,23 +2019,28 @@ A sleepy node that hears no fixed relay at the end of its boot listen
 ([channel at boot](#channel-at-boot)) has no anchor: it is in
 **anchorless mode**. It knows no node that holds mail, so no address
 can point at a node that holds its mail and hears its beat. Instead it
-does a relay's work where there is none: it forwards at once what it is
-given, with the ordinary time to live, its address is its own position
-and it owns it, and a DATA for it does not wait for a beat. It receives
-duty-cycled, as every sleepy node does between its windows, and has no
-window: every frame to it carries the long preamble. It keeps the home
-channel it chose at boot; it does not sweep or move.
+does a relay's work where there is none:
+
+- it forwards at once what it is given, with the ordinary time to live;
+- its address is its own position, and it owns it;
+- a DATA for it does not wait for a beat.
+
+It receives duty-cycled, as every sleepy node does between its windows,
+and has no window: every frame to it carries the long preamble. It
+keeps the home channel it chose at boot; it does not sweep or move.
 
 It beats with the sleepy and anchorless bits and the long preamble, each
 beat a random half to one **anchorless beat period** after the last, on
 the next channel of the rotation each time ([heartbeat](#heartbeat)),
 naming its own channel in `aux`. The period is the delivery TTL over the
-13 channels, 600 / 13 = 46.2 s: beats at most a period apart visit every
-channel within a TTL, so a relay in reach on any channel hears the node,
-and two nodes in anchorless mode find each other, before anything the
-network holds for them runs out ([sleepy nodes](#sleepy-nodes)). At the
-mean interval of 34.6 s the beats cost 38 s an hour of airtime, 11 % of
-its budget, and 0.34 mA at 32 mA of transmit current.
+13 channels, 600 / 13 = 46.2 s. At the mean interval of 34.6 s the beats
+cost 38 s an hour of airtime, 11 % of its budget, and 0.34 mA at 32 mA
+of transmit current.
+
+*Why that period.* Beats at most a period apart visit every channel
+within a TTL, so a relay in reach on any channel hears the node, and two
+nodes in anchorless mode find each other, before anything the network
+holds for them runs out ([sleepy nodes](#sleepy-nodes)).
 
 Nodes in anchorless mode route among themselves and are a next hop like
 any other ([next hop](#next-hop)), each DATA to one with the long
@@ -2026,18 +2049,18 @@ heartbeat of its own on the channel the beat names, with the long
 preamble, at once and again a fade later, 60 s
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)), for two of
 the node's beat periods, so that one lost answer does not cost a
-rotation. A carried node does not answer, since nobody anchors to it,
-nor does a relay whose grace on battery is over. A receiver cannot tell an
-answer from
-a heartbeat in its slot by the frame; a sleeping node tells them apart
-by the time ([relay choice](#relay-choice), roadmap D62).
+rotation.
+
+A carried node does not answer, since nobody anchors to it, nor does a
+relay whose grace on battery is over. A receiver cannot tell an answer
+from a heartbeat in its slot by the frame; a sleeping node tells them
+apart by the time ([relay choice](#relay-choice), roadmap D62).
 
 At the first relay it hears the node anchors as any sleepy node does and
-leaves anchorless mode. Its
-neighbours then keep it as a last resort, and
-the anchorless ones behind it learn where it listens from its long beats
-on their channels ([beats](#beats)) and from the frames they exchange
-with it.
+leaves anchorless mode. Its neighbours then keep it as a last resort,
+and the anchorless ones behind it learn where it listens from its long
+beats on their channels ([beats](#beats)) and from the frames they
+exchange with it.
 
 ---
 
