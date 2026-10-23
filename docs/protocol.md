@@ -1,6 +1,6 @@
 # bark protocol: Civilian 433 MHz Mesh
 
-**Status:** live specification, 2026-10-22. Decisions that refine it are in
+**Status:** live specification, 2026-10-23. Decisions that refine it are in
 `roadmap.md` with D-numbers; [open items](#open-items) lists what is still
 to be decided or measured. Where the code and this text disagree, one of
 them is wrong and the fix is a commit to both.
@@ -77,8 +77,8 @@ its own, and its heartbeat publishes each as a flag
 *Why nothing to set.* The nRF52840 detects USB power itself, so a
 person's node relays on its charger and sleeps in a pocket.
 
-*Why a carried node takes each fix.* So that its heartbeats say where it
-is and its neighbours route to it there. A fixed node keeps its place so
+*Why a carried node takes each fix.* Its heartbeats then say where it
+is, and its neighbours route to it there. A fixed node keeps its place so
 that no later fix, true or spoofed, moves it (roadmap D63).
 
 The two combine in four ways, all of them real, and each flag means the
@@ -480,8 +480,8 @@ naming the sender costs no airtime.
 | deaf time | ≈15 ms per heartbeat, ≈0.2% |
 
 **Procedure.** Retune to channel k, listen before talking (CAD + RSSI,
-≈1 ms); if busy, retry after a random 0–200 ms up to three times, then
-skip; send; retune home.
+≈1 ms), up to three checks a random 0–200 ms apart; if every check is
+busy, skip; else send; retune home.
 
 No scanning is needed: every relay's heartbeat visits all channels, so a
 node listening on any one channel hears every relay in range within one
@@ -814,7 +814,7 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    14.4 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
-   neighbour (demoted after 2 in a row, neighbour table) and ban it
+   neighbour (demoted after two in a row) and ban it
    ([bans](#bans)). The message waits in its place for the ban and is
    offered to the same neighbour again, with three fresh attempts.
    - Once a failure has demoted the neighbour, the message instead
@@ -1270,7 +1270,7 @@ message would only wait and age here. Each neighbour's pushback is its
 own ban, so it does not hold up the other ways, and it ends with the
 ban. A message already in the network is spared because its sender
 would send it round the pushback, and around a ring of relays such
-refusals kept each other up (roadmap D54).
+refusals would keep each other up (roadmap D54).
 
 The packet is one of the following, tested in this order:
 
@@ -1998,8 +1998,7 @@ A refused message goes back to the application with the wait the
 refusal asks for ([bans](#bans)), and the node takes no message of the
 application's until that wait is over; the application may offer it
 again then, or give it up, and tell the person either way. Held by the
-node instead, a refused message aged at its origin until its time ran
-out.
+node instead, it would age at its origin until its time ran out.
 
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
 doubled for each unanswered hand-over to the anchor in a row, or when

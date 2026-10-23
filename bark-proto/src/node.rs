@@ -85,7 +85,7 @@ pub struct Config {
     pub move_wait_max: Duration,
     /// Heartbeat listen-before-talk checks before the heartbeat is skipped,
     /// with a random 0–`lbt_backoff_max` wait after each busy one
-    /// (spec "Heartbeat": "retry ... up to three times, then skip").
+    /// (spec "Heartbeat": "up to three checks ... if every check is busy, skip").
     pub lbt_attempts: u8,
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
