@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -40,9 +40,10 @@ all its own deadlines internally and exposes only the earliest, so there is one 
 core and no timer identifiers cross the boundary.
 
 Boot: the first `handle` call a core receives is `Event::Wakeup`, delivered at start
-whatever `next_wakeup()` says. The core's boot listen (spec "Channel at boot") starts there.
-The driver then reports the power at once, at the same instant (§4); until it does, a
-`Relay` takes itself to be on external power.
+whatever `next_wakeup()` says. The core's first rotation (spec "Channel at boot") starts
+there. The driver then reports the power at once, at the same instant (§4); until it does,
+a `Relay` takes itself to be on external power. The driver builds the core with what it
+kept of the core's state before the reboot, if anything, in `Config::stored` (§4).
 
 ## 3. Radio
 
@@ -107,8 +108,9 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::Fix` and `AppCommand::Power`, and the events `AppEvent::Message` and
-`AppEvent::GivenBack`.
+`AppCommand::Fix` and `AppCommand::Power`, the events `AppEvent::Message`,
+`AppEvent::GivenBack` and `AppEvent::Boot`, and the store, `Action::Store` and
+`Config::stored`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 233 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -120,7 +122,7 @@ whether the message arrived is for the app to find out inside its payload. A mes
 node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
 A node holds one message of its application's at a time, until its first hop takes it.
-It accepts a message while it is running, holds none, its send queue takes a full
+It accepts a message from its boot on while it holds none, its send queue takes a full
 frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
 for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
 bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
@@ -155,6 +157,21 @@ on; running, from the change on, as spec "Sleepy nodes" says.
 `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
+`AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
+(spec "Channel at boot", "Phone link"): at boot, with no relay known and when the rotation
+ends; each time the node learns a relay in it, with the relays it knows; and once at its
+end, `ends` then `None`. A sleepy node's first rotation ends at the first relay it hears,
+or at once when it resumes a stored anchor.
+
+`Action::Store(stored)` asks the driver to keep `stored` across a reboot, in place of
+what it kept before (spec "Implementation notes"). The core emits it at boot and then only
+when the state changes: the home channel, the place a fixed node stands, the carried flag
+and a fixed sleepy node's anchor. The driver hands the last one back in `Config::stored`
+when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
+it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
+record. The firmware appends records to a page of flash (`bark-fw/src/store.rs`); the
+simulator keeps the last one across a `restart` and drops it at a `wipe`.
+
 ## 5. What the driver must simulate or implement
 
 | Driver obligation | Simulator | Firmware |
@@ -169,6 +186,7 @@ The core never inspects a payload (spec "Phone link": the app owns identity and 
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
+| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `memory.x`) |
 
 ## 6. Memory
 
@@ -192,10 +210,10 @@ for each hop count a message can be sent on with, keep overload from dropping me
 457.3 s a full send queue takes to drain at one ban per place, plus the 294 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-167 008 B (163.1 KiB, measured 2026-10-21, roadmap D71): the tables and, in under 1 KiB around them, the
-medium access, the hand-over, its one owed reply and its application's message while it
-waits. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 147 992 B (144.5 KiB), without the heard table and the delivery
+167 032 B (163.1 KiB, measured 2026-10-24, roadmap D73): the tables and, in about 1 KiB around them, the
+medium access, the hand-over, its one owed reply, its application's message while it
+waits, and its stored state as handed back and as last kept, 56 B. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 148 016 B (144.5 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
@@ -241,8 +259,9 @@ action at a time, and the core never allocates.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - Types 0x1, 0x2, 0x4, 0xA and 0xE are unused and rejected, and so is 0x6, the
-    firmware's bench frames (roadmap D70).
+  - Types 0x1, 0x2 and 0x4 are unused and rejected, and so is 0x6, the
+    firmware's bench frames (roadmap D70). 0xA and 0xE are heartbeats of a relay in its
+    first rotation's burst (roadmap D73).
   - A refusal is a NACK, type 0x7, 14 bytes: the ACK's 13 and the wait it asks for in
     bans of 1.56 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
     receipt. A fixed-size packet with trailing bytes is rejected.

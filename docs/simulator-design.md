@@ -196,12 +196,14 @@ retunes, are true. The rate is fixed for the run: temperature does not
 move it. The default, 0, keeps every clock true.
 
 **Restart.** A scripted `restart` powers a node off and on at once. The
-node keeps its ID and position, and
-loses everything else, as a solar relay does after a night. Its core is
-built afresh with a new random seed and boots: a relay listens before
-choosing a home channel (spec "Channel at boot") and takes no traffic until then,
-while its neighbours still list it. A scripted `wipe` does the same with
-the node's stored state erased, as a fresh board in its place.
+node keeps its ID and position and what its core last asked to keep
+across a reboot (`Action::Store`, spec "Implementation notes"), the
+flash, and loses everything else, as a solar relay does after a night.
+Its core is built afresh with a new random seed and that stored state,
+and boots (spec "Channel at boot"), while its neighbours still list it.
+A scripted `wipe` does the same with the stored state erased, as a fresh
+board in its place. The summary counts the writes of stored state per
+node and day.
 
 **Boots.** Every boot, a node's switch-on and every scripted `start`,
 `restart` and `wipe`, is followed until the node takes part: when it
