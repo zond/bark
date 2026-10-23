@@ -290,55 +290,64 @@ not transmitting. All traffic *to* a node is sent on its home channel.
 ### Busy estimate
 
 Per channel, a node keeps `busy[c]`, an exponential moving average of a
-0/1 busy reading:
+0/1 busy reading. Foreign transmitters (key fobs, LPD433 handhelds)
+count exactly like peers.
 
-- **Sweep:** one RSSI reading per channel per second, spread evenly, one
-  every 1 s / 13 ≈ 77 ms, channels in turn, each taken only when the
-  modem reports no preamble detected and no packet in progress. A
-  reading is a retune (≈0.1 ms), a read (≈0.3 ms after it) and a retune
-  home, ≈0.5 ms: ≈6.5 ms a second, 0.65% of the time off the home
-  channel.
-- **Cost:** spread readings lose no packet. The modem needs a length `D`
-  of preamble to lock on
-  ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-  so a gap of length `g` loses a packet whose preamble starts too late
-  before it for the modem to have locked, or too early in it to leave
-  `D` after it: a window of `g + 2D − P`, with `P` the 12-symbol
-  preamble, 3.1 ms ([physical layer](#physical-layer)). For one spread
-  reading 0.5 + 2.0 − 3.1 < 0. One burst of all 13 readings, ≈5 ms,
-  would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals a second, 0.4%. Spreading
-  loses nothing as long as `D ≤ (P − g) / 2` ≈ 1.3 ms, 5 symbols; if the
-  bench shows the modem needs more, redo this comparison.
-- **Reading:** 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0. The
-  average is of the 0/1 reading, not of the dBm: what matters is the
-  fraction of time listen-before-talk would refuse.
-- **Window:** α ≈ 1/600 per sample, ≈10 minutes at one sample per
-  channel per second. One sample per heartbeat interval would give 60
-  samples per window, ±4 points on a 10% channel, as large as the
-  differences the rule acts on.
-- **Home channel:** count only what would stay behind if the node moved.
-  DATA addressed to the node, the ACKs of its own hand-overs, and its
-  own transmissions go wherever it goes: counted, they would make a busy
-  relay leave its channel for its own traffic and take that traffic
-  along. So a home reading taken while one of them was on the air is set
-  aside, and every other is the same 0/1 reading as on any other
-  channel. The move rule compares home with the others, so all are read
-  alike (roadmap D55).
-- **Home readings and the node's own packets:** whether a reading fell in
-  the node's own packet is known only when that packet ends, so a home
-  reading is held until the next, one second later, longer than any
-  packet (roadmap D24). The radio keeps receiving while it reads its own
-  channel (`core-interface.md`, Radio, rules 7 and 8): a home reading
-  inside a packet addressed to the node is discarded, one inside any
-  other counts. A packet for the node that fails its CRC cannot be told
-  from someone else's, and counts.
-- **Noise floor:** calibrated per device at boot as a low percentile of
-  RSSI readings over the first rotation, and recalibrated slowly.
+| | |
+|---|---|
+| reading | 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0 |
+| sweep | one reading per channel per second, spread evenly, one every 1 s / 13 ≈ 77 ms, channels in turn |
+| one reading | a retune (≈0.1 ms), a read (≈0.3 ms after it) and a retune home, ≈0.5 ms: ≈6.5 ms a second, 0.65% of the time off the home channel |
+| window | α ≈ 1/600 per sample, ≈10 minutes at one sample per channel per second |
+| noise floor | calibrated per device at boot as a low percentile of RSSI readings over the first rotation, and recalibrated slowly |
 
-Foreign transmitters (key fobs, LPD433 handhelds) count exactly like
-peers. What hurts a node is busy time at its own receiver, which RSSI
-measures directly; counting neighbours per channel would not, since two
-neighbours that hear each other share a channel cleanly.
+A reading is taken only when the modem reports no preamble detected and
+no packet in progress. On its home channel a node counts only what
+would stay behind if it moved:
+
+- A home reading taken while DATA addressed to the node, the ACK of one
+  of its own hand-overs, or its own transmission was on the air is set
+  aside. Every other is the same 0/1 reading as on any other channel.
+- Whether a reading fell in the node's own packet is known only when
+  that packet ends, so a home reading is held until the next, one second
+  later, longer than any packet (roadmap D24).
+- The radio keeps receiving while it reads its own channel
+  (`core-interface.md`, Radio, rules 7 and 8): a home reading inside a
+  packet addressed to the node is discarded, one inside any other
+  counts. A packet for the node that fails its CRC cannot be told from
+  someone else's, and counts.
+
+*Why the node's own traffic is set aside.* DATA addressed to the node,
+the ACKs of its own hand-overs, and its own transmissions go wherever it
+goes: counted, they would make a busy relay leave its channel for its
+own traffic and take that traffic along. The move rule compares home
+with the others, so all are read alike (roadmap D55).
+
+*Why not the dBm.* The average is of the 0/1 reading, not of the dBm:
+what matters is the fraction of time listen-before-talk would refuse.
+
+*Why foreign transmitters count.* What hurts a node is busy time at its
+own receiver, which RSSI measures directly; counting neighbours per
+channel would not, since two neighbours that hear each other share a
+channel cleanly.
+
+*Why a sample per channel per second.* One sample per heartbeat
+interval would give 60 samples per window, ±4 points on a 10% channel,
+as large as the differences the rule acts on.
+
+*Why spread readings.* Spread readings lose no packet. The modem needs a
+length `D` of preamble to lock on
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+so a gap of length `g` loses a packet whose preamble starts too late
+before it for the modem to have locked, or too early in it to leave `D`
+after it: a window of `g + 2D − P`, with `P` the 12-symbol preamble,
+3.1 ms ([physical layer](#physical-layer)).
+
+For one spread reading 0.5 + 2.0 − 3.1 < 0. One burst of all 13
+readings, ≈5 ms, would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals a second,
+0.4%. Spreading loses nothing as long as `D ≤ (P − g) / 2` ≈ 1.3 ms,
+5 symbols; if the bench shows the modem needs more, redo this
+comparison.
 
 ### Channel at boot
 
@@ -349,34 +358,42 @@ once, collecting sweeps and heartbeats. Then it sets home to
 the choice among them is random, so that nodes that hear nothing do not
 all pick channel 0. A config override exists for bench work.
 
-A sleepy node listens two rotations, 390 s: a relay switched on with it
-heartbeats only after a boot listen of its own, and once the node
-receives duty-cycled it hears relays only by their answers (roadmap D51,
-D52). It ends the listen at the first relay it hears, takes it as its
-anchor and moves to the anchor's channel; one that hears none homes as
-a relay does and keeps that channel ([relay choice](#relay-choice),
+A sleepy node listens two rotations, 390 s. It ends the listen at the
+first relay it hears, takes it as its anchor and moves to the anchor's
+channel; one that hears none homes as a relay does and keeps that
+channel ([relay choice](#relay-choice),
 [sleepy nodes alone](#sleepy-nodes-alone)).
+
+*Why two rotations.* A relay switched on with it heartbeats only after a
+boot listen of its own, and once the node receives duty-cycled it hears
+relays only by their answers (roadmap D51, D52).
 
 ### Channel moves
 
 A node moves only when `busy[home] − min_c busy[c] > 0.05` continuously
 for 10 minutes; then it waits a random 0–5 minutes, checks again, and
-moves to `argmin` with random tie-break. The hysteresis keeps moves
-rare: without it, every rooftop relay in range of the same interference
-sees the same ranking, and they all jump together.
+moves to `argmin` with random tie-break.
+
+*Why the hysteresis.* It keeps moves rare: without it, every rooftop
+relay in range of the same interference sees the same ranking, and they
+all jump together.
 
 Immediately after retuning it sends **one heartbeat on the old
 channel**, which names the new one and retunes at once any neighbour
-parked on the old channel. A sleepy node listening at the time, in a
-window ([delivery](#delivery)), hears it and follows at once, so the
-moving node sends to the sleepy nodes of its heard table on the old
-channel that now listen on the new one ([heard table](#heard-table)).
-A sleeping node anchored to it follows at the next heartbeat it wakes
-for ([relay choice](#relay-choice)) and beats on the new channel soon
-after, which tells the holder where it listens ([beats](#beats),
-roadmap D53). There is no other announcement: neighbours that miss it
-learn the new channel from the next rotation ([heartbeat](#heartbeat))
-or from ACK failure ([hand-over](#hand-over)).
+parked on the old channel. There is no other announcement: neighbours
+that miss it learn the new channel from the next rotation
+([heartbeat](#heartbeat)) or from ACK failure ([hand-over](#hand-over)).
+
+Its sleepy nodes follow it:
+
+- A sleepy node listening at the time, in a window
+  ([delivery](#delivery)), hears it and follows at once, so the moving
+  node sends to the sleepy nodes of its heard table on the old channel
+  that now listen on the new one ([heard table](#heard-table)).
+- A sleeping node anchored to it follows at the next heartbeat it wakes
+  for ([relay choice](#relay-choice)) and beats on the new channel soon
+  after, which tells the holder where it listens ([beats](#beats),
+  roadmap D53).
 
 ---
 
