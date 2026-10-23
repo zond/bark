@@ -8,13 +8,18 @@
  *
  *   0x00000000..0x00001000   MBR
  *   0x00001000..0x00026000   SoftDevice S140 6.1.1 (kept, never enabled by us)
- *   0x00026000..0x000F4000   application                      <- FLASH
+ *   0x00026000..0x000F3000   application                      <- FLASH
+ *   0x000F3000..0x000F4000   the node's stored state, one page <- STORE
  *   0x000F4000..0x000FD800   bootloader code
  *   0x000FD800..0x000FE000   bootloader config
  *   0x000FE000..0x000FF000   MBR parameter page
  *   0x000FF000..0x00100000   bootloader settings page
  *
- *   LENGTH(FLASH) = 0xF4000 - 0x26000 = 0xCE000 = 843 776 B = 824 KiB.
+ *   LENGTH(FLASH) = 0xF3000 - 0x26000 = 0xCD000 = 839 680 B = 820 KiB.
+ *
+ * STORE is one 4 KiB page (nRF52840 Product Specification, NVMC: the
+ * erase unit) that src/store.rs writes the core's stored state into
+ * (roadmap D73); src/store.rs names its address.
  *
  * RAM. On a normal boot to the application the bootloader does not enable
  * the SoftDevice, so the application owns all 256 KiB. Two carve-outs at the
@@ -40,7 +45,8 @@
  */
 MEMORY
 {
-  FLASH   : ORIGIN = 0x00026000, LENGTH = 0xF4000 - 0x26000
+  FLASH   : ORIGIN = 0x00026000, LENGTH = 0xF3000 - 0x26000
+  STORE   : ORIGIN = 0x000F3000, LENGTH = 0x1000
   PANDUMP : ORIGIN = 0x20000008, LENGTH = 0x400 - 0x8
   RAM     : ORIGIN = 0x20000400, LENGTH = 256K - 0x400
 }

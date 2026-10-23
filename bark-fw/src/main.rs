@@ -17,6 +17,8 @@ mod console;
 mod node;
 mod power;
 mod radio;
+#[cfg(not(feature = "console"))]
+mod store;
 
 use core::cell::Cell;
 
@@ -177,10 +179,11 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "console")]
     let mut lines = console::Lines::new();
     #[cfg(not(feature = "console"))]
-    let (config, core) = {
-        let config = node::config();
+    let (config, core, flash) = {
+        let (flash, stored) = store::Flash::open(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+        let config = node::config(stored);
         let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG).blocking_next_u64();
-        (config, node::core(config, seed))
+        (config, node::core(config, seed), flash)
     };
     let radio_task = async {
         let t0 = clock.now();
@@ -201,7 +204,7 @@ async fn main(_spawner: Spawner) {
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
-                node::run(core, radio, &config).await;
+                node::run(core, radio, flash, &config).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.

@@ -52,6 +52,9 @@ panic-persist = { version = "=0.3.0", features = ["utf8"] }
 # and header CRC failures as errors instead of handing the buffer up as a
 # packet. vendor/README.md says how the copy is kept.
 lora-phy = { path = "vendor/lora-phy" }
+# The flash traits embassy-nrf's NVMC driver implements, for the stored
+# state (src/store.rs).
+embedded-storage = "=0.3.2"
 # Wraps the SPIM bus and the NSS pin into the SpiDevice lora-phy takes.
 embedded-hal-bus = { version = "=0.3.0", features = ["async"] }
 

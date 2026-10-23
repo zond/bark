@@ -15,6 +15,7 @@ use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position, Store
 use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
+use crate::store::Flash;
 
 /// The node: every board runs the full one, which can be a relay.
 pub type Role = bark_proto::Relay;
@@ -44,8 +45,10 @@ impl Clock for Monotonic {
 
 /// No application yet (BLE comes later, roadmap D5): nothing to send, and
 /// what the core tells the application goes to the log. The power comes
-/// from USB (`power.rs`).
-pub struct LogApp;
+/// from USB (`power.rs`); what the core keeps goes to flash (`store.rs`).
+pub struct LogApp {
+    flash: Flash,
+}
 
 impl App for LogApp {
     async fn ready(&mut self, _offer: bool) {
@@ -91,6 +94,7 @@ impl App for LogApp {
 
     fn store(&mut self, stored: &Stored) {
         log::info!("store {:?}", stored);
+        self.flash.keep(stored);
     }
 }
 
@@ -101,16 +105,19 @@ fn position() -> Option<Position> {
     Some(Position::from_degrees(lat, lon))
 }
 
-/// The protocol configuration for this board.
-pub fn config() -> Config {
+/// The protocol configuration for this board, with what it stored before
+/// its last reboot.
+pub fn config(stored: Option<Stored>) -> Config {
     let position = position().unwrap_or_else(|| {
         log::warn!("no BARK_LAT/BARK_LON at build time; position 0, 0");
         Position::default()
     });
+    log::info!("stored {:?}", stored);
     Config {
         position,
         node_id: NodeId(embassy_nrf::pac::FICR.deviceid(0).read().to_be_bytes()),
         tx_power_dbm: MAX_TX_DBM,
+        stored,
         ..Config::default()
     }
 }
@@ -127,9 +134,9 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 }
 
 /// Run the core forever.
-pub async fn run(core: &'static mut Role, radio: Radio<'_>, config: &Config) -> ! {
+pub async fn run(core: &'static mut Role, radio: Radio<'_>, flash: Flash, config: &Config) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp, dbm);
+    let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp { flash }, dbm);
     log::info!(
         "node id={:02x?} at {} {} power_dbm={} usb={}",
         config.node_id.0,

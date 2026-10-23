@@ -93,6 +93,10 @@ Unverified, in the order they will fail if wrong:
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
 - A panic message survives the soft reset through the bootloader (PANDUMP in
   `memory.x`) and is logged on the next boot.
+- The stored state: the NVMC writes each record the core asks to keep into
+  the next slot of the `STORE` page and erases the page when it is full,
+  and the next boot logs `stored Some(..)` and comes back on the same home
+  channel (`src/store.rs`, roadmap D73).
 - P0.13 (`PWR_EN`) and P0.12 (`PWR_ON`) high power the radio, both on USB
   and on battery, and the 10 ms wait after them covers the rail's ramp.
 - The radio wiring of `src/board.rs`: SPI on P0.19/P0.22/P0.23, NSS P0.24,
@@ -147,9 +151,10 @@ block count and address range.
 ## Flash
 
 The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6). The
-application lives at `0x26000..0xF4000`; the bootloader, its settings and the
-MBR parameter page sit above, and the MBR and the (unused) SoftDevice S140
-below. `memory.x` has the full map.
+application lives at `0x26000..0xF3000`, and the node's stored state in the
+page above it, `0xF3000..0xF4000` (`src/store.rs`, roadmap D73); the
+bootloader, its settings and the MBR parameter page sit above, and the MBR
+and the (unused) SoftDevice S140 below. `memory.x` has the full map.
 
 1. Connect the T-Echo over USB-C. A USB-C-to-USB-C cable may not power it;
    use a USB-A-to-C cable if nothing happens.
