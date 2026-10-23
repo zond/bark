@@ -141,16 +141,18 @@ Both regimes allow any modulation in this band.
 | Channel spacing | no requirement | no requirement |
 | Listen-before-talk | not required | not required |
 
-The protocol keeps to them with an airtime token bucket per node that
-holds every hour within 10% ([duty cycle cap](#duty-cycle-cap)), no
-transmission longer than 1 s (an SF5 packet is at most 139 ms, 493 ms
-with the long preamble, [physical layer](#physical-layer)), and +10 dBm
-at the connector, which with the stock antenna (≈0 dBd gain) is at most
-+10 dBm ERP.
+The protocol keeps to them with:
 
-433 MHz is the only band with identical rules in both jurisdictions and
-enough range: 868 MHz has no 500 mW sub-band in Ukraine, and 2.4 GHz too
-little range.
+- an airtime token bucket per node that holds every hour within 10%
+  ([duty cycle cap](#duty-cycle-cap));
+- no transmission longer than 1 s: an SF5 packet is at most 139 ms,
+  493 ms with the long preamble ([physical layer](#physical-layer));
+- +10 dBm at the connector, which with the stock antenna (≈0 dBd gain)
+  is at most +10 dBm ERP.
+
+*Why 433 MHz.* It is the only band with identical rules in both
+jurisdictions and enough range: 868 MHz has no 500 mW sub-band in
+Ukraine, and 2.4 GHz too little range.
 
 ---
 
