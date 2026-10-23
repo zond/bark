@@ -257,7 +257,7 @@ pub enum Action {
 /// A protocol event worth recording, emitted where it happens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trace {
-    /// The home channel changed: chosen at the end of the boot listen
+    /// The home channel changed: chosen at the end of the first rotation
     /// (spec "Channel at boot") or moved by the move rule (spec "Channel moves").
     HomeChannelMoved {
         /// Previous home.
@@ -379,9 +379,9 @@ pub enum Trace {
     /// A relay's answer to a node that knows no relay goes out (spec
     /// "Heartbeat"): the frame of the `Action::Transmit` that follows.
     Answer,
-    /// A heartbeat of the node's first rotation, which go a second apart,
-    /// goes out (spec "Heartbeat"): the frame of the `Action::Transmit`
-    /// that follows.
+    /// A heartbeat of the node's burst, its first rotation's heartbeats a
+    /// burst gap apart, goes out (spec "Heartbeat"): the frame of the
+    /// `Action::Transmit` that follows.
     Burst,
     /// A relay's grace on battery ended: it holds no more mail, and
     /// flushes what it holds before it turns sleepy (spec "Delivery").

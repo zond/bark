@@ -2,7 +2,7 @@
 //! it hears. Every node is a `Relay`, sleepy or not by its power
 //! (`relay/power.rs`, spec "Sleepy nodes").
 //!
-//! This file holds the medium access: boot listen and home channel
+//! This file holds the medium access: first rotation and home channel
 //! (spec "Home channel selection"), the busy sweep (spec "Busy estimate"), the heartbeat (spec "Heartbeat"), the neighbour
 //! table (spec "Neighbours"), the duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"), and a sleepy
 //! node's home and beat (below). Routing and the per-hop transfer (spec "Forwarding")
@@ -172,7 +172,7 @@ pub struct Anchor {
 enum Stage {
     /// Not started: the driver's first `Wakeup` starts it.
     Off,
-    /// Listening before choosing a home channel (spec "Channel at boot"), until then.
+    /// In its first rotation (spec "Channel at boot"), until then.
     Booting(Instant),
     Running,
 }
@@ -344,7 +344,7 @@ pub struct Node<const H: usize, const Q: usize> {
     window_ends: Option<Instant>,
     /// When the bucket lets the application send, if only it is missing.
     app_ready_at: Option<Instant>,
-    /// When the boot listen began.
+    /// When the first rotation began.
     boot_from: Instant,
     /// Until when the driver was told the radio may receive duty-cycled
     /// (module documentation).
@@ -892,7 +892,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self.heard
     }
 
-    /// Whether the boot listen (spec "Channel at boot") is still running.
+    /// Whether the first rotation (spec "Channel at boot") is still running.
     pub fn booting(&self) -> bool {
         !matches!(self.stage, Stage::Running)
     }
@@ -1906,7 +1906,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.heard_as_relay(hb.id, hb.home);
         }
         if self.sleepy && self.booting() {
-            // An anchor ends the boot listen, which chooses a home
+            // An anchor ends the first rotation, which chooses a home
             // for a node that hears none (spec "Channel at boot").
             self.finish_boot(now, emit);
         }

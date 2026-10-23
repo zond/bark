@@ -187,7 +187,7 @@ pub struct NodeMetrics {
     /// Time on air after the settle time, µs.
     pub settled_airtime_us: u64,
     /// For a sleepy node: when it took an anchor after a spell without
-    /// one past its boot listen, and when the spell began, s.
+    /// one past its first rotation, and when the spell began, s.
     pub anchored_s: Vec<(f64, f64)>,
     /// Messages originated here by the traffic model.
     pub originated: u64,
@@ -378,7 +378,7 @@ impl LeafSums {
 /// and the tables (`bark_proto::Load`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct LoadStats {
-    /// Samples taken while running (after the boot listen).
+    /// Samples taken while running (after the first rotation).
     pub samples: u64,
     /// Samples at the cap: the bucket held less than the reply reserve and
     /// one full frame, so the relay could take no full frame of new work.

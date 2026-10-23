@@ -212,7 +212,7 @@ pub struct SleepSummary {
     /// The mean of each part of `current_ma`: listening, receiving
     /// duty-cycled, transmitting.
     pub current_parts_ma: [f64; 3],
-    /// Spells without an anchor past the boot listen, all and those that
+    /// Spells without an anchor past the first rotation, all and those that
     /// began after the first scripted removal (`Sim::anchorless_spells`).
     pub anchorless_spells: [(u64, u64, Option<f64>, Option<f64>); 2],
     /// The counters.

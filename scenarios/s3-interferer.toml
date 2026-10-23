@@ -17,7 +17,7 @@ name = "s3-interferer"
 seed = 1
 duration_s = 9000.0
 # As S2, and a move needs ten minutes of measurement and up to five of
-# waiting after the boot listen (spec "Channel moves"): 195 + 600 + 300 s.
+# waiting after the first rotation (spec "Channel moves"): 195 + 600 + 300 s.
 settle_s = 1095.0
 
 [origin]

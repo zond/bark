@@ -200,8 +200,8 @@ fn capacity_scenario_runs_a_minute_quickly() {
     let sens = sc.radio.sensitivity_dbm();
     assert!((at_3km - p.site_loss_db(Site::Rooftop, Site::Rooftop) - sens).abs() < 0.1);
     assert!(at_3km - p.site_loss_db(Site::Outdoor, Site::Rooftop) < sens - 20.0);
-    // Within the relays' boot listen (spec "Channel at boot") no leaf has attached,
-    // so the texts have no address yet.
+    // In the first minute few leaves have attached, and texts to the
+    // others have no address yet (spec "Channel at boot").
     let texts = s.app.originated + s.app.unaddressed;
     assert!(texts > 200, "{texts} texts in a minute");
     // "A few seconds" on an optimised build, and the minute is all boot
@@ -247,7 +247,7 @@ fn s1_parses_and_runs() {
     assert_eq!(
         settled.as_micros() as f64 / 1e6,
         sc.settle_s,
-        "the scenario's settle time is one rotation after the boot listen"
+        "the scenario's settle time is one rotation after the first"
     );
     for seed in S1_SEEDS {
         let mut sc = sc.clone();
@@ -257,7 +257,7 @@ fn s1_parses_and_runs() {
 }
 
 /// One run of S1. Once the relays know each other, a worst-case rotation
-/// after their boot listen (spec "Channel at boot", "Heartbeat"), every text with an address
+/// after their first (spec "Channel at boot", "Heartbeat"), every text with an address
 /// is delivered until B is removed at 20 minutes; after that every one is
 /// dropped at A for want of a route (spec "Return to parent"), or, while A
 /// waits out the ban on B, refused at LA and given back to its application
@@ -409,7 +409,7 @@ fn s2_block_smoke() {
     accounted(&sim, "S2");
     let nodes = s.nodes.as_ref().expect("per-node metrics");
     for n in nodes.iter().filter(|n| n.label.starts_with("relay")) {
-        // The choice at the end of the boot listen and no move after it
+        // The choice at the end of the first rotation and no move after it
         // (spec "Channel at boot", "Channel moves").
         assert!(
             n.m.home_moves <= 1,
@@ -549,8 +549,9 @@ fn mesh_routes_bursts_and_a_restart() {
 }
 
 /// A restarted relay keeps its position, loses its neighbours and boots
-/// again: it listens before choosing a home channel (spec "Channel at boot"), and
-/// its neighbours are heard again within a rotation after that (spec "Heartbeat").
+/// again, on the home channel it stored (spec "Channel at boot",
+/// "Implementation notes"), and its neighbours are heard again within its
+/// first rotation (spec "Heartbeat").
 #[test]
 fn a_restarted_relay_boots_again_with_its_identity() {
     use bark_proto::{Duration, Instant};
@@ -565,14 +566,16 @@ fn a_restarted_relay_boots_again_with_its_identity() {
     let position = sim.relay(0).config().position;
     assert!(!sim.relay(0).booting());
     assert_eq!(sim.relay(0).neighbours().count(), 1);
+    let home = sim.relay(0).home();
     sim.restart(0);
     assert!(sim.relay(0).booting());
+    assert_eq!(sim.relay(0).home(), home);
     assert_eq!(sim.relay(0).neighbours().count(), 0);
     assert_eq!(sim.relay(0).config().position, position);
     sim.run_until(settled + c.boot_listen + c.heartbeat_max.mul(13) + Duration::from_secs(1));
     assert!(!sim.relay(0).booting());
     assert_eq!(sim.relay(0).neighbours().count(), 1);
-    assert!(sim.resting(0).is_some());
+    assert_eq!(sim.resting(0), Some(home));
 }
 
 /// Staggered switch-on: each node comes on within its kind's window and

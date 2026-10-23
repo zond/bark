@@ -8,9 +8,9 @@ name = "dense-movers"
 seed = 1
 # One settled hour after the settle time: 2700 + 3600 s.
 duration_s = 6300.0
-# After it is switched on, a relay chooses a home channel after its 195 s
-# boot listen (spec "Channel at boot") and a sleepy node takes an anchor
-# within its two-rotation boot listen and chooses within a rotation more
+# After it is switched on, a relay chooses a home channel at the end of
+# its 195 s first rotation (spec "Channel at boot") and a sleepy node
+# takes an anchor within that rotation and chooses within a rotation more
 # (spec "Relay choice"); the move rule acts only on ten minutes of
 # measurement (spec "Channel moves"), so a relay's first moves come 795 s
 # after it is switched on. The run has settled this long after the last

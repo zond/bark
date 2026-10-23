@@ -698,7 +698,7 @@ pub struct Sim {
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
     /// Since when each sleepy node has been without an anchor, past its
-    /// boot listen; and every such spell that ended with an anchor, from
+    /// first rotation; and every such spell that ended with an anchor, from
     /// when to when.
     anchorless_since: Vec<Option<Instant>>,
     spells: Vec<(Instant, Instant)>,
@@ -3566,7 +3566,7 @@ impl Sim {
     /// relay's own position; for a leaf, the relay it is attached to, or
     /// the one it was last attached to, as the sender would have learnt
     /// it from an earlier message; for a leaf without an anchor past its
-    /// boot listen, its own position. `None` for a leaf that has had
+    /// first rotation, its own position. `None` for a leaf that has had
     /// neither: nobody can have its address.
     fn address_of(&mut self, node: u32) -> Option<Position> {
         let switches = self.switches(node);

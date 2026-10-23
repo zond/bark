@@ -103,9 +103,9 @@
 //! heartbeat on the neighbour's channel, with the long preamble, so that
 //! the neighbour hears it and takes it as its anchor: at once and every
 //! fade after, for two beat periods ([`Neighbours::answer_due`]). A relay
-//! that knows no relay, in its first rotation, flags its heartbeat
-//! anchorless too ([`Neighbour::anchorless`]); it listens all the time,
-//! and is answered once, with the ordinary preamble.
+//! flags the heartbeats of its burst anchorless too
+//! ([`Neighbour::anchorless`]); it listens all the time, and is answered
+//! once, with the ordinary preamble.
 //!
 //! # The anchor of a node that sleeps
 //!

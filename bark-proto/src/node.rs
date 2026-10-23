@@ -208,7 +208,7 @@ pub const CARRY_AFTER: Duration = {
 
 const _: () = assert!(CARRY_AFTER.as_micros() == 72_000_000);
 
-/// Longest heartbeat interval (spec "Heartbeat": 15 s); the boot listen derives from it.
+/// Longest heartbeat interval (spec "Heartbeat": 15 s); the first rotation derives from it.
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
 impl Config {

@@ -12,7 +12,7 @@
 //! A core has one wakeup at a time: each one it asks for replaces the
 //! last. Pushed on the event queue, every replaced one would stay there
 //! until its time came, to be skipped then; a sleepy node that asks for
-//! the end of its boot listen whenever its radio is busy leaves one
+//! the end of its first rotation whenever its radio is busy leaves one
 //! behind at each reading, and in a city-sized run they make up nearly
 //! all of the queue. Here each node has one place, in a heap that moves
 //! or removes it.

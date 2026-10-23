@@ -20,7 +20,7 @@ fn pos(east: f64) -> Position {
 /// The grace of these tests, shorter than the design's to keep them quick.
 const GRACE: u64 = 600;
 
-/// A node at `east` with the design's boot listen, and whether it is on
+/// A node at `east` with the design's first rotation, and whether it is on
 /// external power at boot.
 fn node(east: f64, external: bool, seed: u64) -> (Relay, bool) {
     let config = Config {

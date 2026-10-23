@@ -12,16 +12,17 @@
 # seeds (5 among 1 to 10) a relay that nothing reaches, whose messages
 # are counted apart as unreachable. Every leaf i sends 60 bytes to leaf
 # i + 12 (mod 25) every 600 s, so the flows cross the whole mesh. The
-# first message waits until every leaf has attached: the relays' 195 s
-# boot listen, up to a worst-case rotation (195 s) for a leaf to hear its
-# first heartbeat, and a rotation more before it chooses (spec "Relay choice"),
+# first message waits until every leaf has attached: up to a worst-case
+# rotation (195 s) for a leaf to hear its first heartbeat, a rotation more
+# before it chooses (spec "Relay choice"), and a rotation of margin,
 # 585 s.
 
 name = "mesh-spread"
 seed = 1
 duration_s = 2700.0
-# As S1: the relays know each other one worst-case rotation (13
-# heartbeats at 15 s) after their 195 s boot listen (spec "Channel at boot", "Heartbeat").
+# As S1: the relays know each other within their first rotation, and
+# choose their homes at its end, 195 s; 390 s leaves a rotation more
+# (spec "Channel at boot", "Heartbeat").
 settle_s = 390.0
 
 [origin]

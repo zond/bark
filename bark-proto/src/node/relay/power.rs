@@ -134,7 +134,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
-    /// boot listen.
+    /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
         self.unplugged = None;

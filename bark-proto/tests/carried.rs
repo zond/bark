@@ -21,7 +21,7 @@ fn pos(east: f64) -> Position {
 }
 
 /// A node at `east`, and whether it is on external power, with the short
-/// boot listen of `tests/sleepy.rs` for one that is not sleepy.
+/// first rotation of `tests/sleepy.rs` for one that is not sleepy.
 fn node(east: f64, sleepy: bool, seed: u64) -> (Relay, bool) {
     let config = Config {
         fixed_after: secs(600),

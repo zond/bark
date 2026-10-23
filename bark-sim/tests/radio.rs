@@ -1,7 +1,7 @@
 //! Radio-model tests, driven by scripted driver-level actions so they hold
 //! whatever the protocol cores do. Sleepy nodes (placed as leaves) are
-//! used throughout, kept in a boot listen of a day: there a sleepy node
-//! never transmits, and with the sweep slowed to one reading a day it does
+//! used throughout, kept in a first rotation of a day: there a sleepy node
+//! that hears no relay never transmits, and with the sweep slowed to one reading a day it does
 //! not leave its channel either.
 
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
@@ -37,7 +37,7 @@ fn curve_trio(t1_dbm: f64, t2_dbm: f64) -> Scenario {
 }
 
 /// Longer than any test here: the sweep takes one reading at start and the
-/// next a day later, and the boot listen ends then.
+/// next a day later, and the first rotation ends then.
 const DAY_MS: u64 = 86_400_000;
 
 fn run(sc: &Scenario) -> Sim {

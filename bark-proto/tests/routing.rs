@@ -23,7 +23,7 @@ fn pos(east: f64, north: f64) -> Position {
     )
 }
 
-/// The boot listen is a full rotation in the design (spec "Channel at boot"); a short one
+/// The first rotation is a full rotation in the design (spec "Channel at boot"); a short one
 /// keeps the tests quick and changes nothing after it.
 fn relay(east: f64, north: f64, seed: u64) -> Relay {
     Relay::new(

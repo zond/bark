@@ -24,7 +24,7 @@ fn pos(east: f64, north: f64) -> Position {
 }
 
 /// A node at `east`, sleepy, on battery, or not, and whether it is on
-/// external power. The boot listen is a full rotation in the design (spec
+/// external power. The first rotation is a full rotation in the design (spec
 /// "Channel at boot"); a short one keeps the tests quick, except for a
 /// sleepy node, which chooses its anchor at its end.
 fn node(east: f64, sleepy: bool, seed: u64) -> (Relay, bool) {
@@ -529,7 +529,7 @@ fn a_sleepy_node_moves_only_to_a_much_stronger_node() {
     h.link(first, s);
     h.set_rssi(first, s, -95);
     h.start_at(s, at(10));
-    // A boot listen, a rotation to first hear the relay, and another.
+    // A first rotation, a rotation to first hear the relay, and another.
     h.run_until(at(700), |_| false);
     let id_of = |h: &Harness<Relay>, i: usize| h.nodes[i].core.id();
     assert_eq!(
