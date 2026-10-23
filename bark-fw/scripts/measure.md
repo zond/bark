@@ -134,8 +134,8 @@ A> ping 5    (×20)
 A prints `ping … rtt_us=… within=…`; B prints `pong … cad_us=…
 tx_us=… rx_to_tx_done_us=…`. `rtt_us` runs from A's TxDone to the pong
 received, which is what the 100 ms ACK timeout of spec "Hand-over" must cover: B's
-reception handling, CAD on A's channel, its transmit start and the 13-byte
-pong (14.4 ms on air). If `within=false`, the ACK timeout or the
+reception handling, CAD on A's channel, its transmit start and the 17-byte
+pong (15.7 ms on air). If `within=false`, the ACK timeout or the
 receiver's path needs changing; note which part of B's line dominates.
 
 ### 1.7 Sensitivity
@@ -235,8 +235,8 @@ hour after the cable goes (spec "Sleepy nodes").
 
 ### 5.1 Every long preamble is caught
 
-On A, a bench frame of a DATA's length (30 bytes: the 22-byte DATA header
-and a short text) with the long preamble, 100 times, 5 s apart: 377.7 ms
+On A, a bench frame of a DATA's length (36 bytes: the 28-byte DATA header
+and a short text) with the long preamble, 100 times, 5 s apart: 380.2 ms
 on air, 7.6 % of the period, under the console's 10 % cap. 5 s is not a
 multiple of S's 361.125 ms cycle, so the frames start at offsets spread
 over it (5000 mod 361.125 = 305.375 ms a step).
@@ -244,7 +244,7 @@ over it (5000 mod 361.125 = 305.375 ms a step).
 ```
 A> preamble long
 A> ch h
-A> beacon h 5000 30     (500 s; then:)
+A> beacon h 5000 36     (500 s; then:)
 A> stop
 ```
 

@@ -32,7 +32,7 @@ use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::{ACK_LEN, T_BENCH};
+use bark_proto::wire::{ACK_LEN, HEARTBEAT_LEN, T_BENCH};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -631,9 +631,10 @@ impl<'a> Console<'a> {
             Command::Preamble(symbols) => {
                 self.preamble = symbols;
                 log::info!(
-                    "preamble symbols={} airtime_us_9={} airtime_us_255={}",
+                    "preamble symbols={} airtime_us_{}={} airtime_us_255={}",
                     symbols,
-                    airtime_us(9, symbols),
+                    HEARTBEAT_LEN,
+                    airtime_us(HEARTBEAT_LEN, symbols),
                     airtime_us(MAX_LEN, symbols)
                 );
             }
