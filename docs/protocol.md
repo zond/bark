@@ -1349,22 +1349,21 @@ and no record is replaced. Then:
 - The message moves as a single packet: a relay sends only what it has
   just received or originated, and every ACK-only case of
   [receiving DATA](#receiving-data) sends nothing.
-- A relay holding the message either owns the destination, sends to its
-  next candidate, or returns it to its parent. A neighbour that takes the
-  message is tried and never offered it again from that record, so each
-  relay hands the message to each neighbour at most once; a return goes
-  up the parents, which lead to the origin without a loop. So each stay
-  of the message at a relay ends with a hand-over that succeeds, or at
-  the origin with a drop, and there are finitely many of those: the
-  search ends. A neighbour that does not answer is banned and then demoted
-  ([hand-over](#hand-over) step 6), so it costs its relay a bounded number of failed hand-overs
-  ([bounds](#bounds)), and the hop cap bounds the stays ([hop count](#hop-count)).
+- Each stay of the message at a relay ends with a hand-over that
+  succeeds, or at the origin with a drop ([next hop](#next-hop),
+  [return to parent](#return-to-parent)), and there are finitely many of
+  those: a relay hands the message to each neighbour at most once, since
+  one that takes it is tried ([message records](#message-records)), and
+  the parents lead to the origin without a loop. So the search ends. A
+  neighbour that does not answer costs a bounded number of failed
+  hand-overs ([bounds](#bounds)), and the hop cap bounds the stays
+  ([hop count](#hop-count)).
 - A send to a relay that already has the message hands it the search
-  ([receiving DATA](#receiving-data), case 5): it goes on with its own candidates. The sender
-  is one of them unless the relay has tried it, so the search comes back
-  to the sender as a return, and the sender goes on with its own. A
-  relay whose search is unfinished gets the message back that way or
-  through the parents, so none is left with neighbours untried.
+  ([receiving DATA](#receiving-data), case 5), and the search comes back
+  to the sender as a return, since the sender stays one of its
+  candidates unless it has tried it. A relay whose search is unfinished
+  gets the message back that way or through the parents, so none is left
+  with neighbours untried.
 
 So the message makes a depth-first traversal of the relays reachable
 from the origin through neighbours that answer, nearest to the
