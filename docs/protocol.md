@@ -272,11 +272,13 @@ f_k = 433.170 MHz + k × 0.125 MHz,   k = 0..12
 
 No fixed grid assigns channels, and no position derives them: each node
 measures how busy each channel is and chooses
-([home channel selection](#home-channel-selection)); why not a grid:
-[what the protocol omits](#what-the-protocol-omits). Channel 6 is
+([home channel selection](#home-channel-selection)). Channel 6 is
 centred on 433.920 MHz, the busiest spot in the band (key fobs,
-sensors); the choice avoids it wherever it is busy. Whether 125 kHz
-spacing is enough is open item O5 ([open items](#open-items)).
+sensors); the choice avoids it wherever it is busy.
+
+Why not a grid: [what the protocol omits](#what-the-protocol-omits).
+Whether 125 kHz spacing is enough is open item O5
+([open items](#open-items)).
 
 ---
 
