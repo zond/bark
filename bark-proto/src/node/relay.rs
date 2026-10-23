@@ -1027,19 +1027,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// What the node keeps across a reboot now (`store.rs`). A carried
-    /// node's place changes with each fix and its anchor as it goes, so it
-    /// keeps the place it stood when last fixed, and no anchor: one that
-    /// boots where it has gone chooses afresh.
+    /// node's place changes with each fix, and a carried sleepy node's
+    /// anchor and home as it goes: it keeps the place it stood when last
+    /// fixed, a sleepy one the home it had then, and no anchor, since one
+    /// that boots where it has gone chooses afresh.
     fn to_keep(&self) -> Stored {
-        let place = match (self.motion.carried, self.stored) {
-            (true, Some(s)) => s.place,
-            _ => self.motion.place(),
-        };
+        let carried = self.motion.carried;
+        let kept = self.stored.filter(|_| carried);
         Stored {
-            home: self.home,
-            place,
-            carried: self.motion.carried,
-            anchor: self.anchor.filter(|_| self.sleepy && !self.motion.carried),
+            home: match kept {
+                Some(s) if self.sleepy => s.home,
+                _ => self.home,
+            },
+            place: kept.map_or(self.motion.place(), |s| s.place),
+            carried,
+            anchor: self.anchor.filter(|_| self.sleepy && !carried),
         }
     }
 

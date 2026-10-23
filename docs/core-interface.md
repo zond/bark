@@ -165,8 +165,8 @@ or at once when it resumes a stored anchor.
 
 `Action::Store(stored)` asks the driver to keep `stored` across a reboot, in place of
 what it kept before (spec "Implementation notes"). The core emits it at boot and then only
-when the state changes: the home channel, the place a fixed node stands, the carried flag
-and a fixed sleepy node's anchor. The driver hands the last one back in `Config::stored`
+when the state changes: the home channel, but a carried sleepy node's, the place a fixed
+node stands, the carried flag and a fixed sleepy node's anchor. The driver hands the last one back in `Config::stored`
 when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
 it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
 record. The firmware appends records to a page of flash (`bark-fw/src/store.rs`); the

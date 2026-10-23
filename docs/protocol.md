@@ -2367,7 +2367,7 @@ with it ([channel at boot](#channel-at-boot)):
 
 | | |
 |---|---|
-| home channel | a relay keeps it and makes no choice at the end of its first rotation, so that its neighbours, which still list it, reach it at once |
+| home channel | a relay keeps it and makes no choice at the end of its first rotation, so that its neighbours, which still list it, reach it at once; a carried sleepy node keeps the one it had when last fixed |
 | the place a fixed node stands | its position after the reboot, as before it ([position](#position)) |
 | carried flag | kept, still since the boot |
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
@@ -2377,7 +2377,8 @@ with it ([channel at boot](#channel-at-boot)):
 every timer starts afresh: a carried node is still since the boot, and a
 relay on battery begins its grace again.
 
-*Why not a carried node's place or anchor.* Both change as it goes, and
+*Why not a carried node's place, nor a carried sleepy node's anchor and
+home.* They change as it goes, its anchor at each relay it passes, and
 each change would be a write; after a reboot it is somewhere else.
 
 *Why not the noise floor.* The sweep takes 13 readings a second, and
