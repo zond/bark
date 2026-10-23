@@ -1391,20 +1391,22 @@ hand-overs, leaving about 200 for routing around gaps.
 
 A message lives in the network for at most the delivery TTL, 600 s
 ([nodes](#nodes)), from when a node takes it from its application.
-Without an end by time, a message the network has taken lives as long as
-hand-overs to someone succeed: past the cap, long after its sender and
-its destination's queue would have given it up, keeping the relays at
-their duty cap (roadmap D42, D44).
+
+*Why an end by time.* Without one, a message the network has taken
+lives as long as hand-overs to someone succeed: past the cap, long after
+its sender and its destination's queue would have given it up, keeping
+the relays at their duty cap (roadmap D42, D44).
 
 Every DATA carries the time the message has left, `time_left`, in whole
 units of 2.5 s ([packet formats](#packet-formats)); the node that took
 the message from its application starts it at the TTL. Each
 transmission, retries included, carries what is left at that moment,
 rounded down, so no node claims more than the message has; a sleepy
-node's waits for its anchor count against it. A relay that takes a
-packet to send on counts the message's time from the packet: what it
-carries less the frame's time on air, since the sender stamps the time
-as the frame goes out.
+node's waits for its anchor count against it.
+
+A relay that takes a packet to send on counts the message's time from
+the packet: what it carries less the frame's time on air, since the
+sender stamps the time as the frame goes out.
 
 With one unit or less left, a message can no longer be sent with any,
 and its time is gone. The relay drops it wherever it waits in the send
@@ -1413,19 +1415,21 @@ and drops one whose frame is on air at its next attempt. A packet that
 arrives with its time gone is no work: the relay takes it, as in cases
 1, 3 and 4 of [receiving DATA](#receiving-data), and the message ends
 there. A return or a copy carries the time like any DATA, so the
-parent's copy (case 5) ends by the same clock. A message to deliver is
-not affected: at its owner the delivery queue keeps it until its node
-takes it or a newer message needs its place, whatever was left
-([delivery queue](#delivery-queue)).
+parent's copy (case 5) ends by the same clock.
 
-2.5 s is the finest unit at which one byte holds the TTL, as 240.
-Rounding down loses up to a unit at each hand-over, a whole one at a
-hand-over that follows at once, so such a message has time for 239
-hand-overs, near the 255 of the hop cap ([hop count](#hop-count)). At
-10 s it would have time for 59, fewer than some searches under load take
-to reach their owner (roadmap D44). Rounded to the nearest instead, a
-message that stays just under half a unit at each relay would lose no
-time at all.
+A message to deliver is not affected: at its owner the delivery queue
+keeps it until its node takes it or a newer message needs its place,
+whatever was left ([delivery queue](#delivery-queue)).
+
+*Why that unit.* 2.5 s is the finest unit at which one byte holds the
+TTL, as 240. Rounding down loses up to a unit at each hand-over, a whole
+one at a hand-over that follows at once, so such a message has time for
+239 hand-overs, near the 255 of the hop cap ([hop count](#hop-count)).
+At 10 s it would have time for 59, fewer than some searches under load
+take to reach their owner (roadmap D44).
+
+*Why round down.* Rounded to the nearest instead, a message that stays
+just under half a unit at each relay would lose no time at all.
 
 #### Owner
 
@@ -1434,10 +1438,12 @@ A node **owns** a message's destination when:
 - `dst_id` is its own ID: it is the addressed node, wherever it is; or
 - its own position is `dst_pos`; or
 - it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
-  closer to it than itself. The relay at that position has then probably
-  died or moved; 50 m is what two GPS fixes of a node that has not moved
-  may differ by ([position](#position)), so a relay this close is, for
-  the radio, in the same place.
+  closer to it than itself.
+
+*Why the third case.* The relay at that position has then probably died
+or moved; 50 m is what two GPS fixes of a node that has not moved may
+differ by ([position](#position)), so a relay this close is, for the
+radio, in the same place.
 
 A node farther than 50 m with no closer neighbour is at a gap, not the
 owner, and the search goes on ([next hop](#next-hop)). A sleepy or
@@ -1448,12 +1454,13 @@ else on ([nodes](#nodes)), and a sleepy or carried neighbour closer to
 A message whose destination is the sending node's own address is
 delivered there without entering the search. Otherwise the destination
 position decides who holds it: a relay that hears the sleepy node but
-does not own the position routes the message on like any other. A
-sleepy node that has just moved to another anchor stays in the old
-relay's heard table for a delivery TTL ([heard table](#heard-table)), so
-the table disagrees with the address exactly when the address is new;
-delivering from the table would queue the message for a node that has
-gone (roadmap D21).
+does not own the position routes the message on like any other.
+
+*Why not the heard table.* A sleepy node that has just moved to another
+anchor stays in the old relay's heard table for a delivery TTL
+([heard table](#heard-table)), so the table disagrees with the address
+exactly when the address is new; delivering from the table would queue
+the message for a node that has gone (roadmap D21).
 
 The addressed node delivers the message to its application. Any other
 owner queues it for the addressed node
@@ -1463,12 +1470,11 @@ copy of a delivered message is only ACKed
 ([receiving DATA](#receiving-data), case 1). A message for a relay that
 is gone waits there until a newer message needs its place, and ends.
 
-
 ### Why the search finds a path
 
 Suppose that while a message is being routed the links do not change,
-every hand-over to a neighbour that answers succeeds within its attempts,
-and no record is replaced. Then:
+every hand-over to a neighbour that answers succeeds within its
+attempts, and no record is replaced. Then:
 
 - The message moves as a single packet: a relay sends only what it has
   just received or originated, and every ACK-only case of
@@ -1478,16 +1484,16 @@ and no record is replaced. Then:
   [return to parent](#return-to-parent)), and there are finitely many of
   those: a relay hands the message to each neighbour at most once, since
   one that takes it is tried ([message records](#message-records)), and
-  the parents lead to the origin without a loop. So the search ends. A
-  neighbour that does not answer costs a bounded number of failed
+  the parents lead to the origin without a loop. So the search ends.
+- A neighbour that does not answer costs a bounded number of failed
   hand-overs ([bounds](#bounds)), and the hop cap bounds the stays
   ([hop count](#hop-count)).
 - A send to a relay that already has the message hands it the search
-  (receiving DATA, case 5), and the search comes back
-  to the sender as a return, since the sender stays one of its
-  candidates unless it has tried it. A relay whose search is unfinished
-  gets the message back that way or through the parents, so none is left
-  with neighbours untried.
+  (receiving DATA, case 5), and the search comes back to the sender as a
+  return, since the sender stays one of its candidates unless it has
+  tried it. A relay whose search is unfinished gets the message back
+  that way or through the parents, so none is left with neighbours
+  untried.
 
 So the message makes a depth-first traversal of the relays reachable
 from the origin through neighbours that answer, nearest to the
@@ -1504,64 +1510,64 @@ What breaks it:
   the relays above it never get the message back. The search ends early,
   or wanders until the hop cap ends it.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
-  sender moves on while the receiver also carries the message: two copies
-  search at once. They share the relays' records, so each goes on from
-  where the other left a relay. The sender has not marked the receiver
-  tried, so a copy that comes back to it is offered there again. A copy
-  ends where it meets the other held at a relay (receiving DATA, case 4),
-  where the message has arrived (case 1), at the origin with the search,
-  or at the hop cap. A copy is never ended where it is the last one.
+  sender moves on while the receiver also carries the message: two
+  copies search at once. They share the relays' records, so each goes on
+  from where the other left a relay. The sender has not marked the
+  receiver tried, so a copy that comes back to it is offered there
+  again. A copy ends where it meets the other held at a relay (receiving
+  DATA, case 4), where the message has arrived (case 1), at the origin
+  with the search, or at the hop cap. A copy is never ended where it is
+  the last one.
 - **Links that change** during the search, including a parent that moves
-  to another home channel: parts of the graph go
-  unsearched.
+  to another home channel: parts of the graph go unsearched.
 
 ### Bounds
 
-- **Hand-overs per message:** at most 256 that succeed (the first, at
-  count 0, and 255 more, [hop count](#hop-count)). A relay hands the
-  message to each
-  neighbour at most once per record, in at most 3 attempts. A neighbour
-  that does not answer costs 3 attempts each time it is offered a
-  message, and each failure bans it for every message, the ban doubling
-  up to 61 s ([bans](#bans)). So a dead neighbour costs a relay at most 11
-  failed hand-overs, 33 frames, whatever the messages, before it leaves
-  the table 390 s after its last heartbeat or ACK: the bans 1.56, 3.11, 6.2,
-  12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
-  After two failures it is a last resort ([neighbour table](#neighbour-table)).
-- **Life:** at most the delivery TTL in the network, whatever its
-  search and waits ([time to live](#time-to-live)), so no longer than
-  that in a send queue, then in its owner's delivery queue until its node
-  takes it or, once stale, its place is needed
-  ([delivery queue](#delivery-queue)).
-- **Cost of a search:** each link between two relays costs at most two
-  hand-overs that succeed from each end: a send and a return. In the
-  usual case it is two in all; a split adds a round trip on the link
-  whose ACKs were lost. A link that does not answer costs three attempts
-  each time the message is routed past it, so a search that comes back
-  through a relay often, as one with no owner does, pays for it at every
-  stay (roadmap D36). Within the hop cap a search can explore about 64 to
-  128 links beyond the route that led into the gap.
-- **Message records:** at most 1855 per relay
-  ([message records](#message-records)). A message
-  sent on can come back, returned by a child or offered by a split copy,
-  and its record must still be here then. On its way it may wait at each
-  relay as long as a full send queue takes to drain, each of the 294
-  places waiting out one ban of 1.56 s: 457.3 s. A ban after
-  silence lasts up to 61 s, so where every way on is
-  silent a message can wait longer; its own record is kept while it is
-  held, and this bound covers the wait behind refusals only (roadmap
-  D42). Every message a relay handles costs at least an ACK (13 bytes,
-  14.4 ms) and one DATA packet with no payload (22 bytes, 18.2 ms: at
-  SF5 and coding rate 4/5 the 22nd byte fits in the 21st's block of
-  symbols, [physical layer](#physical-layer)), together 32.6 ms. Any 457.3
-  s carries at most a full bucket and its
-  refill, 6 s + 9.83% × 457.3 s = 51.0 s of airtime
-  ([duty cycle cap](#duty-cycle-cap)), so a
-  relay handles at most 1561 messages in that time. The
-  records of held messages are never evicted and may be older, so the
-  table has room for the 294 a send queue holds on top: 1855.
-- **State per relay:** the RAM budget of
-  [implementation notes](#implementation-notes).
+| | |
+|---|---|
+| hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
+| a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
+| life | at most the delivery TTL in the network, whatever its search and waits ([time to live](#time-to-live)), so no longer than that in a send queue; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
+| cost of a search | each link between two relays at most two hand-overs that succeed from each end: a send and a return |
+| message records | at most 1855 per relay ([message records](#message-records)) |
+| state per relay | the RAM budget of [implementation notes](#implementation-notes) |
+
+*What a neighbour that does not answer costs.* A relay hands the message
+to each neighbour at most once per record, in at most 3 attempts. A
+neighbour that does not answer costs 3 attempts each time it is offered
+a message, and each failure bans it for every message, the ban doubling
+up to 61 s ([bans](#bans)). So a dead neighbour costs a relay that many
+failed hand-overs before it leaves the table 390 s after its last
+heartbeat or ACK: the bans 1.56, 3.11, 6.2, 12.5, 24.9 and 49.8 s add up
+to 98 s, and 61 s bans fill the rest. After two failures it is a last
+resort ([neighbour table](#neighbour-table)).
+
+*What a search costs.* In the usual case it is two hand-overs in all
+per link; a split adds a round trip on the link whose ACKs were lost. A
+link that does not answer costs three attempts each time the message is
+routed past it, so a search that comes back through a relay often, as
+one with no owner does, pays for it at every stay (roadmap D36). Within
+the hop cap a search can explore about 64 to 128 links beyond the route
+that led into the gap.
+
+*Why that many records.* A message sent on can come back, returned by a
+child or offered by a split copy, and its record must still be here
+then. On its way it may wait at each relay as long as a full send queue
+takes to drain, each of the 294 places waiting out one ban of 1.56 s:
+457.3 s. A ban after silence lasts up to 61 s, so where every way on is
+silent a message can wait longer; its own record is kept while it is
+held, and this bound covers the wait behind refusals only (roadmap D42).
+
+Every message a relay handles costs at least an ACK (13 bytes, 14.4 ms)
+and one DATA packet with no payload (22 bytes, 18.2 ms: at SF5 and
+coding rate 4/5 the 22nd byte fits in the 21st's block of symbols,
+[physical layer](#physical-layer)), together 32.6 ms. Any 457.3 s
+carries at most a full bucket and its refill,
+6 s + 9.83% × 457.3 s = 51.0 s of airtime
+([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1561
+messages in that time. The records of held messages are never evicted
+and may be older, so the table has room for the 294 a send queue holds
+on top: 1855.
 
 ---
 
