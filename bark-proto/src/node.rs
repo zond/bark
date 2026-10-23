@@ -92,9 +92,9 @@ pub struct Config {
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
     /// A node's first rotation: it chooses its home at the end, by when
-    /// every relay in range has been heard, unless it has a stored one,
-    /// and a sleepy node that has heard no relay by then is anchorless
-    /// (spec "Channel at boot": the worst-case rotation, 13 × 15 s = 195 s).
+    /// every relay in range has been heard, unless it has a stored one;
+    /// a sleepy node that has heard no relay in two is anchorless (spec
+    /// "Channel at boot": the worst-case rotation, 13 × 15 s = 195 s).
     pub boot_listen: Duration,
     /// What the node stored before its last reboot, from its driver
     /// (`store.rs`, spec "Implementation notes"); `None` for a fresh board.

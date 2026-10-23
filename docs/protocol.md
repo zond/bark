@@ -357,14 +357,14 @@ comparison.
 A node takes part from the second it is switched on. Its **first
 rotation** is the worst-case rotation that follows
 ([heartbeat](#heartbeat)), 195 s, by when it has heard every relay in
-range and has the sweeps of a rotation:
+range and has the sweeps of a rotation; a sleepy node's is two, 390 s:
 
 | | |
 |---|---|
 | home at boot | the one it stored before the reboot ([implementation notes](#implementation-notes)), else a random channel |
 | from boot | it sweeps, takes and forwards traffic, and a relay heartbeats, its first rotation's heartbeats 1.2 s apart ([heartbeat](#heartbeat)) |
 | end of the first rotation, without a stored home | it moves to `argmin busy[c]` unless its home is within 0.01 of it; channels within 0.01 of the lowest count as tied, and the choice among them is random |
-| a sleepy node | listens: at the first relay it hears it ends its first rotation and takes the relay as its anchor ([relay choice](#relay-choice)); with none by the end it is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
+| a sleepy node | listens: at the first relay it hears it ends its first rotation and takes the relay as its anchor ([relay choice](#relay-choice)); with none by the end of two rotations it is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
 
 A config override fixes the home for bench work.
 
@@ -376,9 +376,12 @@ like any other ([channel moves](#channel-moves)): neighbours that missed
 its announcement send to the old channel for up to a rotation. A home
 as quiet as the quietest gains nothing by it.
 
-*Why one rotation for a sleepy node.* Every relay heartbeats from its
-own boot, so a relay switched on together with the node is heard within
-the rotation like any other (roadmap D51, D52, D73).
+*Why two rotations for a sleepy node.* A listening receiver loses about
+one heartbeat in ten (roadmap D47), so in one rotation a node with one
+relay in reach misses it one time in ten, at the edge of its reach more
+often, and in two one time in a hundred. Listening finds a relay at no
+cost to anyone; anchorless mode finds it by long beats and long answers,
+and a node is in it far longer (roadmap D51, D73).
 
 While a node is in its first rotation its table may lack relays that
 are in range. It owns no position but its own ([owner](#owner)), and it

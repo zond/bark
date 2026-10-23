@@ -31,7 +31,7 @@
 //! [`Config::grace`]: crate::Config::grace
 
 use super::{Mover, Node, Stage};
-use crate::event::{Action, DropReason, Trace};
+use crate::event::{Action, AppEvent, DropReason, Trace};
 use crate::node::heartbeat_interval;
 use crate::time::{Duration, Instant};
 
@@ -54,9 +54,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// When the first rotation that began at `from` ends: a worst-case
     /// rotation, by when every relay in range has been heard, since every
-    /// relay heartbeats from its own boot (spec "Channel at boot").
+    /// relay heartbeats from its own boot; for a sleepy node that hears
+    /// none, two, since a listening receiver misses one heartbeat in ten
+    /// (spec "Channel at boot").
     pub(super) fn boot_end(&self, from: Instant) -> Instant {
-        from + self.config.boot_listen
+        let rotations = if self.sleepy { 2 } else { 1 };
+        from + self.config.boot_listen.mul(rotations)
     }
 
     /// The driver reports whether external power is present.
@@ -64,9 +67,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let sleepy = !external || !Self::can_relay();
         if let Stage::Booting(_) = self.stage {
             self.sleepy = sleepy;
+            let ends = self.boot_end(self.boot_from);
+            self.stage = Stage::Booting(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
             if let Some(a) = anchor.filter(|_| sleepy && self.anchor.is_none()) {
                 self.resume_anchor(a, now, emit);
+            } else {
+                emit(Action::App(AppEvent::Boot {
+                    relays: self.relays_known(now),
+                    ends: Some(ends),
+                }));
             }
             return;
         }

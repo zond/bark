@@ -125,7 +125,7 @@ fn a_relay_bursts_and_is_answered() {
     assert!(h.run_until(end, |h| knows(h, a, b) && knows(h, b, a)) || knows(&h, b, a));
     assert!(knows(&h, a, b) && knows(&h, b, a));
     // B's application hears how its boot goes.
-    let relays: Vec<u8> = h.nodes[b]
+    let mut relays: Vec<u8> = h.nodes[b]
         .boot
         .iter()
         .map(|(_, e)| match e {
@@ -133,6 +133,7 @@ fn a_relay_bursts_and_is_answered() {
             _ => unreachable!(),
         })
         .collect();
+    relays.dedup();
     assert_eq!(relays[..2], [0, 1]);
 }
 
@@ -159,12 +160,13 @@ fn a_booting_relay_holds_its_text_until_it_hears_a_relay() {
     assert!(!dropped);
 }
 
-/// A sleepy node that hears no relay in its first rotation is anchorless
-/// at its end, one worst-case rotation, and beats with the long preamble.
+/// A sleepy node that hears no relay in its first rotation, two worst-case
+/// rotations for it, is anchorless at its end, and beats with the long
+/// preamble.
 #[test]
-fn a_sleepy_node_alone_is_anchorless_after_one_rotation() {
+fn a_sleepy_node_alone_is_anchorless_after_its_first_rotation() {
     let mut h = Harness::powered(vec![node(0.0, false, 5)]);
-    let rotation = Config::default().boot_listen;
+    let rotation = Config::default().boot_listen.mul(2);
     h.run_until(Instant::ZERO + rotation - secs(1), |_| false);
     assert!(!h.nodes[0].core.anchorless());
     assert!(heartbeats(&h, 0, Instant::ZERO).is_empty(), "silent");
