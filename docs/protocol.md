@@ -561,9 +561,11 @@ Every node has a 4-byte **node ID**: the low word of its chip's factory
 device ID (nRF52840 FICR DEVICEID), the same at every boot, with no
 setup step. It names the node wherever a packet names one: DATA
 `dst_hop`, `src_hop` and `dst_id`, ACK `from` and `to`
-([packet formats](#packet-formats)). Two of n nodes share an ID with
-probability about n² / 2³³. That matters only among the nodes one node
-keeps in its tables, 64 neighbours and 256 sleepy nodes
+([packet formats](#packet-formats)).
+
+*Why four bytes are enough.* Two of n nodes share an ID with probability
+about n² / 2³³. That matters only among the nodes one node keeps in its
+tables, 64 neighbours and 256 sleepy nodes
 ([heard table](#heard-table)): 1.2 × 10⁻⁵.
 
 The ID, not the position, is a node's identity: a node whose position
@@ -588,95 +590,112 @@ Per node, up to 64 entries, by node ID:
 | banned_until | when its ban ends ([bans](#bans)) |
 | last_beat | when its last heartbeat heard started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
-**Expiry.** An entry expires after 3 rotations (390 s) without a
-heartbeat or an ACK from the neighbour ([the ACK](#the-ack)). A sleepy
-entry with an anchor expires after two beat periods, 600 s: its beats
-come once a period, on its anchor's channel only ([beats](#beats)), so a
-node elsewhere renews it from the frames they exchange. An anchorless
-entry ([sleepy nodes alone](#sleepy-nodes-alone)) expires after two of
-its sender's worst-case rotations and a heartbeat's lag: 13 beats, one
-on each channel, take at most 13 anchorless beat periods, so two
-rotations take 26, 1200 s, and the lag is 1.0 s
-([heartbeat](#heartbeat)). Two, because a listening receiver loses about
-one beat in ten (roadmap D47): with one rotation a live neighbour, perhaps
-the only
-way on where there is no relay, would drop out every tenth rotation, for
-13 minutes; with two, one time in a hundred, and a stale entry costs a
-hand-over's attempts and a ban (roadmap D51). A sleeping node keeps its
-anchor's entry whatever its age, and evicts it for no newcomer
-([relay choice](#relay-choice)).
+**Expiry.** An entry expires after a time without a heartbeat or an ACK
+from the neighbour ([the ACK](#the-ack)):
+
+| | |
+|---|---|
+| a relay | 3 rotations (390 s) |
+| a sleepy node with an anchor | two beat periods, 600 s |
+| an anchorless node ([sleepy nodes alone](#sleepy-nodes-alone)) | two of its sender's worst-case rotations and a heartbeat's lag |
+| a sleeping node's anchor | never: the node keeps its anchor's entry whatever its age, and evicts it for no newcomer ([relay choice](#relay-choice)) |
+
+*Why a sleepy entry lasts longer.* Its beats come once a period, on its
+anchor's channel only ([beats](#beats)), so a node elsewhere renews it
+from the frames they exchange.
+
+*Why two rotations for an anchorless entry.* 13 beats, one on each
+channel, take at most 13 anchorless beat periods, so two rotations take
+26, 1200 s, and the lag is 1.0 s ([heartbeat](#heartbeat)). Two, because
+a listening receiver loses about one beat in ten (roadmap D47): with one
+rotation a live neighbour, perhaps the only way on where there is no
+relay, would drop out every tenth rotation, for 13 minutes; with two,
+one time in a hundred, and a stale entry costs a hand-over's attempts
+and a ban (roadmap D51).
 
 **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
-above the noise floor ([busy estimate](#busy-estimate)): a 255-byte frame
-is then lost no more than one time in a hundred, the datasheet's
-standard for sensitivity, after a fade of 4 dB. A neighbour without
-margin stays in the table, its heartbeats showing it alive, but is a
-next hop only when no other is left ([next hop](#next-hop)). The 4.1 dB
-follows from the radio. A packet arrives only if every symbol does: a
-255-byte frame has 541 symbols, the datasheet's 64-byte reference packet
-156, a heartbeat 46, so with the symbol error rate of the modulation (32
-possible symbols, detected without phase) a full frame needs 0.44 dB
-more signal than the reference for the same 1 % loss, and a heartbeat
-0.46 dB less. Half of all heartbeats arrive even 3.2 dB below a full
-frame's level, so a heartbeat says little about a full frame.
+above the noise floor ([busy estimate](#busy-estimate)). A neighbour
+without margin stays in the table, its heartbeats showing it alive, but
+is a next hop only when no other is left ([next hop](#next-hop)).
+
+*Why that margin.* A 255-byte frame is then lost no more than one time
+in a hundred, the datasheet's standard for sensitivity, after a fade of
+4 dB.
+
+The 4.1 dB follows from the radio. A packet arrives only if every symbol
+does: a 255-byte frame has 541 symbols, the datasheet's 64-byte
+reference packet 156, a heartbeat 46, so with the symbol error rate of
+the modulation (32 possible symbols, detected without phase) a full
+frame needs 0.44 dB more signal than the reference for the same 1 %
+loss, and a heartbeat 0.46 dB less. Half of all heartbeats arrive even
+3.2 dB below a full frame's level, so a heartbeat says little about a
+full frame.
+
 Sensitivity is 2.5 dB below the noise at SF5 (datasheet Table 6-1), so a
 full frame's level is 2.5 − 0.44 = 2.06 dB below the noise floor, and
 after the fade the signal must average −2.06 + 4 = 1.94 dB above it.
 Packet RSSI is signal and noise together (datasheet §13.5.3), so it
-reads 10 log10(1 + 10^0.194) = 4.1 dB above the floor. The fade, 4 dB,
-is the standard deviation of fading over time and channel in the
-simulated links, until Phase 2 measures it. The average must cover it
-because a frame goes out on the neighbour's channel while this relay
-hears the neighbour on its own, where the fading differs.
+reads 10 log10(1 + 10^0.194) = 4.1 dB above the floor.
+
+*Where the fade comes from.* The fade, 4 dB, is the standard deviation
+of fading over time and channel in the simulated links, until Phase 2
+measures it. The average must cover it because a frame goes out on the
+neighbour's channel while this relay hears the neighbour on its own,
+where the fading differs.
 
 **Demotion.** A neighbour with two ACK failures in a row
 (`fail_count ≥ 2`) is demoted until it ACKs a packet from this relay or
 three rotations (390 s) pass, and is then a next hop only when no other
-with margin is left. Its heartbeats do not clear
-the demotion: a heartbeat proves the neighbour is alive, not that it
-hears us, and a link that works one way only would otherwise cost every
-message the failed attempts again. Expiry takes minutes; a failed
-forward must demote at once.
+with margin is left. Its heartbeats do not clear the demotion. Expiry
+takes minutes; a failed forward must demote at once.
+
+*Why heartbeats do not clear it.* A heartbeat proves the neighbour is
+alive, not that it hears us, and a link that works one way only would
+otherwise cost every message the failed attempts again.
 
 **Eviction.** When the table is full and a relay not in it is heard, the
 newcomer replaces, in this order:
 
 1. the least recently heard demoted entry;
 2. the least recently heard entry, if it has missed a worst-case
-   rotation, and so certainly a heartbeat on
-   this channel;
-3. if the newcomer is a fixed relay, one that holds mail, within 50 m, the owner radius
-   ([owner](#owner)), the least recently heard relay beyond 50 m
-   (roadmap D68, D70).
+   rotation, and so certainly a heartbeat on this channel;
+3. if the newcomer is a fixed relay, one that holds mail, within 50 m,
+   the owner radius ([owner](#owner)), the least recently heard relay
+   beyond 50 m (roadmap D68, D70).
 
-Failing all three it is not added (roadmap D12). Replacing the least
-recently heard entry outright fails at a rooftop relay that hears ≈270
-relays ([capacity and sizing](#capacity-and-sizing)): about two
-heartbeats a second arrive on its channel, most from relays not in the
-table, so each entry would last about 64 / 2 ≈ 30 s and every failure
-count would be forgotten within a minute. Keeping incumbents holds an
-equally arbitrary 64, keeps their failure counts, and replaces exactly
-the entries that are failing or silent. The table is then a sample of
-the relays heard, weighted toward the strong links, which are heard
-first and most often. Those lie where the relays are, which is where
-destinations are, so a loaded relay whose best next hop is banned finds
-another there; a table spread by bearing routes no better (roadmap
-D69).
+Failing all three it is not added (roadmap D12). A sleepy node with an
+anchor replaces no entry.
 
-The relay within 50 m is kept because the owner rule reads from the
-table that no relay that near is closer to a destination: one turned
-away would have its messages claimed by its neighbour and queued for a
-node that never beats. With every person's node a relay, 714 per km²,
-5.6 are within 50 m on average (714 × π × 0.05²). A carried relay needs
-no such place ([nodes](#nodes)). A sleepy node with an anchor replaces
-no entry: it is a last resort, and a relay hears
-the beats of every sleepy node on its channel, often more than 64, so
-making way for them would push out the neighbours it routes through.
+*Why keep incumbents.* Replacing the least recently heard entry outright
+fails at a rooftop relay that hears ≈270 relays
+([capacity and sizing](#capacity-and-sizing)): about two heartbeats a
+second arrive on its channel, most from relays not in the table, so each
+entry would last about 64 / 2 ≈ 30 s and every failure count would be
+forgotten within a minute. Keeping incumbents holds an equally arbitrary
+64, keeps their failure counts, and replaces exactly the entries that
+are failing or silent.
 
-A beat fills the neighbour table like any heartbeat,
-the entry marked sleepy. At a node that is not sleepy it fills the heard
-table too if the sleepy bit is alone ([heard table](#heard-table)); a
-node without an anchor has no window to deliver in.
+*What the table holds.* It is then a sample of the relays heard,
+weighted toward the strong links, which are heard first and most often.
+Those lie where the relays are, which is where destinations are, so a
+loaded relay whose best next hop is banned finds another there; a table
+spread by bearing routes no better (roadmap D69).
+
+*Why the relay within 50 m is kept.* The owner rule reads from the table
+that no relay that near is closer to a destination: one turned away
+would have its messages claimed by its neighbour and queued for a node
+that never beats. With every person's node a relay, 714 per km², 5.6 are
+within 50 m on average (714 × π × 0.05²). A carried relay needs no such
+place ([nodes](#nodes)).
+
+*Why a sleepy node replaces none.* It is a last resort, and a relay
+hears the beats of every sleepy node on its channel, often more than 64,
+so making way for them would push out the neighbours it routes through.
+
+A beat fills the neighbour table like any heartbeat, the entry marked
+sleepy. At a node that is not sleepy it fills the heard table too if the
+sleepy bit is alone ([heard table](#heard-table)); a node without an
+anchor has no window to deliver in.
 
 ---
 
