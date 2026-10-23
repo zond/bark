@@ -81,6 +81,10 @@ pub struct SimNode<C: Core> {
     /// whether it took the node off its resting channel.
     pub checks: Vec<(Instant, Instant, Action, bool)>,
     pub app: Vec<(Instant, AppEvent)>,
+    /// What it told its application of its first rotation.
+    pub boot: Vec<(Instant, AppEvent)>,
+    /// What the core last asked to keep across a reboot.
+    pub stored: Option<bark_proto::Stored>,
     pub traces: Vec<(Instant, Trace)>,
     pub sent: Vec<(Instant, Frame)>,
     pub received: Vec<(Instant, Vec<u8>)>,
@@ -126,6 +130,8 @@ impl<C: Core> Harness<C> {
                 airtime: Vec::new(),
                 checks: Vec::new(),
                 app: Vec::new(),
+                boot: Vec::new(),
+                stored: None,
                 traces: Vec::new(),
                 sent: Vec::new(),
                 received: Vec::new(),
@@ -201,6 +207,20 @@ impl<C: Core> Harness<C> {
     /// Stop a node, as if unplugged.
     pub fn kill(&mut self, node: usize) {
         self.nodes[node].alive = false;
+    }
+
+    /// Power node `node` off and on again now with `core`: it boots afresh,
+    /// its power reported as at the first boot.
+    pub fn reboot(&mut self, node: usize, core: C) {
+        let n = &mut self.nodes[node];
+        n.core = core;
+        n.alive = true;
+        n.started = false;
+        n.wakeup = Some(self.now);
+        n.ex = None;
+        n.held = None;
+        n.resting = None;
+        n.deaf_until = self.now;
     }
 
     /// Delay a node's start until `at`.
@@ -467,7 +487,9 @@ impl<C: Core> Harness<C> {
                     n.resting_since = now + RETUNE;
                 }
             }
+            Action::App(e @ AppEvent::Boot { .. }) => self.nodes[i].boot.push((now, e)),
             Action::App(e) => self.nodes[i].app.push((now, e)),
+            Action::Store(s) => self.nodes[i].stored = Some(s),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 let n = &self.nodes[i];

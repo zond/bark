@@ -138,7 +138,7 @@
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
-use super::{Job, Node};
+use super::{Job, Node, Stage};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
@@ -380,6 +380,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if dst == self.config.position {
             return true;
+        }
+        if self.booting() {
+            // Its table may not yet hold a relay within the radius that is
+            // nearer (spec "Owner").
+            return false;
         }
         let target = self.plane.point(dst);
         let mine = target.distance2(Default::default());
@@ -779,8 +784,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// would be taken but without the ACK, and not every neighbour is
     /// banned; for a sleepy node with a live anchor, not the anchor.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
-        !self.booting()
-            && self.own.is_none()
+        self.own.is_none()
             && now >= self.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
@@ -791,7 +795,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the application may send again, if only the bucket and bans
     /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.booting() || self.own.is_some() || self.regular() >= SEND_QUEUE {
+        if self.own.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need = self.queue.airtime()
@@ -1047,6 +1051,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return Routed::Wait(t.max(now + hold(self.own_refusals)));
             }
             return Routed::Wait(t);
+        }
+        if let Stage::Booting(ends) = self.stage {
+            if self.own == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
+                // Until it hears a relay, or its first rotation ends
+                // (`heard`).
+                return Routed::Wait(ends);
+            }
         }
         let alone = self.neighbours.live(now).next().is_none();
         if self.sleepy && self.own == Some(id) && alone {

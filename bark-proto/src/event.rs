@@ -10,6 +10,7 @@
 use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
 use crate::radio::Channel;
+use crate::store::Stored;
 use crate::time::{Duration, Instant};
 
 /// Largest LoRa payload the SX126x carries, and so the largest frame the
@@ -164,9 +165,9 @@ pub enum DropReason {
     Unplugged,
 }
 
-/// Events for the application side: a message for it, and a sleepy
-/// node's own message given back. Nothing else is reported of a message it
-/// sent (`docs/core-interface.md` §4). `Message` carries its payload by
+/// Events for the application side: a message for it, a sleepy node's
+/// own message given back, and the node's first rotation. Nothing else is
+/// reported of a message it sent (`docs/core-interface.md` §4). `Message` carries its payload by
 /// value for the same reason `Action::Transmit` does.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +190,15 @@ pub enum AppEvent {
         msg_id: MsgId,
         /// The end of the wait the refusal asked for.
         retry_at: Instant,
+    },
+    /// The node's first rotation (spec "Channel at boot"): at boot, at
+    /// each relay it learns in it, and at its end, so that the app can
+    /// show how it comes up.
+    Boot {
+        /// The relays, nodes that are not sleepy, it knows now.
+        relays: u8,
+        /// When the first rotation ends; `None` once it has.
+        ends: Option<Instant>,
     },
 }
 
@@ -235,6 +245,10 @@ pub enum Action {
     Sniff(Instant),
     /// Tell the application something.
     App(AppEvent),
+    /// Keep this across a reboot, in place of what was kept before, and
+    /// hand it back in [`crate::Config::stored`] at the next boot
+    /// (`docs/core-interface.md` §4). Emitted only when it changes.
+    Store(Stored),
     /// A protocol event for logs and the simulator's metrics. Carries no
     /// obligation; a driver may ignore it (`docs/core-interface.md` §3).
     Trace(Trace),
@@ -362,6 +376,13 @@ pub enum Trace {
     /// on its home channel (spec "Heartbeat"): the frame of the
     /// `Action::Transmit` that follows.
     Changed,
+    /// A relay's answer to a node that knows no relay goes out (spec
+    /// "Heartbeat"): the frame of the `Action::Transmit` that follows.
+    Answer,
+    /// A heartbeat of the node's first rotation, which go a second apart,
+    /// goes out (spec "Heartbeat"): the frame of the `Action::Transmit`
+    /// that follows.
+    Burst,
     /// A relay's grace on battery ended: it holds no more mail, and
     /// flushes what it holds before it turns sleepy (spec "Delivery").
     GraceEnded,

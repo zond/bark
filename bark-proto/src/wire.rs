@@ -1,6 +1,6 @@
 //! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x1, 0x2, 0x4, 0xA and 0xE are unused, and 0x6 is the
-//! firmware's bench frames (roadmap D46, D49, D58, D70).
+//! codes 0x1, 0x2 and 0x4 are unused, and 0x6 is the firmware's bench
+//! frames (roadmap D46, D49, D58, D70).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
 //! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
@@ -44,9 +44,9 @@
 //!   than a ban, so the unit keeps every place apart; 255 bans are 398 s,
 //!   and a longer wait is told as that. `aux` is zero in both.
 //! - The heartbeat's type is 0x8 with flags in its three low bits: 0x1,
-//!   sleepy, 0x2, anchorless, only with sleepy (0xA and 0xE are
-//!   rejected: a node that listens all the time has no anchor to miss),
-//!   and 0x4, carried, with or without the others. `aux` holds the home
+//!   sleepy, 0x2, anchorless, and 0x4, carried, each with or without the
+//!   others (roadmap D73 made 0xA and 0xE heartbeats: a relay that knows
+//!   no relay yet says so). `aux` holds the home
 //!   channel, 0 to 12, in all four of its bits, so the flags are in the
 //!   type. 0x8 is the one base whose eight codes, 0x8 to 0xF, miss the
 //!   ACK, NACK and DATA, so the bench frames moved from 0xF to 0x6
@@ -159,9 +159,9 @@ pub struct Heartbeat {
     /// beat, or at any time with the long preamble; it holds mail for
     /// nobody. Clear, it listens all the time.
     pub sleepy: bool,
-    /// Anchorless (0xB, with `sleepy`): the sender knows no node it can
-    /// anchor to; one that can be an anchor answers. Nobody anchors to it.
-    /// Encoded only with `sleepy`.
+    /// Anchorless (0xA, 0xB with `sleepy`): the sender knows no node
+    /// that holds mail, one neither sleepy nor carried; such a node that
+    /// hears it answers.
     pub anchorless: bool,
     /// Carried (0x4 on any of the others): the sender moves. It takes
     /// each GPS fix and holds mail for nobody, so nobody anchors to it.
@@ -350,7 +350,7 @@ impl Packet<'_> {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
                 let kind = T_HEARTBEAT
                     | flag(h.sleepy, HEARTBEAT_SLEEPY)
-                    | flag(h.anchorless && h.sleepy, HEARTBEAT_ANCHORLESS)
+                    | flag(h.anchorless, HEARTBEAT_ANCHORLESS)
                     | flag(h.carried, HEARTBEAT_CARRIED);
                 buf[FIRST] = first(kind, h.home.index());
                 put(buf, HEARTBEAT_ID, &h.id.0);
@@ -396,9 +396,7 @@ impl<'a> Packet<'a> {
         let kind = first >> TYPE_SHIFT;
         let aux = first & AUX_MASK;
         match kind {
-            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT
-                && k & (HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS) != HEARTBEAT_ANCHORLESS =>
-            {
+            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT => {
                 exact(b, HEARTBEAT_LEN)?;
                 Ok(Packet::Heartbeat(Heartbeat {
                     sleepy: kind & HEARTBEAT_SLEEPY != 0,
@@ -492,7 +490,6 @@ mod tests {
             id in id(),
             position in position(),
         ) {
-            let anchorless = anchorless && sleepy;
             let hb = Heartbeat { sleepy, anchorless, carried, home, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
@@ -592,11 +589,11 @@ mod tests {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60, 0xa0, 0xe0] {
+        for gone in [0x10, 0x20, 0x40, 0x60] {
             assert_eq!(
                 Packet::decode(&[gone; 9]),
                 Err(BadType(gone >> 4)),
-                "unused, the bench frames, or anchorless without sleepy"
+                "unused, or the bench frames"
             );
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
@@ -655,8 +652,8 @@ mod tests {
             ..hb
         };
         Packet::Heartbeat(alone).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x8c, "anchorless only with sleepy");
-        for (flags, code) in [(hb, 0xc), (sleepy, 0xd), (anchorless, 0xf)] {
+        assert_eq!(buf[0], 0xac, "a relay that knows no relay");
+        for (flags, code) in [(hb, 0xc), (sleepy, 0xd), (alone, 0xe), (anchorless, 0xf)] {
             let carried = Heartbeat {
                 carried: true,
                 ..flags

@@ -234,6 +234,19 @@ pub struct SleepSummary {
     pub anchorless: Vec<(u64, f64, u32, u32)>,
 }
 
+/// Writes of the state a node keeps across a reboot (`Action::Store`)
+/// after the settle time, per node and day, mean and most, and in the
+/// whole run.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct StoreWrites {
+    /// Of the nodes placed as relays.
+    pub relays_per_day: (f64, f64),
+    /// Of the nodes placed as sleepy nodes.
+    pub sleepy_per_day: (f64, f64),
+    /// Every write of the run.
+    pub total: u64,
+}
+
 /// The run summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Summary {
@@ -282,6 +295,10 @@ pub struct Summary {
     /// How soon nodes switched on took part, by what switched them on and
     /// their role (`boots.rs`).
     pub boots: Vec<crate::boots::BootRow>,
+    /// Airtime of the first rotations' heartbeats and of answers.
+    pub boot_airtime: crate::metrics::BootAirtime,
+    /// How often nodes asked to keep their state across a reboot.
+    pub store_writes: StoreWrites,
     /// Pairs of nodes that are not sleepy and are in reach of each other,
     /// and of those, ones with the same heartbeat interval
     /// (`bark_proto::node::heartbeat_interval`).
@@ -459,6 +476,8 @@ impl Sim {
             heartbeats: m.heartbeats,
             boot_heartbeats: m.boot_heartbeats,
             boots: self.boot_rows(),
+            boot_airtime: m.boot_airtime,
+            store_writes: self.store_writes(),
             interval_pairs: self.interval_pairs(),
             hop_places: m.hop_places,
             records_lost: m.records_lost.clone(),
@@ -832,6 +851,29 @@ impl Summary {
         }
         for r in &self.boots {
             s.push_str(&r.lines());
+        }
+        let a = &self.boot_airtime;
+        if a.burst_us[0] + a.answer_us[0] > 0 {
+            let share = |x: u64, of: u64| 100.0 * x as f64 / of.max(1) as f64;
+            let _ = writeln!(
+                s,
+                "first rotations' heartbeats {:.1} s ({:.2} % of all airtime), answers {:.1} s ({:.2} %); in the first minute {:.2} % and {:.2} % of {:.1} s",
+                a.burst_us[0] as f64 / 1e6,
+                share(a.burst_us[0], a.all_us[0]),
+                a.answer_us[0] as f64 / 1e6,
+                share(a.answer_us[0], a.all_us[0]),
+                share(a.burst_us[1], a.all_us[1]),
+                share(a.answer_us[1], a.all_us[1]),
+                a.all_us[1] as f64 / 1e6
+            );
+        }
+        let w = &self.store_writes;
+        if w.total > 0 {
+            let _ = writeln!(
+                s,
+                "stored state written {} times; per node and day after the settle time, relays {:.1} (most {:.1}), sleepy nodes {:.1} (most {:.1})",
+                w.total, w.relays_per_day.0, w.relays_per_day.1, w.sleepy_per_day.0, w.sleepy_per_day.1
+            );
         }
         let h = &self.hop_places;
         if h.refusals > 0 {

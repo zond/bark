@@ -105,15 +105,17 @@ fn a_sleepy_node_beats_on_its_anchor_s_channel_slowly() {
     assert_eq!(sleepy.address(), h.nodes[strong].core.config().position);
     let home = h.nodes[strong].core.home();
     assert_eq!(h.resting(s), Some(home));
-    // From its choice on: before it, it beats where it boots.
-    let chose = h.nodes[s]
-        .traces
-        .iter()
-        .filter(|(_, t)| matches!(t, Trace::HomeChannelMoved { .. }))
-        .map(|(t, _)| *t)
-        .next_back()
+    // From its last choice on, which it says with a beat at once and one
+    // within a heartbeat interval: before it, it beats where it boots and
+    // to its first anchor.
+    let all = beats(&h, s);
+    let quick = Config::default().heartbeat_max + secs(1);
+    let chose = (0..all.len() - 1)
+        .rev()
+        .find(|&k| all[k + 1].0.since(all[k].0) <= quick)
+        .map(|k| all[k].0)
         .unwrap();
-    let b: Vec<_> = beats(&h, s).into_iter().filter(|b| b.0 >= chose).collect();
+    let b: Vec<_> = all.into_iter().filter(|b| b.0 >= chose).collect();
     assert!(b.len() >= 6, "{} beats", b.len());
     assert!(b.iter().all(|&(_, c, sleepy)| c == home && sleepy));
     let c = Config::default();

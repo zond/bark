@@ -12,13 +12,15 @@ use crate::ids::NodeId;
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
+use crate::store::Stored;
 use crate::time::{Duration, Instant};
+use crate::wire::HEARTBEAT_LEN;
 
 mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{Load, Node, Relay, SleepyNode};
+pub use relay::{Anchor, Load, Node, Relay, SleepyNode};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).
@@ -89,9 +91,20 @@ pub struct Config {
     pub lbt_attempts: u8,
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
-    /// Listen on one channel this long before choosing home (spec "Channel at boot":
-    /// the worst-case rotation, 13 × 15 s = 195 s, so every relay in range is heard).
+    /// A node's first rotation: it chooses its home at the end, by when
+    /// every relay in range has been heard, unless it has a stored one,
+    /// and a sleepy node that has heard no relay by then is anchorless
+    /// (spec "Channel at boot": the worst-case rotation, 13 × 15 s = 195 s).
     pub boot_listen: Duration,
+    /// What the node stored before its last reboot, from its driver
+    /// (`store.rs`, spec "Implementation notes"); `None` for a fresh board.
+    pub stored: Option<Stored>,
+    /// Research switch: a sleepy node in its first rotation heartbeats as
+    /// a relay does then, with the sleepy and anchorless flags, until it
+    /// has an anchor, so that the relays in range answer it. Off in the
+    /// design: each answer to a sleepy node carries the long preamble
+    /// (roadmap D73).
+    pub sleepy_burst: bool,
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
@@ -147,6 +160,21 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
     let backoffs =
         config.lbt_backoff_max.as_micros() * config.lbt_attempts.saturating_sub(1) as u64;
     Duration::from_micros(attempt + backoffs)
+}
+
+/// How far apart a node's heartbeats go in its first rotation (spec
+/// "Heartbeat"): as long as the answers to one can take to arrive, so
+/// that the next says whether one did. An answer goes within a
+/// listen-before-talk backoff of the heartbeat, then waits behind its
+/// slot as any heartbeat may, [`heartbeat_lag`], and is on the air for a
+/// heartbeat's airtime: 200 + 992.86 + 11.84 ms = 1204.70 ms.
+pub const fn burst_gap(config: &Config) -> Duration {
+    let airtime = time_on_air(HEARTBEAT_LEN as u8, crate::radio::MIN_PREAMBLE_SYMBOLS);
+    Duration::from_micros(
+        config.lbt_backoff_max.as_micros()
+            + heartbeat_lag(config).as_micros()
+            + airtime.as_micros(),
+    )
 }
 
 /// A relay within this distance of a destination that is not its own
@@ -211,6 +239,8 @@ impl Config {
         lbt_attempts: 3,
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
+        stored: None,
+        sleepy_burst: false,
         home_override: None,
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),

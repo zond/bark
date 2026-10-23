@@ -292,6 +292,16 @@ impl SendQueue {
             .position(|o| o.kind.delivers() && o.not_before <= now)
     }
 
+    /// The entry of message `id`, if it waits beyond `now`, is due at
+    /// `now`.
+    pub fn due_now(&mut self, id: MsgId, now: Instant) {
+        for o in self.frames.as_mut_slice() {
+            if o.not_before > now && o.msg_id() == Some(id) {
+                o.not_before = now;
+            }
+        }
+    }
+
     /// When the earliest waiting entry is due.
     pub fn earliest_due(&self) -> Option<Instant> {
         self.iter().map(|o| o.not_before).min()

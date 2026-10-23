@@ -31,7 +31,7 @@ use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
     Action, AppCommand, AppEvent, Channel, Config, Core, Duration, Event, Frame, Instant, MsgId,
-    NodeId, Position, Relay, Trace, MAX_FRAME,
+    NodeId, Position, Relay, Stored, Trace, MAX_FRAME,
 };
 use std::collections::HashMap;
 
@@ -798,6 +798,12 @@ pub struct Sim {
     refused_at: HashMap<(u32, u32), (Instant, bool)>,
     /// Every boot, watched until the node takes part (`boots.rs`).
     boots: Boots,
+    /// Per node, what the trace before its next transmission said it is.
+    next_tx: Vec<TxMark>,
+    /// Per node, what it last asked to keep across a reboot, and how
+    /// often it asked: in all, and after the settle time.
+    stored: Vec<Option<Stored>>,
+    store_writes: Vec<[u32; 2]>,
     /// The destinations of the texts offered at scripted boots.
     boot_rng: Stream,
 }
@@ -990,6 +996,16 @@ fn floor_ratio(a: i128, b: i64, d: i64) -> i128 {
 
 /// The interval of the series, µs.
 const SERIES_EVERY_US: u64 = 60_000_000;
+
+/// What the trace before a node's transmission said the frame is
+/// (`metrics::BootAirtime`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TxMark {
+    #[default]
+    None,
+    Burst,
+    Answer,
+}
 
 /// The text a node's application offers at a scripted boot: the length
 /// of the texts of spec "Capacity and sizing".
@@ -1243,6 +1259,9 @@ impl Sim {
             recorded: std::collections::HashSet::new(),
             refused_at: HashMap::new(),
             boots: Boots::new(n),
+            next_tx: vec![TxMark::None; n],
+            stored: vec![None; n],
+            store_writes: vec![[0; 2]; n],
             boot_rng: Stream::new(sc.seed, Purpose::BootText, 0),
         };
         sim.component = sim.components();
@@ -2027,7 +2046,7 @@ impl Sim {
         }
         let counts: Vec<u32> = self.relays[..n]
             .iter()
-            .map(|r| r.neighbours().filter(|e| e.anchorless).count() as u32)
+            .map(|r| r.neighbours().filter(|e| e.alone()).count() as u32)
             .collect();
         let mean = counts.iter().sum::<u32>() as f64 / n as f64;
         let most = counts.iter().copied().max().unwrap_or(0);
@@ -2361,6 +2380,14 @@ impl Sim {
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
+                let mark = std::mem::take(&mut self.next_tx[node as usize]);
+                let air = time_on_air(f.len, f.preamble_symbols).as_micros();
+                self.metrics.boot_airtime.add(
+                    self.now,
+                    mark == TxMark::Burst,
+                    mark == TxMark::Answer,
+                    air,
+                );
                 self.note_direct(node, &f);
                 self.note_sent_again(node, &f);
                 self.note_carried_beat(&f);
@@ -2372,6 +2399,12 @@ impl Sim {
                 self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
             }
             Action::App(e) => self.app_event(node, e),
+            Action::Store(s) => {
+                self.stored[node as usize] = Some(s);
+                let w = &mut self.store_writes[node as usize];
+                w[0] += 1;
+                w[1] += u32::from(self.now >= self.settle);
+            }
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
                 self.power_trace(node, &Trace::Dropped { msg_id, reason });
                 self.message_dropped(node, msg_id, reason)
@@ -2437,6 +2470,8 @@ impl Sim {
                         let flip = self.carried_flip.remove(&node);
                         self.changing.insert(node, flip);
                     }
+                    Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
+                    Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
                     Trace::Role { sleepy: false } if self.relays[node as usize].carried() => {
                         let after = self.now >= self.settle;
                         self.carried_metrics().plugged_in += u64::from(after);
@@ -3089,6 +3124,7 @@ impl Sim {
                 }
                 return;
             }
+            AppEvent::Boot { .. } => return,
         };
         let m = &mut self.metrics;
         m.nodes[node as usize].messages_in += 1;
@@ -3872,6 +3908,28 @@ impl Sim {
         }
     }
 
+    /// How often nodes asked their drivers to keep their state across a
+    /// reboot (`Action::Store`), after the settle time, per node and day:
+    /// of the nodes placed as relays and of those placed as sleepy nodes,
+    /// the mean and the most; and the writes in the whole run.
+    pub(crate) fn store_writes(&self) -> crate::summary::StoreWrites {
+        let window = self.end().since(self.settle).as_micros() as f64 / 86_400e6;
+        let per_day = |r: std::ops::Range<usize>| {
+            let w: Vec<f64> = self.store_writes[r]
+                .iter()
+                .map(|w| w[1] as f64 / window.max(1e-9))
+                .collect();
+            let mean = w.iter().sum::<f64>() / w.len().max(1) as f64;
+            (mean, w.iter().cloned().fold(0.0, f64::max))
+        };
+        let n = self.n_relays as usize;
+        crate::summary::StoreWrites {
+            relays_per_day: per_day(0..n),
+            sleepy_per_day: per_day(n..self.node_count()),
+            total: self.store_writes.iter().map(|w| w[0] as u64).sum(),
+        }
+    }
+
     /// The boots so far, by kind and role (`boots.rs`).
     pub(crate) fn boot_rows(&self) -> Vec<crate::boots::BootRow> {
         self.boots
@@ -3898,8 +3956,9 @@ impl Sim {
     }
 
     /// As [`Sim::restart`], with the node's stored state erased: a fresh
-    /// board in its place. A core keeps no store yet, so it is a restart.
+    /// board in its place.
     pub fn wipe(&mut self, node: u32) {
+        self.stored[node as usize] = None;
         self.reboot(node, BootKind::Wipe);
     }
 
@@ -3917,7 +3976,12 @@ impl Sim {
         let index = (st.restarts as u64) << 32 | node as u64;
         let seed = stream_seed(self.seed, Purpose::CoreSeed, index);
         let r = &mut self.relays[node as usize];
-        *r = Relay::new(*r.config(), seed);
+        // The flash survives: the core gets back what it kept.
+        let config = Config {
+            stored: self.stored[node as usize],
+            ..*r.config()
+        };
+        *r = Relay::new(config, seed);
         self.power_on(node);
         self.watch_boot(node, kind);
     }

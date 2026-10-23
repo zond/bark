@@ -27,7 +27,7 @@ use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{
-    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position,
+    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position, Stored,
     MAX_FRAME,
 };
 use embassy_futures::select::{select3, Either3};
@@ -141,6 +141,11 @@ pub trait App {
     /// the driver reports it to the core right after the boot wakeup and
     /// at every change (core-interface §4).
     fn power(&mut self) -> Option<bool>;
+
+    /// Keep `stored` across a reboot, in place of what was kept before,
+    /// to hand back in `Config::stored` at the next boot (core-interface
+    /// §4).
+    fn store(&mut self, stored: &Stored);
 }
 
 /// Counters for the log, and the timings that say whether the loop keeps
@@ -422,6 +427,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             }
             Action::Sniff(until) => sniff = Some(until).filter(|&t| t > now),
             Action::App(e) => app.message(&e),
+            Action::Store(s) => app.store(&s),
             Action::Trace(t) => log::info!("{:?}", t),
         });
         let took = self.clock.now().since(now);
@@ -487,7 +493,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
-            Action::Listen(_) | Action::Sniff(_) | Action::App(_) | Action::Trace(_) => {
+            Action::Listen(_)
+            | Action::Sniff(_)
+            | Action::App(_)
+            | Action::Store(_)
+            | Action::Trace(_) => {
                 unreachable!("only excursions are kept")
             }
         };

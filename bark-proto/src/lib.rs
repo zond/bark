@@ -21,6 +21,7 @@ pub mod node;
 pub mod position;
 pub mod radio;
 pub mod sniff;
+pub mod store;
 pub mod tables;
 pub mod time;
 pub mod wire;
@@ -29,7 +30,8 @@ pub use event::{
     Action, AppCommand, AppEvent, Delivery, DropReason, Event, Frame, Trace, MAX_FRAME,
 };
 pub use ids::{MsgId, NodeId};
-pub use node::{Config, Core, Load, Node, Relay, SleepyNode};
+pub use node::{Anchor, Config, Core, Load, Node, Relay, SleepyNode};
 pub use position::{Position, ShortName};
 pub use radio::{Channel, CHANNELS};
+pub use store::Stored;
 pub use time::{Duration, Instant};

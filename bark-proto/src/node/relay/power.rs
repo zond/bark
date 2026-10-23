@@ -4,8 +4,8 @@
 //! On external power a node is a relay; on battery it is sleepy. The
 //! driver reports the power at boot and at every change
 //! (`AppCommand::Power`). While the node boots nobody depends on it yet,
-//! and a report sets its role at once, its boot listen as long as that
-//! role's.
+//! and a report sets its role at once; a sleepy node handed back an
+//! anchor at boot takes it (`store.rs`).
 //!
 //! Running, a node plugged in is a relay at once: it leaves its anchor,
 //! its address is its own position, and it heartbeats as a relay.
@@ -52,11 +52,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         H > 0 && Q > 0
     }
 
-    /// When the boot listen that began at `from` ends: a worst-case
-    /// rotation, and for a sleepy node one more (spec "Channel at boot").
+    /// When the first rotation that began at `from` ends: a worst-case
+    /// rotation, by when every relay in range has been heard, since every
+    /// relay heartbeats from its own boot (spec "Channel at boot").
     pub(super) fn boot_end(&self, from: Instant) -> Instant {
-        let rotations = if self.sleepy { 2 } else { 1 };
-        from + self.config.boot_listen.mul(rotations)
+        from + self.config.boot_listen
     }
 
     /// The driver reports whether external power is present.
@@ -64,7 +64,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let sleepy = !external || !Self::can_relay();
         if let Stage::Booting(_) = self.stage {
             self.sleepy = sleepy;
-            self.stage = Stage::Booting(self.boot_end(self.boot_from));
+            let anchor = self.config.stored.and_then(|s| s.anchor);
+            if let Some(a) = anchor.filter(|_| sleepy && self.anchor.is_none()) {
+                self.resume_anchor(a, now, emit);
+            }
             return;
         }
         match (sleepy, self.sleepy) {
@@ -117,10 +120,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.anchor = None;
         self.unwatch();
         self.neighbours.pin(None);
-        // Its slots as at the end of a boot listen, at a random phase.
+        // Its slots at a random phase, as at boot, without the first
+        // rotation's burst: its neighbours know it.
         let interval = heartbeat_interval(self.id, &self.config);
         self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
         self.beacon.quick = 0;
+        self.beacon.burst = 0;
         self.sweep.next_at = now;
         // It listens all the time from now on.
         emit(Action::Listen(self.home));

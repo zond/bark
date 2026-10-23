@@ -41,15 +41,21 @@ fn rotation(c: &Config) -> Duration {
     c.heartbeat_max.mul(CHANNELS as u64)
 }
 
-/// Each relay's heartbeat lands on the other's home once per rotation
-/// (spec "Heartbeat"), so discovery takes one rotation after boot, unless that one
+/// A relay's first rotation goes a burst gap a heartbeat (spec "Heartbeat"),
+/// so each lands on the other's home within its burst, at most an interval
+/// for its first slot and twelve gaps and a lag after boot, unless that one
 /// heartbeat arrives while the receiver is off its home channel: twelve
 /// sweep readings of 0.7 ms a second here, ≈1 % of heartbeats, since this
 /// medium loses a frame to any overlap and ignores the preamble the modem
-/// can lock on after a short gap (spec "Busy estimate"). Then it takes the next rotation.
+/// can lock on after a short gap (spec "Busy estimate"). Then it takes the
+/// next rotation.
 #[test]
-fn two_relays_discover_each_other_within_one_rotation() {
+fn two_relays_discover_each_other_in_their_first_burst() {
     let c = Config::default();
+    let burst = c.heartbeat_max
+        + bark_proto::node::burst_gap(&c).mul(CHANNELS as u64 - 1)
+        + bark_proto::node::heartbeat_lag(&c)
+        + time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
     let mut worst = Duration::ZERO;
     let mut total = Duration::ZERO;
     let mut late = 0;
@@ -58,36 +64,34 @@ fn two_relays_discover_each_other_within_one_rotation() {
         let mut h = Harness::new(vec![relay(0.0, 2 * seed), relay(500.0, 2 * seed + 1)]);
         h.link(0, 1);
         let boot_end = Instant::ZERO + c.boot_listen;
-        let deadline = boot_end + rotation(&c).mul(2);
         assert!(
-            h.run_until(deadline, |h| knows(h, 0, 1) && knows(h, 1, 0)),
-            "seed {seed}: not discovered within two rotations after boot"
+            h.run_until(boot_end + rotation(&c), |h| knows(h, 0, 1)
+                && knows(h, 1, 0)),
+            "seed {seed}: not discovered within two rotations"
         );
-        let took = h.now.since(boot_end);
-        if took > rotation(&c) {
+        let took = h.now.since(Instant::ZERO);
+        if took > burst {
             late += 1;
         }
         worst = worst.max(took);
         total = total + took;
-        // Both chose a home and listen there.
+        // Both listen on their homes, and each records the other's
+        // channel, after the first rotation too.
+        h.run_until(boot_end + rotation(&c), |_| false);
         for i in 0..2 {
             assert!(!h.nodes[i].core.booting());
             assert_eq!(h.resting(i), Some(h.nodes[i].core.home()));
         }
-        // And each records the other's channel.
         let n = h.nodes[0].core.neighbours().next().unwrap();
         assert_eq!(n.home, h.nodes[1].core.home());
     }
     println!(
-        "discovery after boot: mean {:.1} s, worst {:.1} s, {late} of {seeds} past one rotation ({} s)",
+        "discovery after boot: mean {:.1} s, worst {:.1} s, {late} of {seeds} past the burst ({:.1} s)",
         total.as_millis() as f64 / 1000.0 / seeds as f64,
         worst.as_millis() as f64 / 1000.0,
-        rotation(&c).as_millis() / 1000
+        burst.as_millis() as f64 / 1000.0
     );
-    assert!(
-        late <= 2,
-        "{late} of {seeds} pairs needed a second rotation"
-    );
+    assert!(late <= 2, "{late} of {seeds} pairs needed a later rotation");
 }
 
 #[test]
@@ -165,13 +169,19 @@ fn heartbeat_rotates_through_every_channel_in_order() {
             r#"k ← k + 1 (spec "Heartbeat")"#
         );
         let gap = t1.since(t0);
-        // Its own fixed interval, from its ID; the listen-before-talk
-        // checks on an idle channel take about the same time each.
+        // Its own fixed interval, from its ID, and a burst gap in its
+        // first rotation; the listen-before-talk checks on an idle channel
+        // take about the same time each.
         let interval = bark_proto::node::heartbeat_interval(h.nodes[0].core.id(), &c);
         assert!(interval >= c.heartbeat_min && interval < c.heartbeat_max);
+        let first = sent.iter().position(|s| s.0 == t0).unwrap() < CHANNELS as usize - 1;
+        let want = match first {
+            true => bark_proto::node::burst_gap(&c),
+            false => interval,
+        };
         assert!(
-            gap.as_micros().abs_diff(interval.as_micros()) <= 1000,
-            "{gap:?} against {interval:?}"
+            gap.as_micros().abs_diff(want.as_micros()) <= 1000,
+            "{gap:?} against {want:?}"
         );
         let Ok(Packet::Heartbeat(hb)) = Packet::decode(f0.payload()) else {
             panic!("not a heartbeat")
@@ -251,7 +261,9 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
         ),
     ]);
     h.link(0, 1);
+    // Past A's first rotation, whose end would choose a home as well.
     let boot_end = Instant::ZERO + c.boot_listen;
+    h.run_until(boot_end, |_| false);
     h.run_until(boot_end + rotation(&c), |h| knows(h, 1, 0));
     assert!(knows(&h, 1, 0));
     // A foreign carrier appears on A's home, on 30 % of the time. (A
@@ -306,9 +318,9 @@ fn a_busy_home_moves_and_announces_on_the_old_channel() {
     let moves = h.nodes[0]
         .traces
         .iter()
-        .filter(|(_, t)| matches!(t, Trace::HomeChannelMoved { .. }))
+        .filter(|(t, tr)| *t >= jam_at && matches!(tr, Trace::HomeChannelMoved { .. }))
         .count();
-    assert_eq!(moves, 2, "the boot choice and one move");
+    assert_eq!(moves, 1, "one move");
     println!(
         "moved {:.0} s after the jam began",
         moved_at.since(jam_at).as_millis() as f64 / 1000.0

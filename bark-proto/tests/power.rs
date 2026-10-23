@@ -98,9 +98,9 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
     MsgId::of(dst_pos, dst_id, text)
 }
 
-/// A node on external power at boot is a relay, one on battery sleepy,
-/// each with its role's boot listen; a report while it boots sets the role
-/// at once, with no trace, since nobody depends on it yet.
+/// A node on external power at boot is a relay, one on battery sleepy; a
+/// report while it boots sets the role at once, with no trace, since
+/// nobody depends on it yet.
 #[test]
 fn the_power_at_boot_sets_the_role() {
     let (r, s, late) = (0, 1, 2);
@@ -110,10 +110,12 @@ fn the_power_at_boot_sets_the_role() {
         node(80.0, false, 3),
     ]);
     h.link(r, s);
-    h.link(r, late);
-    // Plugged in while it boots: a relay, its boot listen one rotation.
+    // Plugged in while it boots, before it has heard a relay, which would
+    // end a sleepy node's first rotation: a relay.
     h.run_until(at(100), |_| false);
+    assert!(h.nodes[late].core.booting());
     power(&mut h, late, true);
+    h.link(r, late);
     let rotation = Config::default().boot_listen;
     h.run_until(at(rotation.as_micros() / 1_000_000 + 1), |_| false);
     assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.booting());

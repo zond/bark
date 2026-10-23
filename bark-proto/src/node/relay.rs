@@ -89,15 +89,16 @@ mod forward;
 mod motion;
 mod power;
 
-use crate::event::{Action, AppCommand, Event, Frame, Trace};
+use crate::event::{Action, AppCommand, AppEvent, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Radio};
 use crate::node::transfer::{Replies, Step, Transfer};
-use crate::node::{heartbeat_interval, heartbeat_lag, Config, Core, Rng};
+use crate::node::{burst_gap, heartbeat_interval, heartbeat_lag, Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::{anchorless_beat_period, LONG_PREAMBLE_SYMBOLS};
+use crate::store::Stored;
 use crate::tables::budget::Budget;
 use crate::tables::busy::{percent, BusyEstimator, ONE};
 use crate::tables::delivered::Delivered;
@@ -231,6 +232,9 @@ struct Beacon {
     /// A heartbeat owed for a change of flags or of the map point
     /// (`changed`): the home channel when it changed.
     change: Option<Channel>,
+    /// Of the first rotation's slots, the ones still to go a
+    /// [`burst_gap`] apart (spec "Heartbeat").
+    burst: u8,
 }
 
 /// Which heartbeat the beacon sends.
@@ -375,6 +379,9 @@ pub struct Node<const H: usize, const Q: usize> {
     /// listen-before-talk gave up on them, they refused it, or its
     /// attempts went unanswered (spec "Hand-over"); not tried.
     skipped: u64,
+    /// What the node last told its driver to keep across a reboot, or
+    /// was handed back at boot (`store.rs`).
+    stored: Option<Stored>,
     /// This node's ID: `config.node_id`, or drawn from the seed.
     id: NodeId,
     home: Channel,
@@ -412,6 +419,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             None => unreachable!(),
         };
         Node {
+            stored: None,
             id: NodeId::NONE,
             plane: LocalPlane::ORIGIN,
             home: channel,
@@ -441,6 +449,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 reach_all: None,
                 reach_left: 0,
                 change: None,
+                burst: 0,
             },
             mover: Mover {
                 excess_since: None,
@@ -498,14 +507,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         while node_id == NodeId::NONE {
             node_id = NodeId((rng.next_u64() as u32).to_be_bytes());
         }
+        let mut config = config;
+        // A fixed node stands where it stood before the reboot (spec
+        // "Position").
+        if let Some(s) = config.stored.filter(|s| !s.carried) {
+            config.position = s.place;
+        }
         let home = config
             .home_override
+            .or(config.stored.map(|s| s.home))
             .unwrap_or_else(|| random_channel(&mut rng));
         let rotation = random_channel(&mut rng);
         // Every field by name, so that a new one cannot be left out. The
         // large tables are emptied where they lie.
         let Node {
             config: c,
+            stored,
             id,
             plane,
             rng: r,
@@ -554,6 +571,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             chosen_from,
             reach_m,
         } = self;
+        *stored = config.stored;
         *id = node_id;
         *plane = LocalPlane::new(config.position);
         *h = home;
@@ -585,6 +603,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             reach_all: None,
             reach_left: 0,
             change: None,
+            burst: 0,
         };
         *mover = Mover::default();
         records.clear();
@@ -756,9 +775,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let interval = heartbeat_interval(a.id, &self.config);
         if self.watch_at.is_none() {
             self.misses = 0;
-            if let Some((_, n)) = self.neighbours.by_id(a.id) {
-                self.watch_base = n.beat_at;
-                self.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
+            match self.neighbours.by_id(a.id) {
+                // Its last heartbeat heard was of its burst, in no slot
+                // (spec "Heartbeat"): it watches from the next it hears,
+                // awake while it chooses, and else listening a rotation.
+                Some((_, n)) if n.anchorless => {
+                    if self.choosing.is_none() {
+                        self.check_anchor(now, emit);
+                    }
+                }
+                Some((_, n)) => {
+                    self.watch_base = n.beat_at;
+                    self.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
+                }
+                None => {}
             }
         }
         while let Some((from, to)) = self.watch().filter(|&(_, to)| now >= to) {
@@ -971,23 +1001,80 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// Boot: the first rotation begins (spec "Channel at boot"). The node
+    /// heartbeats from its first slot, on its stored home or a random
+    /// channel, and takes traffic from the first neighbour it hears.
     fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        // A sleepy node listens a rotation more: a relay switched on with
-        // it heartbeats only after a boot listen of its own, and once the
-        // node receives duty-cycled it hears relays only by their answers
-        // (spec "Channel at boot").
         self.boot_from = now;
-        self.stage = Stage::Booting(self.boot_end(now));
+        let ends = self.boot_end(now);
+        self.stage = Stage::Booting(ends);
         self.sweep.next_at = now;
+        if self.config.stored.is_some_and(|s| s.carried) {
+            // Still since now: no clock ran while it was off.
+            self.motion = Motion::carried(self.config.position, now);
+        }
+        // At a random phase of its interval: nodes that boot together, after
+        // a power cut, would otherwise heartbeat in step whenever their
+        // intervals have a small common multiple.
+        let interval = heartbeat_interval(self.id, &self.config);
+        self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
+        self.beacon.burst = CHANNELS;
         emit(Action::Listen(self.home));
+        emit(Action::App(AppEvent::Boot {
+            relays: 0,
+            ends: Some(ends),
+        }));
     }
 
-    /// End of the boot listen: choose home (spec "Channel at boot"), or for
-    /// a sleepy node an anchor, and start heartbeats.
+    /// What the node keeps across a reboot now (`store.rs`). A carried
+    /// node's place changes with each fix and its anchor as it goes, so it
+    /// keeps the place it stood when last fixed, and no anchor: one that
+    /// boots where it has gone chooses afresh.
+    fn to_keep(&self) -> Stored {
+        let place = match (self.motion.carried, self.stored) {
+            (true, Some(s)) => s.place,
+            _ => self.motion.place(),
+        };
+        Stored {
+            home: self.home,
+            place,
+            carried: self.motion.carried,
+            anchor: self.anchor.filter(|_| self.sleepy && !self.motion.carried),
+        }
+    }
+
+    /// Tell the driver to keep what changed.
+    fn keep(&mut self, emit: &mut dyn FnMut(Action)) {
+        let now = self.to_keep();
+        if self.stored != Some(now) {
+            self.stored = Some(now);
+            emit(Action::Store(now));
+        }
+    }
+
+    /// The relays this node knows: live neighbours that are not sleepy.
+    fn relays_known(&self, now: Instant) -> u8 {
+        let n = self.neighbours.live(now).filter(|(_, n)| n.relay()).count();
+        n.min(u8::MAX as usize) as u8
+    }
+
+    /// End of the first rotation (spec "Channel at boot"): a node without
+    /// a stored home chooses one, which for a relay is a move like any
+    /// other (spec "Channel moves"); a sleepy node takes the anchor it has
+    /// heard, or is anchorless.
     fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
         if self.sleepy {
-            if self.config.home_override.is_none() {
+            // Its beats keep no slots.
+            self.beacon.burst = 0;
+        }
+        emit(Action::App(AppEvent::Boot {
+            relays: self.relays_known(now),
+            ends: None,
+        }));
+        let chooses = self.config.home_override.is_none() && self.config.stored.is_none();
+        if self.sleepy {
+            if chooses && !self.home_is_quietest() {
                 let home = self.quietest();
                 self.retune(home, emit);
             }
@@ -999,15 +1086,44 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        if self.config.home_override.is_none() {
-            let home = self.quietest();
-            self.retune(home, emit);
+        if chooses && !self.home_is_quietest() {
+            let old = self.home;
+            let to = self.quietest();
+            self.retune(to, emit);
+            if self.home != old {
+                self.beacon.announce = Some(old);
+                self.take_listeners(old, now);
+            }
         }
-        // At a random phase of its interval: nodes that boot together, after
-        // a power cut, would otherwise heartbeat in step whenever their
-        // intervals have a small common multiple.
-        let interval = heartbeat_interval(self.id, &self.config);
-        self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
+    }
+
+    /// Whether the home channel is among the quietest, tied within 0.01
+    /// (spec "Channel at boot"): a node keeps it then, since a move costs
+    /// the neighbours that know it a rotation of a stale channel.
+    fn home_is_quietest(&self) -> bool {
+        let min = Channel::all()
+            .map(|c| self.busy.fraction(c))
+            .min()
+            .unwrap_or(ONE);
+        self.busy.fraction(self.home) <= min.saturating_add(percent(1))
+    }
+
+    /// A sleepy node handed back its anchor at boot (`store.rs`) takes it
+    /// at once and beats to it, and listens a rotation for its heartbeat,
+    /// as when it checks its anchor (spec "Relay choice"): it keeps it at
+    /// the first, and takes the strongest relay heard if it hears none.
+    fn resume_anchor(&mut self, a: Anchor, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.stage = Stage::Running;
+        self.beacon.burst = 0;
+        emit(Action::App(AppEvent::Boot {
+            relays: 0,
+            ends: None,
+        }));
+        self.anchor = Some(a);
+        self.anchored();
+        self.beacon.next_at = now;
+        self.beacon.quick = 1;
+        self.check_anchor(now, emit);
     }
 
     fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
@@ -1385,8 +1501,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- Heartbeat (spec "Heartbeat") ---
 
+    /// Whether the node heartbeats now: from its boot, but a sleepy node
+    /// only once it has an anchor or its first rotation has ended, unless
+    /// the research switch [`Config::sleepy_burst`] is on (spec "Channel at boot").
+    fn heartbeats(&self) -> bool {
+        match self.stage {
+            Stage::Off => false,
+            Stage::Booting(_) => !self.sleepy || self.config.sleepy_burst,
+            Stage::Running => true,
+        }
+    }
+
     fn beacon_due(&self, now: Instant) -> bool {
-        self.stage == Stage::Running
+        self.heartbeats()
             && self.beacon.check == Check::Idle
             && now >= self.beacon.ready_at
             && (self.beacon.current.is_some()
@@ -1417,11 +1544,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         span.div_ceil(self.config.fade_retry.as_micros().max(1)) as u8
     }
 
-    /// The next answer a relay owes an anchorless neighbour, if any: its
-    /// ID, the channel it listens on, and when.
+    /// The next answer a relay owes a neighbour that knows no relay, if
+    /// any: its ID, the channel it listens on, and when.
     fn answer_due(&self) -> Option<(NodeId, Channel, Instant)> {
-        // Nobody anchors to a node that holds no mail.
-        if self.sleepy || self.motion.carried || self.leaving {
+        // Nobody anchors to a node that holds no mail. A node in its first
+        // rotation is heard by its burst instead (spec "Heartbeat").
+        if self.sleepy || self.motion.carried || self.leaving || self.booting() {
             return None;
         }
         self.neighbours
@@ -1430,10 +1558,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The heartbeat in progress. It carries the home at the moment it is
     /// sent, so a move during its backoff still announces the new channel.
-    /// A sleepy node with an anchor beats on its home; a node without an
-    /// anchor, a relay answering one, and a sleepy node's beat on its
-    /// anchorless neighbours' channels, its home among them, send with the
-    /// long preamble.
+    /// A sleepy node with an anchor beats on its home; a sleepy node
+    /// without an anchor, a relay answering one, and a sleepy node's beat
+    /// on its anchorless neighbours' channels, its home among them, send
+    /// with the long preamble.
     fn heartbeat_frame(&self) -> Frame {
         let (channel, beat) = self
             .beacon
@@ -1444,9 +1572,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Beat::Slot if anchored => self.home,
             _ => channel,
         };
+        // A sleepy node without an anchor, and a relay in its burst, whose
+        // neighbour table is new, ask to be answered (spec "Heartbeat").
+        let anchorless = if self.sleepy {
+            self.anchor.is_none()
+        } else {
+            self.beacon.burst > 0
+        };
+        let asker = match beat {
+            Beat::Answer(id) => self.neighbours.get(id),
+            _ => None,
+        };
         let hb = Heartbeat {
             sleepy: self.sleepy,
-            anchorless: self.sleepy && self.anchor.is_none(),
+            anchorless,
             carried: self.motion.carried,
             home: self.home,
             id: self.id,
@@ -1454,8 +1593,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let reaches_home = self.beacon.reach_all.unwrap_or(0) & channel_bit(self.home) != 0;
         let preamble = match beat {
-            Beat::Answer(_) | Beat::Reach => LONG_PREAMBLE_SYMBOLS,
-            _ if hb.anchorless => LONG_PREAMBLE_SYMBOLS,
+            // A sleepy node receives duty-cycled; a relay listens.
+            Beat::Answer(_) if asker.is_some_and(|n| n.sleepy) => LONG_PREAMBLE_SYMBOLS,
+            Beat::Answer(_) => MIN_PREAMBLE_SYMBOLS,
+            Beat::Reach => LONG_PREAMBLE_SYMBOLS,
+            _ if self.anchorless() => LONG_PREAMBLE_SYMBOLS,
             // An anchorless neighbour listens on its home too.
             Beat::Slot if anchored && reaches_home => LONG_PREAMBLE_SYMBOLS,
             _ => MIN_PREAMBLE_SYMBOLS,
@@ -1490,6 +1632,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 (None, Some((id, home, at))) if now >= at => Some((home, Beat::Answer(id))),
                 _ => return false,
             };
+            if let Some((_, Beat::Answer(_))) = self.beacon.current {
+                // Every relay that heard the heartbeat answers it: each at
+                // a random time within a backoff, so that they do not all
+                // check the channel and send in the same instant.
+                let wait = self
+                    .rng
+                    .duration(Duration::ZERO, self.config.lbt_backoff_max);
+                self.beacon.ready_at = now + wait;
+                return false;
+            }
         }
         let f = self.heartbeat_frame();
         let airtime = mac::airtime(&f);
@@ -1548,8 +1700,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .start(Job::Heartbeat, Action::Rssi(f.channel), emit);
         } else {
             self.beacon.check = Check::Tx;
-            if let Some((_, Beat::Change)) = self.beacon.current {
-                emit(Action::Trace(Trace::Changed));
+            match self.beacon.current {
+                Some((_, Beat::Change)) => emit(Action::Trace(Trace::Changed)),
+                Some((_, Beat::Answer(_))) => emit(Action::Trace(Trace::Answer)),
+                Some((_, Beat::Slot)) if self.beacon.burst > 0 => emit(Action::Trace(Trace::Burst)),
+                _ => {}
             }
             self.budget.record(mac::airtime(&f), now);
             self.radio.start(Job::Heartbeat, Action::Transmit(f), emit);
@@ -1595,7 +1750,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // The window after its beat (spec "Delivery").
             self.awake_until = now + self.heard.params().awake;
         }
-        if self.sleepy {
+        if self.sleepy && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
             // this one went; with one, the rotation is not used.
             self.beacon.rotation = self.beacon.rotation.next();
@@ -1603,19 +1758,38 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             // On its fixed interval, a channel a slot whether or not the
             // heartbeat went, so that a neighbour that heard one knows when
-            // the next comes to its channel (spec "Heartbeat").
-            let interval = heartbeat_interval(self.id, &self.config);
-            let mut next = self.beacon.next_at + interval;
+            // the next comes to its channel (spec "Heartbeat"); in its first
+            // rotation, a burst gap apart.
+            let mut next = self.beacon.next_at + self.slot_gap();
             self.beacon.rotation = self.beacon.rotation.next();
             while next <= now {
-                next += interval;
+                next += self.slot_gap();
                 self.beacon.rotation = self.beacon.rotation.next();
             }
             self.beacon.next_at = next;
+            if let (true, Stage::Booting(ends)) = (self.sleepy, self.stage) {
+                if self.beacon.burst == 0 {
+                    // A sleepy node's burst is all it sends before its
+                    // first rotation ends.
+                    self.beacon.next_at = ends;
+                }
+            }
         }
         if self.sleepy {
             // Its own beat stands in for the sweep's round of the tables.
             self.neighbours.expire(now);
+        }
+    }
+
+    /// The time from the slot that has just gone to the next: a burst gap
+    /// while the first rotation's slots last, then the node's interval
+    /// (spec "Heartbeat").
+    fn slot_gap(&mut self) -> Duration {
+        self.beacon.burst = self.beacon.burst.saturating_sub(1);
+        if self.beacon.burst > 0 {
+            burst_gap(&self.config)
+        } else {
+            heartbeat_interval(self.id, &self.config)
         }
     }
 
@@ -1627,9 +1801,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Back in reach: its anchor's rotations count from here.
             self.misses = 0;
         }
-        // A booting relay has no home channel yet to be reached on, nor
-        // neighbours to forward to: it takes no traffic (spec "Channel at boot").
-        let running = self.stage == Stage::Running;
         let decoded = Packet::decode(bytes);
         // A node's DATA says where it listens now (spec "Packet sender"),
         // a sleepy node's that it is still in reach (spec "Heard table"). Its
@@ -1646,7 +1817,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
-            Ok(Packet::Data(d)) if running && d.dst_hop == self.me() => self.data(d, now, emit),
+            Ok(Packet::Data(d)) if d.dst_hop == self.me() => self.data(d, now, emit),
             _ => {}
         }
     }
@@ -1700,12 +1871,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let off_slot = self.anchor.is_some_and(|a| a.id == hb.id)
             && self.watch_at.is_some()
             && self.watch().is_some_and(|(from, _)| started < from);
-        if !off_slot {
+        // A relay's burst goes a burst gap a heartbeat: none of it is in a
+        // slot (spec "Heartbeat").
+        let burst = hb.anchorless && !hb.sleepy;
+        if !off_slot && !burst {
             self.neighbours.beat_heard(hb.id, self.home, started);
         }
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
+            if let (Stage::Booting(ends), false) = (self.stage, hb.sleepy) {
+                // A relay learned in the first rotation: the application
+                // shows it, and its own message waits no longer.
+                emit(Action::App(AppEvent::Boot {
+                    relays: self.relays_known(now),
+                    ends: Some(ends),
+                }));
+                if let Some(id) = self.own {
+                    self.queue.due_now(id, now);
+                }
+            }
         }
         if hb.sleepy {
             if !self.sleepy && !hb.anchorless && self.heard.heard(hb.id, hb.home, rssi, now) {
@@ -1737,7 +1922,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }));
                 }
             }
-            if off_slot {
+            if off_slot || burst {
                 self.anchor_alive();
             } else {
                 self.anchor_heard(started);
@@ -1786,12 +1971,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 }
 
-/// How long a heartbeat heard was on the air: an anchorless node's beat
-/// with the long preamble, any other as if with the shortest. A relay's
+/// How long a heartbeat heard was on the air: an anchorless sleepy node's
+/// beat with the long preamble, any other as if with the shortest. A relay's
 /// answer to an anchorless node also has the long one, but cannot be told
 /// from its other heartbeats.
 fn heartbeat_airtime(hb: &Heartbeat) -> Duration {
-    let preamble = if hb.anchorless {
+    let preamble = if hb.anchorless && hb.sleepy {
         LONG_PREAMBLE_SYMBOLS
     } else {
         MIN_PREAMBLE_SYMBOLS
@@ -1870,6 +2055,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             self.sniffing = None;
         }
         self.sniff(now, emit);
+        self.keep(emit);
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
@@ -1913,7 +2099,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         // Radio jobs only once the radio is free: their completion event
         // wakes the core otherwise.
         if self.radio.idle() && !awaiting {
-            if self.stage == Stage::Running && self.beacon.check == Check::Idle {
+            if self.heartbeats() && self.beacon.check == Check::Idle {
                 let pending = self.beacon.announce.is_some()
                     || self.beacon.current.is_some()
                     || self.beacon.change.is_some();
@@ -1962,11 +2148,13 @@ mod tests {
     fn sizes() {
         // docs/core-interface.md §6: the tables, and around them the medium
         // access, the hand-over, one owed reply and one held message in
-        // under 1 KiB.
+        // under 1 KiB, and what the node keeps across a reboot, handed
+        // back and last kept.
         let relay = core::mem::size_of::<Relay>();
         let tables = crate::tables::sizes::tables();
-        std::println!("Relay {relay} B, tables {tables} B");
-        assert!(relay <= tables + 1024, "{relay}");
+        let kept = 2 * core::mem::size_of::<Option<Stored>>();
+        std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
+        assert!(relay <= tables + 1024 + kept, "{relay}");
         // It fits the board's RAM: 255 KiB for the application
         // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
         // (docs/implementation-research-2026-10-14.md), and Embassy and the
@@ -2546,7 +2734,8 @@ mod tests {
         let mut r = Relay::new(config, 1);
         let mut now = Instant::ZERO;
         r.handle(Event::Wakeup, now, &mut |_| {});
-        assert!(!r.accepts_send(now), "booting");
+        // From its boot (roadmap D73).
+        assert!(r.accepts_send(now), "booting");
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         assert!(r.accepts_send(now));
 

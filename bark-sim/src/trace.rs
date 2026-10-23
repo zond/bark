@@ -217,6 +217,19 @@ impl Tracer {
                     other => write!(what, "{other:?}"),
                 };
             }
+            Action::App(AppEvent::Boot { relays, ends }) => {
+                let _ = write!(what, "app boot, {relays} relays known");
+                if let Some(t) = ends {
+                    let _ = write!(
+                        what,
+                        ", first rotation to {:.3} s",
+                        t.as_micros() as f64 / 1e6
+                    );
+                }
+            }
+            Action::Store(s) => {
+                let _ = write!(what, "store {s:?}");
+            }
             Action::Cad(_) | Action::Rssi(_) => return,
         }
         self.line(t, node, &what);

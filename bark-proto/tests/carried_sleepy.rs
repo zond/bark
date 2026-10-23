@@ -105,20 +105,25 @@ fn delivered_at(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Instant> {
 }
 
 /// A relay R and two sleepy nodes S and P anchored to it; F, a relay, and
-/// L, a sleepy node with no relay in reach. F, P and L walk until carried.
-/// Each of the four combinations heartbeats its own type: 0x8 fixed relay,
-/// 0xC carried relay, 0x9 fixed sleepy node, 0xD carried one, 0xF carried
-/// and anchorless; and a neighbour keeps both flags as heard.
+/// L, a sleepy node with no relay in reach; G, a relay R knows. F, P and L
+/// walk until carried. Each of the four combinations heartbeats its own
+/// type: 0x8 fixed relay, 0xC carried relay, 0x9 fixed sleepy node, 0xD
+/// carried one, 0xF carried and anchorless; and a neighbour keeps both
+/// flags as heard.
 #[test]
 fn the_four_combinations_heartbeat_their_flags() {
-    let (r, f, s, p, l) = (0, 1, 2, 3, 4);
+    let (r, f, s, p, l, g) = (0, 1, 2, 3, 4, 5);
     let mut h = Harness::powered(vec![
         node(0.0, true, 1),
         node(300.0, true, 2),
         node(20.0, false, 3),
         node(30.0, false, 4),
         node(5000.0, false, 5),
+        node(-300.0, true, 6),
     ]);
+    // Without G, R would know no relay that holds mail once F is carried,
+    // and say so with the anchorless flag (spec "Heartbeat").
+    h.link(r, g);
     for i in [f, s, p] {
         h.link(r, i);
     }
@@ -268,6 +273,8 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     h.link(r, c);
     h.link(r, o);
     h.link(c, o);
+    // C anchors to R, and listens on its channel once plugged in.
+    h.set_rssi(r, c, -60);
     h.start_at(c, at(10));
     h.run_until(at(1000), |_| false);
     let stop = walk_until_carried(&mut h, c, 20.0);

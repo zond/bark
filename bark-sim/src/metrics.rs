@@ -567,7 +567,8 @@ pub struct TypeAirtime {
     /// HEARTBEAT of a sleepy node without an anchor, with the long
     /// preamble.
     pub anchorless_us: u64,
-    /// HEARTBEAT of a relay answering one, with the long preamble.
+    /// HEARTBEAT of a relay answering a sleepy node without an anchor,
+    /// with the long preamble.
     pub answer_us: u64,
     /// ACK.
     pub ack_us: u64,
@@ -589,7 +590,7 @@ impl TypeAirtime {
         use bark_proto::wire::Packet;
         let long = preamble >= bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
         let c = match p {
-            Some(Packet::Heartbeat(h)) if h.anchorless => &mut self.anchorless_us,
+            Some(Packet::Heartbeat(h)) if h.anchorless && h.sleepy => &mut self.anchorless_us,
             Some(Packet::Heartbeat(h)) if h.sleepy && long => &mut self.reach_us,
             Some(Packet::Heartbeat(h)) if h.sleepy => &mut self.beat_us,
             Some(Packet::Heartbeat(_)) if long => &mut self.answer_us,
@@ -645,6 +646,36 @@ pub struct AppMetrics {
     /// Origination to destination application, µs, in arrival order.
     #[serde(skip)]
     pub latencies_us: Vec<u64>,
+}
+
+/// Airtime, µs, over the whole run and in its first [`BOOT_MINUTE`]: of
+/// the heartbeats of nodes' first rotations, which go a burst gap apart
+/// (`Trace::Burst`), of relays' answers to nodes that know no relay
+/// (`Trace::Answer`), and of everything.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct BootAirtime {
+    /// The first rotation's heartbeats.
+    pub burst_us: [u64; 2],
+    /// Answers.
+    pub answer_us: [u64; 2],
+    /// Everything.
+    pub all_us: [u64; 2],
+}
+
+impl BootAirtime {
+    /// Count `us` of airtime that began at `at`, of a frame that is part of
+    /// a burst, an answer, or neither.
+    pub fn add(&mut self, at: bark_proto::Instant, burst: bool, answer: bool, us: u64) {
+        let first = at < bark_proto::Instant::ZERO + BOOT_MINUTE;
+        for k in [0, 1] {
+            if k == 1 && !first {
+                break;
+            }
+            self.all_us[k] += us;
+            self.burst_us[k] += if burst { us } else { 0 };
+            self.answer_us[k] += if answer { us } else { 0 };
+        }
+    }
 }
 
 /// The start of a run in which the heartbeats of nodes switched on
@@ -1070,6 +1101,9 @@ pub struct Metrics {
     /// The same in the run's first [`BOOT_MINUTE`], before the settle
     /// time: what nodes switched on together meet (roadmap D73).
     pub boot_heartbeats: HeartbeatFates,
+    /// Airtime of the first rotation's heartbeats and of the answers to
+    /// nodes that know no relay.
+    pub boot_airtime: BootAirtime,
     /// Frames addressed to a relay, by fate.
     pub addressed: Addressed,
     /// Refusals for room, and the hop places free at them.

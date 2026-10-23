@@ -17,7 +17,8 @@ use bark_driver::{App, Clock, Driver, Heard, Outgoing, Radio, MAX_AIRTIME, RSSI_
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, Position, Relay, MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, Position, Relay, Stored,
+    MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -289,6 +290,8 @@ struct TestApp {
     /// The power the application tells, and the one the driver last read.
     power: Option<bool>,
     read: Option<bool>,
+    /// What the core last asked to keep.
+    stored: Option<Stored>,
 }
 
 impl App for TestApp {
@@ -315,6 +318,10 @@ impl App for TestApp {
 
     fn message(&mut self, event: &AppEvent) {
         self.messages.push(*event);
+    }
+
+    fn store(&mut self, stored: &Stored) {
+        self.stored = Some(*stored);
     }
 }
 

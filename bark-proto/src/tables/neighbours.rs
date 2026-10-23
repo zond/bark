@@ -102,7 +102,10 @@
 //! A relay answers each beat of an anchorless neighbour with its own
 //! heartbeat on the neighbour's channel, with the long preamble, so that
 //! the neighbour hears it and takes it as its anchor: at once and every
-//! fade after, for two beat periods ([`Neighbours::answer_due`]).
+//! fade after, for two beat periods ([`Neighbours::answer_due`]). A relay
+//! that knows no relay, in its first rotation, flags its heartbeat
+//! anchorless too ([`Neighbour::anchorless`]); it listens all the time,
+//! and is answered once, with the ordinary preamble.
 //!
 //! # The anchor of a node that sleeps
 //!
@@ -151,8 +154,10 @@ pub struct Neighbour {
     /// duty-cycled between its windows, and is sent to with the long
     /// preamble.
     pub sleepy: bool,
-    /// Whether it is sleepy and knows no node that is not (heartbeat 0xB):
-    /// no anchor for a sleepy node.
+    /// Whether its last heartbeat had the anchorless flag (0xA, 0xB): it
+    /// knows no node that holds mail, and a relay that hears it answers
+    /// ([`Neighbours::answer_due`]). A sleepy one is in anchorless mode
+    /// ([`Neighbour::alone`]).
     pub anchorless: bool,
     /// Whether it moves (the heartbeat's carried flag): it holds mail for
     /// nobody, so it is no anchor and does not keep this node from owning
@@ -180,6 +185,12 @@ impl Neighbour {
         self.sleepy && !self.anchorless
     }
 
+    /// Whether it is a sleepy node without an anchor (heartbeat 0xB): no
+    /// anchor for a sleepy node, and a next hop like any other.
+    pub fn alone(&self) -> bool {
+        self.sleepy && self.anchorless
+    }
+
     /// Whether it is not sleepy: it listens all the time.
     pub fn relay(&self) -> bool {
         !self.sleepy
@@ -196,7 +207,7 @@ impl Neighbour {
     /// rotations of its beats: not switching on, about to anchor, but in a
     /// pocket with no relay (spec "Beats").
     pub fn stays_anchorless(&self) -> bool {
-        self.anchorless && self.beats >= BEATS
+        self.alone() && self.beats >= BEATS
     }
 }
 
@@ -378,7 +389,7 @@ impl Neighbours {
     }
 
     fn expire_after(&self, n: &Neighbour) -> Duration {
-        if n.anchorless {
+        if n.alone() {
             self.params.anchorless_expire_after
         } else if n.sleepy {
             self.params.sleepy_expire_after
@@ -428,7 +439,7 @@ impl Neighbours {
                 let anchorless = hb.anchorless && hb.sleepy;
                 let (min, max) = self.params.anchorless_rotations();
                 let gap = now.since(n.beat_at);
-                n.beats = if anchorless && !n.anchorless {
+                n.beats = if anchorless && !n.alone() {
                     1
                 } else if anchorless && gap < min {
                     // On this channel twice in one rotation: no new one.
@@ -439,7 +450,7 @@ impl Neighbours {
                 } else {
                     (n.beats + 1).min(BEATS)
                 };
-                n.anchorless = anchorless;
+                n.anchorless = hb.anchorless;
                 n.answered = 0;
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
@@ -457,7 +468,7 @@ impl Neighbours {
             rssi: rssi as f32,
             fail_count: 0,
             sleepy: hb.sleepy,
-            anchorless: hb.anchorless && hb.sleepy,
+            anchorless: hb.anchorless,
             carried: hb.carried,
             beats: 1,
             beat_at: now,
@@ -497,14 +508,16 @@ impl Neighbours {
         n.beat_at + interval.mul(steps as u64)
     }
 
-    /// The next answer due to an anchorless neighbour (spec "Sleepy nodes alone"):
-    /// the `k`-th, counted from 0, `k` × `every` after the start of its last
-    /// beat, for the first `answers`. Its ID, its home, where it listens,
+    /// The next answer due to a neighbour whose last heartbeat had the
+    /// anchorless flag (spec "Heartbeat", "Sleepy nodes alone"): the
+    /// `k`-th, counted from 0, `k` × `every` after the start of its last
+    /// heartbeat, for the first `answers` to a sleepy one, and once to
+    /// one that listens all the time. Its ID, its home, where it listens,
     /// and when. The answers end long before the entry expires, so expiry
     /// is not checked.
     pub fn answer_due(&self, every: Duration, answers: u8) -> Option<(NodeId, Channel, Instant)> {
         self.iter()
-            .filter(|n| n.anchorless && n.answered < answers)
+            .filter(|n| n.anchorless && n.answered < if n.sleepy { answers } else { 1 })
             .map(|n| (n.id, n.home, n.beat_at + every.mul(n.answered as u64)))
             .min_by_key(|&(_, _, at)| at)
     }

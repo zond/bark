@@ -67,8 +67,12 @@ fn busy_block(seed: u64) -> Scenario {
     sc.metrics.observers = vec!["relay:0".into(), "relay:12".into()];
     sc.metrics.cadence_s = Some(10.0);
     // The sleepy nodes' boot sweep would meet the test frames below; one
-    // reading a day keeps them on their channel.
+    // reading a day keeps them on their channel. A relay that heartbeats
+    // once a day is heard by none of them in two minutes, so none takes an
+    // anchor and beats.
     sc.protocol.sweep_interval_ms = Some(13 * 86_400_000);
+    sc.protocol.heartbeat_min_ms = Some(86_400_000);
+    sc.protocol.heartbeat_max_ms = Some(86_400_000);
     // Leaves stand in for traffic the stub cores do not generate: each
     // listens on a channel and transmits test frames.
     for k in 0..300u32 {
@@ -147,8 +151,7 @@ fn same_seed_gives_bit_identical_output() {
         "{}",
         s.table()
     );
-    // Two minutes is inside the relays' boot listen (spec "Channel at boot"): no leaf
-    // has attached, so no message has an address yet.
+    // No leaf has attached, so no message has an address yet.
     assert!(s.app.originated + s.app.unaddressed > 100);
     assert!(
         s.channels[6].busy_fraction.unwrap() > 0.0,

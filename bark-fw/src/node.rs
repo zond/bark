@@ -11,7 +11,7 @@
 
 use bark_driver::{App, Clock, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position};
+use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position, Stored};
 use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
@@ -82,7 +82,15 @@ impl App for LogApp {
                     retry_at.since(now).as_micros() / 1000
                 )
             }
+            AppEvent::Boot { relays, ends } => {
+                let left = ends.map(|t| t.since(Monotonic.now()).as_micros() / 1_000_000);
+                log::info!("boot relays={} first_rotation_left_s={:?}", relays, left)
+            }
         }
+    }
+
+    fn store(&mut self, stored: &Stored) {
+        log::info!("store {:?}", stored);
     }
 }
 

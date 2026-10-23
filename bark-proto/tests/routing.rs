@@ -49,14 +49,21 @@ fn knows(h: &Harness<Relay>, a: usize, b: usize) -> bool {
     core(h, a).neighbours().any(|n| n.position == target)
 }
 
-/// Run until every linked pair knows each other (spec "Heartbeat": within about a
-/// rotation after boot).
+/// Run until every linked pair knows each other (spec "Heartbeat": within
+/// a node's first rotation), and the first rotations' quick heartbeats
+/// are over, so that the tests see the network as it runs.
 fn discover(h: &mut Harness<Relay>, pairs: &[(usize, usize)]) {
     let pairs = pairs.to_vec();
     let found = h.run_until(Instant::ZERO + secs(600), |h| {
         pairs.iter().all(|&(a, b)| knows(h, a, b) && knows(h, b, a))
     });
     assert!(found, "neighbours not discovered");
+    let c = Config::default();
+    let burst = c.heartbeat_max
+        + bark_proto::node::burst_gap(&c).mul(bark_proto::CHANNELS as u64)
+        + bark_proto::node::heartbeat_lag(&c);
+    let quiet = h.now.max(Instant::ZERO + burst);
+    h.run_until(quiet, |_| false);
 }
 
 fn build(nodes: Vec<Relay>, links: &[(usize, usize)]) -> Harness<Relay> {
@@ -117,7 +124,9 @@ fn fill(h: &mut Harness<Relay>, x: usize, f: usize, d: usize) {
             "{x} took no message"
         );
         send(h, x, d, &k.to_be_bytes());
-        if h.run_until(h.now + Duration::from_millis(200), refused) {
+        // Until `x` may send again, or `f` refuses this one.
+        h.run_until(h.now + Duration::from_millis(200), refused);
+        if h.run_until(h.now + secs(5), |h| refused(h) || h.accepts(x)) && refused(h) {
             return;
         }
     }
@@ -2168,7 +2177,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .iter()
         .filter_map(|(t, e)| match e {
             AppEvent::Message { msg_id, .. } => Some(t.since(sent_at[msg_id])),
-            AppEvent::GivenBack { .. } => None,
+            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } => None,
         })
         .collect();
     latency.sort();
@@ -2177,7 +2186,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .iter()
         .filter_map(|(t, e)| match e {
             AppEvent::Message { msg_id, .. } => Some(t.since(taken_at[msg_id])),
-            AppEvent::GivenBack { .. } => None,
+            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } => None,
         })
         .collect();
     since_taken.sort();

@@ -52,6 +52,24 @@ impl Motion {
     }
 }
 
+impl Motion {
+    /// Carried at `at`, still there since `now`.
+    pub(super) const fn carried(at: Position, now: Instant) -> Motion {
+        Motion {
+            carried: true,
+            far_since: None,
+            still_at: at,
+            still_since: now,
+        }
+    }
+
+    /// The place a fixed node stands, and a carried one stood when it
+    /// was last fixed (`store.rs`).
+    pub(super) fn place(&self) -> Position {
+        self.still_at
+    }
+}
+
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is carried (module documentation).
     pub fn carried(&self) -> bool {
@@ -111,12 +129,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return takes;
         }
         self.set_position(at);
-        self.motion = Motion {
-            carried: true,
-            far_since: None,
-            still_at: at,
-            still_since: now,
-        };
+        self.motion = Motion::carried(at, now);
         self.changed();
         emit(Action::Trace(Trace::Carried { carried: true }));
         true
