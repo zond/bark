@@ -703,12 +703,12 @@ anchor has no window to deliver in.
 
 ### Addresses
 
-A destination address is a position and a node ID
-([node identity](#node-identity)): a relay's own position, or a sleepy
-node's anchor's ([nodes](#nodes)), and the recipient's ID. A sender
-learns an address from a previous message (the sender's address is
-carried in the encrypted payload), from a QR code, or from a directory;
-the network provides no lookup. Sending to an area is open item O7.
+A destination address is a position and a node ID: a relay's own
+position, or a sleepy node's anchor's, and the recipient's ID
+([node identity](#node-identity), [nodes](#nodes)). A sender learns an
+address from a previous message (the sender's address is carried in the
+encrypted payload), from a QR code, or from a directory; the network
+provides no lookup. Sending to an area is open item O7.
 
 The network carries no sender address and sends no failure notices. Its
 only acknowledgement is the per-hop ACK ([hand-over](#hand-over));
@@ -718,15 +718,17 @@ payload.
 
 The app hands a node a message only when the node says it will take
 one ([receiving DATA](#receiving-data)), and hears nothing about it
-afterwards: not the first hop's ACK, which a user could take for
-delivery, and not a drop. From then on the node is sending the message
-or waiting to, so a busy network makes its users wait rather than lose
-their messages at the first step (roadmap D29). The one thing the app
-hears is a sleepy node's refused message, given back with the wait the
-refusal asks for, so that a person told to wait is not left with a
-message that ages in a node
-([a sleepy node's own message](#a-sleepy-nodes-own-message); roadmap
-D54).
+afterwards: not the first hop's ACK, and not a drop. The one thing the
+app hears is a sleepy node's refused message, given back with the wait
+the refusal asks for
+([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+
+*Why the app hears so little.* A user could take the first hop's ACK
+for delivery. From then on the node is sending the message or waiting
+to, so a busy network makes its users wait rather than lose their
+messages at the first step (roadmap D29). A refused message is given
+back so that a person told to wait is not left with a message that ages
+in a node (roadmap D54).
 
 ### Duty cycle cap
 
@@ -735,17 +737,22 @@ of budget before its channel fills. Forwarding to the neighbour nearest
 the destination does not spread load; central rooftop relays hit the
 cap first.
 
-**Token bucket.** Each node keeps its airtime in a bucket that holds at
-most 6 s, one minute at 10%, and fills at (360 s − 6 s) per hour, 9.83%
-of the time. A transmission may start only if the bucket holds its
-airtime, which it takes out. Any interval of length L then carries at
-most 6 s + 9.83% × L on air, so any hour at most 360 s: 10%, the limit
-of ERC/REC 70-03 band g1, which is measured over an hour (proof in
+**Token bucket.** Each node keeps its airtime in a bucket. A
+transmission may start only if the bucket holds its airtime, which it
+takes out.
+
+| | |
+|---|---|
+| depth | at most 6 s, one minute at 10% |
+| fill | (360 s − 6 s) per hour, 9.83% of the time |
+| a node at the cap | sends steadily, 5.9 s of every minute; with its bucket empty a full frame waits 1.4 s |
+| longest wait | 6 s / 9.83% = 61 s (roadmap D26) |
+
+*Why that rate.* Any interval of length L then carries at most
+6 s + 9.83% × L on air, so any hour at most 360 s: 10%, the limit of
+ERC/REC 70-03 band g1, which is measured over an hour (proof in
 `tables/budget.rs`). The rate is below 10% by the bucket's depth over
-the hour, so that a burst cannot carry an hour over the limit. A node at
-the cap sends steadily, 5.9 s of every minute; with its bucket empty a
-full frame waits 1.4 s, and nothing waits longer than
-6 s / 9.83% = 61 s (roadmap D26).
+the hour, so that a burst cannot carry an hour over the limit.
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
 it is not dropped. Two reserves stay in the bucket:
@@ -755,24 +762,27 @@ it is not dropped. Two reserves stay in the bucket:
   between heartbeats ([heartbeat](#heartbeat)), so heartbeats always go.
 - Forwarding, and the ACK that takes on a packet, leave the **reply
   reserve**, 242 ms: the heartbeat, and the refusals the bucket refills
-  while a sender retries an unanswered hand-over. The retrying takes
-  2.39 s: the two retry waits, 306 + 612 ms, and two more attempts, each
-  up to 500 ms of listen-before-talk, a 138.6 ms full frame and the
-  100 ms ACK timeout ([hand-over](#hand-over)). The bucket refills
-  9.83 % × 2.39 s = 235.5 ms of it, ⌊235.5 / 14.4⌋ = 16 refusals.
+  while a sender retries an unanswered hand-over.
+
+*Why the reply reserve.* The retrying takes 2.39 s: the two retry
+waits, 306 + 612 ms, and two more attempts, each up to 500 ms of
+listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
+([hand-over](#hand-over)). The bucket refills 9.83 % × 2.39 s =
+235.5 ms of it, ⌊235.5 / 14.4⌋ = 16 refusals.
 
 A relay takes new work into the regular room of its send queue only if
 its bucket holds the reply reserve on top of the work's ACK and of
 everything it has queued, and otherwise into a hop place or not at all
 ([receiving DATA](#receiving-data)). So a hand-over waits for the bucket
-only when retries, replies or a delivery that goes first
-([delivery](#delivery)) have spent it since its packet was taken, or
-when its packet holds a hop place. A relay below the reserve sends
-nothing but heartbeats and replies until its bucket refills. Each sender
-it refuses bans it ([bans](#bans)), so a sender costs it at most one
-reply per ban. Without budget even for a reply it stays silent; its
-neighbours' hand-overs to it fail, and they ban it, longer each time,
-and route around it (roadmap D27, D29, D42).
+only when its packet holds a hop place, or when retries, replies or a
+delivery that goes first have spent it since its packet was taken
+([delivery](#delivery)).
+
+A relay below the reserve sends nothing but heartbeats and replies until
+its bucket refills. Each sender it refuses bans it, so a sender costs it
+at most one reply per ban ([bans](#bans)). Without budget even for a
+reply it stays silent; its neighbours' hand-overs to it fail, and they
+ban it, longer each time, and route around it (roadmap D27, D29, D42).
 
 ### Hand-over
 
@@ -785,55 +795,58 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
 1. Retune to the next hop's home channel. Addresses and channels are
    read at the moment of sending, before each attempt, from the latest
    heartbeats (and DATA `aux`, [neighbour table](#neighbour-table)): a
-   retry goes to a
-   neighbour's new home if it has moved since the last attempt.
+   retry goes to a neighbour's new home if it has moved since the last
+   attempt.
 2. Listen-before-talk: CAD, then RSSI. Random backoff 0–50 ms if busy,
    retry; give up after 500 ms and choose the next hop again
    ([next hop](#next-hop)), without counting a failure against the
-   neighbour. The
-   neighbour is set aside for this hand-over only, so the next choice is
-   a different one. For a return to the parent or a delivery to a
-   sleepy node ([delivery](#delivery)), which have no other candidate, a give-up
-   counts as one attempt.
+   neighbour. The neighbour is set aside for this hand-over only, so the
+   next choice is a different one. For a return to the parent or a
+   delivery to a sleepy node ([delivery](#delivery)), which have no
+   other candidate, a give-up counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
    ([packet formats](#packet-formats)). Its preamble is the shortest, or
-   the long one to a
-   sleepy neighbour, as the neighbour table has it then
+   the long one to a sleepy neighbour, as the neighbour table has it
+   then
    ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
    14.4 ms plus the receiver's retune and listen-before-talk).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
-   neighbour (demoted after 2 in a row, neighbour table)
-   and ban it ([bans](#bans)). The message waits in its place for the ban
-   and is offered to the same neighbour again, with three fresh attempts.
-   Once a failure has demoted the neighbour, the message instead chooses
-   the next hop at once: the neighbour is set aside
-   for this hand-over, as in step 2, but not counted as tried. A return
-   waits for its parent the same way and is dropped when a failure
-   demotes the parent ([return to parent](#return-to-parent)). The
-   delivery queue keeps a delivery whatever happens to its hand-over
-   ([delivery queue](#delivery-queue)).
+   neighbour (demoted after 2 in a row, neighbour table) and ban it
+   ([bans](#bans)). The message waits in its place for the ban and is
+   offered to the same neighbour again, with three fresh attempts.
+   - Once a failure has demoted the neighbour, the message instead
+     chooses the next hop at once: the neighbour is set aside for this
+     hand-over, as in step 2, but not counted as tried.
+   - A return waits for its parent the same way and is dropped when a
+     failure demotes the parent ([return to parent](#return-to-parent)).
+   - The delivery queue keeps a delivery whatever happens to its
+     hand-over ([delivery queue](#delivery-queue)).
 
 #### Retry wait
 
 The wait before the retry after the k-th unanswered transmission is
-uniform in [0, 2^k × 153.0 ms]: 0–306 ms, then 0–612 ms. 153.0 ms is how
-long one hand-over holds its receiver, a full frame (138.6 ms) and its
-ACK (14.4 ms). Other than a weak link, the usual cause of a missing ACK
-is a hidden terminal: a sender the first cannot hear transmitted to the
-same receiver at the same time, and both miss the ACK and retry. Their
-retries miss each other only if they start more than one hand-over
-apart, which for full frames and a window of W units happens with
-probability (1 − 1/W)²: never with one unit, 1/4 with two, 9/16 with
-four. Doubling per attempt also spreads more than two such senders.
+uniform in [0, 2^k × 153.0 ms]: 0–306 ms, then 0–612 ms. For a hand-over
+whose frame has the long preamble the unit is 507.3 ms. The
+listen-before-talk backoff of step 2 stays short: it waits for a channel
+the sender can hear to clear, and checks again (roadmap D22).
 
-The listen-before-talk backoff of step 2 stays short: it waits for a
-channel the sender can hear to clear, and checks again (roadmap D22). A
-hand-over whose frame has the long preamble holds its receiver longer by
-as much as its frame is longer, 354.3 ms, so its unit is 507.3 ms
+*Why that unit.* 153.0 ms is how long one hand-over holds its receiver,
+a full frame (138.6 ms) and its ACK (14.4 ms). A hand-over whose frame
+has the long preamble holds its receiver longer by as much as its frame
+is longer, 354.3 ms
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
+
+*Why a random wait that doubles.* Other than a weak link, the usual
+cause of a missing ACK is a hidden terminal: a sender the first cannot
+hear transmitted to the same receiver at the same time, and both miss
+the ACK and retry. Their retries miss each other only if they start more
+than one hand-over apart, which for full frames and a window of W units
+happens with probability (1 − 1/W)²: never with one unit, 1/4 with two,
+9/16 with four. Doubling per attempt also spreads more than two such
+senders.
 
 #### The ACK
 
@@ -843,22 +856,25 @@ ID, and the IDs of the answering and the answered node: 13 bytes,
 14.4 ms ([packet formats](#packet-formats)). One that refuses is a
 **NACK**, the same and a byte for the wait it asks ([bans](#bans)): 14
 bytes at the same 14.4 ms, since at SF5 the 14th byte fits in the 13th's
-block of symbols. Below, an ACK is either unless it says so. The sender
-matches the ID and both names against its outstanding hand-over. An ACK
-resets the neighbour's failure count and refreshes its last-heard time
-([neighbour table](#neighbour-table)): a neighbour that answers is alive
-whether or not its heartbeats are heard.
+block of symbols. Below, an ACK is either unless it says so.
 
-Both IDs are needed. Nodes share home channels, so without the answering
+The sender matches the ID and both names against its outstanding
+hand-over. An ACK resets the neighbour's failure count and refreshes its
+last-heard time ([neighbour table](#neighbour-table)): a neighbour that
+answers is alive whether or not its heartbeats are heard.
+
+*Why both IDs.* Nodes share home channels, so without the answering
 node's ID an ACK for the same message from another relay on the same
 channel, which the depth-first search can produce, would end the wrong
-hand-over and strand the message. And two senders can offer the same
-message to one node at once: one retrying a hand-over whose ACK was
-lost while another returns the message there, or the two copies of a
-split message ([why the search finds a path](#why-the-search-finds-a-path)).
-If the ACK named only the message and the relay, each sender would take
-the answer to the other as its own. A taken one would end a hand-over
-the relay never took, and the message would be lost; a refused one would
+hand-over and strand the message.
+
+And two senders can offer the same message to one node at once: one
+retrying a hand-over whose ACK was lost while another returns the
+message there, or the two copies of a split message
+([why the search finds a path](#why-the-search-finds-a-path)). If the
+ACK named only the message and the relay, each sender would take the
+answer to the other as its own. A taken one would end a hand-over the
+relay never took, and the message would be lost; a refused one would
 send a sender on from a relay that took its packet, and the message
 would have a second copy (roadmap D32).
 
@@ -869,12 +885,13 @@ attempt covers it.
 A node owes at most one reply at a time. A DATA that arrives while its
 reply to another packet still waits for the channel is neither taken nor
 refused: the node says nothing and changes nothing, and the sender
-retries as for a lost ACK. A second reply would go out only after the
+retries as for a lost ACK. A copy of the packet the owed reply answers,
+sent again because that reply is late, is answered by it (roadmap D29).
+
+*Why one reply at a time.* A second reply would go out only after the
 first, which may wait for its channel until its own sender gives up,
 100 ms; taking a packet it may not answer in time would let its sender
-hand the message to someone else as well. A copy of the packet the owed
-reply answers, sent again because that reply is late, is answered by it
-(roadmap D29).
+hand the message to someone else as well.
 
 So ACKs too arrive on the home channel, which a node leaves only to
 transmit ([home channel selection](#home-channel-selection)). A sleepy
