@@ -599,7 +599,7 @@ newcomer replaces, in this order:
 2. the least recently heard entry, if it has missed a worst-case
    rotation, and so certainly a heartbeat on
    this channel;
-3. if the newcomer holds mail and is within 50 m, the owner radius
+3. if the newcomer is a fixed relay, one that holds mail, within 50 m, the owner radius
    ([owner](#owner)), the least recently heard relay beyond 50 m
    (roadmap D68, D70).
 
