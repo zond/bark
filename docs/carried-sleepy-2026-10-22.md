@@ -1,7 +1,7 @@
 # Sleepy and carried, measured apart
 
-**Date:** 2026-10-22, roadmap D72. **Status:** measured, the decision is
-the user's. Spec references are to `protocol.md`. The base is main
+**Date:** 2026-10-22, roadmap D72. **Status:** decided 2026-10-23,
+adopted (roadmap D72). Spec references are to `protocol.md`. The base is main
 `dc7b031`, run as its own binary on the same scenario files.
 
 The question, from the user's decision of 2026-10-22: there are no

@@ -49,10 +49,10 @@ bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
 docs/         design notes, research, decisions.
 ```
 
-Every node runs the same protocol, and its role follows its power. A
-relay, on USB or another supply, forwards a message to the neighbour
-closest to the destination's position, backtracks around gaps, and
-expects an acknowledgement from every hop. A sleepy node, on battery,
+Every node runs the same protocol, and what it does follows its power
+and its motion. A relay, a node on USB or another supply, forwards a
+message to the neighbour closest to the destination's position,
+backtracks around gaps, and expects an acknowledgement from every hop. A sleepy node, on battery,
 heartbeats rarely to the relay it has chosen, which holds its messages
 until it listens. The protocol core has no external routing dependency (roadmap D1).
 
