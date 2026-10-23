@@ -885,7 +885,7 @@ the same full channels: going there at once undoes what the ban gains
 (roadmap D42). Two silences in a row demote the neighbour, so a link
 that is really gone costs one ban and one more hand-over before the
 message moves on. A neighbour that is gone is tried again after each ban
-until its entry expires ([neighbour table](#neighbour-table)).
+until its entry expires; [bounds](#bounds) adds up what that costs.
 
 **A node's own message waits on the same ladder.** Offered again every
 1.56 s, a node's own application's message would put a full frame on the
@@ -1077,10 +1077,9 @@ from costing every message its attempts while another route exists; it
 should not drop a message whose only route is that link. Two hand-overs
 lost to collisions demote a neighbour that works, and on a line it is
 the only route, so without the last resort every message would be
-dropped until the demotion lapsed, six and a half minutes. A neighbour
-that is really gone costs its relay a bounded number of failed
-hand-overs, whatever the messages, until its entry expires
-([bounds](#bounds); roadmap D25, D36, D42).
+dropped until the demotion lapsed, six and a half minutes. What a
+neighbour that is really gone costs is in [bounds](#bounds) (roadmap
+D25, D36, D42).
 
 Nothing requires the next hop to be closer to the destination than the
 relay itself. After the message comes back, the best neighbour left is
@@ -1183,10 +1182,10 @@ In every case the relay records the packet's sender and count as the
 last packet, raises its highest count if the packet's is higher, and
 updates its last-active time.
 
-Only cases 1, 3 and 4 end a packet without acting on it, and in each the
+Cases 1, 3 and 4 end a packet without acting on it, and in each the
 message lives on: it has arrived, the packet was acted on when it first
-came, or another copy goes on. So no case ends the last copy of a
-message; only its time can ([time to live](#time-to-live)). Nothing is
+came, or another copy goes on, so no case ends the last copy of a
+message ([overload waits](#overload-waits) lists what does). Nothing is
 sent straight back: a relay that has had the message goes on from where
 its own search stands, and its sender, if not tried, stays a candidate
 and gets the message back in turn. A return goes from a relay to its
@@ -1400,17 +1399,16 @@ What breaks it:
   neighbour at most once per record, in at most 3 attempts. A neighbour
   that does not answer costs 3 attempts each time it is offered a
   message, and each failure bans it for every message, the ban doubling
-  up to 61 s ([hand-over](#hand-over)). So a dead neighbour costs a relay at most 11
+  up to 61 s ([bans](#bans)). So a dead neighbour costs a relay at most 11
   failed hand-overs, 33 frames, whatever the messages, before it leaves
   the table 390 s after its last heartbeat or ACK: the bans 1.56, 3.11, 6.2,
   12.5, 24.9 and 49.8 s add up to 98 s, and 61 s bans fill the rest.
   After two failures it is a last resort ([neighbour table](#neighbour-table)).
-- **Life:** at most the delivery TTL from a node taking it from the
-  application to its owner ([time to live](#time-to-live)), whatever its search and
-  however long it waits, then in the owner's delivery queue until its
-  node takes it or, a TTL or more after it came, a newer message needs
-  its place ([delivery queue](#delivery-queue)). So it holds a place in a send queue no
-  longer than a TTL.
+- **Life:** at most the delivery TTL in the network, whatever its
+  search and waits ([time to live](#time-to-live)), so no longer than
+  that in a send queue, then in its owner's delivery queue until its node
+  takes it or, once stale, its place is needed
+  ([delivery queue](#delivery-queue)).
 - **Cost of a search:** each link between two relays costs at most two
   hand-overs that succeed from each end: a send and a return. In the
   usual case it is two in all; a split adds a round trip on the link
