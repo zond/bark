@@ -2182,13 +2182,7 @@ firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
 unknown type (roadmap D70; 0xF before).
 ```
 
-The heartbeat's flags tell others how to treat its sender. They are in
-its type, since `aux` holds the home channel in all four of its bits and
-the position fills the four bytes after the ID. The three flags take the
-type's three low bits, and 0x8 is the one base whose eight codes, 0x8 to
-0xF, miss the ACK, the NACK and DATA; the bench frames are at 0x6, which
-no flag reaches. A heartbeat does not say where its sender's position
-came from: no receiver needs to know.
+The heartbeat's flags tell others how to treat its sender:
 
 - **Sleepy**, bit 0: "I sleep. Reach me cheaply in my window after my
   beat, or at any time with the long preamble." ([nodes](#nodes))
@@ -2196,6 +2190,15 @@ came from: no receiver needs to know.
   neither sleepy nor carried. If you are one, tell me." ([nodes](#nodes))
 - **Carried**, bit 2: "I move. I take each GPS fix and hold mail for
   nobody." ([nodes](#nodes))
+
+A heartbeat does not say where its sender's position came from: no
+receiver needs to know.
+
+*Why in the type.* `aux` holds the home channel in all four of its bits
+and the position fills the four bytes after the ID. The three flags take
+the type's three low bits, and 0x8 is the one base whose eight codes,
+0x8 to 0xF, miss the ACK, the NACK and DATA; the bench frames are at
+0x6, which no flag reaches.
 
 The flags say what the node is, not what it asks, so each is set on its
 own, except that anchorless needs sleepy: a node that listens all the
@@ -2219,12 +2222,12 @@ sender's address is inside it, encrypted.
 ### Positions on the wire
 
 A position is WGS-84 latitude and longitude in fixed point, 25 + 26 bits
-and 5 spare in 7 bytes, ≈0.6 m, the same everywhere on Earth: one firmware
-and one
-app, with no per-deployment origin. A 1 m grid over the Earth's
-5.1 × 10¹⁴ m² needs 49 bits, so 51 bits is within 2 bits of the minimum;
-decimetres would need 56. Plain fixed point keeps the distance
-arithmetic trivial.
+and 5 spare in 7 bytes, ≈0.6 m, the same everywhere on Earth: one
+firmware and one app, with no per-deployment origin.
+
+*Why that size.* A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs 49
+bits, so 51 bits is within 2 bits of the minimum; decimetres would need
+56. Plain fixed point keeps the distance arithmetic trivial.
 
 Routing needs distances, not coordinates: each node converts every
 position it handles into metres on a flat plane centred on itself,
@@ -2235,15 +2238,17 @@ to reorder only near-ties between candidate hops.
 
 **Short position.** The heartbeat carries a node's position in 4 bytes:
 the low 16 bits of its latitude count, then the low 16 bits of its
-longitude count, big-endian. One count is 180° / 2²⁵ ≈ 0.6 m, so the low
-16 bits repeat every 65 536 counts: 39 km of latitude and
-39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
-hearing radius (≈3 km, [physical layer](#physical-layer)). A receiver
-rebuilds the full position as the one candidate within half a period of
-its own on each axis. That holds to latitudes near 80°, where the
-east-west period shrinks toward the hearing radius. DATA `dst_pos` stays
-7 bytes because in a large city a node may be more than half a period
-from the destination (roadmap D14).
+longitude count, big-endian. A receiver rebuilds the full position as
+the one candidate within half a period of its own on each axis. DATA
+`dst_pos` stays 7 bytes because in a large city a node may be more than
+half a period from the destination (roadmap D14).
+
+*Why the short position is unambiguous.* One count is 180° / 2²⁵ ≈
+0.6 m, so the low 16 bits repeat every 65 536 counts: 39 km of latitude
+and 39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
+hearing radius (≈3 km, [physical layer](#physical-layer)). That holds to
+latitudes near 80°, where the east-west period shrinks toward the
+hearing radius.
 
 ---
 
