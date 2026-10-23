@@ -366,7 +366,7 @@ fn two_relays_at_one_position_are_two_nodes() {
 
 #[test]
 fn duty_budget_defers_heartbeats_and_never_drops_them() {
-    // Heartbeats every 50 ms ask for 11.84 / 50 ≈ 24 % of airtime, over the
+    // Heartbeats every 50 ms ask for 13.12 / 50 ≈ 26 % of airtime, over the
     // 10 % cap. The harness panics if any hour holds more than 360 s. B
     // watches A throughout.
     let fast = Config {

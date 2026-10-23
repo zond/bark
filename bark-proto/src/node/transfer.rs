@@ -487,8 +487,8 @@ mod tests {
     fn ack(id: u32) -> Ack {
         Ack {
             msg_id: MsgId(id),
-            from: NodeId([1, 2, 3, 4]),
-            to: NodeId([5, 6, 7, 8]),
+            from: NodeId([1, 2, 3, 4, 5, 6]),
+            to: NodeId([7, 8, 9, 10, 11, 12]),
             refused: false,
             wait: 0,
         }
@@ -543,13 +543,13 @@ mod tests {
         assert!(!t.acked(ack(8)));
         assert!(
             !t.acked(Ack {
-                from: NodeId([9; 4]),
+                from: NodeId([9; 6]),
                 ..ack(7)
             }),
             "same message, other receiver (D19)"
         );
         let to_another = Ack {
-            to: NodeId([9; 4]),
+            to: NodeId([9; 6]),
             ..ack(7)
         };
         assert!(

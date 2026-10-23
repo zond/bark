@@ -66,10 +66,13 @@ const USB_PACKET: u16 = 64;
 /// here; once it is full, new lines are dropped, so the banner survives.
 const LOG_BUFFER: usize = 2048;
 
-/// Heartbeat airtime as the core computes it (8-byte frame, minimum SF5
+/// Heartbeat airtime as the core computes it (the heartbeat frame, minimum SF5
 /// preamble). A compile-time call into `bark-proto` for the target.
-const HEARTBEAT_AIRTIME_US: u64 =
-    bark_proto::radio::time_on_air(8, bark_proto::radio::MIN_PREAMBLE_SYMBOLS).as_micros();
+const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
+    bark_proto::wire::HEARTBEAT_LEN as u8,
+    bark_proto::radio::MIN_PREAMBLE_SYMBOLS,
+)
+.as_micros();
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {

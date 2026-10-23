@@ -221,7 +221,7 @@ impl NodeState {
 
 /// The last few heartbeats to reach a node: when each was on the air, its
 /// channel, and whether a sleepy node sent it. A frame lasts at most a full
-/// frame's 139 ms and a heartbeat 11.84 ms, so eight cover what a frame can
+/// frame's 139 ms and a heartbeat 13.12 ms, so eight cover what a frame can
 /// overlap at any heartbeat rate a node hears.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BeatRing {
@@ -651,7 +651,7 @@ pub struct Sim {
     /// (`metrics::Carried::delivered_by`).
     delivered_by: [u64; 4],
     /// Relay node by ID, as [`key`] gives it.
-    pub(crate) relay_index: HashMap<u32, u32>,
+    pub(crate) relay_index: HashMap<u64, u32>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
@@ -713,9 +713,9 @@ pub struct Sim {
     /// Per leaf, when it came back into reach, until a relay hears it.
     back_at: Vec<Option<Instant>>,
     /// Leaf ID to node index, for the leaves that go dark.
-    leaf_nodes: HashMap<[u8; 4], u32>,
+    leaf_nodes: HashMap<[u8; NodeId::LEN], u32>,
     /// Sleepy node by ID, as [`key`] gives it.
-    pub(crate) sleepy_index: HashMap<u32, u32>,
+    pub(crate) sleepy_index: HashMap<u64, u32>,
     /// DATA on air addressed to a sleepy node: key to the node, what the
     /// frame found at its start, and the message and its holder.
     pub(crate) to_sleepy: HashMap<u64, ToSleepy>,
@@ -741,14 +741,14 @@ pub struct Sim {
     offered: HashMap<u32, Offer>,
     /// The count of the last DATA of each message to each node, to read
     /// the count a NACK answers.
-    pub(crate) data_hops: HashMap<(u32, u32), u8>,
+    pub(crate) data_hops: HashMap<(u32, u64), u8>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,
     /// Messages queued, by holder and destination node's ID, for counting
     /// the beats the holder hears.
-    queued_for: HashMap<(u32, u32), Vec<u32>>,
+    queued_for: HashMap<(u32, u64), Vec<u32>>,
     /// The holders of messages queued for each node, by the node's ID.
-    holders_of: HashMap<u32, Vec<u32>>,
+    holders_of: HashMap<u64, Vec<u32>>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
     pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
@@ -783,13 +783,13 @@ pub struct Sim {
     pub(crate) reach_of: HashMap<u64, (usize, usize)>,
     /// DATA on air addressed to a relay: key to the ACK that would answer
     /// it, message ID and `to`.
-    pub(crate) answer_of: HashMap<u64, (u32, u32)>,
+    pub(crate) answer_of: HashMap<u64, (u32, u64)>,
     /// DATA a relay received and has not answered yet: (relay, message,
     /// `to`) to the answer's deadline and whether a leaf sent it.
-    pub(crate) awaiting: HashMap<(u32, u32, u32), (Instant, bool)>,
+    pub(crate) awaiting: HashMap<(u32, u32, u64), (Instant, bool)>,
     /// The relay DATA a relay is being handed now: (relay, message,
     /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
-    rx_data: Option<(u32, u32, u32, u8)>,
+    rx_data: Option<(u32, u32, u64, u8)>,
     /// (relay, message) for every record a relay has kept, for
     /// [`crate::metrics::RecordsLost`].
     recorded: std::collections::HashSet<(u32, u32)>,
@@ -809,10 +809,13 @@ pub struct Sim {
 }
 
 /// The ID the simulator gives node `i`: `i + 1` times an odd constant,
-/// a bijection on 32 bits, so every node has its own and none is zero,
-/// and the IDs spread over the range as random ones would.
+/// a bijection on the 48 bits of an ID, so every node has its own and
+/// none is zero, and the IDs spread over the range as random ones would.
+/// The constant is 2⁴⁸ over the golden ratio, made odd; being odd, it
+/// also gives 256 nodes in a row 256 different last bytes, which set
+/// their heartbeat intervals (spec "Heartbeat").
 fn node_id(i: u32) -> NodeId {
-    NodeId((i + 1).wrapping_mul(0x9e37_79b1).to_be_bytes())
+    NodeId::from_u64((i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4b))
 }
 
 /// The 45° sector of the bearing to `p`, north first and clockwise.
@@ -828,23 +831,23 @@ pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
 }
 
 /// A node ID as a map key.
-pub(crate) fn key(id: NodeId) -> u32 {
-    u32::from_be_bytes(id.0)
+pub(crate) fn key(id: NodeId) -> u64 {
+    id.to_u64()
 }
 
 /// `n` node IDs drawn from the run's seed, each node from its own stream.
 /// A draw that is zero, which names no node, or another node's ID is drawn
 /// again: the simulator keys its own tables by ID. Among the 20 000 nodes
-/// of a domain two share an ID about one run in twenty.
+/// of a domain two share an ID about one run in a million and a half.
 fn random_ids(seed: u64, n: usize) -> Vec<NodeId> {
     let mut seen = std::collections::HashSet::with_capacity(n);
     (0..n as u64)
         .map(|i| {
             let mut r = Stream::new(seed, Purpose::NodeId, i);
             loop {
-                let id = r.next_u64() as u32;
-                if id != 0 && seen.insert(id) {
-                    return NodeId(id.to_be_bytes());
+                let id = NodeId::from_u64(r.next_u64());
+                if id != NodeId::NONE && seen.insert(id) {
+                    return id;
                 }
             }
         })
@@ -2696,7 +2699,7 @@ impl Sim {
 
     /// A delivery by `holder` of `msg` to the node `to` waits for its next
     /// beat: count it by its window and its first DATA.
-    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u32, tried: bool) {
+    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u64, tried: bool) {
         let first = self.first_try.remove(&(holder, msg));
         let Some(&n) = self.sleepy_index.get(&to) else {
             return;
@@ -3208,7 +3211,7 @@ impl Sim {
     }
 
     /// The holders with messages for the node `id` not yet accounted for.
-    pub(crate) fn holders_waiting(&mut self, id: u32) -> Vec<u32> {
+    pub(crate) fn holders_waiting(&mut self, id: u64) -> Vec<u32> {
         let Some(holders) = self.holders_of.get_mut(&id) else {
             return Vec::new();
         };
@@ -3224,7 +3227,7 @@ impl Sim {
 
     /// Count a beat of the node `id` with `fate` at `holder` for each
     /// message the holder holds for it.
-    pub(crate) fn watch_note(&mut self, holder: u32, id: u32, fate: usize, elsewhere: bool) {
+    pub(crate) fn watch_note(&mut self, holder: u32, id: u64, fate: usize, elsewhere: bool) {
         if let Some(tags) = self.queued_for.get(&(holder, id)) {
             for &t in tags {
                 let o = &mut self.origins[t as usize];
@@ -4272,7 +4275,7 @@ mod tests {
         let pairs = |ids: &[NodeId]| {
             let mut count = [0u64; 256];
             for id in ids {
-                count[id.0[3] as usize] += 1;
+                count[id.last() as usize] += 1;
             }
             count
                 .iter()

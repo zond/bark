@@ -505,7 +505,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut rng = Rng::new(seed);
         let mut node_id = config.node_id;
         while node_id == NodeId::NONE {
-            node_id = NodeId((rng.next_u64() as u32).to_be_bytes());
+            node_id = NodeId::from_u64(rng.next_u64());
         }
         let mut config = config;
         // A fixed node stands where it stood before the reboot (spec
@@ -2126,16 +2126,16 @@ mod tests {
 
     /// The ID a test gives the relay heard at `p`.
     fn id_of(p: Position) -> NodeId {
-        NodeId(p.short().0.to_be_bytes())
+        NodeId::from_u64(p.short().0 as u64)
     }
 
     /// The ID numbered `n`.
     fn name(n: u32) -> NodeId {
-        NodeId(n.to_be_bytes())
+        NodeId::from_u64(n as u64)
     }
 
     /// The ID of a node no test builds.
-    const NOBODY: NodeId = NodeId([9; 4]);
+    const NOBODY: NodeId = NodeId([9; 6]);
 
     #[test]
     fn sizes() {
@@ -2413,7 +2413,7 @@ mod tests {
         drive(&mut used, &mut now, Instant::ZERO + Duration::from_secs(30));
         let send = AppCommand::Send {
             dst_pos: config.position,
-            dst_id: NodeId([1; 4]),
+            dst_id: NodeId([1; 6]),
             payload: b"queued",
         };
         used.handle(Event::App(send), now, &mut |_| {});
@@ -2460,7 +2460,7 @@ mod tests {
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         assert!(!r.booting());
         now = Instant::ZERO + Duration::from_secs(10);
-        let node = NodeId([7; 4]);
+        let node = NodeId([7; 6]);
         r.heard.heard(node, r.home, -80, now);
         // Short of the DATA and the reply reserve by what the bucket refills
         // well within the window.
@@ -2542,7 +2542,7 @@ mod tests {
         let mut now = Instant::ZERO;
         drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
         now = Instant::ZERO + Duration::from_secs(10);
-        let node = NodeId([7; 4]);
+        let node = NodeId([7; 6]);
         r.heard.heard(node, r.home, -80, now);
         let dst = r.config.position;
         // Forwards waiting for a ban, a quarter of the bucket's depth.
@@ -2738,7 +2738,7 @@ mod tests {
         let send = |r: &mut Relay, k: u8, now| {
             let cmd = AppCommand::Send {
                 dst_pos: me,
-                dst_id: NodeId([1; 4]),
+                dst_id: NodeId([1; 6]),
                 payload: &[k],
             };
             r.handle(Event::App(cmd), now, &mut |_| {});

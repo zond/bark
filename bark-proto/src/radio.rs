@@ -157,12 +157,12 @@ mod tests {
 
     #[test]
     fn heartbeat_airtime() {
-        // 8-byte heartbeat, 12-symbol preamble. Payload bits:
-        // 8·8 + 16 − 4·5 + 8 = 68 → ceil(68 / 20) = 4 → ×5 = 20 symbols.
-        // Total 12 + 6.25 + 8 + 20 = 46.25 symbols × 256 µs = 11.84 ms,
-        // which is the "≈12 ms" of spec "Heartbeat".
-        let t = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
-        assert_eq!(t.as_micros(), 11_840);
+        // 11-byte heartbeat, 12-symbol preamble. Payload bits:
+        // 8·11 + 16 − 4·5 + 8 = 92 → ceil(92 / 20) = 5 → ×5 = 25 symbols.
+        // Total 12 + 6.25 + 8 + 25 = 51.25 symbols × 256 µs = 13.12 ms,
+        // the 13.1 ms of spec "Heartbeat".
+        let t = time_on_air(crate::wire::HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        assert_eq!(t.as_micros(), 13_120);
     }
 
     /// Symbol error of noncoherent detection of M = 32 orthogonal signals
@@ -209,10 +209,11 @@ mod tests {
             (full - FULL_FRAME_ABOVE_SENSITIVITY_DB as f64).abs() < 0.005,
             "{full}"
         );
-        // An 8-byte heartbeat is lost 1 % of the time 0.9 dB lower, and
-        // half the time 3.2 dB lower.
-        assert!((full - above(8, 0.01) - 0.90).abs() < 0.01);
-        assert!((full - above(8, 0.5) - 3.23).abs() < 0.01);
+        // An 11-byte heartbeat is lost 1 % of the time 0.86 dB lower, and
+        // half the time 3.16 dB lower.
+        let hb = crate::wire::HEARTBEAT_LEN as u8;
+        assert!((full - above(hb, 0.01) - 0.86).abs() < 0.01);
+        assert!((full - above(hb, 0.5) - 3.16).abs() < 0.01);
         let rssi = full_frame_rssi_above_noise_db();
         assert!((rssi - 4.09).abs() < 0.01, "{rssi}");
     }

@@ -22,17 +22,17 @@
 //! each entry waiting out one ban (spec "Bans", roadmap D31):
 //!
 //! ```text
-//! (40 + 254) places × 1.56 s = 457.3 s
+//! (39 + 254) places × 1.57 s = 459.6 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (spec "Duty cycle cap"): each costs at least an ACK (13 bytes, 14.40 ms) and one
-//! DATA packet with no payload (22 bytes, 18.24 ms), together 32.64 ms;
-//! any 457.3 s carries at most a full bucket and its refill,
-//! 6 s + 9.83 % × 457.3 s = 50.97 s of airtime ([`most_on_air`]), and
-//! ⌊50.97 s / 32.64 ms⌋ = 1561. The records of held messages are not
+//! cycle (spec "Duty cycle cap"): each costs at least an ACK (17 bytes, 15.68 ms) and one
+//! DATA packet with no payload (28 bytes, 22.08 ms), together 37.76 ms;
+//! any 459.6 s carries at most a full bucket and its refill,
+//! 6 s + 9.83 % × 459.6 s = 51.19 s of airtime ([`most_on_air`]), and
+//! ⌊51.19 s / 37.76 ms⌋ = 1355. The records of held messages are not
 //! evicted and may be older than that, so the table has room for them on
-//! top: 1561 + 294 = 1855.
+//! top: 1355 + 293 = 1648.
 //!
 //! # The tried set
 //!
@@ -84,7 +84,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1855);
+const _: () = assert!(RECORDS == 1648);
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -356,29 +356,29 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 294 places × one ban, 1.56 s.
-        assert_eq!(DRAIN, BAN.mul(294));
-        assert_eq!(DRAIN.as_millis(), 457_324);
-        assert_eq!(HELD, 294);
-        assert_eq!(RECORDS, 1561 + 294);
-        assert_eq!(core::mem::size_of::<Record>(), 32);
+        // 293 places × one ban, 1.57 s.
+        assert_eq!(DRAIN, BAN.mul(293));
+        assert_eq!(DRAIN.as_millis(), 459_583);
+        assert_eq!(HELD, 293);
+        assert_eq!(RECORDS, 1355 + 293);
+        assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 
     #[test]
     fn record_fields() {
-        let p = NodeId([0, 0, 0xab, 0xcd]);
+        let p = NodeId([0, 0, 0, 0, 0xab, 0xcd]);
         let mut r = Record::new(MsgId(7), Some((p, ch(4))), 3, at(0));
         assert_eq!(r.parent(), Some((p, ch(4))));
         assert!(!r.arrived());
         assert!(r.repeats(p, 3), "the packet that created it, again");
-        assert!(!r.repeats(p, 2) && !r.repeats(NodeId([5; 4]), 3));
-        r.received(NodeId([5; 4]), 2, at(1));
+        assert!(!r.repeats(p, 2) && !r.repeats(NodeId([5; 6]), 3));
+        r.received(NodeId([5; 6]), 2, at(1));
         assert!(
-            r.repeats(NodeId([5; 4]), 2) && !r.repeats(p, 3),
+            r.repeats(NodeId([5; 6]), 2) && !r.repeats(p, 3),
             "the last only"
         );
         assert_eq!((r.highest_hops(), r.last_active()), (3, at(1)));
-        r.received(NodeId([5; 4]), 9, at(2));
+        r.received(NodeId([5; 6]), 9, at(2));
         assert_eq!(r.highest_hops(), 9);
         r.handed_over(12);
         r.handed_over(10);
@@ -432,7 +432,7 @@ mod tests {
         // Received counts as touched too.
         t.get_mut(MsgId(3))
             .unwrap()
-            .received(NodeId([1; 4]), 1, now);
+            .received(NodeId([1; 6]), 1, now);
         let i = t.place(|_| false).unwrap();
         assert_eq!(
             t.put(i, Record::new(MsgId(10_001), None, 0, now))

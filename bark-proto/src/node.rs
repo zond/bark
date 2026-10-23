@@ -54,7 +54,7 @@ pub struct Config {
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
     /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,
-    /// 152.96 ms; `tables::RETRY_BACKOFF`).
+    /// 154.24 ms; `tables::RETRY_BACKOFF`).
     pub retry_backoff: Duration,
     /// Failed transfers before a neighbour is demoted (spec "Neighbour table": 2).
     pub demote_after_failures: u8,
@@ -126,9 +126,9 @@ impl Default for Config {
 /// The heartbeat intervals a node can have: 256, one ID byte's worth, over
 /// the range of spec "Heartbeat", 39.06 ms apart (spec "Heartbeat"). Two
 /// nodes whose intervals differ by at least two heartbeats' airtime,
-/// 2 × 11.84 ms, slide past each other by more than an overlap at every
+/// 2 × 13.12 ms, slide past each other by more than an overlap at every
 /// heartbeat, so that two heartbeats of theirs meet at most once in a row;
-/// 10 s / 23.68 ms = 422 intervals would do, and the largest power of two
+/// 10 s / 26.24 ms = 381 intervals would do, and the largest power of two
 /// below it is 256.
 pub const INTERVALS: u64 = 256;
 
@@ -139,7 +139,7 @@ pub const INTERVALS: u64 = 256;
 pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
     let min = config.heartbeat_min.as_micros();
     let span = config.heartbeat_max.as_micros().saturating_sub(min);
-    Duration::from_micros(min + span * id.0[3] as u64 / INTERVALS)
+    Duration::from_micros(min + span * id.last() as u64 / INTERVALS)
 }
 
 /// The longest a heartbeat waits behind its slot: a hand-over attempt it

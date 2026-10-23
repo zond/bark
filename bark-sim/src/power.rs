@@ -25,7 +25,7 @@ pub(crate) struct PowerModel {
     /// Per node: whether it switches, at random or with its walks.
     switches: Vec<bool>,
     /// Switching node by its ID's key.
-    index: HashMap<u32, u32>,
+    index: HashMap<u64, u32>,
     /// The texts held at the end of a grace after the settle time, and
     /// their fate so far, an index of `PowerMetrics::held`.
     held: HashMap<u32, Option<usize>>,

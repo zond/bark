@@ -720,7 +720,7 @@ mod tests {
     }
 
     fn id(i: i32) -> NodeId {
-        NodeId((i as u32 + 1).to_be_bytes())
+        NodeId::from_u64(i as u64 + 1)
     }
 
     fn pos(i: i32) -> Position {

@@ -262,7 +262,7 @@ mod tests {
     }
 
     fn leaf(i: u8) -> NodeId {
-        NodeId([i; 4])
+        NodeId([i; 6])
     }
 
     fn msg(id: u32, to: u8, t: u64) -> Queued {

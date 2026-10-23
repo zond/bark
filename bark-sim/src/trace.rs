@@ -18,7 +18,7 @@ pub(crate) struct Names {
     /// Node label by index.
     pub labels: Vec<String>,
     /// Node by ID.
-    pub ids: HashMap<[u8; 4], u32>,
+    pub ids: HashMap<[u8; NodeId::LEN], u32>,
 }
 
 impl Names {

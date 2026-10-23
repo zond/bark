@@ -360,7 +360,7 @@ impl Sim {
     /// A beat of the sleepy node `id` reaches the air in `slot`: note, for
     /// each holder of messages for it, what is already known of its fate
     /// there (`crate::sim::HolderWatch`).
-    fn watch_beat(&mut self, slot: u32, id: u32, anchorless: bool) {
+    fn watch_beat(&mut self, slot: u32, id: u64, anchorless: bool) {
         use crate::sim::beat_fate as f;
         let holders = self.holders_waiting(id);
         if holders.is_empty() {

@@ -49,7 +49,7 @@ const AT_HOME: usize = 1;
 const AT_FLAGS: usize = 2;
 const AT_PLACE: usize = 3;
 const AT_ANCHOR_ID: usize = AT_PLACE + Position::WIRE_LEN;
-const AT_ANCHOR_POS: usize = AT_ANCHOR_ID + 4;
+const AT_ANCHOR_POS: usize = AT_ANCHOR_ID + NodeId::LEN;
 const AT_CHECK: usize = RECORD_LEN - 4;
 const _: () = assert!(AT_ANCHOR_POS + Position::WIRE_LEN <= AT_CHECK);
 
@@ -96,14 +96,13 @@ impl Stored {
             Position::decode(&b)
         };
         let flags = r[AT_FLAGS];
-        let anchor = (flags & FLAG_ANCHOR != 0).then(|| Anchor {
-            id: NodeId([
-                r[AT_ANCHOR_ID],
-                r[AT_ANCHOR_ID + 1],
-                r[AT_ANCHOR_ID + 2],
-                r[AT_ANCHOR_ID + 3],
-            ]),
-            position: pos(AT_ANCHOR_POS),
+        let anchor = (flags & FLAG_ANCHOR != 0).then(|| {
+            let mut id = [0u8; NodeId::LEN];
+            id.copy_from_slice(&r[AT_ANCHOR_ID..AT_ANCHOR_POS]);
+            Anchor {
+                id: NodeId(id),
+                position: pos(AT_ANCHOR_POS),
+            }
         });
         Some(Stored {
             home: Channel::new(r[AT_HOME])?,
@@ -124,7 +123,7 @@ mod tests {
             place: Position::from_degrees(50.45, 30.52),
             carried: true,
             anchor: Some(Anchor {
-                id: NodeId([1, 2, 3, 4]),
+                id: NodeId([1, 2, 3, 4, 5, 6]),
                 position: Position::from_degrees(50.46, 30.51),
             }),
         }

@@ -241,7 +241,7 @@ fn a_carried_node_queues_mail_for_nobody() {
             h.run_until(h.now + secs(400), |_| false);
         }
         let dst = h.nodes[r].core.config().position;
-        let id = send(&mut h, o, dst, NodeId([9; 4]), b"for a sleepy node");
+        let id = send(&mut h, o, dst, NodeId([9; 6]), b"for a sleepy node");
         h.run_for(secs(30));
         let queued = h.nodes[r]
             .traces

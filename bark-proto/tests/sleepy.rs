@@ -474,7 +474,7 @@ fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
     let mut h = Harness::powered(vec![node(0.0, true, 41)]);
     h.run_until(at(400), |_| false);
     let text = b"nobody there";
-    let (dst_pos, dst_id) = (pos(500.0, 0.0), NodeId([9; 4]));
+    let (dst_pos, dst_id) = (pos(500.0, 0.0), NodeId([9; 6]));
     h.command(
         0,
         AppCommand::Send {

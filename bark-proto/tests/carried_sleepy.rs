@@ -113,14 +113,22 @@ fn delivered_at(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Instant> {
 #[test]
 fn the_four_combinations_heartbeat_their_flags() {
     let (r, f, s, p, l, g) = (0, 1, 2, 3, 4, 5);
-    let mut h = Harness::powered(vec![
-        node(0.0, true, 1),
-        node(300.0, true, 2),
-        node(20.0, false, 3),
-        node(30.0, false, 4),
-        node(5000.0, false, 5),
-        node(-300.0, true, 6),
-    ]);
+    // Built one by one on the heap: six nodes at once overflow a debug
+    // test thread's stack.
+    let nodes = [
+        (0.0, true),
+        (300.0, true),
+        (20.0, false),
+        (30.0, false),
+        (5000.0, false),
+        (-300.0, true),
+    ];
+    let mut h = Harness::powered(
+        (1..)
+            .zip(nodes)
+            .map(|(seed, (east, external))| node(east, external, seed))
+            .collect(),
+    );
     // Without G, R would know no relay that holds mail once F is carried,
     // and say so with the anchorless flag (spec "Heartbeat").
     h.link(r, g);

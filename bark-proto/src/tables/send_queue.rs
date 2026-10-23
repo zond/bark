@@ -4,11 +4,11 @@
 //! **Regular room.** A relay takes a packet into it only if the airtime of
 //! everything queued, that packet included, fits in its duty bucket as it
 //! stands (spec "Receiving DATA", roadmap D29). Its length follows: the bucket's depth,
-//! 6 s, over the time of one full frame and its ACK, `138.56 + 14.40 =
-//! 152.96 ms`: ⌈39.2⌉ = 40. Each packet taken also costs the ACK that
+//! 6 s, over the time of one full frame and its ACK, `138.56 + 15.68 =
+//! 154.24 ms`: ⌈38.9⌉ = 39. Each packet taken also costs the ACK that
 //! takes it, so from a full bucket with the reply reserve left in at most
 //! 37 full frames fit, and for full frames the bucket binds first. Short
-//! frames fill the 40 places first: forty hand-overs of them still go out
+//! frames fill the 39 places first: 39 hand-overs of them still go out
 //! in a few seconds.
 //!
 //! **Hop places.** Beyond the regular room there is one place for each
@@ -57,7 +57,7 @@ pub const fn queue_for(depth: Duration) -> usize {
 /// Queue length for the design's bucket (spec "Duty cycle cap").
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
-const _: () = assert!(SEND_QUEUE == 40);
+const _: () = assert!(SEND_QUEUE == 39);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
@@ -450,10 +450,10 @@ mod tests {
         use crate::wire::Data;
         let d = Data {
             sender_home: Channel::new(3).unwrap(),
-            dst_hop: NodeId([1; 4]),
-            src_hop: NodeId([2; 4]),
+            dst_hop: NodeId([1; 6]),
+            src_hop: NodeId([2; 6]),
             dst_pos: crate::position::Position { lat: 0, lon: 0 },
-            dst_id: NodeId([3; 4]),
+            dst_id: NodeId([3; 6]),
             hops,
             time_left: 1,
             payload: &[tag],

@@ -611,7 +611,7 @@ fn a_relay_runs_through_the_loop() {
         anchorless: false,
         carried: false,
         home: ch(6),
-        id: bark_proto::NodeId([6; 4]),
+        id: bark_proto::NodeId([6; 6]),
         short: other.short(),
     });
     let mut buf = [0u8; MAX_FRAME];

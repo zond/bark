@@ -3,7 +3,7 @@
 //! frames (roadmap D46, D49, D58, D70).
 //!
 //! The first byte of every packet is `type:4 | aux:4`. Every node has a
-//! 4-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
+//! 6-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
 //! `src_hop`, ACK `from` and `to`) carry it. DATA `dst_pos` locates a place
 //! and is the 7-byte form of [`Position::encode`]; the heartbeat carries
 //! the sender's position in the 4-byte short form of [`ShortName`], which
@@ -12,15 +12,11 @@
 //! lives in the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT 0x8 to 0xF first id pos                                = 9
-//! ACK       0x3      first msg from to                              = 13
+//! HEARTBEAT 0x8 to 0xF first id pos                                = 11
+//! ACK       0x3      first msg from to                              = 17
 //! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
-//!                    time_left payload                              = 22 + payload
+//!                    time_left payload                              = 28 + payload
 //! ```
-//!
-//! A 9-byte heartbeat is as long on air as an 8-byte one, 20 payload
-//! symbols at SF5 (`radio::time_on_air`), so naming the sender costs it no
-//! airtime.
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
 //! refusal is for this hop only (spec "Receiving DATA"); the network still sends no
@@ -32,16 +28,17 @@
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
 //!
-//! - Short positions and message IDs are big-endian; a node ID is four
+//! - Short positions and message IDs are big-endian; a node ID is six
 //!   opaque bytes in order.
-//! - The payload is at most [`MAX_PAYLOAD`] = 233 bytes, what a frame holds
+//! - The payload is at most [`MAX_PAYLOAD`] = 227 bytes, what a frame holds
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - An ACK takes the offer; a NACK, type 0x7, refuses it and adds a byte
 //!   for the wait it asks for, in whole bans rounded down
-//!   (`tables/budget.rs`). At SF5 the 14th byte costs no airtime. The
+//!   (`tables/budget.rs`). At SF5 the 18th byte takes one more block of
+//!   symbols, 1.28 ms, so a NACK is 16.96 ms against an ACK's 15.68. The
 //!   places in a refuser's line are one ban apart and nothing acts faster
-//!   than a ban, so the unit keeps every place apart; 255 bans are 398 s,
+//!   than a ban, so the unit keeps every place apart; 255 bans are 403 s,
 //!   and a longer wait is told as that. `aux` is zero in both.
 //! - The heartbeat's type is 0x8 with flags in its three low bits: 0x1,
 //!   sleepy, 0x2, anchorless, and 0x4, carried, each with or without the
@@ -59,7 +56,7 @@
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
-use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::Channel;
 use crate::time::Duration;
 
 // Field widths.
@@ -67,7 +64,7 @@ const FIRST_LEN: usize = 1;
 const POS_LEN: usize = Position::WIRE_LEN;
 const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
-const ID_LEN: usize = 4;
+const ID_LEN: usize = NodeId::LEN;
 const HOPS_LEN: usize = 1;
 const TIME_LEFT_LEN: usize = 1;
 
@@ -117,11 +114,11 @@ pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
 const ACK_ID: usize = FIRST + FIRST_LEN;
 const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
 const ACK_TO: usize = ACK_FROM + ID_LEN;
-/// ACK length (spec "Packet formats": 13).
+/// ACK length (spec "Packet formats": 17).
 pub const ACK_LEN: usize = ACK_TO + ID_LEN;
 // NACK: an ACK and the wait, in whole TTL units.
 const NACK_WAIT: usize = ACK_LEN;
-/// NACK length (spec "Packet formats": 14).
+/// NACK length (spec "Packet formats": 18).
 pub const NACK_LEN: usize = NACK_WAIT + 1;
 
 // DATA.
@@ -131,26 +128,16 @@ const DATA_DST_POS: usize = DATA_SRC_HOP + ID_LEN;
 const DATA_DST_ID: usize = DATA_DST_POS + POS_LEN;
 const DATA_HOPS: usize = DATA_DST_ID + ID_LEN;
 const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
-/// DATA header length (spec "Packet formats": 22).
+/// DATA header length (spec "Packet formats": 28).
 pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
-/// 255 − 22 = 233 bytes.
+/// 255 − 28 = 227 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 9 && ACK_LEN == 13 && NACK_LEN == 14);
-const _: () = assert!(
-    time_on_air(NACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        == time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
-    "the wait costs the refusal no airtime"
-);
-const _: () = assert!(
-    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        == time_on_air(8, MIN_PREAMBLE_SYMBOLS).as_micros(),
-    "the node ID costs the heartbeat no airtime"
-);
-const _: () = assert!(DATA_HEADER_LEN == 22);
-const _: () = assert!(MAX_PAYLOAD == 233);
+const _: () = assert!(HEARTBEAT_LEN == 11 && ACK_LEN == 17 && NACK_LEN == 18);
+const _: () = assert!(DATA_HEADER_LEN == 28);
+const _: () = assert!(MAX_PAYLOAD == 227);
 
 /// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,6 +302,12 @@ fn get_short(b: &[u8], at: usize) -> ShortName {
     ShortName(u32::from_be_bytes(get4(b, at)))
 }
 
+fn get_id(b: &[u8], at: usize) -> NodeId {
+    let mut a = [0; ID_LEN];
+    a.copy_from_slice(&b[at..at + ID_LEN]);
+    NodeId(a)
+}
+
 fn get_msg_id(b: &[u8], at: usize) -> MsgId {
     MsgId(u32::from_be_bytes(get4(b, at)))
 }
@@ -403,7 +396,7 @@ impl<'a> Packet<'a> {
                     anchorless: kind & HEARTBEAT_ANCHORLESS != 0,
                     carried: kind & HEARTBEAT_CARRIED != 0,
                     home: channel(aux)?,
-                    id: NodeId(get4(b, HEARTBEAT_ID)),
+                    id: get_id(b, HEARTBEAT_ID),
                     short: get_short(b, HEARTBEAT_POS),
                 }))
             }
@@ -412,8 +405,8 @@ impl<'a> Packet<'a> {
                 exact(b, if refused { NACK_LEN } else { ACK_LEN })?;
                 Ok(Packet::Ack(Ack {
                     msg_id: get_msg_id(b, ACK_ID),
-                    from: NodeId(get4(b, ACK_FROM)),
-                    to: NodeId(get4(b, ACK_TO)),
+                    from: get_id(b, ACK_FROM),
+                    to: get_id(b, ACK_TO),
                     refused,
                     wait: if refused { b[NACK_WAIT] } else { 0 },
                 }))
@@ -422,10 +415,10 @@ impl<'a> Packet<'a> {
                 let payload = payload(b, DATA_HEADER_LEN)?;
                 Ok(Packet::Data(Data {
                     sender_home: channel(aux)?,
-                    dst_hop: NodeId(get4(b, DATA_DST_HOP)),
-                    src_hop: NodeId(get4(b, DATA_SRC_HOP)),
+                    dst_hop: get_id(b, DATA_DST_HOP),
+                    src_hop: get_id(b, DATA_SRC_HOP),
                     dst_pos: get_pos(b, DATA_DST_POS),
-                    dst_id: NodeId(get4(b, DATA_DST_ID)),
+                    dst_id: get_id(b, DATA_DST_ID),
                     hops: b[DATA_HOPS],
                     time_left: b[DATA_TIME_LEFT],
                     payload,
@@ -439,7 +432,7 @@ impl<'a> Packet<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radio::CHANNELS;
+    use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
     use crate::time::Duration;
     use proptest::prelude::*;
 
@@ -453,7 +446,7 @@ mod tests {
     }
 
     fn id() -> impl Strategy<Value = NodeId> {
-        any::<[u8; 4]>().prop_map(NodeId)
+        any::<[u8; ID_LEN]>().prop_map(NodeId)
     }
 
     fn msg() -> impl Strategy<Value = MsgId> {
@@ -471,10 +464,10 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
-            Packet::Heartbeat(_) => 9,
-            Packet::Ack(a) if a.refused => 14,
-            Packet::Ack(_) => 13,
-            Packet::Data(d) => 22 + d.payload.len(),
+            Packet::Heartbeat(_) => 11,
+            Packet::Ack(a) if a.refused => 18,
+            Packet::Ack(_) => 17,
+            Packet::Data(d) => 28 + d.payload.len(),
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -498,17 +491,19 @@ mod tests {
         #[test]
         fn ack_round_trips(
             msg_id in msg(),
-            from: [u8; 4],
-            to: [u8; 4],
+            from in id(),
+            to in id(),
             refused: bool,
             step: u8,
         ) {
             let wait = if refused { step } else { 0 };
-            let ack = Ack { msg_id, from: NodeId(from), to: NodeId(to), refused, wait };
+            let ack = Ack { msg_id, from, to, refused, wait };
             round_trip(&Packet::Ack(ack));
             let flipped = Ack { refused: !refused, ..ack };
             prop_assert!(ack.answers(&flipped));
-            let other = Ack { to: NodeId([!to[0], to[1], to[2], to[3]]), ..ack };
+            let mut flipped_to = to;
+            flipped_to.0[0] = !flipped_to.0[0];
+            let other = Ack { to: flipped_to, ..ack };
             prop_assert!(!ack.answers(&other), "another sender's answer");
         }
 
@@ -552,7 +547,7 @@ mod tests {
             let mut bytes = std::vec![first(kind, aux)];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 4, 5, 8, 9, 10, 20, 21, 22, 23] {
+            for cut in [0, 1, 6, 7, 10, 11, 12, 17, 18, 19, 20, 27, 28, 29] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
@@ -563,10 +558,10 @@ mod tests {
         let payload = [0xa5; MAX_PAYLOAD];
         let d = Data {
             sender_home: Channel::new(3).unwrap(),
-            dst_hop: NodeId([1; 4]),
-            src_hop: NodeId([2; 4]),
+            dst_hop: NodeId([1; ID_LEN]),
+            src_hop: NodeId([2; ID_LEN]),
             dst_pos: Position::default(),
-            dst_id: NodeId([3; 4]),
+            dst_id: NodeId([3; ID_LEN]),
             hops: 0,
             time_left: 0,
             payload: &payload,
@@ -591,21 +586,21 @@ mod tests {
         assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
         for gone in [0x10, 0x20, 0x40, 0x60] {
             assert_eq!(
-                Packet::decode(&[gone; 9]),
+                Packet::decode(&[gone; HEARTBEAT_LEN]),
                 Err(BadType(gone >> 4)),
                 "unused, or the bench frames"
             );
         }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
+        let mut hb = [0u8; HEARTBEAT_LEN + 1];
+        hb[FIRST] = 0x8d;
         assert_eq!(
-            Packet::decode(&[0x8d, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Packet::decode(&hb[..HEARTBEAT_LEN]),
             Err(ChannelOutOfRange(13))
         );
-        assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0]), Err(Short));
-        assert_eq!(
-            Packet::decode(&[0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-            Err(BadLength)
-        );
+        hb[FIRST] = 0x80;
+        assert_eq!(Packet::decode(&hb[..HEARTBEAT_LEN - 1]), Err(Short));
+        assert_eq!(Packet::decode(&hb), Err(BadLength));
         assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
         assert_eq!(Packet::decode(&[0x70; NACK_LEN - 1]), Err(Short));
@@ -633,11 +628,11 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(12).unwrap(),
-            id: NodeId([1, 2, 3, 4]),
-            short: ShortName(0x0506_0708),
+            id: NodeId([1, 2, 3, 4, 5, 6]),
+            short: ShortName(0x0708_090a),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x9c);
@@ -664,23 +659,26 @@ mod tests {
         }
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(11_840),
-            "46.25 symbols at SF5, as for 8 bytes"
+            Duration::from_micros(13_120),
+            "51.25 symbols at SF5"
         );
 
         let ack = Ack {
             msg_id: MsgId(0x0102_0304),
-            from: NodeId([5, 6, 7, 8]),
-            to: NodeId([9, 10, 11, 12]),
+            from: NodeId([5, 6, 7, 8, 9, 10]),
+            to: NodeId([11, 12, 13, 14, 15, 16]),
             refused: false,
             wait: 0,
         };
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x30, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(
+            &buf[..len],
+            &[0x30, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(14_400),
-            "51.25 symbols at SF5"
+            Duration::from_micros(15_680),
+            "61.25 symbols at SF5"
         );
         let refused = Ack {
             refused: true,
@@ -690,35 +688,35 @@ mod tests {
         let len = Packet::Ack(refused).encode(&mut buf).unwrap();
         assert_eq!(
             &buf[..len],
-            &[0x70, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 24]
+            &[0x70, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24]
         );
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(14_400),
-            "the 14th byte fits in the 13th's block of symbols"
+            Duration::from_micros(16_960),
+            "the 18th byte takes one more block of symbols"
         );
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),
-            dst_hop: NodeId([1, 2, 3, 4]),
-            src_hop: NodeId([5, 6, 7, 8]),
+            dst_hop: NodeId([1, 2, 3, 4, 5, 6]),
+            src_hop: NodeId([7, 8, 9, 10, 11, 12]),
             dst_pos: position,
-            dst_id: NodeId([9, 10, 11, 12]),
-            hops: 13,
+            dst_id: NodeId([13, 14, 15, 16, 17, 18]),
+            hops: 19,
             time_left: 14,
-            payload: &[15, 16],
+            payload: &[21, 22],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();
-        let mut want = std::vec![0x59, 1, 2, 3, 4, 5, 6, 7, 8];
+        let mut want = std::vec![0x59, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         want.extend_from_slice(&position.encode());
-        want.extend_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
+        want.extend_from_slice(&[13, 14, 15, 16, 17, 18, 19, 14, 21, 22]);
         assert_eq!(&buf[..len], &want[..]);
         let header = Data { payload: &[], ..d };
         let len = Packet::Data(header).encode(&mut buf).unwrap();
         assert_eq!(
             crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(18_240),
-            "71.25 symbols at SF5, as for 21 bytes"
+            Duration::from_micros(22_080),
+            "86.25 symbols at SF5"
         );
         assert_eq!(d.time_left(), Duration::from_secs(35));
         assert_eq!(Data::units(Duration::from_millis(600_000)), 240);

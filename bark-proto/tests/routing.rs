@@ -90,7 +90,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
 }
 
 /// The ID of a node no test builds.
-const NOBODY: NodeId = NodeId([9; 4]);
+const NOBODY: NodeId = NodeId([9; 6]);
 
 fn messages(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
     h.nodes[i]
@@ -518,7 +518,7 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
         ..Config::default()
     };
     let patient = Config {
-        hop_attempts: 20,
+        hop_attempts: 40,
         ..hasty
     };
     // One at a time: built together, they would overflow a test's stack.
@@ -589,7 +589,7 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
-    let (pq, l) = (position(&h, q), NodeId([7; 4]));
+    let (pq, l) = (position(&h, q), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
@@ -842,7 +842,7 @@ fn a_split_met_again_merges() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(x, y), (x, z), (y, p)]);
-    let (pp, l) = (position(&h, p), NodeId([7; 4]));
+    let (pp, l) = (position(&h, p), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
@@ -1226,7 +1226,7 @@ fn a_relay_with_only_banned_neighbours_waits_for_the_ban() {
         ],
         &[(p, o), (o, f)],
     );
-    let (pf, l) = (position(&h, f), NodeId([7; 4]));
+    let (pf, l) = (position(&h, f), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
@@ -1325,7 +1325,7 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
         ],
         &[(o, f)],
     );
-    let (pf, l) = (position(&h, f), NodeId([7; 4]));
+    let (pf, l) = (position(&h, f), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
             from,
@@ -1627,6 +1627,7 @@ fn the_time_left_travels_with_the_message_and_its_return() {
 /// ```
 #[test]
 fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
+    use bark_proto::store::Stored;
     use bark_proto::tables::busy::percent;
     use bark_proto::{Action, Channel, CHANNELS};
     let (p, c, y, d) = (0, 1, 2, 3);
@@ -1634,43 +1635,48 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     // Move once the home has been busy this long, at once (spec "Channel moves": 10 min
     // and up to 5 min more, which only make the test longer).
     let dwell = secs(20);
-    let topology = |c_home: u8| {
-        let fixed = |east: f64, north: f64, home: u8, seed: u64| {
-            Relay::new(
-                Config {
-                    position: pos(east, north),
-                    boot_listen: secs(5),
-                    home_override: Some(ch(home)),
-                    ..Config::default()
-                },
-                seed,
-            )
-        };
-        let mut nodes = vec![
-            Relay::new(
-                Config {
-                    position: pos(0.0, 0.0),
-                    boot_listen: secs(5),
-                    move_dwell: dwell,
-                    move_wait_max: Duration::ZERO,
-                    ..Config::default()
-                },
-                141,
-            ),
-            fixed(400.0, 100.0, c_home, 142),
-            fixed(300.0, -300.0, 5, 143),
-            fixed(1000.0, 0.0, 7, 144),
-        ];
-        for (k, east) in [200.0, 400.0, 600.0, 800.0].into_iter().enumerate() {
-            nodes.push(fixed(east, 500.0, 8 + k as u8, 145 + k as u64));
-        }
-        let mut links = vec![(p, c), (p, y), (y, d)];
-        links.extend(xs.iter().map(|&x| (c, x)));
-        build(nodes, &links)
+    // P and C share a home: P's is the one it kept across a reboot, so it
+    // makes no choice at the end of its first rotation that could take it
+    // off C's (spec "Channel at boot").
+    let old = ch(0);
+    let fixed = |east: f64, north: f64, home: u8, seed: u64| {
+        Relay::new(
+            Config {
+                position: pos(east, north),
+                boot_listen: secs(5),
+                home_override: Some(ch(home)),
+                ..Config::default()
+            },
+            seed,
+        )
     };
-    // C listens where P chooses to: find out where that is.
-    let old = core(&topology(0), p).home();
-    let mut h = topology(old.index());
+    let mut nodes = vec![
+        Relay::new(
+            Config {
+                position: pos(0.0, 0.0),
+                boot_listen: secs(5),
+                move_dwell: dwell,
+                move_wait_max: Duration::ZERO,
+                stored: Some(Stored {
+                    home: old,
+                    place: pos(0.0, 0.0),
+                    carried: false,
+                    anchor: None,
+                }),
+                ..Config::default()
+            },
+            141,
+        ),
+        fixed(400.0, 100.0, old.index(), 142),
+        fixed(300.0, -300.0, 5, 143),
+        fixed(1000.0, 0.0, 7, 144),
+    ];
+    for (k, east) in [200.0, 400.0, 600.0, 800.0].into_iter().enumerate() {
+        nodes.push(fixed(east, 500.0, 8 + k as u8, 145 + k as u64));
+    }
+    let mut links = vec![(p, c), (p, y), (y, d)];
+    links.extend(xs.iter().map(|&x| (c, x)));
+    let mut h = build(nodes, &links);
     assert_eq!(core(&h, p).home(), old);
     for x in xs {
         h.unlink(c, x);
