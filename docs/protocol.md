@@ -656,24 +656,16 @@ business, with whatever acknowledgement it puts inside the encrypted
 payload.
 
 The app hands a node a message only when the node says it will take
-one, and hears nothing about it afterwards: not the first hop's ACK,
-which a user could take for delivery, and not a drop. From then on the
-node is sending the message or waiting to. A node holds one message of
-its app's at a time, until its first hop takes it. It takes one while it
-is running, holds none, has room in its send queue and bucket for a
-full frame on top of what they hold ([send queue](#send-queue)), and not
-every neighbour is banned ([receiving DATA](#receiving-data)), or, for a
-sleepy node with a live anchor, not the anchor
-([a sleepy node's own message](#a-sleepy-nodes-own-message)).
-
-A node whose neighbours are busy keeps the message and offers it again
-([bans](#bans)), so a busy network makes its users wait rather than lose
-their messages at the first step (roadmap D29). A sleepy node whose own
-message is refused gives it back to its app with the wait the refusal
-asks for, and takes no other until then
-([a sleepy node's own message](#a-sleepy-nodes-own-message)). That is the
-one thing the app hears, so that a person told to wait is not left with
-a message that ages in a node (roadmap D54).
+one ([receiving DATA](#receiving-data)), and hears nothing about it
+afterwards: not the first hop's ACK, which a user could take for
+delivery, and not a drop. From then on the node is sending the message
+or waiting to, so a busy network makes its users wait rather than lose
+their messages at the first step (roadmap D29). The one thing the app
+hears is a sleepy node's refused message, given back with the wait the
+refusal asks for, so that a person told to wait is not left with a
+message that ages in a node
+([a sleepy node's own message](#a-sleepy-nodes-own-message); roadmap
+D54).
 
 ### Duty cycle cap
 
@@ -994,9 +986,8 @@ needs no neighbour-table entry for the sender; if it has one, `aux`
 becomes its channel there, as a heartbeat's would
 ([neighbour table](#neighbour-table)).
 
-A packet with `hops = 0` is a sleepy node's own message ([hop count](#hop-count)):
-the receiving node is the origin, the message has no parent, and the
-sender counts as tried ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+A packet with `hops = 0` is a sleepy node's own message, and the node
+that receives it is the origin ([hop count](#hop-count)).
 
 #### Message records
 
@@ -1029,7 +1020,7 @@ its place; a new record then replaces the least recently active one
 whose message the relay does not hold. A relay holds a message while it
 is in its send queue ([send queue](#send-queue)), the hand-over included,
 or set aside for a full delivery queue
-([return to parent](#return-to-parent)). Without its record the message
+([receiving DATA](#receiving-data)). Without its record the message
 could not be routed when its turn comes, so a message is never lost for
 want of room (roadmap D31). The table holds 1855 records
 ([bounds](#bounds)).
@@ -1123,7 +1114,7 @@ packet gives it to do:
   [overload waits](#overload-waits) needs every such message to move on
   (roadmap D34).
 - **A message entering the network here**, a sleepy node's own (count
-  0) or the node's own application's, also needs a neighbour the relay
+  0, [hop count](#hop-count)) or the node's own application's, also needs a neighbour the relay
   could hand it to now: a live one that is not banned
   ([next hop](#next-hop)), demoted or not, since the message has tried
   none. A relay whose neighbours are all banned would only hold the
@@ -1139,7 +1130,14 @@ packet gives it to do:
   ways, and it ends with the ban. A message already in the network is
   not refused for that: its sender would send it round the pushback, and
   around a ring of relays such refusals kept each other up (roadmap
-  D54).
+  D54). From its own application a node takes one message at a time,
+  until its first hop takes it: while it is running, holds none, and has
+  room in its send queue and bucket for a full frame on top of what they
+  hold ([send queue](#send-queue)), and not every neighbour is banned, or,
+  for a sleepy node with a live anchor, not the anchor
+  ([a sleepy node's own message](#a-sleepy-nodes-own-message)). A
+  message from its own application for a sleepy node it holds for, when
+  the delivery queue is full, is kept aside until the queue has a place.
 - **Something to deliver.** It takes the packet only if its bucket holds
   the reply reserve and an ACK and, for another node, its delivery
   queue has room ([delivery queue](#delivery-queue)).
@@ -1167,7 +1165,7 @@ The packet is one of the following, tested in this order:
    packet of the message the relay received: the sender's ACK was lost
    and it sent the same packet again. ACK only.
 4. **A copy while the relay holds one:** the message waits in its send
-   queue or is set aside ([return to parent](#return-to-parent)). ACK
+   queue or is set aside (above). ACK
    only: the two copies merge, and the relay's goes on. A hand-over
    whose frame has gone out does not count as holding one: its receiver
    may have taken it with only the ACK lost, and this packet may be that
@@ -1216,9 +1214,7 @@ end-to-end acknowledgement.
 
 A message whose neighbours left are only banned is neither returned nor
 dropped: it waits ([overload waits](#overload-waits)), a node's own
-application's message as in [bans](#bans). A message from this relay's
-own application for a sleepy node it holds for, when the delivery queue
-is full, is kept aside until the queue has a place.
+application's message as in [bans](#bans).
 
 If a failed hand-over to the parent demotes it, after the message has
 waited for the parent's ban and gone again ([hand-over](#hand-over) step
@@ -1228,10 +1224,15 @@ refuses the return has not failed ([bans](#bans)).
 #### Hop count
 
 `hops` in the DATA header counts hand-overs. A sleepy node with an
-anchor sends its own message with 0; a relay sending for its own
-application sends 1, as if it had received the message at 0, since 0
-means "a sleepy node's own, start the search here"
-([packet sender](#packet-sender)). A relay sends its record's highest
+anchor sends its own message with 0
+([a sleepy node's own message](#a-sleepy-nodes-own-message)): the node
+that takes it is its origin, the message has no parent, and the sender
+counts as tried, so the search never returns to a node that sleeps. Sent
+with 1, the message could take hop place 1 at its first hop, which
+overload must not give to fresh work ([send queue](#send-queue)). A relay
+sending for its own application sends 1, as if it had received the
+message at 0, since 0 means "a sleepy node's own, start the search
+here". A relay sends its record's highest
 count plus one ([message records](#message-records)), whether forwarding
 or returning to its parent. The count is set when a hand-over's first
 frame goes out, and its retries repeat it ([hand-over](#hand-over)); a
@@ -1812,16 +1813,12 @@ A sleepy node with an anchor hands its own message to the anchor while
 the anchor is live, with count 0 ([hop count](#hop-count)), and
 otherwise to its next hop as any node does ([next hop](#next-hop)); one
 without an anchor sends as a relay does
-([sleepy nodes alone](#sleepy-nodes-alone)). The node that takes a
-message with count 0 is its origin and counts the sender as tried
-([packet sender](#packet-sender)), so the search never returns to a node
-that sleeps. It takes it only as fresh work, into its regular room and
-only while not every neighbour of its is banned
-([receiving DATA](#receiving-data); roadmap D31, D34). Handed to the
-neighbour nearest its destination instead, the first hop would often be
-a faint, far relay (roadmap D46). Sent with count 1, as a relay's own
-message is, it could take hop place 1 at its first hop, which overload
-must not give to fresh work.
+([sleepy nodes alone](#sleepy-nodes-alone)). Handed to the neighbour
+nearest its destination instead, the first hop would often be a faint,
+far relay (roadmap D46). The anchor takes it only as fresh work
+([receiving DATA](#receiving-data); roadmap D31, D34), and the node
+takes a message from its application only while the anchor is not
+banned.
 
 A refused message goes back to the application with the wait the
 refusal asks for ([bans](#bans)), and the node takes no message of the
