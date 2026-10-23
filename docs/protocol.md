@@ -63,20 +63,23 @@ its own, and its heartbeat publishes each as a flag
 
 - **Sleepy**: it is on battery, past a grace of an hour
   ([sleepy nodes](#sleepy-nodes)). On external power, USB on a
-  windowsill or a solar box on a roof, a node is not sleepy. The
-  nRF52840 detects USB power itself, so a person's node relays on its
-  charger and sleeps in a pocket, with nothing to set. Sleepy decides
-  how the node uses its radio: it beats rarely instead of heartbeating,
-  listens only in a window after each beat, receives duty-cycled
-  between, forwards what it is given at once, anchors to a fixed relay,
-  and keeps no mailbox.
+  windowsill or a solar box on a roof, a node is not sleepy. Sleepy
+  decides how the node uses its radio: it beats rarely instead of
+  heartbeating, listens only in a window after each beat, receives
+  duty-cycled between, forwards what it is given at once, anchors to a
+  fixed relay, and keeps no mailbox.
 - **Carried**: its GPS says it moves ([position](#position)). A map
   point set in the app makes it not carried at once. Carried decides how
   the node uses its GPS: it takes each fix as its position, as a sleepy
-  node does too, so that its heartbeats say where it is and its
-  neighbours route to it there. A node that is neither keeps the place
-  it stands as its position, so that no later fix, true or spoofed,
-  moves it (roadmap D63). A carried relay is otherwise like any other.
+  node does too. A node that is neither keeps the place it stands as its
+  position. A carried relay is otherwise like any other.
+
+*Why nothing to set.* The nRF52840 detects USB power itself, so a
+person's node relays on its charger and sleeps in a pocket.
+
+*Why a carried node takes each fix.* So that its heartbeats say where it
+is and its neighbours route to it there. A fixed node keeps its place so
+that no later fix, true or spoofed, moves it (roadmap D63).
 
 The two combine in four ways, all of them real, and each flag means the
 same whatever the other is:
@@ -89,21 +92,23 @@ same whatever the other is:
 Holding mail for sleepy nodes, owning a destination by its position
 ([owner](#owner)) and being a sleepy node's anchor
 ([relay choice](#relay-choice)) need neither flag; each flag takes all
-three away. Mail is held only where a sleepy node can count on finding
-it. A carried node would leave its sleepy nodes behind, and it has no
-position at which anyone can address it for long, so its senders learn
-where it is at the app layer ([addresses](#addresses)); as an anchor it
-would carry its sleepy nodes' addresses off with it. A node that holds
-no mail owns only what is addressed to its ID, since owning a position
-means holding the mail addressed to it.
+three away. A node that holds no mail owns only what is addressed to its
+ID, since owning a position means holding the mail addressed to it.
+
+*Why either flag takes them away.* Mail is held only where a sleepy node
+can count on finding it. A carried node would leave its sleepy nodes
+behind, and as an anchor it would carry its sleepy nodes' addresses off
+with it. It has no position at which anyone can address it for long, so
+its senders learn where it is at the app layer
+([addresses](#addresses)).
 
 The rest of this document uses these words:
 
 - A **relay** is a node that is not sleepy, carried or not: it listens
   all the time, heartbeats every 5–15 s on every channel, and forwards.
   A **sleepy node** is one that is sleepy, and a **fixed** node one that
-  is not carried. Like "anchor" and "holder", these words name a state a node
-  is in, not a kind of node.
+  is not carried. Like "anchor" and "holder", these words name a state a
+  node is in, not a kind of node.
 - A sleepy node's **anchor** is the relay it chooses, a fixed one. The
   anchor's position is the sleepy node's address, its home channel the
   sleepy node's, and its heartbeat the one the sleepy node watches to
