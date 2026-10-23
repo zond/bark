@@ -1051,12 +1051,10 @@ candidate left and none that is only banned, so that the message would
 go back to its parent or be dropped ([return to parent](#return-to-parent)).
 A ban is no reason to go through a node that sleeps; the message waits
 for the ban ([overload waits](#overload-waits)). It is sent to with the
-long preamble, since between its windows it receives duty-cycled
-([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
-Where a relay is in reach the sleepy node has anchored to one, which is
-the hop; the last resort is for a pocket with no relay in that
-direction, where a sleepy node that has anchored is the way out for the
-anchorless ones behind it (roadmap D58). An anchorless neighbour is a
+long preamble. Where a relay is in reach, that relay is the hop; the
+last resort is for a pocket with no relay in that direction, where a
+sleepy node that has anchored is the way out for the anchorless ones
+behind it (roadmap D58). An anchorless neighbour is a
 candidate like any other, sent to with the long preamble. The first hop
 of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
@@ -1442,15 +1440,11 @@ What breaks it:
 
 ## Sleepy nodes
 
-A sleepy node ([nodes](#nodes), roadmap D71) heartbeats rarely, on its
-anchor's channel. It listens for a short window after each beat and
-each message it takes, and for its anchor's heartbeat once a rotation;
-between those it receives duty-cycled
-([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-so that any node can reach it at any time with the long preamble, as a
-last resort ([next hop](#next-hop)). Its holder, most often its anchor,
-delivers to it in its windows ([delivery](#delivery)). One that hears no
-relay is anchorless ([sleepy nodes alone](#sleepy-nodes-alone)).
+A sleepy node ([nodes](#nodes), roadmap D71) beats on its anchor's
+channel ([beats](#beats)), takes what its holder has for it in the
+window after ([delivery](#delivery)), and between its windows receives
+duty-cycled
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 
 A sleepy node holds mail for nobody. The mailbox
 ([heard table](#heard-table), [delivery queue](#delivery-queue)) is a
@@ -1891,14 +1885,12 @@ nor does a relay whose grace on battery is over
 a heartbeat in its slot by the frame; a sleeping node tells them apart
 by the time ([relay choice](#relay-choice), roadmap D62).
 
-The node takes the first relay it hears as its anchor
-([relay choice](#relay-choice)), listens a rotation to choose the
-strongest, and from then on beats with the sleepy bit alone, on its
-anchor's channel, and receives duty-cycled between its windows. Its
-neighbours keep its entry, marked sleepy, a last resort reached with the
-long preamble ([next hop](#next-hop)); the anchorless ones behind it
-learn where it listens from its long beats on their channels
-([beats](#beats)) and from the frames they exchange with it.
+At the first relay it hears the node anchors as any sleepy node does
+([relay choice](#relay-choice)) and leaves anchorless mode. Its
+neighbours then keep it as a last resort ([next hop](#next-hop)), and
+the anchorless ones behind it learn where it listens from its long beats
+on their channels ([beats](#beats)) and from the frames they exchange
+with it.
 
 ---
 
