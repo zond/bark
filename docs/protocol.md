@@ -915,64 +915,75 @@ waits in the send queue until the ban ends and goes again, the refused
 transmission not counting as one of its attempts.
 
 The ban is never shorter than 1.56 s, the time the refuser's bucket
-takes to refill what the refused packet would have cost. A relay
-refuses a packet to send on when its frame and the ACK that would take
-it, at most 138.6 + 14.4 = 153.0 ms, do not fit in its bucket and no hop
-place takes it, and the bucket refills that in
-153.0 ms / 9.83 % = 1.56 s ([duty cycle cap](#duty-cycle-cap)); trying
-sooner would only cost it another reply (roadmap D29).
+takes to refill what the refused packet would have cost; trying sooner
+would only cost it another reply (roadmap D29).
+
+*Where the shortest ban comes from.* A relay refuses a packet to send on
+when its frame and the ACK that would take it, at most
+138.6 + 14.4 = 153.0 ms, do not fit in its bucket and no hop place takes
+it, and the bucket refills that in 153.0 ms / 9.83 % = 1.56 s
+([duty cycle cap](#duty-cycle-cap)).
 
 The NACK tells the wait in whole bans of 1.56 s, rounded down
-([packet formats](#packet-formats)). For want of room it is the time
-until the bucket holds everything queued and the frame and its ACK, with
-the reply reserve left, if nothing else comes. The senders refused stand
-in line, each told one ban later than the one before, the time the
-bucket takes to refill the frame and ACK it will bring back, so they
-come back one after another as room frees. A refusal of fresh work for
-the way on asks for the rest of the
-ban on that way, as learned, without a place in line: passed on so, a
-wait cannot grow from relay to relay around a ring.
+([packet formats](#packet-formats)):
 
-The places in line are one ban apart and nothing in the protocol acts
-sooner, so the ban is the unit; a coarser one would merge neighbouring
-places. A byte holds 255 bans, 398 s; a longer wait is told as the
-longest, the sender coming back early to be refused again (roadmap
-D54).
+- For want of room it is the time until the bucket holds everything
+  queued and the frame and its ACK, with the reply reserve left, if
+  nothing else comes.
+- The senders refused stand in line, each told one ban later than the
+  one before, the time the bucket takes to refill the frame and ACK it
+  will bring back, so they come back one after another as room frees.
+- A refusal of fresh work for the way on asks for the rest of the ban on
+  that way, as learned, without a place in line: passed on so, a wait
+  cannot grow from relay to relay around a ring.
+- A byte holds 255 bans, 398 s; a longer wait is told as the longest,
+  the sender coming back early to be refused again (roadmap D54).
+
+*Why the ban is the unit.* The places in line are one ban apart and
+nothing in the protocol acts sooner; a coarser unit would merge
+neighbouring places.
 
 **Silence doubles the ban from 1.56 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.56 s doubled k − 1 times: 1.56 s, 3.11 s,
 6.2 s and so on, up to 61 s, the longest anything waits for a bucket. An
-ACK from the neighbour resets its
-failure count and so the ladder (roadmap D42). A refusal measures one
-thing, what one hand-over takes from the receiver's bucket. Silence says
-only that the channel or the receiver is full, or the link gone, not how
-full, so its ban grows. Without it, a neighbour that stops answering
-under load is offered every other message at once, each offer up to
-three more frames where frames are already being lost; past the cap that
-loop is what breaks first.
+ACK from the neighbour resets its failure count and so the ladder
+(roadmap D42).
 
-The message whose hand-over failed waits for the same neighbour (step 6)
-rather than going to the next, which is usually a longer way round on
-the same full channels: going there at once undoes what the ban gains
-(roadmap D42). Nor is the neighbour counted as tried: an attempt is lost
-to a collision at the receiver far more often than its ACK goes astray
-(roadmap D34), so the neighbour most likely does not have the message,
-and it stays a candidate once its ban has ended. If it did take it, the
-next offer costs one round trip: it holds the message and only ACKs, or
-has finished with it and returns it (roadmap D36). Two silences in a row
-demote the neighbour, so a link
-that is really gone costs one ban and one more hand-over before the
-message moves on. A neighbour that is gone is tried again after each ban
-until its entry expires; [bounds](#bounds) adds up what that costs.
+*Why silence doubles.* A refusal measures one thing, what one hand-over
+takes from the receiver's bucket. Silence says only that the channel or
+the receiver is full, or the link gone, not how full, so its ban grows.
+Without it, a neighbour that stops answering under load is offered every
+other message at once, each offer up to three more frames where frames
+are already being lost; past the cap that loop is what breaks first.
 
-**A node's own message waits on the same ladder.** Offered again every
-1.56 s, a node's own application's message would put a full frame on the
-refusing neighbour's channel that often, 9 % of it, hiding its ACKs, and
-spend that neighbour's bucket as fast as it refills. So after its k-th
-refusal in a row it waits the k-th step of the silence ladder, and starts
-again from one ban once it is taken or dropped. A sleepy node's own
-message has a wait of its own
+The message whose hand-over failed waits for the same neighbour
+(step 6), and the neighbour is not counted as tried. Two silences in a
+row demote the neighbour, so a link that is really gone costs one ban
+and one more hand-over before the message moves on. A neighbour that is
+gone is tried again after each ban until its entry expires;
+[bounds](#bounds) adds up what that costs.
+
+*Why the same neighbour.* The next is usually a longer way round on the
+same full channels: going there at once undoes what the ban gains
+(roadmap D42).
+
+*Why not counted as tried.* An attempt is lost to a collision at the
+receiver far more often than its ACK goes astray (roadmap D34), so the
+neighbour most likely does not have the message, and it stays a
+candidate once its ban has ended. If it did take it, the next offer
+costs one round trip: it holds the message and only ACKs, or has
+finished with it and returns it (roadmap D36).
+
+**A node's own message waits on the same ladder.** After its k-th
+refusal in a row a node's own application's message waits the k-th step
+of the silence ladder, and starts again from one ban once it is taken or
+dropped. A sleepy node's own message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+
+*Why a ladder here too.* Offered again every 1.56 s, the message would
+put a full frame on the refusing neighbour's channel that often, 9 % of
+it, hiding its ACKs, and spend that neighbour's bucket as fast as it
+refills.
 
 #### Send queue
 
@@ -980,58 +991,69 @@ The send queue has a regular room of 40 places and one hop place for
 each count from 1 to 254; the packet being handed over keeps its place.
 A packet to send on enters the regular room only if it fits in the
 bucket with everything queued ([receiving DATA](#receiving-data)), so it
-waits for the hand-overs ahead of it, not for the bucket to refill; a
+waits for the hand-overs ahead of it, not for the bucket to refill. A
 delivery in its node's window, which goes ahead of them all, needs only
-its own frame ([delivery queue](#delivery-queue)). The bucket sets the
-40: it holds at most 6 s ([duty cycle cap](#duty-cycle-cap)), and a full
-frame and the ACK that took it on cost 138.6 + 14.4 = 153.0 ms, so
-⌈6 s / 153.0 ms⌉ = 40. With the reply reserve left in, a full bucket
-takes at most 37 full frames, so for full frames the bucket is the
-limit; shorter frames fill the 40 places first, and forty hand-overs of
-them go out within a few seconds.
+its own frame ([delivery queue](#delivery-queue)).
+
+*What sets the 40.* The bucket holds at most 6 s
+([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
+took it on cost 138.6 + 14.4 = 153.0 ms, so ⌈6 s / 153.0 ms⌉ = 40. With
+the reply reserve left in, a full bucket takes at most 37 full frames,
+so for full frames the bucket is the limit; shorter frames fill the 40
+places first, and forty hand-overs of them go out within a few seconds.
 
 A packet received with count h that the regular room refuses takes the
 highest free hop place numbered h or lower, and keeps it until it leaves
 the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A message entering the network, a
-sleepy node's own with count 0 or a node's own app's, takes no hop
-place, so overload stops new messages where they enter, at the app
-([addresses](#addresses)). A packet received at 255 ends at the cap
-([hop count](#hop-count)), so 254 hop places are enough. Packets are
-handed over in the order they arrived, except that a delivery goes
-first ([delivery](#delivery)), and that when bans end the packets that
-waited for them go first ([overload waits](#overload-waits)).
+bucket still decides when it is sent. A packet received at 255 ends at
+the cap ([hop count](#hop-count)), so 254 hop places are enough.
+
+A message entering the network, a sleepy node's own with count 0 or a
+node's own app's, takes no hop place, so overload stops new messages
+where they enter, at the app ([addresses](#addresses)).
+
+Packets are handed over in the order they arrived, except that:
+
+- a delivery goes first ([delivery](#delivery));
+- when bans end, the packets that waited for them go first
+  ([overload waits](#overload-waits)).
 
 #### Overload waits
 
 Overload makes a message wait and never ends it. A message whose every
 remaining candidate is banned, by refusals or by silence, waits in its
 place in the send queue, its airtime still counted, until the earliest
-ban ends, and is routed again then, at the origin or anywhere else. A
-message ends only when it is delivered, when its search runs out of
-neighbours ([return to parent](#return-to-parent)), when a return goes
-unanswered twice in a row (step 6), when its time runs out on the way
-([time to live](#time-to-live)), when a newer message needs its place in
-the delivery queue ([delivery queue](#delivery-queue)), at the hop cap
-([hop count](#hop-count)), or when a node holding it dies
-(roadmap D31, D44).
+ban ends, and is routed again then, at the origin or anywhere else. When
+bans end, the messages that waited for them go first, the most travelled
+first. The rest of the queue keeps its order, since ordering it all by
+count would starve messages that have just entered.
 
-Waiting alone can lock relays up: two neighbours whose queues are full
-of messages for each other would refuse each other forever, since what
-a relay holds drains only as it sends (roadmap D29). The hop places of
-the send queue prevent it. Take the highest-numbered hop place held at
-any relay, k. Its message has made at least k hand-overs and is sent
-with a higher count, and place k + 1 is free at every relay, so the
-neighbour it is offered to can take it, unless its count is at the cap,
-where it ends. That message moves, then the next highest, and so on
-down to the regular room.
+A message ends only:
 
-For this the message that has come farthest must be offered when a ban
-ends: a less travelled one offered first would be refused and ban the
-neighbour again, each time. So when bans end, the messages that waited
-for them go first, the most travelled first. The rest of the queue
-keeps its order, since ordering it all by count would starve messages
-that have just entered.
+- when it is delivered;
+- when its search runs out of neighbours
+  ([return to parent](#return-to-parent));
+- when a return goes unanswered twice in a row (step 6);
+- when its time runs out on the way ([time to live](#time-to-live));
+- when a newer message needs its place in the delivery queue
+  ([delivery queue](#delivery-queue));
+- at the hop cap ([hop count](#hop-count));
+- when a node holding it dies (roadmap D31, D44).
+
+*Why hop places.* Waiting alone can lock relays up: two neighbours whose
+queues are full of messages for each other would refuse each other
+forever, since what a relay holds drains only as it sends (roadmap
+D29). The hop places of the send queue prevent it.
+
+Take the highest-numbered hop place held at any relay, k. Its message
+has made at least k hand-overs and is sent with a higher count, and
+place k + 1 is free at every relay, so the neighbour it is offered to
+can take it, unless its count is at the cap, where it ends. That message
+moves, then the next highest, and so on down to the regular room.
+
+*Why the most travelled first.* For this the message that has come
+farthest must be offered when a ban ends: a less travelled one offered
+first would be refused and ban the neighbour again, each time.
 
 ### Routing
 
