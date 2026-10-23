@@ -565,7 +565,7 @@ its sender's worst-case rotations and a heartbeat's lag: 13 beats, one
 on each channel, take at most 13 anchorless beat periods, so two
 rotations take 26, 1200 s, and the lag is 1.0 s
 ([heartbeat](#heartbeat)). Two, because a listening receiver loses about
-one beat in ten: with one rotation a live neighbour, perhaps the only
+one beat in ten (roadmap D47): with one rotation a live neighbour, perhaps the only
 way on where there is no relay, would drop out every tenth rotation, for
 13 minutes; with two, one time in a hundred, and a stale entry costs a
 hand-over's attempts and a ban (roadmap D51). A sleeping node keeps its
