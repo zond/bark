@@ -2,9 +2,8 @@
 
 **Status:** live specification, 2026-10-22. Decisions that refine it are in
 `roadmap.md` with D-numbers; [open items](#open-items) lists what is still
-to be decided or
-measured. Where the code and this text disagree, one of them is wrong and
-the fix is a commit to both.
+to be decided or measured. Where the code and this text disagree, one of
+them is wrong and the fix is a commit to both.
 
 A mesh network of cheap radio nodes, legal without a licence in the EU and
 Ukraine, that lets phone apps message each other across a city when
@@ -38,9 +37,8 @@ deliberate jamming; it is designed for infrastructure loss.
 **LILYGO T-Echo, 433 MHz build.** nRF52840 (Nordic, Norway), SX1262
 (Semtech, US, EAR99), Quectel L76K GNSS, 1.54" e-ink, BLE 5.0, 850 mAh
 Li-ion, USB-C charging, UF2 bootloader. Check that the LoRa module is the
-433 MHz build, not the 868/915
-build: the 868 board's antenna matching makes 433 MHz operation lossy and
-out of spec.
+433 MHz build, not the 868/915 build: the 868 board's antenna matching
+makes 433 MHz operation lossy and out of spec.
 
 Same chipset, same firmware, for rooftop relays:
 
@@ -49,9 +47,10 @@ Same chipset, same firmware, for rooftop relays:
 - **RAK WisMesh Repeater Mini V2** (solar + 3200 mAh), if a 433 MHz build
   is available (O12).
 
-The SX1262 is not European, but anyone must be able to buy and plant a
-node, and no European part offers nRF52840 + SX1262 integration off the
-shelf (ST's STM32WL55, the European fallback, has no BLE).
+*Why a radio from outside Europe.* The SX1262 is not European, but
+anyone must be able to buy and plant a node, and no European part offers
+nRF52840 + SX1262 integration off the shelf (ST's STM32WL55, the
+European fallback, has no BLE).
 
 ---
 
