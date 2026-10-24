@@ -1018,7 +1018,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // intervals have a small common multiple.
         let interval = heartbeat_interval(self.id, &self.config);
         self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
-        self.beacon.burst = CHANNELS;
+        // A sleepy node does not burst: it heartbeats once it has an anchor
+        // or its first rotation has ended, and its beats keep no slots.
+        self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
         emit(Action::Listen(self.home));
         emit(Action::App(AppEvent::Boot {
             relays: 0,
@@ -1066,10 +1068,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// heard, or is anchorless.
     fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
-        if self.sleepy {
-            // Its beats keep no slots.
-            self.beacon.burst = 0;
-        }
         emit(Action::App(AppEvent::Boot {
             relays: self.relays_known(now),
             ends: None,
@@ -1116,7 +1114,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the first, and takes the strongest relay heard if it hears none.
     fn resume_anchor(&mut self, a: Anchor, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
-        self.beacon.burst = 0;
         emit(Action::App(AppEvent::Boot {
             relays: 0,
             ends: None,
@@ -1504,12 +1501,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- Heartbeat (spec "Heartbeat") ---
 
     /// Whether the node heartbeats now: from its boot, but a sleepy node
-    /// only once it has an anchor or its first rotation has ended, unless
-    /// the research switch [`Config::sleepy_burst`] is on (spec "Channel at boot").
+    /// only once it has an anchor or its first rotation has ended, since
+    /// every answer to a sleepy node would carry the long preamble
+    /// (spec "Channel at boot", roadmap D73).
     fn heartbeats(&self) -> bool {
         match self.stage {
             Stage::Off => false,
-            Stage::Booting(_) => !self.sleepy || self.config.sleepy_burst,
+            Stage::Booting(_) => !self.sleepy,
             Stage::Running => true,
         }
     }
@@ -1769,13 +1767,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.beacon.rotation = self.beacon.rotation.next();
             }
             self.beacon.next_at = next;
-            if let (true, Stage::Booting(ends)) = (self.sleepy, self.stage) {
-                if self.beacon.burst == 0 {
-                    // A sleepy node's burst is all it sends before its
-                    // first rotation ends.
-                    self.beacon.next_at = ends;
-                }
-            }
         }
         if self.sleepy {
             // Its own beat stands in for the sweep's round of the tables.

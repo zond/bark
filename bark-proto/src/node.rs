@@ -99,12 +99,6 @@ pub struct Config {
     /// What the node stored before its last reboot, from its driver
     /// (`store.rs`, spec "Implementation notes"); `None` for a fresh board.
     pub stored: Option<Stored>,
-    /// Research switch: a sleepy node in its first rotation heartbeats as
-    /// a relay does then, with the sleepy and anchorless flags, until it
-    /// has an anchor, so that the relays in range answer it. Off in the
-    /// design: each answer to a sleepy node carries the long preamble
-    /// (roadmap D73).
-    pub sleepy_burst: bool,
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
@@ -240,7 +234,6 @@ impl Config {
         lbt_backoff_max: Duration::from_millis(200),
         boot_listen: HEARTBEAT_MAX.mul(CHANNELS as u64),
         stored: None,
-        sleepy_burst: false,
         home_override: None,
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
