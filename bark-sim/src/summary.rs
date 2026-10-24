@@ -308,6 +308,9 @@ pub struct Summary {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: crate::metrics::RecordsLost,
+    /// Refusals sent, by the wait each told, in the units on the wire
+    /// (spec "Bans").
+    pub told_waits: Vec<u64>,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -481,6 +484,7 @@ impl Sim {
             interval_pairs: self.interval_pairs(),
             hop_places: m.hop_places,
             records_lost: m.records_lost.clone(),
+            told_waits: m.told_waits.clone(),
             addressed: m.addressed,
             channels,
             observers,

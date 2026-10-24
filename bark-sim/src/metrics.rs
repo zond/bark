@@ -1110,6 +1110,9 @@ pub struct Metrics {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: RecordsLost,
+    /// Refusals sent, by the wait each told, in the units on the wire
+    /// (spec "Bans").
+    pub told_waits: Vec<u64>,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.

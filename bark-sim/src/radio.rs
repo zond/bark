@@ -232,6 +232,15 @@ impl Sim {
             self.beat_took[i].0 = self.now;
         }
         let m = &mut self.metrics;
+        if let Some(WirePacket::Ack(a)) = decoded {
+            if a.refused {
+                let w = a.wait as usize;
+                if m.told_waits.len() <= w {
+                    m.told_waits.resize(w + 1, 0);
+                }
+                m.told_waits[w] += 1;
+            }
+        }
         m.nodes[src as usize].tx_frames += 1;
         m.nodes[src as usize].airtime_us += air;
         if self.now >= self.settle {
