@@ -488,7 +488,8 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 | Field | Bits | Content |
 |---|---|---|
-| type | 4 | 0x8, with three flags in its low bits: sleepy, anchorless, carried ([packet formats](#packet-formats)) |
+| heartbeat | 1 | set: the packet is a heartbeat ([packet formats](#packet-formats)) |
+| flags | 3 | sleepy, anchorless, carried ([packet formats](#packet-formats)) |
 | channel | 4 | home channel index 0–12 |
 | id | 48 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
@@ -844,14 +845,14 @@ it is not dropped. Two reserves stay in the bucket:
   13.1 ms. The bucket refills that in 133 ms, far less than the 5 s
   between heartbeats ([heartbeat](#heartbeat)), so heartbeats always go.
 - Forwarding, and the ACK that takes on a packet, leave the **reply
-  reserve**, 234 ms: the heartbeat, and the refusals the bucket refills
+  reserve**, 248 ms: the heartbeat, and the refusals the bucket refills
   while a sender retries an unanswered hand-over.
 
 *Why the reply reserve.* The retrying takes 2.40 s: the two retry
 waits, 308 + 617 ms, and two more attempts, each up to 500 ms of
 listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
 ([hand-over](#hand-over)). The bucket refills 9.83 % × 2.40 s =
-236.3 ms of it, ⌊236.3 / 17.0⌋ = 13 refusals of 17.0 ms
+236.3 ms of it, ⌊236.3 / 15.7⌋ = 15 refusals of 15.7 ms
 ([the ACK](#the-ack)).
 
 A relay takes new work into the regular room of its send queue only if
@@ -937,10 +938,9 @@ senders.
 The receiver retunes to the sender's channel, listens before talking,
 sends the ACK, and retunes home. The ACK is the first byte, the message
 ID, and the IDs of the answering and the answered node: 17 bytes,
-15.7 ms ([packet formats](#packet-formats)). One that refuses is a
-**NACK**, the same and a byte for the wait it asks ([bans](#bans)): 18
-bytes, 17.0 ms: at SF5 the 18th byte takes one more block of symbols.
-Below, an ACK is either unless it says so.
+15.7 ms ([packet formats](#packet-formats)). It answers taken or
+refused, and its first byte says which: 0 there takes the packet, and a
+refusal puts there the wait it asks for ([bans](#bans)).
 
 The sender matches the ID and both names against its outstanding
 hand-over. An ACK resets the neighbour's failure count and refreshes its
@@ -989,8 +989,8 @@ A neighbour that refuses a packet or fails a hand-over is **banned**: no
 candidate for any message ([next hop](#next-hop)) until the ban ends.
 Three rules set how long.
 
-**A refusal bans for the wait it asks.** A NACK that answers the
-outstanding hand-over means the receiver does not take the packet
+**A refusal bans for the wait it asks.** An ACK that refuses, answering
+the outstanding hand-over, means the receiver does not take the packet
 ([receiving DATA](#receiving-data)). The sender treats it as a
 listen-before-talk give-up (step 2): the neighbour is set aside for this
 hand-over, not counted as tried, no failure is counted, and the next hop
@@ -1008,8 +1008,8 @@ when its frame and the ACK that would take it, at most
 it, and the bucket refills that in 154.2 ms / 9.83 % = 1.57 s
 ([duty cycle cap](#duty-cycle-cap)).
 
-The NACK tells the wait in whole bans of 1.57 s, rounded down
-([packet formats](#packet-formats)):
+A refusal tells the wait in whole bans of 1.57 s, rounded down, and at
+least one, since 0 means taken ([packet formats](#packet-formats)):
 
 - For want of room it is the time until the bucket holds everything
   queued and the frame and its ACK, with the reply reserve left, if
@@ -1020,12 +1020,17 @@ The NACK tells the wait in whole bans of 1.57 s, rounded down
 - A refusal of fresh work for the way on asks for the rest of the ban on
   that way, as learned, without a place in line: passed on so, a wait
   cannot grow from relay to relay around a ring.
-- A byte holds 255 bans, 400 s; a longer wait is told as the longest,
-  the sender coming back early to be refused again (roadmap D54).
+- The ACK's six bits hold 63 bans, 98.8 s; a longer wait is told as 63,
+  the sender coming back early to be refused again (roadmap D54, D76).
 
 *Why the ban is the unit.* The places in line are one ban apart and
 nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
+
+*Why 63 bans are enough.* Only a line of refused senders reaching well
+past the bucket's whole refill, 61 s, asks for more, which is rare even
+at three times the design rate (roadmap D76); and a sender told too
+short a wait only comes back early.
 
 **Silence doubles the ban from 1.57 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.57 s doubled k − 1 times: 1.57 s, 3.14 s,
@@ -1337,11 +1342,11 @@ packet gives it to do:
   would refuse work: a refusal would send its sender on with a second
   copy.
 
-Otherwise it refuses: after listening before talking it sends a NACK on
-the channel in `aux`, changes nothing, and the sender tries elsewhere at
-once or waits ([bans](#bans)). A relay that cannot afford even the
-reply stays silent, and its sender retries as for a lost ACK (roadmap
-D27, D29).
+Otherwise it refuses: after listening before talking it sends an ACK
+that refuses on the channel in `aux`, changes nothing, and the sender
+tries elsewhere at once or waits ([bans](#bans)). A relay that cannot
+afford even the reply stays silent, and its sender retries as for a
+lost ACK (roadmap D27, D29).
 
 *Why fresh work needs a free way on.* A relay whose neighbours are all
 banned would only hold the message until a ban ends, and its offer could
@@ -2271,63 +2276,66 @@ Common mesh and radio mechanisms left out, and why.
 
 ## Packet formats
 
-The first byte of every packet is `type:4 | aux:4`; `aux` is the home
-channel in heartbeats and type-specific flags elsewhere. A position is
-7 bytes, the heartbeat's short position 4
+The first byte of every packet has one of two shapes, told apart by
+its top bit:
+
+| first byte | packet | the other bits |
+|---|---|---|
+| `1fff cccc` | heartbeat | `fff` its three flags, below; `cccc` the home channel, 0 to 12 |
+| `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
+| `01aa aaaa` | ACK | `aux`, 0 if the offer is taken, else the wait the refuser asks for, 1 to 63 bans ([bans](#bans)) |
+
+A node rejects a heartbeat whose channel is 13 to 15 and a DATA whose
+`aux` is above 12. A heartbeat byte with channel 15, which no node
+sends, starts the bench frames of the firmware's measurement console
+(`bark-fw/README.md`).
+
+A position is 7 bytes, the heartbeat's short position 4
 ([positions on the wire](#positions-on-the-wire)), and a node ID 6
 ([node identity](#node-identity)). The LoRa hardware CRC covers
 everything.
 
 ```
-HEARTBEAT 0x8 to 0xF: first(1) id(6) short_pos(4)                          = 11
-          type bit 0 = sleepy (0x9); bit 1 = anchorless (0xA, 0xB);
-          bit 2 = carried, with any of these (0xC to 0xF; roadmap
-          D70, D72, D73); aux = home channel, 0 to 12, in all four
-          bits
-ACK       0x3: first(1) id(4) from(6) to(6)                                 = 17
-          the answer to a DATA that takes it; sent on the channel in
-          the answered packet's aux; aux = 0
+HEARTBEAT first(1) id(6) short_pos(4)                                       = 11
+ACK       first(1) id(4) from(6) to(6)                                      = 17
+          the answer to a DATA, taken or refused; sent on the channel in
+          the answered packet's aux
           from, to = the IDs of the answering and the answered node
-NACK      0x7: first(1) id(4) from(6) to(6) wait(1)                         = 18
-          the answer to a DATA that refuses it, as the ACK; wait = how
-          long the refuser asks its sender to wait, in bans of 1.57 s,
-          rounded down ([bans](#bans)); aux = 0
-DATA      0x5: first(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6) hops(1)
-               time_left(1) payload                                         = 28 + payload
+DATA      first(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6) hops(1)
+          time_left(1) payload                                              = 28 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
           time_left = the time the message has left, in 2.5 s, rounded down,
           stamped at each transmission ([time to live](#time-to-live)); 240 is the 600 s TTL
-Types 0x1, 0x2 and 0x4 are unused; nodes reject them like any unknown type.
-Type 0x6 is reserved for the bench frames of the
-firmware's measurement console (`bark-fw/README.md`); nodes reject it like any
-unknown type (roadmap D70; 0xF before).
 ```
+
+*Why the wait in the first byte.* A refusal then costs what an ACK
+costs, 15.7 ms; a byte of its own would take one more block of symbols
+at SF5, 1.3 ms (roadmap D76).
 
 The heartbeat's flags tell others how to treat its sender:
 
-- **Sleepy**, bit 0: "I sleep. Reach me cheaply in my window after my
+- **Sleepy**, bit 4: "I sleep. Reach me cheaply in my window after my
   beat, or at any time with the long preamble." ([nodes](#nodes))
-- **Anchorless**, bit 1: "I know no node that holds mail, one that is
+- **Anchorless**, bit 5: "I know no node that holds mail, one that is
   neither sleepy nor carried. If you are one, tell me." A sleepy node
   without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)),
   and a relay on the heartbeats of its burst, while its table is new;
   those are in no slot ([heartbeat](#heartbeat)).
-- **Carried**, bit 2: "I move. I take each GPS fix and hold mail for
+- **Carried**, bit 6: "I move. I take each GPS fix and hold mail for
   nobody." ([nodes](#nodes))
 
 A heartbeat does not say where its sender's position came from: no
 receiver needs to know.
 
-*Why in the type.* `aux` holds the home channel in all four of its bits
-and the position fills the four bytes after the ID. The three flags take
-the type's three low bits, and 0x8 is the one base whose eight codes,
-0x8 to 0xF, miss the ACK, the NACK and DATA; the bench frames are at
-0x6, which no flag reaches.
+*Why in the first byte.* The position fills the four bytes after the
+ID, and the home channel takes four bits of the first byte, so the
+flags take the three left by the top bit.
 
-The flags say what the node is, so each is set on its own: 0xA is a
-relay in its burst and 0xE one on the move, 0xC a relay on the move,
-and 0xD and 0xF a sleepy node on the move, with an anchor and without.
+The flags say what the node is, so each is set on its own: a heartbeat
+whose first byte's high four bits are 0xA is a relay in its burst and
+0xE one on the move, 0xC a relay on the move, and 0xD and 0xF a sleepy
+node on the move, with an anchor and without.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
