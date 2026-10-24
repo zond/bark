@@ -230,8 +230,9 @@ home channel (named in the ping), then a 17-byte pong, then back home; it
 prints the time of each part. It does not do the RSSI half of
 listen-before-talk.
 
-Bench frames are packet type 0x6 (reserved in spec "Packet formats"): byte 0 is
-`0x60 | kind` (0 test or beacon, 1 ping, 2 pong), bytes 1 to 4 a
+Bench frames start with a heartbeat's first byte on channel 15, which no
+node sends and every node rejects (spec "Packet formats"): byte 0 is
+`0x8F | kind << 4` (0 test or beacon, 1 ping, 2 pong), bytes 1 to 4 a
 big-endian sequence number, byte 5 the sender's home channel, then
 `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
 step); packet RSSI and SNR are in quarter dB.

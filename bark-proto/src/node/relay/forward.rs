@@ -147,7 +147,7 @@ use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{
-    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, NACK_AIRTIME, REPLY_RESERVE,
+    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
@@ -585,7 +585,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
-            if self.can_reply(NACK_AIRTIME, now) {
+            if self.can_reply(ACK_AIRTIME, now) {
                 self.replies.owe(reply, d.sender_home, deadline, now);
                 self.renew = false;
             }

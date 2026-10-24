@@ -1,29 +1,34 @@
-//! Encoding and decoding of every packet in spec "Packet formats". Type
-//! codes 0x1, 0x2 and 0x4 are unused, and 0x6 is the firmware's bench
-//! frames (roadmap D46, D49, D58, D70).
+//! Encoding and decoding of every packet in spec "Packet formats".
 //!
-//! The first byte of every packet is `type:4 | aux:4`. Every node has a
-//! 6-byte [`NodeId`], and fields that only name a node (DATA `dst_hop` and
-//! `src_hop`, ACK `from` and `to`) carry it. DATA `dst_pos` locates a place
-//! and is the 7-byte form of [`Position::encode`]; the heartbeat carries
-//! the sender's position in the 4-byte short form of [`ShortName`], which
-//! the receiver rebuilds from its own (spec "Positions on the wire", roadmap D14). DATA carries no
-//! message ID: every node computes [`Data::msg_id`] (D15). Search state
-//! lives in the nodes, not the packet (D16). Lengths, in bytes:
+//! The first byte of every packet has two shapes (roadmap D76):
 //!
 //! ```text
-//! HEARTBEAT 0x8 to 0xF first id pos                                = 11
-//! ACK       0x3      first msg from to                              = 17
-//! DATA      0x5      first dst_hop src_hop dst_pos dst_id hops
-//!                    time_left payload                              = 28 + payload
+//! 1 f f f c c c c   HEARTBEAT: flags fff, home channel cccc
+//! 0 k a a a a a a   k = 0 DATA, 1 ACK; aux aaaaaa
+//! ```
+//!
+//! Every node has a 6-byte [`NodeId`], and fields that only name a node
+//! (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
+//! `dst_pos` locates a place and is the 7-byte form of
+//! [`Position::encode`]; the heartbeat carries the sender's position in the
+//! 4-byte short form of [`ShortName`], which the receiver rebuilds from its
+//! own (spec "Positions on the wire", roadmap D14). DATA carries no message
+//! ID: every node computes [`Data::msg_id`] (D15). Search state lives in
+//! the nodes, not the packet (D16). Lengths, in bytes:
+//!
+//! ```text
+//! HEARTBEAT  first id pos                                         = 11
+//! ACK        first msg from to                                    = 17
+//! DATA       first dst_hop src_hop dst_pos dst_id hops
+//!            time_left payload                                    = 28 + payload
 //! ```
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
-//! refusal is for this hop only (spec "Receiving DATA"); the network still sends no
-//! failure notices (D10). An ACK names the message, the node answering
-//! and the node answered, so that a sender takes only the answer to its
-//! own offer, however many others offer the same message to the same
-//! node (D32).
+//! refusal is for this hop only (spec "Receiving DATA"); the network still
+//! sends no failure notices (D10). An ACK names the message, the node
+//! answering and the node answered, so that a sender takes only the answer
+//! to its own offer, however many others offer the same message to the
+//! same node (D32).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
@@ -33,22 +38,20 @@
 //! - The payload is at most [`MAX_PAYLOAD`] = 227 bytes, what a frame holds
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
-//! - An ACK takes the offer; a NACK, type 0x7, refuses it and adds a byte
-//!   for the wait it asks for, in whole bans rounded down
-//!   (`tables/budget.rs`). At SF5 the 18th byte takes one more block of
-//!   symbols, 1.28 ms, so a NACK is 16.96 ms against an ACK's 15.68. The
-//!   places in a refuser's line are one ban apart and nothing acts faster
-//!   than a ban, so the unit keeps every place apart; 255 bans are 403 s,
-//!   and a longer wait is told as that. `aux` is zero in both.
-//! - The heartbeat's type is 0x8 with flags in its three low bits: 0x1,
-//!   sleepy, 0x2, anchorless, and 0x4, carried, each with or without the
-//!   others (roadmap D73 made 0xA and 0xE heartbeats: a relay that knows
-//!   no relay yet says so). `aux` holds the home
-//!   channel, 0 to 12, in all four of its bits, so the flags are in the
-//!   type. 0x8 is the one base whose eight codes, 0x8 to 0xF, miss the
-//!   ACK, NACK and DATA, so the bench frames moved from 0xF to 0x6
-//!   (roadmap D70). A heartbeat says nothing of where its position came
-//!   from: no receiver needs to know.
+//! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
+//!   wait the refuser asks for in whole bans, 1 to 63 (`tables/budget.rs`).
+//!   The wait needs no byte of its own, which at SF5 would take one more
+//!   block of symbols.
+//! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
+//!   are zero, and a DATA with either set is rejected.
+//! - The heartbeat's flags are 0x1, sleepy, 0x2, anchorless, and 0x4,
+//!   carried, each with or without the others, so the high four bits of a
+//!   heartbeat's first byte are 0x8 to 0xF (roadmap D73 made 0xA and 0xE
+//!   heartbeats: a relay that knows no relay yet says so). A heartbeat says
+//!   nothing of where its position came from: no receiver needs to know.
+//! - A heartbeat byte whose channel is 15, which no node sends, starts the
+//!   firmware's bench frames ([`bench_first`]); nodes reject it as a
+//!   channel outside the plan.
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
 //! - A fixed-size packet with trailing bytes is malformed, not padded.
@@ -70,39 +73,42 @@ const TIME_LEFT_LEN: usize = 1;
 
 // First byte.
 const FIRST: usize = 0;
-const TYPE_SHIFT: u32 = 4;
-const AUX_MASK: u8 = 0x0f;
-
-// Type codes (spec "Packet formats").
-const T_ACK: u8 = 0x3;
-// The ACK that refuses, with the wait it asks for (spec "Bans").
-const T_NACK: u8 = 0x7;
-const T_DATA: u8 = 0x5;
-/// Reserved for the firmware's bench frames (spec "Packet formats"),
-/// which nodes reject as an unknown type.
-pub const T_BENCH: u8 = 0x6;
-const T_HEARTBEAT: u8 = 0x8;
-// The heartbeat's flags, in the type's three low bits.
-const HEARTBEAT_FLAGS: u8 = 0x7;
+const HEARTBEAT_BIT: u8 = 0x80;
+const ANSWER_BIT: u8 = 0x40;
+/// The bits of `aux`, below the kind bits (spec "Packet formats"): the
+/// longest wait an ACK asks for, in bans.
+pub const AUX_MASK: u8 = 0x3f;
+// The heartbeat's flags, above its channel.
+const FLAGS_SHIFT: u32 = 4;
+const CHANNEL_MASK: u8 = 0x0f;
 const HEARTBEAT_SLEEPY: u8 = 0x1;
 const HEARTBEAT_ANCHORLESS: u8 = 0x2;
 const HEARTBEAT_CARRIED: u8 = 0x4;
-const _: () =
-    assert!(HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS | HEARTBEAT_CARRIED == HEARTBEAT_FLAGS);
+const HEARTBEAT_FLAGS: u8 = HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS | HEARTBEAT_CARRIED;
 const _: () = assert!(
-    T_HEARTBEAT | HEARTBEAT_SLEEPY == 0x9
-        && T_HEARTBEAT | HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS == 0xB
-        && T_HEARTBEAT | HEARTBEAT_CARRIED == 0xC,
-    "spec \"Packet formats\": 0x8, 0x9, 0xB and 0xC"
+    HEARTBEAT_BIT | HEARTBEAT_FLAGS << FLAGS_SHIFT | CHANNEL_MASK == 0xff
+        && ANSWER_BIT | AUX_MASK == !HEARTBEAT_BIT,
+    "spec \"Packet formats\": each bit of the first byte has one meaning"
 );
-const _: () = assert!(
-    T_HEARTBEAT & HEARTBEAT_FLAGS == 0
-        && T_ACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
-        && T_NACK & !HEARTBEAT_FLAGS != T_HEARTBEAT
-        && T_DATA & !HEARTBEAT_FLAGS != T_HEARTBEAT
-        && T_BENCH & !HEARTBEAT_FLAGS != T_HEARTBEAT,
-    "every heartbeat code is free"
-);
+// The channel field of a bench frame's first byte: no node's home.
+const BENCH_CHANNEL: u8 = CHANNEL_MASK;
+const _: () = assert!(Channel::new(BENCH_CHANNEL).is_none());
+
+/// The first byte of a firmware bench frame of `kind`, 0 to 7, in the
+/// flag bits: a heartbeat byte on channel 15, which no node sends and
+/// every node rejects (spec "Packet formats").
+pub const fn bench_first(kind: u8) -> u8 {
+    HEARTBEAT_BIT | (kind & HEARTBEAT_FLAGS) << FLAGS_SHIFT | BENCH_CHANNEL
+}
+
+/// The kind of the bench frame whose first byte is `first`, if it is one.
+pub const fn bench_kind(first: u8) -> Option<u8> {
+    if first & (HEARTBEAT_BIT | CHANNEL_MASK) == HEARTBEAT_BIT | BENCH_CHANNEL {
+        Some(first >> FLAGS_SHIFT & HEARTBEAT_FLAGS)
+    } else {
+        None
+    }
+}
 
 // HEARTBEAT.
 const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
@@ -116,10 +122,6 @@ const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
 const ACK_TO: usize = ACK_FROM + ID_LEN;
 /// ACK length (spec "Packet formats": 17).
 pub const ACK_LEN: usize = ACK_TO + ID_LEN;
-// NACK: an ACK and the wait, in whole TTL units.
-const NACK_WAIT: usize = ACK_LEN;
-/// NACK length (spec "Packet formats": 18).
-pub const NACK_LEN: usize = NACK_WAIT + 1;
 
 // DATA.
 const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
@@ -135,22 +137,22 @@ pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 /// 255 − 28 = 227 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 11 && ACK_LEN == 17 && NACK_LEN == 18);
+const _: () = assert!(HEARTBEAT_LEN == 11 && ACK_LEN == 17);
 const _: () = assert!(DATA_HEADER_LEN == 28);
 const _: () = assert!(MAX_PAYLOAD == 227);
 
-/// HEARTBEAT, type 0x8 with its flags (spec "Heartbeat").
+/// HEARTBEAT (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// Sleepy (0x9): reach the sender cheaply in its window after its
+    /// Sleepy (0x1): reach the sender cheaply in its window after its
     /// beat, or at any time with the long preamble; it holds mail for
     /// nobody. Clear, it listens all the time.
     pub sleepy: bool,
-    /// Anchorless (0xA, 0xB with `sleepy`): the sender knows no node
+    /// Anchorless (0x2): the sender knows no node
     /// that holds mail, one neither sleepy nor carried; such a node that
     /// hears it answers.
     pub anchorless: bool,
-    /// Carried (0x4 on any of the others): the sender moves. It takes
+    /// Carried (0x4): the sender moves. It takes
     /// each GPS fix and holds mail for nobody, so nobody anchors to it.
     pub carried: bool,
     /// The sender's home channel.
@@ -170,7 +172,7 @@ impl Heartbeat {
     }
 }
 
-/// ACK, type 0x3 (spec "The ACK"): the answer to an offer, taken or refused.
+/// ACK (spec "The ACK"): the answer to an offer, taken or refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
     /// The answered message.
@@ -181,8 +183,8 @@ pub struct Ack {
     pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
-    /// For a refusal, the wait the refuser asks for, in whole bans
-    /// (spec "Bans"); 0 in an ACK that takes.
+    /// For a refusal, the wait the refuser asks for in whole bans, 1 to
+    /// [`AUX_MASK`] (spec "Bans"); 0 in an ACK that takes.
     pub wait: u8,
 }
 
@@ -194,7 +196,7 @@ impl Ack {
     }
 }
 
-/// DATA, type 0x5 (spec "Forwarding", "Packet formats").
+/// DATA (spec "Forwarding", "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
     /// The sender's home channel, where the ACK and anything sent straight
@@ -259,8 +261,6 @@ pub enum Packet<'a> {
 /// Why a frame did not decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DecodeError {
-    /// Unknown type nibble.
-    BadType(u8),
     /// Fewer bytes than the packet's fields need.
     Short,
     /// Longer than [`MAX_FRAME`], or trailing bytes after a fixed-size packet.
@@ -276,10 +276,6 @@ pub enum DecodeError {
 pub enum EncodeError {
     /// The payload is longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
-}
-
-fn first(kind: u8, aux: u8) -> u8 {
-    (kind << TYPE_SHIFT) | (aux & AUX_MASK)
 }
 
 fn put(buf: &mut [u8], at: usize, bytes: &[u8]) {
@@ -341,31 +337,32 @@ impl Packet<'_> {
         match self {
             Packet::Heartbeat(h) => {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
-                let kind = T_HEARTBEAT
-                    | flag(h.sleepy, HEARTBEAT_SLEEPY)
+                let flags = flag(h.sleepy, HEARTBEAT_SLEEPY)
                     | flag(h.anchorless, HEARTBEAT_ANCHORLESS)
                     | flag(h.carried, HEARTBEAT_CARRIED);
-                buf[FIRST] = first(kind, h.home.index());
+                buf[FIRST] = HEARTBEAT_BIT | flags << FLAGS_SHIFT | h.home.index();
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
-                buf[FIRST] = first(if a.refused { T_NACK } else { T_ACK }, 0);
+                // A refusal is never told as 0, which means taken.
+                let wait = if a.refused {
+                    a.wait.clamp(1, AUX_MASK)
+                } else {
+                    0
+                };
+                buf[FIRST] = ANSWER_BIT | wait;
                 put(buf, ACK_ID, &a.msg_id.0.to_be_bytes());
                 put(buf, ACK_FROM, &a.from.0);
                 put(buf, ACK_TO, &a.to.0);
-                if !a.refused {
-                    return Ok(ACK_LEN);
-                }
-                buf[NACK_WAIT] = a.wait;
-                Ok(NACK_LEN)
+                Ok(ACK_LEN)
             }
             Packet::Data(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
                 }
-                buf[FIRST] = first(T_DATA, d.sender_home.index());
+                buf[FIRST] = d.sender_home.index();
                 put(buf, DATA_DST_HOP, &d.dst_hop.0);
                 put(buf, DATA_SRC_HOP, &d.src_hop.0);
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
@@ -386,46 +383,40 @@ impl<'a> Packet<'a> {
             return Err(DecodeError::BadLength);
         }
         let first = *b.first().ok_or(DecodeError::Short)?;
-        let kind = first >> TYPE_SHIFT;
-        let aux = first & AUX_MASK;
-        match kind {
-            k if k & !HEARTBEAT_FLAGS == T_HEARTBEAT => {
-                exact(b, HEARTBEAT_LEN)?;
-                Ok(Packet::Heartbeat(Heartbeat {
-                    sleepy: kind & HEARTBEAT_SLEEPY != 0,
-                    anchorless: kind & HEARTBEAT_ANCHORLESS != 0,
-                    carried: kind & HEARTBEAT_CARRIED != 0,
-                    home: channel(aux)?,
-                    id: get_id(b, HEARTBEAT_ID),
-                    short: get_short(b, HEARTBEAT_POS),
-                }))
-            }
-            T_ACK | T_NACK => {
-                let refused = kind == T_NACK;
-                exact(b, if refused { NACK_LEN } else { ACK_LEN })?;
-                Ok(Packet::Ack(Ack {
-                    msg_id: get_msg_id(b, ACK_ID),
-                    from: get_id(b, ACK_FROM),
-                    to: get_id(b, ACK_TO),
-                    refused,
-                    wait: if refused { b[NACK_WAIT] } else { 0 },
-                }))
-            }
-            T_DATA => {
-                let payload = payload(b, DATA_HEADER_LEN)?;
-                Ok(Packet::Data(Data {
-                    sender_home: channel(aux)?,
-                    dst_hop: get_id(b, DATA_DST_HOP),
-                    src_hop: get_id(b, DATA_SRC_HOP),
-                    dst_pos: get_pos(b, DATA_DST_POS),
-                    dst_id: get_id(b, DATA_DST_ID),
-                    hops: b[DATA_HOPS],
-                    time_left: b[DATA_TIME_LEFT],
-                    payload,
-                }))
-            }
-            other => Err(DecodeError::BadType(other)),
+        if first & HEARTBEAT_BIT != 0 {
+            exact(b, HEARTBEAT_LEN)?;
+            let flags = first >> FLAGS_SHIFT;
+            return Ok(Packet::Heartbeat(Heartbeat {
+                sleepy: flags & HEARTBEAT_SLEEPY != 0,
+                anchorless: flags & HEARTBEAT_ANCHORLESS != 0,
+                carried: flags & HEARTBEAT_CARRIED != 0,
+                home: channel(first & CHANNEL_MASK)?,
+                id: get_id(b, HEARTBEAT_ID),
+                short: get_short(b, HEARTBEAT_POS),
+            }));
         }
+        let aux = first & AUX_MASK;
+        if first & ANSWER_BIT != 0 {
+            exact(b, ACK_LEN)?;
+            return Ok(Packet::Ack(Ack {
+                msg_id: get_msg_id(b, ACK_ID),
+                from: get_id(b, ACK_FROM),
+                to: get_id(b, ACK_TO),
+                refused: aux != 0,
+                wait: aux,
+            }));
+        }
+        let payload = payload(b, DATA_HEADER_LEN)?;
+        Ok(Packet::Data(Data {
+            sender_home: channel(aux)?,
+            dst_hop: get_id(b, DATA_DST_HOP),
+            src_hop: get_id(b, DATA_SRC_HOP),
+            dst_pos: get_pos(b, DATA_DST_POS),
+            dst_id: get_id(b, DATA_DST_ID),
+            hops: b[DATA_HOPS],
+            time_left: b[DATA_TIME_LEFT],
+            payload,
+        }))
     }
 }
 
@@ -465,7 +456,6 @@ mod tests {
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
             Packet::Heartbeat(_) => 11,
-            Packet::Ack(a) if a.refused => 18,
             Packet::Ack(_) => 17,
             Packet::Data(d) => 28 + d.payload.len(),
         };
@@ -494,7 +484,7 @@ mod tests {
             from in id(),
             to in id(),
             refused: bool,
-            step: u8,
+            step in 1..=AUX_MASK,
         ) {
             let wait = if refused { step } else { 0 };
             let ack = Ack { msg_id, from, to, refused, wait };
@@ -530,8 +520,8 @@ mod tests {
         #[test]
         fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME + 2)) {
             // Whatever decodes must re-encode to the same length and decode
-            // the same, apart from bits the decoder ignores (unused aux bits
-            // of an ACK, spare position bits).
+            // the same, apart from bits the decoder ignores (spare position
+            // bits).
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
@@ -541,13 +531,13 @@ mod tests {
         }
 
         #[test]
-        fn every_type_never_panics(kind in 0u8..16, aux in 0u8..16, rest in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME)) {
-            // Random first bytes rarely hit a known type with a valid aux;
-            // force every type nibble so each decoder's length paths run.
-            let mut bytes = std::vec![first(kind, aux)];
+        fn every_first_byte_never_panics(first: u8, rest in proptest::collection::vec(any::<u8>(), 0..=MAX_FRAME)) {
+            // Cut at every length a decoder checks, so that each length
+            // path runs whatever the first byte.
+            let mut bytes = std::vec![first];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 6, 7, 10, 11, 12, 17, 18, 19, 20, 27, 28, 29] {
+            for cut in [0, 1, 6, 7, 10, 11, 12, 16, 17, 18, 27, 28, 29] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
@@ -583,14 +573,6 @@ mod tests {
     fn malformed_frames() {
         use DecodeError::*;
         assert_eq!(Packet::decode(&[]), Err(Short));
-        assert_eq!(Packet::decode(&[0x00]), Err(BadType(0)));
-        for gone in [0x10, 0x20, 0x40, 0x60] {
-            assert_eq!(
-                Packet::decode(&[gone; HEARTBEAT_LEN]),
-                Err(BadType(gone >> 4)),
-                "unused, or the bench frames"
-            );
-        }
         assert_eq!(Packet::decode(&[0x80, 0, 0, 0, 0]), Err(Short));
         let mut hb = [0u8; HEARTBEAT_LEN + 1];
         hb[FIRST] = 0x8d;
@@ -601,21 +583,44 @@ mod tests {
         hb[FIRST] = 0x80;
         assert_eq!(Packet::decode(&hb[..HEARTBEAT_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&hb), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x30; ACK_LEN - 1]), Err(Short));
-        assert_eq!(Packet::decode(&[0x30; ACK_LEN + 1]), Err(BadLength));
-        assert_eq!(Packet::decode(&[0x70; NACK_LEN - 1]), Err(Short));
-        assert_eq!(Packet::decode(&[0x70; NACK_LEN + 1]), Err(BadLength));
+        for first in [0x40, 0x41, 0x7f] {
+            assert_eq!(Packet::decode(&[first; ACK_LEN - 1]), Err(Short));
+            assert_eq!(Packet::decode(&[first; ACK_LEN + 1]), Err(BadLength));
+        }
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
 
         let mut data = [0u8; DATA_HEADER_LEN];
-        data[FIRST] = first(T_DATA, 13);
-        assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(13)));
-        data[FIRST] = first(T_DATA, 0);
+        for (aux, why) in [
+            (13, "outside the plan"),
+            (0x10, "a high bit"),
+            (0x23, "a high bit"),
+        ] {
+            data[FIRST] = aux;
+            assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(aux)), "{why}");
+        }
+        data[FIRST] = 0;
         assert!(
             Packet::decode(&data).is_ok(),
             "an empty payload is a payload"
         );
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
+    }
+
+    #[test]
+    fn bench_frames_are_rejected() {
+        for kind in 0..=HEARTBEAT_FLAGS {
+            let first = bench_first(kind);
+            assert_eq!(bench_kind(first), Some(kind));
+            let mut frame = [0u8; HEARTBEAT_LEN];
+            frame[FIRST] = first;
+            assert_eq!(
+                Packet::decode(&frame),
+                Err(DecodeError::ChannelOutOfRange(BENCH_CHANNEL))
+            );
+        }
+        for first in [0x00, 0x0f, 0x40, 0x4f, 0x80, 0x8c] {
+            assert_eq!(bench_kind(first), None, "{first:#x}");
+        }
     }
 
     #[test]
@@ -673,7 +678,7 @@ mod tests {
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(
             &buf[..len],
-            &[0x30, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            &[0x40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
@@ -688,13 +693,16 @@ mod tests {
         let len = Packet::Ack(refused).encode(&mut buf).unwrap();
         assert_eq!(
             &buf[..len],
-            &[0x70, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24]
+            &[0x58, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            "the wait in aux"
         );
-        assert_eq!(
-            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(16_960),
-            "the 18th byte takes one more block of symbols"
-        );
+        let unsaid = Ack {
+            refused: true,
+            wait: 0,
+            ..ack
+        };
+        Packet::Ack(unsaid).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0x41, "a refusal is never told as taken");
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),
@@ -707,7 +715,7 @@ mod tests {
             payload: &[21, 22],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();
-        let mut want = std::vec![0x59, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut want = std::vec![0x09, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         want.extend_from_slice(&position.encode());
         want.extend_from_slice(&[13, 14, 15, 16, 17, 18, 19, 14, 21, 22]);
         assert_eq!(&buf[..len], &want[..]);

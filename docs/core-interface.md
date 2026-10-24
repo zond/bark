@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -261,9 +261,12 @@ action at a time, and the core never allocates.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - Types 0x1, 0x2 and 0x4 are unused and rejected, and so is 0x6, the
-    firmware's bench frames (roadmap D70). 0xA and 0xE are heartbeats of a relay in its
-    first rotation's burst (roadmap D73).
-  - A refusal is a NACK, type 0x7, 18 bytes: the ACK's 17 and the wait it asks for in
-    bans of 1.57 s (roadmap D54); `aux` is sent as zero in ACK and NACK and ignored on
-    receipt. A fixed-size packet with trailing bytes is rejected.
+  - The first byte's top bit marks a heartbeat, whose channel field holds 0 to 12; the
+    firmware's bench frames put 15 there, which nodes reject (`wire::bench_first`).
+    Below a clear top bit, the next bit tells DATA from the ACK, and the six bits under
+    it are `aux` (roadmap D76).
+  - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
+    it refuses, 1 to 63 bans of 1.57 s (spec "Bans"); taken or refused, an
+    ACK is 17 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
+    of the two high bits of `aux` set is rejected. A fixed-size packet with trailing
+    bytes is rejected.

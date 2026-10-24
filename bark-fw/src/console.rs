@@ -23,8 +23,9 @@
 //! status [reset]             uptime, battery, settings, counters
 //! ```
 //!
-//! Bench frames use packet type 0x6, which the protocol reserves for them
-//! and nodes reject (spec "Packet formats"): byte 0 is `0x60 | kind`, bytes 1..5 a big-endian
+//! Bench frames start with a heartbeat's first byte on channel 15, which no
+//! node sends and nodes reject (spec "Packet formats"): byte 0 is
+//! `0x8F | kind << 4`, bytes 1..5 a big-endian
 //! sequence number, byte 5 the sender's home channel, and the rest
 //! `byte[i] = i`.
 
@@ -32,7 +33,7 @@ use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::{ACK_LEN, HEARTBEAT_LEN, T_BENCH};
+use bark_proto::wire::{bench_first, bench_kind, ACK_LEN, HEARTBEAT_LEN};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -127,11 +128,10 @@ impl Lines {
     }
 }
 
-/// Bench frame kinds (byte 0 low nibble).
+/// Bench frame kinds, in byte 0 (`bark_proto::wire::bench_first`).
 const KIND_TEST: u8 = 0;
 const KIND_PING: u8 = 1;
 const KIND_PONG: u8 = 2;
-const BENCH_TYPE: u8 = T_BENCH << 4;
 /// Type byte, sequence number, home channel.
 const BENCH_HEADER: usize = 6;
 
@@ -145,7 +145,7 @@ struct Bench {
 
 fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Channel) -> &[u8] {
     let mut header = [0u8; BENCH_HEADER];
-    header[0] = BENCH_TYPE | kind;
+    header[0] = bench_first(kind);
     header[1..5].copy_from_slice(&seq.to_be_bytes());
     header[5] = home.index();
     for (i, b) in buf.iter_mut().enumerate().take(len) {
@@ -155,11 +155,11 @@ fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Ch
 }
 
 fn parse_bench(frame: &[u8]) -> Option<Bench> {
-    if frame.len() < BENCH_HEADER || frame[0] & 0xF0 != BENCH_TYPE {
+    if frame.len() < BENCH_HEADER {
         return None;
     }
     Some(Bench {
-        kind: frame[0] & 0x0F,
+        kind: bench_kind(frame[0])?,
         seq: u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]),
         channel: frame[5],
     })

@@ -284,8 +284,8 @@ pub struct Addressed {
     /// takes it, one that refuses it, either started later than the ACK
     /// timeout after the frame's end, or none.
     pub replies: [[u64; 4]; 2],
-    /// Refusing ACKs by the wait they ask for, in the NACK's units: 0, 1,
-    /// 2–3, 4–7 and so on doubling, 64 and more.
+    /// Refusing ACKs by the wait they ask for, in bans: 0, 1, 2–3, 4–7 and
+    /// so on doubling, 64 and more.
     pub refusal_steps: [u64; 8],
     /// The same, by the count of the refused DATA: 0 (fresh work), 1,
     /// 2–3, 4 and more.

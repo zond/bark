@@ -740,7 +740,7 @@ pub struct Sim {
     /// What each application offered, to offer again when given back.
     offered: HashMap<u32, Offer>,
     /// The count of the last DATA of each message to each node, to read
-    /// the count a NACK answers.
+    /// the count a refusing ACK answers.
     pub(crate) data_hops: HashMap<(u32, u64), u8>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,

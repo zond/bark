@@ -690,7 +690,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
     let end = data(&h).unwrap();
     h.run_until(end + Duration::from_millis(5), |_| false);
     let bans = 4;
-    let nack = Ack {
+    let refusal = Ack {
         msg_id: id,
         from: h.nodes[r].core.id(),
         to: h.nodes[s].core.id(),
@@ -703,7 +703,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
         len: 0,
         bytes: [0; MAX_FRAME],
     };
-    frame.len = Packet::Ack(nack).encode(&mut frame.bytes).unwrap() as u8;
+    frame.len = Packet::Ack(refusal).encode(&mut frame.bytes).unwrap() as u8;
     let sent = h.now;
     h.inject(r, frame);
     let given = |h: &Harness<Relay>| {
