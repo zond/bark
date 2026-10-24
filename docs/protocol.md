@@ -1027,10 +1027,11 @@ least one, since 0 means taken ([packet formats](#packet-formats)):
 nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
 
-*Why 63 bans are enough.* Only a line of refused senders reaching well
-past the bucket's whole refill, 61 s, asks for more, which is rare even
-at three times the design rate (roadmap D76); and a sender told too
-short a wait only comes back early.
+*Why 63 bans are enough.* A told wait is a place in the refuser's
+line, one ban a sender ahead, or the rest of a ban on the way on, at
+most the silence ladder's 61 s, 39 bans. The longest wait, 63 bans,
+covers the ladder and a line of 63 senders at one relay; a sender told
+too short a wait only comes back early to be refused again.
 
 **Silence doubles the ban from 1.57 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.57 s doubled k − 1 times: 1.57 s, 3.14 s,
