@@ -4,8 +4,8 @@
 //! The core says what to keep with [`crate::Action::Store`] whenever it
 //! changes, and the driver hands the last one back at boot in
 //! [`crate::Config::stored`]. Only slow-changing state is kept, so that
-//! writes are rare: the home channel, the place a fixed node stands, the
-//! carried flag, and a sleepy node's anchor. Time is not kept, since the
+//! writes are rare: the home channel, the place a fixed node stands and
+//! whether it is a map point, the carried flag, and a sleepy node's anchor. Time is not kept, since the
 //! board has no clock that runs while it is off.
 //!
 //! [`Stored::record`] lays it out as a fixed 32-byte record with a
@@ -29,6 +29,8 @@ pub struct Stored {
     pub place: Position,
     /// Whether it is carried.
     pub carried: bool,
+    /// Whether `place` is a map point a person set in the app, not a fix.
+    pub map_point: bool,
     /// A sleepy node's anchor, whose home channel is `home`.
     pub anchor: Option<Anchor>,
 }
@@ -42,6 +44,7 @@ const VERSION: u8 = 1;
 
 const FLAG_CARRIED: u8 = 0x1;
 const FLAG_ANCHOR: u8 = 0x2;
+const FLAG_MAP_POINT: u8 = 0x4;
 
 // Offsets in the record.
 const AT_VERSION: usize = 0;
@@ -67,7 +70,9 @@ impl Stored {
         r[AT_VERSION] = VERSION;
         r[AT_HOME] = self.home.index();
         let anchor = self.anchor.map_or(0, |_| FLAG_ANCHOR);
-        r[AT_FLAGS] = anchor | if self.carried { FLAG_CARRIED } else { 0 };
+        let flag = |set: bool, bit: u8| if set { bit } else { 0 };
+        r[AT_FLAGS] =
+            anchor | flag(self.carried, FLAG_CARRIED) | flag(self.map_point, FLAG_MAP_POINT);
         r[AT_PLACE..AT_ANCHOR_ID].copy_from_slice(&self.place.encode());
         if let Some(a) = self.anchor {
             r[AT_ANCHOR_ID..AT_ANCHOR_POS].copy_from_slice(&a.id.0);
@@ -108,6 +113,7 @@ impl Stored {
             home: Channel::new(r[AT_HOME])?,
             place: pos(AT_PLACE),
             carried: flags & FLAG_CARRIED != 0,
+            map_point: flags & FLAG_MAP_POINT != 0,
             anchor,
         })
     }
@@ -122,6 +128,7 @@ mod tests {
             home: Channel::new(7).unwrap(),
             place: Position::from_degrees(50.45, 30.52),
             carried: true,
+            map_point: false,
             anchor: Some(Anchor {
                 id: NodeId([1, 2, 3, 4, 5, 6]),
                 position: Position::from_degrees(50.46, 30.51),
@@ -133,6 +140,12 @@ mod tests {
     fn a_record_round_trips() {
         let s = stored();
         assert_eq!(Stored::from_record(&s.record()), Some(s));
+        let pinned = Stored {
+            carried: false,
+            map_point: true,
+            ..s
+        };
+        assert_eq!(Stored::from_record(&pinned.record()), Some(pinned));
         let bare = Stored {
             anchor: None,
             carried: false,

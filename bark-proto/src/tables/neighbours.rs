@@ -143,6 +143,9 @@ pub struct Neighbour {
     /// "Neighbour table"); shown to a person, used by no rule while
     /// format 1 is the only one.
     pub format: u8,
+    /// Whether its position is a map point a person set, by its last
+    /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
+    pub map_point: bool,
     /// When its last heartbeat was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
@@ -439,6 +442,7 @@ impl Neighbours {
                 }
                 n.home = hb.home;
                 n.format = hb.format;
+                n.map_point = hb.map_point;
                 n.sleepy = hb.sleepy;
                 n.carried = hb.carried;
                 let anchorless = hb.anchorless && hb.sleepy;
@@ -468,6 +472,7 @@ impl Neighbours {
             local: plane.point(position),
             home: hb.home,
             format: hb.format,
+            map_point: hb.map_point,
             last_heard: now,
             demoted_at: Instant::ZERO,
             banned_until: Instant::ZERO,
@@ -691,6 +696,7 @@ mod tests {
             carried: false,
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
+            map_point: false,
             id: id(i),
             short: pos(i).short(),
         };

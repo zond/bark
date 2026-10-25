@@ -465,7 +465,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             anchor: None,
-            motion: Motion::fixed(config.position),
+            motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
@@ -618,7 +618,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *anchor = None;
-        *motion = Motion::fixed(config.position);
+        *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
@@ -1052,6 +1052,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             },
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
+            map_point: kept.map_or(self.motion.map_point, |s| s.map_point),
             anchor: self.anchor.filter(|_| self.sleepy && !carried),
         }
     }
@@ -1610,6 +1611,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             carried: self.motion.carried,
             home: self.home,
             format: crate::wire::FORMAT,
+            map_point: self.motion.map_point,
             id: self.id,
             short: self.config.position.short(),
         };
@@ -2244,6 +2246,7 @@ mod tests {
             carried: false,
             home: r.home(),
             format: crate::wire::FORMAT,
+            map_point: false,
             id: other,
             short: config.position.short(),
         };
@@ -2377,6 +2380,7 @@ mod tests {
                 carried: false,
                 home: Channel::new(4).unwrap(),
                 format: crate::wire::FORMAT,
+                map_point: false,
                 id: anchor,
                 short: config.position.short(),
             };
@@ -3033,6 +3037,7 @@ mod tests {
             carried: false,
             home: b_home,
             format: crate::wire::FORMAT,
+            map_point: false,
             id: id_of(b),
             short: b.short(),
         };
@@ -3168,6 +3173,7 @@ mod tests {
             carried: false,
             home: Channel::new(5).unwrap(),
             format: crate::wire::FORMAT,
+            map_point: false,
             id: id_of(d_pos),
             short: d_pos.short(),
         };
@@ -3297,6 +3303,7 @@ mod tests {
                 carried: false,
                 home: Channel::new(5).unwrap(),
                 format: crate::wire::FORMAT,
+                map_point: false,
                 id: id_of(d_pos),
                 short: d_pos.short(),
             }),
@@ -3382,6 +3389,7 @@ mod tests {
                 carried: false,
                 home: Channel::new(5).unwrap(),
                 format: crate::wire::FORMAT,
+                map_point: false,
                 id: id_of(at),
                 short: at.short(),
             };

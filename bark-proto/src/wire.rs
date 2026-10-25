@@ -12,6 +12,8 @@
 //! frame. This code speaks format [`FORMAT`] only, so it sends 1 and
 //! rejects a DATA or ACK of any other; the heartbeat's layout never
 //! changes, so it reads every heartbeat and keeps the sender's format.
+//! A heartbeat's third byte holds flags that later formats may add to;
+//! a receiver ignores the bits it does not know. Bit 0 is the map point.
 //!
 //! Every node has a 6-byte [`NodeId`], and fields that only name a node
 //! (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
@@ -23,7 +25,7 @@
 //! the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT  first format id pos                                  = 12
+//! HEARTBEAT  first format flags id pos                            = 13
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            time_left payload                                    = 29 + payload
@@ -75,6 +77,7 @@ pub const FORMAT: u8 = 1;
 // Field widths.
 const FIRST_LEN: usize = 1;
 const FORMAT_LEN: usize = 1;
+const FLAGS_LEN: usize = 1;
 const POS_LEN: usize = Position::WIRE_LEN;
 const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
@@ -125,7 +128,11 @@ pub const fn bench_kind(first: u8) -> Option<u8> {
 const VERSION: usize = FIRST + FIRST_LEN;
 
 // HEARTBEAT.
-const HEARTBEAT_ID: usize = VERSION + FORMAT_LEN;
+const HEARTBEAT_MORE: usize = VERSION + FORMAT_LEN;
+const HEARTBEAT_ID: usize = HEARTBEAT_MORE + FLAGS_LEN;
+// The bits of the flags byte that this format defines; the others are
+// sent zero and ignored.
+const MAP_POINT: u8 = 0x01;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
@@ -151,19 +158,19 @@ pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 /// 255 − 29 = 226 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 12 && ACK_LEN == 18);
+const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
 const _: () = assert!(DATA_HEADER_LEN == 29);
 const _: () = assert!(MAX_PAYLOAD == 226);
 
-/// Whether a frame of `len` bytes takes as long on air as one a byte
-/// shorter.
-const fn byte_is_free(len: usize) -> bool {
+/// Whether a frame of `len` bytes takes as long on air as one `less`
+/// bytes shorter.
+const fn free(len: usize, less: usize) -> bool {
     time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        == time_on_air((len - FORMAT_LEN) as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        == time_on_air((len - less) as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
 }
 const _: () = assert!(
-    byte_is_free(HEARTBEAT_LEN) && byte_is_free(ACK_LEN),
-    "spec \"Packet formats\": the version byte costs a heartbeat and an ACK no airtime"
+    free(HEARTBEAT_LEN, FORMAT_LEN + FLAGS_LEN) && free(ACK_LEN, FORMAT_LEN),
+    "spec \"Packet formats\": the version and flags bytes cost no airtime"
 );
 
 /// HEARTBEAT (spec "Heartbeat").
@@ -184,6 +191,9 @@ pub struct Heartbeat {
     pub home: Channel,
     /// The newest wire format the sender speaks: its capability.
     pub format: u8,
+    /// The sender's position is a map point a person set in the app, not
+    /// a GPS fix (spec "Position").
+    pub map_point: bool,
     /// The sender.
     pub id: NodeId,
     /// The sender's position in short form; [`Heartbeat::position`]
@@ -379,6 +389,7 @@ impl Packet<'_> {
                     | flag(h.carried, HEARTBEAT_CARRIED);
                 buf[FIRST] = HEARTBEAT_BIT | flags << FLAGS_SHIFT | h.home.index();
                 buf[VERSION] = h.format;
+                buf[HEARTBEAT_MORE] = flag(h.map_point, MAP_POINT);
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
@@ -432,6 +443,7 @@ impl<'a> Packet<'a> {
                 carried: flags & HEARTBEAT_CARRIED != 0,
                 home: channel(first & CHANNEL_MASK)?,
                 format: b[VERSION],
+                map_point: b[HEARTBEAT_MORE] & MAP_POINT != 0,
                 id: get_id(b, HEARTBEAT_ID),
                 short: get_short(b, HEARTBEAT_POS),
             }));
@@ -498,7 +510,7 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
-            Packet::Heartbeat(_) => 12,
+            Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
             Packet::Data(d) => 29 + d.payload.len(),
         };
@@ -514,11 +526,12 @@ mod tests {
             carried: bool,
             home in chan(),
             format: u8,
+            map_point: bool,
             id in id(),
             position in position(),
         ) {
             // Every heartbeat is read, whatever format its sender speaks.
-            let hb = Heartbeat { sleepy, anchorless, carried, home, format, id, short: position.short() };
+            let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -582,7 +595,7 @@ mod tests {
             let mut bytes = std::vec![first];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 2, 7, 8, 11, 12, 13, 17, 18, 19, 28, 29, 30] {
+            for cut in [0, 1, 2, 3, 7, 8, 12, 13, 14, 17, 18, 19, 28, 29, 30] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
@@ -673,6 +686,19 @@ mod tests {
     }
 
     #[test]
+    fn unknown_heartbeat_flags_are_ignored() {
+        let mut hb = [HEARTBEAT_BIT; HEARTBEAT_LEN];
+        hb[VERSION] = FORMAT;
+        for (more, map_point) in [(0x00, false), (0xfe, false), (0x01, true), (0xff, true)] {
+            hb[HEARTBEAT_MORE] = more;
+            let Ok(Packet::Heartbeat(h)) = Packet::decode(&hb) else {
+                panic!("{more:#x}")
+            };
+            assert_eq!(h.map_point, map_point, "{more:#x}");
+        }
+    }
+
+    #[test]
     fn bench_frames_are_rejected() {
         for kind in 0..=HEARTBEAT_FLAGS {
             let first = bench_first(kind);
@@ -700,11 +726,19 @@ mod tests {
             carried: false,
             home: Channel::new(12).unwrap(),
             format: FORMAT,
+            map_point: false,
             id: NodeId([1, 2, 3, 4, 5, 6]),
             short: ShortName(0x0708_090a),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x8c, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(&buf[..len], &[0x8c, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        let pinned = Heartbeat {
+            map_point: true,
+            ..hb
+        };
+        Packet::Heartbeat(pinned).encode(&mut buf).unwrap();
+        assert_eq!(buf[2], 0x01, "the map point");
+        Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x9c);

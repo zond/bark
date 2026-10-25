@@ -34,7 +34,7 @@
 //! `0x8F | kind << 4`, byte 1 the format version, as in every packet,
 //! bytes 2..6 a big-endian sequence number, byte 6 the sender's home
 //! channel, and the rest `byte[i] = i`. A heartbeat heard is printed with
-//! its sender's ID and the newest format it speaks.
+//! its sender's ID, the newest format it speaks and its map point flag.
 
 use core::fmt;
 
@@ -1014,14 +1014,16 @@ fn report_frame(ch: Channel, frame: &[u8], status: &PacketStatus, crc: &str, at_
     );
 }
 
-/// A heartbeat's sender and the newest format it speaks, so that a person
-/// at the console learns which format a planted node speaks.
+/// A heartbeat's sender, the newest format it speaks and whether it stands
+/// on a map point, so that a person at the console learns them of a
+/// planted node.
 fn report_heartbeat(frame: &[u8]) {
     if let Ok(Packet::Heartbeat(h)) = Packet::decode(frame) {
         log::info!(
-            "heartbeat id={} format={} home={}",
+            "heartbeat id={} format={} map_point={} home={}",
             Hex(&h.id.0),
             h.format,
+            h.map_point,
             h.home.index()
         );
     }

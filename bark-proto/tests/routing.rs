@@ -1661,6 +1661,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     home: old,
                     place: pos(0.0, 0.0),
                     carried: false,
+                    map_point: false,
                     anchor: None,
                 }),
                 ..Config::default()

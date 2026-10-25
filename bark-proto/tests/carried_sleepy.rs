@@ -6,7 +6,7 @@
 mod common;
 
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::Packet;
+use bark_proto::wire::{Heartbeat, Packet};
 use bark_proto::{AppCommand, AppEvent, Config, Delivery, Instant, MsgId, Position, Relay, Trace};
 use common::{secs, Harness};
 
@@ -398,7 +398,44 @@ fn a_map_point_fixes_any_node() {
         assert_eq!(traced(&h, n, Trace::Changed), changes + 1);
         let want = if external { 0x8 } else { 0x9 };
         assert_eq!(last_type(&h, n), want);
+        // Its heartbeat says the position is a map point, and the
+        // neighbour that heard it keeps that (spec "Packet formats").
+        assert!(last_heartbeat(&h, n).map_point);
+        let id = h.nodes[n].core.id();
+        let pinned = |h: &Harness<Relay>| {
+            h.nodes[r]
+                .core
+                .neighbours()
+                .any(|e| e.id == id && e.map_point)
+        };
+        let until = h.now + secs(400);
+        h.run_until(until, pinned);
+        assert!(pinned(&h), "external: {external}");
+        // A fix the node takes as its position replaces the map point; a
+        // fixed relay keeps its place, and so its map point.
+        fix(&mut h, n, 700.0);
+        let since = h.now;
+        h.run_until(at(5000), |h| last_heartbeat_since(h, n, since).is_some());
+        let after = last_heartbeat_since(&h, n, since).expect("a heartbeat");
+        assert_eq!(after.map_point, external, "external: {external}");
     }
+}
+
+/// Node `i`'s last heartbeat.
+fn last_heartbeat(h: &Harness<Relay>, i: usize) -> Heartbeat {
+    last_heartbeat_since(h, i, Instant::ZERO).expect("a heartbeat")
+}
+
+/// Node `i`'s last heartbeat sent after `from`, if any.
+fn last_heartbeat_since(h: &Harness<Relay>, i: usize, from: Instant) -> Option<Heartbeat> {
+    h.nodes[i]
+        .sent
+        .iter()
+        .rev()
+        .find_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Heartbeat(hb)) if *t > from => Some(hb),
+            _ => None,
+        })
 }
 
 /// An anchorless sleepy node on the move says so with the long preamble,
