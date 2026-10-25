@@ -129,7 +129,7 @@ impl Sim {
     }
 
     /// `node`'s power is `external` now: report it to its core if it runs.
-    fn set_power(&mut self, node: u32, external: bool) {
+    pub(crate) fn set_power(&mut self, node: u32, external: bool) {
         if self.external[node as usize] == external {
             return;
         }

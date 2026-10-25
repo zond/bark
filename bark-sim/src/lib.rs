@@ -9,6 +9,7 @@
 
 #![forbid(unsafe_code)]
 
+mod battery;
 pub mod boots;
 pub mod geo;
 pub mod links;

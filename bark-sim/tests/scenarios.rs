@@ -727,3 +727,49 @@ fn nodes_switch_with_their_power() {
     assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
     accounted(&sim, "S2 switching");
 }
+
+/// The battery series' last row, by column name.
+fn battery_last(sim: &Sim) -> std::collections::HashMap<String, f64> {
+    let csv = sim.battery_csv().expect("batteries");
+    let mut lines = csv.lines();
+    let head: Vec<&str> = lines.next().expect("header").split(',').collect();
+    let last = lines.last().expect("a row");
+    head.iter()
+        .zip(last.split(','))
+        .map(|(h, v)| (h.to_string(), v.parse().unwrap_or(f64::NAN)))
+        .collect()
+}
+
+/// The grid goes down for two hours: with battery levels the relays,
+/// full, relay through it; with the grace alone they turn sleepy after
+/// it; and relays whose battery is low turn sleepy within the outage.
+#[test]
+fn relays_on_battery_in_an_outage() {
+    let outage = |levels: bool, charge: f64| {
+        let mut sc = scenario("s2-block.toml");
+        let from = sc.settled_s();
+        sc.protocol.grace_ms = Some(600_000);
+        sc.protocol.battery_levels = Some(levels);
+        sc.battery.on = true;
+        sc.battery.charge_on_usb = [charge, charge];
+        // A board that draws a GPS's current besides the radio, to reach
+        // the low level within the run (L76K: 29 mA tracking).
+        sc.battery.relay_ua = 29_000.0;
+        sc.battery.outages = vec![[from, from + 7200.0]];
+        sc.duration_s = from + 3600.0;
+        let mut sim = Sim::new(&sc).expect("S2 builds");
+        sim.run();
+        accounted(&sim, "S2 grid down");
+        battery_last(&sim)
+    };
+    let full = outage(true, 1.0);
+    assert_eq!(full["usb"], 0.0);
+    assert_eq!(full["to_sleepy"], 0.0, "{full:?}");
+    assert!(full["relays_on_battery"] >= 10.0, "{full:?}");
+    let grace = outage(false, 1.0);
+    assert_eq!(grace["relays"], 0.0, "{grace:?}");
+    // 2 % above the low level: 17 mAh, 35 minutes at 29 mA.
+    let low = outage(true, 0.22);
+    assert!(low["to_sleepy"] >= 10.0, "{low:?}");
+    assert!(low["relay_charge_min"] > 0.15, "{low:?}");
+}

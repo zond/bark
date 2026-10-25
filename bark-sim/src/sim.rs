@@ -77,6 +77,10 @@ pub(crate) enum Ev {
     Gps(u32),
     /// A node whose power switches at random changes it (node).
     Power(u32),
+    /// The grid's outage begins, `false`, or ends (`battery.rs`).
+    Grid(bool),
+    /// Every cell is brought up to now and read (`battery.rs`).
+    Battery,
 }
 
 /// Kind of excursion.
@@ -664,6 +668,9 @@ pub struct Sim {
     pub(crate) external: Vec<bool>,
     /// The nodes whose power switches, if any (`scenario::Power`).
     pub(crate) power: Option<crate::power::PowerModel>,
+    /// The nodes' batteries and the grid's outages, if any
+    /// (`scenario::Battery`).
+    pub(crate) battery: Option<crate::battery::BatteryModel>,
     /// Every node's core.
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
@@ -1185,6 +1192,7 @@ impl Sim {
             n_relays,
             external: (0..n as u32).map(|i| i < n_relays).collect(),
             power: None,
+            battery: None,
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1581,7 +1589,8 @@ impl Sim {
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
         }
-        self.power_setup(&sc.power, sc.seed)
+        self.power_setup(&sc.power, sc.seed)?;
+        self.battery_setup(&sc.battery, sc.seed)
     }
 
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
@@ -1771,6 +1780,8 @@ impl Sim {
             }
             Ev::Fix(n) => self.fix(n),
             Ev::Power(n) => self.power_toggle(n),
+            Ev::Grid(on) => self.grid(on),
+            Ev::Battery => self.battery_tick(),
             Ev::Gps(n) => {
                 self.fix(n);
                 let every = match self.gps.relays_every_s {
@@ -2414,6 +2425,9 @@ impl Sim {
             }
             Action::Trace(t) => {
                 self.power_trace(node, &t);
+                if let Trace::Role { sleepy } = t {
+                    self.battery_turn(sleepy);
+                }
                 let c = &mut self.metrics.nodes[node as usize].core;
                 match t {
                     Trace::HomeChannelMoved { from, to } if !self.was_booting => {

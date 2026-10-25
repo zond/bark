@@ -142,6 +142,9 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
+    /// `Config::battery` at the design's levels: a fixed relay on battery
+    /// relays until its battery is low.
+    pub battery_levels: Option<bool>,
 }
 
 impl ProtocolOverrides {
@@ -189,6 +192,9 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
+        if let Some(on) = self.battery_levels {
+            c.battery = on.then_some(bark_proto::BatteryLevels::DESIGN);
+        }
         c
     }
 }
@@ -515,6 +521,58 @@ impl Default for Power {
     }
 }
 
+/// Each node's battery, and the grid's outages, which take USB power
+/// from every node on it (`battery.rs`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Battery {
+    /// Model the batteries at all.
+    pub on: bool,
+    /// The nominal capacity, mAh.
+    pub capacity_mah: f64,
+    /// Each cell's capacity as a share of the nominal, drawn uniformly
+    /// between the two.
+    pub cell: [f64; 2],
+    /// The charge of a node on USB at the start as a share of its cell's
+    /// capacity, drawn uniformly between the two.
+    pub charge_on_usb: [f64; 2],
+    /// The same for a node on battery.
+    pub charge_on_battery: [f64; 2],
+    /// Each node's reading is off by a factor drawn uniformly within
+    /// 1 ± this.
+    pub gain_error: f64,
+    /// The charging current on USB, mA.
+    pub charge_ma: f64,
+    /// The board's current besides the radio, µA, of a relay and of a
+    /// sleepy node.
+    pub relay_ua: f64,
+    /// See `relay_ua`.
+    pub sleepy_ua: f64,
+    /// How often the driver reads the battery, seconds.
+    pub read_s: f64,
+    /// The grid's outages, `[from, to]` seconds, each after the settle
+    /// time.
+    pub outages: Vec<[f64; 2]>,
+}
+
+impl Default for Battery {
+    fn default() -> Self {
+        Battery {
+            on: false,
+            capacity_mah: 850.0,
+            cell: [1.0, 1.0],
+            charge_on_usb: [1.0, 1.0],
+            charge_on_battery: [1.0, 1.0],
+            gain_error: 0.0,
+            charge_ma: 500.0,
+            relay_ua: 0.0,
+            sleepy_ua: 0.0,
+            read_s: 60.0,
+            outages: Vec::new(),
+        }
+    }
+}
+
 /// Sleepy nodes carried in vehicles. A share of the sleepy nodes that do
 /// not walk ride: each stops indoors at a point of a straight route, then
 /// is driven along the route to another point drawn uniformly on it, and
@@ -655,6 +713,8 @@ pub struct Scenario {
     pub gps: Gps,
     /// Whose power switches between USB and battery.
     pub power: Power,
+    /// The nodes' batteries and the grid's outages.
+    pub battery: Battery,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -700,6 +760,7 @@ impl Default for Scenario {
             dark_groups: Vec::new(),
             gps: Gps::default(),
             power: Power::default(),
+            battery: Battery::default(),
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

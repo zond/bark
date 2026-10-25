@@ -55,6 +55,8 @@ pub enum Purpose {
     Power = 19,
     /// Where the text offered at a scripted boot goes (`boots.rs`).
     BootText = 20,
+    /// Each node's cell (`scenario::Battery`).
+    Battery = 21,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.
