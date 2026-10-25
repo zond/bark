@@ -591,3 +591,22 @@ pub fn at(s: u64) -> Instant {
 pub fn ch(i: u8) -> Channel {
     Channel::new(i).unwrap()
 }
+
+/// The heartbeat flags of spec "Packet formats", as `heartbeat_flags`
+/// gives them.
+pub const RELAY: u8 = 0;
+pub const SLEEPY: u8 = 0x1;
+pub const ANCHORLESS: u8 = 0x2;
+pub const CARRIED: u8 = 0x4;
+
+/// The sleepy, anchorless and carried flags of the heartbeat in `bytes`.
+pub fn heartbeat_flags(bytes: &[u8]) -> Option<u8> {
+    match bark_proto::wire::Packet::decode(bytes) {
+        Ok(bark_proto::wire::Packet::Heartbeat(h)) => Some(
+            (u8::from(h.sleepy) * SLEEPY)
+                | (u8::from(h.anchorless) * ANCHORLESS)
+                | (u8::from(h.carried) * CARRIED),
+        ),
+        _ => None,
+    }
+}

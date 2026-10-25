@@ -10,7 +10,7 @@ use bark_proto::radio::{CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::Packet;
 use bark_proto::{AppCommand, AppEvent, Config, Instant, MsgId, Position, Relay, Trace};
-use common::{at, secs, Harness};
+use common::{at, heartbeat_flags, secs, Harness, ANCHORLESS, RELAY, SLEEPY};
 
 /// A position `east` metres from a point in Kyiv.
 fn pos(east: f64) -> Position {
@@ -41,7 +41,7 @@ fn heartbeats(h: &Harness<Relay>, i: usize, from: Instant) -> Vec<(Instant, u8, 
             *t >= from && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
         })
         .map(|(t, f)| {
-            let kind = f.payload()[0] >> 4;
+            let kind = heartbeat_flags(f.payload()).unwrap();
             (*t, kind, f.channel.index(), f.preamble_symbols)
         })
         .collect()
@@ -75,7 +75,7 @@ fn send(h: &mut Harness<Relay>, from: usize, to: usize, text: &[u8]) -> MsgId {
 
 /// A relay planted beside a running one heartbeats from its first slot:
 /// its first rotation's thirteen heartbeats a burst gap apart with the
-/// anchorless flag, 0xA, one on each channel, then on its interval. The
+/// anchorless flag, one on each channel, then on its interval. The
 /// running relay answers the one on its channel once, with the ordinary
 /// preamble, within a backoff and a lag, on the new relay's channel, and
 /// each knows the other within the burst.
@@ -94,7 +94,7 @@ fn a_relay_bursts_and_is_answered() {
     let channels: std::collections::HashSet<u8> = burst.iter().map(|b| b.2).collect();
     assert_eq!(channels.len(), CHANNELS as usize, "every channel once");
     for w in burst.windows(2) {
-        assert_eq!(w[0].1, 0xA, "flagged");
+        assert_eq!(w[0].1, ANCHORLESS, "flagged");
         let gap = w[1].0.since(w[0].0);
         assert!(
             gap.as_micros().abs_diff(burst_gap(&c).as_micros()) <= 1000,
@@ -106,7 +106,7 @@ fn a_relay_bursts_and_is_answered() {
         .0
         .since(beats[CHANNELS as usize - 1].0);
     assert!(after.as_micros().abs_diff(interval.as_micros()) <= 1000);
-    assert_eq!(beats[CHANNELS as usize].1, 0x8, "the burst is over");
+    assert_eq!(beats[CHANNELS as usize].1, RELAY, "the burst is over");
     // A's answer: one heartbeat on B's channel, out of A's slots.
     let home_b = h.nodes[b].core.home().index();
     let heard_at = burst
@@ -175,7 +175,7 @@ fn a_sleepy_node_alone_is_anchorless_after_its_first_rotation() {
     let beats = heartbeats(&h, 0, Instant::ZERO);
     assert!(beats
         .iter()
-        .all(|b| b.1 == 0xB && b.3 == LONG_PREAMBLE_SYMBOLS));
+        .all(|b| b.1 == SLEEPY | ANCHORLESS && b.3 == LONG_PREAMBLE_SYMBOLS));
 }
 
 /// A relay restarted with what it stored comes back on its home channel
@@ -238,7 +238,7 @@ fn a_sleepy_node_resumes_its_stored_anchor() {
     assert_eq!(h.nodes[s].core.anchor(), Some(anchor));
     assert!(!h.nodes[s].core.booting());
     let beats = heartbeats(&h, s, back);
-    assert_eq!(beats[0].1, 0x9, "a beat to its anchor at once");
+    assert_eq!(beats[0].1, SLEEPY, "a beat to its anchor at once");
     assert_eq!(beats[0].2, h.nodes[r].core.home().index());
     h.run_until(back + Config::default().boot_listen + secs(10), |_| false);
     assert_eq!(h.nodes[s].core.anchor(), Some(anchor));

@@ -30,17 +30,17 @@
 //! `scripts/image.py stage` sends an image through the last four.
 //!
 //! Bench frames start with a heartbeat's first byte on channel 15, which no
-//! node sends and nodes reject (spec "Packet formats"): byte 0 is
-//! `0x8F | kind << 4`, byte 1 the format version, as in every packet,
-//! bytes 2..6 a big-endian sequence number, byte 6 the sender's home
-//! channel, and the rest `byte[i] = i`. A heartbeat heard is printed with
+//! node sends and nodes reject (spec "Packet formats"): byte 0 is `0x8F`,
+//! byte 1 the format version, as in every packet, byte 2 the kind, in the
+//! heartbeat's flags byte, bytes 3..7 a big-endian sequence number, byte 7
+//! the sender's home channel, and the rest `byte[i] = i`. A heartbeat heard is printed with
 //! its sender's ID, the newest format it speaks and its map point flag.
 
 use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::{bench_first, bench_kind, Packet, ACK_LEN, FORMAT, HEARTBEAT_LEN};
+use bark_proto::wire::{Packet, ACK_LEN, BENCH_FIRST, FORMAT, HEARTBEAT_LEN};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -143,12 +143,12 @@ impl Lines {
     }
 }
 
-/// Bench frame kinds, in byte 0 (`bark_proto::wire::bench_first`).
+/// Bench frame kinds, in byte 2.
 const KIND_TEST: u8 = 0;
 const KIND_PING: u8 = 1;
 const KIND_PONG: u8 = 2;
-/// Type byte, format, sequence number, home channel.
-const BENCH_HEADER: usize = 7;
+/// First byte, format, kind, sequence number, home channel.
+const BENCH_HEADER: usize = 8;
 
 /// A bench frame's header fields.
 #[derive(Clone, Copy)]
@@ -160,10 +160,11 @@ struct Bench {
 
 fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Channel) -> &[u8] {
     let mut header = [0u8; BENCH_HEADER];
-    header[0] = bench_first(kind);
+    header[0] = BENCH_FIRST;
     header[1] = FORMAT;
-    header[2..6].copy_from_slice(&seq.to_be_bytes());
-    header[6] = home.index();
+    header[2] = kind;
+    header[3..7].copy_from_slice(&seq.to_be_bytes());
+    header[7] = home.index();
     for (i, b) in buf.iter_mut().enumerate().take(len) {
         *b = if i < BENCH_HEADER { header[i] } else { i as u8 };
     }
@@ -171,13 +172,13 @@ fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Ch
 }
 
 fn parse_bench(frame: &[u8]) -> Option<Bench> {
-    if frame.len() < BENCH_HEADER {
+    if frame.len() < BENCH_HEADER || frame[0] != BENCH_FIRST {
         return None;
     }
     Some(Bench {
-        kind: bench_kind(frame[0])?,
-        seq: u32::from_be_bytes([frame[2], frame[3], frame[4], frame[5]]),
-        channel: frame[6],
+        kind: frame[2],
+        seq: u32::from_be_bytes([frame[3], frame[4], frame[5], frame[6]]),
+        channel: frame[7],
     })
 }
 

@@ -157,11 +157,11 @@ pub struct Neighbour {
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
-    /// Whether it is sleepy (heartbeat 0x9 or 0xB): it receives
+    /// Whether it is sleepy (the heartbeat's sleepy flag): it receives
     /// duty-cycled between its windows, and is sent to with the long
     /// preamble.
     pub sleepy: bool,
-    /// Whether its last heartbeat had the anchorless flag (0xA, 0xB): it
+    /// Whether its last heartbeat had the anchorless flag: it
     /// knows no node that holds mail, and a relay that hears it answers
     /// ([`Neighbours::answer_due`]). A sleepy one is in anchorless mode
     /// ([`Neighbour::alone`]).
@@ -192,7 +192,7 @@ impl Neighbour {
         self.sleepy && !self.anchorless
     }
 
-    /// Whether it is a sleepy node without an anchor (heartbeat 0xB): no
+    /// Whether it is a sleepy node without an anchor (sleepy and anchorless): no
     /// anchor for a sleepy node, and a next hop like any other.
     pub fn alone(&self) -> bool {
         self.sleepy && self.anchorless

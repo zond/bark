@@ -1,10 +1,12 @@
 //! Encoding and decoding of every packet in spec "Packet formats".
 //!
-//! The first byte of every packet has two shapes (roadmap D76):
+//! The first byte of every packet is its kind and that kind's one small
+//! field (roadmap D76, D77):
 //!
 //! ```text
-//! 1 f f f c c c c   HEARTBEAT: flags fff, home channel cccc
-//! 0 k a a a a a a   k = 0 DATA, 1 ACK; aux aaaaaa
+//! 1 0 0 0 c c c c   HEARTBEAT: home channel cccc
+//! 0 0 a a a a a a   DATA: aux, the sender's home channel
+//! 0 1 a a a a a a   ACK: aux, the wait
 //! ```
 //!
 //! The second is the format version (roadmap D77): in a heartbeat the
@@ -12,8 +14,8 @@
 //! frame. This code speaks format [`FORMAT`] only, so it sends 1 and
 //! rejects a DATA or ACK of any other; the heartbeat's layout never
 //! changes, so it reads every heartbeat and keeps the sender's format.
-//! A heartbeat's third byte holds flags that later formats may add to;
-//! a receiver ignores the bits it does not know. Bit 0 is the map point.
+//! A heartbeat's third byte holds its flags; a receiver ignores the bits
+//! it does not know, which later formats may define.
 //!
 //! Every node has a 6-byte [`NodeId`], and fields that only name a node
 //! (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
@@ -52,13 +54,10 @@
 //!   one airtime.
 //! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
 //!   are zero, and a DATA with either set is rejected.
-//! - The heartbeat's flags are 0x1, sleepy, 0x2, anchorless, and 0x4,
-//!   carried, each with or without the others, so the high four bits of a
-//!   heartbeat's first byte are 0x8 to 0xF (roadmap D73 made 0xA and 0xE
-//!   heartbeats: a relay that knows no relay yet says so). A heartbeat says
-//!   nothing of where its position came from: no receiver needs to know.
+//! - The heartbeat's flags are bit 0 sleepy, bit 1 anchorless, bit 2
+//!   carried and bit 3 map point, each with or without the others.
 //! - A heartbeat byte whose channel is 15, which no node sends, starts the
-//!   firmware's bench frames ([`bench_first`]); nodes reject it as a
+//!   firmware's bench frames ([`BENCH_FIRST`]); nodes reject it as a
 //!   channel outside the plan.
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
@@ -92,15 +91,11 @@ const ANSWER_BIT: u8 = 0x40;
 /// The bits of `aux`, below the kind bits (spec "Packet formats"): the
 /// longest wait an ACK asks for, in bans.
 pub const AUX_MASK: u8 = 0x3f;
-// The heartbeat's flags, above its channel.
-const FLAGS_SHIFT: u32 = 4;
+// A heartbeat's channel, below three bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
-const HEARTBEAT_SLEEPY: u8 = 0x1;
-const HEARTBEAT_ANCHORLESS: u8 = 0x2;
-const HEARTBEAT_CARRIED: u8 = 0x4;
-const HEARTBEAT_FLAGS: u8 = HEARTBEAT_SLEEPY | HEARTBEAT_ANCHORLESS | HEARTBEAT_CARRIED;
+const HEARTBEAT_ZERO: u8 = 0x70;
 const _: () = assert!(
-    HEARTBEAT_BIT | HEARTBEAT_FLAGS << FLAGS_SHIFT | CHANNEL_MASK == 0xff
+    HEARTBEAT_BIT | HEARTBEAT_ZERO | CHANNEL_MASK == 0xff
         && ANSWER_BIT | AUX_MASK == !HEARTBEAT_BIT,
     "spec \"Packet formats\": each bit of the first byte has one meaning"
 );
@@ -108,31 +103,22 @@ const _: () = assert!(
 const BENCH_CHANNEL: u8 = CHANNEL_MASK;
 const _: () = assert!(Channel::new(BENCH_CHANNEL).is_none());
 
-/// The first byte of a firmware bench frame of `kind`, 0 to 7, in the
-/// flag bits: a heartbeat byte on channel 15, which no node sends and
-/// every node rejects (spec "Packet formats").
-pub const fn bench_first(kind: u8) -> u8 {
-    HEARTBEAT_BIT | (kind & HEARTBEAT_FLAGS) << FLAGS_SHIFT | BENCH_CHANNEL
-}
-
-/// The kind of the bench frame whose first byte is `first`, if it is one.
-pub const fn bench_kind(first: u8) -> Option<u8> {
-    if first & (HEARTBEAT_BIT | CHANNEL_MASK) == HEARTBEAT_BIT | BENCH_CHANNEL {
-        Some(first >> FLAGS_SHIFT & HEARTBEAT_FLAGS)
-    } else {
-        None
-    }
-}
+/// The first byte of a firmware bench frame: a heartbeat byte on channel
+/// 15, which no node sends and every node rejects (spec "Packet formats").
+pub const BENCH_FIRST: u8 = HEARTBEAT_BIT | BENCH_CHANNEL;
 
 // The second byte, the format version.
 const VERSION: usize = FIRST + FIRST_LEN;
 
 // HEARTBEAT.
-const HEARTBEAT_MORE: usize = VERSION + FORMAT_LEN;
-const HEARTBEAT_ID: usize = HEARTBEAT_MORE + FLAGS_LEN;
+const HEARTBEAT_FLAGS: usize = VERSION + FORMAT_LEN;
+const HEARTBEAT_ID: usize = HEARTBEAT_FLAGS + FLAGS_LEN;
 // The bits of the flags byte that this format defines; the others are
 // sent zero and ignored.
-const MAP_POINT: u8 = 0x01;
+const SLEEPY: u8 = 0x01;
+const ANCHORLESS: u8 = 0x02;
+const CARRIED: u8 = 0x04;
+const MAP_POINT: u8 = 0x08;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
@@ -306,6 +292,9 @@ pub enum DecodeError {
     ChannelOutOfRange(u8),
     /// A payload longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
+    /// A first byte of no kind: a heartbeat's with a bit between its kind
+    /// and its channel set.
+    Kind(u8),
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
 }
@@ -384,12 +373,12 @@ impl Packet<'_> {
         match self {
             Packet::Heartbeat(h) => {
                 let flag = |set: bool, bit: u8| if set { bit } else { 0 };
-                let flags = flag(h.sleepy, HEARTBEAT_SLEEPY)
-                    | flag(h.anchorless, HEARTBEAT_ANCHORLESS)
-                    | flag(h.carried, HEARTBEAT_CARRIED);
-                buf[FIRST] = HEARTBEAT_BIT | flags << FLAGS_SHIFT | h.home.index();
+                buf[FIRST] = HEARTBEAT_BIT | h.home.index();
                 buf[VERSION] = h.format;
-                buf[HEARTBEAT_MORE] = flag(h.map_point, MAP_POINT);
+                buf[HEARTBEAT_FLAGS] = flag(h.sleepy, SLEEPY)
+                    | flag(h.anchorless, ANCHORLESS)
+                    | flag(h.carried, CARRIED)
+                    | flag(h.map_point, MAP_POINT);
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
@@ -435,15 +424,18 @@ impl<'a> Packet<'a> {
         }
         let first = *b.first().ok_or(DecodeError::Short)?;
         if first & HEARTBEAT_BIT != 0 {
+            if first & HEARTBEAT_ZERO != 0 {
+                return Err(DecodeError::Kind(first));
+            }
             exact(b, HEARTBEAT_LEN)?;
-            let flags = first >> FLAGS_SHIFT;
+            let flags = b[HEARTBEAT_FLAGS];
             return Ok(Packet::Heartbeat(Heartbeat {
-                sleepy: flags & HEARTBEAT_SLEEPY != 0,
-                anchorless: flags & HEARTBEAT_ANCHORLESS != 0,
-                carried: flags & HEARTBEAT_CARRIED != 0,
+                sleepy: flags & SLEEPY != 0,
+                anchorless: flags & ANCHORLESS != 0,
+                carried: flags & CARRIED != 0,
                 home: channel(first & CHANNEL_MASK)?,
                 format: b[VERSION],
-                map_point: b[HEARTBEAT_MORE] & MAP_POINT != 0,
+                map_point: flags & MAP_POINT != 0,
                 id: get_id(b, HEARTBEAT_ID),
                 short: get_short(b, HEARTBEAT_POS),
             }));
@@ -638,6 +630,10 @@ mod tests {
             Packet::decode(&hb[..HEARTBEAT_LEN]),
             Err(ChannelOutOfRange(13))
         );
+        for first in [0x90, 0xa3, 0xcc, 0xff] {
+            hb[FIRST] = first;
+            assert_eq!(Packet::decode(&hb[..HEARTBEAT_LEN]), Err(Kind(first)));
+        }
         hb[FIRST] = 0x80;
         assert_eq!(Packet::decode(&hb[..HEARTBEAT_LEN - 1]), Err(Short));
         assert_eq!(Packet::decode(&hb), Err(BadLength));
@@ -687,31 +683,29 @@ mod tests {
 
     #[test]
     fn unknown_heartbeat_flags_are_ignored() {
-        let mut hb = [HEARTBEAT_BIT; HEARTBEAT_LEN];
+        let mut hb = [0u8; HEARTBEAT_LEN];
+        hb[FIRST] = HEARTBEAT_BIT;
         hb[VERSION] = FORMAT;
-        for (more, map_point) in [(0x00, false), (0xfe, false), (0x01, true), (0xff, true)] {
-            hb[HEARTBEAT_MORE] = more;
+        for flags in [0x00, 0x08, 0xf0, 0xf8] {
+            hb[HEARTBEAT_FLAGS] = flags;
             let Ok(Packet::Heartbeat(h)) = Packet::decode(&hb) else {
-                panic!("{more:#x}")
+                panic!("{flags:#x}")
             };
-            assert_eq!(h.map_point, map_point, "{more:#x}");
+            assert_eq!(h.map_point, flags & MAP_POINT != 0, "{flags:#x}");
+            assert!(!h.sleepy && !h.anchorless && !h.carried, "{flags:#x}");
         }
     }
 
     #[test]
     fn bench_frames_are_rejected() {
-        for kind in 0..=HEARTBEAT_FLAGS {
-            let first = bench_first(kind);
-            assert_eq!(bench_kind(first), Some(kind));
-            let mut frame = [0u8; HEARTBEAT_LEN];
-            frame[FIRST] = first;
+        let mut frame = [0u8; HEARTBEAT_LEN];
+        frame[FIRST] = BENCH_FIRST;
+        for kind in 0..=u8::MAX {
+            frame[HEARTBEAT_FLAGS] = kind;
             assert_eq!(
                 Packet::decode(&frame),
                 Err(DecodeError::ChannelOutOfRange(BENCH_CHANNEL))
             );
-        }
-        for first in [0x00, 0x0f, 0x40, 0x4f, 0x80, 0x8c] {
-            assert_eq!(bench_kind(first), None, "{first:#x}");
         }
     }
 
@@ -732,36 +726,33 @@ mod tests {
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
         assert_eq!(&buf[..len], &[0x8c, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-        let pinned = Heartbeat {
-            map_point: true,
-            ..hb
-        };
-        Packet::Heartbeat(pinned).encode(&mut buf).unwrap();
-        assert_eq!(buf[2], 0x01, "the map point");
-        Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        let sleepy = Heartbeat { sleepy: true, ..hb };
-        Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0x9c);
-        let anchorless = Heartbeat {
-            anchorless: true,
-            ..sleepy
-        };
-        Packet::Heartbeat(anchorless).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0xbc);
-        let alone = Heartbeat {
-            anchorless: true,
-            ..hb
-        };
-        Packet::Heartbeat(alone).encode(&mut buf).unwrap();
-        assert_eq!(buf[0], 0xac, "a relay that knows no relay");
-        for (flags, code) in [(hb, 0xc), (sleepy, 0xd), (alone, 0xe), (anchorless, 0xf)] {
-            let carried = Heartbeat {
-                carried: true,
-                ..flags
-            };
-            Packet::Heartbeat(carried).encode(&mut buf).unwrap();
-            assert_eq!(buf[0], code << 4 | 0xc, "carried with any of the others");
-            assert_eq!(Packet::decode(&buf[..len]), Ok(Packet::Heartbeat(carried)));
+        for (bit, set) in [
+            (0x01, Heartbeat { sleepy: true, ..hb }),
+            (
+                0x02,
+                Heartbeat {
+                    anchorless: true,
+                    ..hb
+                },
+            ),
+            (
+                0x04,
+                Heartbeat {
+                    carried: true,
+                    ..hb
+                },
+            ),
+            (
+                0x08,
+                Heartbeat {
+                    map_point: true,
+                    ..hb
+                },
+            ),
+        ] {
+            Packet::Heartbeat(set).encode(&mut buf).unwrap();
+            assert_eq!(buf[..2], [0x8c, 1], "{bit:#x}: only the flags byte");
+            assert_eq!(buf[2], bit);
         }
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),

@@ -405,9 +405,9 @@ listen-before-talk.
 
 Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
-`0x8F | kind << 4` (0 test or beacon, 1 ping, 2 pong), byte 1 the
-format version as in every packet, bytes 2 to 5 a big-endian sequence
-number, byte 6 the sender's home channel, then `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
+`0x8F`, byte 1 the format version as in every packet, byte 2 the kind
+(0 test or beacon, 1 ping, 2 pong), bytes 3 to 6 a big-endian sequence
+number, byte 7 the sender's home channel, then `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
 step); packet RSSI and SNR are in quarter dB.
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
