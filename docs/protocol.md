@@ -1725,8 +1725,14 @@ sleepy nodes, and their addresses, to other anchors.
 
 When the grace ends the node takes no more mail, owning nothing by
 position, and flushes its delivery queue, listening all the time until
-each message has had its attempt; a relay that turned carried in its
-grace has flushed already, at its first far fix.
+each message has had its attempt, or for a delivery TTL at most; a relay
+that turned carried in its grace has flushed already, at its first far
+fix.
+
+*Why a TTL at most.* The flush goes through the duty budget as any
+delivery, and where the channels are full it could wait for hours with
+the node listening at full current. A TTL is what the network promises a
+node it cannot reach.
 
 Then it is sleepy, and stays carried or fixed as it was. It holds
 nothing, so what the flush did not deliver is dropped, and it takes as
