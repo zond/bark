@@ -1,7 +1,9 @@
 # When a sleepy node runs its GPS
 
-**Date:** 2026-10-25. **Status:** measured, not decided. Spec references
-are to `protocol.md`. The base is main `1654017`.
+**Date:** 2026-10-25. **Status:** adopted 2026-10-25 (roadmap D80):
+variant (b), events with an 8 h back-off. Spec references are to
+`protocol.md`. The measurements below were taken on main `1654017`; the
+last section repeats them on the tip, rebased on `3c33c80`.
 
 ## Question
 
@@ -140,9 +142,8 @@ far fixes at the receiver's rate of one a second. On USB 29 mA costs
 nothing that matters. A solar relay (O17) cannot afford it, and should
 search as a sleepy node does; that is O17's to decide.
 
-**The app.** An app that wants the node's own position, for a map, can
-ask with a new command that starts a search; the phone usually has a
-better GPS of its own. Not built.
+**The app.** It asks for no fix: it needs no position but the anchor's,
+and replies go to the anchor's address.
 
 ## Measurements
 
@@ -237,8 +238,7 @@ What the runs say:
 ## Recommendation
 
 Adopt (b), events with an 8 h back-off, and replace the GPS paragraph
-of spec "Beats" with the text below. The spec is not edited here: the
-back-off is a choice of how much battery to protect, the user's to make. It keeps the user's rule and the user's
+of spec "Beats" with the text below. Adopted; the spec carries it. It keeps the user's rule and the user's
 hypothesis where it holds: an anchored node runs no GPS between anchor
 changes. It costs what no GPS costs, 56 days on 850 mAh in S4, against
 1.2 days as written, and it keeps the two things the hypothesis alone
@@ -251,18 +251,18 @@ not worth 28 mA. If they are wanted, a radio signal that the node
 moves, the anchor's averaged RSSI falling by the switching margin, could
 start the move check without the GPS; not measured.
 
-Remove `EveryBeat`, `Follow` and `Anchorless` before a merge, and the
-`gps` switch and `[protocol] gps_schedule` with them; `gps_backoff`
-becomes a constant.
+`EveryBeat`, `Follow` and `Anchorless`, the `gps` switch and
+`[protocol] gps_schedule` are removed; the back-off is the constant
+`gps::BACKOFF`. The app gets no command to ask for a fix: the app needs
+no position but the anchor's, and replies go to the anchor's address.
 
-## Proposed spec text
+## The spec text as proposed
 
 For spec "Beats", in place of its last paragraph but one ("A sleepy node
-may have moved since its last beat, …"); D77 is the next free number, to
-be given at the decision:
+may have moved since its last beat, …"); the spec now has it, as D80:
 
 > A sleepy node runs its GPS only when the radio says it may have moved
-> (roadmap D77). It searches when it turns sleepy, when it takes an
+> (roadmap D80). It searches when it turns sleepy, when it takes an
 > anchor or changes it, when it turns anchorless, and once a delivery
 > TTL while it stays anchorless. A search ends at the first fix that
 > passes the checks ([position](#position)) or after 60 s, and one that
@@ -325,3 +325,22 @@ a budget:
 - **The firmware has no GPS driver**; `bark-driver` logs `Locate`.
 - The other agent's airtime correction moves the radio currents by about
   1 %; the comparisons are within one binary.
+
+## On the tip
+
+Rebased on main `3c33c80`, after the airtime correction, with only the
+adopted schedule left. Settled hour, no indoor node under the sky:
+
+| Run | delivered | to walkers | to a walker walking | radio mA | GPS mA | total mA | days on 850 mAh |
+|---|---|---|---|---|---|---|---|
+| S4 seed 1, main `3c33c80` (no GPS model, a fix at each walker's beat) | 94.08 % | 89.61 % | 81.80 % | 0.638 | — | — | — |
+| S4 seed 1 | 93.49 % | 87.18 % | 75.05 % | 0.613 | 0.023 | 0.636 | 55.7 |
+| S4 seed 2 | 93.81 % | 88.29 % | 75.79 % | 0.617 | 0.023 | 0.640 | 55.3 |
+| S4 seed 3 | 93.27 % | 86.73 % | 75.61 % | 0.616 | 0.023 | 0.638 | 55.5 |
+| `dense-movers.toml` seed 1 | 96.48 % | 90.27 % | 70.88 % | 0.514 | 0.022 | 0.536 | 66.1 |
+
+The drop from main at seed 1, 0.6 points, is mostly the walkers' move
+check, which main had from a fix it handed every walker at every beat
+and counted nothing for; the texts to the other nodes are 95.12 against
+95.24 %.
+
