@@ -25,10 +25,20 @@
 //! anchor among the relays it knows as a booting sleepy node does. A node
 //! carried by then flushed at its first far fix already.
 //!
+//! With [`Config::battery`] only a carried relay leaves at its grace's
+//! end. A fixed one relays on until its battery reads at or below the low
+//! level (`AppCommand::Battery`), and leaves then, grace or not; carried
+//! later, it leaves at once if its grace is over. The low reading holds
+//! until one at or above the high level, or external power; a node that
+//! turned sleepy by its battery relays again at the high level while it
+//! is fixed, as a solar box's battery recharges. A fixed relay that
+//! reboots on battery relays on, from what it stored (`store.rs`).
+//!
 //! A [`SleepyNode`](super::SleepyNode) has no room for the mail a relay
 //! holds, and stays sleepy whatever its power.
 //!
 //! [`Config::grace`]: crate::Config::grace
+//! [`Config::battery`]: crate::Config::battery
 
 use super::{Mover, Node, Stage};
 use crate::event::{Action, AppEvent, DropReason, Trace};
@@ -65,8 +75,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reports whether external power is present.
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
+        if external {
+            self.low = false;
+        }
         if let Stage::Booting(_) = self.stage {
-            self.sleepy = sleepy;
+            // A fixed relay rebooted on battery relays on, its grace
+            // counted from the boot.
+            let kept = self.config.battery.is_some()
+                && Self::can_relay()
+                && self.config.stored.is_some_and(|s| s.relay && !s.carried);
+            self.sleepy = sleepy && !kept;
+            self.unplugged = (sleepy && kept).then_some(now);
             let ends = self.boot_end(self.boot_from);
             self.stage = Stage::Booting(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
@@ -95,22 +114,53 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// When the grace of a relay on battery ends, if it is under way.
-    pub(super) fn grace_ends(&self) -> Option<Instant> {
-        let t = self.unplugged.filter(|_| !self.leaving)?;
-        Some(t + self.config.grace)
-    }
-
-    /// The grace's end and the turn to sleepy once the flush is done
-    /// (module documentation).
-    pub(super) fn power_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.stage != Stage::Running || self.sleepy {
+    /// The driver reads the battery (module documentation).
+    pub(super) fn battery(&mut self, millivolts: u16) {
+        let Some(levels) = self.config.battery else {
+            return;
+        };
+        if !self.sleepy && self.unplugged.is_none() {
+            // On external power: the reading is the charger's.
             return;
         }
-        if self.grace_ends().is_some_and(|t| now >= t) {
-            self.leaving = true;
-            self.feed_due = true;
-            emit(Action::Trace(Trace::GraceEnded));
+        if millivolts <= levels.low_mv {
+            self.low = true;
+        } else if millivolts >= levels.high_mv {
+            self.low = false;
+        }
+    }
+
+    /// When the grace of a relay on battery ends, if it is under way and
+    /// its end would turn the node (module documentation).
+    pub(super) fn grace_ends(&self) -> Option<Instant> {
+        let t = self.unplugged.filter(|_| !self.leaving)?;
+        let ends = self.config.battery.is_none() || self.motion.carried;
+        ends.then_some(t + self.config.grace)
+    }
+
+    /// The grace's end, a low battery, and the turn to sleepy once the
+    /// flush is done; a node turned sleepy by its battery relays again at
+    /// the high level (module documentation).
+    pub(super) fn power_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.stage != Stage::Running {
+            return;
+        }
+        if self.sleepy {
+            if self.battery_sleepy && !self.low && !self.motion.carried {
+                self.turn_relay(now, emit);
+                self.unplugged = Some(now);
+            }
+            return;
+        }
+        if !self.leaving {
+            if self.unplugged.is_some() && self.low {
+                self.leaving = true;
+                emit(Action::Trace(Trace::BatteryLow));
+            } else if self.grace_ends().is_some_and(|t| now >= t) {
+                self.leaving = true;
+                emit(Action::Trace(Trace::GraceEnded));
+            }
+            self.feed_due |= self.leaving;
         }
         if self.leaving && self.flushed() {
             self.turn_sleepy(now, emit);
@@ -126,6 +176,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Plugged in: a relay at once, with its own position as its address.
     fn turn_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = false;
+        self.battery_sleepy = false;
         self.fixed_here();
         self.anchor = None;
         self.unwatch();
@@ -147,6 +198,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
+        self.battery_sleepy = self.low;
         self.unplugged = None;
         self.leaving = false;
         for q in self.delivery.iter() {

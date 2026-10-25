@@ -115,6 +115,34 @@ pub struct Config {
     /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
     /// would turn a node sleepy at every brief unplug.
     pub grace: Duration,
+    /// The battery voltages between which a fixed relay on battery keeps
+    /// relaying past its grace (spec "Nodes", `relay/power.rs`); `None`
+    /// for every relay to turn sleepy at its grace's end.
+    pub battery: Option<BatteryLevels>,
+}
+
+/// A battery's rested voltage, millivolts, at which a fixed relay on
+/// battery turns sleepy, `low`, and at which a node its battery turned
+/// sleepy relays again, `high` (spec "Nodes"). The driver reports the
+/// voltage (`AppCommand::Battery`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatteryLevels {
+    /// Turn sleepy at or below this.
+    pub low_mv: u16,
+    /// Relay again at or above this.
+    pub high_mv: u16,
+}
+
+impl BatteryLevels {
+    /// A typical Li-ion cell's open-circuit voltage at 20 % and 30 % of its
+    /// charge, 3741 and 3775 mV (Maxim Integrated, Application Note 4189,
+    /// Table 1). The load moves the reading by its current times the
+    /// cell's resistance, a few millivolts at a relay's; the gap is several
+    /// times that and a reading's noise, so that the role does not flap.
+    pub const DESIGN: BatteryLevels = BatteryLevels {
+        low_mv: 3741,
+        high_mv: 3775,
+    };
 }
 
 impl Default for Config {
@@ -237,6 +265,7 @@ impl Config {
         home_override: None,
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
+        battery: None,
     };
 }
 

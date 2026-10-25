@@ -122,6 +122,14 @@ pub enum AppCommand<'a> {
         /// External power is present.
         external: bool,
     },
+    /// The battery's voltage, read while the radio does not transmit, as
+    /// often as the driver reads it (spec "Nodes"). A fixed relay on
+    /// battery relays on while it is above [`crate::BatteryLevels`]'
+    /// low level; on external power it is not read.
+    Battery {
+        /// Millivolts.
+        millivolts: u16,
+    },
 }
 
 /// Why a node dropped a message, or refused one (spec "Forwarding"). The network
@@ -386,6 +394,9 @@ pub enum Trace {
     /// A relay's grace on battery ended: it holds no more mail, and
     /// flushes what it holds before it turns sleepy (spec "Delivery").
     GraceEnded,
+    /// A relay on battery reached its low battery level: it holds no more
+    /// mail, and flushes what it holds before it turns sleepy.
+    BatteryLow,
     /// The node turned sleepy, or a relay, by its power
     /// (spec "Sleepy nodes"); not while it boots.
     Role {

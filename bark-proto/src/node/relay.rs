@@ -313,6 +313,11 @@ pub struct Node<const H: usize, const Q: usize> {
     unplugged: Option<Instant>,
     /// Its grace is over: it flushes, and then turns sleepy.
     leaving: bool,
+    /// Its battery read at or below the low level since it last read at
+    /// or above the high one, or since its external power (`relay/power.rs`).
+    low: bool,
+    /// It turned sleepy by its battery, so relays again when that is high.
+    battery_sleepy: bool,
     config: Config,
     /// Until when a sleepy node listens after its beat or a message it
     /// took (spec "Delivery").
@@ -427,6 +432,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy: !Self::can_relay(),
             unplugged: None,
             leaving: false,
+            low: false,
+            battery_sleepy: false,
             boot_from: Instant::ZERO,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
@@ -531,6 +538,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy,
             unplugged,
             leaving,
+            low,
+            battery_sleepy,
             boot_from,
             radio,
             busy,
@@ -581,6 +590,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *sleepy = !Self::can_relay();
         *unplugged = None;
         *leaving = false;
+        *low = false;
+        *battery_sleepy = false;
         *boot_from = Instant::ZERO;
         *radio = Radio::new();
         *busy = BusyEstimator::from_config(&config);
@@ -1044,6 +1055,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
             anchor: self.anchor.filter(|_| self.sleepy && !carried),
+            relay: !self.sleepy,
         }
     }
 
@@ -1937,6 +1949,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
+            AppCommand::Battery { millivolts } => self.battery(millivolts),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
                     AppCommand::Fix { .. } => self.fix(position, now, emit),

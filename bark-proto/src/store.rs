@@ -5,7 +5,7 @@
 //! changes, and the driver hands the last one back at boot in
 //! [`crate::Config::stored`]. Only slow-changing state is kept, so that
 //! writes are rare: the home channel, the place a fixed node stands, the
-//! carried flag, and a sleepy node's anchor. Time is not kept, since the
+//! carried flag, a sleepy node's anchor, and whether it was a relay. Time is not kept, since the
 //! board has no clock that runs while it is off.
 //!
 //! [`Stored::record`] lays it out as a fixed 32-byte record with a
@@ -31,6 +31,9 @@ pub struct Stored {
     pub carried: bool,
     /// A sleepy node's anchor, whose home channel is `home`.
     pub anchor: Option<Anchor>,
+    /// Whether it was a relay: a fixed one that boots on battery relays
+    /// on (`relay/power.rs`).
+    pub relay: bool,
 }
 
 /// Bytes in a [`Stored::record`].
@@ -42,6 +45,7 @@ const VERSION: u8 = 1;
 
 const FLAG_CARRIED: u8 = 0x1;
 const FLAG_ANCHOR: u8 = 0x2;
+const FLAG_RELAY: u8 = 0x4;
 
 // Offsets in the record.
 const AT_VERSION: usize = 0;
@@ -67,7 +71,8 @@ impl Stored {
         r[AT_VERSION] = VERSION;
         r[AT_HOME] = self.home.index();
         let anchor = self.anchor.map_or(0, |_| FLAG_ANCHOR);
-        r[AT_FLAGS] = anchor | if self.carried { FLAG_CARRIED } else { 0 };
+        let flag = |on: bool, f: u8| if on { f } else { 0 };
+        r[AT_FLAGS] = anchor | flag(self.carried, FLAG_CARRIED) | flag(self.relay, FLAG_RELAY);
         r[AT_PLACE..AT_ANCHOR_ID].copy_from_slice(&self.place.encode());
         if let Some(a) = self.anchor {
             r[AT_ANCHOR_ID..AT_ANCHOR_POS].copy_from_slice(&a.id.0);
@@ -109,6 +114,7 @@ impl Stored {
             place: pos(AT_PLACE),
             carried: flags & FLAG_CARRIED != 0,
             anchor,
+            relay: flags & FLAG_RELAY != 0,
         })
     }
 }
@@ -126,6 +132,7 @@ mod tests {
                 id: NodeId([1, 2, 3, 4, 5, 6]),
                 position: Position::from_degrees(50.46, 30.51),
             }),
+            relay: false,
         }
     }
 
@@ -136,6 +143,7 @@ mod tests {
         let bare = Stored {
             anchor: None,
             carried: false,
+            relay: true,
             ..s
         };
         assert_eq!(Stored::from_record(&bare.record()), Some(bare));

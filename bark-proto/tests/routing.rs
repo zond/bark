@@ -1662,6 +1662,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     place: pos(0.0, 0.0),
                     carried: false,
                     anchor: None,
+                    relay: true,
                 }),
                 ..Config::default()
             },

@@ -74,7 +74,7 @@ pub struct SimNode<C: Core> {
     started: bool,
     /// The power its driver reports right after the boot wakeup, if any
     /// (`docs/core-interface.md` §4).
-    power: Option<bool>,
+    pub power: Option<bool>,
     /// Every transmission: start and airtime.
     pub airtime: Vec<(Instant, Duration)>,
     /// Every CAD and RSSI check as it began: start, end, the action, and
