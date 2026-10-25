@@ -287,5 +287,6 @@ action at a time, and the core never allocates.
   - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
     it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); taken or refused, an
     ACK is 18 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
-    of the two high bits of `aux` set is rejected. A fixed-size packet with trailing
+    of the two high bits of `aux` set is rejected. A heartbeat is read from its first 13
+    bytes, and what follows is ignored. An ACK with trailing
     bytes is rejected.

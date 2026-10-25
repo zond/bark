@@ -61,7 +61,9 @@
 //!   channel outside the plan.
 //! - DATA `time_left` is the time the message has left, in whole
 //!   [`TTL_UNIT`]s, rounded down.
-//! - A fixed-size packet with trailing bytes is malformed, not padded.
+//! - An ACK with trailing bytes is malformed, not padded. A heartbeat is
+//!   read from its first [`HEARTBEAT_LEN`] bytes, and what follows is
+//!   ignored, so that a later format may append fields.
 
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
@@ -157,6 +159,10 @@ const fn free(len: usize, less: usize) -> bool {
 const _: () = assert!(
     free(HEARTBEAT_LEN, FORMAT_LEN + FLAGS_LEN) && free(ACK_LEN, FORMAT_LEN),
     "spec \"Packet formats\": the version and flags bytes cost no airtime"
+);
+const _: () = assert!(
+    !free(HEARTBEAT_LEN + 1, 1),
+    "spec \"Packet formats\": a byte appended to the heartbeat costs a block"
 );
 
 /// HEARTBEAT (spec "Heartbeat").
@@ -286,7 +292,7 @@ pub enum Packet<'a> {
 pub enum DecodeError {
     /// Fewer bytes than the packet's fields need.
     Short,
-    /// Longer than [`MAX_FRAME`], or trailing bytes after a fixed-size packet.
+    /// Longer than [`MAX_FRAME`], or trailing bytes after an ACK.
     BadLength,
     /// A channel field outside the plan.
     ChannelOutOfRange(u8),
@@ -427,7 +433,9 @@ impl<'a> Packet<'a> {
             if first & HEARTBEAT_ZERO != 0 {
                 return Err(DecodeError::Kind(first));
             }
-            exact(b, HEARTBEAT_LEN)?;
+            if b.len() < HEARTBEAT_LEN {
+                return Err(DecodeError::Short);
+            }
             let flags = b[HEARTBEAT_FLAGS];
             return Ok(Packet::Heartbeat(Heartbeat {
                 sleepy: flags & SLEEPY != 0,
@@ -575,7 +583,9 @@ mod tests {
             if let Ok(p) = Packet::decode(&bytes) {
                 let mut buf = [0; MAX_FRAME];
                 let len = p.encode(&mut buf).unwrap();
-                prop_assert_eq!(len, bytes.len());
+                if !matches!(p, Packet::Heartbeat(_)) {
+                    prop_assert_eq!(len, bytes.len());
+                }
                 prop_assert_eq!(Packet::decode(&buf[..len]), Ok(p));
             }
         }
@@ -636,7 +646,16 @@ mod tests {
         }
         hb[FIRST] = 0x80;
         assert_eq!(Packet::decode(&hb[..HEARTBEAT_LEN - 1]), Err(Short));
-        assert_eq!(Packet::decode(&hb), Err(BadLength));
+        let mut long = [0xa5u8; HEARTBEAT_LEN + 7];
+        long[..HEARTBEAT_LEN].copy_from_slice(&hb[..HEARTBEAT_LEN]);
+        for len in [HEARTBEAT_LEN + 1, HEARTBEAT_LEN + 7] {
+            assert_eq!(
+                Packet::decode(&long[..len]),
+                Packet::decode(&hb[..HEARTBEAT_LEN]),
+                "what follows a heartbeat's first 13 bytes is ignored"
+            );
+        }
+        assert!(Packet::decode(&hb[..HEARTBEAT_LEN]).is_ok());
         for first in [0x40, 0x41, 0x7f] {
             assert_eq!(Packet::decode(&[first; ACK_LEN - 1]), Err(Short));
             assert_eq!(Packet::decode(&[first; ACK_LEN + 1]), Err(BadLength));

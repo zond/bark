@@ -3851,8 +3851,11 @@ impl Sim {
             ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
             ScriptAction::Rssi => self.apply(node, Action::Rssi(channel.expect("validated")), true),
             ScriptAction::Transmit => {
+                // A test signal no node takes for a packet: a bench
+                // frame's first byte, then the event's number.
                 let mut bytes = [0u8; MAX_FRAME];
-                bytes[..4].copy_from_slice(&k.to_le_bytes());
+                bytes[0] = bark_proto::wire::BENCH_FIRST;
+                bytes[1..5].copy_from_slice(&k.to_le_bytes());
                 let f = Frame {
                     channel: channel.expect("validated"),
                     preamble_symbols: preamble,

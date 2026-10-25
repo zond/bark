@@ -2384,11 +2384,19 @@ format 1.
 | heartbeat | the newest format its sender speaks |
 | DATA, ACK | the format of this frame |
 
-A node speaks every format from 1 to its newest. The heartbeat's layout
-never changes, so a node reads every heartbeat whatever its second byte
-says, and keeps the sender's newest format in its neighbour table
-([neighbour table](#neighbour-table)). Which format a DATA and its ACK
-take is in [hand-over](#hand-over).
+A node speaks every format from 1 to its newest. A heartbeat's first 13
+bytes are the same in every format, and anything a later format appends
+comes after them. So a node reads the first 13 bytes of every heartbeat
+whatever its second byte says, ignores what follows, and keeps the
+sender's newest format in its neighbour table
+([neighbour table](#neighbour-table)). A heartbeat shorter than 13 bytes
+is rejected. Which format a DATA and its ACK take is in
+[hand-over](#hand-over).
+
+*Why read only the first 13 bytes.* A later format can then add to what
+a heartbeat says, and an old node still sees the neighbour. 13 bytes
+fill 6 blocks of symbols exactly at SF5, so the first byte appended
+costs a block, 1.28 ms.
 
 A heartbeat's third byte is its **flags**. Each says one thing about the
 sender and is set on its own:
