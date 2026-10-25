@@ -26,13 +26,13 @@
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (spec "Duty cycle cap"): each costs at least an ACK (17 bytes, 16.96 ms) and one
-//! DATA packet with no payload (28 bytes, 22.08 ms), together 39.04 ms;
+//! cycle (spec "Duty cycle cap"): each costs at least an ACK (18 bytes, 16.96 ms) and one
+//! DATA packet with no payload (29 bytes, 23.36 ms), together 40.32 ms;
 //! any 463.4 s carries at most a full bucket and its refill,
 //! 6 s + 9.83 % × 463.4 s = 51.57 s of airtime ([`most_on_air`]), and
-//! ⌊51.57 s / 39.04 ms⌋ = 1320. The records of held messages are not
+//! ⌊51.57 s / 40.32 ms⌋ = 1278. The records of held messages are not
 //! evicted and may be older than that, so the table has room for them on
-//! top: 1320 + 293 = 1613.
+//! top: 1278 + 293 = 1571.
 //!
 //! # The tried set
 //!
@@ -84,7 +84,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1613);
+const _: () = assert!(RECORDS == 1571);
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(DRAIN, BAN.mul(293));
         assert_eq!(DRAIN.as_millis(), 463_397);
         assert_eq!(HELD, 293);
-        assert_eq!(RECORDS, 1320 + 293);
+        assert_eq!(RECORDS, 1278 + 293);
         assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 

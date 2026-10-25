@@ -73,9 +73,10 @@ impl Tracer {
         let n = &self.names;
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(h)) => format!(
-                "HEARTBEAT{} home {}",
+                "HEARTBEAT{} home {} format {}",
                 if h.sleepy { " (sleepy)" } else { "" },
-                h.home.index()
+                h.home.index(),
+                h.format
             ),
             Ok(Packet::Ack(a)) => {
                 format!(

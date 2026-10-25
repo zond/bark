@@ -7,6 +7,12 @@
 //! 0 k a a a a a a   k = 0 DATA, 1 ACK; aux aaaaaa
 //! ```
 //!
+//! The second is the format version (roadmap D77): in a heartbeat the
+//! newest format the sender speaks, in DATA and the ACK the format of the
+//! frame. This code speaks format [`FORMAT`] only, so it sends 1 and
+//! rejects a DATA or ACK of any other; the heartbeat's layout never
+//! changes, so it reads every heartbeat and keeps the sender's format.
+//!
 //! Every node has a 6-byte [`NodeId`], and fields that only name a node
 //! (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
 //! `dst_pos` locates a place and is the 7-byte form of
@@ -17,10 +23,10 @@
 //! the nodes, not the packet (D16). Lengths, in bytes:
 //!
 //! ```text
-//! HEARTBEAT  first id pos                                         = 11
-//! ACK        first msg from to                                    = 17
-//! DATA       first dst_hop src_hop dst_pos dst_id hops
-//!            time_left payload                                    = 28 + payload
+//! HEARTBEAT  first format id pos                                  = 12
+//! ACK        first format msg from to                             = 18
+//! DATA       first format dst_hop src_hop dst_pos dst_id hops
+//!            time_left payload                                    = 29 + payload
 //! ```
 //!
 //! An ACK answers every offer, taken or refused: its `aux` says which. A
@@ -35,7 +41,7 @@
 //!
 //! - Short positions and message IDs are big-endian; a node ID is six
 //!   opaque bytes in order.
-//! - The payload is at most [`MAX_PAYLOAD`] = 227 bytes, what a frame holds
+//! - The payload is at most [`MAX_PAYLOAD`] = 226 bytes, what a frame holds
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
@@ -59,11 +65,16 @@
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
-use crate::radio::Channel;
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::time::Duration;
+
+/// The wire format this code speaks, and so sends and reads (spec
+/// "Packet formats", roadmap D77).
+pub const FORMAT: u8 = 1;
 
 // Field widths.
 const FIRST_LEN: usize = 1;
+const FORMAT_LEN: usize = 1;
 const POS_LEN: usize = Position::WIRE_LEN;
 const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
@@ -110,36 +121,50 @@ pub const fn bench_kind(first: u8) -> Option<u8> {
     }
 }
 
+// The second byte, the format version.
+const VERSION: usize = FIRST + FIRST_LEN;
+
 // HEARTBEAT.
-const HEARTBEAT_ID: usize = FIRST + FIRST_LEN;
+const HEARTBEAT_ID: usize = VERSION + FORMAT_LEN;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
 
 // ACK.
-const ACK_ID: usize = FIRST + FIRST_LEN;
+const ACK_ID: usize = VERSION + FORMAT_LEN;
 const ACK_FROM: usize = ACK_ID + MSG_ID_LEN;
 const ACK_TO: usize = ACK_FROM + ID_LEN;
-/// ACK length (spec "Packet formats": 17).
+/// ACK length (spec "Packet formats": 18).
 pub const ACK_LEN: usize = ACK_TO + ID_LEN;
 
 // DATA.
-const DATA_DST_HOP: usize = FIRST + FIRST_LEN;
+const DATA_DST_HOP: usize = VERSION + FORMAT_LEN;
 const DATA_SRC_HOP: usize = DATA_DST_HOP + ID_LEN;
 const DATA_DST_POS: usize = DATA_SRC_HOP + ID_LEN;
 const DATA_DST_ID: usize = DATA_DST_POS + POS_LEN;
 const DATA_HOPS: usize = DATA_DST_ID + ID_LEN;
 const DATA_TIME_LEFT: usize = DATA_HOPS + HOPS_LEN;
-/// DATA header length (spec "Packet formats": 28).
+/// DATA header length (spec "Packet formats": 29).
 pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
-/// 255 − 28 = 227 bytes.
+/// 255 − 29 = 226 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 11 && ACK_LEN == 17);
-const _: () = assert!(DATA_HEADER_LEN == 28);
-const _: () = assert!(MAX_PAYLOAD == 227);
+const _: () = assert!(HEARTBEAT_LEN == 12 && ACK_LEN == 18);
+const _: () = assert!(DATA_HEADER_LEN == 29);
+const _: () = assert!(MAX_PAYLOAD == 226);
+
+/// Whether a frame of `len` bytes takes as long on air as one a byte
+/// shorter.
+const fn byte_is_free(len: usize) -> bool {
+    time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+        == time_on_air((len - FORMAT_LEN) as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+}
+const _: () = assert!(
+    byte_is_free(HEARTBEAT_LEN) && byte_is_free(ACK_LEN),
+    "spec \"Packet formats\": the version byte costs a heartbeat and an ACK no airtime"
+);
 
 /// HEARTBEAT (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +182,8 @@ pub struct Heartbeat {
     pub carried: bool,
     /// The sender's home channel.
     pub home: Channel,
+    /// The newest wire format the sender speaks: its capability.
+    pub format: u8,
     /// The sender.
     pub id: NodeId,
     /// The sender's position in short form; [`Heartbeat::position`]
@@ -269,6 +296,8 @@ pub enum DecodeError {
     ChannelOutOfRange(u8),
     /// A payload longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
+    /// A DATA or ACK in a format this code does not speak.
+    Format(u8),
 }
 
 /// Why a packet did not encode.
@@ -308,6 +337,14 @@ fn get_msg_id(b: &[u8], at: usize) -> MsgId {
     MsgId(u32::from_be_bytes(get4(b, at)))
 }
 
+/// The format of a DATA or ACK, if this code speaks it.
+fn format(b: &[u8]) -> Result<(), DecodeError> {
+    match b[VERSION] {
+        FORMAT => Ok(()),
+        other => Err(DecodeError::Format(other)),
+    }
+}
+
 fn channel(aux: u8) -> Result<Channel, DecodeError> {
     Channel::new(aux).ok_or(DecodeError::ChannelOutOfRange(aux))
 }
@@ -341,6 +378,7 @@ impl Packet<'_> {
                     | flag(h.anchorless, HEARTBEAT_ANCHORLESS)
                     | flag(h.carried, HEARTBEAT_CARRIED);
                 buf[FIRST] = HEARTBEAT_BIT | flags << FLAGS_SHIFT | h.home.index();
+                buf[VERSION] = h.format;
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
@@ -353,6 +391,7 @@ impl Packet<'_> {
                     0
                 };
                 buf[FIRST] = ANSWER_BIT | wait;
+                buf[VERSION] = FORMAT;
                 put(buf, ACK_ID, &a.msg_id.0.to_be_bytes());
                 put(buf, ACK_FROM, &a.from.0);
                 put(buf, ACK_TO, &a.to.0);
@@ -363,6 +402,7 @@ impl Packet<'_> {
                     return Err(EncodeError::PayloadTooLong);
                 }
                 buf[FIRST] = d.sender_home.index();
+                buf[VERSION] = FORMAT;
                 put(buf, DATA_DST_HOP, &d.dst_hop.0);
                 put(buf, DATA_SRC_HOP, &d.src_hop.0);
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
@@ -391,6 +431,7 @@ impl<'a> Packet<'a> {
                 anchorless: flags & HEARTBEAT_ANCHORLESS != 0,
                 carried: flags & HEARTBEAT_CARRIED != 0,
                 home: channel(first & CHANNEL_MASK)?,
+                format: b[VERSION],
                 id: get_id(b, HEARTBEAT_ID),
                 short: get_short(b, HEARTBEAT_POS),
             }));
@@ -398,6 +439,7 @@ impl<'a> Packet<'a> {
         let aux = first & AUX_MASK;
         if first & ANSWER_BIT != 0 {
             exact(b, ACK_LEN)?;
+            format(b)?;
             return Ok(Packet::Ack(Ack {
                 msg_id: get_msg_id(b, ACK_ID),
                 from: get_id(b, ACK_FROM),
@@ -407,6 +449,7 @@ impl<'a> Packet<'a> {
             }));
         }
         let payload = payload(b, DATA_HEADER_LEN)?;
+        format(b)?;
         Ok(Packet::Data(Data {
             sender_home: channel(aux)?,
             dst_hop: get_id(b, DATA_DST_HOP),
@@ -423,7 +466,7 @@ impl<'a> Packet<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
+    use crate::radio::CHANNELS;
     use crate::time::Duration;
     use proptest::prelude::*;
 
@@ -455,9 +498,9 @@ mod tests {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
         let expected = match p {
-            Packet::Heartbeat(_) => 11,
-            Packet::Ack(_) => 17,
-            Packet::Data(d) => 28 + d.payload.len(),
+            Packet::Heartbeat(_) => 12,
+            Packet::Ack(_) => 18,
+            Packet::Data(d) => 29 + d.payload.len(),
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -470,10 +513,12 @@ mod tests {
             anchorless: bool,
             carried: bool,
             home in chan(),
+            format: u8,
             id in id(),
             position in position(),
         ) {
-            let hb = Heartbeat { sleepy, anchorless, carried, home, id, short: position.short() };
+            // Every heartbeat is read, whatever format its sender speaks.
+            let hb = Heartbeat { sleepy, anchorless, carried, home, format, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(hb.position(position), position);
         }
@@ -537,7 +582,7 @@ mod tests {
             let mut bytes = std::vec![first];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 6, 7, 10, 11, 12, 16, 17, 18, 27, 28, 29] {
+            for cut in [0, 1, 2, 7, 8, 11, 12, 13, 17, 18, 19, 28, 29, 30] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
@@ -590,6 +635,7 @@ mod tests {
         assert_eq!(Packet::decode(&[0; MAX_FRAME + 1]), Err(BadLength));
 
         let mut data = [0u8; DATA_HEADER_LEN];
+        data[VERSION] = FORMAT;
         for (aux, why) in [
             (13, "outside the plan"),
             (0x10, "a high bit"),
@@ -604,6 +650,26 @@ mod tests {
             "an empty payload is a payload"
         );
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
+    }
+
+    #[test]
+    fn formats() {
+        // A DATA or ACK in a format this code does not speak is rejected;
+        // a heartbeat is read whatever its sender speaks.
+        let mut data = [0u8; DATA_HEADER_LEN + 1];
+        let mut ack = [ANSWER_BIT; ACK_LEN];
+        let mut hb = [HEARTBEAT_BIT; HEARTBEAT_LEN];
+        for f in [0, 2, 0xff] {
+            data[VERSION] = f;
+            ack[VERSION] = f;
+            hb[VERSION] = f;
+            assert_eq!(Packet::decode(&data), Err(DecodeError::Format(f)));
+            assert_eq!(Packet::decode(&ack), Err(DecodeError::Format(f)));
+            let Ok(Packet::Heartbeat(h)) = Packet::decode(&hb) else {
+                panic!("a heartbeat of format {f}")
+            };
+            assert_eq!(h.format, f);
+        }
     }
 
     #[test]
@@ -633,11 +699,12 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(12).unwrap(),
+            format: FORMAT,
             id: NodeId([1, 2, 3, 4, 5, 6]),
             short: ShortName(0x0708_090a),
         };
         let len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
-        assert_eq!(&buf[..len], &[0x8c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(&buf[..len], &[0x8c, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         let sleepy = Heartbeat { sleepy: true, ..hb };
         Packet::Heartbeat(sleepy).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x9c);
@@ -678,7 +745,7 @@ mod tests {
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(
             &buf[..len],
-            &[0x40, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+            &[0x40, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
@@ -693,7 +760,7 @@ mod tests {
         let len = Packet::Ack(refused).encode(&mut buf).unwrap();
         assert_eq!(
             &buf[..len],
-            &[0x58, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            &[0x58, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
             "the wait in aux"
         );
         let unsaid = Ack {
@@ -715,16 +782,16 @@ mod tests {
             payload: &[21, 22],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();
-        let mut want = std::vec![0x09, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        let mut want = std::vec![0x09, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         want.extend_from_slice(&position.encode());
         want.extend_from_slice(&[13, 14, 15, 16, 17, 18, 19, 14, 21, 22]);
         assert_eq!(&buf[..len], &want[..]);
         let header = Data { payload: &[], ..d };
         let len = Packet::Data(header).encode(&mut buf).unwrap();
         assert_eq!(
-            crate::radio::time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(22_080),
-            "86.25 symbols at SF5"
+            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(23_360),
+            "91.25 symbols at SF5"
         );
         assert_eq!(d.time_left(), Duration::from_secs(35));
         assert_eq!(Data::units(Duration::from_millis(600_000)), 240);

@@ -139,6 +139,10 @@ pub struct Neighbour {
     pub local: Point,
     /// Its home channel, where to transmit to it.
     pub home: Channel,
+    /// The newest wire format it speaks, from its last heartbeat (spec
+    /// "Neighbour table"); shown to a person, used by no rule while
+    /// format 1 is the only one.
+    pub format: u8,
     /// When its last heartbeat was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
@@ -434,6 +438,7 @@ impl Neighbours {
                     n.local = plane.point(position);
                 }
                 n.home = hb.home;
+                n.format = hb.format;
                 n.sleepy = hb.sleepy;
                 n.carried = hb.carried;
                 let anchorless = hb.anchorless && hb.sleepy;
@@ -462,6 +467,7 @@ impl Neighbours {
             position,
             local: plane.point(position),
             home: hb.home,
+            format: hb.format,
             last_heard: now,
             demoted_at: Instant::ZERO,
             banned_until: Instant::ZERO,
@@ -684,6 +690,7 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
             id: id(i),
             short: pos(i).short(),
         };

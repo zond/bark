@@ -31,15 +31,16 @@
 //!
 //! Bench frames start with a heartbeat's first byte on channel 15, which no
 //! node sends and nodes reject (spec "Packet formats"): byte 0 is
-//! `0x8F | kind << 4`, bytes 1..5 a big-endian
-//! sequence number, byte 5 the sender's home channel, and the rest
-//! `byte[i] = i`.
+//! `0x8F | kind << 4`, byte 1 the format version, as in every packet,
+//! bytes 2..6 a big-endian sequence number, byte 6 the sender's home
+//! channel, and the rest `byte[i] = i`. A heartbeat heard is printed with
+//! its sender's ID and the newest format it speaks.
 
 use core::fmt;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::{bench_first, bench_kind, ACK_LEN, HEARTBEAT_LEN};
+use bark_proto::wire::{bench_first, bench_kind, Packet, ACK_LEN, FORMAT, HEARTBEAT_LEN};
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -146,8 +147,8 @@ impl Lines {
 const KIND_TEST: u8 = 0;
 const KIND_PING: u8 = 1;
 const KIND_PONG: u8 = 2;
-/// Type byte, sequence number, home channel.
-const BENCH_HEADER: usize = 6;
+/// Type byte, format, sequence number, home channel.
+const BENCH_HEADER: usize = 7;
 
 /// A bench frame's header fields.
 #[derive(Clone, Copy)]
@@ -160,8 +161,9 @@ struct Bench {
 fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Channel) -> &[u8] {
     let mut header = [0u8; BENCH_HEADER];
     header[0] = bench_first(kind);
-    header[1..5].copy_from_slice(&seq.to_be_bytes());
-    header[5] = home.index();
+    header[1] = FORMAT;
+    header[2..6].copy_from_slice(&seq.to_be_bytes());
+    header[6] = home.index();
     for (i, b) in buf.iter_mut().enumerate().take(len) {
         *b = if i < BENCH_HEADER { header[i] } else { i as u8 };
     }
@@ -174,8 +176,8 @@ fn parse_bench(frame: &[u8]) -> Option<Bench> {
     }
     Some(Bench {
         kind: bench_kind(frame[0])?,
-        seq: u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]),
-        channel: frame[5],
+        seq: u32::from_be_bytes([frame[2], frame[3], frame[4], frame[5]]),
+        channel: frame[6],
     })
 }
 
@@ -815,6 +817,7 @@ impl<'a> Console<'a> {
             Received::Frame { len, status } => {
                 self.counters.rx_ok += 1;
                 report_frame(ch, &self.rx[..len], &status, "ok", at_us);
+                report_heartbeat(&self.rx[..len]);
                 Ok(Some(parse_bench(&self.rx[..len])))
             }
             Received::CrcError { len, status } => {
@@ -1009,6 +1012,19 @@ fn report_frame(ch: Channel, frame: &[u8], status: &PacketStatus, crc: &str, at_
         at_us,
         Hex(frame)
     );
+}
+
+/// A heartbeat's sender and the newest format it speaks, so that a person
+/// at the console learns which format a planted node speaks.
+fn report_heartbeat(frame: &[u8]) {
+    if let Ok(Packet::Heartbeat(h)) = Packet::decode(frame) {
+        log::info!(
+            "heartbeat id={} format={} home={}",
+            Hex(&h.id.0),
+            h.format,
+            h.home.index()
+        );
+    }
 }
 
 /// Time on air of a `len`-byte frame after `preamble` symbols, µs.

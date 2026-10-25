@@ -380,16 +380,16 @@ retune times.
 |---|---|---|
 | `ch <k>` | set the home channel, where the radio listens between commands | `retune_us` |
 | `tx <k> <hex\|len>` | send one frame on k: hex bytes (`0a0b…`, or `0x…` to force hex), or a bench frame of len bytes (1 to 3 decimal digits) | `prepare_us`, `tx_us` (SetTx to TxDone), `airtime_us` (datasheet formula), `excess_us`, `rest_us` (back to listening) |
-| `rx <k> [ms]` | listen on k until a frame or ms (default 10 000) | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes` |
+| `rx <k> [ms]` | listen on k until a frame or ms (default 10 000) | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`; for a heartbeat also its sender's `id`, the newest `format` it speaks and its `home` |
 | `cad <k>` | one CAD (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us`, `rest_us` |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
 | `power <dbm>` | transmit power, clamped to −9..10 dBm | the power in effect |
-| `preamble <short\|long\|n>` | preamble of `tx` and `beacon` frames: 12 symbols, the 1396 of a frame to a sleepy node, or n between | `symbols`, the airtime of a heartbeat, 11 bytes, and of a 255-byte frame |
-| `beacon <k> <ms> [len]` | send a bench frame (default 17 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
+| `preamble <short\|long\|n>` | preamble of `tx` and `beacon` frames: 12 symbols, the 1396 of a frame to a sleepy node, or n between | `symbols`, the airtime of a heartbeat, 12 bytes, and of a 255-byte frame |
+| `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
-| `ping <k>` | send a 17-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
+| `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
@@ -399,15 +399,15 @@ retune times.
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
 home channel answers it like an ACK (spec "The ACK"): CAD on the sender's
-home channel (named in the ping), then a 17-byte pong, then back home; it
+home channel (named in the ping), then an 18-byte pong, then back home; it
 prints the time of each part. It does not do the RSSI half of
 listen-before-talk.
 
 Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
-`0x8F | kind << 4` (0 test or beacon, 1 ping, 2 pong), bytes 1 to 4 a
-big-endian sequence number, byte 5 the sender's home channel, then
-`byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
+`0x8F | kind << 4` (0 test or beacon, 1 ping, 2 pong), byte 1 the
+format version as in every packet, bytes 2 to 5 a big-endian sequence
+number, byte 6 the sender's home channel, then `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
 step); packet RSSI and SNR are in quarter dB.
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5

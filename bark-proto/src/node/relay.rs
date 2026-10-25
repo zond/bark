@@ -1609,6 +1609,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             anchorless,
             carried: self.motion.carried,
             home: self.home,
+            format: crate::wire::FORMAT,
             id: self.id,
             short: self.config.position.short(),
         };
@@ -2242,6 +2243,7 @@ mod tests {
             anchorless: false,
             carried: false,
             home: r.home(),
+            format: crate::wire::FORMAT,
             id: other,
             short: config.position.short(),
         };
@@ -2374,6 +2376,7 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(4).unwrap(),
+                format: crate::wire::FORMAT,
                 id: anchor,
                 short: config.position.short(),
             };
@@ -3029,6 +3032,7 @@ mod tests {
             anchorless: false,
             carried: false,
             home: b_home,
+            format: crate::wire::FORMAT,
             id: id_of(b),
             short: b.short(),
         };
@@ -3163,6 +3167,7 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
             id: id_of(d_pos),
             short: d_pos.short(),
         };
@@ -3291,6 +3296,7 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
                 id: id_of(d_pos),
                 short: d_pos.short(),
             }),
@@ -3375,6 +3381,7 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
                 id: id_of(at),
                 short: at.short(),
             };

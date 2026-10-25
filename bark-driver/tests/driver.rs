@@ -611,6 +611,7 @@ fn a_relay_runs_through_the_loop() {
         anchorless: false,
         carried: false,
         home: ch(6),
+        format: bark_proto::wire::FORMAT,
         id: bark_proto::NodeId([6; 6]),
         short: other.short(),
     });
