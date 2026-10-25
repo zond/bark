@@ -67,7 +67,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let sleepy = !external || !Self::can_relay();
         if let Stage::Booting(_) = self.stage {
             if sleepy && !self.sleepy {
-                self.gps_sleepy();
+                self.gps_due();
             }
             self.sleepy = sleepy;
             let ends = self.boot_end(self.boot_from);
@@ -151,7 +151,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
-        self.gps_sleepy();
+        self.gps_due();
         self.unplugged = None;
         self.leaving = false;
         for q in self.delivery.iter() {

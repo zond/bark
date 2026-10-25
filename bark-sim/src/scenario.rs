@@ -142,22 +142,6 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
-    pub gps_schedule: Option<GpsSchedule>,
-    pub gps_backoff_ms: Option<u64>,
-}
-
-/// When a sleepy node runs its GPS (`bark_proto::gps::GpsSchedule`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GpsSchedule {
-    /// Before every beat, up to 10 minutes.
-    EveryBeat,
-    /// At turning sleepy, each anchor taken, and while anchorless.
-    Events,
-    /// As `Events`, and at each beat while the fixes say it moves.
-    Follow,
-    /// Only while anchorless.
-    Anchorless,
 }
 
 impl ProtocolOverrides {
@@ -205,16 +189,6 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
-        set!(gps_backoff, gps_backoff_ms, ms);
-        if let Some(g) = self.gps_schedule {
-            use bark_proto::gps::GpsSchedule as G;
-            c.gps = match g {
-                GpsSchedule::EveryBeat => G::EveryBeat,
-                GpsSchedule::Events => G::Events,
-                GpsSchedule::Follow => G::Follow,
-                GpsSchedule::Anchorless => G::Anchorless,
-            };
-        }
         c
     }
 }
@@ -628,7 +602,8 @@ pub struct GpsFault {
 /// plausibility checks of spec "Position" before handing a fix to its
 /// core. A relay with a fault takes a fix every second, the receiver's
 /// usual output rate; one that walks, one at each heartbeat; a sleepy node
-/// one before each beat (spec "Beats"). Other nodes are handed no fixes,
+/// one from each search its core asks for (`gps.rs`), where it hears the
+/// sky. Other nodes are handed no fixes,
 /// since a true one changes nothing, unless `relays_every_s` or
 /// `error_m` says otherwise.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

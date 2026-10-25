@@ -5,7 +5,7 @@
 //! Table 2 (page 11), at room temperature with every satellite at
 //! −130 dBm, about the open-sky level. A sleepy node runs a search only
 //! when its core asks for one ([`crate::Action::Locate`]), at the times
-//! [`GpsSchedule`] gives.
+//! spec "Beats" gives (roadmap D80).
 
 use crate::time::Duration;
 
@@ -39,28 +39,29 @@ pub const ORBIT_VALID: Duration = Duration::from_secs(4 * 3600);
 /// needs to acquire (Table 2), where a longer one finds nothing either.
 pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 
-/// The search limit of spec "Beats" as written before
-/// `docs/gps-schedule-2026-10-25.md`: 10 minutes.
-pub const BEAT_SEARCH_LIMIT: Duration = Duration::from_secs(600);
+/// How long a sleepy node runs no search after one that found nothing:
+/// 8 h. A search that finds nothing costs [`SEARCH_LIMIT`] at
+/// [`GPS_CURRENT_UA`], 0.48 mAh; once in 8 h that is 0.060 mA, a tenth of
+/// a sleepy node's 0.63 mA (spec "Delivery"), for a node that never sees
+/// the sky (roadmap D80).
+pub const BACKOFF: Duration = Duration::from_secs(8 * 3600);
 
-/// When a sleepy node runs its GPS. A research switch: the note measures
-/// each, and the rejected ones go before a merge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GpsSchedule {
-    /// Spec "Beats" as written: a search before every beat, of up to
-    /// [`BEAT_SEARCH_LIMIT`].
-    EveryBeat,
-    /// A search of up to [`SEARCH_LIMIT`] when the node turns sleepy, when
-    /// it takes an anchor or changes it, when it turns anchorless, and
-    /// once a delivery TTL while it stays anchorless; none for
-    /// [`crate::Config::gps_backoff`] after one that found nothing.
-    Events,
-    /// As `Events`, and at each beat while the node's last two fixes were
-    /// farther apart than two fixes of a still node may be (spec
-    /// "Position"): it searches while it is seen to move, until a search
-    /// finds nothing or a fix is near the last.
-    Follow,
-    /// As `Events`, but none for an anchor: only when the node turns
-    /// anchorless and once a delivery TTL while it stays so.
-    Anchorless,
+/// A sleepy node's mean current with an anchor, µA: the radio's, S4's
+/// figure (spec "Delivery"), which [`BACKOFF`] keeps the GPS within a
+/// tenth of.
+pub const SLEEPY_CURRENT_UA: u64 = 630;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_back_off_keeps_a_node_without_sky_within_a_tenth() {
+        let search_uas = GPS_CURRENT_UA * SEARCH_LIMIT.as_micros() / 1_000_000;
+        let mean_ua = search_uas as f64 / (BACKOFF.as_micros() as f64 / 1e6);
+        assert!(mean_ua <= SLEEPY_CURRENT_UA as f64 / 10.0, "{mean_ua}");
+        // And not much less: 7.7 h is the least that keeps it.
+        let least_s = search_uas as f64 / (SLEEPY_CURRENT_UA as f64 / 10.0);
+        assert!((least_s / 3600.0 - 7.7).abs() < 0.05, "{least_s}");
+    }
 }

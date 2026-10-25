@@ -1028,7 +1028,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // or its first rotation has ended, and its beats keep no slots.
         self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
         if self.sleepy {
-            self.gps_sleepy();
+            self.gps_due();
         }
         emit(Action::Listen(self.home));
         emit(Action::App(AppEvent::Boot {
@@ -1088,7 +1088,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.retune(home, emit);
             }
             if !self.reconsider_anchor(now, emit) {
-                self.gps_anchorless();
+                self.gps_due();
                 // At a random time within a beat period, so that nodes that
                 // boot together do not beat together.
                 self.beacon.next_at =
@@ -1329,7 +1329,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn leave_anchor(&mut self, now: Instant) {
         self.anchor = None;
         self.anchored();
-        self.gps_anchorless();
+        self.gps_due();
         self.beacon.next_at = now;
         self.beacon.quick = 0;
     }
@@ -1771,9 +1771,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // The window after its beat (spec "Delivery").
             self.awake_until = now + self.heard.params().awake;
         }
-        if sent && self.sleepy {
-            self.gps_beat();
-        }
         if self.sleepy && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
             // this one went; with one, the rotation is not used.
@@ -1964,8 +1961,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
                     AppCommand::Fix { .. } => {
-                        let moved = self.plane.point(position).distance_m(Default::default());
-                        self.gps_fixed(moved);
+                        self.gps_fixed();
                         self.fix(position, now, emit)
                     }
                     _ => {
