@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; `AppCommand::Battery` and the stored relay flag (§4, §5), 2026-10-25, proposed in `docs/battery-role-2026-10-25.md`. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -108,7 +108,7 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::Fix` and `AppCommand::Power`, the events `AppEvent::Message`,
+`AppCommand::Fix`, `AppCommand::Power` and `AppCommand::Battery`, the events `AppEvent::Message`,
 `AppEvent::GivenBack` and `AppEvent::Boot`, and the store, `Action::Store` and
 `Config::stored`.
 
@@ -154,6 +154,12 @@ right after the boot wakeup and at every change, and may repeat it. On external 
 the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
 on; running, from the change on, as spec "Sleepy nodes" says.
 
+`AppCommand::Battery` reports the battery's voltage in millivolts, read while the radio
+does not transmit, on battery, as often as the driver reads it. With `Config::battery` a
+fixed relay on battery relays until a reading at or below the low level, and a node its
+battery turned sleepy relays again at the high level (spec "Nodes"); without, the core
+ignores it. The driver calibrates its reading (`docs/battery-role-2026-10-25.md`).
+
 `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
 
@@ -166,7 +172,7 @@ or at once when it resumes a stored anchor.
 `Action::Store(stored)` asks the driver to keep `stored` across a reboot, in place of
 what it kept before (spec "Implementation notes"). The core emits it at boot and then only
 when the state changes: the home channel, but a carried sleepy node's, the place a fixed
-node stands, the carried flag and a fixed sleepy node's anchor. The driver hands the last one back in `Config::stored`
+node stands, the carried flag, a fixed sleepy node's anchor and whether it is a relay. The driver hands the last one back in `Config::stored`
 when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
 it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
 record. The firmware appends records to a page of flash (`bark-fw/src/store.rs`); the
@@ -186,6 +192,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
+| Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | not yet: the SAADC on AIN2 behind the board's 2:1 divider (`bark-fw/src/board.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `memory.x`) |
 
 ## 6. Memory
