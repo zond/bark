@@ -58,10 +58,10 @@ Verified on the host:
   with each of the two builds.
 - The ELF's first loadable byte (the vector table) is at `0x2B000`, the
   initial stack pointer is `0x20040000`. The node image is 167 KiB of
-  flash (`.text`, `.rodata` and `.data`, 171 300 B, 670 UF2 blocks) and
+  flash (`.text`, `.rodata` and `.data`, 171 644 B, 671 UF2 blocks) and
   uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 212 B),
   which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`); the
-  console image is 105 348 B. The
+  console image is 105 804 B. The
   relay, 172 432 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. Its deepest
   single stack frame, the largest stack adjustment in the disassembly

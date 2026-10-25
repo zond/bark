@@ -1,6 +1,8 @@
 # Firmware updates over the mesh (2026-10-25)
 
-**Status:** design study, nothing built. Spec references are to
+**Status:** design study. The loader and the flash layout below are
+built (roadmap D79, 2026-10-25); the transport, the policy and the
+signatures are not. Spec references are to
 `protocol.md` by heading. Airtimes use the corrected SF5 figures being
 brought into the spec at the same time: a 255-byte frame 138.6 ms, a
 17-byte ACK 16.96 ms, an 11-byte heartbeat 14.40 ms.
@@ -165,7 +167,9 @@ at the bottom of the application region.** Roadmap D6 stands.
   of our own built on embassy-boot. It swaps a staged image into place
   and swaps it back when the new image does not confirm itself. The
   firmware image and the loader go to the board together as one UF2,
-  so bring-up does not change: one copy to `TECHOBOOT`.
+  so bring-up does not change: one copy to `TECHOBOOT`. Built
+  2026-10-25 (roadmap D79): the loader is 8748 B, and the node image
+  behind it 171 644 B (`bark-fw/README.md`, "Updates").
 - The signature is checked by the running application before it asks
   for the swap, never by the loader. The loader then holds no key, and
   the keys live in the image, where an update can change them. A key
@@ -214,7 +218,10 @@ The application region holds 205 pages:
 | 89 | 356 KiB | DFU: the staged image, one page larger (embassy-boot's swap needs it) |
 | 23 | 92 KiB | staging: the update's own state and coded pieces waiting to be decoded |
 
-D73's page at `0xF3000` stays where it is. Today's 334 KiB image fits in
+Built so on 2026-10-25 (roadmap D79), the staging's first page holding
+the staged image's header for the loader's check, the running image
+from `0x2B000`; `bark-fw/README.md`, "Flash layout", has each region's
+address. D73's page at `0xF3000` stays where it is. Today's 334 KiB image fits in
 ACTIVE; with the relay's tables in `.bss` (done 2026-10-25) it is half full,
 with room for BLE. The SoftDevice's 148 KiB stay reserved; the Adafruit
 bootloader uses them only for its BLE path, which we do not use, but
