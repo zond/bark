@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 
 use crate::layout::{Region, ACTIVE, DFU, PAGE, RECORD, STATE};
 use crate::record::{CHECKED, CHECKED_AT, HEADER_AT};
-use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN};
+use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
 /// The flash, shared by the partitions that each see one region of it.
 pub type Shared<F> = Mutex<NoopRawMutex, RefCell<F>>;
@@ -182,6 +182,9 @@ pub enum Started {
     Confirmed,
     /// The previous image is back: the new one did not confirm itself.
     Reverted,
+    /// The loader refused the staged image (`Boot::Refused`), whose record
+    /// is now forgotten.
+    Refused,
 }
 
 /// Mark the running image as the one to keep. Called once the node has
@@ -189,6 +192,18 @@ pub enum Started {
 pub fn confirm<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     let found = state(flash)?;
     if found == State::Boot {
+        // A record never checked, with no swap asked for, is one the
+        // loader refused: it cancels the swap before it checks anything
+        // else.
+        let mut record = part(flash, RECORD);
+        let mut bytes = [0u8; HEADER_LEN];
+        let mut word = [0u8; 4];
+        record.read(HEADER_AT, &mut bytes).map_err(flash_error)?;
+        record.read(CHECKED_AT, &mut word).map_err(flash_error)?;
+        if bytes[..MAGIC.len()] == MAGIC && u32::from_le_bytes(word) != CHECKED {
+            record.erase(0, RECORD.len).map_err(flash_error)?;
+            return Ok(Started::Refused);
+        }
         return Ok(Started::Normal);
     }
     let mut word = AlignedBuffer([0u8; 4]);

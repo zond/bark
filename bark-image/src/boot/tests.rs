@@ -230,6 +230,7 @@ fn a_staged_image_that_went_bad_is_refused() {
     assert_eq!(boot(&flash), Ok(Boot::Refused(Refusal::Hash)));
     assert_eq!(active(&flash, a.len()), a);
     assert_eq!(boot(&flash), Ok(Boot::Normal));
+    assert_eq!(confirm(&flash), Ok(Started::Refused));
     assert_eq!(confirm(&flash), Ok(Started::Normal));
 }
 
