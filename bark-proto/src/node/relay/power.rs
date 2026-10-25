@@ -66,6 +66,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
         if let Stage::Booting(_) = self.stage {
+            if sleepy && !self.sleepy {
+                self.gps_sleepy();
+            }
             self.sleepy = sleepy;
             let ends = self.boot_end(self.boot_from);
             self.stage = Stage::Booting(ends);
@@ -126,6 +129,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Plugged in: a relay at once, with its own position as its address.
     fn turn_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = false;
+        self.gps_relay();
         self.fixed_here();
         self.anchor = None;
         self.unwatch();
@@ -147,6 +151,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
+        self.gps_sleepy();
         self.unplugged = None;
         self.leaving = false;
         for q in self.delivery.iter() {

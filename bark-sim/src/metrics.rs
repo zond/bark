@@ -158,6 +158,17 @@ impl RxCounts {
     }
 }
 
+/// A sleepy node's GPS searches after the settle time (`gps.rs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct GpsCounts {
+    /// Searches started.
+    pub searches: u64,
+    /// Searches that found a fix.
+    pub fixes: u64,
+    /// Time the receiver ran, µs.
+    pub on_us: u64,
+}
+
 /// Per-node counters.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct NodeMetrics {
@@ -197,6 +208,9 @@ pub struct NodeMetrics {
     pub drops: DropCounts,
     /// What the core reported in its traces.
     pub core: CoreCounts,
+    /// For a sleepy node: its GPS searches after the settle time
+    /// (`gps.rs`).
+    pub gps: GpsCounts,
     /// A node's tables and bucket, sampled; `None` for a sleepy node or
     /// when not sampled.
     #[serde(skip_serializing_if = "Option::is_none")]

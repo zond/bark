@@ -9,6 +9,7 @@ use crate::metrics::{
     AFTER_BEAT, AFTER_TAKE, FIRST_TRIES,
 };
 use crate::sim::{Fate, Sim};
+use bark_proto::gps::{GPS_CURRENT_UA, GPS_STANDBY_UA};
 use bark_proto::radio::CHANNELS;
 use bark_proto::sniff::{RX_CURRENT_UA, SNIFF_CURRENT_NA, TX_CURRENT_UA};
 use bark_proto::Instant;
@@ -212,6 +213,14 @@ pub struct SleepSummary {
     /// The mean of each part of `current_ma`: listening, receiving
     /// duty-cycled, transmitting.
     pub current_parts_ma: [f64; 3],
+    /// The GPS's mean current per sleepy node after the settle time, mA:
+    /// its searches at `gps::GPS_CURRENT_UA`, and standby between them at
+    /// `gps::GPS_STANDBY_UA`; mean, median and 90th percentile.
+    pub gps_ma: [f64; 3],
+    /// GPS searches per sleepy node and hour.
+    pub gps_searches_per_h: f64,
+    /// The share of those searches that found a fix.
+    pub gps_found: f64,
     /// Spells without an anchor past the first rotation, all and those that
     /// began after the first scripted removal (`Sim::anchorless_spells`).
     pub anchorless_spells: [(u64, u64, Option<f64>, Option<f64>); 2],
@@ -573,11 +582,29 @@ impl Sim {
             [mean, at(50.0), at(90.0)]
         };
         let part = |i: usize| nodes.iter().map(|m| parts(m)[i]).sum::<f64>() / nodes.len() as f64;
+        let gps = |i: usize| {
+            let on = self.gps_on_us(i as u32) as f64 / window as f64;
+            (on * GPS_CURRENT_UA as f64 + (1.0 - on) * GPS_STANDBY_UA as f64) / 1e3
+        };
+        let gps_ma = {
+            let mut v: Vec<u64> = (n..n + nodes.len())
+                .map(|i| (gps(i) * 1e3) as u64)
+                .collect();
+            v.sort_unstable();
+            let mean = v.iter().sum::<u64>() as f64 / v.len() as f64 / 1e3;
+            let at = |p: f64| percentile(&v, p).unwrap_or(0) as f64 / 1e3;
+            [mean, at(50.0), at(90.0)]
+        };
+        let searches: u64 = nodes.iter().map(|m| m.gps.searches).sum();
+        let found: u64 = nodes.iter().map(|m| m.gps.fixes).sum();
         Some(SleepSummary {
             listen_s_per_h: stats(&|m| hour(listen_us(m))),
             sniff_s_per_h: stats(&|m| hour(sniff_us(m))),
             current_ma: stats(&|m| parts(m).iter().sum()),
             current_parts_ma: [part(0), part(1), part(2)],
+            gps_ma,
+            gps_searches_per_h: searches as f64 * 3.6e9 / window as f64 / nodes.len() as f64,
+            gps_found: found as f64 / searches.max(1) as f64,
             anchorless_spells: [
                 self.anchorless_spells(Instant::ZERO),
                 self.anchorless_spells(self.removal.unwrap_or(Instant::MAX)),
@@ -794,6 +821,16 @@ impl Summary {
                 z.current_parts_ma[0],
                 z.current_parts_ma[1],
                 z.current_parts_ma[2]
+            );
+            let _ = writeln!(
+                s,
+                "sleepy nodes' GPS: {:.2} searches an hour, {:.1} % found a fix; current {:.3} mA (median {:.3}, p90 {:.3}); with the radio {:.3} mA",
+                z.gps_searches_per_h,
+                z.gps_found * 100.0,
+                z.gps_ma[0],
+                z.gps_ma[1],
+                z.gps_ma[2],
+                z.gps_ma[0] + z.current_ma[0]
             );
             let f = |x: Option<f64>| x.map_or_else(|| "-".into(), |x| format!("{x:.0}"));
             let (never, p50, p90, last) = z.first_anchor;

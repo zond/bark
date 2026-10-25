@@ -249,6 +249,11 @@ pub enum Action {
     /// hand it back in [`crate::Config::stored`] at the next boot
     /// (`docs/core-interface.md` §4). Emitted only when it changes.
     Store(Stored),
+    /// Run the GPS until this instant and hand the first fix that passes
+    /// the checks as [`AppCommand::Fix`], then stop it; a later `Locate`
+    /// moves the end. Only a sleepy node asks: a relay's GPS runs all the
+    /// time (`crate::gps`, spec "Position").
+    Locate(Instant),
     /// A protocol event for logs and the simulator's metrics. Carries no
     /// obligation; a driver may ignore it (`docs/core-interface.md` §3).
     Trace(Trace),

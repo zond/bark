@@ -142,6 +142,22 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
+    pub gps_schedule: Option<GpsSchedule>,
+    pub gps_backoff_ms: Option<u64>,
+}
+
+/// When a sleepy node runs its GPS (`bark_proto::gps::GpsSchedule`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpsSchedule {
+    /// Before every beat, up to 10 minutes.
+    EveryBeat,
+    /// At turning sleepy, each anchor taken, and while anchorless.
+    Events,
+    /// As `Events`, and at each beat while the fixes say it moves.
+    Follow,
+    /// Only while anchorless.
+    Anchorless,
 }
 
 impl ProtocolOverrides {
@@ -189,6 +205,16 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
+        set!(gps_backoff, gps_backoff_ms, ms);
+        if let Some(g) = self.gps_schedule {
+            use bark_proto::gps::GpsSchedule as G;
+            c.gps = match g {
+                GpsSchedule::EveryBeat => G::EveryBeat,
+                GpsSchedule::Events => G::Events,
+                GpsSchedule::Follow => G::Follow,
+                GpsSchedule::Anchorless => G::Anchorless,
+            };
+        }
         c
     }
 }
@@ -605,7 +631,7 @@ pub struct GpsFault {
 /// one before each beat (spec "Beats"). Other nodes are handed no fixes,
 /// since a true one changes nothing, unless `relays_every_s` or
 /// `error_m` says otherwise.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Gps {
     /// The faults.
@@ -625,6 +651,29 @@ pub struct Gps {
     pub error_m: f64,
     /// See `error_m`, seconds.
     pub error_correlation_s: f64,
+    /// The share of the sleepy nodes placed indoors, and of the walkers at
+    /// their stops, whose GPS hears no sky there: every search of theirs
+    /// indoors runs to its limit and finds nothing. Each node is drawn
+    /// once from the run's seed. Every scenario places its sleepy nodes
+    /// indoors behind a wall of 14.4 dB at 433 MHz, more at the GPS's
+    /// 1575 MHz, with the floors above between them and the sky, and the
+    /// L76K acquires only 18 dB below the open-sky level (Table 2 of its
+    /// hardware design): so by default none hears it
+    /// (`docs/gps-schedule-2026-10-25.md`).
+    pub no_sky: f64,
+}
+
+impl Default for Gps {
+    fn default() -> Self {
+        Gps {
+            faults: Vec::new(),
+            checks: false,
+            relays_every_s: 0.0,
+            error_m: 0.0,
+            error_correlation_s: 0.0,
+            no_sky: 1.0,
+        }
+    }
 }
 
 /// A complete scenario.

@@ -8,6 +8,7 @@
 //! `node/transfer.rs`.
 
 use crate::event::{Action, Event, MAX_FRAME};
+use crate::gps::GpsSchedule;
 use crate::ids::NodeId;
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS};
@@ -115,6 +116,13 @@ pub struct Config {
     /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
     /// would turn a node sleepy at every brief unplug.
     pub grace: Duration,
+    /// When a sleepy node runs its GPS (`crate::gps`). A research switch;
+    /// the spec as written is [`GpsSchedule::EveryBeat`].
+    pub gps: GpsSchedule,
+    /// How long a sleepy node runs no search after one that found nothing,
+    /// but before a beat with [`GpsSchedule::EveryBeat`]
+    /// (`docs/gps-schedule-2026-10-25.md`).
+    pub gps_backoff: Duration,
 }
 
 impl Default for Config {
@@ -237,6 +245,8 @@ impl Config {
         home_override: None,
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
+        gps: GpsSchedule::EveryBeat,
+        gps_backoff: Duration::from_secs(3600),
     };
 }
 

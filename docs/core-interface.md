@@ -109,8 +109,8 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
 `AppCommand::Fix` and `AppCommand::Power`, the events `AppEvent::Message`,
-`AppEvent::GivenBack` and `AppEvent::Boot`, and the store, `Action::Store` and
-`Config::stored`.
+`AppEvent::GivenBack` and `AppEvent::Boot`, the store, `Action::Store` and
+`Config::stored`, and the GPS request `Action::Locate`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -149,6 +149,12 @@ whether it is carried; a sleepy or carried node takes each fix, and one that is 
 keeps its position (roadmap D70, D72). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
 
+`Action::Locate(until)` asks the driver to run the GPS until `until` and hand the first
+fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end.
+Only a sleepy node asks; a relay's GPS runs all the time. When it asks is the research
+switch `Config::gps`, measured in `docs/gps-schedule-2026-10-25.md`: before every beat,
+as spec "Beats" is written, or only at the events that may have moved the node.
+
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power
 the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
@@ -186,6 +192,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
+| GPS (§4) | `Action::Locate` starts a search; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky` (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
 
 ## 6. Memory

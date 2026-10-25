@@ -85,6 +85,8 @@ pub struct SimNode<C: Core> {
     pub boot: Vec<(Instant, AppEvent)>,
     /// What the core last asked to keep across a reboot.
     pub stored: Option<bark_proto::Stored>,
+    /// The searches for a fix the core asked for: when, and until when.
+    pub located: Vec<(Instant, Instant)>,
     pub traces: Vec<(Instant, Trace)>,
     pub sent: Vec<(Instant, Frame)>,
     pub received: Vec<(Instant, Vec<u8>)>,
@@ -132,6 +134,7 @@ impl<C: Core> Harness<C> {
                 app: Vec::new(),
                 boot: Vec::new(),
                 stored: None,
+                located: Vec::new(),
                 traces: Vec::new(),
                 sent: Vec::new(),
                 received: Vec::new(),
@@ -490,6 +493,7 @@ impl<C: Core> Harness<C> {
             Action::App(e @ AppEvent::Boot { .. }) => self.nodes[i].boot.push((now, e)),
             Action::App(e) => self.nodes[i].app.push((now, e)),
             Action::Store(s) => self.nodes[i].stored = Some(s),
+            Action::Locate(until) => self.nodes[i].located.push((now, until)),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
             Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 let n = &self.nodes[i];

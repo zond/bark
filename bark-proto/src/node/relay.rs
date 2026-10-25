@@ -86,6 +86,7 @@
 
 mod delivery;
 mod forward;
+mod gps;
 mod motion;
 mod power;
 
@@ -324,6 +325,8 @@ pub struct Node<const H: usize, const Q: usize> {
     anchor: Option<Anchor>,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
+    /// A sleepy node's searches for a fix (`relay/gps.rs`).
+    gps: gps::Gps,
     mover: Mover,
     replies: Replies,
     radio: Radio<Job>,
@@ -463,6 +466,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             heard: Heard::from_config(&config),
             anchor: None,
             motion: Motion::fixed(config.position),
+            gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -547,6 +551,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             heard,
             anchor,
             motion,
+            gps,
             delivery,
             delivered,
             delivery_retry_at,
@@ -614,6 +619,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *heard = Heard::from_config(&config);
         *anchor = None;
         *motion = Motion::fixed(config.position);
+        *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -1021,6 +1027,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
         self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
+        if self.sleepy {
+            self.gps_sleepy();
+        }
         emit(Action::Listen(self.home));
         emit(Action::App(AppEvent::Boot {
             relays: 0,
@@ -1079,6 +1088,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.retune(home, emit);
             }
             if !self.reconsider_anchor(now, emit) {
+                self.gps_anchorless();
                 // At a random time within a beat period, so that nodes that
                 // boot together do not beat together.
                 self.beacon.next_at =
@@ -1287,6 +1297,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.beacon.next_at = now;
         self.beacon.quick = 1;
         self.anchored();
+        self.gps_anchor();
     }
 
     /// The anchor was chosen or confirmed: a node that sleeps keeps it
@@ -1304,11 +1315,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .pin(self.anchor.filter(|_| keep).map(|a| a.id));
     }
 
+    /// The fix asked for at a new anchor came: the node chose from there
+    /// (`relay/gps.rs`).
+    fn anchored_at_fix(&mut self) {
+        self.chosen_from = self.config.position;
+        self.reach_m = self.anchor.map_or(0.0, |a| {
+            self.plane.point(a.position).distance_m(Default::default())
+        });
+    }
+
     /// Give up an anchor that turned carried, with no other to take: the
     /// node is anchorless (spec "Sleepy nodes alone") and beats at once.
     fn leave_anchor(&mut self, now: Instant) {
         self.anchor = None;
         self.anchored();
+        self.gps_anchorless();
         self.beacon.next_at = now;
         self.beacon.quick = 0;
     }
@@ -1750,6 +1771,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // The window after its beat (spec "Delivery").
             self.awake_until = now + self.heard.params().awake;
         }
+        if sent && self.sleepy {
+            self.gps_beat();
+        }
         if self.sleepy && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
             // this one went; with one, the rotation is not used.
@@ -1939,7 +1963,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
-                    AppCommand::Fix { .. } => self.fix(position, now, emit),
+                    AppCommand::Fix { .. } => {
+                        let moved = self.plane.point(position).distance_m(Default::default());
+                        self.gps_fixed(moved);
+                        self.fix(position, now, emit)
+                    }
                     _ => {
                         // A sleepy node's position is no news, but a
                         // change of its carried flag is.
@@ -1950,6 +1978,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }
                 };
                 if !took || !self.sleepy {
+                    return;
+                }
+                if core::mem::take(&mut self.gps.at_choice) {
+                    // Where it chose from (`relay/gps.rs`).
+                    self.anchored_at_fix();
                     return;
                 }
                 let moved = self
@@ -2040,6 +2073,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.timers(now, emit);
         self.power_timers(now, emit);
+        self.gps_timers(now, emit);
         self.forward_timers(now, emit);
         self.delivery_timers(now);
         self.pump(now, emit);
@@ -2078,6 +2112,9 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             at(t);
         }
         if let Some(t) = self.grace_ends() {
+            at(t);
+        }
+        if let Some(t) = self.gps_wakeup() {
             at(t);
         }
         if let Some(t) = self.window_ends {

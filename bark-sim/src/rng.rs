@@ -55,6 +55,8 @@ pub enum Purpose {
     Power = 19,
     /// Where the text offered at a scripted boot goes (`boots.rs`).
     BootText = 20,
+    /// Whether a sleepy node's GPS hears the sky indoors (`gps.rs`).
+    GpsSky = 21,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.
