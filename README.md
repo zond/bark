@@ -6,6 +6,13 @@ people message each other across a city, through an app linked to their node
 over Bluetooth, when ordinary infrastructure is gone. Licence-free in the EU
 and Ukraine (10 mW effective radiated power, 10% duty cycle).
 
+The network is open and built for infrastructure loss, not against an
+adversary. Nothing on the air is authenticated, so anyone with a radio
+in range can disrupt the nodes around them, and anyone in range of a
+node learns its ID and position. The app encrypts the messages
+themselves end to end. `docs/protocol.md`, "What the protocol omits",
+says why.
+
 The name is from Darwin's bark spider (*Caerostris darwini*), the Madagascan
 spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big

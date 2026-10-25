@@ -2258,8 +2258,11 @@ and when the rotation ends ([channel at boot](#channel-at-boot)), so
 that the app can show "listening, 3 relays heard, 1:40 to go".
 The app owns identity and end-to-end encryption; the node sees opaque
 payloads. The sender's address, position and node ID, travels inside
-the encrypted payload, so that only the recipient learns where the
-sender is. Encryption scheme: open item O1.
+the encrypted payload, so that the relays that carry a message do not
+learn who sent it. Anyone in radio range of the sender's node still
+learns its ID and position from its heartbeats
+([what the protocol omits](#what-the-protocol-omits)). Encryption
+scheme: open item O1.
 
 A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app
@@ -2270,13 +2273,6 @@ per message does that.
 are one message to every relay that still keeps the first one's record
 ([message records](#message-records), [bounds](#bounds)), and the second
 is not delivered.
-
-**What the network does not defend against.** Nothing on the air is
-authenticated. Anyone with a 433 MHz LoRa radio can send heartbeats with
-any position, attract traffic to it and drop it, send packets in another
-node's name, or replay what it has heard. The app's end-to-end
-encryption keeps payloads private and authentic; it does nothing for
-routing. This is the scope stated at the top.
 
 ---
 
@@ -2335,6 +2331,36 @@ Common mesh and radio mechanisms left out, and why.
 | Spreading one signal over the whole band (DSSS/CDMA) | 13 separate channels | the SX1262 cannot, and in random meshes without power control separate channels carry 5–10× more (Weber et al., [sources](#sources)) |
 | Frequency hopping | measured home channels | hopping on a common schedule has the capacity of one channel; per-receiver schedules are fixed channels plus time sync; random channels per packet need ≥20 ms preambles on every packet; no regulatory benefit at 433 MHz |
 | Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | collisions happen at the shared relay whatever the sleepy node's range: 58% of a channel at 400 sleepy nodes per relay, 400 × 14.4 ms every 10 s |
+
+**No authentication.** The network is open, and nothing on the air is
+authenticated. Any node in radio range, by a bug or on purpose, can
+forge any frame and disrupt its district, within its duty cycle and
+unnoticed:
+
+- refuse in a relay's name and ban it for up to 100 s ([bans](#bans));
+- take a message in a relay's name, and the message is lost;
+- send a heartbeat in an anchor's name and send its sleepy nodes
+  elsewhere ([relay choice](#relay-choice));
+- claim the position of a destination and own it ([owner](#owner)).
+
+The design resists collisions and overload, not adversaries. Anyone in
+radio range learns every node's ID and position from its heartbeats;
+nobody farther away does. The app's end-to-end encryption keeps payloads
+private and authentic ([phone link](#phone-link)); it does nothing for
+routing.
+
+*Why no authentication.* A real node of the network with a few
+judicious bugs, by accident or intent, breaks large parts of it whether
+or not frames are signed, since it is a legitimate participant. Signing
+every frame would also need the hardware locked so that its holder
+cannot extract the key, which an open device anyone can buy and build
+cannot be. And no radio network withstands a serious adversary, who can
+jam it in any case.
+
+*Why no location privacy.* A node tells its position every rotation on
+a channel anyone can hear. A node that took a new ID would be linked to
+the old one by anyone who heard the old one fall silent and the new one
+appear in the same place.
 
 ---
 
