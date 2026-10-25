@@ -313,6 +313,9 @@ pub struct Node<const H: usize, const Q: usize> {
     unplugged: Option<Instant>,
     /// Its grace is over: it flushes, and then turns sleepy.
     leaving: bool,
+    /// When a relay leaving turns sleepy whatever its flush has done
+    /// (`relay/power.rs`).
+    flush_by: Instant,
     /// Its battery read at or below the low level since it last read at
     /// or above the high one, or since its external power (`relay/power.rs`).
     low: bool,
@@ -432,6 +435,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy: !Self::can_relay(),
             unplugged: None,
             leaving: false,
+            flush_by: Instant::ZERO,
             low: false,
             battery_sleepy: false,
             boot_from: Instant::ZERO,
@@ -538,6 +542,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy,
             unplugged,
             leaving,
+            flush_by,
             low,
             battery_sleepy,
             boot_from,
@@ -590,6 +595,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *sleepy = !Self::can_relay();
         *unplugged = None;
         *leaving = false;
+        *flush_by = Instant::ZERO;
         *low = false;
         *battery_sleepy = false;
         *boot_from = Instant::ZERO;
@@ -2094,6 +2100,9 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         if let Some(t) = self.grace_ends() {
             at(t);
+        }
+        if self.leaving {
+            at(self.flush_by);
         }
         if let Some(t) = self.window_ends {
             at(t);

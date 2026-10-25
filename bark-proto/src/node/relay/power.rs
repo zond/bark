@@ -20,7 +20,8 @@
 //! it, nothing happened. Then it takes no more mail, as a carried node
 //! does, and flushes its delivery queue as a node does at its first far
 //! fix (`relay/delivery.rs`), listening all the time until each message
-//! has had its attempt; then it turns sleepy. A sleepy node holds
+//! has had its attempt, or for a delivery TTL at most; then it turns
+//! sleepy. A sleepy node holds
 //! nothing: what the flush did not deliver is dropped, and it chooses an
 //! anchor among the relays it knows as a booting sleepy node does. A node
 //! carried by then flushed at its first far fix already.
@@ -160,9 +161,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.leaving = true;
                 emit(Action::Trace(Trace::GraceEnded));
             }
-            self.feed_due |= self.leaving;
+            if self.leaving {
+                self.feed_due = true;
+                // What the network promises a node it cannot reach is a
+                // delivery TTL; a flush that the duty cap or a busy channel
+                // holds up longer would keep a node with a low battery
+                // listening until it is flat.
+                self.flush_by = now + self.config.delivery_ttl;
+            }
         }
-        if self.leaving && self.flushed() {
+        if self.leaving && (self.flushed() || now >= self.flush_by) {
             self.turn_sleepy(now, emit);
         }
     }
