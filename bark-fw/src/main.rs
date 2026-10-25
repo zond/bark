@@ -19,11 +19,12 @@ mod power;
 mod radio;
 #[cfg(not(feature = "console"))]
 mod store;
+mod update;
 
 use core::cell::Cell;
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join4;
+use embassy_futures::join::join5;
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
@@ -149,7 +150,11 @@ async fn main(_spawner: Spawner) {
         Input
     );
 
-    log::info!("bark-fw {} on LILYGO T-Echo", env!("CARGO_PKG_VERSION"));
+    log::info!(
+        "bark-fw {} on LILYGO T-Echo, image version {}",
+        env!("CARGO_PKG_VERSION"),
+        update::BARK_IMAGE_VERSION
+    );
     log::info!(
         "bark-proto: {} channels from {} Hz, spacing {} Hz, SF{}, symbol {} us, heartbeat {} us",
         bark_proto::radio::CHANNELS,
@@ -164,6 +169,7 @@ async fn main(_spawner: Spawner) {
     }
 
     let blink = on_usb_only(board.leds.green);
+    let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
 
     #[cfg(feature = "console")]
     let clock = clock::Clock::new(p.TIMER1);
@@ -183,7 +189,7 @@ async fn main(_spawner: Spawner) {
     let mut lines = console::Lines::new();
     #[cfg(not(feature = "console"))]
     let (config, core, flash) = {
-        let (flash, stored) = store::Flash::open(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+        let (flash, stored) = store::Flash::open(shared);
         let config = node::config(stored);
         let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG).blocking_next_u64();
         (config, node::core(config, seed), flash)
@@ -202,6 +208,7 @@ async fn main(_spawner: Spawner) {
         {
             Ok(radio) => {
                 log::info!("radio up in {} us", clock.since(t0));
+                update::started(shared);
                 #[cfg(feature = "console")]
                 console::Console::new(radio, &clock, battery)
                     .run(&mut lines)
@@ -215,7 +222,14 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join4(device.run(), log_sink, blink, radio_task).await;
+    join5(
+        device.run(),
+        log_sink,
+        blink,
+        radio_task,
+        update::watchdog(p.WDT),
+    )
+    .await;
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.
