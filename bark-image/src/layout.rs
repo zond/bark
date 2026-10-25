@@ -134,7 +134,9 @@ pub const PANIC_DUMP: Region = Region {
 };
 
 /// RAM for `.data`, `.bss` and the stack, in the firmware and the loader
-/// alike.
+/// alike. The board's bootloader does not enable the SoftDevice on a
+/// boot to the application, so all of it is ours; the BLE controller
+/// (roadmap D5) will take its memory as a static buffer inside it.
 pub const RAM: Region = Region {
     start: PANIC_DUMP.end(),
     len: RAM_END - PANIC_DUMP.end(),

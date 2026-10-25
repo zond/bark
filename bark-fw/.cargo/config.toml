@@ -4,8 +4,8 @@ target = "thumbv7em-none-eabihf"
 
 [target.thumbv7em-none-eabihf]
 rustflags = [
-  # cortex-m-rt's linker script; it INCLUDEs memory.x (copied to OUT_DIR by build.rs).
+  # cortex-m-rt's linker script; it INCLUDEs memory.x (written to OUT_DIR by build.rs).
   "-C", "link-arg=-Tlink.x",
-  # Do not page-align sections: the image must start exactly at 0x26000.
+  # Do not page-align sections: the image must start exactly at its slot.
   "-C", "link-arg=--nmagic",
 ]

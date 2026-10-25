@@ -22,6 +22,8 @@ console = []
 [dependencies]
 bark-proto = { path = "../bark-proto" }
 bark-driver = { path = "../bark-driver" }
+# The flash layout, and the staging and confirmation of an image.
+bark-image = { path = "../bark-image" }
 # A place for the 150 KiB relay outside every task's future and stack.
 static_cell = "=2.1.1"
 
@@ -53,10 +55,16 @@ panic-persist = { version = "=0.3.0", features = ["utf8"] }
 # packet. vendor/README.md says how the copy is kept.
 lora-phy = { path = "vendor/lora-phy" }
 # The flash traits embassy-nrf's NVMC driver implements, for the stored
-# state (src/store.rs).
+# state (src/store.rs), and the partitions that share the NVMC between it
+# and the update (src/update.rs).
 embedded-storage = "=0.3.2"
+embassy-embedded-hal = "=0.6.0"
 # Wraps the SPIM bus and the NSS pin into the SpiDevice lora-phy takes.
 embedded-hal-bus = { version = "=0.3.0", features = ["async"] }
+
+[build-dependencies]
+# memory.x is written from the layout table.
+bark-image = { path = "../bark-image", default-features = false }
 
 [profile.release]
 debug = 2
