@@ -82,7 +82,7 @@ with the CPU stopped (nRF52840 Product Specification, NVMC; quoted in
 The application has 255 KiB (`memory.x`). The relay takes 173 840 B
 (`core-interface.md` Memory, measured 2026-10-24), and the image as a
 whole 177 KiB before the stack, which leaves 79 612 B (77.7 KiB) for the
-stack, whose deepest single frame is 23 KiB (`bark-fw/README.md`), and
+stack, whose deepest single frame is 34 KiB (`bark-fw/README.md`), and
 for BLE, under 5 KiB (`implementation-research-2026-10-14.md`). A
 decoder that needs 10 to 20 kB fits; the one proposed below needs about
 6 kB.
@@ -215,7 +215,7 @@ The application region holds 205 pages:
 | 23 | 92 KiB | staging: the update's own state and coded pieces waiting to be decoded |
 
 D73's page at `0xF3000` stays where it is. Today's 334 KiB image fits in
-ACTIVE; moving the relay's tables to `.bss` would leave it half full,
+ACTIVE; with the relay's tables in `.bss` (done 2026-10-25) it is half full,
 with room for BLE. The SoftDevice's 148 KiB stay reserved; the Adafruit
 bootloader uses them only for its BLE path, which we do not use, but
 whether it boots the application without them is not verified, and
