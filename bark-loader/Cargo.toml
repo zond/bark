@@ -1,0 +1,34 @@
+[package]
+name = "bark-loader"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/zond/bark"
+description = "Second-stage loader for the T-Echo: swaps in a staged bark-fw image and swaps it back if it does not confirm itself."
+publish = false
+
+# Its own workspace, like bark-fw: it only builds for thumbv7em-none-eabihf.
+[workspace]
+
+[dependencies]
+# The layout and the swap with its check, shared with bark-fw.
+bark-image = { path = "../bark-image" }
+# The watchdog that pets itself on every flash operation of the swap.
+embassy-boot-nrf = "=0.12.0"
+embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "unstable-pac"] }
+embassy-sync = "=0.8.0"
+cortex-m = { version = "=0.7.9", features = ["critical-section-single-core"] }
+cortex-m-rt = "=0.7.7"
+
+[build-dependencies]
+bark-image = { path = "../bark-image", default-features = false }
+
+[profile.release]
+debug = 2
+lto = "fat"
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
