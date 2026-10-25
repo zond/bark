@@ -21,7 +21,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
 | Medium access | Listen on the home channel except to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
-| Heartbeat | A node's periodic 12-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.2 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
+| Heartbeat | A node's periodic 13-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.2 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
 | Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; a relay just switched on is heard by all within ~15 s, and those that hear it answer; no scanning, no schedules |
 | Boot | A node takes traffic from the second it is switched on, and keeps its home channel and a sleepy node's anchor across a reboot |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
@@ -489,14 +489,14 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
 | Field | Bits | Content |
 |---|---|---|
-| heartbeat | 1 | set: the packet is a heartbeat ([packet formats](#packet-formats)) |
-| flags | 3 | sleepy, anchorless, carried ([packet formats](#packet-formats)) |
+| heartbeat | 4 | `1000`: the packet is a heartbeat ([packet formats](#packet-formats)) |
 | channel | 4 | home channel index 0–12 |
 | format | 8 | the newest format the node speaks ([packet formats](#packet-formats)) |
+| flags | 8 | sleepy, anchorless, carried, map point ([packet formats](#packet-formats)) |
 | id | 48 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
-12 bytes, 14.4 ms on air at SF5 ([physical layer](#physical-layer)).
+13 bytes, 14.4 ms on air at SF5 ([physical layer](#physical-layer)).
 
 | | |
 |---|---|
@@ -667,9 +667,10 @@ Per node, up to 64 entries, by node ID:
 |---|---|
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
-| sleepy, anchorless | from its heartbeat's type ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
-| carried | from its heartbeat's type ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)) |
+| sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
+| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)) |
 | format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
+| map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every frame heard from it, each new frame counting half; says whether it has margin |
@@ -928,7 +929,7 @@ hand, one at a time, so a new format must work beside nodes that never
 get it. A node updated to a new format still talks to its old neighbours
 in the old one, and their heartbeats tell it, at no traffic, which
 neighbour speaks what. The byte costs no airtime in the heartbeat and
-the ACK, whose 12 and 18 bytes fill the same 6 and 8 blocks of symbols
+the ACK: their 13 and 18 bytes fill the same 6 and 8 blocks of symbols
 at SF5 as 11 and 17 would. In DATA it adds a block, 1.28 ms, for one
 payload length in five: 0.26 ms on average, under 1 % of a text's
 frame, and 1.7 % for the 100-byte text of
@@ -1289,7 +1290,7 @@ message to its parent.
 
 *Why margin comes first.* Neighbours without margin come after every
 neighbour with margin, demoted ones included, because fading lets a
-relay hear the 12-byte heartbeat of a neighbour whose link usually cannot
+relay hear the 13-byte heartbeat of a neighbour whose link usually cannot
 carry a full DATA frame. Such a neighbour is often the farthest, so the
 nearest to the destination; without this rule every message would try
 it first, three DATA frames unanswered.
@@ -2321,7 +2322,7 @@ Common mesh and radio mechanisms left out, and why.
 
 | Omitted | Instead | Why |
 |---|---|---|
-| Neighbour lists in heartbeats and a network-wide node table | a 12-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Neighbour lists in heartbeats and a network-wide node table | a 13-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
 | Addressing by ID with a lookup, or registration with a home relay | position + node ID; the owner resolves the ID locally ([forwarding](#forwarding)) | registration traffic grows with users; position addressing needs none |
 | Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
 | Cooperative position estimation | GPS or a map point ([position](#position)) | every node knows its own position |
@@ -2365,12 +2366,13 @@ appear in the same place.
 
 ## Packet formats
 
-The first two bytes of every packet say what it is. The first byte has
-one of two shapes, told apart by its top bit:
+Every packet begins with two bytes that say what it is: its kind with
+that kind's one small field, then the format version. A heartbeat's
+third byte holds its flags. Each field has one place.
 
-| first byte | packet | the other bits |
+| first byte | packet | the low bits |
 |---|---|---|
-| `1fff cccc` | heartbeat | `fff` its three flags, below; `cccc` the home channel, 0 to 12 |
+| `1000 cccc` | heartbeat | `cccc` the home channel, 0 to 12 |
 | `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
 | `01aa aaaa` | ACK | `aux`, 0 if the offer is taken, else the wait the refuser asks for, 1 to 63 bans ([bans](#bans)) |
 
@@ -2384,14 +2386,44 @@ format 1.
 
 A node speaks every format from 1 to its newest. The heartbeat's layout
 never changes, so a node reads every heartbeat whatever its second byte
-says, and keeps the sender's newest format in its
-neighbour table ([neighbour table](#neighbour-table)). Which format a
-DATA and its ACK take is in [hand-over](#hand-over).
+says, and keeps the sender's newest format in its neighbour table
+([neighbour table](#neighbour-table)). Which format a DATA and its ACK
+take is in [hand-over](#hand-over).
 
-A node rejects a heartbeat whose channel is 13 to 15, a DATA whose
-`aux` is above 12, and a DATA or ACK in a format it does not speak. A
-heartbeat byte with channel 15, which no node sends, starts the bench
-frames of the firmware's measurement console (`bark-fw/README.md`).
+A heartbeat's third byte is its **flags**. Each says one thing about the
+sender and is set on its own:
+
+| bit | flag | meaning |
+|---|---|---|
+| 0 | sleepy | "I sleep. Reach me cheaply in my window after my beat, or at any time with the long preamble." ([nodes](#nodes)) |
+| 1 | anchorless | "I know no node that holds mail, one that is neither sleepy nor carried. If you are one, tell me." A sleepy node without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)), and a relay on the heartbeats of its burst, while its table is new; those are in no slot ([heartbeat](#heartbeat)) |
+| 2 | carried | "I move. I take each GPS fix and hold mail for nobody." ([nodes](#nodes)) |
+| 3 | map point | "My position is a map point a person set in the app, not a GPS fix." ([position](#position)) |
+| 4–7 | | zero; a later format may define them |
+
+A receiver ignores the flag bits it does not know.
+
+*Why a flags byte.* A later format can then add to what a heartbeat
+says without a new heartbeat layout, which every node, old or new, must
+read. It costs no airtime: 13 bytes fill the same 6 blocks of symbols
+at SF5 as 11.
+
+A node sets the map point while its position is the map point, keeps it
+across a reboot, and clears it when it takes a fix as its position. Its
+neighbours keep it ([neighbour table](#neighbour-table)); no rule uses
+it yet.
+
+*Why a map point is told.* Every node is assumed honest, since the
+design breaks otherwise ([what the protocol omits](#what-the-protocol-omits)),
+so a map point is a position a person vouched for, where a fixed relay's
+first GPS fix could have been spoofed. Which checks may lean on that is
+for later; until then the bit is carried, kept and shown.
+
+A node rejects a heartbeat whose first byte has any of bits 4 to 6 set
+or whose channel is 13 to 15, a DATA whose `aux` is above 12, and a DATA
+or ACK in a format it does not speak. A heartbeat byte with channel 15,
+which no node sends, starts the bench frames of the firmware's
+measurement console (`bark-fw/README.md`).
 
 A position is 7 bytes, the heartbeat's short position 4
 ([positions on the wire](#positions-on-the-wire)), and a node ID 6
@@ -2399,7 +2431,7 @@ A position is 7 bytes, the heartbeat's short position 4
 everything.
 
 ```
-HEARTBEAT first(1) format(1) id(6) short_pos(4)                             = 12
+HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
 ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           the answer to a DATA, taken or refused; sent on the channel in
           the answered packet's aux
@@ -2417,30 +2449,6 @@ one length and one airtime, 17.0 ms, and the reply reserve counts one
 figure. A byte of its own would make the refusal a second packet, and
 at 19 bytes it would take a block of symbols more than the 18-byte ACK
 (roadmap D76).
-
-The heartbeat's flags tell others how to treat its sender:
-
-- **Sleepy**, bit 4: "I sleep. Reach me cheaply in my window after my
-  beat, or at any time with the long preamble." ([nodes](#nodes))
-- **Anchorless**, bit 5: "I know no node that holds mail, one that is
-  neither sleepy nor carried. If you are one, tell me." A sleepy node
-  without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)),
-  and a relay on the heartbeats of its burst, while its table is new;
-  those are in no slot ([heartbeat](#heartbeat)).
-- **Carried**, bit 6: "I move. I take each GPS fix and hold mail for
-  nobody." ([nodes](#nodes))
-
-A heartbeat does not say where its sender's position came from: no
-receiver needs to know.
-
-*Why in the first byte.* The position fills the four bytes after the
-ID, and the home channel takes four bits of the first byte, so the
-flags take the three left by the top bit.
-
-The flags say what the node is, so each is set on its own: a heartbeat
-whose first byte's high four bits are 0xA is a relay in its burst and
-0xE one on the move, 0xC a relay on the move, and 0xD and 0xF a sleepy
-node on the move, with an anchor and without.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
@@ -2510,7 +2518,7 @@ with it ([channel at boot](#channel-at-boot)):
 | | |
 |---|---|
 | home channel | a relay keeps it and makes no choice at the end of its first rotation, so that its neighbours, which still list it, reach it at once; a carried sleepy node keeps the one it had when last fixed |
-| the place a fixed node stands | its position after the reboot, as before it ([position](#position)) |
+| the place a fixed node stands | its position after the reboot, as before it, and whether it is a map point ([position](#position)) |
 | carried flag | kept, still since the boot |
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
 | record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`) |
