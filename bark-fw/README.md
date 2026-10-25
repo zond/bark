@@ -353,7 +353,7 @@ What stays, and is not this firmware's to fix without a board:
 
 The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a
-366 ms frame with the long preamble at the transmit current, every 34.6 s
+369 ms frame with the long preamble at the transmit current, every 34.6 s
 on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 `scripts/measure.md` step 5 measures it in each state.
 

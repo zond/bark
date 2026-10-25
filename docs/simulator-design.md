@@ -127,7 +127,7 @@ The core's interface is `core-interface.md`. Firmware maps its actions onto `lor
 
 | module | keyed by | bound | purpose |
 |---|---|---|---|
-| message records | message ID (spec "Packet formats") | 1648 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
+| message records | message ID (spec "Packet formats") | 1613 records, least recently active given up, never one of a message held (spec "Message records") | DFS parent and tried set; recognises repeats |
 | `tables::neighbours` | 4-byte node ID | 64 entries | position, channel, last-heard, `fail_count`; expire after three rotations, a sleepy node's after two beat periods |
 | `tables::heard` | 4-byte node ID | 256 entries | sleepy nodes heard beating, their channel and window (spec "Heard table") |
 | `tables::delivery` | message ID | 41 messages; when the queue is full, the oldest queued 10 min or longer makes way for a new one (spec "Delivery queue") | messages waiting for a sleepy node |

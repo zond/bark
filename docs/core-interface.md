@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -190,7 +190,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-24 (roadmap D75), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75 and the airtime correction), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
@@ -198,19 +198,19 @@ test in `tables/mod.rs`:
 | Neighbours (spec "Neighbour table") | 64 × 72 B | 4.5 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 1648 × 40 B | 64.4 KiB |
+| Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
 | Send queue (spec "Send queue") | (39 + 254) × 280 B | 80.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **168.7 KiB** |
+| **All** | | **167.4 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Send queue", roadmap D31). The records hold the 1355 messages a relay can handle in the
-459.6 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
+(spec "Send queue", roadmap D31). The records hold the 1320 messages a relay can handle in the
+463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-173 840 B (169.8 KiB, measured 2026-10-24, roadmap D75): the tables and, in about 1 KiB around them, the
+172 440 B (168.4 KiB, measured 2026-10-25): the tables and, in about 1 KiB around them, the
 medium access, the hand-over, its one owed reply, its application's message while it
 waits, and its stored state as handed back and as last kept, 56 B. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 154 824 B (151.2 KiB), without the heard table and the delivery
@@ -266,7 +266,7 @@ action at a time, and the core never allocates.
     Below a clear top bit, the next bit tells DATA from the ACK, and the six bits under
     it are `aux` (roadmap D76).
   - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
-    it refuses, 1 to 63 bans of 1.57 s (spec "Bans"); taken or refused, an
+    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); taken or refused, an
     ACK is 17 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
     of the two high bits of `aux` set is rejected. A fixed-size packet with trailing
     bytes is rejected.
