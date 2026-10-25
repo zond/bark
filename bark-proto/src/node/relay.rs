@@ -1055,7 +1055,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
             anchor: self.anchor.filter(|_| self.sleepy && !carried),
-            relay: !self.sleepy,
+            // Kept only where it is read (`relay/power.rs`), so that a node
+            // without battery levels writes no more than before.
+            relay: !self.sleepy && self.config.battery.is_some(),
         }
     }
 
