@@ -9,12 +9,14 @@
 use core::cell::RefCell;
 
 use bark_image::boot::{confirm, Shared, Started};
+use bark_image::layout::{LOADER, PAGE};
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{peripherals, wdt, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
+use embedded_storage::nor_flash::NorFlash;
 
 /// This image's version, from `BARK_IMAGE_VERSION` at build time, 0
 /// without it. An image is staged only above the running one's. Kept
@@ -36,6 +38,10 @@ enum Bench {
     Panic,
     /// Spins with the executor blocked: the watchdog ends its trial.
     Hang,
+    /// Tries to erase the loader's first page, which the loader's write
+    /// protection must stop with a bus fault. Should it get through, the
+    /// board's bootloader finds nothing to start and waits for a UF2.
+    EraseLoader,
 }
 
 const BENCH: Option<Bench> = match option_env!("BARK_UPDATE_BENCH") {
@@ -43,7 +49,8 @@ const BENCH: Option<Bench> = match option_env!("BARK_UPDATE_BENCH") {
     Some(v) if same(v, "unconfirmed") => Some(Bench::Unconfirmed),
     Some(v) if same(v, "panic") => Some(Bench::Panic),
     Some(v) if same(v, "hang") => Some(Bench::Hang),
-    Some(_) => panic!("BARK_UPDATE_BENCH is unconfirmed, panic or hang"),
+    Some(v) if same(v, "erase-loader") => Some(Bench::EraseLoader),
+    Some(_) => panic!("BARK_UPDATE_BENCH is unconfirmed, panic, hang or erase-loader"),
 };
 
 const fn same(a: &str, b: &str) -> bool {
@@ -92,8 +99,30 @@ static CONFIRMED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// The node has started, its core set up and its radio up: keep this
 /// image. Until this runs, a reset swaps the previous image back.
 pub fn started(flash: &Flash) {
+    // What the loader protected, as the ACL reads back (nRF52840 Product
+    // Specification, ACL): all zeros if this image runs without it.
+    for n in 0..2 {
+        let acl = embassy_nrf::pac::ACL.acl(n);
+        log::info!(
+            "update: acl {} start={:#x} len={:#x} write={:?}",
+            n,
+            acl.addr().read(),
+            acl.size().read(),
+            acl.perm().read().write()
+        );
+    }
     match BENCH {
         None => {}
+        Some(Bench::EraseLoader) => {
+            log::warn!("bench image: erasing the loader's first page");
+            let page = LOADER.start..LOADER.start + PAGE;
+            let erased = flash.lock(|f| f.borrow_mut().erase(page.start, page.end));
+            log::error!(
+                "the loader's page erase returned {:?}: not protected",
+                erased
+            );
+            return;
+        }
         Some(Bench::Unconfirmed) => {
             log::warn!("bench image: not confirming");
             return;

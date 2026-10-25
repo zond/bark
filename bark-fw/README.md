@@ -338,7 +338,13 @@ scripts/image.py stage target/v2.img /dev/ttyACM0 --reboot
 The log then shows `image version 2` and `update: version 2 confirmed`.
 `BARK_UPDATE_BENCH` at build time makes the images that must be swapped
 back: `unconfirmed` runs and never confirms, `panic` panics where it
-would confirm, `hang` spins there with everything else stopped.
+would confirm, `hang` spins there with everything else stopped; and
+`erase-loader` tries to erase the loader's first page, which the write
+protection must stop with a bus fault (should it get through, the board's
+bootloader finds nothing to start and waits for a UF2, so the test costs
+at most a copy). Every image logs the two protected regions as the ACL
+reads them back, `update: acl 0 start=0x0 len=0x2a000 write=Disable`
+and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
 ## Radio power
 
