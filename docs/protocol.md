@@ -930,8 +930,8 @@ get it. A node updated to a new format still talks to its old neighbours
 in the old one, and their heartbeats tell it, at no traffic, which
 neighbour speaks what. The byte costs no airtime in the heartbeat and
 the ACK: their 13 and 18 bytes fill the same 6 and 8 blocks of symbols
-at SF5 as 11 and 17 would. In DATA it adds a block, 1.28 ms, for one
-payload length in five: 0.26 ms on average, under 1 % of a text's
+at SF5 as 11 and 17 would. In DATA it adds a block, 1.28 ms, for two
+payload lengths in five: 0.51 ms on average, under 1 % of a text's
 frame, and 1.7 % for the 100-byte text of
 [capacity and sizing](#capacity-and-sizing).
 

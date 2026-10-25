@@ -696,6 +696,30 @@ mod tests {
         }
     }
 
+    /// The version byte's cost in DATA (spec "Hand-over"): a block of
+    /// symbols for 91 of the 227 payload lengths, those whose frame is 1
+    /// or 4 bytes mod 5, 0.51 ms on average; and one block for the
+    /// 100-byte text of spec "Capacity and sizing", 1.7 % of its frame.
+    #[test]
+    fn the_version_byte_in_data() {
+        let air = |len: usize| time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
+        let block = air(16) - air(15);
+        assert_eq!(block, 1280, "5 symbols of 256 µs");
+        let grows: std::vec::Vec<usize> = (0..=MAX_PAYLOAD)
+            .filter(|p| air(DATA_HEADER_LEN + p) > air(DATA_HEADER_LEN - FORMAT_LEN + p))
+            .collect();
+        assert_eq!(grows.len(), 91);
+        assert!(grows
+            .iter()
+            .all(|p| matches!((DATA_HEADER_LEN + p) % 5, 1 | 4)));
+        let mean_us = grows.len() as u64 * block / (MAX_PAYLOAD as u64 + 1);
+        assert_eq!(mean_us, 513);
+        let text = DATA_HEADER_LEN + 100;
+        assert_eq!(air(text) - air(text - FORMAT_LEN), block);
+        assert_eq!(air(text), 74_560);
+        assert_eq!(block * 1000 / (air(text) - block), 17, "1.7 % of the frame");
+    }
+
     #[test]
     fn bench_frames_are_rejected() {
         let mut frame = [0u8; HEARTBEAT_LEN];

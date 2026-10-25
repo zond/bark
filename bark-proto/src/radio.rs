@@ -166,8 +166,8 @@ mod tests {
 
     #[test]
     fn heartbeat_airtime() {
-        // 11-byte heartbeat, 12-symbol preamble. Payload bits:
-        // 8·11 + 16 − 4·5 + 20 = 104 → ceil(104 / 20) = 6 → ×5 = 30 symbols.
+        // 13-byte heartbeat, 12-symbol preamble. Payload bits:
+        // 8·13 + 16 − 4·5 + 20 = 120 → ceil(120 / 20) = 6 → ×5 = 30 symbols.
         // Total 12 + 6.25 + 8 + 30 = 56.25 symbols × 256 µs = 14.40 ms,
         // the 14.4 ms of spec "Heartbeat".
         let t = time_on_air(crate::wire::HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
@@ -218,7 +218,7 @@ mod tests {
             (full - FULL_FRAME_ABOVE_SENSITIVITY_DB as f64).abs() < 0.005,
             "{full}"
         );
-        // An 11-byte heartbeat is lost 1 % of the time 0.82 dB lower, and
+        // A 13-byte heartbeat is lost 1 % of the time 0.82 dB lower, and
         // half the time 3.09 dB lower.
         let hb = crate::wire::HEARTBEAT_LEN as u8;
         assert!((full - above(hb, 0.01) - 0.82).abs() < 0.01);
