@@ -21,7 +21,13 @@
 //! beacon <k> <ms> [len]      send a frame every ms; stop with `stop`
 //! ping <k>                   send a ping on k, wait home for the pong
 //! status [reset]             uptime, battery, settings, counters
+//! stage <header hex>         start staging an image (`bark_image::Header`)
+//! chunk <offset> <hex>       write up to 256 bytes of it, in order
+//! commit                     check it and ask the loader to swap it in
+//! reboot                     reset, to let the loader swap
 //! ```
+//!
+//! `scripts/image.py stage` sends an image through the last four.
 //!
 //! Bench frames start with a heartbeat's first byte on channel 15, which no
 //! node sends and nodes reject (spec "Packet formats"): byte 0 is
@@ -44,6 +50,14 @@ use lora_phy::mod_params::{PacketStatus, RadioError};
 
 use crate::clock::Clock;
 use crate::radio::{Radio, Received, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
+use crate::update::{Flash, BARK_IMAGE_VERSION};
+use bark_image::boot::{Stager, CHUNK};
+use bark_image::HEADER_LEN;
+use embassy_nrf::nvmc::Nvmc;
+
+/// How long `reboot` waits for the log to reach the host: the 2 KiB log
+/// buffer at one 64-byte packet per 1 ms frame (USB 2.0 full speed, bulk).
+const LOG_DRAIN: Duration = Duration::from_millis(2048 / 64);
 
 /// Log target of command echo lines; the log formatter prints them bare,
 /// after a `>`.
@@ -188,6 +202,12 @@ enum Command<'l> {
     Ping(Channel),
     Status(bool),
     Help,
+    /// A header, as checked hex digits.
+    Stage(&'l [u8]),
+    /// An offset and bytes, as checked hex digits.
+    Chunk(u32, &'l [u8]),
+    Commit,
+    Reboot,
 }
 
 /// Default `rx` wait, ms.
@@ -202,7 +222,8 @@ const ACK_TIMEOUT_US: u32 = 100_000;
 
 const HELP: &str =
     "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | rssi <k> [dwell_us] | sweep | \
-noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset]";
+noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
+stage <header hex> | chunk <offset> <hex> | commit | reboot";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim_start_matches('>');
@@ -259,6 +280,18 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             Some(_) => return Err("status takes nothing or `reset`"),
         },
         "help" | "?" => Command::Help,
+        "stage" => Command::Stage(hex_bytes(
+            arg().ok_or("stage needs the image's header in hex")?,
+            HEADER_LEN,
+            HEADER_LEN,
+        )?),
+        "chunk" => {
+            let offset = number(arg())?;
+            let bytes = hex_bytes(arg().ok_or("chunk needs bytes in hex")?, 1, CHUNK)?;
+            Command::Chunk(offset, bytes)
+        }
+        "commit" => Command::Commit,
+        "reboot" => Command::Reboot,
         _ => return Err("unknown command; try `help`"),
     };
     if words.next().is_some() {
@@ -302,8 +335,20 @@ fn payload(word: &str) -> Result<Payload<'_>, &'static str> {
     Ok(Payload::Hex(hex))
 }
 
+/// `min..=max` whole bytes in hex, checked.
+fn hex_bytes(word: &str, min: usize, max: usize) -> Result<&[u8], &'static str> {
+    let hex = word.as_bytes();
+    if !hex.len().is_multiple_of(2) || !(min..=max).contains(&(hex.len() / 2)) {
+        return Err("wrong number of hex bytes");
+    }
+    if !hex.iter().all(u8::is_ascii_hexdigit) {
+        return Err("not a hex digit");
+    }
+    Ok(hex)
+}
+
 /// Decode checked hex digits into `buf`.
-fn decode_hex<'b>(hex: &[u8], buf: &'b mut [u8; MAX_LEN]) -> &'b [u8] {
+fn decode_hex<'b>(hex: &[u8], buf: &'b mut [u8]) -> &'b [u8] {
     let nibble = |c: u8| match c {
         b'0'..=b'9' => c - b'0',
         b'a'..=b'f' => c - b'a' + 10,
@@ -393,12 +438,22 @@ pub struct Console<'a> {
     counters: Counters,
     rx: [u8; MAX_LEN],
     tx: [u8; MAX_LEN],
+    flash: &'static Flash,
+    /// The image being staged, between `stage` and `commit`.
+    staging: Option<Stager<'static, Nvmc<'static>>>,
 }
 
 impl<'a> Console<'a> {
     /// A console on channel 0 at the highest allowed power.
-    pub fn new(radio: Radio<'a>, clock: &'a Clock, battery: Saadc<'a, 1>) -> Console<'a> {
+    pub fn new(
+        radio: Radio<'a>,
+        clock: &'a Clock,
+        battery: Saadc<'a, 1>,
+        flash: &'static Flash,
+    ) -> Console<'a> {
         Console {
+            flash,
+            staging: None,
             radio,
             clock,
             battery,
@@ -674,6 +729,50 @@ impl<'a> Console<'a> {
             Command::Ping(ch) => self.ping(ch).await?,
             Command::Status(reset) => self.status(reset).await,
             Command::Help => log::info!("{}", HELP),
+            Command::Stage(hex) => {
+                let mut header = [0u8; HEADER_LEN];
+                decode_hex(hex, &mut header);
+                self.staging = None;
+                match Stager::begin(self.flash, &header, BARK_IMAGE_VERSION) {
+                    Ok(s) => {
+                        let h = s.header();
+                        log::info!(
+                            "stage version={} length={} sha256={} next=0",
+                            h.version,
+                            h.length,
+                            Hex(&h.hash)
+                        );
+                        self.staging = Some(s);
+                    }
+                    Err(e) => log::warn!("stage refused={:?}", e),
+                }
+            }
+            Command::Chunk(offset, hex) => {
+                let Some(staging) = self.staging.as_mut() else {
+                    log::warn!("chunk refused: no `stage` before it");
+                    return Ok(());
+                };
+                let mut bytes = [0u8; CHUNK];
+                let bytes = decode_hex(hex, &mut bytes);
+                match staging.write(offset, bytes) {
+                    Ok(next) => log::info!("chunk next={}", next),
+                    Err(e) => log::warn!("chunk refused={:?} next={}", e, staging.next()),
+                }
+            }
+            Command::Commit => match self.staging.take().map(Stager::finish) {
+                None => log::warn!("commit refused: no `stage` before it"),
+                Some(Ok(h)) => log::info!(
+                    "commit version={} length={}: the loader swaps it in at the next boot; `reboot`",
+                    h.version,
+                    h.length
+                ),
+                Some(Err(e)) => log::warn!("commit refused={:?}", e),
+            },
+            Command::Reboot => {
+                log::info!("reboot");
+                Timer::after(LOG_DRAIN).await;
+                cortex_m::peripheral::SCB::sys_reset();
+            }
         }
         Ok(())
     }

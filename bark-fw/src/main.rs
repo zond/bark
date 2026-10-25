@@ -210,7 +210,7 @@ async fn main(_spawner: Spawner) {
                 log::info!("radio up in {} us", clock.since(t0));
                 update::started(shared);
                 #[cfg(feature = "console")]
-                console::Console::new(radio, &clock, battery)
+                console::Console::new(radio, &clock, battery, shared)
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
