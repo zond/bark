@@ -56,16 +56,15 @@ Verified on the host:
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the two builds.
 - The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The image is 319 KiB of
-  flash (`.text`, `.rodata` and `.data`), 163 KiB of it
-  the node's empty tables, which start in flash and are copied to RAM at
-  boot; it uses 171 KiB of RAM before the stack (`.data` and `.bss`),
-  which leaves 84 KiB for the stack (2026-10-21, one image, roadmap D71;
-  the relay image was 317 KiB and 170 KiB, and the sleepy image, without
-  the heard table and the delivery queue, 292 KiB and 152 KiB). Its deepest single stack frame, the
-  largest stack adjustment in the disassembly (`llvm-objdump`), is 23 KiB,
-  in the main task (2026-10-17, one node type, roadmap D46). The same measure gives
-  28 KiB for the image before D46, where this file said 18 KiB.
+  initial stack pointer is `0x20040000`. The node image is 164 KiB of
+  flash (`.text`, `.rodata` and `.data`, 167 996 B, 657 UF2 blocks) and
+  uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 108 B),
+  which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`). The
+  relay, 172 432 B, is in `.bss`: its static holds zero bytes, which the
+  startup code writes, and `src/node.rs` sets it up in place. Its deepest
+  single stack frame, the largest stack adjustment in the disassembly
+  (`llvm-objdump`), is 34 560 B (33.8 KiB), in the main task
+  (2026-10-25).
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
   the host workspace), duty-cycled receive included: it starts at the
   core's `Sniff`, starts again after each frame, ends at the sniff's end or

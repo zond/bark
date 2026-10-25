@@ -48,8 +48,10 @@ empty tables (`Relay::UNSET`, `core-interface.md` Memory), stored in
 flash so that they can be copied to RAM. The code and constants are
 166 kB. The whole image compresses to 117 kB with `gzip -9` and to
 103 kB with `xz -9e`; coding only the runs of zeros brings it to
-170 kB. If the tables were placed in `.bss`, which the startup code
-zeroes and which takes no flash, the image would be about 170 kB. This
+170 kB. Since then the relay is kept in `.bss`, which the startup code
+zeroes and which takes no flash (`bark-fw/src/node.rs`): the node image
+is 167 996 B (164 KiB, 657 UF2 blocks), its `.data` 2120 B, its RAM
+unchanged (measured 2026-10-25 at `3299a37`). This
 note keeps the user's 250 kB as the size to plan for, since BLE (roadmap
 D5) and the application are still to come.
 

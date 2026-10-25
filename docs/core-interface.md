@@ -225,10 +225,15 @@ the sizes follow from the design. The board's application has 255 KiB of RAM
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target it takes 174 KiB of stack to build one (measured
 2026-10-15 in the firmware's release build), more than the 85 KiB left beside a
-relay in static memory. So `Relay::UNSET`, a relay with empty tables, is a constant a driver
-can keep in a static, built at compile time, and `Relay::reset(config, seed)` sets it up in
-place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
-`Relay::new`.
+relay in static memory. So `Relay::reset(config, seed)` sets up a relay in place, as
+`Relay::new` would have, whatever it held before. A driver can keep the relay in a static
+holding `Relay::UNSET`, a relay with empty tables built at compile time, or holding zero
+bytes, which are a valid relay. The firmware does the second: a static of zero bytes is in
+`.bss`, which takes no flash, where `Relay::UNSET`, whose empty tables are not all zeros,
+would put the whole relay in flash, to be copied to RAM at boot. A constant in
+`bark-fw/src/node.rs` stops the firmware building if zero bytes stop being a valid relay,
+and a test in `bark-driver` checks that a relay reset in zeroed memory runs as a new one.
+The simulator, on the host, uses `Relay::new`.
 
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
