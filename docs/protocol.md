@@ -2398,7 +2398,7 @@ Crate layout is D7.
 and the delivery queue included, since every node may turn relay
 (roadmap D71); their sizes, and how they fit beside Embassy and the
 stacks (≈16 KiB) in the 255 KiB the application has once 1 KiB is kept
-for the bootloader's words and the panic message (`bark-fw/memory.x`),
+for the bootloader's words and the panic message (`bark-image/src/layout.rs`),
 are in `core-interface.md`, Memory.
 
 **Stored state.** A node keeps in flash what changes slowly and saves a

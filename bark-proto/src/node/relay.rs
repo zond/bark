@@ -2149,7 +2149,7 @@ mod tests {
         std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
         assert!(relay <= tables + 1024 + kept, "{relay}");
         // It fits the board's RAM: 255 KiB for the application
-        // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
+        // (bark-image/src/layout.rs), less the BLE controller's buffer, under 5 KiB
         // (docs/implementation-research-2026-10-14.md), and Embassy and the
         // stacks, about 16 KiB (spec "Implementation notes").
         let ram = (255 - 5 - 16) * 1024;

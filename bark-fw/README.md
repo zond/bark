@@ -3,7 +3,8 @@
 Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
-Current state (2026-10-21). The firmware blinks the green LED at 1 Hz
+Current state (2026-10-25). It starts behind a loader of its own, which
+can swap in a staged image and swap it back (Updates, below). The firmware blinks the green LED at 1 Hz
 while on USB, logs over USB CDC-ACM (a banner with the firmware version
 and constants from `bark-proto`, the previous boot's panic message if
 there was one, an uptime line every 10 s while on USB), powers up the
@@ -55,11 +56,12 @@ Verified on the host:
 
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the two builds.
-- The ELF's first loadable byte (the vector table) is at `0x26000`, the
-  initial stack pointer is `0x20040000`. The node image is 164 KiB of
-  flash (`.text`, `.rodata` and `.data`, 167 996 B, 657 UF2 blocks) and
-  uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 108 B),
-  which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`). The
+- The ELF's first loadable byte (the vector table) is at `0x2B000`, the
+  initial stack pointer is `0x20040000`. The node image is 167 KiB of
+  flash (`.text`, `.rodata` and `.data`, 171 300 B, 670 UF2 blocks) and
+  uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 212 B),
+  which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`); the
+  console image is 105 348 B. The
   relay, 172 432 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. Its deepest
   single stack frame, the largest stack adjustment in the disassembly
@@ -70,13 +72,36 @@ Verified on the host:
   core's `Sniff`, starts again after each frame, ends at the sniff's end or
   at the core's next use of the radio, waits for a packet under way, and
   starts again after a packet that never ends (2026-10-20).
-- `scripts/uf2.py` produces a UF2 that its own `--check` accepts: correct
-  magic numbers, family `0xADA52840`, contiguous 256-byte payloads starting
-  at `0x26000`.
+- `scripts/uf2.py` produces UF2s that its own `--check` accepts: correct
+  magic numbers, family `0xADA52840`, 256-byte payloads in ascending
+  order inside `0x26000..0xF4000`; the loader's at `0x26000`, the
+  firmware's at `0x2B000`, the erased state page and record.
+- The loader builds to 8748 B at `0x26000`, and `cargo clippy --release
+  -- -D warnings` passes in `../bark-loader`.
+- The swap, on a flash in RAM with the board's layout
+  (`cargo test -p bark-image` in the host workspace): a staged image is
+  swapped in and kept once confirmed, swapped back when it does not
+  confirm, refused when a bit of it is lost or its record is missing; and
+  with the power cut at every flash operation of a staging, a swap, a
+  swap back and a confirmation, one image is always whole afterwards,
+  the new one after a swap and the old one after a swap back (2026-10-25).
+- `scripts/image.py stage` sends an image whole, in order, through a
+  fake console on a pseudo-terminal (2026-10-25).
 
 Unverified, in the order they will fail if wrong:
 
-- The bootloader accepts the UF2 and jumps to `0x26000`.
+- The bootloader accepts the UF2 with the loader and jumps to it at
+  `0x26000`, and the loader jumps to the firmware at `0x2B000`.
+- The bootloader writes a UF2 block of `0xFF` bytes as an erased page,
+  so that a copy clears a swap asked for before it (Build and package).
+- The loader's write protection: after the jump, an erase of its pages
+  or the bootloader's by the firmware raises a bus fault (nRF52840
+  Product Specification, ACL).
+- The watchdog: started by the loader for a trial, it resets a firmware
+  that never confirms after 600 s and keeps running through the soft
+  reset of a panic (Product Specification, POWER, reset behaviour); the
+  firmware's clocks start after such a soft reset with the watchdog
+  running.
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
 - The 32 MHz crystal starts (USB needs it) when a node boots on USB
@@ -90,8 +115,9 @@ Unverified, in the order they will fail if wrong:
   time and the node turns a relay on the cable at once.
 - The green LED is on P0.15 and active low.
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
-- A panic message survives the soft reset through the bootloader (PANDUMP in
-  `memory.x`) and is logged on the next boot.
+- A panic message survives the soft reset through the bootloader and the
+  loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
+  next boot.
 - The stored state: the NVMC writes each record the core asks to keep into
   the next slot of the `STORE` page and erases the page when it is full,
   and the next boot logs `stored Some(..)` and comes back on the same home
@@ -133,27 +159,71 @@ Stable Rust and the Cortex-M4F target:
 rustup target add thumbv7em-none-eabihf
 ```
 
-Python 3.9 or later for the UF2 converter (standard library only). No probe, objcopy or
+Python 3.9 or later for the scripts (standard library only). No probe, objcopy or
 cargo-binutils is needed.
+
+## Flash layout
+
+The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6): it
+jumps to `0x26000`. There sits a loader of our own, `../bark-loader`,
+which starts the firmware from the slot above it and can swap in a
+staged image (Updates, below; roadmap D79). One table,
+`bark-image/src/layout.rs`, gives every region; the build scripts of the
+firmware and of the loader write each one's `memory.x` from it, with a
+symbol for each region, which `scripts/uf2.py` reads from the ELF.
+Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
+
+| Region | Start | Size | Why |
+|---|---|---|---|
+| MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
+| SoftDevice S140 6.1.1 | `0x01000` | 148 KiB | kept, never enabled; whether the bootloader starts the application without it is not known |
+| loader | `0x26000` | 16 KiB, 4 pages | where the bootloader jumps; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field |
+| loader state | `0x2A000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 354 of its 1024) |
+| firmware, running | `0x2B000` | 352 KiB, 88 pages | what is left once the loader, its state and the staging have theirs, halved: 2.1 times today's 167 KiB node image, 1.44 times the 250 kB the update note plans for once BLE and the application are in |
+| firmware, staged | `0x83000` | 356 KiB, 89 pages | one page larger than the running slot, which embassy-boot's swap needs |
+| staged image's record | `0xDC000` | 4 KiB | its header, and the loader's word that it matched it |
+| coded pieces | `0xDD000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was |
+| bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
+| bootloader config | `0xFD800` | 2 KiB | |
+| MBR parameters | `0xFE000` | 4 KiB | |
+| bootloader settings | `0xFF000` | 4 KiB | |
+
+The staging the update note sets aside, the record and the 22 pages of
+pieces, does not depend on the image's size: it holds what the mesh
+decoder gathers, so it stays at the note's 23 pages, and the image's two
+slots take the rest.
+
+RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
+`0x20000008..0x20000400` holds a panic message for the next boot
+(`panic-persist`), below the RAM of the loader and the bootloader; the
+firmware and the loader each use the rest.
 
 ## Build and package
 
-From `bark-fw/`, one line:
+From `bark-fw/`, the firmware alone, for a board that already has the
+loader:
 
 ```
 cargo build --release && scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw target/bark-fw.uf2
 ```
 
-`scripts/uf2.py --check target/bark-fw.uf2` validates a UF2 and prints its
-block count and address range.
+The loader and the firmware in one UF2, for a board without the loader
+(every board at bring-up) or to replace the loader:
+
+```
+(cd ../bark-loader && cargo build --release)
+cargo build --release && scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
+```
+
+Both also write the loader state page and the record as erased, so a copy
+always boots the copied firmware, even over a swap asked for and not yet
+made. The firmware alone on a board without the loader does not start:
+the bootloader jumps to `0x26000`, which then holds an old image or nothing. `scripts/uf2.py
+--check target/bark.uf2` validates a UF2 and prints its block count and
+address ranges.
 
 ## Flash
-
-The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6). The
-application lives at `0x26000..0xF3000`, and the node's stored state in the
-page above it, `0xF3000..0xF4000` (`src/store.rs`, roadmap D73); the
-bootloader, its settings and the MBR parameter page sit above, and the MBR
-and the (unused) SoftDevice S140 below. `memory.x` has the full map.
 
 1. Connect the T-Echo over USB-C. A USB-C-to-USB-C cable may not power it;
    use a USB-A-to-C cable if nothing happens.
@@ -163,7 +233,7 @@ and the (unused) SoftDevice S140 below. `memory.x` has the full map.
    bootloader and SoftDevice versions; expect bootloader 0.6.1, S140 6.1.1.
 3. Copy the UF2 to it:
    ```
-   cp target/bark-fw.uf2 /media/$USER/TECHOBOOT/   # or /run/media/$USER/TECHOBOOT
+   cp target/bark.uf2 /media/$USER/TECHOBOOT/   # or /run/media/$USER/TECHOBOOT
    ```
    The drive disconnects when the copy completes and the board restarts into
    the application. (Some file managers report an error on that disconnect;
@@ -175,6 +245,100 @@ and the (unused) SoftDevice S140 below. `memory.x` has the full map.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
+
+## Updates
+
+A new image is staged in the second slot by the running firmware, swapped
+in by the loader at the next boot, and kept only if it confirms itself
+(roadmap D79, `docs/mesh-update-2026-10-25.md`). The firmware's side is
+`src/update.rs`; both sides of the swap are in `bark-image/src/boot.rs`,
+where the host tests run them.
+
+**The image.** A 256-byte header, then the bytes of the firmware's slot
+as `scripts/uf2.py` lays them:
+
+| Bytes | Holds |
+|---|---|
+| 0–3 | `bark` |
+| 4 | format, 1 |
+| 5–7 | zero |
+| 8–11 | version, little-endian, raised with every image |
+| 12–15 | the image's length in bytes, little-endian |
+| 16–47 | SHA-256 of the image (FIPS 180-4) |
+| 48–255 | zero: room for three signatures of 65 bytes, an Ed25519 signature (RFC 8032) and a byte naming its key |
+
+The header is not signed yet: signatures come with the key policy, and
+the running firmware will check them before it stages, never the loader
+(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time (0
+without it), kept under its own symbol, from which `scripts/image.py`
+writes the header's; an image is staged only above the running one's
+version. The hash is computed with the `sha2` crate (0.10.9), the
+firmware's over what it wrote to flash, the loader's again before the
+swap.
+
+**The loader**, at every boot:
+
+1. With no swap asked for, it changes nothing.
+2. With one asked for, it first checks the staged slot's first `length`
+   bytes against the record's SHA-256. If they differ, or the record holds
+   no header, it cancels the swap and the running firmware boots, which
+   logs `update: the loader refused the staged image`. If they match, it
+   notes it in the record, so that a swap a power cut stopped half way,
+   whose slot no longer matches anything, goes on without the check.
+3. It runs embassy-boot's `prepare_boot`, which swaps the slots, goes on
+   with a swap that was stopped, or swaps them back if the new image did
+   not mark itself booted. It copies a page at a time into a page whose
+   content is held in another, and writes a progress word in the state
+   page once each copy is whole, so a power cut anywhere is taken up from
+   the copy it stopped (embassy-boot's documentation of `prepare_boot`,
+   "SWAPPING" and "REVERTING", read at version 0.7.0). A swap is two
+   copies of each of the 88 pages, an erase of 85 ms and 1024 word writes
+   of 41 µs each (nRF52840 Product Specification, NVMC), 22 s; a swap back
+   as long.
+4. On those boots it starts the watchdog first, with a period of
+   600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
+   timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
+   feeds it at every flash operation of the swap.
+5. It write-protects `0x00000..0x2A000` (the MBR, the SoftDevice and
+   itself) and `0xF4000..0x100000` (the bootloader, its settings and the
+   MBR's parameters) through two ACL regions, until the next reset
+   (Product Specification, ACL).
+6. It jumps to the firmware at `0x2B000`.
+
+**The firmware** confirms itself once its core is set up and its radio
+is up (`update::started`), and from then on feeds the watchdog twice a
+period, since a started watchdog cannot be stopped before a reset
+(Product Specification, WDT). An image that hangs before then is reset
+by the watchdog; one that panics resets itself through `panic-persist`,
+and the watchdog runs on through that soft reset (Product Specification,
+POWER, reset behaviour); either way the loader swaps the previous image
+back, which logs `update: the new image did not confirm itself`. The
+confirmation will also ask for a neighbour heard, within the same 600 s,
+once the mesh carries updates.
+
+Each update erases each page of the slots at most twice, once in staging
+and once in the swap, and the state page twice: the 10 000 erase cycles
+of the flash (Product Specification, NVMC) last 5000 updates.
+
+**Staging is a bench tool** until the update has a transport (BLE, then
+the mesh). A console build takes an image over its serial port:
+`stage <header hex>`, `chunk <offset> <hex>` for up to 256 bytes at a
+time, in order, `commit`, which checks the hash, records the header and
+asks for the swap, and `reboot`. `scripts/image.py` packs and sends it:
+
+```
+BARK_IMAGE_VERSION=2 cargo build --release --features console
+scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v2.img
+BARK_IMAGE_VERSION=1 cargo build --release --features console
+scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
+# copy target/bark.uf2 to the board, then:
+scripts/image.py stage target/v2.img /dev/ttyACM0 --reboot
+```
+
+The log then shows `image version 2` and `update: version 2 confirmed`.
+`BARK_UPDATE_BENCH` at build time makes the images that must be swapped
+back: `unconfirmed` runs and never confirms, `panic` panics where it
+would confirm, `hang` spins there with everything else stopped.
 
 ## Radio power
 
@@ -221,6 +385,10 @@ retune times.
 | `stop` | stop the beacon | |
 | `ping <k>` | send a 17-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
+| `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
+| `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
+| `reboot` | reset, after the log has reached the host | |
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its

@@ -186,7 +186,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
-| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `memory.x`) |
+| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
 
 ## 6. Memory
 
@@ -217,7 +217,7 @@ waits, and its stored state as handed back and as last kept, 56 B. Every board r
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-fw/memory.x`); the BLE controller takes under 5 KiB
+(`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
 (spec "Implementation notes"), which leaves 234 KiB, 64 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
