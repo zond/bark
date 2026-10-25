@@ -34,8 +34,8 @@
 //!
 //! A relay out of budget stops forwarding but keeps sending heartbeats
 //! (spec "Duty cycle cap"), so everything but a heartbeat leaves [`HEARTBEAT_RESERVE`] in
-//! the bucket: one heartbeat's airtime, 13.12 ms. That suffices while
-//! heartbeats are at least the reserve's refill time, 13.12 ms / r = 133 ms,
+//! the bucket: one heartbeat's airtime, 14.40 ms. That suffices while
+//! heartbeats are at least the reserve's refill time, 14.40 ms / r = 146 ms,
 //! apart (spec "Heartbeat": at least 5 s): a heartbeat finds the reserve, takes
 //! it, and the bucket refills it before the next, since nothing else may
 //! spend below it.
@@ -50,9 +50,9 @@
 //! reserve.
 //!
 //! The reserve holds the refusals the bucket refills while a sender
-//! retries a hand-over that goes unanswered, 2.40 s (spec "Hand-over"):
-//! `r × 2.40 s = 236.3 ms`, ⌊236.3 / 15.68⌋ = [`REPLIES`] = 15 ACKs of
-//! 15.68 ms, and the heartbeat reserve on top, 248.3 ms in all: a relay at
+//! retries a hand-over that goes unanswered, 2.41 s (spec "Hand-over"):
+//! `r × 2.41 s = 237.0 ms`, ⌊237.0 / 16.96⌋ = [`REPLIES`] = 13 ACKs of
+//! 16.96 ms, and the heartbeat reserve on top, 234.9 ms in all: a relay at
 //! the reserve can refuse, from the refill alone, as many senders as would
 //! otherwise have spent that time retrying it.
 //!
@@ -61,8 +61,8 @@
 //! A relay refuses a packet to send on when the packet's frame and the ACK
 //! that takes it do not fit in its bucket on top of what it has queued
 //! (spec "Receiving DATA", roadmap D29). The sender bans it for [`BAN`], the time the
-//! bucket takes to refill a full frame and its ACK, 138.56 + 15.68 =
-//! 154.24 ms at 9.83 %: 1.57 s: by then the bucket has refilled what the
+//! bucket takes to refill a full frame and its ACK, 138.56 + 16.96 =
+//! 155.52 ms at 9.83 %: 1.58 s: by then the bucket has refilled what the
 //! refusal lacked, unless the relay has spent it on what it already held.
 
 use crate::event::MAX_FRAME;
@@ -109,7 +109,7 @@ const _: () = assert!(MAX_TRANSMISSION.as_micros() <= DEPTH.as_micros());
 /// documentation.
 pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// Airtime of an ACK, taken or refused, 15.68 ms.
+/// Airtime of an ACK, taken or refused, 16.96 ms.
 pub const ACK_AIRTIME: Duration = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
 /// The airtime the bucket refills in `d`.
@@ -147,13 +147,13 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
 ));
 
-const _: () = assert!(REPLIES == 15);
+const _: () = assert!(REPLIES == 13);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
 /// row before offering it again (spec "Bans"): one [`BAN`] after the
 /// first, doubling after each further one, up to the refill of the whole
 /// bucket, 61 s, the longest anything waits for a bucket. Offered once a
-/// ban, a full frame every 1.57 s would be a 9 % probe on the refuser's
+/// ban, a full frame every 1.58 s would be a 9 % probe on the refuser's
 /// channel and spend the holder's bucket as fast as it refills.
 pub const fn hold(refusals: u8) -> Duration {
     let cap = refill_time(DEPTH).as_micros();
@@ -175,7 +175,7 @@ pub fn told(bans: u8) -> Duration {
 
 /// `wait` in whole [`BAN`]s for a refusal, rounded down, so that a wait
 /// passed on from relay to relay only shrinks; at least 1, since 0 in an
-/// ACK means taken, and at most what `aux` holds, 63 bans, 98.8 s. A
+/// ACK means taken, and at most what `aux` holds, 63 bans, 99.6 s. A
 /// longer wait is told as the longest, and its sender may come back
 /// early and be refused again.
 pub fn wait_units(wait: Duration) -> u8 {
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn heartbeat_reserve_is_one_heartbeat() {
-        assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(13_120));
+        assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(14_400));
     }
 
     #[test]
@@ -327,16 +327,16 @@ mod tests {
         assert_eq!(wait_units(BAN.mul(63)), AUX_MASK);
         assert_eq!(wait_units(Duration::from_secs(1000)), AUX_MASK);
         let longest = told(AUX_MASK).as_micros();
-        assert!((98_800_000..98_900_000).contains(&longest), "{longest}");
+        assert!((99_600_000..99_700_000).contains(&longest), "{longest}");
         assert_eq!(told(0), BAN, "never less than a ban");
     }
 
     #[test]
     fn reply_reserve_and_ban() {
-        assert_eq!(ACK_AIRTIME, Duration::from_micros(15_680));
-        assert_eq!(REPLY_RESERVE, Duration::from_micros(248_320));
+        assert_eq!(ACK_AIRTIME, Duration::from_micros(16_960));
+        assert_eq!(REPLY_RESERVE, Duration::from_micros(234_880));
         let ban = BAN.as_micros();
-        assert!((1_568_000..1_569_000).contains(&ban), "{ban} µs");
+        assert!((1_581_000..1_582_000).contains(&ban), "{ban} µs");
         // The ban refills exactly a full frame and its ACK.
         let mut b = Budget::new();
         let t = Instant::from_micros(1_000_000);

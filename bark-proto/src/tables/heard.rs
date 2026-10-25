@@ -52,10 +52,10 @@ pub struct HeardParams {
     /// one cut short waits a beat period. That is the attempt the holder
     /// may have under way, a full frame and the ACK timeout, 238.56 ms,
     /// and the message's hand-over, as [`linger`](Self::linger):
-    /// 3379.68 ms.
+    /// 3387.36 ms.
     pub awake: Duration,
     /// How long it listens after it has answered a message: one hand-over
-    /// with all its attempts and retry waits, 3141.12 ms. Nothing is under
+    /// with all its attempts and retry waits, 3148.80 ms. Nothing is under
     /// way ahead of the next message then: the holder has just had the
     /// answer.
     pub linger: Duration,
@@ -290,9 +290,9 @@ mod tests {
             Duration::from_secs(300)
         );
         assert_eq!(p.keep, Duration::from_secs(600));
-        // 3 × 738.56 ms + 308.48 + 616.96 ms, after 138.56 + 100 ms.
-        assert_eq!(p.linger, Duration::from_micros(3_141_120));
-        assert_eq!(p.awake, Duration::from_micros(238_560 + 3_141_120));
+        // 3 × 738.56 ms + 311.04 + 622.08 ms, after 138.56 + 100 ms.
+        assert_eq!(p.linger, Duration::from_micros(3_148_800));
+        assert_eq!(p.awake, Duration::from_micros(238_560 + 3_148_800));
     }
 
     #[test]

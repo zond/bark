@@ -83,6 +83,14 @@ const SYNC_QUARTER_SYMBOLS: u64 = 25;
 /// §6.1.4: the `8` term of the time-on-air formula).
 const HEADER_BLOCK_SYMBOLS: u64 = 8;
 
+/// Bits of the payload CRC in the time-on-air formula (datasheet §6.1.4,
+/// N_bit_CRC with the CRC on).
+const CRC_BITS: i64 = 16;
+
+/// Bits of the explicit header in the time-on-air formula (datasheet
+/// §6.1.4, N_symbol_header = 20 in explicit header mode).
+const HEADER_BITS: i64 = 20;
+
 /// Time from a packet's start to the end of its header block, after which
 /// the receiver knows the header is sound and the packet's length.
 pub const fn header_end(preamble_symbols: u16) -> Duration {
@@ -96,14 +104,15 @@ pub const fn header_end(preamble_symbols: u16) -> Duration {
 /// for SF5/SF6 (header on, CRC on, low data rate optimisation off):
 ///
 /// ```text
-/// n_symbols = preamble + 6.25 + 8 + ceil(max(8·len + 16 − 4·SF + 8, 0) / (4·SF)) · CR_denominator
+/// n_symbols = preamble + 6.25 + 8 + ceil(max(8·len + 16 − 4·SF + 20, 0) / (4·SF)) · CR_denominator
 /// ```
 ///
-/// The 6.25-symbol term replaces the 4.25 of SF7+ and the `+8` inside the
-/// `max` is the SF5/SF6 header correction, both per datasheet. Result in µs.
+/// 16 is the CRC's bits and 20 the explicit header's (0 in implicit mode).
+/// At SF7 and above the sync is 4.25 symbols and the `max` holds a further
+/// `+ 8`; SF5 and SF6 drop that `+ 8` but keep the header's 20. Result in µs.
 pub const fn time_on_air(payload_len: u8, preamble_symbols: u16) -> Duration {
     let sf = SPREADING_FACTOR as i64;
-    let bits = 8 * payload_len as i64 + 16 - 4 * sf + 8;
+    let bits = 8 * payload_len as i64 + CRC_BITS - 4 * sf + HEADER_BITS;
     let bits = if bits < 0 { 0 } else { bits };
     let payload_symbols = (bits + 4 * sf - 1) / (4 * sf) * CODING_RATE_DENOMINATOR as i64;
     let payload = SYMBOL_TIME.mul(payload_symbols as u64);
@@ -121,7 +130,7 @@ pub const DEMOD_SNR_DB: f32 = -2.5;
 /// symbols; the symbol error rate is that of noncoherent detection of 32
 /// orthogonal signals, anchored at the datasheet's 64-byte point
 /// (`docs/reception-research-2026-10-15.md`). Derived in the tests below.
-pub const FULL_FRAME_ABOVE_SENSITIVITY_DB: f32 = 0.44;
+pub const FULL_FRAME_ABOVE_SENSITIVITY_DB: f32 = 0.43;
 
 /// The fade a link must ride out: the standard deviation of fading over
 /// time and channel in the scenarios, 4 dB (`docs/roadmap.md` D38). Not
@@ -158,11 +167,11 @@ mod tests {
     #[test]
     fn heartbeat_airtime() {
         // 11-byte heartbeat, 12-symbol preamble. Payload bits:
-        // 8·11 + 16 − 4·5 + 8 = 92 → ceil(92 / 20) = 5 → ×5 = 25 symbols.
-        // Total 12 + 6.25 + 8 + 25 = 51.25 symbols × 256 µs = 13.12 ms,
-        // the 13.1 ms of spec "Heartbeat".
+        // 8·11 + 16 − 4·5 + 20 = 104 → ceil(104 / 20) = 6 → ×5 = 30 symbols.
+        // Total 12 + 6.25 + 8 + 30 = 56.25 symbols × 256 µs = 14.40 ms,
+        // the 14.4 ms of spec "Heartbeat".
         let t = time_on_air(crate::wire::HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
-        assert_eq!(t.as_micros(), 13_120);
+        assert_eq!(t.as_micros(), 14_400);
     }
 
     /// Symbol error of noncoherent detection of M = 32 orthogonal signals
@@ -209,12 +218,12 @@ mod tests {
             (full - FULL_FRAME_ABOVE_SENSITIVITY_DB as f64).abs() < 0.005,
             "{full}"
         );
-        // An 11-byte heartbeat is lost 1 % of the time 0.86 dB lower, and
-        // half the time 3.16 dB lower.
+        // An 11-byte heartbeat is lost 1 % of the time 0.82 dB lower, and
+        // half the time 3.09 dB lower.
         let hb = crate::wire::HEARTBEAT_LEN as u8;
-        assert!((full - above(hb, 0.01) - 0.86).abs() < 0.01);
-        assert!((full - above(hb, 0.5) - 3.16).abs() < 0.01);
+        assert!((full - above(hb, 0.01) - 0.82).abs() < 0.01);
+        assert!((full - above(hb, 0.5) - 3.09).abs() < 0.01);
         let rssi = full_frame_rssi_above_noise_db();
-        assert!((rssi - 4.09).abs() < 0.01, "{rssi}");
+        assert!((rssi - 4.08).abs() < 0.01, "{rssi}");
     }
 }

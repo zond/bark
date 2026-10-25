@@ -471,7 +471,7 @@ mod tests {
         let p = RadioParams::default();
         let c = ErrorCurve::new(&p);
         let n_ref = time_on_air(64, 8).as_micros() as f64 / 256.0;
-        assert_eq!(n_ref, 152.25);
+        assert_eq!(n_ref, 157.25);
         let per_at = |dbm: f64| 1.0 - (-c.hazard(dbm, 0.0, 0.0).0 * n_ref).exp();
         let s = p.sensitivity_dbm();
         assert!((per_at(s) - SENSITIVITY_PER).abs() < 1e-9);
@@ -484,8 +484,8 @@ mod tests {
         assert!((per_at(s - 2.0) - 0.51).abs() < 0.01);
         assert!(per_at(s - 4.0) > 0.999);
         assert!(per_at(s + 1.0) < 1e-3);
-        // The datasheet sits 1.34 dB better than ideal detection.
-        assert!((c.offset_db() - 1.34).abs() < 0.01);
+        // The datasheet sits 1.36 dB better than ideal detection.
+        assert!((c.offset_db() - 1.36).abs() < 0.01);
     }
 
     #[test]

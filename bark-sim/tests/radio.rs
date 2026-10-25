@@ -406,7 +406,7 @@ fn curve_burst(dbm: f64, len: u8, n: u32, seed: u64) -> RxCounts {
 #[test]
 fn the_curve_loses_one_reference_packet_in_a_hundred_at_sensitivity() {
     // The datasheet's sensitivity packet has 64 bytes; ours has a 12-symbol
-    // preamble where it has 8, 156.25 symbols to its 152.25, so 1.03 %.
+    // preamble where it has 8, 161.25 symbols to its 157.25, so 1.03 %.
     let s = RadioParams::default().sensitivity_dbm();
     let r = curve_burst(s, 64, 4000, 1);
     let lost = r.candidates - r.delivered;

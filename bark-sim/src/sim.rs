@@ -221,7 +221,7 @@ impl NodeState {
 
 /// The last few heartbeats to reach a node: when each was on the air, its
 /// channel, and whether a sleepy node sent it. A frame lasts at most a full
-/// frame's 139 ms and a heartbeat 13.12 ms, so eight cover what a frame can
+/// frame's 139 ms and a heartbeat 14.40 ms, so eight cover what a frame can
 /// overlap at any heartbeat rate a node hears.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BeatRing {

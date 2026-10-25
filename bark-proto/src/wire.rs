@@ -40,8 +40,8 @@
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
 //!   wait the refuser asks for in whole bans, 1 to 63 (`tables/budget.rs`).
-//!   The wait needs no byte of its own, which at SF5 would take one more
-//!   block of symbols.
+//!   The wait needs no byte of its own, so every ACK has one length and
+//!   one airtime.
 //! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
 //!   are zero, and a DATA with either set is rejected.
 //! - The heartbeat's flags are 0x1, sleepy, 0x2, anchorless, and 0x4,
@@ -664,8 +664,8 @@ mod tests {
         }
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(13_120),
-            "51.25 symbols at SF5"
+            Duration::from_micros(14_400),
+            "56.25 symbols at SF5"
         );
 
         let ack = Ack {
@@ -682,8 +682,8 @@ mod tests {
         );
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(15_680),
-            "61.25 symbols at SF5"
+            Duration::from_micros(16_960),
+            "66.25 symbols at SF5"
         );
         let refused = Ack {
             refused: true,
