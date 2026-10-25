@@ -407,8 +407,9 @@ Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
 `0x8F`, byte 1 the format version as in every packet, byte 2 the kind
 (0 test or beacon, 1 ping, 2 pong), bytes 3 to 6 a big-endian sequence
-number, byte 7 the sender's home channel, then `byte[i] = i`. RSSI is whole dBm (the driver drops the chip's half-dB
-step); packet RSSI and SNR are in quarter dB.
+number, byte 7 the sender's home channel, then `byte[i] = i`. RSSI is
+whole dBm (the driver drops the chip's half-dB step); packet RSSI and
+SNR are in quarter dB.
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
 and bench item C1, with a table that maps the results onto the simulator's
