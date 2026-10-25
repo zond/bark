@@ -920,8 +920,7 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
 | in the neighbour table | the lower of this node's newest and the neighbour's, from its last heartbeat ([neighbour table](#neighbour-table)) |
 | known only from a DATA it sent ([packet sender](#packet-sender)) | that DATA's |
 
-The ACK answers in the format of the DATA it answers. This specification
-is format 1, so every packet a node sends today carries 1
+The ACK answers in the format of the DATA it answers
 ([packet formats](#packet-formats)).
 
 *Why a byte in every packet.* Nodes are planted by anyone and updated by
@@ -2384,8 +2383,8 @@ format 1.
 | DATA, ACK | the format of this frame |
 
 A node speaks every format from 1 to its newest. The heartbeat's layout
-is the same in every format, so a node reads every heartbeat whatever
-its second byte says, and keeps the sender's newest format in its
+never changes, so a node reads every heartbeat whatever its second byte
+says, and keeps the sender's newest format in its
 neighbour table ([neighbour table](#neighbour-table)). Which format a
 DATA and its ACK take is in [hand-over](#hand-over).
 
