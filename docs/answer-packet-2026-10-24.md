@@ -1,13 +1,20 @@
 # One answer packet, the wait in the first byte (2026-10-24)
 
 Roadmap D76. With six-byte node IDs (D75) the ACK is 17 bytes and the
-refusing NACK 18: the ACK and a byte for the wait. At SF5 the payload
-is coded in blocks of 20 bits, so 15 to 17 bytes take the same airtime
-and the 18th takes another block of five symbols, 1.28 ms: a NACK was
-16.96 ms against the ACK's 15.68. This note measures the change that
-folds the wait into the first byte, so that every answer is the
-17-byte ACK, and compares two ways to code the wait in the six bits it
-gets.
+refusing NACK 18: the ACK and a byte for the wait. This note measures
+the change that folds the wait into the first byte, so that every
+answer is the 17-byte ACK, and compares two ways to code the wait in
+the six bits it gets.
+
+*Corrected 2026-10-25.* This note first said that the 18th byte took
+another block of five symbols, 1.28 ms, a NACK 16.96 ms against the
+ACK's 15.68. That was a formula error in `time_on_air`, found on
+2026-10-25 (`docs/airtime-correction-2026-10-25.md`): at SF5 the 17-byte
+ACK and the 18-byte NACK both take 16.96 ms. The runs below were made
+with the error, so the 1.28 ms each refusal saved in them is not real,
+and the comparison of the answer packet with the NACK measured only
+noise. The comparison of the two codes, made with one packet on both
+sides, stands.
 
 ## The change
 
@@ -21,9 +28,11 @@ The first byte has two shapes (spec "Packet formats"):
 
 What follows from it:
 
-- One reply airtime, 15.68 ms. The reply reserve holds ⌊236.3 / 15.68⌋
-  = 15 replies and a heartbeat, 248.32 ms, where it held 13 NACKs and a
-  heartbeat, 233.6 ms (`tables/budget.rs`).
+- One reply airtime, 16.96 ms. The reply reserve holds ⌊237.0 / 16.96⌋
+  = 13 replies and a heartbeat, 234.88 ms, as it held 13 NACKs
+  (`tables/budget.rs`). In the runs below, with the formula error, it
+  held 15 replies of 15.68 ms and a heartbeat, 248.32 ms, against 13
+  NACKs and a heartbeat, 233.6 ms.
 - A refusal never says 0. The old byte rounded waits under one ban
   down to 0, which the core read as one ban: 0.7 % of refusals at three
   times the design rate, 8 % at twice. Now `wait_units` gives at least 1,
@@ -156,13 +165,14 @@ the worst seed is still below the 0.98 it had before D75.
 ## What it shows
 
 - The answer packet costs nothing measurable and gains nothing
-  measurable in delivery. At ×1 and ×2 refusals are few (52 to 2749 a
-  run), so 1.28 ms each is under a second an hour; the differences
-  between base and change, a few tenths of a point and a few percent of
-  airtime either way, are the run-to-run spread of a network whose every
-  hand-over shifts when one frame does. At ×3 the spread between seeds,
-  57 to 75 %, swamps any effect of 1.28 ms on a quarter of a million
-  refusals, about 340 s of airtime in 119 000.
+  measurable in delivery. The 1.28 ms a refusal saved in these runs was
+  the formula error, and with the radio's true airtime the two answers
+  cost the same; the differences between base and change, a few tenths
+  of a point and a few percent of airtime either way at ×1 and ×2, and
+  57 to 75 % between seeds at ×3, are the run-to-run spread of a
+  network whose every hand-over shifts when one frame does. The one
+  packet stays because it is simpler: one length, one airtime, and one
+  figure for the reply reserve.
 - The two codes are the same wherever no wait reaches 40 bans, which is
   everywhere below the cliff, and the same within one standard error at
   ×3. Six linear bits cut a wait in at most one refusal in a thousand.
