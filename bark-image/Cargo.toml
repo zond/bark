@@ -1,0 +1,22 @@
+[package]
+name = "bark-image"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The T-Echo's flash layout, the firmware image header and the swap of a staged image, shared by the firmware, its loader and their build scripts."
+
+[features]
+default = ["boot"]
+# The swap and the staging on a flash (`boot`); the build scripts, which
+# need only the layout, leave it out.
+boot = ["dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-storage", "dep:sha2"]
+
+[dependencies]
+# The swap that survives a power cut, and the confirmation that keeps it.
+embassy-boot = { version = "=0.7.0", optional = true }
+embassy-embedded-hal = { version = "=0.6.0", optional = true }
+embassy-sync = { version = "=0.8.0", optional = true }
+embedded-storage = { version = "=0.3.2", optional = true }
+# SHA-256 (FIPS 180-4) of a staged image.
+sha2 = { version = "=0.10.9", default-features = false, optional = true }

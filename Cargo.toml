@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["bark-proto", "bark-driver", "bark-sim"]
-# bark-fw targets thumbv7em-none-eabihf and is its own workspace; see README.
-exclude = ["bark-fw"]
+members = ["bark-proto", "bark-driver", "bark-sim", "bark-image"]
+# bark-fw and bark-loader target thumbv7em-none-eabihf and are each their own
+# workspace; see README.
+exclude = ["bark-fw", "bark-loader"]
 
 [workspace.package]
 edition = "2021"
