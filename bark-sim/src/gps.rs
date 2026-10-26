@@ -172,7 +172,9 @@ impl Sim {
         let open = self.receivers[node as usize]
             .acct
             .filter(|a| a.2 && self.now > self.settle)
-            .map_or(0, |(since, _, _)| self.now.since(since.max(self.settle)).as_micros());
+            .map_or(0, |(since, _, _)| {
+                self.now.since(since.max(self.settle)).as_micros()
+            });
         g.relay_on_us[0] + g.relay_on_us[1] + open
     }
 

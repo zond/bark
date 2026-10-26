@@ -215,7 +215,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// With [`RelayGps::Grace`], when a relay on battery rests its GPS:
     /// a grace after it lost external power.
     fn gps_grace_ends(&self) -> Option<Instant> {
-        let t = self.unplugged.filter(|_| self.config.relay_gps == RelayGps::Grace)?;
+        let t = self
+            .unplugged
+            .filter(|_| self.config.relay_gps == RelayGps::Grace)?;
         Some(t + self.config.grace)
     }
 
@@ -280,7 +282,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn gps_wakeup(&self) -> Option<Instant> {
         if !self.sleepy {
             let until = at(self.gps.until).filter(|_| self.config.relay_gps != RelayGps::Always);
-            let grace = self.gps_grace_ends().filter(|_| self.gps.flags & PAST_GRACE == 0);
+            let grace = self
+                .gps_grace_ends()
+                .filter(|_| self.gps.flags & PAST_GRACE == 0);
             return match (until, grace) {
                 (Some(a), Some(b)) => Some(a.min(b)),
                 (a, b) => a.or(b),

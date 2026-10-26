@@ -45,7 +45,11 @@ fn row(mode: RelayGps) -> Harness<Relay> {
 }
 
 fn searches(h: &Harness<Relay>, from: Instant) -> usize {
-    h.nodes[0].located.iter().filter(|(t, _)| *t >= from).count()
+    h.nodes[0]
+        .located
+        .iter()
+        .filter(|(t, _)| *t >= from)
+        .count()
 }
 
 /// By default a relay's GPS runs all the time and it never asks for a
@@ -103,9 +107,19 @@ fn a_far_fix_keeps_it_on() {
     let mut h = row(RelayGps::RadioEverywhere);
     h.run_until(at(600), |_| false);
     assert!(!h.nodes[0].core.gps_tracks());
-    h.command(0, AppCommand::Fix { position: pos(100.0) });
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(100.0),
+        },
+    );
     assert!(h.nodes[0].core.gps_tracks());
-    h.command(0, AppCommand::Fix { position: pos(10.0) });
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(10.0),
+        },
+    );
     assert!(!h.nodes[0].core.gps_tracks());
     for s in 0..=72 {
         h.run_until(at(700 + s), |_| false);

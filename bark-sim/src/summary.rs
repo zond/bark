@@ -584,7 +584,10 @@ impl Sim {
         let nodes = &self.metrics.nodes;
         let sum = |f: &dyn Fn(&NodeMetrics) -> u64| nodes.iter().map(f).sum::<u64>() as f64;
         let relay_us = [sum(&|m| m.gps.relay_us[0]), sum(&|m| m.gps.relay_us[1])];
-        let on_us = [sum(&|m| m.gps.relay_on_us[0]), sum(&|m| m.gps.relay_on_us[1])];
+        let on_us = [
+            sum(&|m| m.gps.relay_on_us[0]),
+            sum(&|m| m.gps.relay_on_us[1]),
+        ];
         let total = relay_us[0] + relay_us[1];
         if window == 0 || total == 0.0 {
             return None;
@@ -1058,7 +1061,9 @@ impl Summary {
                 after.sort_by(f64::total_cmp);
                 let at = |q: f64| {
                     let i = ((after.len() as f64 * q).ceil() as usize).saturating_sub(1);
-                    after.get(i).map_or_else(|| "-".into(), |x| format!("{x:.0}"))
+                    after
+                        .get(i)
+                        .map_or_else(|| "-".into(), |x| format!("{x:.0}"))
                 };
                 let fixed_h = |battery: bool| {
                     w.iter()
