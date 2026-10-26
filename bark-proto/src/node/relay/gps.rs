@@ -57,9 +57,14 @@ fn chi_square_point(k: u8) -> f32 {
 pub(super) struct Gps {
     /// Until when the search under way runs.
     until: u32,
-    /// When the last search found nothing, until a fix comes.
+    /// A sleepy node's: when its last search found nothing, until a fix
+    /// comes. A relay's that watches its radio: the sum of the squared
+    /// surprises of the rotation under way over [`SURPRISE_VAR_DB2`], in
+    /// thousandths. Each role's is cleared when the node takes the other.
     failed_at: u32,
-    /// When the last search started.
+    /// A sleepy node's: when its last search started. A relay's that
+    /// watches its radio: when the rotation of surprises under way began,
+    /// 0 for none.
     tried_at: u32,
     /// A search is to start.
     due: bool,
@@ -68,12 +73,8 @@ pub(super) struct Gps {
     /// A resting relay's last fix was far: its GPS runs until it is
     /// carried or a fix is near.
     follow: bool,
-    /// When the rotation of surprises under way began, 0 for none.
-    window: u32,
-    /// The rotation's surprises: how many, and the sum of their squares
-    /// over [`SURPRISE_VAR_DB2`], in thousandths.
+    /// The surprises of the rotation under way.
     surprises: u8,
-    surprise: u32,
 }
 
 impl Gps {
@@ -85,9 +86,7 @@ impl Gps {
         due: false,
         at_choice: false,
         follow: false,
-        window: 0,
         surprises: 0,
-        surprise: 0,
     };
 }
 
@@ -145,32 +144,32 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         if !self.gps_watches() {
-            self.gps.window = 0;
+            self.gps.tried_at = 0;
             return;
         }
         let g = &mut self.gps;
-        if at(g.window).is_some_and(|t| now >= t + self.config.boot_listen) {
+        if at(g.tried_at).is_some_and(|t| now >= t + self.config.boot_listen) {
             let moved =
-                g.surprises > 0 && g.surprise as f32 / 1000.0 > chi_square_point(g.surprises);
+                g.surprises > 0 && g.failed_at as f32 / 1000.0 > chi_square_point(g.surprises);
             g.due |= moved;
             emit(Action::Trace(crate::event::Trace::MoveSign {
                 surprises: g.surprises,
-                sum_milli: g.surprise,
+                sum_milli: g.failed_at,
                 moved,
             }));
-            g.window = 0;
+            g.tried_at = 0;
         }
-        if g.window == 0 {
-            g.window = mark(now);
+        if g.tried_at == 0 {
+            g.tried_at = mark(now);
             g.surprises = 0;
-            g.surprise = 0;
+            g.failed_at = 0;
         }
         if g.surprises == u8::MAX {
             return;
         }
         g.surprises += 1;
         let z2 = surprise_db * surprise_db / SURPRISE_VAR_DB2;
-        g.surprise = g.surprise.saturating_add((z2 * 1000.0) as u32);
+        g.failed_at = g.failed_at.saturating_add((z2 * 1000.0) as u32);
     }
 
     /// A fix came to a relay: a far one keeps its resting GPS on.
@@ -194,12 +193,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A fix came: the search is over.
     pub(super) fn gps_fixed(&mut self) {
         self.gps.until = 0;
-        self.gps.failed_at = 0;
+        if self.sleepy {
+            self.gps.failed_at = 0;
+        }
     }
 
     /// The node is a relay now: its GPS runs all the time.
     pub(super) fn gps_relay(&mut self) {
         self.gps = Gps::DEFAULT;
+    }
+
+    /// The node turned sleepy: it searches, with nothing of a relay's
+    /// left.
+    pub(super) fn gps_sleepy(&mut self) {
+        self.gps = Gps::DEFAULT;
+        self.gps.due = true;
     }
 
     /// When a search may start again after one that found nothing.

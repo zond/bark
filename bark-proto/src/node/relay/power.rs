@@ -280,7 +280,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
         self.battery_sleepy = self.low;
-        self.gps_due();
+        self.gps_sleepy();
         self.unplugged = None;
         self.leaving = false;
         for q in self.delivery.iter() {
