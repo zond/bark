@@ -61,11 +61,11 @@ fn by_default_a_relay_tracks() {
     assert_eq!(searches(&h, Instant::ZERO), 0);
 }
 
-/// With `Battery`, a relay tracks on USB and rests on battery, in its
+/// With `Radio`, a relay tracks on USB and rests on battery, in its
 /// grace too; with a map point it rests on USB as well.
 #[test]
 fn on_battery_it_rests() {
-    let mut h = row(RelayGps::Battery);
+    let mut h = row(RelayGps::Radio);
     h.run_until(at(600), |_| false);
     assert!(h.nodes[0].core.gps_tracks());
     h.command(0, AppCommand::Power { external: false });

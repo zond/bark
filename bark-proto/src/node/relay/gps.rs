@@ -121,9 +121,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let rests = match self.config.relay_gps {
             RelayGps::Always => return true,
-            RelayGps::Battery | RelayGps::Radio => self.unplugged.is_some(),
+            RelayGps::Radio => self.unplugged.is_some(),
             RelayGps::Grace => self.unplugged.is_some() && self.gps.flags & PAST_GRACE != 0,
-            RelayGps::BatteryEverywhere | RelayGps::RadioEverywhere => true,
+            RelayGps::RadioEverywhere => true,
         };
         !self.motion.map_point && (self.motion.carried || (self.gps.flags & FOLLOW != 0) || !rests)
     }

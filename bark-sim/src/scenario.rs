@@ -152,10 +152,8 @@ pub struct ProtocolOverrides {
 #[allow(missing_docs)]
 pub enum RelayGps {
     Always,
-    Battery,
     Radio,
     Grace,
-    BatteryEverywhere,
     RadioEverywhere,
 }
 
@@ -208,10 +206,8 @@ impl ProtocolOverrides {
             use bark_proto::gps::RelayGps as R;
             c.relay_gps = match g {
                 RelayGps::Always => R::Always,
-                RelayGps::Battery => R::Battery,
                 RelayGps::Radio => R::Radio,
                 RelayGps::Grace => R::Grace,
-                RelayGps::BatteryEverywhere => R::BatteryEverywhere,
                 RelayGps::RadioEverywhere => R::RadioEverywhere,
             };
         }
