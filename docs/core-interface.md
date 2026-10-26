@@ -159,11 +159,16 @@ right after the boot wakeup and at every change, and may repeat it. On external 
 the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
 on; running, from the change on, as spec "Sleepy nodes" says.
 
-`AppCommand::Battery` reports the battery's voltage in millivolts, read while the radio
-does not transmit, on battery, as often as the driver reads it. With `Config::battery` a
-fixed relay on battery relays until a reading at or below the low level, and a node its
-battery turned sleepy relays again at the high level (spec "Nodes"); without, the core
-ignores it. The driver calibrates its reading (`docs/battery-role-2026-10-25.md`).
+`AppCommand::Battery` reports the battery's voltage in millivolts as the board's converter
+reads it, uncalibrated. The driver sends it only on battery, never on external power,
+where the reading is the charger's; once a minute (`bark_driver::BATTERY_EVERY`); and only
+between radio operations, never while the radio transmits, whose current would pull the
+cell down. The core calibrates the readings at a rested full charge and keeps the scale in
+its stored state, and compares them with `Config::battery`'s levels (spec "Sleepy nodes"):
+a fixed relay on battery relays until a reading at or below the low level, and a node its
+battery turned sleepy relays again at the high level. A driver whose board reads no
+battery builds the core with `Config::battery` `None`, and the core then turns every relay
+sleepy at its grace's end, since a fixed one would otherwise relay until it browns out.
 
 `AppEvent::Message` delivers a payload to this node's application.
 The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
@@ -177,7 +182,8 @@ or at once when it resumes a stored anchor.
 `Action::Store(stored)` asks the driver to keep `stored` across a reboot, in place of
 what it kept before (spec "Implementation notes"). The core emits it at boot and then only
 when the state changes: the home channel, but a carried sleepy node's, the place a fixed
-node stands, the carried flag, a fixed sleepy node's anchor and whether it is a relay. The driver hands the last one back in `Config::stored`
+node stands, the carried flag, a fixed sleepy node's anchor, whether it is a relay and its
+battery readings' scale. The driver hands the last one back in `Config::stored`
 when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
 it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
 record. The firmware appends records to a page of flash (`bark-fw/src/store.rs`); the

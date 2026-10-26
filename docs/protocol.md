@@ -26,7 +26,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Boot | A node takes traffic from the second it is switched on, and keeps its home channel and a sleepy node's anchor across a reboot |
 | Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 6-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
-| Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery, carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
+| Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery (a fixed relay only once its battery is low), carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | From GPS unless a fix fails the checks or the app sets a map point; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
 | Time | No network time, and GPS time is not used |
@@ -62,7 +62,8 @@ setting: it follows two properties the node measures of itself, each on
 its own, and its heartbeat publishes each as a flag
 ([packet formats](#packet-formats); roadmap D70, D71, D72).
 
-- **Sleepy**: it is on battery, past a grace of an hour
+- **Sleepy**: it is on battery, past a grace of an hour if it is
+  carried, and with its battery low if it is a fixed relay
   ([sleepy nodes](#sleepy-nodes)). On external power, USB on a
   windowsill or a solar box on a roof, a node is not sleepy. Sleepy
   decides how the node uses its radio: it beats rarely instead of
@@ -1740,7 +1741,61 @@ plugged in is a relay at once:
 
 A relay unplugged changes nothing for a **grace** of one hour: it
 relays, owns and holds mail as before, and power back within the grace
-is as if nothing happened.
+is as if nothing happened. After the grace a carried relay turns sleepy;
+a fixed one relays on until its **battery is low**. A relay on battery
+whose battery is low turns sleepy, grace or not. A node its battery
+turned sleepy relays again when its battery is high while it is fixed,
+and any node on external power. A fixed relay that reboots on battery is
+a relay, its grace counted from the boot
+([implementation notes](#implementation-notes)).
+
+| | |
+|---|---|
+| battery low | a calibrated reading at or below 3.741 V, until one at or above the high level, or external power |
+| battery high | a calibrated reading at or above 3.775 V |
+| reading | the cell's voltage, read on battery once a minute while the radio does not transmit |
+| calibration | after 3 h on external power, the first reading an hour into battery is a full cell's, 4.177 V, and every reading after it is scaled to match; a scale beyond ±3 % is not taken; the scale is kept across a reboot, and before the first one readings are taken as read |
+
+The three voltages are a typical Li-ion cell's open-circuit voltage at
+20, 30 and 100 % of its charge, read after an hour's rest (Maxim
+Integrated, Application Note 4189, Table 1).
+
+*Why a fixed relay relays on.* In a grid outage every relay in a
+district loses its power in the same second; if each turned sleepy an
+hour later, every sleepy node there would lose its anchor in the same
+minute and go anchorless ([sleepy nodes alone](#sleepy-nodes-alone)),
+and the domain's channels would fill with long frames. On battery a
+fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
+airtime), so 80 % of the 850 mAh cell lasts it four days; the fifth
+left keeps it asleep for eleven more.
+
+*Why a carried relay keeps the grace.* A node in a pocket is its
+owner's, and nobody anchors to it ([nodes](#nodes)); relaying, it would
+be flat in days.
+
+*Why those levels.* At 20 % a relay has relayed through four fifths of
+its cell and keeps the rest for its owner. The curve is flat there,
+34 mV from 20 to 30 %; the gap is several times a reading's noise and
+the load's drop across the cell, so the role does not flap, and a cell
+rises without external power only on a solar box, which then relays
+again.
+
+*Why it calibrates.* The SAADC's gain error at gain 1/6 is up to ±3 %
+(nRF52840 Product Specification, SAADC), which at 3.74 V spans 4 to 57 %
+of a cell's charge. A cell that has finished charging and rested reads
+the curve's 100 %: the T-Echo's 500 mA charger brings an empty 850 mAh
+cell to its end voltage within 1.7 h, its constant-voltage end is
+assumed to take under 1.3 h more, and AN4189's readings rest an hour.
+Scaled so, a board is left with the charger's tolerance on its end
+voltage, about 1 %, and turns between 14 and 32 %. A scale beyond the
+gain error is of a cell that was not full. A relay unplugged from a full
+charge calibrates within its first hour, days before it is low; only a
+discharge begun short of full, before any calibration, turns anywhere
+between 4 and 57 %.
+
+*Why once a minute.* A reading a minute late is under a tenth of a
+percent of the cell at the most a board draws, below a reading's noise,
+and a reading costs a sample of microseconds.
 
 *Why an hour.* A charger moved across the room then costs nobody
 anything. The grace costs the node an hour of listening at 5.8 mA,
@@ -1748,8 +1803,8 @@ anything. The grace costs the node an hour of listening at 5.8 mA,
 would turn a node sleepy at every brief unplug, and each turn moves its
 sleepy nodes, and their addresses, to other anchors.
 
-When the grace ends the node takes no more mail, owning nothing by
-position, and flushes its delivery queue, listening all the time until
+When it is to turn sleepy the node takes no more mail, owning nothing
+by position, and flushes its delivery queue, listening all the time until
 each message has had its attempt, or for a delivery TTL at most; a relay
 that turned carried in its grace has flushed already, at its first far
 fix.
@@ -2535,6 +2590,8 @@ with it ([channel at boot](#channel-at-boot)):
 | the place a fixed node stands | its position after the reboot, as before it, and whether it is a map point ([position](#position)) |
 | carried flag | kept, still since the boot |
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
+| whether it is a relay | a fixed relay that boots on battery relays on ([sleepy nodes](#sleepy-nodes)) |
+| its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
 | record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`) |
 
 *Why not time.* The board has no clock that runs while it is off, so
@@ -2572,7 +2629,6 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
-| O17 | How a solar relay reports its power: its panel charges the battery by day and not at night, and a relay that turned sleepy every evening would move its sleepy nodes each time ([nodes](#nodes), [sleepy nodes](#sleepy-nodes)) | before rooftop boards, roadmap D71 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 
 ---

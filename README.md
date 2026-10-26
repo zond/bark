@@ -23,7 +23,8 @@ web from small, cheap threads.
 The protocol core, the simulator and the firmware are written. In the
 simulator, 28 km² of city with 270 relays and 20 000 sleepy nodes delivers
 96 % of the texts it can reach at the design's rate. The firmware runs the
-core, a relay on USB and sleepy on battery, but has not yet run on a board; four
+core, a relay on USB, and on battery a relay until its battery is low if it
+stands still, sleepy if carried, but has not yet run on a board; four
 T-Echo boards are expected around 2026-11-04. `docs/roadmap.md` has the phases.
 
 Read, in order:

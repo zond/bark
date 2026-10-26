@@ -1,9 +1,11 @@
 # A fixed relay on battery relays until its battery is low
 
-**Date:** 2026-10-25. **Status:** built behind a research switch
-(`Config::battery`, off by default) and measured; not decided. Spec
-references are to `protocol.md`. The base is main `1654017`; S4 seed 1
-repeats it to the byte with the switch off.
+**Date:** 2026-10-25, updated 2026-10-26. **Status:** adopted
+2026-10-26 as roadmap D81, with the flush's bound. The measurements below
+were taken on main `1654017` behind a research switch, D71's rule against
+this one; since the adoption the switch is gone, the firmware reads its
+battery and turns the levels on, and the core calibrates the readings
+(The rule). Spec references are to `protocol.md`.
 
 ## The problem
 
@@ -208,7 +210,7 @@ documentation does not give. ±3 % of 3.74 V is ±112 mV, which on the
 curve above spans 4 to 57 % of charge. An uncalibrated board cannot tell
 20 % from 50 %.
 
-So the driver calibrates: a cell that has finished charging and rested
+So the readings are calibrated: a cell that has finished charging and rested
 reads the curve's 100 % point, 4.177 V. A board that has been on USB long
 enough to be full (the 500 mA charger's constant current brings an empty
 850 mAh cell to its end voltage within 1.7 h, and the constant-voltage
@@ -229,10 +231,24 @@ Today the role follows `AppCommand::Power` with a grace
 parameter:
 
 - `AppCommand::Battery { millivolts }`: the driver reports the cell's
-  voltage, calibrated, while the radio does not transmit, as often as it
-  reads it; once a minute in the simulator.
+  voltage as its converter reads it, uncalibrated, on battery, once a
+  minute, between radio operations, so never while the radio transmits
+  (`bark-driver`, `BATTERY_EVERY`).
 - `Config::battery: Option<BatteryLevels { low_mv, high_mv }>`, the
-  design's 3741 and 3775 mV. `None` is D71's rule.
+  design's 3741 and 3775 mV. `None` only for a driver that reports no
+  battery.
+
+Built after the adoption, and changed from the proposal above: the core,
+not the driver, calibrates, so that the simulator runs the calibration
+too. After 3 h on external power, its first reading an hour into battery
+is taken as 4177 mV, and the readings after it are scaled to match; a
+scale beyond ±3 % is not taken; the scale is kept in the stored record
+across reboots. Before the first calibration the readings are taken as
+read: a relay unplugged from a full charge calibrates within its first
+hour, days before it is low, so only a discharge begun short of full
+turns uncalibrated, anywhere between 4 and 57 % of charge. The firmware
+reads AIN2 with eight samples averaged in hardware and its offset
+calibrated before each reading (`bark-fw/src/battery.rs`).
 
 The rule, as built:
 
@@ -573,10 +589,10 @@ taken: the charger holds the cell's voltage up.
 - **Seeds.** Seeds 2 and 3 for the new rule in (a) and (d); one seed for
   the rest, and for the old rule, whose collapse is a hundred times the
   differences between seeds.
-- **Firmware.** Nothing here runs on a board. The firmware does not read
-  its battery outside the console yet, and until it reports a calibrated
-  reading `Config::battery` must stay off there: with the levels on and
-  no reading, a fixed relay on battery would relay until it browns out.
+- **Firmware.** Built since: the board reads its battery once a minute
+  on battery and the levels are on, but nothing has run on a board. The
+  curve of a T-Echo's own cell and the readings after calibration are
+  Phase 2 bench rows (roadmap D81).
 
 ## Recommendation
 
@@ -590,12 +606,10 @@ taken: the charger holds the cell's voltage up.
    whatever it reads as external power, until the battery is low.
 2. **Adopt the flush's bound**, a delivery TTL at most, whatever is
    decided about 1; it is already in the spec on this branch.
-3. **Before the firmware turns the levels on**: the driver reads the
-   battery once a minute while the radio does not transmit, and scales
-   its readings at a full charge; a bench measures a T-Echo's own
-   discharge at a relay's load to check the levels. Until then
-   `Config::battery` stays off on the board, since with the levels on
-   and no reading a fixed relay would relay until it browns out.
+3. **The firmware's reading**: once a minute while the radio does not
+   transmit, calibrated at a full charge; a bench measures a T-Echo's
+   own discharge at a relay's load to check the levels. Built since
+   (The rule).
 4. **Decide how a fixed relay on battery uses its GPS.** At one fix a
    second the rule buys fifteen hours instead of four days.
 5. **No spread of the grace.**
@@ -610,6 +624,5 @@ of a node that relayed through the outage and turns the relays sooner;
 at 20 % a node turned sleepy lasts eleven days more.
 
 The variant built and not recommended, D71's grace alone under a
-battery model, is the switch's `None`; if the rule is adopted the switch
-goes and the levels become the design's, with the firmware's reading
-(item 3) in place first.
+battery model, was the switch's `None`; with the adoption the switch is
+gone and the levels are the design's.
