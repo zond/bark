@@ -142,9 +142,6 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
-    /// `Config::battery` at the design's levels: a fixed relay on battery
-    /// relays until its battery is low.
-    pub battery_levels: Option<bool>,
 }
 
 impl ProtocolOverrides {
@@ -192,9 +189,6 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
-        if let Some(on) = self.battery_levels {
-            c.battery = on.then_some(bark_proto::BatteryLevels::DESIGN);
-        }
         c
     }
 }
@@ -522,7 +516,8 @@ impl Default for Power {
 }
 
 /// Each node's battery, and the grid's outages, which take USB power
-/// from every node on it (`battery.rs`).
+/// from every node on it (`battery.rs`). With it every node's core has
+/// the design's battery levels.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Battery {
@@ -538,8 +533,8 @@ pub struct Battery {
     pub charge_on_usb: [f64; 2],
     /// The same for a node on battery.
     pub charge_on_battery: [f64; 2],
-    /// Each node's reading is off by a factor drawn uniformly within
-    /// 1 ± this.
+    /// Each node's converter reads off by a factor drawn uniformly within
+    /// 1 ± this, until its core calibrates its readings.
     pub gain_error: f64,
     /// The charging current on USB, mA.
     pub charge_ma: f64,

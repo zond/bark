@@ -1040,7 +1040,12 @@ impl Sim {
             return Err("scenario has no nodes".into());
         }
         let n_relays = placed.iter().filter(|p| p.role == RoleSpec::Relay).count() as u32;
-        let base = sc.protocol.config();
+        let mut base = sc.protocol.config();
+        // A node whose driver reads its battery has the design's levels
+        // (`battery.rs`); without `[battery]` no driver reports one.
+        if sc.battery.on {
+            base.battery = Some(bark_proto::BatteryLevels::DESIGN);
+        }
         let radio = sc.radio.clone();
         let origin: Origin = sc.origin;
         let xy: Vec<Xy> = placed.iter().map(|p| p.xy).collect();

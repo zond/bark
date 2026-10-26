@@ -5,9 +5,8 @@
 #
 # The outage is the variable of the run: `outages` here is one of four
 # hours; the note runs one of 24 hours and rolling outages of four hours
-# off and four on. `[protocol] battery_levels` is the rule: true, a fixed
-# relay on battery relays until its battery is low; false, every relay
-# turns sleepy an hour after its power goes (roadmap D71).
+# off and four on. A fixed relay on battery relays until its battery is
+# low (spec "Sleepy nodes", roadmap D81).
 
 name = "grid-down"
 seed = 1
@@ -136,9 +135,6 @@ mean_dark_s = 300.0
 cadence_s = 60.0
 per_node = true
 
-[protocol]
-battery_levels = true
-
 [battery]
 on = true
 # The T-Echo's cell and charger (LILYGO T-Echo README: 850 mAh, charge
@@ -151,11 +147,14 @@ charge_ma = 500.0
 cell = [0.8, 1.0]
 charge_on_usb = [0.9, 1.0]
 charge_on_battery = [0.2, 1.0]
-# A reading calibrated at a full charge is off by the charger's tolerance
-# on its end voltage, taken as 1 % (docs/battery-role-2026-10-25.md).
-gain_error = 0.01
+# The SAADC's gain error at gain 1/6, up to 3 % (nRF52840 Product
+# Specification). A core calibrates a node's readings after 3 h on USB
+# and an hour's rest on battery; the relays here are on USB for under an
+# hour before the outage, so they read uncalibrated.
+gain_error = 0.03
 # The battery divider's drain, about 12 µA (bark-fw/src/board.rs); the
-# rest of the board is not modelled, the GPS included.
+# microcontroller and a relay's GPS are not modelled, a sleepy node's GPS
+# searches are (`bark-sim/src/gps.rs`).
 relay_ua = 12.0
 sleepy_ua = 12.0
 read_s = 60.0

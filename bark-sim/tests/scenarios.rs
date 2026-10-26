@@ -741,16 +741,14 @@ fn battery_last(sim: &Sim) -> std::collections::HashMap<String, f64> {
         .collect()
 }
 
-/// The grid goes down for two hours: with battery levels the relays,
-/// full, relay through it; with the grace alone they turn sleepy after
-/// it; and relays whose battery is low turn sleepy within the outage.
+/// The grid goes down for two hours: the relays, full, relay through it,
+/// past their grace; relays whose battery is low turn sleepy within it.
 #[test]
 fn relays_on_battery_in_an_outage() {
-    let outage = |levels: bool, charge: f64| {
+    let outage = |charge: f64| {
         let mut sc = scenario("s2-block.toml");
         let from = sc.settled_s();
         sc.protocol.grace_ms = Some(600_000);
-        sc.protocol.battery_levels = Some(levels);
         sc.battery.on = true;
         sc.battery.charge_on_usb = [charge, charge];
         // A board that draws a GPS's current besides the radio, to reach
@@ -763,14 +761,12 @@ fn relays_on_battery_in_an_outage() {
         accounted(&sim, "S2 grid down");
         battery_last(&sim)
     };
-    let full = outage(true, 1.0);
+    let full = outage(1.0);
     assert_eq!(full["usb"], 0.0);
     assert_eq!(full["to_sleepy"], 0.0, "{full:?}");
     assert!(full["relays_on_battery"] >= 10.0, "{full:?}");
-    let grace = outage(false, 1.0);
-    assert_eq!(grace["relays"], 0.0, "{grace:?}");
     // 2 % above the low level: 17 mAh, 35 minutes at 29 mA.
-    let low = outage(true, 0.22);
+    let low = outage(0.22);
     assert!(low["to_sleepy"] >= 10.0, "{low:?}");
     assert!(low["relay_charge_min"] > 0.15, "{low:?}");
 }

@@ -6,20 +6,22 @@
 //! battery. On USB it charges at the charger's current less the load; on
 //! battery it discharges at the radio's currents for the time the node's
 //! radio listened, received duty-cycled and transmitted (the currents of
-//! `bark_proto::sniff`, as the sleepy nodes' current in the summary), and
-//! a current for the rest of the board. The time is the radio's after the
+//! `bark_proto::sniff`, as the sleepy nodes' current in the summary), the
+//! GPS for the searches a sleepy node asks for (`gps.rs`), and a current
+//! for the rest of the board by its role, a relay's GPS among it. The time is the radio's after the
 //! settle time, which the metrics count, so outages begin after it.
 //!
 //! An outage takes USB power from every node on it when it begins and
 //! gives it back when it ends. On battery the driver reads the cell's
-//! open-circuit voltage at its charge, off by the node's reading error,
-//! and reports it to the core (`AppCommand::Battery`) when the core has
-//! battery levels to compare it with.
+//! open-circuit voltage at its charge, off by the node's converter's gain
+//! error, once a minute, and reports it to the core (`AppCommand::Battery`),
+//! which calibrates it.
 
 use crate::metrics::NodeMetrics;
 use crate::rng::{Purpose, Stream};
 use crate::scenario::Battery;
 use crate::sim::{secs, Ev, Sim};
+use bark_proto::gps::GPS_CURRENT_UA;
 use bark_proto::sniff::{RX_CURRENT_UA, SNIFF_CURRENT_NA, TX_CURRENT_UA};
 use bark_proto::{AppCommand, Event, Instant};
 
@@ -48,7 +50,8 @@ struct Cell {
     capacity: f64,
     /// Its charge at the last reading, mAh.
     charge: f64,
-    /// The charge its radio had drawn by the last reading, µA·µs.
+    /// The charge its radio and its GPS's searches had drawn by the last
+    /// reading, µA·µs.
     drawn: f64,
     /// Its reading's gain: 1 for a true reading.
     gain: f64,
@@ -62,8 +65,6 @@ pub(crate) struct BatteryModel {
     cells: Vec<Cell>,
     /// The nodes the outage under way took USB from.
     unplugged: Vec<u32>,
-    /// Whether to report readings to the cores.
-    report: bool,
     /// The series written by `bark-sim --battery FILE`.
     rows: String,
     /// Turns to sleepy and to relay so far.
@@ -119,12 +120,10 @@ impl Sim {
                 }
             })
             .collect();
-        let report = self.relay(0).config().battery.is_some();
         self.battery = Some(BatteryModel {
             p: p.clone(),
             cells,
             unplugged: Vec::new(),
-            report,
             rows: HEADER.to_string(),
             turns: [0; 2],
         });
@@ -165,7 +164,8 @@ impl Sim {
         let window = since(self.now);
         let dt_h = m.p.read_s / 3600.0;
         for (i, c) in m.cells.iter_mut().enumerate() {
-            let drawn = radio_ua_us(&self.metrics.nodes[i], window);
+            let gps = self.gps_on_us(i as u32) as f64 * GPS_CURRENT_UA as f64;
+            let drawn = radio_ua_us(&self.metrics.nodes[i], window) + gps;
             let board = if self.relay(i as u32).sleepy() {
                 m.p.sleepy_ua
             } else {
@@ -188,7 +188,7 @@ impl Sim {
             .cells
             .iter()
             .enumerate()
-            .filter(|&(i, _)| m.report && !self.external[i] && self.nodes[i].alive)
+            .filter(|&(i, _)| !self.external[i] && self.nodes[i].alive)
             .map(|(i, c)| {
                 let v = ocv(c.charge / c.capacity) * c.gain;
                 (i as u32, (v * 1000.0).round() as u16)
