@@ -152,7 +152,9 @@ position, and a relay's sleepy nodes' with it (spec "Node identity").
 `Action::Locate(until)` asks the driver to run the GPS until `until` and hand the first
 fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end.
 Only a sleepy node asks, at the events spec "Beats" names; a relay's GPS runs all the
-time (roadmap D80), which `Node::gps_tracks` says.
+time (roadmap D80), which `Node::gps_tracks` says. Under the research switch
+`Config::relay_gps` a relay's GPS may rest, and a resting relay asks too
+(`docs/relay-gps-2026-10-26.md`).
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power

@@ -122,6 +122,9 @@ pub struct Config {
     /// relay then turns sleepy at its grace's end, since a fixed one would
     /// otherwise relay until its battery browns out.
     pub battery: Option<BatteryLevels>,
+    /// Research switch: how a relay runs its GPS
+    /// (`docs/relay-gps-2026-10-26.md`); all the time in the design.
+    pub relay_gps: crate::gps::RelayGps,
 }
 
 /// A battery's open-circuit voltage, millivolts, at which a fixed relay
@@ -293,6 +296,7 @@ impl Config {
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
         battery: None,
+        relay_gps: crate::gps::RelayGps::Always,
     };
 }
 

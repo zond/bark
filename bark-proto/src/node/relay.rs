@@ -1055,7 +1055,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
         self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
-        if self.sleepy {
+        if !self.gps_tracks() {
             self.gps_due();
         }
         emit(Action::Listen(self.home));
@@ -1909,7 +1909,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let position = hb.position(self.config.position);
+        // A fixed relay's averaged RSSI before this heartbeat, for a relay
+        // that watches its radio for a sign that it moves (`relay/gps.rs`).
+        let average = self
+            .gps_watches()
+            .then(|| self.neighbours.get(hb.id))
+            .flatten()
+            .filter(|n| n.holds_mail() && !hb.sleepy && !hb.carried)
+            .map(|n| n.rssi);
         let heard = self.neighbours.heard(&hb, position, rssi, &self.plane, now);
+        if let Some(a) = average {
+            self.gps_surprise(rssi as f32 - a, now);
+        }
         // When it started: a heartbeat's slot is its start, give or take
         // the listen-before-talk.
         let started = now - heartbeat_airtime(&hb);
@@ -1998,7 +2009,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let took = match cmd {
                     AppCommand::Fix { .. } => {
                         self.gps_fixed();
-                        self.fix(position, now, emit)
+                        let took = self.fix(position, now, emit);
+                        self.gps_after_fix();
+                        took
                     }
                     _ => {
                         // A sleepy node's position is no news, but a

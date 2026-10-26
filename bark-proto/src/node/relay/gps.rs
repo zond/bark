@@ -12,11 +12,43 @@
 //! A fix asked for at a new anchor is where the node chose from: it is
 //! taken after the choice, and measuring a move from the position before
 //! it would check the anchor just chosen.
+//!
+//! A research switch, [`Config::relay_gps`], lets a relay rest its GPS in
+//! standby (`docs/relay-gps-2026-10-26.md`). Resting, it searches at boot,
+//! and with [`RelayGps::Radio`] when the radio says it may have moved: the
+//! heartbeats of its fixed relay neighbours, over a worst-case rotation,
+//! differ from their averaged RSSI more than fading explains. A search that
+//! finds a far fix keeps the GPS on until the node is carried or a fix
+//! comes near again; a relay's search has no back-off.
+//!
+//! [`Config::relay_gps`]: crate::Config::relay_gps
 
 use super::{Node, Stage};
 use crate::event::Action;
-use crate::gps::{BACKOFF, SEARCH_LIMIT};
+use crate::gps::{RelayGps, BACKOFF, SEARCH_LIMIT};
+use crate::radio::FADE_DEPTH_DB;
 use crate::time::{Duration, Instant};
+
+/// How far beyond its mean, in its own standard deviations, the sum of a
+/// rotation's squared surprises must lie before a resting relay searches:
+/// two, which a still node's passes in 2.3 % of rotations, the convention
+/// of the switching margin (spec "Relay choice").
+const SURPRISE_SIGMAS: f32 = 2.0;
+
+/// The variance of a heartbeat's surprise, the difference between its RSSI
+/// and the averaged RSSI before it, under fading of [`FADE_DEPTH_DB`]: the
+/// frame's σ² and the average's σ²/3, since each frame counts half in it
+/// and a neighbour's heartbeats reach the node's channel a rotation apart,
+/// longer than the fading lasts.
+const SURPRISE_VAR_DB2: f32 = FADE_DEPTH_DB * FADE_DEPTH_DB * 4.0 / 3.0;
+
+/// The point [`SURPRISE_SIGMAS`] above the mean of a chi-square of `k`
+/// degrees of freedom, by the Wilson–Hilferty approximation.
+fn chi_square_point(k: u8) -> f32 {
+    let k = k as f32;
+    let a = 2.0 / (9.0 * k);
+    k * libm::powf(1.0 - a + SURPRISE_SIGMAS * libm::sqrtf(a), 3.0)
+}
 
 /// A sleepy node's searches. Its times are whole seconds from the
 /// clock's zero, 0 for none, so that the node stays within the size
@@ -33,6 +65,15 @@ pub(super) struct Gps {
     due: bool,
     /// The next fix is the one asked for at a new anchor.
     pub(super) at_choice: bool,
+    /// A resting relay's last fix was far: its GPS runs until it is
+    /// carried or a fix is near.
+    follow: bool,
+    /// When the rotation of surprises under way began, 0 for none.
+    window: u32,
+    /// The rotation's surprises: how many, and the sum of their squares
+    /// over [`SURPRISE_VAR_DB2`], in thousandths.
+    surprises: u8,
+    surprise: u32,
 }
 
 impl Gps {
@@ -43,6 +84,10 @@ impl Gps {
         tried_at: 0,
         due: false,
         at_choice: false,
+        follow: false,
+        window: 0,
+        surprises: 0,
+        surprise: 0,
     };
 }
 
@@ -59,9 +104,68 @@ fn at(m: u32) -> Option<Instant> {
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the driver is to run the GPS all the time now: a relay's
     /// runs all the time, a sleepy node's only in the searches it asks
-    /// for (spec "Beats").
+    /// for (spec "Beats"). With [`Config::relay_gps`] a relay's may rest
+    /// (module documentation), and one with a map point is handed no fix
+    /// and rests.
+    ///
+    /// [`Config::relay_gps`]: crate::Config::relay_gps
     pub fn gps_tracks(&self) -> bool {
-        !self.sleepy
+        if self.sleepy {
+            return false;
+        }
+        let rests = match self.config.relay_gps {
+            RelayGps::Always => return true,
+            RelayGps::Battery | RelayGps::Radio => self.unplugged.is_some(),
+            RelayGps::BatteryEverywhere | RelayGps::RadioEverywhere => true,
+        };
+        !self.motion.map_point && (self.motion.carried || self.gps.follow || !rests)
+    }
+
+    /// Whether this relay rests its GPS and watches the radio for a sign
+    /// that it moves: then the heartbeats of its fixed relay neighbours go
+    /// to [`Node::gps_surprise`].
+    pub(super) fn gps_watches(&self) -> bool {
+        matches!(
+            self.config.relay_gps,
+            RelayGps::Radio | RelayGps::RadioEverywhere
+        ) && !self.sleepy
+            && self.stage == Stage::Running
+            && !self.motion.map_point
+            && !self.gps_tracks()
+    }
+
+    /// A heartbeat of a fixed relay neighbour came `surprise_db` from its
+    /// averaged RSSI before it. At the end of a worst-case rotation, a sum
+    /// of their squares beyond what fading explains starts a search
+    /// (module documentation).
+    pub(super) fn gps_surprise(&mut self, surprise_db: f32, now: Instant) {
+        if !self.gps_watches() {
+            self.gps.window = 0;
+            return;
+        }
+        let g = &mut self.gps;
+        if at(g.window).is_some_and(|t| now >= t + self.config.boot_listen) {
+            if g.surprises > 0 && g.surprise as f32 / 1000.0 > chi_square_point(g.surprises) {
+                g.due = true;
+            }
+            g.window = 0;
+        }
+        if g.window == 0 {
+            g.window = mark(now);
+            g.surprises = 0;
+            g.surprise = 0;
+        }
+        if g.surprises == u8::MAX {
+            return;
+        }
+        g.surprises += 1;
+        let z2 = surprise_db * surprise_db / SURPRISE_VAR_DB2;
+        g.surprise = g.surprise.saturating_add((z2 * 1000.0) as u32);
+    }
+
+    /// A fix came to a relay: a far one keeps its resting GPS on.
+    pub(super) fn gps_after_fix(&mut self) {
+        self.gps.follow = !self.sleepy && self.far();
     }
 
     /// The node turned sleepy, or boots sleepy, or turned anchorless: it
@@ -105,20 +209,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some(next.max(self.gps_allowed_at()))
     }
 
-    /// Start a search that is due, and end one at its limit.
+    /// Start a search that is due, and end one at its limit. A relay's
+    /// search, with its GPS resting, has no back-off.
     pub(super) fn gps_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if !self.sleepy {
+        if !self.sleepy && self.config.relay_gps == RelayGps::Always {
             return;
         }
         if at(self.gps.until).is_some_and(|t| now >= t) {
             self.gps.until = 0;
-            self.gps.failed_at = mark(now);
+            if self.sleepy {
+                self.gps.failed_at = mark(now);
+            }
         }
         if self.gps_anchorless_at().is_some_and(|t| now >= t) {
             self.gps.due = true;
         }
-        if !core::mem::take(&mut self.gps.due) || self.gps.until > 0 || now < self.gps_allowed_at()
-        {
+        let held = self.sleepy && now < self.gps_allowed_at();
+        if !core::mem::take(&mut self.gps.due) || self.gps.until > 0 || held {
+            return;
+        }
+        if !self.sleepy && (self.gps_tracks() || self.motion.map_point) {
             return;
         }
         self.gps.until = mark(now + SEARCH_LIMIT);
@@ -129,7 +239,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the core next needs a wakeup for its searches.
     pub(super) fn gps_wakeup(&self) -> Option<Instant> {
         if !self.sleepy {
-            return None;
+            return at(self.gps.until).filter(|_| self.config.relay_gps != RelayGps::Always);
         }
         match (at(self.gps.until), self.gps_anchorless_at()) {
             (Some(a), Some(b)) => Some(a.min(b)),

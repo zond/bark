@@ -46,6 +46,26 @@ pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 /// the sky (roadmap D80).
 pub const BACKOFF: Duration = Duration::from_secs(8 * 3600);
 
+/// How a relay runs its GPS: a research switch
+/// (`docs/relay-gps-2026-10-26.md`). The spec's is [`RelayGps::Always`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelayGps {
+    /// All the time, on external power and on battery (spec "Beats").
+    #[default]
+    Always,
+    /// All the time on external power; on battery in standby, but for a
+    /// search at boot.
+    Battery,
+    /// All the time on external power; on battery in standby, but for a
+    /// search at boot and when the radio says the node may have moved
+    /// (`node/relay/gps.rs`).
+    Radio,
+    /// As [`RelayGps::Battery`], on external power too.
+    BatteryEverywhere,
+    /// As [`RelayGps::Radio`], on external power too.
+    RadioEverywhere,
+}
+
 /// A sleepy node's mean current with an anchor, µA: the radio's, S4's
 /// figure (spec "Delivery"), which [`BACKOFF`] keeps the GPS within a
 /// tenth of.
