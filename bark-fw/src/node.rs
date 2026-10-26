@@ -13,9 +13,10 @@ use core::mem::MaybeUninit;
 
 use bark_driver::{App, Clock, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position, Stored};
+use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, NodeId, Position, Stored};
 use embassy_time::{Duration, Timer, TICK_HZ};
 
+use crate::battery::Battery;
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
 use crate::store::Flash;
 
@@ -48,17 +49,22 @@ impl Clock for Monotonic {
 /// No application yet (BLE comes later, roadmap D5): nothing to send, and
 /// what the core tells the application goes to the log. The power comes
 /// from USB (`power.rs`); what the core keeps goes to flash (`store.rs`).
-pub struct LogApp {
+pub struct LogApp<'a> {
     flash: Flash,
+    battery: Battery<'a>,
 }
 
-impl App for LogApp {
+impl App for LogApp<'_> {
     async fn ready(&mut self, _offer: bool) {
         crate::power::FOR_CORE.wait().await
     }
 
     fn power(&mut self) -> Option<bool> {
         Some(crate::power::reported())
+    }
+
+    async fn battery(&mut self) -> Option<u16> {
+        Some(self.battery.read().await)
     }
 
     fn take(&mut self, _: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -120,6 +126,11 @@ pub fn config(stored: Option<Stored>) -> Config {
         node_id: node_id(),
         tx_power_dbm: MAX_TX_DBM,
         stored,
+        // The board reads its battery (`battery.rs`). On the bench's USB,
+        // built to report battery (`power.rs`), the reading is the
+        // charger's and never low, so a fixed node would relay for ever:
+        // without levels it is sleepy, as the bench wants.
+        battery: (option_env!("BARK_ON_BATTERY") != Some("1")).then_some(BatteryLevels::DESIGN),
         ..Config::default()
     }
 }
@@ -159,9 +170,16 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 }
 
 /// Run the core forever.
-pub async fn run(core: &'static mut Role, radio: Radio<'_>, flash: Flash, config: &Config) -> ! {
+pub async fn run(
+    core: &'static mut Role,
+    radio: Radio<'_>,
+    flash: Flash,
+    battery: Battery<'_>,
+    config: &Config,
+) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let mut driver = Driver::new(Static(core), radio, Monotonic, LogApp { flash }, dbm);
+    let app = LogApp { flash, battery };
+    let mut driver = Driver::new(Static(core), radio, Monotonic, app, dbm);
     log::info!(
         "node id={:02x?} at {} {} power_dbm={} usb={}",
         config.node_id.0,

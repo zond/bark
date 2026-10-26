@@ -38,11 +38,11 @@
 
 use core::fmt;
 
+use crate::battery::Battery;
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::{Packet, ACK_LEN, BENCH_FIRST, FORMAT, HEARTBEAT_LEN};
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_nrf::saadc::Saadc;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::{Duration, Instant, Timer};
@@ -427,7 +427,7 @@ struct Beacon {
 pub struct Console<'a> {
     radio: Radio<'a>,
     clock: &'a Clock,
-    battery: Saadc<'a, 1>,
+    battery: Battery<'a>,
     home: Channel,
     /// The radio is listening at home. Cleared by an error, so a radio that
     /// cannot get back to listening is not polled for interrupts (an
@@ -451,7 +451,7 @@ impl<'a> Console<'a> {
     pub fn new(
         radio: Radio<'a>,
         clock: &'a Clock,
-        battery: Saadc<'a, 1>,
+        battery: Battery<'a>,
         flash: &'static Flash,
     ) -> Console<'a> {
         Console {
@@ -474,7 +474,6 @@ impl<'a> Console<'a> {
 
     /// Serve commands forever.
     pub async fn run(&mut self, lines: &mut Lines) -> ! {
-        self.battery.calibrate().await;
         self.recover().await;
         log::info!(
             "console ready: ch={} power_dbm={}; `help` lists commands",
@@ -958,10 +957,7 @@ impl<'a> Console<'a> {
     }
 
     async fn status(&mut self, reset: bool) {
-        let mut raw = [0i16; 1];
-        self.battery.sample(&mut raw).await;
-        // board.rs, Battery: mV = raw × 7200 / 4096.
-        let battery_mv = i32::from(raw[0]).max(0) * 7200 / 4096;
+        let battery_mv = self.battery.read().await;
         let c = &self.counters;
         log::info!(
             "status uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \

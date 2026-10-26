@@ -4,11 +4,13 @@
 //! powers up the SX1262 at bark's modulation and runs the protocol core on
 //! it (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
-//! (`console.rs`) on the serial port. Touches no GPS, display or BLE.
+//! (`console.rs`) on the serial port. Reads the battery (`battery.rs`);
+//! touches no GPS, display or BLE.
 
 #![no_std]
 #![no_main]
 
+mod battery;
 mod board;
 mod clock;
 #[cfg(feature = "console")]
@@ -46,6 +48,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    SAADC => embassy_nrf::saadc::InterruptHandler;
 });
 
 /// What the host types: commands for the console, or nothing to the node.
@@ -176,15 +179,12 @@ async fn main(_spawner: Spawner) {
     #[cfg(not(feature = "console"))]
     let clock = clock::Clock::new();
     let irq_deadline = Cell::new(None);
-    #[cfg(feature = "console")]
-    let battery = embassy_nrf::saadc::Saadc::new(
+    let battery = battery::Battery::new(embassy_nrf::saadc::Saadc::new(
         p.SAADC,
         Irqs,
-        embassy_nrf::saadc::Config::default(),
-        [embassy_nrf::saadc::ChannelConfig::single_ended(
-            board.battery.adc,
-        )],
-    );
+        battery::Battery::config(),
+        [battery::Battery::channel(board.battery.adc)],
+    ));
     #[cfg(feature = "console")]
     let mut lines = console::Lines::new();
     #[cfg(not(feature = "console"))]
@@ -214,7 +214,7 @@ async fn main(_spawner: Spawner) {
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
-                node::run(core, radio, flash, &config).await;
+                node::run(core, radio, flash, battery, &config).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.

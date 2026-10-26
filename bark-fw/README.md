@@ -21,10 +21,13 @@ Every board runs the same node. Its role is not a setting: the firmware
 reads whether USB power is present from the nRF52840's VBUS detection
 (Product Specification, POWER, USB supply: `USBREGSTATUS.VBUSDETECT`,
 and the `USBDETECTED` and `USBREMOVED` events) and reports it to the core
-at boot and at every change (`AppCommand::Power`, `src/power.rs`); the core
-is a relay on USB and turns sleepy on battery after its grace (spec
-"Sleepy nodes"). For bench work, `BARK_ON_BATTERY=1` at build time
-reports battery whatever USB says, so that a board on the bench's USB runs
+at boot and at every change (`AppCommand::Power`, `src/power.rs`). On
+battery it reads the cell once a minute between radio operations
+(`AppCommand::Battery`, `src/battery.rs`). The core is a relay on USB; on
+battery a carried one turns sleepy after its grace and a fixed one when
+its battery is low (spec "Sleepy nodes"). For bench work,
+`BARK_ON_BATTERY=1` at build time reports battery whatever USB says and
+leaves the battery levels off, so that a board on the bench's USB runs
 sleepy and still logs (`scripts/measure.md` step 5).
 
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
