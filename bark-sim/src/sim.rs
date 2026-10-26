@@ -2899,14 +2899,14 @@ impl Sim {
         true
     }
 
-    /// `node` sends `f`: if it is a relay that walks and `f` is its
-    /// heartbeat, it takes a GPS fix as it goes, which its core is handed
-    /// next. A sleepy node's fixes come from the searches its core asks
-    /// for (`gps.rs`).
+    /// `node` sends `f`: if it is a relay that walks, its GPS runs, and
+    /// `f` is its heartbeat, it takes a GPS fix as it goes, which its core
+    /// is handed next. A sleepy node's fixes, and a resting relay's, come
+    /// from the searches its core asks for (`gps.rs`).
     fn note_beat_fix(&mut self, node: u32, f: &Frame, scripted: bool) {
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(node));
         let own_fixes = node < self.n_relays && self.gps.relays_every_s > 0.0;
-        if scripted || !walks || own_fixes || self.relays[node as usize].sleepy() {
+        if scripted || !walks || own_fixes || !self.relays[node as usize].gps_tracks() {
             return;
         }
         if let Ok(bark_proto::wire::Packet::Heartbeat(_)) =
@@ -4612,6 +4612,19 @@ mod tests {
         assert_eq!(g.hours[1], 0.0);
         assert!((g.gps_ma[0] - 29.0).abs() < 1e-9, "{g:?}");
         assert!(g.radio_ma > 5.8 && g.radio_ma < 7.0, "{g:?}");
+    }
+
+    /// A relay that rests its GPS (`[protocol] relay_gps`) runs it only in
+    /// its searches: at boot, and when the radio says it may have moved.
+    #[test]
+    fn a_resting_relay_s_gps_is_counted() {
+        let mut sc = block(7, 1800.0);
+        sc.protocol.relay_gps = Some(crate::scenario::RelayGps::RadioEverywhere);
+        let mut sim = Sim::new(&sc).unwrap();
+        sim.run();
+        let g = sim.summary().relay_gps.expect("relays");
+        assert!(g.gps_ma[0] < 1.0, "{g:?}");
+        assert!(g.gps_ma[0] >= bark_proto::gps::GPS_STANDBY_UA as f64 / 1e3);
     }
 
     /// An interferer reaches walkers where they are: one that walks out of

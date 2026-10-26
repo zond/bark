@@ -258,6 +258,9 @@ pub struct RelayGpsSummary {
     pub searches_per_h: f64,
     /// See `searches_per_h`.
     pub found: f64,
+    /// Searches a relay that never walks started, per relay-hour of such
+    /// relays: every one a search for nothing.
+    pub still_searches_per_h: f64,
     /// The radio's mean current of the nodes that were relays all the
     /// time, mA: listening at `sniff::RX_CURRENT_UA`, transmitting at
     /// `sniff::TX_CURRENT_UA`.
@@ -595,6 +598,12 @@ impl Sim {
         };
         let searches = sum(&|m| m.gps.relay_searches[0]);
         let found = sum(&|m| m.gps.relay_searches[1]);
+        let walks = |i: usize| self.walks.as_ref().is_some_and(|w| w.walks(i as u32));
+        let still = nodes.iter().enumerate().filter(|(i, _)| !walks(*i));
+        let (still_searches, still_us) = still.fold((0, 0), |(n, us), (_, m)| {
+            let g = &m.gps;
+            (n + g.relay_searches[0], us + g.relay_us[0] + g.relay_us[1])
+        });
         let full: Vec<f64> = nodes
             .iter()
             .filter(|m| m.gps.relay_us[0] + m.gps.relay_us[1] == window)
@@ -608,6 +617,7 @@ impl Sim {
             gps_ma: [gps_ma(0), gps_ma(1)],
             searches_per_h: searches * 3.6e9 / total,
             found: found / searches.max(1.0),
+            still_searches_per_h: still_searches as f64 * 3.6e9 / (still_us as f64).max(1.0),
             radio_ma: full.iter().sum::<f64>() / full.len().max(1) as f64,
         })
     }
@@ -859,12 +869,13 @@ impl Summary {
         if let Some(g) = &self.relay_gps {
             let _ = writeln!(
                 s,
-                "relays' GPS: on USB {:.3} mA over {:.0} relay-hours, on battery {:.3} mA over {:.1}; {:.3} searches a relay-hour, {:.1} % found a fix; relays' radio {:.3} mA",
+                "relays' GPS: on USB {:.3} mA over {:.0} relay-hours, on battery {:.3} mA over {:.1}; {:.3} searches a relay-hour ({:.3} by relays that do not walk), {:.1} % found a fix; relays' radio {:.3} mA",
                 g.gps_ma[0],
                 g.hours[0],
                 g.gps_ma[1],
                 g.hours[1],
                 g.searches_per_h,
+                g.still_searches_per_h,
                 g.found * 100.0,
                 g.radio_ma
             );

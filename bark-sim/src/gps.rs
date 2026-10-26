@@ -135,6 +135,12 @@ impl Sim {
         if r.acct.map(|(_, b, on)| (b, on)) == state {
             return;
         }
+        let rests = r.acct.is_some_and(|a| a.2) && state.is_some_and(|s| !s.1);
+        if rests && self.hears_sky(node) {
+            // It had its fixes until now: its next start is hot.
+            self.receivers[i].fixed_at = Some(self.now);
+        }
+        let r = &mut self.receivers[i];
         if let Some((since, battery, on)) = r.acct.take() {
             if self.now > self.settle {
                 let us = self.now.since(since.max(self.settle)).as_micros();
