@@ -1,4 +1,6 @@
-//! A sleepy node's GPS searches (`Action::Locate`, `bark_proto::gps`).
+//! A node's GPS: a sleepy node's searches (`Action::Locate`,
+//! `bark_proto::gps`), and a relay's receiver, which runs while its core
+//! says it tracks (`Node::gps_tracks`) and in its searches.
 //!
 //! A search runs from the core's `Locate` until the first fix the driver
 //! hands or the end the core gave. A node under the sky gets its fix after
@@ -7,7 +9,8 @@
 //! the end. Under the sky are the nodes placed outdoors or on a roof, the
 //! walkers while they walk, and of the others indoors the share
 //! `[gps] no_sky` leaves, drawn once per node. The time each search runs
-//! after the settle time is counted, at the receiver's current.
+//! after the settle time is counted, at the receiver's current, and a
+//! relay's time on USB and on battery with the time its receiver ran.
 
 use crate::links::Site;
 use crate::rng::{Purpose, Stream};
@@ -28,6 +31,11 @@ pub(crate) struct Receiver {
     pending: bool,
     /// Whether it hears the sky indoors: drawn at its first search.
     sky_indoors: Option<bool>,
+    /// The search under way is a relay's.
+    relay: bool,
+    /// While the node is a relay: since when, whether on battery, and
+    /// whether the receiver runs.
+    acct: Option<(Instant, bool, bool)>,
 }
 
 impl Sim {
@@ -37,6 +45,7 @@ impl Sim {
         let now = self.now;
         let sky = self.hears_sky(node);
         let settled = now >= self.settle;
+        let relay = !self.relay(node).sleepy();
         let r = &mut self.receivers[node as usize];
         match r.on {
             Some((since, _)) => r.on = Some((since, until)),
@@ -44,8 +53,12 @@ impl Sim {
                 r.on = Some((now, until));
                 r.run += 1;
                 r.pending = false;
-                if settled {
-                    self.metrics.nodes[node as usize].gps.searches += 1;
+                r.relay = relay;
+                let g = &mut self.metrics.nodes[node as usize].gps;
+                match (settled, r.relay) {
+                    (false, _) => {}
+                    (true, false) => g.searches += 1,
+                    (true, true) => g.relay_searches[0] += 1,
                 }
             }
         }
@@ -58,6 +71,7 @@ impl Sim {
             self.push(now + first, Ev::GpsFix(node, run));
         }
         self.push(until, Ev::GpsEnd(node, run));
+        self.gps_account(node);
     }
 
     /// The fix of search `run` comes, if it still runs and has not ended.
@@ -71,9 +85,14 @@ impl Sim {
         }
         if self.fix_now(node) {
             self.receivers[node as usize].fixed_at = Some(self.now);
+            let relay = self.receivers[node as usize].relay;
             self.gps_off(node);
             if self.now >= self.settle {
-                self.metrics.nodes[node as usize].gps.fixes += 1;
+                let g = &mut self.metrics.nodes[node as usize].gps;
+                match relay {
+                    false => g.fixes += 1,
+                    true => g.relay_searches[1] += 1,
+                }
             }
         } else {
             // Refused by the checks: the receiver's next, a second later.
@@ -91,23 +110,69 @@ impl Sim {
 
     /// The search ends now: its time after the settle time is counted.
     pub(crate) fn gps_off(&mut self, node: u32) {
-        let Some((since, _)) = self.receivers[node as usize].on.take() else {
+        let r = &mut self.receivers[node as usize];
+        let Some((since, _)) = r.on.take() else {
             return;
         };
         let us = self.now.since(since.max(self.settle)).as_micros();
-        if self.now > self.settle {
+        if self.now > self.settle && !r.relay {
             self.metrics.nodes[node as usize].gps.on_us += us;
         }
+        self.gps_account(node);
+    }
+
+    /// Count the time `node` was a relay, and its receiver ran, up to
+    /// now, if it was, and note what it is now: a relay or not, on
+    /// battery or not, its receiver on or not.
+    pub(crate) fn gps_account(&mut self, node: u32) {
+        let i = node as usize;
+        let core = self.relay(node);
+        let state = (self.nodes[i].alive && !core.sleepy()).then(|| {
+            let on = core.gps_tracks() || self.receivers[i].on.is_some();
+            (!self.external[i], on)
+        });
+        let r = &mut self.receivers[i];
+        if r.acct.map(|(_, b, on)| (b, on)) == state {
+            return;
+        }
+        if let Some((since, battery, on)) = r.acct.take() {
+            if self.now > self.settle {
+                let us = self.now.since(since.max(self.settle)).as_micros();
+                let g = &mut self.metrics.nodes[i].gps;
+                g.relay_us[usize::from(battery)] += us;
+                if on {
+                    g.relay_on_us[usize::from(battery)] += us;
+                }
+            }
+        }
+        r.acct = state.map(|(battery, on)| (self.now, battery, on));
     }
 
     /// The time `node`'s receiver ran after the settle time, a search
     /// still under way counted to now.
     pub(crate) fn gps_on_us(&self, node: u32) -> u64 {
         let done = self.metrics.nodes[node as usize].gps.on_us;
-        let open = self.receivers[node as usize].on.map_or(0, |(since, _)| {
+        let r = &self.receivers[node as usize];
+        let open = r.on.filter(|_| !r.relay).map_or(0, |(since, _)| {
             self.now.since(since.max(self.settle)).as_micros()
         });
         done + open
+    }
+
+    /// Count `node`'s time as a relay up to now (`gps_account`), as at
+    /// the end of the run.
+    pub(crate) fn gps_flush(&mut self, node: u32) {
+        if let Some((since, battery, on)) = self.receivers[node as usize].acct.as_mut() {
+            if self.now > self.settle {
+                let us = self.now.since((*since).max(self.settle)).as_micros();
+                let g = &mut self.metrics.nodes[node as usize].gps;
+                g.relay_us[usize::from(*battery)] += us;
+                if *on {
+                    g.relay_on_us[usize::from(*battery)] += us;
+                }
+            }
+            *since = self.now;
+        }
     }
 
     /// Whether `node`'s receiver hears the sky where it is now.

@@ -158,15 +158,21 @@ impl RxCounts {
     }
 }
 
-/// A sleepy node's GPS searches after the settle time (`gps.rs`).
+/// A node's GPS after the settle time (`gps.rs`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct GpsCounts {
-    /// Searches started.
+    /// Searches started while sleepy.
     pub searches: u64,
-    /// Searches that found a fix.
+    /// Of those, searches that found a fix.
     pub fixes: u64,
-    /// Time the receiver ran, µs.
+    /// Time the receiver ran in those searches, µs.
     pub on_us: u64,
+    /// Time the node was a relay, on USB and on battery, µs.
+    pub relay_us: [u64; 2],
+    /// Of that time, time its receiver ran, tracking or searching, µs.
+    pub relay_on_us: [u64; 2],
+    /// Searches started while a relay, and those that found a fix.
+    pub relay_searches: [u64; 2],
 }
 
 /// Per-node counters.
@@ -1019,6 +1025,12 @@ pub struct Carried {
     /// Texts queued for a sleepy node at a node while it was carried: none
     /// is, since a carried node owns nothing by position.
     pub queued: u64,
+    /// Every walk begun after the settle time by a walker that was a fixed
+    /// relay when it set off: the node, how long the walk lasted, s (to
+    /// the end of the run if it had not ended), how long after it set off
+    /// it turned carried, if it did in the walk, and whether it was on
+    /// battery.
+    pub relay_walks: Vec<(u32, f64, Option<f64>, bool)>,
 }
 
 /// What the neighbour tables hold (`Research::tables`), sampled once a

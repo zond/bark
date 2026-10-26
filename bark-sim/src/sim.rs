@@ -650,6 +650,10 @@ pub struct Sim {
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
     far_at: HashMap<u32, (Instant, bool)>,
+    /// The walks under way, begun after the settle time, of walkers that
+    /// were fixed relays when they set off: when the walk began, whether
+    /// the node was on battery, and when it turned carried.
+    relay_walks: HashMap<u32, (Instant, bool, Option<Instant>)>,
     /// The sleepy nodes whose carried flag changed since their last
     /// heartbeat for a change.
     carried_flip: std::collections::HashSet<u32>,
@@ -1192,6 +1196,7 @@ impl Sim {
             receivers: vec![Default::default(); n],
             held_far: HashMap::new(),
             far_at: HashMap::new(),
+            relay_walks: HashMap::new(),
             carried_flip: Default::default(),
             changing: HashMap::new(),
             delivered_by: [0; 4],
@@ -1673,8 +1678,11 @@ impl Sim {
         self.run_until(self.end);
         for n in 0..self.node_count() as u32 {
             self.wake(n);
-            // Searches under way count to the end.
+            // Searches under way count to the end, and the relays' time
+            // and walks.
             self.gps_off(n);
+            self.gps_flush(n);
+            self.end_relay_walk(n);
         }
         if let Some(t) = &mut self.tracer {
             t.flush();
@@ -1778,6 +1786,7 @@ impl Sim {
                     self.metrics.sleep.walks[usize::from(walking)] += 1;
                 }
                 self.power_walk(node, walking);
+                self.note_relay_walk(node, walking);
                 self.push(until, Ev::Leg(w));
             }
             Ev::Group(k, dark) => {
@@ -1993,6 +2002,7 @@ impl Sim {
             self.apply(node, a, false);
         }
         self.actions = buf;
+        self.gps_account(node);
         let st = &mut self.nodes[node as usize];
         if st.wake_at != wake {
             st.wake_at = wake;
@@ -2617,8 +2627,37 @@ impl Sim {
         }
     }
 
+    /// A walker set off or stopped: a walk of a fixed relay, begun after
+    /// the settle time, is followed until it ends.
+    fn note_relay_walk(&mut self, node: u32, walking: bool) {
+        if !walking {
+            self.end_relay_walk(node);
+            return;
+        }
+        let r = &self.relays[node as usize];
+        if self.now >= self.settle && self.nodes[node as usize].alive && !r.sleepy() && !r.carried()
+        {
+            let battery = !self.external[node as usize];
+            self.relay_walks.insert(node, (self.now, battery, None));
+        }
+    }
+
+    /// The walk of `node` under way, if followed, ends now.
+    pub(crate) fn end_relay_walk(&mut self, node: u32) {
+        if let Some((from, battery, carried)) = self.relay_walks.remove(&node) {
+            let s = |t: Instant| t.since(from).as_micros() as f64 / 1e6;
+            let walk = (node, s(self.now), carried.map(s), battery);
+            self.carried_metrics().relay_walks.push(walk);
+        }
+    }
+
     /// `relay` turned carried, or fixed again.
     fn note_carried(&mut self, relay: u32, carried: bool) {
+        if let Some((_, _, at)) = self.relay_walks.get_mut(&relay) {
+            if carried {
+                at.get_or_insert(self.now);
+            }
+        }
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(relay));
         let sleepy = self.relays[relay as usize].sleepy();
         if sleepy && !self.carried_flip.remove(&relay) {
@@ -4044,6 +4083,7 @@ impl Sim {
         st.resting = None;
         st.wake_at = None;
         self.wakeups.set(node, None);
+        self.gps_account(node);
         let st = &mut self.nodes[node as usize];
         st.ex_gen = st.ex_gen.wrapping_add(1);
         st.held = None;
@@ -4557,6 +4597,21 @@ mod tests {
             .all(|&(_, _, walks, run, _)| !walks && run >= 72.0));
         assert!(run(1.0, 1.0).is_none());
         assert!(run(0.0, 0.0).is_none());
+    }
+
+    /// A relay's GPS runs all the time: its time as a relay is counted, on
+    /// USB, all of it at the receiver's current.
+    #[test]
+    fn a_relay_s_gps_runs_all_the_time() {
+        let sc = block(7, 900.0);
+        let mut sim = Sim::new(&sc).unwrap();
+        sim.run();
+        let g = sim.summary().relay_gps.expect("relays");
+        let hours = sim.relays() as f64 * (sc.duration_s - sc.settle_s) / 3600.0;
+        assert!((g.hours[0] - hours).abs() < 1e-6 * hours, "{g:?}");
+        assert_eq!(g.hours[1], 0.0);
+        assert!((g.gps_ma[0] - 29.0).abs() < 1e-9, "{g:?}");
+        assert!(g.radio_ma > 5.8 && g.radio_ma < 7.0, "{g:?}");
     }
 
     /// An interferer reaches walkers where they are: one that walks out of

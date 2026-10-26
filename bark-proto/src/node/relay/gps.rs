@@ -57,6 +57,13 @@ fn at(m: u32) -> Option<Instant> {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
+    /// Whether the driver is to run the GPS all the time now: a relay's
+    /// runs all the time, a sleepy node's only in the searches it asks
+    /// for (spec "Beats").
+    pub fn gps_tracks(&self) -> bool {
+        !self.sleepy
+    }
+
     /// The node turned sleepy, or boots sleepy, or turned anchorless: it
     /// searches.
     pub(super) fn gps_due(&mut self) {

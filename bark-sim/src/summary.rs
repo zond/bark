@@ -243,6 +243,27 @@ pub struct SleepSummary {
     pub anchorless: Vec<(u64, f64, u32, u32)>,
 }
 
+/// The GPS of the nodes while they were relays, after the settle time
+/// (`gps.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct RelayGpsSummary {
+    /// Relay-hours on USB and on battery.
+    pub hours: [f64; 2],
+    /// The receiver's mean current over that time, on USB and on
+    /// battery, mA: running at `gps::GPS_CURRENT_UA`, in standby at
+    /// `gps::GPS_STANDBY_UA`.
+    pub gps_ma: [f64; 2],
+    /// Searches a relay started, per relay-hour, and the share that found
+    /// a fix.
+    pub searches_per_h: f64,
+    /// See `searches_per_h`.
+    pub found: f64,
+    /// The radio's mean current of the nodes that were relays all the
+    /// time, mA: listening at `sniff::RX_CURRENT_UA`, transmitting at
+    /// `sniff::TX_CURRENT_UA`.
+    pub radio_ma: f64,
+}
+
 /// Writes of the state a node keeps across a reboot (`Action::Store`)
 /// after the settle time, per node and day, mean and most, and in the
 /// whole run.
@@ -297,6 +318,8 @@ pub struct Summary {
     /// Sleepy nodes, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<SleepSummary>,
+    /// The relays' GPS, if any node was a relay after the settle time.
+    pub relay_gps: Option<RelayGpsSummary>,
     /// Heartbeats at their receivers, after the settle time.
     pub heartbeats: crate::metrics::HeartbeatFates,
     /// The same in the run's first minute (`metrics::BOOT_MINUTE`).
@@ -485,6 +508,7 @@ impl Sim {
                 }
             }),
             sleep: self.sleep_summary(),
+            relay_gps: self.relay_gps_summary(),
             heartbeats: m.heartbeats,
             boot_heartbeats: m.boot_heartbeats,
             boots: self.boot_rows(),
@@ -546,6 +570,46 @@ impl Sim {
             }
         }
         (pairs, same)
+    }
+
+    /// The relays' GPS and radio after the settle time.
+    fn relay_gps_summary(&self) -> Option<RelayGpsSummary> {
+        let window = self
+            .now()
+            .as_micros()
+            .saturating_sub(self.settle.as_micros());
+        let nodes = &self.metrics.nodes;
+        let sum = |f: &dyn Fn(&NodeMetrics) -> u64| nodes.iter().map(f).sum::<u64>() as f64;
+        let relay_us = [sum(&|m| m.gps.relay_us[0]), sum(&|m| m.gps.relay_us[1])];
+        let on_us = [sum(&|m| m.gps.relay_on_us[0]), sum(&|m| m.gps.relay_on_us[1])];
+        let total = relay_us[0] + relay_us[1];
+        if window == 0 || total == 0.0 {
+            return None;
+        }
+        let gps_ma = |b: usize| {
+            if relay_us[b] == 0.0 {
+                return 0.0;
+            }
+            let on = on_us[b] / relay_us[b];
+            (on * GPS_CURRENT_UA as f64 + (1.0 - on) * GPS_STANDBY_UA as f64) / 1e3
+        };
+        let searches = sum(&|m| m.gps.relay_searches[0]);
+        let found = sum(&|m| m.gps.relay_searches[1]);
+        let full: Vec<f64> = nodes
+            .iter()
+            .filter(|m| m.gps.relay_us[0] + m.gps.relay_us[1] == window)
+            .map(|m| {
+                let air = m.settled_airtime_us as f64 / window as f64;
+                ((1.0 - air) * RX_CURRENT_UA as f64 + air * TX_CURRENT_UA as f64) / 1e3
+            })
+            .collect();
+        Some(RelayGpsSummary {
+            hours: [relay_us[0] / 3.6e9, relay_us[1] / 3.6e9],
+            gps_ma: [gps_ma(0), gps_ma(1)],
+            searches_per_h: searches * 3.6e9 / total,
+            found: found / searches.max(1.0),
+            radio_ma: full.iter().sum::<f64>() / full.len().max(1) as f64,
+        })
     }
 
     /// Listening time of the sleepy nodes after the settle time, and what
@@ -792,6 +856,19 @@ impl Summary {
             self.home_moves,
             self.relay_changes
         );
+        if let Some(g) = &self.relay_gps {
+            let _ = writeln!(
+                s,
+                "relays' GPS: on USB {:.3} mA over {:.0} relay-hours, on battery {:.3} mA over {:.1}; {:.3} searches a relay-hour, {:.1} % found a fix; relays' radio {:.3} mA",
+                g.gps_ma[0],
+                g.hours[0],
+                g.gps_ma[1],
+                g.hours[1],
+                g.searches_per_h,
+                g.found * 100.0,
+                g.radio_ma
+            );
+        }
         if let Some(z) = &self.sleep {
             let m = &z.m;
             let share = |x: u64| x as f64 / m.anchored.max(1) as f64;
@@ -953,6 +1030,33 @@ impl Summary {
                 walking(&back),
                 c.anchors_left
             );
+            if !c.relay_walks.is_empty() {
+                let w = &c.relay_walks;
+                let mut after: Vec<f64> = w.iter().filter_map(|x| x.2).collect();
+                after.sort_by(f64::total_cmp);
+                let at = |q: f64| {
+                    let i = ((after.len() as f64 * q).ceil() as usize).saturating_sub(1);
+                    after.get(i).map_or_else(|| "-".into(), |x| format!("{x:.0}"))
+                };
+                let fixed_h = |battery: bool| {
+                    w.iter()
+                        .filter(|x| !battery || x.3)
+                        .map(|x| x.2.unwrap_or(x.1).min(x.1))
+                        .sum::<f64>()
+                        / 3600.0
+                };
+                let _ = writeln!(
+                    s,
+                    "walks of fixed relays: {} ({} on battery); carried within the walk {}, after p50 {} s p90 {} s; walked fixed {:.2} h ({:.2} h on battery)",
+                    w.len(),
+                    w.iter().filter(|x| x.3).count(),
+                    after.len(),
+                    at(0.5),
+                    at(0.9),
+                    fixed_h(false),
+                    fixed_h(true)
+                );
+            }
             for (k, h) in c.held.iter().enumerate() {
                 let _ = writeln!(
                     s,
