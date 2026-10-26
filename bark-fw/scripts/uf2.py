@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Convert the bark-fw ELF into a UF2 for the T-Echo's UF2 bootloader.
+"""Pack bark-fw, and the loader with it, into a UF2 for the T-Echo's UF2 bootloader.
 
-No dependencies beyond Python 3: the ELF program headers are parsed here, so
-neither objcopy nor cargo-binutils is needed.
+No dependencies beyond Python 3: the ELF headers and symbols are parsed
+here, so neither objcopy nor cargo-binutils is needed.
 
+    # a board that already has the loader: the firmware alone
     scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw bark-fw.uf2
-    scripts/uf2.py --check bark-fw.uf2
+    # a board without it, or to replace it: the loader and the firmware
+    scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader \\
+        target/thumbv7em-none-eabihf/release/bark-fw bark.uf2
+    scripts/uf2.py --check bark.uf2
 
 Format: UF2 specification (github.com/microsoft/uf2, README "File format"):
 512-byte blocks, each carrying 256 bytes of payload for one flash address,
 with the family-ID flag set so the bootloader rejects images for other chips.
+The blocks need not be contiguous.
 
 What goes in: every PT_LOAD segment with file contents, placed at its
 physical (load) address. That is the flash image: .vector_table, .text,
@@ -17,15 +22,19 @@ physical (load) address. That is the flash image: .vector_table, .text,
 whose load address follows .rodata in flash). Gaps between segments are
 filled with 0xFF, the erased-flash value (nRF52840 Product Specification,
 NVMC chapter), so they are written as if untouched.
+
+The regions come from the symbols the linker scripts define, which
+bark-image/src/layout.rs writes. Every UF2 also writes the loader's state
+page and the staged image's record as erased, so that a copied firmware
+always boots as it is: no swap asked for before the copy takes place over it.
 """
+
+from __future__ import annotations
 
 import argparse
 import struct
 import sys
 
-# Application window under the stock bootloader (memory.x, roadmap D6).
-APP_START = 0x26000
-APP_END = 0xF4000
 # Family ID the bootloader accepts for nRF52840 images (its INFO_UF2.TXT
 # and the UF2 specification's family list, "nRF52840").
 FAMILY_NRF52840 = 0xADA52840
@@ -39,15 +48,26 @@ UF2_PAYLOAD = 256  # bytes of data per block, the size every bootloader accepts
 UF2_DATA_FIELD = 476  # bytes reserved for data in each block
 
 PT_LOAD = 1
+SHT_SYMTAB = 2
 FLASH_ERASED = 0xFF
 
+# What the board's bootloader lets a UF2 write: from where it jumps to
+# below itself (bark-image/src/layout.rs, APPLICATION_START and
+# BOOTLOADER_START).
+WINDOW_START = 0x26000
+WINDOW_END = 0xF4000
 
-def load_segments(elf: bytes) -> list[tuple[int, bytes]]:
-    """Return (load address, bytes) for each PT_LOAD segment with file data."""
+
+def check_elf(elf: bytes) -> None:
     if elf[:4] != b"\x7fELF":
         sys.exit("not an ELF file")
     if elf[4] != 1 or elf[5] != 1:
         sys.exit("expected a 32-bit little-endian ELF (thumbv7em)")
+
+
+def load_segments(elf: bytes) -> list[tuple[int, bytes]]:
+    """Return (load address, bytes) for each PT_LOAD segment with file data."""
+    check_elf(elf)
     (e_phoff,) = struct.unpack_from("<I", elf, 0x1C)
     e_phentsize, e_phnum = struct.unpack_from("<HH", elf, 0x2A)
     segments = []
@@ -60,46 +80,102 @@ def load_segments(elf: bytes) -> list[tuple[int, bytes]]:
     return sorted(segments)
 
 
-def flash_image(segments: list[tuple[int, bytes]]) -> tuple[int, bytes]:
-    """Lay the segments into one contiguous image; check it fits the app window."""
+def symbols(elf: bytes) -> dict[str, int]:
+    """Every symbol's name and value, from the ELF's symbol table."""
+    check_elf(elf)
+    (e_shoff,) = struct.unpack_from("<I", elf, 0x20)
+    e_shentsize, e_shnum = struct.unpack_from("<HH", elf, 0x2E)
+    sections = [struct.unpack_from("<10I", elf, e_shoff + i * e_shentsize) for i in range(e_shnum)]
+    found = {}
+    for sh in sections:
+        _name, sh_type, _flags, _addr, offset, size, link, _info, _align, entsize = sh
+        if sh_type != SHT_SYMTAB:
+            continue
+        strtab = sections[link]
+        str_off = strtab[4]
+        for at in range(offset, offset + size, entsize):
+            st_name, st_value = struct.unpack_from("<II", elf, at)
+            end = elf.index(b"\0", str_off + st_name)
+            found[elf[str_off + st_name : end].decode()] = st_value
+    return found
+
+
+def region(syms: dict[str, int], name: str) -> tuple[int, int]:
+    try:
+        return syms[f"{name}_start"], syms[f"{name}_end"]
+    except KeyError:
+        sys.exit(f"the ELF has no {name}_start/_end: built before bark-image wrote its memory.x?")
+
+
+def flash_image(segments: list[tuple[int, bytes]], start: int, end: int, what: str) -> bytes:
+    """Lay the segments into one contiguous image; check it fills its region from the start."""
     if not segments:
-        sys.exit("ELF has no loadable segments")
-    start = segments[0][0]
-    end = max(addr + len(data) for addr, data in segments)
-    if start != APP_START:
-        sys.exit(f"image starts at {start:#x}, expected {APP_START:#x} (check memory.x)")
-    if end > APP_END:
-        sys.exit(f"image ends at {end:#x}, past the application window end {APP_END:#x}")
-    image = bytearray([FLASH_ERASED]) * (end - start)
-    previous_end = start
+        sys.exit(f"{what}: the ELF has no loadable segments")
+    first = segments[0][0]
+    last = max(addr + len(data) for addr, data in segments)
+    if first != start:
+        sys.exit(f"{what} starts at {first:#x}, expected {start:#x}")
+    if last > end:
+        sys.exit(f"{what} ends at {last:#x}, past its region's end {end:#x}")
+    image = bytearray([FLASH_ERASED]) * (last - first)
+    previous_end = first
     for addr, data in segments:
         if addr < previous_end:
-            sys.exit(f"segments overlap at {addr:#x}")
-        image[addr - start : addr - start + len(data)] = data
+            sys.exit(f"{what}: segments overlap at {addr:#x}")
+        image[addr - first : addr - first + len(data)] = data
         previous_end = addr + len(data)
-    return start, bytes(image)
+    return bytes(image)
 
 
-def to_uf2(base: int, image: bytes) -> bytes:
-    num_blocks = (len(image) + UF2_PAYLOAD - 1) // UF2_PAYLOAD
+def blocks(base: int, image: bytes) -> list[tuple[int, bytes]]:
+    """(address, 256 bytes) for each UF2 payload of `image` at `base`."""
+    out = []
+    for at in range(0, len(image), UF2_PAYLOAD):
+        chunk = image[at : at + UF2_PAYLOAD]
+        out.append((base + at, chunk + bytes([FLASH_ERASED]) * (UF2_PAYLOAD - len(chunk))))
+    return out
+
+
+def to_uf2(payloads: list[tuple[int, bytes]]) -> bytes:
     out = bytearray()
-    for n in range(num_blocks):
-        chunk = image[n * UF2_PAYLOAD : (n + 1) * UF2_PAYLOAD]
-        chunk = chunk + bytes([FLASH_ERASED]) * (UF2_PAYLOAD - len(chunk))
+    total = len(payloads)
+    for n, (addr, chunk) in enumerate(payloads):
         header = struct.pack(
             "<8I",
             UF2_MAGIC_START0,
             UF2_MAGIC_START1,
             UF2_FLAG_FAMILY_ID_PRESENT,
-            base + n * UF2_PAYLOAD,
+            addr,
             UF2_PAYLOAD,
             n,
-            num_blocks,
+            total,
             FAMILY_NRF52840,
         )
-        data = chunk + bytes(UF2_DATA_FIELD - UF2_PAYLOAD)
-        out += header + data + struct.pack("<I", UF2_MAGIC_END)
+        out += header + chunk + bytes(UF2_DATA_FIELD - UF2_PAYLOAD) + struct.pack("<I", UF2_MAGIC_END)
     return bytes(out)
+
+
+def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
+    """The UF2, and a line for each region it writes."""
+    syms = symbols(firmware_elf)
+    payloads = []
+    lines = []
+    if loader_elf is not None:
+        start, end = region(syms, "__bark_loader")
+        if region(symbols(loader_elf), "__bark_loader") != (start, end):
+            sys.exit("the loader and the firmware were built from different layouts")
+        loader = flash_image(load_segments(loader_elf), start, end, "loader")
+        payloads += blocks(start, loader)
+        lines.append(f"loader:   {len(loader)} bytes at {start:#x}")
+    for name, what in (("__bootloader_state", "state"), ("__bark_record", "record")):
+        start, end = region(syms, name)
+        payloads += blocks(start, bytes([FLASH_ERASED]) * (end - start))
+        lines.append(f"{what + ':':<9} {end - start} bytes at {start:#x}, erased")
+    start, end = region(syms, "__bootloader_active")
+    firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
+    payloads += blocks(start, firmware)
+    lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
+    return to_uf2(sorted(payloads)), lines
 
 
 def check(uf2: bytes) -> int:
@@ -107,9 +183,9 @@ def check(uf2: bytes) -> int:
     errors = []
     if len(uf2) % UF2_BLOCK:
         errors.append(f"size {len(uf2)} is not a multiple of {UF2_BLOCK}")
-    blocks = len(uf2) // UF2_BLOCK
+    count = len(uf2) // UF2_BLOCK
     addresses = []
-    for n in range(blocks):
+    for n in range(count):
         block = uf2[n * UF2_BLOCK : (n + 1) * UF2_BLOCK]
         m0, m1, flags, addr, size, no, total, family = struct.unpack_from("<8I", block)
         (mend,) = struct.unpack_from("<I", block, UF2_BLOCK - 4)
@@ -119,18 +195,24 @@ def check(uf2: bytes) -> int:
             errors.append(f"block {n}: family {family:#x} flags {flags:#x}")
         if size != UF2_PAYLOAD:
             errors.append(f"block {n}: payload {size}")
-        if no != n or total != blocks:
+        if no != n or total != count:
             errors.append(f"block {n}: numbered {no}/{total}")
-        if not (APP_START <= addr and addr + size <= APP_END):
-            errors.append(f"block {n}: address {addr:#x} outside application window")
+        if not (WINDOW_START <= addr and addr + size <= WINDOW_END):
+            errors.append(f"block {n}: address {addr:#x} outside {WINDOW_START:#x}..{WINDOW_END:#x}")
+        if addresses and addr <= addresses[-1]:
+            errors.append(f"block {n}: address {addr:#x} not above the one before")
         addresses.append(addr)
-    contiguous = all(b - a == UF2_PAYLOAD for a, b in zip(addresses, addresses[1:]))
-    print(f"blocks:        {blocks}")
-    print(f"first address: {addresses[0]:#x}" if addresses else "first address: -")
-    print(f"last address:  {addresses[-1]:#x}" if addresses else "last address:  -")
-    print(f"payload bytes: {blocks * UF2_PAYLOAD}")
+    runs = []
+    for addr in addresses:
+        if runs and addr == runs[-1][1]:
+            runs[-1][1] = addr + UF2_PAYLOAD
+        else:
+            runs.append([addr, addr + UF2_PAYLOAD])
+    print(f"blocks:        {count}")
+    print(f"payload bytes: {count * UF2_PAYLOAD}")
     print(f"family:        {FAMILY_NRF52840:#x}")
-    print(f"contiguous:    {contiguous}")
+    for start, end in runs:
+        print(f"range:         {start:#x}..{end:#x} ({end - start} bytes)")
     for e in errors[:20]:
         print("ERROR:", e)
     print("OK" if not errors else f"{len(errors)} error(s)")
@@ -140,7 +222,8 @@ def check(uf2: bytes) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="validate an existing UF2 instead")
-    ap.add_argument("input", help="ELF to convert, or UF2 with --check")
+    ap.add_argument("--loader", help="the loader's ELF, to put in front of the firmware")
+    ap.add_argument("input", help="the firmware's ELF, or a UF2 with --check")
     ap.add_argument("output", nargs="?", help="UF2 to write")
     args = ap.parse_args()
     with open(args.input, "rb") as f:
@@ -149,11 +232,16 @@ def main() -> int:
         return check(data)
     if not args.output:
         ap.error("output path required")
-    base, image = flash_image(load_segments(data))
-    uf2 = to_uf2(base, image)
+    loader = None
+    if args.loader:
+        with open(args.loader, "rb") as f:
+            loader = f.read()
+    uf2, lines = pack(data, loader)
     with open(args.output, "wb") as f:
         f.write(uf2)
-    print(f"{args.output}: {len(image)} bytes at {base:#x}, {len(uf2) // UF2_BLOCK} blocks")
+    for line in lines:
+        print(line)
+    print(f"{args.output}: {len(uf2) // UF2_BLOCK} blocks")
     return 0
 
 

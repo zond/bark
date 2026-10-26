@@ -86,6 +86,7 @@
 
 mod delivery;
 mod forward;
+mod gps;
 mod motion;
 mod power;
 
@@ -307,15 +308,13 @@ pub type SleepyNode = Node<0, 0>;
 #[repr(C)]
 pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
+    /// Since when a relay has been on battery, while its grace lasts;
+    /// once it is leaving, since when it has been leaving.
+    unplugged: Option<Instant>,
     /// Sleepy: on battery (`relay/power.rs`).
     sleepy: bool,
-    /// Since when a relay has been on battery, while its grace lasts.
-    unplugged: Option<Instant>,
     /// Its grace is over: it flushes, and then turns sleepy.
     leaving: bool,
-    /// When a relay leaving turns sleepy whatever its flush has done
-    /// (`relay/power.rs`).
-    flush_by: Instant,
     /// Its battery read at or below the low level since it last read at
     /// or above the high one, or since its external power (`relay/power.rs`).
     low: bool,
@@ -332,6 +331,8 @@ pub struct Node<const H: usize, const Q: usize> {
     anchor: Option<Anchor>,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
+    /// A sleepy node's searches for a fix (`relay/gps.rs`).
+    gps: gps::Gps,
     mover: Mover,
     replies: Replies,
     radio: Radio<Job>,
@@ -435,7 +436,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy: !Self::can_relay(),
             unplugged: None,
             leaving: false,
-            flush_by: Instant::ZERO,
             low: false,
             battery_sleepy: false,
             boot_from: Instant::ZERO,
@@ -473,7 +473,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             anchor: None,
-            motion: Motion::fixed(config.position),
+            motion: Motion::at_boot(&config),
+            gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             delivery_retry_at: Instant::ZERO,
@@ -542,9 +543,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy,
             unplugged,
             leaving,
-            flush_by,
             low,
             battery_sleepy,
+
             boot_from,
             radio,
             busy,
@@ -561,6 +562,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             heard,
             anchor,
             motion,
+            gps,
             delivery,
             delivered,
             delivery_retry_at,
@@ -595,7 +597,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *sleepy = !Self::can_relay();
         *unplugged = None;
         *leaving = false;
-        *flush_by = Instant::ZERO;
         *low = false;
         *battery_sleepy = false;
         *boot_from = Instant::ZERO;
@@ -630,7 +631,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *anchor = None;
-        *motion = Motion::fixed(config.position);
+        *motion = Motion::at_boot(&config);
+        *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *delivery_retry_at = Instant::ZERO;
@@ -1038,6 +1040,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
         self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
+        if self.sleepy {
+            self.gps_due();
+        }
         emit(Action::Listen(self.home));
         emit(Action::App(AppEvent::Boot {
             relays: 0,
@@ -1060,6 +1065,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             },
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
+            map_point: kept.map_or(self.motion.map_point, |s| s.map_point),
             anchor: self.anchor.filter(|_| self.sleepy && !carried),
             // Kept only where it is read (`relay/power.rs`), so that a node
             // without battery levels writes no more than before.
@@ -1099,6 +1105,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.retune(home, emit);
             }
             if !self.reconsider_anchor(now, emit) {
+                self.gps_due();
                 // At a random time within a beat period, so that nodes that
                 // boot together do not beat together.
                 self.beacon.next_at =
@@ -1307,6 +1314,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.beacon.next_at = now;
         self.beacon.quick = 1;
         self.anchored();
+        self.gps_anchor();
     }
 
     /// The anchor was chosen or confirmed: a node that sleeps keeps it
@@ -1324,11 +1332,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .pin(self.anchor.filter(|_| keep).map(|a| a.id));
     }
 
+    /// The fix asked for at a new anchor came: the node chose from there
+    /// (`relay/gps.rs`).
+    fn anchored_at_fix(&mut self) {
+        self.chosen_from = self.config.position;
+        self.reach_m = self.anchor.map_or(0.0, |a| {
+            self.plane.point(a.position).distance_m(Default::default())
+        });
+    }
+
     /// Give up an anchor that turned carried, with no other to take: the
     /// node is anchorless (spec "Sleepy nodes alone") and beats at once.
     fn leave_anchor(&mut self, now: Instant) {
         self.anchor = None;
         self.anchored();
+        self.gps_due();
         self.beacon.next_at = now;
         self.beacon.quick = 0;
     }
@@ -1608,6 +1626,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             anchorless,
             carried: self.motion.carried,
             home: self.home,
+            format: crate::wire::FORMAT,
+            map_point: self.motion.map_point,
             id: self.id,
             short: self.config.position.short(),
         };
@@ -1960,7 +1980,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Battery { millivolts } => self.battery(millivolts),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
-                    AppCommand::Fix { .. } => self.fix(position, now, emit),
+                    AppCommand::Fix { .. } => {
+                        self.gps_fixed();
+                        self.fix(position, now, emit)
+                    }
                     _ => {
                         // A sleepy node's position is no news, but a
                         // change of its carried flag is.
@@ -1971,6 +1994,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }
                 };
                 if !took || !self.sleepy {
+                    return;
+                }
+                if core::mem::take(&mut self.gps.at_choice) {
+                    // Where it chose from (`relay/gps.rs`).
+                    self.anchored_at_fix();
                     return;
                 }
                 let moved = self
@@ -2061,6 +2089,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.timers(now, emit);
         self.power_timers(now, emit);
+        self.gps_timers(now, emit);
         self.forward_timers(now, emit);
         self.delivery_timers(now);
         self.pump(now, emit);
@@ -2101,8 +2130,11 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         if let Some(t) = self.grace_ends() {
             at(t);
         }
-        if self.leaving {
-            at(self.flush_by);
+        if let Some(t) = self.flush_ends() {
+            at(t);
+        }
+        if let Some(t) = self.gps_wakeup() {
+            at(t);
         }
         if let Some(t) = self.window_ends {
             at(t);
@@ -2173,7 +2205,7 @@ mod tests {
         std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
         assert!(relay <= tables + 1024 + kept, "{relay}");
         // It fits the board's RAM: 255 KiB for the application
-        // (bark-fw/memory.x), less the BLE controller's buffer, under 5 KiB
+        // (bark-image/src/layout.rs), less the BLE controller's buffer, under 5 KiB
         // (docs/implementation-research-2026-10-14.md), and Embassy and the
         // stacks, about 16 KiB (spec "Implementation notes").
         let ram = (255 - 5 - 16) * 1024;
@@ -2233,6 +2265,8 @@ mod tests {
             anchorless: false,
             carried: false,
             home: r.home(),
+            format: crate::wire::FORMAT,
+            map_point: false,
             id: other,
             short: config.position.short(),
         };
@@ -2365,6 +2399,8 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(4).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
                 id: anchor,
                 short: config.position.short(),
             };
@@ -3020,6 +3056,8 @@ mod tests {
             anchorless: false,
             carried: false,
             home: b_home,
+            format: crate::wire::FORMAT,
+            map_point: false,
             id: id_of(b),
             short: b.short(),
         };
@@ -3154,6 +3192,8 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
             id: id_of(d_pos),
             short: d_pos.short(),
         };
@@ -3282,6 +3322,8 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
                 id: id_of(d_pos),
                 short: d_pos.short(),
             }),
@@ -3366,6 +3408,8 @@ mod tests {
                 anchorless: false,
                 carried: false,
                 home: Channel::new(5).unwrap(),
+                format: crate::wire::FORMAT,
+                map_point: false,
                 id: id_of(at),
                 short: at.short(),
             };

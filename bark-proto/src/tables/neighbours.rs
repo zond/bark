@@ -139,6 +139,13 @@ pub struct Neighbour {
     pub local: Point,
     /// Its home channel, where to transmit to it.
     pub home: Channel,
+    /// The newest wire format it speaks, from its last heartbeat (spec
+    /// "Neighbour table"); shown to a person, used by no rule while
+    /// format 1 is the only one.
+    pub format: u8,
+    /// Whether its position is a map point a person set, by its last
+    /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
+    pub map_point: bool,
     /// When its last heartbeat was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
@@ -150,11 +157,11 @@ pub struct Neighbour {
     pub rssi: f32,
     /// Consecutive failed hand-overs to it.
     pub fail_count: u8,
-    /// Whether it is sleepy (heartbeat 0x9 or 0xB): it receives
+    /// Whether it is sleepy (the heartbeat's sleepy flag): it receives
     /// duty-cycled between its windows, and is sent to with the long
     /// preamble.
     pub sleepy: bool,
-    /// Whether its last heartbeat had the anchorless flag (0xA, 0xB): it
+    /// Whether its last heartbeat had the anchorless flag: it
     /// knows no node that holds mail, and a relay that hears it answers
     /// ([`Neighbours::answer_due`]). A sleepy one is in anchorless mode
     /// ([`Neighbour::alone`]).
@@ -185,7 +192,7 @@ impl Neighbour {
         self.sleepy && !self.anchorless
     }
 
-    /// Whether it is a sleepy node without an anchor (heartbeat 0xB): no
+    /// Whether it is a sleepy node without an anchor (sleepy and anchorless): no
     /// anchor for a sleepy node, and a next hop like any other.
     pub fn alone(&self) -> bool {
         self.sleepy && self.anchorless
@@ -434,6 +441,8 @@ impl Neighbours {
                     n.local = plane.point(position);
                 }
                 n.home = hb.home;
+                n.format = hb.format;
+                n.map_point = hb.map_point;
                 n.sleepy = hb.sleepy;
                 n.carried = hb.carried;
                 let anchorless = hb.anchorless && hb.sleepy;
@@ -462,6 +471,8 @@ impl Neighbours {
             position,
             local: plane.point(position),
             home: hb.home,
+            format: hb.format,
+            map_point: hb.map_point,
             last_heard: now,
             demoted_at: Instant::ZERO,
             banned_until: Instant::ZERO,
@@ -684,6 +695,8 @@ mod tests {
             anchorless: false,
             carried: false,
             home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
             id: id(i),
             short: pos(i).short(),
         };

@@ -184,14 +184,14 @@ mod tests {
         assert_eq!(SNIFF_SLEEP.as_micros(), 349_125);
         assert_eq!(SNIFF_CYCLE.as_micros(), 361_125);
         assert_eq!(LONG_PREAMBLE_SYMBOLS, 1396);
-        // 357.4 ms of preamble; a heartbeat 367.4 ms, a full frame 492.9 ms.
+        // 357.4 ms of preamble; a heartbeat 368.7 ms, a full frame 492.9 ms.
         assert_eq!(
             SYMBOL_TIME.mul(LONG_PREAMBLE_SYMBOLS as u64).as_micros(),
             357_376
         );
         assert_eq!(
             time_on_air(crate::wire::HEARTBEAT_LEN as u8, LONG_PREAMBLE_SYMBOLS).as_micros(),
-            367_424
+            368_704
         );
         assert_eq!(time_on_air(255, LONG_PREAMBLE_SYMBOLS).as_micros(), 492_864);
         // 0.194 mA: 30 times less than listening.

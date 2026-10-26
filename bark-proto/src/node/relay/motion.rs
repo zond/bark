@@ -26,12 +26,16 @@ use crate::event::{Action, Trace};
 use crate::node::{CARRY_AFTER, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::time::Instant;
+use crate::Config;
 
 /// Whether a node is fixed or carried, and the fixes that decide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Motion {
     /// It moves: it takes each fix and holds mail for nobody.
     pub(super) carried: bool,
+    /// Its position is a map point the application set, and no fix has
+    /// replaced it since (spec "Position").
+    pub(super) map_point: bool,
     /// Fixed: since when its fixes have been far, with none near since.
     far_since: Option<Instant>,
     /// The place its fixes are compared with, and, carried, since when
@@ -45,6 +49,7 @@ impl Motion {
     pub(super) const fn fixed(at: Position) -> Motion {
         Motion {
             carried: false,
+            map_point: false,
             far_since: None,
             still_at: at,
             still_since: Instant::ZERO,
@@ -53,10 +58,23 @@ impl Motion {
 }
 
 impl Motion {
+    /// Fixed where `config` puts it after a boot, on the map point it
+    /// stood on before, if it did.
+    pub(super) const fn at_boot(config: &Config) -> Motion {
+        Motion {
+            map_point: match config.stored {
+                Some(s) => s.map_point && !s.carried,
+                None => false,
+            },
+            ..Motion::fixed(config.position)
+        }
+    }
+
     /// Carried at `at`, still there since `now`.
     pub(super) const fn carried(at: Position, now: Instant) -> Motion {
         Motion {
             carried: true,
+            map_point: false,
             far_since: None,
             still_at: at,
             still_since: now,
@@ -87,7 +105,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn map_point(&mut self, position: Position) -> bool {
         let was = self.motion.carried;
         self.set_position(position);
-        self.motion = Motion::fixed(position);
+        self.motion = Motion {
+            map_point: true,
+            ..Motion::fixed(position)
+        };
         was
     }
 
@@ -98,6 +119,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let takes = self.sleepy || self.motion.carried;
         if takes {
             self.set_position(at);
+            self.motion.map_point = false;
         }
         if self.motion.carried {
             let still = &mut self.motion;
@@ -139,7 +161,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// where it is now, which it keeps as a relay.
     pub(super) fn fixed_here(&mut self) {
         if !self.motion.carried {
-            self.motion = Motion::fixed(self.config.position);
+            self.motion = Motion {
+                map_point: self.motion.map_point,
+                ..Motion::fixed(self.config.position)
+            };
         }
     }
 }

@@ -4,8 +4,8 @@
 //! **Regular room.** A relay takes a packet into it only if the airtime of
 //! everything queued, that packet included, fits in its duty bucket as it
 //! stands (spec "Receiving DATA", roadmap D29). Its length follows: the bucket's depth,
-//! 6 s, over the time of one full frame and its ACK, `138.56 + 15.68 =
-//! 154.24 ms`: ⌈38.9⌉ = 39. Each packet taken also costs the ACK that
+//! 6 s, over the time of one full frame and its ACK, `138.56 + 16.96 =
+//! 155.52 ms`: ⌈38.6⌉ = 39. Each packet taken also costs the ACK that
 //! takes it, so from a full bucket with the reply reserve left in at most
 //! 37 full frames fit, and for full frames the bucket binds first. Short
 //! frames fill the 39 places first: 39 hand-overs of them still go out

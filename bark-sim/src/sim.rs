@@ -75,6 +75,10 @@ pub(crate) enum Ev {
     Group(u32, bool),
     /// A relay with a GPS fault takes a fix (node).
     Gps(u32),
+    /// A sleepy node's search finds its fix (node, search; `gps.rs`).
+    GpsFix(u32, u32),
+    /// A sleepy node's search reaches its end (node, search).
+    GpsEnd(u32, u32),
     /// A node whose power switches at random changes it (node).
     Power(u32),
     /// The grid's outage begins, `false`, or ends (`battery.rs`).
@@ -225,7 +229,7 @@ impl NodeState {
 
 /// The last few heartbeats to reach a node: when each was on the air, its
 /// channel, and whether a sleepy node sent it. A frame lasts at most a full
-/// frame's 139 ms and a heartbeat 13.12 ms, so eight cover what a frame can
+/// frame's 139 ms and a heartbeat 14.40 ms, so eight cover what a frame can
 /// overlap at any heartbeat rate a node hears.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BeatRing {
@@ -633,10 +637,12 @@ pub struct Sim {
     /// Per node, its GPS fault: from when, how, and in which direction;
     /// whether fixes are checked.
     gps_fault: Vec<Option<(Instant, crate::scenario::FaultKind, f64, Xy)>>,
-    gps: crate::scenario::Gps,
+    pub(crate) gps: crate::scenario::Gps,
     /// Per node that is not sleepy, with `[gps] error_m`, the error of its
     /// fixes, when it was last drawn, and the stream it is drawn from.
     gps_error: Vec<(Xy, Instant, Stream)>,
+    /// Per node, its GPS receiver's searches (`gps.rs`).
+    pub(crate) receivers: Vec<crate::gps::Receiver>,
     /// The texts held at a first far fix after the settle time (roadmap
     /// D70): whether their holder had turned fixed again before, and how
     /// it delivered them, an index of `metrics::Carried::held`.
@@ -1178,6 +1184,7 @@ impl Sim {
             gps_fault: vec![None; n],
             gps: sc.gps.clone(),
             gps_error: Vec::new(),
+            receivers: vec![Default::default(); n],
             held_far: HashMap::new(),
             far_at: HashMap::new(),
             carried_flip: Default::default(),
@@ -1661,6 +1668,8 @@ impl Sim {
         self.run_until(self.end);
         for n in 0..self.node_count() as u32 {
             self.wake(n);
+            // Searches under way count to the end.
+            self.gps_off(n);
         }
         if let Some(t) = &mut self.tracer {
             t.flush();
@@ -1779,6 +1788,8 @@ impl Sim {
                 }
             }
             Ev::Fix(n) => self.fix(n),
+            Ev::GpsFix(n, run) => self.gps_fix(n, run),
+            Ev::GpsEnd(n, run) => self.gps_end(n, run),
             Ev::Power(n) => self.power_toggle(n),
             Ev::Grid(on) => self.grid(on),
             Ev::Battery => self.battery_tick(),
@@ -2390,6 +2401,7 @@ impl Sim {
         };
         match a {
             Action::Sniff(until) => self.sniff(node, true_time(until)),
+            Action::Locate(until) => self.locate(node, true_time(until)),
             Action::Listen(c) => self.listen(node, c),
             Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
@@ -2779,8 +2791,13 @@ impl Sim {
     /// over. The check of the satellites' C/N0 cannot be modelled: the
     /// simulator has no satellites.
     fn fix(&mut self, n: u32) {
+        self.fix_now(n);
+    }
+
+    /// As [`Sim::fix`]; returns whether the core was handed the fix.
+    pub(crate) fn fix_now(&mut self, n: u32) -> bool {
         if !self.nodes[n as usize].alive {
-            return;
+            return false;
         }
         let mut at = self.place(n);
         let fault = self.gps_fault[n as usize].filter(|f| self.now >= f.0);
@@ -2826,7 +2843,7 @@ impl Sim {
                 if fault.is_some() {
                     self.metrics.research.fixes[k][1] += 1;
                 }
-                return;
+                return false;
             }
         }
         if fault.is_some() {
@@ -2835,16 +2852,17 @@ impl Sim {
         self.fixing = true;
         self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
+        true
     }
 
-    /// `node` sends `f`: if it walks, or its GPS has a fault, and `f` is
-    /// its beat, it takes a GPS fix as it goes (spec "Beats"), which its
-    /// core is handed next.
+    /// `node` sends `f`: if it is a relay that walks and `f` is its
+    /// heartbeat, it takes a GPS fix as it goes, which its core is handed
+    /// next. A sleepy node's fixes come from the searches its core asks
+    /// for (`gps.rs`).
     fn note_beat_fix(&mut self, node: u32, f: &Frame, scripted: bool) {
         let walks = self.walks.as_ref().is_some_and(|w| w.walks(node));
-        let faulty = node >= self.n_relays && self.gps_fault[node as usize].is_some();
         let own_fixes = node < self.n_relays && self.gps.relays_every_s > 0.0;
-        if scripted || !(walks || faulty) || own_fixes {
+        if scripted || !walks || own_fixes || self.relays[node as usize].sleepy() {
             return;
         }
         if let Ok(bark_proto::wire::Packet::Heartbeat(_)) =
@@ -3847,8 +3865,11 @@ impl Sim {
             ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
             ScriptAction::Rssi => self.apply(node, Action::Rssi(channel.expect("validated")), true),
             ScriptAction::Transmit => {
+                // A test signal no node takes for a packet: a bench
+                // frame's first byte, then the event's number.
                 let mut bytes = [0u8; MAX_FRAME];
-                bytes[..4].copy_from_slice(&k.to_le_bytes());
+                bytes[0] = bark_proto::wire::BENCH_FIRST;
+                bytes[1..5].copy_from_slice(&k.to_le_bytes());
                 let f = Frame {
                     channel: channel.expect("validated"),
                     preamble_symbols: preamble,

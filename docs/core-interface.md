@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; `AppCommand::Battery` and the stored relay flag (§4, §5), 2026-10-25, proposed in `docs/battery-role-2026-10-25.md`. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery` and the stored relay flag (§4, §5), 2026-10-25, proposed in `docs/battery-role-2026-10-25.md`. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -108,12 +108,12 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::Fix`, `AppCommand::Power` and `AppCommand::Battery`, the events `AppEvent::Message`,
-`AppEvent::GivenBack` and `AppEvent::Boot`, and the store, `Action::Store` and
-`Config::stored`.
+`AppCommand::Fix`, `AppCommand::Power` and `AppCommand::Battery`, the events
+`AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
+`Action::Store` and `Config::stored`, and the GPS request `Action::Locate`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 226 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -148,6 +148,11 @@ and none while a map point is set. Every node, sleepy or not, decides from the f
 whether it is carried; a sleepy or carried node takes each fix, and one that is neither
 keeps its position (roadmap D70, D72). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
+
+`Action::Locate(until)` asks the driver to run the GPS until `until` and hand the first
+fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end.
+Only a sleepy node asks, at the events spec "Beats" names; a relay's GPS runs all the
+time (roadmap D80).
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power
@@ -193,11 +198,12 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | not yet: the SAADC on AIN2 behind the board's 2:1 divider (`bark-fw/src/board.rs`) |
-| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `memory.x`) |
+| GPS (§4) | `Action::Locate` starts a search; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky` (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
+| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-24 (roadmap D75), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
@@ -205,37 +211,42 @@ test in `tables/mod.rs`:
 | Neighbours (spec "Neighbour table") | 64 × 72 B | 4.5 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 1648 × 40 B | 64.4 KiB |
+| Message records (spec "Message records") | 1571 × 40 B | 61.4 KiB |
 | Send queue (spec "Send queue") | (39 + 254) × 280 B | 80.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
-| Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 348 B | 0.4 KiB |
-| **All** | | **168.7 KiB** |
+| Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
+| **All** | | **165.7 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Send queue", roadmap D31). The records hold the 1355 messages a relay can handle in the
-459.6 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
+(spec "Send queue", roadmap D31). The records hold the 1278 messages a relay can handle in the
+463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-173 840 B (169.8 KiB, measured 2026-10-24, roadmap D75): the tables and, in about 1 KiB around them, the
+170 760 B (166.8 KiB, measured 2026-10-25): the tables and, in about 1 KiB around them, the
 medium access, the hand-over, its one owed reply, its application's message while it
 waits, and its stored state as handed back and as last kept, 56 B. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 154 824 B (151.2 KiB), without the heard table and the delivery
+`SleepyNode` is 151 744 B (148.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-fw/memory.x`); the BLE controller takes under 5 KiB
+(`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 64 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 67 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target it takes 174 KiB of stack to build one (measured
-2026-10-15 in the firmware's release build), more than the 85 KiB left beside a
-relay in static memory. So `Relay::UNSET`, a relay with empty tables, is a constant a driver
-can keep in a static, built at compile time, and `Relay::reset(config, seed)` sets it up in
-place, as `Relay::new` would have; the firmware does this. The simulator, on the host, uses
-`Relay::new`.
+2026-10-15 in the firmware's release build), more than the 88 KiB left beside a
+relay in static memory. So `Relay::reset(config, seed)` sets up a relay in place, as
+`Relay::new` would have, whatever it held before. A driver can keep the relay in a static
+holding `Relay::UNSET`, a relay with empty tables built at compile time, or holding zero
+bytes, which are a valid relay. The firmware does the second: a static of zero bytes is in
+`.bss`, which takes no flash, where `Relay::UNSET`, whose empty tables are not all zeros,
+would put the whole relay in flash, to be copied to RAM at boot. A constant in
+`bark-fw/src/node.rs` stops the firmware building if zero bytes stop being a valid relay,
+and a test in `bark-driver` checks that a relay reset in zeroed memory runs as a new one.
+The simulator, on the host, uses `Relay::new`.
 
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
@@ -263,17 +274,26 @@ action at a time, and the core never allocates.
   - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
     sends `hops` 1, as if it had received the message from the application at 0: a
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
-  - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
+  - Application payload at most 226 bytes, what remains of 255 after the 29-byte DATA
     header; the decoder rejects anything longer.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - The first byte's top bit marks a heartbeat, whose channel field holds 0 to 12; the
-    firmware's bench frames put 15 there, which nodes reject (`wire::bench_first`).
-    Below a clear top bit, the next bit tells DATA from the ACK, and the six bits under
-    it are `aux` (roadmap D76).
+  - The first byte's top bit marks a heartbeat, whose low four bits hold its channel, 0 to
+    12, and the three between are zero; the firmware's bench frames put 15 there, which
+    nodes reject (`wire::BENCH_FIRST`). Below a clear top bit, the next bit tells DATA from
+    the ACK, and the six bits under it are `aux` (roadmap D76).
+  - The second byte is the format version (roadmap D77). The core writes it: 1, its only
+    format, in DATA and the ACK, and in a heartbeat as the newest it speaks. It rejects a
+    DATA or ACK of another format, reads every heartbeat whatever its format, and keeps
+    each neighbour's in `Neighbour::format`. A driver neither sets nor reads it.
+  - A heartbeat's third byte is its flags: bit 0 sleepy, bit 1 anchorless, bit 2 carried,
+    bit 3 map point; the core sends the other bits zero and ignores them. The core sets
+    the map point from its own position's source and keeps each neighbour's in
+    `Neighbour::map_point`.
   - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
-    it refuses, 1 to 63 bans of 1.57 s (spec "Bans"); taken or refused, an
-    ACK is 17 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
-    of the two high bits of `aux` set is rejected. A fixed-size packet with trailing
+    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); taken or refused, an
+    ACK is 18 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
+    of the two high bits of `aux` set is rejected. A heartbeat is read from its first 13
+    bytes, and what follows is ignored. An ACK with trailing
     bytes is rejected.

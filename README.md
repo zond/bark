@@ -6,6 +6,13 @@ people message each other across a city, through an app linked to their node
 over Bluetooth, when ordinary infrastructure is gone. Licence-free in the EU
 and Ukraine (10 mW effective radiated power, 10% duty cycle).
 
+The network is open and built for infrastructure loss, not against an
+adversary. Nothing on the air is authenticated, so anyone with a radio
+in range can disrupt the nodes around them, and anyone in range of a
+node learns its ID and position. The app encrypts the messages
+themselves end to end. `docs/protocol.md`, "What the protocol omits",
+says why.
+
 The name is from Darwin's bark spider (*Caerostris darwini*), the Madagascan
 spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
@@ -46,6 +53,12 @@ bark-driver/  no_std loop that drives the core against a radio and a clock;
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
               bark-proto. Its own Cargo workspace, cross-compiled.
+bark-loader/  the loader the board's bootloader starts: swaps in a staged
+              firmware image and swaps it back if it does not confirm
+              itself. Its own Cargo workspace, cross-compiled.
+bark-image/   no_std: the flash layout, the image header and the swap,
+              shared by the firmware, the loader and their build scripts;
+              tested on the host.
 docs/         design notes, research, decisions.
 ```
 
@@ -58,18 +71,21 @@ until it listens. The protocol core has no external routing dependency (roadmap 
 
 ## Building
 
-Host (core and simulator), stable Rust:
+Host (the core, the simulator and the image's layout and swap), stable
+Rust:
 
 ```
 cargo test --workspace
 ```
 
-Firmware, from `bark-fw/` (its own workspace, so the host workspace never
-cross-compiles):
+The firmware and the loader, each its own workspace, so that the host
+workspace never cross-compiles:
 
 ```
 rustup target add thumbv7em-none-eabihf
-cd bark-fw && cargo build --release
+(cd bark-fw && cargo build --release)
+(cd bark-loader && cargo build --release)
 ```
 
-See `bark-fw/README.md` for packaging the UF2 and flashing.
+See `bark-fw/README.md` for packaging the UF2, with the loader, and
+flashing.

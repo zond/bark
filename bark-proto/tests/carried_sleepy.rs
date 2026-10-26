@@ -6,9 +6,9 @@
 mod common;
 
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
-use bark_proto::wire::Packet;
+use bark_proto::wire::{Heartbeat, Packet};
 use bark_proto::{AppCommand, AppEvent, Config, Delivery, Instant, MsgId, Position, Relay, Trace};
-use common::{secs, Harness};
+use common::{heartbeat_flags, secs, Harness, ANCHORLESS, CARRIED, RELAY, SLEEPY};
 
 /// A position `east` metres from a point in Kyiv.
 fn pos(east: f64) -> Position {
@@ -85,7 +85,13 @@ fn heartbeats(h: &Harness<Relay>, i: usize, from: Instant) -> Vec<(u8, u8, u16)>
         .filter(|(t, f)| {
             *t >= from && matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
         })
-        .map(|(_, f)| (f.payload()[0] >> 4, f.channel.index(), f.preamble_symbols))
+        .map(|(_, f)| {
+            (
+                heartbeat_flags(f.payload()).unwrap(),
+                f.channel.index(),
+                f.preamble_symbols,
+            )
+        })
         .collect()
 }
 
@@ -107,9 +113,9 @@ fn delivered_at(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Instant> {
 /// A relay R and two sleepy nodes S and P anchored to it; F, a relay, and
 /// L, a sleepy node with no relay in reach; G, a relay R knows. F, P and L
 /// walk until carried. Each of the four combinations heartbeats its own
-/// type: 0x8 fixed relay, 0xC carried relay, 0x9 fixed sleepy node, 0xD
-/// carried one, 0xF carried and anchorless; and a neighbour keeps both
-/// flags as heard.
+/// flags: a fixed relay none, a carried relay carried, a fixed sleepy
+/// node sleepy, a carried one sleepy and carried, and L all three; and a
+/// neighbour keeps both flags as heard.
 #[test]
 fn the_four_combinations_heartbeat_their_flags() {
     let (r, f, s, p, l, g) = (0, 1, 2, 3, 4, 5);
@@ -154,11 +160,11 @@ fn the_four_combinations_heartbeat_their_flags() {
         t.dedup();
         t
     };
-    assert_eq!(types(r), [0x8]);
-    assert_eq!(types(f), [0xC]);
-    assert_eq!(types(s), [0x9]);
-    assert_eq!(types(p), [0xD]);
-    assert_eq!(types(l), [0xF]);
+    assert_eq!(types(r), [RELAY]);
+    assert_eq!(types(f), [CARRIED]);
+    assert_eq!(types(s), [SLEEPY]);
+    assert_eq!(types(p), [SLEEPY | CARRIED]);
+    assert_eq!(types(l), [SLEEPY | ANCHORLESS | CARRIED]);
     let pid = h.nodes[p].core.id();
     let heard = h.nodes[r].core.neighbours().find(|n| n.id == pid).unwrap();
     assert!(heard.sleepy && heard.carried && !heard.anchorless);
@@ -218,7 +224,7 @@ fn a_sleepy_node_on_the_move_beats_carried_at_once() {
     let home = h.nodes[s].core.home().index();
     let flagged: Vec<_> = heartbeats(&h, s, before)
         .into_iter()
-        .filter(|b| b.0 == 0xD)
+        .filter(|b| b.0 == SLEEPY | CARRIED)
         .collect();
     assert_eq!(flagged.first().map(|b| b.1), Some(home), "on its home");
     let delivered = delivered_at(&h, s, id);
@@ -259,14 +265,14 @@ fn a_sleepy_node_is_fixed_again_after_staying() {
     assert!(!h.nodes[s].core.carried());
     assert_eq!(traced(&h, s, Trace::Carried { carried: false }), 1);
     assert_eq!(traced(&h, s, Trace::Changed), 2);
-    assert_eq!(last_type(&h, s), 0x9);
+    assert_eq!(last_type(&h, s), SLEEPY);
     // Still sleepy, it still takes each fix.
     fix(&mut h, s, stop + 40.0);
     assert_eq!(h.nodes[s].core.config().position, pos(stop + 40.0));
 }
 
 /// A carried sleepy node plugged in is a carried relay: it heartbeats
-/// 0xC, owns nothing by position, so queues no text for a sleepy node it
+/// carried alone, owns nothing by position, so queues no text for a sleepy node it
 /// hears, and no sleepy node anchors to it, however strong; four hours
 /// still (here `STILL`) make it fixed, a relay that holds mail.
 #[test]
@@ -296,7 +302,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     h.set_rssi(r, t, -110);
     h.start_at(t, h.now);
     h.run_for(secs(600));
-    assert_eq!(last_type(&h, c), 0xC);
+    assert_eq!(last_type(&h, c), CARRIED);
     let rid = h.nodes[r].core.id();
     assert_eq!(h.nodes[t].core.anchor().map(|a| a.id), Some(rid));
     let tid = h.nodes[t].core.id();
@@ -328,7 +334,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     assert!(!h.nodes[c].core.carried());
     assert_eq!(h.nodes[c].core.config().position, pos(stop + 5.0));
     h.run_for(secs(30));
-    assert_eq!(last_type(&h, c), 0x8);
+    assert_eq!(last_type(&h, c), RELAY);
     let dst = h.nodes[c].core.config().position;
     let text = b"for T at a relay that stays";
     h.command(
@@ -370,7 +376,7 @@ fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
         }
         assert!(!h.nodes[s].core.carried(), "started: {started}");
         assert_eq!(h.nodes[s].core.config().position, pos(here));
-        assert_eq!(last_type(&h, s), 0x8);
+        assert_eq!(last_type(&h, s), RELAY);
     }
 }
 
@@ -396,9 +402,46 @@ fn a_map_point_fixes_any_node() {
         assert_eq!(h.nodes[n].core.config().position, pos(700.0));
         h.run_for(secs(5));
         assert_eq!(traced(&h, n, Trace::Changed), changes + 1);
-        let want = if external { 0x8 } else { 0x9 };
+        let want = if external { RELAY } else { SLEEPY };
         assert_eq!(last_type(&h, n), want);
+        // Its heartbeat says the position is a map point, and the
+        // neighbour that heard it keeps that (spec "Packet formats").
+        assert!(last_heartbeat(&h, n).map_point);
+        let id = h.nodes[n].core.id();
+        let pinned = |h: &Harness<Relay>| {
+            h.nodes[r]
+                .core
+                .neighbours()
+                .any(|e| e.id == id && e.map_point)
+        };
+        let until = h.now + secs(400);
+        h.run_until(until, pinned);
+        assert!(pinned(&h), "external: {external}");
+        // A fix the node takes as its position replaces the map point; a
+        // fixed relay keeps its place, and so its map point.
+        fix(&mut h, n, 700.0);
+        let since = h.now;
+        h.run_until(at(5000), |h| last_heartbeat_since(h, n, since).is_some());
+        let after = last_heartbeat_since(&h, n, since).expect("a heartbeat");
+        assert_eq!(after.map_point, external, "external: {external}");
     }
+}
+
+/// Node `i`'s last heartbeat.
+fn last_heartbeat(h: &Harness<Relay>, i: usize) -> Heartbeat {
+    last_heartbeat_since(h, i, Instant::ZERO).expect("a heartbeat")
+}
+
+/// Node `i`'s last heartbeat sent after `from`, if any.
+fn last_heartbeat_since(h: &Harness<Relay>, i: usize, from: Instant) -> Option<Heartbeat> {
+    h.nodes[i]
+        .sent
+        .iter()
+        .rev()
+        .find_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Heartbeat(hb)) if *t > from => Some(hb),
+            _ => None,
+        })
 }
 
 /// An anchorless sleepy node on the move says so with the long preamble,
@@ -415,7 +458,10 @@ fn an_anchorless_node_on_the_move_says_so_with_the_long_preamble() {
     let home = h.nodes[l].core.home().index();
     let first = heartbeats(&h, l, before)
         .into_iter()
-        .find(|b| b.0 == 0xF)
+        .find(|b| b.0 == SLEEPY | ANCHORLESS | CARRIED)
         .expect("flagged");
-    assert_eq!(first, (0xF, home, LONG_PREAMBLE_SYMBOLS));
+    assert_eq!(
+        first,
+        (SLEEPY | ANCHORLESS | CARRIED, home, LONG_PREAMBLE_SYMBOLS)
+    );
 }

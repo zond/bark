@@ -9,6 +9,8 @@
 //! (spec "Node identity", "Position"). Its seed comes from the
 //! chip's random number generator (`docs/core-interface.md` §5).
 
+use core::mem::MaybeUninit;
+
 use bark_driver::{App, Clock, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, Config, Core, Event, Instant, NodeId, Position, Stored};
@@ -131,13 +133,27 @@ fn node_id() -> NodeId {
     NodeId::from_u64(high << 32 | low)
 }
 
-/// The node, in static memory built at compile time and set up in place:
-/// `Relay::new` would need 150 KiB more stack than the board has
-/// (`docs/core-interface.md` §6). Once only.
+/// All zero bytes are a node, though not a set-up one. rustc checks that
+/// the value of a constant is valid for its type, so this fails to build
+/// once a field of the core cannot be zero (a `NonZero`, a reference, an
+/// enum without a zero discriminant), and [`core`] must change with it.
+/// It is never used, so it is never copied, the lint's concern.
+#[allow(clippy::large_const_arrays)]
+const _: Role = unsafe { MaybeUninit::zeroed().assume_init() };
+
+/// The node, in static memory and set up in place: `Relay::new` builds
+/// the relay on the stack, which cannot hold it (`docs/core-interface.md`
+/// §6). The static is all zeros, so it lives in `.bss`, which the startup
+/// code zeroes, instead of being stored in flash and copied to RAM at
+/// boot. Once only.
 pub fn core(config: Config, seed: u64) -> &'static mut Role {
-    static CORE: static_cell::ConstStaticCell<Role> =
-        static_cell::ConstStaticCell::new(Role::UNSET);
-    let relay = CORE.take();
+    static CORE: static_cell::ConstStaticCell<MaybeUninit<Role>> =
+        static_cell::ConstStaticCell::new(MaybeUninit::zeroed());
+    // SAFETY: the slot holds zero bytes, a valid `Role` (the constant
+    // above), and `reset` sets every field the node reads to what
+    // `Relay::new` would (bark-driver's test
+    // `a_relay_reset_in_zeroed_memory_is_a_new_one`).
+    let relay = unsafe { CORE.take().assume_init_mut() };
     relay.reset(config, seed);
     relay
 }
@@ -189,7 +205,7 @@ impl embassy_usb_logger::ReceiverHandler for IgnoreInput {
     }
 }
 
-/// The core in static memory: at 150 KiB a relay is kept out of every
+/// The core in static memory: at 168 KiB a relay is kept out of every
 /// task's future and stack.
 struct Static(&'static mut Role);
 

@@ -611,6 +611,8 @@ fn a_relay_runs_through_the_loop() {
         anchorless: false,
         carried: false,
         home: ch(6),
+        format: bark_proto::wire::FORMAT,
+        map_point: false,
         id: bark_proto::NodeId([6; 6]),
         short: other.short(),
     });
@@ -864,4 +866,43 @@ fn the_power_reaches_the_core_at_boot_and_at_each_change() {
             (300_000, "wakeup")
         ]
     );
+}
+
+/// A relay behind a box, as the firmware keeps one behind a static.
+struct Boxed(Box<Relay>);
+
+impl Core for Boxed {
+    fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.0.handle(event, now, emit)
+    }
+
+    fn next_wakeup(&self) -> Option<Instant> {
+        self.0.next_wakeup()
+    }
+
+    fn accepts_send(&self, now: Instant) -> bool {
+        self.0.accepts_send(now)
+    }
+}
+
+/// A relay set up as the firmware sets one up, in zeroed memory with
+/// `Relay::reset` (`bark-fw/src/node.rs`), does what a new one does.
+#[test]
+fn a_relay_reset_in_zeroed_memory_is_a_new_one() {
+    let config = relay_config(Position::from_degrees(50.45, 30.52));
+    // SAFETY: all zero bytes are a valid `Relay`; `bark-fw/src/node.rs`
+    // checks it when it is built.
+    let mut zeroed = unsafe { Box::<Relay>::new_zeroed().assume_init() };
+    zeroed.reset(config, 7);
+    let until = Instant::ZERO + Duration::from_secs(60);
+    let run = |core: Boxed| {
+        let world = World::default();
+        let mut d = driver(core, &world, Duration::ZERO);
+        run_until(&mut d, &world, until);
+        world.ops()
+    };
+    let from_zeros = run(Boxed(zeroed));
+    let fresh = run(Boxed(Box::new(Relay::new(config, 7))));
+    assert!(fresh.iter().any(|(_, op)| matches!(op, Op::Transmit(_))));
+    assert_eq!(from_zeros, fresh);
 }

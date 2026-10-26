@@ -647,10 +647,11 @@ fn drifting_clocks_keep_the_anchor_watch() {
     }
 }
 
-/// S2 with every sleepy node walking, stops of ten minutes: walkers move
-/// far enough from where they chose to check their anchor
-/// (spec "Relay choice"), change anchors, and their texts still arrive or
-/// are accounted for.
+/// S2 with every sleepy node walking, stops of ten minutes: walkers walk
+/// out of their anchor's reach, check it and change anchors
+/// (spec "Relay choice"), and their texts still arrive or are accounted
+/// for. A walker searches for a fix only at a new anchor, and that fix
+/// is where it chose from (spec "Beats"), so no check follows a fix.
 #[test]
 fn walkers_check_and_change_their_anchor() {
     let mut sc = scenario("s2-block.toml");
@@ -662,11 +663,11 @@ fn walkers_check_and_change_their_anchor() {
     let s = sim.summary();
     let z = s.sleep.as_ref().expect("sleepy nodes");
     assert!(z.m.walks[1] > 80, "{} walks", z.m.walks[1]);
-    assert!(
-        z.m.fix_checks > 10,
-        "{} checks after a move",
-        z.m.fix_checks
-    );
+    let checks: u64 = (sim.relays()..sim.node_count() as u32)
+        .map(|n| sim.metrics.nodes[n as usize].core.anchor_checks)
+        .sum();
+    assert!(checks > 10, "{checks} anchor checks");
+    assert_eq!(z.m.fix_checks, 0, "checks after a fix");
     assert!(
         z.m.anchor_changes > 20,
         "{} anchor changes",

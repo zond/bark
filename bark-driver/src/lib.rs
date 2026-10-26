@@ -428,6 +428,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Sniff(until) => sniff = Some(until).filter(|&t| t > now),
             Action::App(e) => app.message(&e),
             Action::Store(s) => app.store(&s),
+            // No GPS driver yet (roadmap Phase 2): the request is logged.
+            Action::Locate(until) => log::info!("locate until {:?}", until),
             Action::Trace(t) => log::info!("{:?}", t),
         });
         let took = self.clock.now().since(now);
@@ -497,6 +499,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             | Action::Sniff(_)
             | Action::App(_)
             | Action::Store(_)
+            | Action::Locate(_)
             | Action::Trace(_) => {
                 unreachable!("only excursions are kept")
             }

@@ -85,7 +85,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let kept = self.config.battery.is_some()
                 && Self::can_relay()
                 && self.config.stored.is_some_and(|s| s.relay && !s.carried);
-            self.sleepy = sleepy && !kept;
+            let turns = sleepy && !kept;
+            if turns && !self.sleepy {
+                self.gps_due();
+            }
+            self.sleepy = turns;
             self.unplugged = (sleepy && kept).then_some(now);
             let ends = self.boot_end(self.boot_from);
             self.stage = Stage::Booting(ends);
@@ -139,6 +143,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         ends.then_some(t + self.config.grace)
     }
 
+    /// When the flush of a relay leaving ends at the latest (module
+    /// documentation).
+    pub(super) fn flush_ends(&self) -> Option<Instant> {
+        let since = self.unplugged.filter(|_| self.leaving)?;
+        Some(since + self.config.delivery_ttl)
+    }
+
     /// The grace's end, a low battery, and the turn to sleepy once the
     /// flush is done; a node turned sleepy by its battery relays again at
     /// the high level (module documentation).
@@ -167,10 +178,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // delivery TTL; a flush that the duty cap or a busy channel
                 // holds up longer would keep a node with a low battery
                 // listening until it is flat.
-                self.flush_by = now + self.config.delivery_ttl;
+                self.unplugged = Some(now);
             }
         }
-        if self.leaving && (self.flushed() || now >= self.flush_by) {
+        if self.leaving && (self.flushed() || self.flush_ends().is_some_and(|t| now >= t)) {
             self.turn_sleepy(now, emit);
         }
     }
@@ -185,6 +196,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn turn_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = false;
         self.battery_sleepy = false;
+        self.gps_relay();
         self.fixed_here();
         self.anchor = None;
         self.unwatch();
@@ -207,6 +219,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.sleepy = true;
         self.battery_sleepy = self.low;
+        self.gps_due();
         self.unplugged = None;
         self.leaving = false;
         for q in self.delivery.iter() {

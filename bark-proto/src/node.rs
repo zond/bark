@@ -54,7 +54,7 @@ pub struct Config {
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
     /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,
-    /// 154.24 ms; `tables::RETRY_BACKOFF`).
+    /// 155.52 ms; `tables::RETRY_BACKOFF`).
     pub retry_backoff: Duration,
     /// Failed transfers before a neighbour is demoted (spec "Neighbour table": 2).
     pub demote_after_failures: u8,
@@ -115,16 +115,17 @@ pub struct Config {
     /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
     /// would turn a node sleepy at every brief unplug.
     pub grace: Duration,
-    /// The battery voltages between which a fixed relay on battery keeps
-    /// relaying past its grace (spec "Nodes", `relay/power.rs`); `None`
-    /// for every relay to turn sleepy at its grace's end.
+    /// The battery levels between which a fixed relay on battery relays
+    /// past its grace (`relay/power.rs`, spec "Sleepy nodes"). `None` for a driver that reports no
+    /// battery, as the simulator's scenarios without batteries: every
+    /// relay then turns sleepy at its grace's end, since a fixed one would
+    /// otherwise relay until its battery browns out.
     pub battery: Option<BatteryLevels>,
 }
 
-/// A battery's rested voltage, millivolts, at which a fixed relay on
-/// battery turns sleepy, `low`, and at which a node its battery turned
-/// sleepy relays again, `high` (spec "Nodes"). The driver reports the
-/// voltage (`AppCommand::Battery`).
+/// A battery's open-circuit voltage, millivolts, at which a fixed relay
+/// on battery turns sleepy, `low`, and at which a node its battery turned
+/// sleepy relays again, `high` (spec "Sleepy nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryLevels {
     /// Turn sleepy at or below this.
@@ -154,9 +155,9 @@ impl Default for Config {
 /// The heartbeat intervals a node can have: 256, one ID byte's worth, over
 /// the range of spec "Heartbeat", 39.06 ms apart (spec "Heartbeat"). Two
 /// nodes whose intervals differ by at least two heartbeats' airtime,
-/// 2 × 13.12 ms, slide past each other by more than an overlap at every
+/// 2 × 14.40 ms, slide past each other by more than an overlap at every
 /// heartbeat, so that two heartbeats of theirs meet at most once in a row;
-/// 10 s / 26.24 ms = 381 intervals would do, and the largest power of two
+/// 10 s / 28.80 ms = 347 intervals would do, and the largest power of two
 /// below it is 256.
 pub const INTERVALS: u64 = 256;
 
@@ -189,7 +190,7 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 /// that the next says whether one did. An answer goes within a
 /// listen-before-talk backoff of the heartbeat, then waits behind its
 /// slot as any heartbeat may, [`heartbeat_lag`], and is on the air for a
-/// heartbeat's airtime: 200 + 992.86 + 13.12 ms = 1205.98 ms.
+/// heartbeat's airtime: 200 + 992.86 + 14.40 ms = 1207.26 ms.
 pub const fn burst_gap(config: &Config) -> Duration {
     let airtime = time_on_air(HEARTBEAT_LEN as u8, crate::radio::MIN_PREAMBLE_SYMBOLS);
     Duration::from_micros(

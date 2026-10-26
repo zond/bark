@@ -22,17 +22,17 @@
 //! each entry waiting out one ban (spec "Bans", roadmap D31):
 //!
 //! ```text
-//! (39 + 254) places × 1.57 s = 459.6 s
+//! (39 + 254) places × 1.58 s = 463.4 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
-//! cycle (spec "Duty cycle cap"): each costs at least an ACK (17 bytes, 15.68 ms) and one
-//! DATA packet with no payload (28 bytes, 22.08 ms), together 37.76 ms;
-//! any 459.6 s carries at most a full bucket and its refill,
-//! 6 s + 9.83 % × 459.6 s = 51.19 s of airtime ([`most_on_air`]), and
-//! ⌊51.19 s / 37.76 ms⌋ = 1355. The records of held messages are not
+//! cycle (spec "Duty cycle cap"): each costs at least an ACK (18 bytes, 16.96 ms) and one
+//! DATA packet with no payload (29 bytes, 23.36 ms), together 40.32 ms;
+//! any 463.4 s carries at most a full bucket and its refill,
+//! 6 s + 9.83 % × 463.4 s = 51.57 s of airtime ([`most_on_air`]), and
+//! ⌊51.57 s / 40.32 ms⌋ = 1278. The records of held messages are not
 //! evicted and may be older than that, so the table has room for them on
-//! top: 1355 + 293 = 1648.
+//! top: 1278 + 293 = 1571.
 //!
 //! # The tried set
 //!
@@ -84,7 +84,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1648);
+const _: () = assert!(RECORDS == 1571);
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -356,11 +356,11 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 293 places × one ban, 1.57 s.
+        // 293 places × one ban, 1.58 s.
         assert_eq!(DRAIN, BAN.mul(293));
-        assert_eq!(DRAIN.as_millis(), 459_583);
+        assert_eq!(DRAIN.as_millis(), 463_397);
         assert_eq!(HELD, 293);
-        assert_eq!(RECORDS, 1355 + 293);
+        assert_eq!(RECORDS, 1278 + 293);
         assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 

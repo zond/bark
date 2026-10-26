@@ -660,10 +660,11 @@ pub struct GpsFault {
 /// plausibility checks of spec "Position" before handing a fix to its
 /// core. A relay with a fault takes a fix every second, the receiver's
 /// usual output rate; one that walks, one at each heartbeat; a sleepy node
-/// one before each beat (spec "Beats"). Other nodes are handed no fixes,
+/// one from each search its core asks for (`gps.rs`), where it hears the
+/// sky. Other nodes are handed no fixes,
 /// since a true one changes nothing, unless `relays_every_s` or
 /// `error_m` says otherwise.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Gps {
     /// The faults.
@@ -683,6 +684,29 @@ pub struct Gps {
     pub error_m: f64,
     /// See `error_m`, seconds.
     pub error_correlation_s: f64,
+    /// The share of the sleepy nodes placed indoors, and of the walkers at
+    /// their stops, whose GPS hears no sky there: every search of theirs
+    /// indoors runs to its limit and finds nothing. Each node is drawn
+    /// once from the run's seed. Every scenario places its sleepy nodes
+    /// indoors behind a wall of 14.4 dB at 433 MHz, more at the GPS's
+    /// 1575 MHz, with the floors above between them and the sky, and the
+    /// L76K acquires only 18 dB below the open-sky level (Table 2 of its
+    /// hardware design): so by default none hears it
+    /// (`docs/gps-schedule-2026-10-25.md`).
+    pub no_sky: f64,
+}
+
+impl Default for Gps {
+    fn default() -> Self {
+        Gps {
+            faults: Vec::new(),
+            checks: false,
+            relays_every_s: 0.0,
+            error_m: 0.0,
+            error_correlation_s: 0.0,
+            no_sky: 1.0,
+        }
+    }
 }
 
 /// A complete scenario.

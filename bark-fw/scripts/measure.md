@@ -134,13 +134,13 @@ A> ping 5    (×20)
 A prints `ping … rtt_us=… within=…`; B prints `pong … cad_us=…
 tx_us=… rx_to_tx_done_us=…`. `rtt_us` runs from A's TxDone to the pong
 received, which is what the 100 ms ACK timeout of spec "Hand-over" must cover: B's
-reception handling, CAD on A's channel, its transmit start and the 17-byte
-pong (15.7 ms on air). If `within=false`, the ACK timeout or the
+reception handling, CAD on A's channel, its transmit start and the 18-byte
+pong (17.0 ms on air). If `within=false`, the ACK timeout or the
 receiver's path needs changing; note which part of B's line dominates.
 
 ### 1.7 Sensitivity
 
-With attenuators (or distance), B sends `beacon 3 120 9` (9 bytes every
+With attenuators (or distance), B sends `beacon 3 120 8` (8 bytes every
 120 ms, 10 % duty) and A listens on 3. Raise the attenuation in steps
 until A receives less than 90 % of the beacons. Per step: `status reset`
 on A, wait 60 s (500 beacons), `status` on A: `rx_ok` against 500. The
@@ -176,7 +176,7 @@ Two boards, two measurements:
 
 With a third board C (we have four), measure rejection the way it
 matters: B sends the wanted signal on 5 at about sensitivity + 3 dB at A
-(`beacon 5 120 9`); C interferes on 6 with long frames
+(`beacon 5 120 8`); C interferes on 6 with long frames
 (`beacon 6 1390 255`), and its level at A is read with
 `noise 6 1000 2000` on A. Each C frame overlaps about one B frame. Raise
 C's level until A loses the B frames that overlap C's (lost sequence
@@ -235,8 +235,8 @@ hour after the cable goes (spec "Sleepy nodes").
 
 ### 5.1 Every long preamble is caught
 
-On A, a bench frame of a DATA's length (36 bytes: the 28-byte DATA header
-and a short text) with the long preamble, 100 times, 5 s apart: 380.2 ms
+On A, a bench frame of a DATA's length (36 bytes: the 29-byte DATA header
+and a short text) with the long preamble, 100 times, 5 s apart: 381.5 ms
 on air, 7.6 % of the period, under the console's 10 % cap. 5 s is not a
 multiple of S's 361.125 ms cycle, so the frames start at offsets spread
 over it (5000 mod 361.125 = 305.375 ms a step).
@@ -250,7 +250,7 @@ A> stop
 
 Note S's `frames` before and after: it should rise by 100. A frame that
 overlaps one of S's own beats (S sends one every 34.6 s on average, a
-366 ms frame A also prints as `rx`) cannot be caught, about 2 in 100;
+369 ms frame A also prints as `rx`) cannot be caught, about 2 in 100;
 count those apart. What the window catches depends on the preamble alone,
 not on what follows it, so the bench frame stands for a DATA (the
 roadmap's bench row).
@@ -288,7 +288,7 @@ Record each state for at least a minute:
 |---|---|---|
 | Boot listen | from power-on to the end of the boot listen | listening, 6.1 mA (4.6 mA receive, DS Table 3-5, and the TCXO's nominal 1.5 mA, DS §4.1.4) |
 | Duty-cycled receive | after the boot listen, between beats | a pulse every 361.125 ms, 0.14 to 0.20 mA on average; between pulses 1.2 µA (DS Table 3-5) |
-| A beat | every 34.6 s on average | 366 ms at the transmit current, under 32 mA at +10 dBm (DS Table 3-6) |
+| A beat | every 34.6 s on average | 369 ms at the transmit current, under 32 mA at +10 dBm (DS Table 3-6) |
 | Catching a frame | during 5.1, on USB: shape only | the pulse lasts the frame's airtime, then the cycle starts again |
 
 From the trace of duty-cycled receive:

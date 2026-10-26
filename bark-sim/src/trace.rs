@@ -73,9 +73,11 @@ impl Tracer {
         let n = &self.names;
         match Packet::decode(bytes) {
             Ok(Packet::Heartbeat(h)) => format!(
-                "HEARTBEAT{} home {}",
+                "HEARTBEAT{} home {} format {}{}",
                 if h.sleepy { " (sleepy)" } else { "" },
-                h.home.index()
+                h.home.index(),
+                h.format,
+                if h.map_point { ", map point" } else { "" }
             ),
             Ok(Packet::Ack(a)) => {
                 format!(
@@ -142,6 +144,9 @@ impl Tracer {
             }
             Action::Sniff(until) => {
                 let _ = write!(what, "sniff to {:.3} s", until.as_micros() as f64 / 1e6);
+            }
+            Action::Locate(until) => {
+                let _ = write!(what, "locate to {:.3} s", until.as_micros() as f64 / 1e6);
             }
             Action::Transmit(f) => {
                 let _ = write!(
