@@ -138,16 +138,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// averaged RSSI before it. At the end of a worst-case rotation, a sum
     /// of their squares beyond what fading explains starts a search
     /// (module documentation).
-    pub(super) fn gps_surprise(&mut self, surprise_db: f32, now: Instant) {
+    pub(super) fn gps_surprise(
+        &mut self,
+        surprise_db: f32,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
         if !self.gps_watches() {
             self.gps.window = 0;
             return;
         }
         let g = &mut self.gps;
         if at(g.window).is_some_and(|t| now >= t + self.config.boot_listen) {
-            if g.surprises > 0 && g.surprise as f32 / 1000.0 > chi_square_point(g.surprises) {
-                g.due = true;
-            }
+            let moved =
+                g.surprises > 0 && g.surprise as f32 / 1000.0 > chi_square_point(g.surprises);
+            g.due |= moved;
+            emit(Action::Trace(crate::event::Trace::MoveSign {
+                surprises: g.surprises,
+                sum_milli: g.surprise,
+                moved,
+            }));
             g.window = 0;
         }
         if g.window == 0 {

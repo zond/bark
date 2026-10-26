@@ -411,6 +411,18 @@ pub enum Trace {
     /// A sleepy node that sleeps listens a rotation to check its anchor
     /// (spec "Relay choice").
     AnchorCheck,
+    /// A relay that rests its GPS and watches its radio closed a rotation
+    /// of surprises (research switch `Config::relay_gps`,
+    /// `node/relay/gps.rs`).
+    MoveSign {
+        /// The heartbeats of fixed relay neighbours in it.
+        surprises: u8,
+        /// The sum of their squared surprises over the variance fading
+        /// gives them, in thousandths.
+        sum_milli: u32,
+        /// Whether the sum passed its point, and a search is due.
+        moved: bool,
+    },
     /// A window in which a sleeping node woke for its anchor's heartbeat
     /// ended (spec "Relay choice"): with the heartbeat, which started
     /// `offset_us` after the time expected, negative if before it; or

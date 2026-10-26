@@ -2483,6 +2483,21 @@ impl Sim {
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::MoveSign {
+                        surprises,
+                        sum_milli,
+                        moved,
+                    } if self.now >= self.settle => {
+                        let walking = self
+                            .walks
+                            .as_ref()
+                            .and_then(|w| w.walker(node))
+                            .is_some_and(|k| k.walking);
+                        let m = &mut self.carried_metrics().move_sign[usize::from(walking)];
+                        m[0] += 1.0;
+                        m[1] += f64::from(u8::from(moved));
+                        m[2] += sum_milli as f64 / 1000.0 / f64::from(surprises.max(1));
+                    }
                     Trace::AnchorCheck => {
                         c.anchor_checks += 1;
                         if self.fixing && self.now >= self.settle {

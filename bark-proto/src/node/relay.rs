@@ -1919,7 +1919,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|n| n.rssi);
         let heard = self.neighbours.heard(&hb, position, rssi, &self.plane, now);
         if let Some(a) = average {
-            self.gps_surprise(rssi as f32 - a, now);
+            self.gps_surprise(rssi as f32 - a, now, emit);
         }
         // When it started: a heartbeat's slot is its start, give or take
         // the listen-before-talk.

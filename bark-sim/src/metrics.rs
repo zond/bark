@@ -1031,6 +1031,11 @@ pub struct Carried {
     /// it turned carried, if it did in the walk, and whether it was on
     /// battery.
     pub relay_walks: Vec<(u32, f64, Option<f64>, bool)>,
+    /// The rotations of surprises that relays resting their GPS closed
+    /// after the settle time (`Trace::MoveSign`), by relays not walking
+    /// and walking then: how many, how many said the relay moved, and
+    /// the sum of their mean squared surprises.
+    pub move_sign: [[f64; 3]; 2],
 }
 
 /// What the neighbour tables hold (`Research::tables`), sampled once a

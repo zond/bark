@@ -1041,6 +1041,17 @@ impl Summary {
                 walking(&back),
                 c.anchors_left
             );
+            for (k, m) in c.move_sign.iter().enumerate().filter(|(_, m)| m[0] > 0.0) {
+                let _ = writeln!(
+                    s,
+                    "radio sign of {} relays: {} rotations, mean squared surprise {:.2}, {} said moved ({:.2} %)",
+                    if k == 0 { "still" } else { "walking" },
+                    m[0],
+                    m[2] / m[0],
+                    m[1],
+                    100.0 * m[1] / m[0]
+                );
+            }
             if !c.relay_walks.is_empty() {
                 let w = &c.relay_walks;
                 let mut after: Vec<f64> = w.iter().filter_map(|x| x.2).collect();
