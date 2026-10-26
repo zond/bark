@@ -60,6 +60,9 @@ pub enum RelayGps {
     /// search at boot and when the radio says the node may have moved
     /// (`node/relay/gps.rs`).
     Radio,
+    /// As [`RelayGps::Radio`], but on battery it runs all the time through
+    /// the node's grace (`Config::grace`) before it rests.
+    Grace,
     /// As [`RelayGps::Battery`], on external power too.
     BatteryEverywhere,
     /// As [`RelayGps::Radio`], on external power too.

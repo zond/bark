@@ -7,7 +7,7 @@
 mod common;
 
 use bark_proto::gps::RelayGps;
-use bark_proto::{AppCommand, Config, Instant, Position, Relay};
+use bark_proto::{AppCommand, BatteryLevels, Config, Instant, Position, Relay};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -29,6 +29,7 @@ fn row(mode: RelayGps) -> Harness<Relay> {
             let config = Config {
                 position: pos(200.0 * i as f64),
                 relay_gps: if i == 0 { mode } else { RelayGps::Always },
+                battery: Some(BatteryLevels::DESIGN),
                 ..Config::default()
             };
             (Relay::new(config, i as u64 + 1), true)
@@ -117,4 +118,18 @@ fn a_far_fix_keeps_it_on() {
     }
     assert!(h.nodes[0].core.carried());
     assert!(h.nodes[0].core.gps_tracks());
+}
+
+/// With `Grace`, a fixed relay on battery, which relays on past its grace
+/// (roadmap D81), runs its GPS through the grace, then rests.
+#[test]
+fn through_the_grace_it_tracks() {
+    let mut h = row(RelayGps::Grace);
+    h.run_until(at(600), |_| false);
+    h.command(0, AppCommand::Power { external: false });
+    h.run_until(at(600 + 3500), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(600 + 3700), |_| false);
+    assert!(!h.nodes[0].core.sleepy());
+    assert!(!h.nodes[0].core.gps_tracks());
 }

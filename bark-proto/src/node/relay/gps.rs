@@ -70,9 +70,8 @@ pub(super) struct Gps {
     due: bool,
     /// The next fix is the one asked for at a new anchor.
     pub(super) at_choice: bool,
-    /// A resting relay's last fix was far: its GPS runs until it is
-    /// carried or a fix is near.
-    follow: bool,
+    /// A relay's: [`FOLLOW`] and [`PAST_GRACE`].
+    flags: u8,
     /// The surprises of the rotation under way.
     surprises: u8,
 }
@@ -85,10 +84,18 @@ impl Gps {
         tried_at: 0,
         due: false,
         at_choice: false,
-        follow: false,
+        flags: 0,
         surprises: 0,
     };
 }
+
+/// A resting relay's last fix was far: its GPS runs until it is carried
+/// or a fix is near.
+const FOLLOW: u8 = 1;
+
+/// A relay with [`RelayGps::Grace`] has been on battery longer than its
+/// grace: its GPS rests.
+const PAST_GRACE: u8 = 2;
 
 /// `t` in whole seconds, rounded up, and at least 1.
 fn mark(t: Instant) -> u32 {
@@ -115,9 +122,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let rests = match self.config.relay_gps {
             RelayGps::Always => return true,
             RelayGps::Battery | RelayGps::Radio => self.unplugged.is_some(),
+            RelayGps::Grace => self.unplugged.is_some() && self.gps.flags & PAST_GRACE != 0,
             RelayGps::BatteryEverywhere | RelayGps::RadioEverywhere => true,
         };
-        !self.motion.map_point && (self.motion.carried || self.gps.follow || !rests)
+        !self.motion.map_point && (self.motion.carried || (self.gps.flags & FOLLOW != 0) || !rests)
     }
 
     /// Whether this relay rests its GPS and watches the radio for a sign
@@ -126,7 +134,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn gps_watches(&self) -> bool {
         matches!(
             self.config.relay_gps,
-            RelayGps::Radio | RelayGps::RadioEverywhere
+            RelayGps::Radio | RelayGps::RadioEverywhere | RelayGps::Grace
         ) && !self.sleepy
             && self.stage == Stage::Running
             && !self.motion.map_point
@@ -174,7 +182,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A fix came to a relay: a far one keeps its resting GPS on.
     pub(super) fn gps_after_fix(&mut self) {
-        self.gps.follow = !self.sleepy && self.far();
+        let follow = !self.sleepy && self.far();
+        self.gps.flags = (self.gps.flags & !FOLLOW) | if follow { FOLLOW } else { 0 };
     }
 
     /// The node turned sleepy, or boots sleepy, or turned anchorless: it
@@ -201,6 +210,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The node is a relay now: its GPS runs all the time.
     pub(super) fn gps_relay(&mut self) {
         self.gps = Gps::DEFAULT;
+    }
+
+    /// With [`RelayGps::Grace`], when a relay on battery rests its GPS:
+    /// a grace after it lost external power.
+    fn gps_grace_ends(&self) -> Option<Instant> {
+        let t = self.unplugged.filter(|_| self.config.relay_gps == RelayGps::Grace)?;
+        Some(t + self.config.grace)
     }
 
     /// The node turned sleepy: it searches, with nothing of a relay's
@@ -233,6 +249,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.sleepy && self.config.relay_gps == RelayGps::Always {
             return;
         }
+        if !self.sleepy {
+            let past = self.gps_grace_ends().is_some_and(|t| now >= t);
+            self.gps.flags = (self.gps.flags & !PAST_GRACE) | if past { PAST_GRACE } else { 0 };
+        }
         if at(self.gps.until).is_some_and(|t| now >= t) {
             self.gps.until = 0;
             if self.sleepy {
@@ -250,14 +270,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         self.gps.until = mark(now + SEARCH_LIMIT);
-        self.gps.tried_at = mark(now);
+        if self.sleepy {
+            self.gps.tried_at = mark(now);
+        }
         emit(Action::Locate(at(self.gps.until).expect("just set")));
     }
 
     /// When the core next needs a wakeup for its searches.
     pub(super) fn gps_wakeup(&self) -> Option<Instant> {
         if !self.sleepy {
-            return at(self.gps.until).filter(|_| self.config.relay_gps != RelayGps::Always);
+            let until = at(self.gps.until).filter(|_| self.config.relay_gps != RelayGps::Always);
+            let grace = self.gps_grace_ends().filter(|_| self.gps.flags & PAST_GRACE == 0);
+            return match (until, grace) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
         }
         match (at(self.gps.until), self.gps_anchorless_at()) {
             (Some(a), Some(b)) => Some(a.min(b)),

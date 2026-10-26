@@ -154,6 +154,7 @@ pub enum RelayGps {
     Always,
     Battery,
     Radio,
+    Grace,
     BatteryEverywhere,
     RadioEverywhere,
 }
@@ -209,6 +210,7 @@ impl ProtocolOverrides {
                 RelayGps::Always => R::Always,
                 RelayGps::Battery => R::Battery,
                 RelayGps::Radio => R::Radio,
+                RelayGps::Grace => R::Grace,
                 RelayGps::BatteryEverywhere => R::BatteryEverywhere,
                 RelayGps::RadioEverywhere => R::RadioEverywhere,
             };
