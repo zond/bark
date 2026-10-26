@@ -165,6 +165,17 @@ impl Sim {
         done + open
     }
 
+    /// The time `node`'s receiver ran while it was a relay, after the
+    /// settle time, to now.
+    pub(crate) fn relay_gps_on_us(&self, node: u32) -> u64 {
+        let g = &self.metrics.nodes[node as usize].gps;
+        let open = self.receivers[node as usize]
+            .acct
+            .filter(|a| a.2 && self.now > self.settle)
+            .map_or(0, |(since, _, _)| self.now.since(since.max(self.settle)).as_micros());
+        g.relay_on_us[0] + g.relay_on_us[1] + open
+    }
+
     /// Count `node`'s time as a relay up to now (`gps_account`), as at
     /// the end of the run.
     pub(crate) fn gps_flush(&mut self, node: u32) {

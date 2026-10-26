@@ -153,8 +153,8 @@ charge_on_battery = [0.2, 1.0]
 # hour before the outage, so they read uncalibrated.
 gain_error = 0.03
 # The battery divider's drain, about 12 µA (bark-fw/src/board.rs); the
-# microcontroller and a relay's GPS are not modelled, a sleepy node's GPS
-# searches are (`bark-sim/src/gps.rs`).
+# microcontroller is not modelled, the GPS while it runs is
+# (`bark-sim/src/gps.rs`).
 relay_ua = 12.0
 sleepy_ua = 12.0
 read_s = 60.0

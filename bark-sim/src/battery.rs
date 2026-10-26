@@ -7,8 +7,9 @@
 //! battery it discharges at the radio's currents for the time the node's
 //! radio listened, received duty-cycled and transmitted (the currents of
 //! `bark_proto::sniff`, as the sleepy nodes' current in the summary), the
-//! GPS for the searches a sleepy node asks for (`gps.rs`), and a current
-//! for the rest of the board by its role, a relay's GPS among it. The time is the radio's after the
+//! GPS while it runs, for the searches a sleepy node asks for and while a
+//! relay's runs (`gps.rs`), and a current for the rest of the board by
+//! its role. The time is the radio's after the
 //! settle time, which the metrics count, so outages begin after it.
 //!
 //! An outage takes USB power from every node on it when it begins and
@@ -50,7 +51,7 @@ struct Cell {
     capacity: f64,
     /// Its charge at the last reading, mAh.
     charge: f64,
-    /// The charge its radio and its GPS's searches had drawn by the last
+    /// The charge its radio and its GPS had drawn by the last
     /// reading, µA·µs.
     drawn: f64,
     /// Its reading's gain: 1 for a true reading.
@@ -164,7 +165,8 @@ impl Sim {
         let window = since(self.now);
         let dt_h = m.p.read_s / 3600.0;
         for (i, c) in m.cells.iter_mut().enumerate() {
-            let gps = self.gps_on_us(i as u32) as f64 * GPS_CURRENT_UA as f64;
+            let on = self.gps_on_us(i as u32) + self.relay_gps_on_us(i as u32);
+            let gps = on as f64 * GPS_CURRENT_UA as f64;
             let drawn = radio_ua_us(&self.metrics.nodes[i], window) + gps;
             let board = if self.relay(i as u32).sleepy() {
                 m.p.sleepy_ua
