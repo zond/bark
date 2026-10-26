@@ -46,6 +46,15 @@ pub const RSSI_DWELL: Duration = Duration::from_micros(300);
 /// takes the channel as busy rather than transmit on a reading it never got.
 pub const FAILED_RSSI_DBM: i16 = 0;
 
+/// How often the driver reads the battery while on battery and reports it
+/// to the core (core-interface §4). The core turns a fixed relay sleepy at
+/// a low reading, and a minute late is 0.6 mAh at the most a board draws,
+/// a relay with its GPS tracking at 36 mA: under a tenth of a percent of
+/// an 850 mAh cell, a fraction of a millivolt on its curve and below a
+/// reading's noise. Each reading wakes the processor once and samples the
+/// converter for microseconds, so it costs nothing measurable either.
+pub const BATTERY_EVERY: Duration = Duration::from_secs(60);
+
 /// What the radio found after [`Radio::wait`] returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heard {
@@ -142,6 +151,12 @@ pub trait App {
     /// at every change (core-interface §4).
     fn power(&mut self) -> Option<bool>;
 
+    /// The battery's voltage in millivolts as the board's converter reads
+    /// it, uncalibrated, or `None` if the board cannot read it. The driver
+    /// asks only on battery, once every [`BATTERY_EVERY`], and only between
+    /// radio operations, never while the radio transmits.
+    async fn battery(&mut self) -> Option<u16>;
+
     /// Keep `stored` across a reboot, in place of what was kept before,
     /// to hand back in `Config::stored` at the next boot (core-interface
     /// §4).
@@ -182,6 +197,8 @@ pub struct Driver<C, R, K, A> {
     booted: bool,
     /// The power last reported to the core.
     power: Option<bool>,
+    /// When the battery is read next: on battery only.
+    battery_at: Option<Instant>,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
     /// Until when the core lets the radio receive duty-cycled
@@ -215,6 +232,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             tx_dbm,
             booted: false,
             power: None,
+            battery_at: None,
             resting: None,
             sniff_until: None,
             listening: None,
@@ -273,10 +291,18 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 return self.deliver(done).await;
             }
         }
+        // Here no excursion is under way: the radio listens or receives
+        // duty-cycled, and transmits nothing while the converter samples.
+        if self.battery_at.is_some_and(|t| now >= t) {
+            return self.read_battery(now).await;
+        }
 
         let wake = self.core.next_wakeup();
         let hold_end = self.held_since.map(|t| t + MAX_AIRTIME);
-        let deadline = earlier(earlier(wake, hold_end), self.radio_due());
+        let deadline = earlier(
+            earlier(earlier(wake, hold_end), self.radio_due()),
+            self.battery_at,
+        );
         let offer = self.core.accepts_send(now);
         let clock = &self.clock;
         let timer = async {
@@ -384,8 +410,22 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         }
         self.power = power;
         let external = power.unwrap_or_default();
+        // On battery the first reading comes at the next step.
+        self.battery_at = (!external).then(|| self.clock.now());
         self.deliver(Event::App(AppCommand::Power { external }))
             .await
+    }
+
+    /// Read the battery and report the reading to the core.
+    async fn read_battery(&mut self, now: Instant) -> Result<(), R::Error> {
+        self.battery_at = Some(now + BATTERY_EVERY);
+        match self.app.battery().await {
+            Some(millivolts) => {
+                self.deliver(Event::App(AppCommand::Battery { millivolts }))
+                    .await
+            }
+            None => Ok(()),
+        }
     }
 
     async fn offer(&mut self) -> Result<(), R::Error> {

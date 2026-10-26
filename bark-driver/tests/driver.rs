@@ -292,6 +292,10 @@ struct TestApp {
     read: Option<bool>,
     /// What the core last asked to keep.
     stored: Option<Stored>,
+    /// The battery reading the application gives, and how many times the
+    /// driver asked for one.
+    battery: Option<u16>,
+    battery_reads: u32,
 }
 
 impl App for TestApp {
@@ -308,6 +312,11 @@ impl App for TestApp {
     fn power(&mut self) -> Option<bool> {
         self.read = self.power;
         self.power
+    }
+
+    async fn battery(&mut self) -> Option<u16> {
+        self.battery_reads += 1;
+        self.battery
     }
 
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -866,6 +875,32 @@ fn the_power_reaches_the_core_at_boot_and_at_each_change() {
             (300_000, "wakeup")
         ]
     );
+}
+
+/// On battery the driver reads the battery at once and then once every
+/// `BATTERY_EVERY`, and reports each reading to the core; on USB it reads
+/// none (core-interface §4).
+#[test]
+fn the_battery_reaches_the_core_once_a_minute_on_battery() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(1)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    d.app_mut().battery = Some(3900);
+    run_until(&mut d, &world, at_ms(1));
+    assert_eq!(d.app().battery_reads, 0, "none on USB");
+    d.app_mut().power = Some(false);
+    run_until(&mut d, &world, at_ms(200_000));
+    let readings: Vec<u64> = seen(&d)
+        .iter()
+        .filter(|(_, s)| *s == "App(Battery { millivolts: 3900 })")
+        .map(|(t, _)| *t)
+        .collect();
+    let every = bark_driver::BATTERY_EVERY.as_micros();
+    assert_eq!(readings.len(), 4, "{:?}", seen(&d));
+    for w in readings.windows(2) {
+        assert_eq!(w[1] - w[0], every);
+    }
 }
 
 /// A relay behind a box, as the firmware keeps one behind a static.
