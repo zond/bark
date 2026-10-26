@@ -116,7 +116,8 @@ pub struct Config {
     /// would turn a node sleepy at every brief unplug.
     pub grace: Duration,
     /// The battery levels between which a fixed relay on battery relays
-    /// past its grace (`relay/power.rs`, spec "Sleepy nodes"). `None` for a driver that reports no
+    /// past its grace, its readings calibrated (`relay/power.rs`, spec
+    /// "Sleepy nodes"). `None` for a driver that reports no
     /// battery, as the simulator's scenarios without batteries: every
     /// relay then turns sleepy at its grace's end, since a fixed one would
     /// otherwise relay until its battery browns out.
@@ -145,6 +146,31 @@ impl BatteryLevels {
         high_mv: 3775,
     };
 }
+
+/// A full cell's open-circuit voltage, millivolts, read after an hour's
+/// rest (Maxim AN4189, Table 1): what a calibrated reading of a cell that
+/// has finished charging and rested is (spec "Sleepy nodes").
+pub const BATTERY_FULL_MV: u16 = 4177;
+
+/// How long on external power a cell is full: the charger's 500 mA
+/// (LILYGO T-Echo, "Electrical Parameters") brings an empty 850 mAh cell
+/// to its end voltage within 1.7 h, and its constant-voltage end is
+/// assumed to take under 1.3 h more.
+pub const BATTERY_CHARGED_AFTER: Duration = Duration::from_secs(3 * 3600);
+
+/// How long a full cell rests on battery before its reading calibrates:
+/// the hour AN4189's readings rest.
+pub const BATTERY_REST: Duration = Duration::from_secs(3600);
+
+/// A calibration that would scale the readings by more than this,
+/// thousandths, is not taken: the SAADC's gain error at gain 1/6 is ±3 %
+/// (nRF52840 Product Specification, SAADC), so a reading further off is
+/// not of a full cell.
+pub const BATTERY_GAIN_BOUND_PERMILLE: u32 = 30;
+
+/// One, in the units of a battery reading's scale: a calibrated reading
+/// is the driver's times the scale over this (`store::Stored`).
+pub const BATTERY_SCALE_ONE: u32 = 1 << 15;
 
 impl Default for Config {
     fn default() -> Self {

@@ -122,10 +122,10 @@ pub enum AppCommand<'a> {
         /// External power is present.
         external: bool,
     },
-    /// The battery's voltage, read while the radio does not transmit, as
-    /// often as the driver reads it (spec "Nodes"). A fixed relay on
-    /// battery relays on while it is above [`crate::BatteryLevels`]'
-    /// low level; on external power it is not read.
+    /// The battery's voltage as the driver reads it, uncalibrated, while
+    /// the radio does not transmit, on battery, once a minute (spec
+    /// "Sleepy nodes", core-interface §4). The core calibrates it and
+    /// compares it with [`crate::BatteryLevels`].
     Battery {
         /// Millivolts.
         millivolts: u16,

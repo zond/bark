@@ -90,6 +90,8 @@ mod gps;
 mod motion;
 mod power;
 
+use power::Charge;
+
 use crate::event::{Action, AppCommand, AppEvent, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
@@ -311,7 +313,8 @@ pub struct Node<const H: usize, const Q: usize> {
     /// Since when a relay has been on battery, while its grace lasts;
     /// once it is leaving, since when it has been leaving.
     unplugged: Option<Instant>,
-    /// Sleepy: on battery (`relay/power.rs`).
+    /// Sleepy: on battery (`relay/power.rs`). The four flags and the
+    /// scale fill one word.
     sleepy: bool,
     /// Its grace is over: it flushes, and then turns sleepy.
     leaving: bool,
@@ -320,6 +323,13 @@ pub struct Node<const H: usize, const Q: usize> {
     low: bool,
     /// It turned sleepy by its battery, so relays again when that is high.
     battery_sleepy: bool,
+    /// The scale of the driver's battery readings
+    /// ([`crate::node::BATTERY_SCALE_ONE`] is one); `None` before the
+    /// first calibration.
+    battery_scale: Option<u16>,
+    /// Since when it has been on external power as last reported, or
+    /// when on battery its next reading is taken as a full cell's.
+    charge: Charge,
     config: Config,
     /// Until when a sleepy node listens after its beat or a message it
     /// took (spec "Delivery").
@@ -438,6 +448,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             leaving: false,
             low: false,
             battery_sleepy: false,
+            charge: Charge::Battery,
+            battery_scale: None,
             boot_from: Instant::ZERO,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
@@ -545,7 +557,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             leaving,
             low,
             battery_sleepy,
-
+            charge,
+            battery_scale,
             boot_from,
             radio,
             busy,
@@ -599,6 +612,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *leaving = false;
         *low = false;
         *battery_sleepy = false;
+        *charge = Charge::Battery;
+        *battery_scale = config.stored.and_then(|s| s.battery_scale);
         *boot_from = Instant::ZERO;
         *radio = Radio::new();
         *busy = BusyEstimator::from_config(&config);
@@ -1070,6 +1085,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Kept only where it is read (`relay/power.rs`), so that a node
             // without battery levels writes no more than before.
             relay: !self.sleepy && self.config.battery.is_some(),
+            battery_scale: self.battery_scale,
         }
     }
 
@@ -1977,7 +1993,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
-            AppCommand::Battery { millivolts } => self.battery(millivolts),
+            AppCommand::Battery { millivolts } => self.battery(millivolts, now),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
                     AppCommand::Fix { .. } => {

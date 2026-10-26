@@ -1664,6 +1664,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     map_point: false,
                     anchor: None,
                     relay: true,
+                    battery_scale: None,
                 }),
                 ..Config::default()
             },

@@ -201,3 +201,61 @@ fn without_levels_the_grace_alone_decides() {
     assert!(h.run_until(h.now + secs(GRACE + 60), |h| h.nodes[r].core.sleepy()));
     assert_eq!(traced(&h, r, Trace::GraceEnded), 1);
 }
+
+/// A pair whose relay 0 has been on the charger long enough to be full
+/// and was then unplugged, rested for an hour.
+fn rested(seed: u64) -> Harness<Relay> {
+    let mut h = pair(seed);
+    let full = bark_proto::node::BATTERY_CHARGED_AFTER;
+    h.run_until(common::at(0) + full + secs(60), |_| false);
+    power(&mut h, 0, false);
+    h
+}
+
+/// A full cell's first reading after its rest scales the readings: a
+/// board that reads 2.9 % low is read 4177 mV there, and the levels apply
+/// to its scaled readings; a reading within the rest calibrates nothing.
+/// The scale is stored, and a relay rebooted with it reads alike.
+#[test]
+fn a_rested_full_cell_calibrates_the_readings() {
+    let r = 0;
+    let mut h = rested(71);
+    // Within the rest: not yet a full cell's reading.
+    h.run_for(secs(1800));
+    battery(&mut h, r, 3900);
+    assert_eq!(h.nodes[r].stored.and_then(|s| s.battery_scale), None);
+    h.run_for(secs(1801));
+    battery(&mut h, r, 4056);
+    h.run_for(secs(1));
+    let scale = h.nodes[r].stored.and_then(|s| s.battery_scale);
+    assert!(scale.is_some_and(|s| s > 33_000), "{scale:?}");
+    // 3700 mV read is 3810 mV scaled: above the low level.
+    battery(&mut h, r, 3700);
+    h.run_for(secs(60));
+    assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.leaving());
+    // Kept across a reboot.
+    let stored = h.nodes[r].stored.expect("kept");
+    reboot_on_battery(&mut h, r, stored, 72);
+    h.run_for(secs(400));
+    battery(&mut h, r, 3700);
+    h.run_for(secs(60));
+    assert!(!h.nodes[r].core.sleepy(), "scaled after the reboot");
+    // 3630 mV read is 3738 mV scaled: low.
+    battery(&mut h, r, 3630);
+    assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
+}
+
+/// A reading that would scale by more than the converter's gain error is
+/// no full cell's, and calibrates nothing: the readings stay as they are.
+#[test]
+fn a_calibration_beyond_the_gain_error_is_not_taken() {
+    let r = 0;
+    let mut h = rested(81);
+    h.run_for(secs(3601));
+    // Scale 1.071: a cell that was not full.
+    battery(&mut h, r, 3900);
+    h.run_for(secs(1));
+    assert_eq!(h.nodes[r].stored.and_then(|s| s.battery_scale), None);
+    battery(&mut h, r, 3700);
+    assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
+}

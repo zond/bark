@@ -35,6 +35,13 @@
 //! is fixed, as a solar box's battery recharges. A fixed relay that
 //! reboots on battery relays on, from what it stored (`store.rs`).
 //!
+//! The driver's readings are off by its converter's gain error until
+//! calibrated: a node on external power long enough to be full that is
+//! then on battery for a rest takes its next reading as a full cell's,
+//! and scales every reading after it to match, keeping the scale across
+//! reboots. Before the first calibration it compares the driver's
+//! readings as they are.
+//!
 //! A [`SleepyNode`](super::SleepyNode) has no room for the mail a relay
 //! holds, and stays sleepy whatever its power.
 //!
@@ -43,8 +50,36 @@
 
 use super::{Mover, Node, Stage};
 use crate::event::{Action, AppEvent, DropReason, Trace};
-use crate::node::heartbeat_interval;
+use crate::node::{
+    heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
+    BATTERY_REST, BATTERY_SCALE_ONE,
+};
 use crate::time::{Duration, Instant};
+
+/// What a node's power says of its cell (module documentation), with
+/// times in whole seconds of the node's clock, which a node's 1 KiB
+/// around its tables holds in half the room of an `Instant` (core-interface
+/// §6); a u32 of seconds lasts 136 years.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Charge {
+    /// On external power since then.
+    Usb(u32),
+    /// On battery.
+    Battery,
+    /// On battery after a full charge: its first reading from then is a
+    /// full cell's, rested.
+    Rested(u32),
+}
+
+impl Charge {
+    fn secs(t: Instant) -> u32 {
+        Self::secs_of(t.since(Instant::ZERO))
+    }
+
+    fn secs_of(d: Duration) -> u32 {
+        (d.as_micros() / 1_000_000) as u32
+    }
+}
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is sleepy now (module documentation).
@@ -76,9 +111,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reports whether external power is present.
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
-        if external {
-            self.low = false;
-        }
+        let s = Charge::secs(now);
+        self.charge = match (external, self.charge) {
+            (true, Charge::Usb(since)) => Charge::Usb(since),
+            (true, _) => {
+                self.low = false;
+                Charge::Usb(s)
+            }
+            // Long enough on the charger to be full: its first reading
+            // after a rest calibrates.
+            (false, Charge::Usb(since)) if s >= since + Charge::secs_of(BATTERY_CHARGED_AFTER) => {
+                Charge::Rested(s + Charge::secs_of(BATTERY_REST))
+            }
+            (false, Charge::Usb(_)) => Charge::Battery,
+            (false, c) => c,
+        };
         if let Stage::Booting(_) = self.stage {
             // A fixed relay rebooted on battery relays on, its grace
             // counted from the boot.
@@ -119,15 +166,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The driver reads the battery (module documentation).
-    pub(super) fn battery(&mut self, millivolts: u16) {
+    /// The driver reads the battery: the first reading a rest after a full
+    /// charge calibrates the readings, and the levels apply to the
+    /// calibrated one (module documentation).
+    pub(super) fn battery(&mut self, raw_mv: u16, now: Instant) {
         let Some(levels) = self.config.battery else {
             return;
         };
-        if !self.sleepy && self.unplugged.is_none() {
-            // On external power: the reading is the charger's.
+        if matches!(self.charge, Charge::Usb(_)) || raw_mv == 0 {
+            // On external power the reading is the charger's.
             return;
         }
+        if matches!(self.charge, Charge::Rested(t) if Charge::secs(now) >= t) {
+            self.charge = Charge::Battery;
+            let scale = u32::from(BATTERY_FULL_MV) * BATTERY_SCALE_ONE / u32::from(raw_mv);
+            let bound = BATTERY_SCALE_ONE * BATTERY_GAIN_BOUND_PERMILLE / 1000;
+            if scale.abs_diff(BATTERY_SCALE_ONE) <= bound {
+                self.battery_scale = Some(scale as u16);
+            }
+        }
+        let millivolts = match self.battery_scale {
+            Some(s) => (u32::from(raw_mv) * u32::from(s) / BATTERY_SCALE_ONE) as u16,
+            None => raw_mv,
+        };
         if millivolts <= levels.low_mv {
             self.low = true;
         } else if millivolts >= levels.high_mv {
