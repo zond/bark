@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82; `Config::placed`, `Node::placed` and `AppCommand::ClearMapPoint` (§4), 2026-10-27, roadmap D83, D84. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -142,12 +142,20 @@ a second outstanding excursion: the core ignores it, and the test and simulator 
 panic or never offer it.
 
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
-over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::Fix` hands
-the core a GPS fix that passed the driver's plausibility checks; the driver hands each one,
-and none while a map point is set. Every node, sleepy or not, decides from the fixes
-whether it is carried; a sleepy or carried node takes each fix, and one that is neither
-keeps its position (roadmap D70, D72). A node's address changes with its
-position, and a relay's sleepy nodes' with it (spec "Node identity").
+over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMapPoint`
+clears it: the node stays where it is and its next accepted fix is its place (roadmap
+D84). `AppCommand::Fix` hands the core a GPS fix that passed the driver's plausibility
+checks; the driver hands each one, and none while a map point is set, and the core takes
+none then. Every node, sleepy or not, decides from the fixes whether it is carried; a
+sleepy or carried node takes each fix, and one that is neither keeps its position
+(roadmap D70, D72). A node's address changes with its position, and a relay's sleepy
+nodes' with it (spec "Node identity").
+
+`Config::placed` says whether `Config::position` is the node's place: a board built
+with one, or the simulator's nodes. Without it and without a stored place the node has
+none (`Node::placed` false): it sends no heartbeat, stores nothing, and takes its first
+accepted fix as its place (roadmap D83). Until then the driver checks its fixes against
+no neighbour, since the core cannot rebuild their positions.
 
 `Action::Locate(until)` asks the driver to run the GPS until `until` and hand the first
 fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end.

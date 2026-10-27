@@ -423,6 +423,34 @@ Its sleepy nodes follow it:
 A node's position is its GPS fix, unless the app sets a map point, which
 wins. A rooftop relay with no sky view uses one.
 
+**A node's place.** A node has a place when it was given one where it
+was built, has one stored ([implementation notes](#implementation-notes)),
+or the app sets a map point. One with none takes its first accepted fix
+as its place, fixed, at once, and sends no heartbeat before it; it
+rebuilds the positions it heard near its place then, and a relay
+heartbeats its first rotation's burst ([heartbeat](#heartbeat)) from
+then, as at boot (roadmap D83).
+
+*Why no heartbeat before.* A heartbeat says where the node is, and
+carries only the short position ([positions on the wire](#positions-on-the-wire)):
+a node with no place can rebuild neither its neighbours' positions nor
+its own beyond the short form's period, so any position or address it
+gave would send its neighbours elsewhere. For the same reason its driver
+checks its first fix against no neighbour.
+
+*Why the first fix and not the fixed rule.* Measured from a position it
+never had, the first fix is a far fix, and the node would be carried
+for four hours, holding no mail, at the place it has just found.
+
+**The map point.** The app sets and clears it. While it is set, the
+node takes no fix, its driver hands none, a relay's GPS rests (below)
+and a sleepy node starts no search ([beats](#beats)); cleared, the node stays where it is, says so at once
+([heartbeat](#heartbeat)), and its next accepted fix is its place
+(roadmap D84).
+
+*Why the app clears it.* A person set it, so a person ends it; a fix
+cannot, since none is read while it is set.
+
 A fix is dropped as unreliable, a sign of spoofing, when:
 
 - it is farther than the hearing radius, 3 km
@@ -446,7 +474,7 @@ whether it moves:
 | far fix | an accepted fix more than the allowance from that place |
 | carried | after 72 s of far fixes with none near between |
 | fixed again | after four hours of fixes within the allowance of one place; it keeps the fix it has then |
-| map point | fixed at once |
+| map point | fixed at once; cleared, the next accepted fix is the place |
 | power | changes nothing: a carried node plugged in is a carried relay until it has stayed four hours, a fixed one keeps the fix it has then (roadmap D72) |
 
 Which fixes a node takes as its position, and what a carried node gives
@@ -2525,7 +2553,7 @@ read. It costs no airtime: 13 bytes fill the same 6 blocks of symbols
 at SF5 as 11.
 
 A node sets the map point while its position is the map point, keeps it
-across a reboot, and clears it when it takes a fix as its position. Its
+across a reboot, and clears it when the app clears it ([position](#position)). Its
 neighbours keep it ([neighbour table](#neighbour-table)); no rule uses
 it yet.
 
