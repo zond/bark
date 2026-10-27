@@ -490,7 +490,7 @@ until the node is carried or a fix is near again.
 
 | | |
 |---|---|
-| fading | σ = 4 dB, the scenarios' figure ([relay choice](#relay-choice)) |
+| fading | σ = 4 dB, the fade depth the switching margin assumes ([relay choice](#relay-choice), roadmap D38) |
 | a surprise's variance | 4σ²/3, 21.3 dB²: the heartbeat's σ² and the average's σ²/3, each frame counting half in it |
 | the sum | the squared surprises of a rotation, 195 s, each over 4σ²/3; for a node that does not move, chi-square with as many degrees as heartbeats |
 | the point | two standard deviations above the sum's mean, by the Wilson–Hilferty approximation, k (1 − 2/(9k) + 2 √(2/(9k)))³ for k heartbeats; the switching margin's convention ([relay choice](#relay-choice)) |
