@@ -2015,6 +2015,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::Battery { millivolts } => self.battery(millivolts, now),
+            AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {
                     AppCommand::Fix { .. } => {

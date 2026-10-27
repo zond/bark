@@ -415,7 +415,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // A search due while it cannot start is dropped.
         let due = if self.sleepy {
-            let held = now < self.gps_allowed_at();
+            // No fix is taken while a map point is set (roadmap D84).
+            let held = now < self.gps_allowed_at() || self.motion.map_point;
             self.gps.searches(|s| core::mem::take(&mut s.due)) && !held
         } else {
             let rests = !self.gps_tracks() && !self.motion.map_point;

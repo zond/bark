@@ -33,14 +33,14 @@ use crate::Config;
 pub(super) struct Motion {
     /// It moves: it takes each fix and holds mail for nobody.
     pub(super) carried: bool,
-    /// Its position is a map point the application set, and no fix has
-    /// replaced it since (spec "Position").
+    /// Its position is a map point the application set (spec
+    /// "Position"); until the application clears it no fix is taken.
     pub(super) map_point: bool,
     /// It has a place: the position it heartbeats is where it is. A
     /// board built without one has none until its first accepted fix.
     pub(super) placed: bool,
-    /// Its next accepted fix is its place, fixed, at once: it has none
-    /// (roadmap D83).
+    /// Its next accepted fix is its place, fixed, at once: it has none,
+    /// or its map point was cleared (roadmap D83, D84).
     pub(super) first_fix: bool,
     /// Fixed: since when its fixes have been far, with none near since.
     far_since: Option<Instant>,
@@ -135,9 +135,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         was
     }
 
+    /// The application cleared its map point: the node stays where it is
+    /// until its next accepted fix, which is its place.
+    pub(super) fn clear_map_point(&mut self) {
+        if self.motion.map_point {
+            self.motion.map_point = false;
+            self.motion.first_fix = true;
+            self.changed();
+        }
+    }
+
     /// The driver hands a GPS fix that passed its checks (module
     /// documentation). Returns whether the node took it as its position.
     pub(super) fn fix(&mut self, at: Position, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+        // No fix moves a map point; the driver hands none meanwhile.
+        if self.motion.map_point {
+            return false;
+        }
         if self.motion.first_fix && !self.motion.carried {
             self.place_at(at, now);
             return true;
@@ -146,7 +160,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let takes = self.sleepy || self.motion.carried;
         if takes {
             self.set_position(at);
-            self.motion.map_point = false;
         }
         if self.motion.carried {
             let still = &mut self.motion;

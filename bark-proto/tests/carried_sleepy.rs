@@ -417,13 +417,18 @@ fn a_map_point_fixes_any_node() {
         let until = h.now + secs(400);
         h.run_until(until, pinned);
         assert!(pinned(&h), "external: {external}");
-        // A fix the node takes as its position replaces the map point; a
-        // fixed relay keeps its place, and so its map point.
-        fix(&mut h, n, 700.0);
+        // No fix replaces a map point (roadmap D84): only the application
+        // clears it, and the next accepted fix is the place.
+        fix(&mut h, n, 900.0);
+        assert_eq!(h.nodes[n].core.config().position, pos(700.0));
+        h.command(n, AppCommand::ClearMapPoint);
         let since = h.now;
         h.run_until(at(5000), |h| last_heartbeat_since(h, n, since).is_some());
         let after = last_heartbeat_since(&h, n, since).expect("a heartbeat");
-        assert_eq!(after.map_point, external, "external: {external}");
+        assert!(!after.map_point, "external: {external}");
+        fix(&mut h, n, 900.0);
+        assert_eq!(h.nodes[n].core.config().position, pos(900.0));
+        assert!(!h.nodes[n].core.carried(), "external: {external}");
     }
 }
 
