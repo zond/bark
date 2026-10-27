@@ -476,6 +476,51 @@ looks for. A spoofed jump beyond the hearing radius the neighbour check
 catches; a spoofed drift inside it no bound on distance catches, only
 the C/N0 check or a map point (roadmap D63, D74).
 
+**A relay's GPS.** A relay's GPS runs all the time on external power
+and for the grace after it is lost ([sleepy nodes](#sleepy-nodes)).
+After the grace, and whenever its position is a map point, it rests in
+standby (roadmap D82). A resting relay searches as a sleepy node does
+([beats](#beats)), with no back-off, at boot and when the radio says it
+may have moved: over each worst-case rotation it sums the squared
+**surprises** of the heartbeats of its fixed relay neighbours, each
+heartbeat's RSSI less that neighbour's averaged RSSI before it
+([neighbour table](#neighbour-table)), and searches when the sum passes
+the point below. A search that finds a far fix keeps the GPS running
+until the node is carried or a fix is near again.
+
+| | |
+|---|---|
+| fading | σ = 4 dB, the scenarios' figure ([relay choice](#relay-choice)) |
+| a surprise's variance | 4σ²/3, 21.3 dB²: the heartbeat's σ² and the average's σ²/3, each frame counting half in it |
+| the sum | the squared surprises of a rotation, 195 s, each over 4σ²/3; for a node that does not move, chi-square with as many degrees as heartbeats |
+| the point | two standard deviations above the sum's mean, by the Wilson–Hilferty approximation, k (1 − 2/(9k) + 2 √(2/(9k)))³ for k heartbeats; the switching margin's convention ([relay choice](#relay-choice)) |
+
+*Why it runs through the grace.* A person who unplugs a node and walks
+off with it does so then, and the 72 s of far fixes that make it
+carried need the GPS running. A relay on battery past the grace is one
+left where it stands, in an outage (roadmap D81), and the L76K's 29 mA
+beside the radio's 6.4 mA would take its battery to the low level in 19
+hours instead of 106.
+
+*Why the radio.* Moving changes every neighbour's signal: by
+36 log10(1 + x/r) dB for a move x towards or away from a neighbour r
+away under the path-loss exponent of 3.6, and more where the node steps
+out of a building or past the walls that shadow it. A node that does
+not move sees only fading.
+
+*Why the test errs towards silence.* The average follows a neighbour's
+DATA and ACKs as well as its heartbeats, and those come within the
+fading's correlation, so a still relay's surprises vary less than
+4σ²/3: measured, a third to a half of it (roadmap D82). It searches for
+nothing less often than the 2.3 % of rotations the point allows.
+
+*Why no back-off.* At the most the point allows, 2.3 % of 18.5
+rotations an hour, a relay that never sees the sky searches 0.42 times
+an hour, 60 s each at 29 mA: 0.20 mA, 3 % of its 6.4 mA.
+
+*Why a map point rests it.* No fix moves a node with a map point
+([nodes](#nodes)), so the GPS has nothing to do.
+
 **Time.** GPS is for position only. There is no network time: every
 timer is local and monotonic, and nothing depends on two nodes agreeing
 on a clock.
@@ -2007,7 +2052,8 @@ anchor or changes it, when it turns anchorless, and once a delivery TTL
 while it stays anchorless. A search ends at the first fix that passes
 the checks ([position](#position)) or after 60 s, and one that finds
 nothing holds every search back for 8 hours. The fix asked for at a new
-anchor is where the node chose from. A relay's GPS runs all the time.
+anchor is where the node chose from. A relay's GPS is in
+[position](#position).
 
 | | |
 |---|---|
