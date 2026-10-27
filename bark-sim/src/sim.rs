@@ -2887,7 +2887,9 @@ impl Sim {
         }
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
-        if self.gps.checks {
+        // A node with no place cannot rebuild its neighbours' positions,
+        // so its fixes go unchecked against them (roadmap D83).
+        if self.gps.checks && self.relays[n as usize].placed() {
             // The longest hearing radius, rooftop to rooftop (spec
             // "Physical layer").
             const HEARING_M: f32 = 3000.0;

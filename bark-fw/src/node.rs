@@ -4,9 +4,11 @@
 //! device ID (nRF52840 Product Specification, FICR DEVICEID), the same at
 //! every boot ([`node_id`]).
 //!
-//! The node's position comes from `BARK_LAT` and `BARK_LON` (degrees) at
+//! The node's place comes from `BARK_LAT` and `BARK_LON` (degrees) at
 //! build time until the phone app or the GPS can set it
-//! (spec "Node identity", "Position"). Its seed comes from the
+//! (spec "Node identity", "Position"). Built without them, and with no
+//! stored place, the node has none: it sends no heartbeat until its first
+//! accepted fix or a map point (roadmap D83). Its seed comes from the
 //! chip's random number generator (`docs/core-interface.md` §5).
 
 use core::mem::MaybeUninit;
@@ -116,13 +118,15 @@ fn position() -> Option<Position> {
 /// The protocol configuration for this board, with what it stored before
 /// its last reboot.
 pub fn config(stored: Option<Stored>) -> Config {
-    let position = position().unwrap_or_else(|| {
-        log::warn!("no BARK_LAT/BARK_LON at build time; position 0, 0");
-        Position::default()
-    });
+    let built = position();
+    if built.is_none() {
+        log::warn!("no BARK_LAT/BARK_LON at build time: no place until a fix");
+    }
+    let position = built.unwrap_or_default();
     log::info!("stored {:?}", stored);
     Config {
         position,
+        placed: built.is_some(),
         node_id: node_id(),
         tx_power_dbm: MAX_TX_DBM,
         stored,

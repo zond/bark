@@ -626,6 +626,14 @@ impl Neighbours {
             .min()
     }
 
+    /// Each position rebuilt from its short form near `near`, for a node
+    /// that has just learned where it is (spec "Positions on the wire").
+    pub fn rebuild(&mut self, near: Position) {
+        for n in self.slots.iter_mut().flatten() {
+            n.position = Position::from_short(n.position.short(), near);
+        }
+    }
+
     /// Recompute every entry's local point after own position changed.
     pub fn replane(&mut self, plane: &LocalPlane) {
         for n in self.slots.iter_mut().flatten() {

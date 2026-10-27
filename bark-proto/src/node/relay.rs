@@ -1091,6 +1091,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Tell the driver to keep what changed.
     fn keep(&mut self, emit: &mut dyn FnMut(Action)) {
+        // A node with no place has none to keep: it boots without one.
+        if !self.motion.placed {
+            return;
+        }
         let now = self.to_keep();
         if self.stored != Some(now) {
             self.stored = Some(now);
@@ -1559,6 +1563,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// every answer to a sleepy node would carry the long preamble
     /// (spec "Channel at boot", roadmap D73).
     fn heartbeats(&self) -> bool {
+        // A heartbeat says where the node is, and a node with no place
+        // knows its neighbours' positions only to the short form's period
+        // (spec "Position", roadmap D83).
+        if !self.motion.placed {
+            return false;
+        }
         match self.stage {
             Stage::Off => false,
             Stage::Booting(_) => !self.sleepy,
@@ -2016,7 +2026,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     _ => {
                         // A sleepy node's position is no news, but a
                         // change of its carried flag is.
-                        if self.map_point(position) || !self.sleepy {
+                        if self.map_point(position, now) || !self.sleepy {
                             self.changed();
                         }
                         true
