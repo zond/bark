@@ -508,11 +508,12 @@ away under the path-loss exponent of 3.6, and more where the node steps
 out of a building or past the walls that shadow it. A node that does
 not move sees only fading.
 
-*Why the test errs towards silence.* The average follows a neighbour's
-DATA and ACKs as well as its heartbeats, and those come within the
-fading's correlation, so a still relay's surprises vary less than
-4σ²/3: measured, a third to a half of it (roadmap D82). It searches for
-nothing less often than the 2.3 % of rotations the point allows.
+*Why the test errs towards silence.* A frame in a deep fade is not
+heard, so the heartbeats that reach a relay are cut off below
+sensitivity, and their RSSI adds the noise to the signal; a still
+relay's surprises vary less than 4σ²/3, measured a third to a half of it
+(roadmap D82). It searches for nothing less often than the 2.3 % of
+rotations the point allows.
 
 *Why no back-off.* At the most the point allows, 2.3 % of 18.5
 rotations an hour, a relay that never sees the sky searches 0.42 times

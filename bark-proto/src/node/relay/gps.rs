@@ -37,10 +37,9 @@ const SURPRISE_SIGMAS: f32 = 2.0;
 /// and the neighbour's averaged RSSI before it, under fading of
 /// [`FADE_DEPTH_DB`]: the frame's σ² and the average's σ²/3, since each
 /// frame counts half in it and a neighbour's heartbeats reach the node's
-/// channel a rotation apart, longer than the fading lasts. The frames the
-/// average also takes in, DATA and ACKs, come closer together, so a still
-/// relay's surprises vary less than this, and the test errs towards
-/// silence (roadmap D82).
+/// channel a rotation apart, longer than the fading lasts. Frames in a
+/// deep fade are not heard, so a still relay's surprises vary less than
+/// this, and the test errs towards silence (roadmap D82).
 const SURPRISE_VAR_DB2: f32 = FADE_DEPTH_DB * FADE_DEPTH_DB * 4.0 / 3.0;
 
 /// The point [`SURPRISE_SIGMAS`] above the mean of a chi-square of `k`
