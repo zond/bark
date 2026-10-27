@@ -394,8 +394,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// relay's grace on battery passing.
     pub(super) fn gps_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self.sleepy {
-            let past = self.gps_grace_ends().is_some_and(|t| now >= t);
-            self.gps.watch(|w| w.set(PAST_GRACE, past));
+            // Once past, past until external power: the flush of a relay
+            // leaving restarts `unplugged` for its own bound, and its GPS
+            // is not to wake for it at a low battery.
+            let on_battery = self.unplugged.is_some();
+            let ended = self.gps_grace_ends().is_some_and(|t| now >= t);
+            self.gps.watch(|w| {
+                let past = on_battery && (ended || w.has(PAST_GRACE));
+                w.set(PAST_GRACE, past);
+            });
         }
         if at(self.gps.until).is_some_and(|t| now >= t) {
             self.gps.until = 0;

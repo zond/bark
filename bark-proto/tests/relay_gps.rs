@@ -6,7 +6,7 @@
 
 mod common;
 
-use bark_proto::{AppCommand, BatteryLevels, Config, Duration, Instant, Position, Relay};
+use bark_proto::{AppCommand, BatteryLevels, Config, Duration, Instant, MsgId, Position, Relay};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -139,4 +139,72 @@ fn a_far_fix_keeps_it_on() {
     }
     // Carried past its grace on battery, it turns sleepy (roadmap D81).
     assert!(h.nodes[0].core.carried());
+}
+
+/// A fixed relay on battery past its grace, holding a message for its
+/// sleepy node, reads low and flushes: its GPS stays at rest through the
+/// flush, whose bound restarts the time it has been on battery.
+#[test]
+fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
+    let (r, o, s) = (0, 1, 2);
+    let config = |east: f64, seed: u64, external: bool| {
+        let c = Config {
+            position: pos(east),
+            battery: Some(BatteryLevels::DESIGN),
+            grace: GRACE,
+            ..Config::default()
+        };
+        (Relay::new(c, seed), external)
+    };
+    let mut h = Harness::powered(vec![
+        config(0.0, 1, true),
+        config(300.0, 2, true),
+        config(20.0, 3, false),
+    ]);
+    h.link(r, o);
+    h.link(r, s);
+    h.link(o, s);
+    h.set_rssi(r, s, -80);
+    h.set_rssi(o, s, -100);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert_eq!(
+        h.nodes[s].core.anchor().map(|a| a.id),
+        Some(h.nodes[r].core.id())
+    );
+    h.command(r, AppCommand::Power { external: false });
+    h.command(
+        r,
+        AppCommand::Battery {
+            millivolts: BatteryLevels::DESIGN.high_mv + 100,
+        },
+    );
+    h.run_for(GRACE + secs(10));
+    assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.gps_tracks());
+    // Out of reach, its sleepy node's message waits at the relay.
+    h.unlink(r, s);
+    let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
+    let text = b"held when the battery goes low";
+    h.command(
+        o,
+        AppCommand::Send {
+            dst_pos,
+            dst_id,
+            payload: text,
+        },
+    );
+    let id = MsgId::of(dst_pos, dst_id, text);
+    h.run_for(secs(60));
+    assert!(h.nodes[r].core.delivery_queue().any(|(m, _)| m == id));
+    h.command(
+        r,
+        AppCommand::Battery {
+            millivolts: BatteryLevels::DESIGN.low_mv,
+        },
+    );
+    assert!(h.nodes[r].core.leaving());
+    while !h.nodes[r].core.sleepy() {
+        assert!(!h.nodes[r].core.gps_tracks());
+        h.run_for(secs(1));
+    }
 }
