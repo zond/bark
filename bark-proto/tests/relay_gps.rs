@@ -1,13 +1,12 @@
-//! How a relay runs its GPS, behind the research switch
-//! `Config::relay_gps` (`docs/relay-gps-2026-10-26.md`): all the time by
-//! default; resting, it searches at boot and, by the radio, when the
-//! heartbeats of its fixed relay neighbours change more than fading
-//! explains, and a far fix keeps it on until it is carried.
+//! How a relay runs its GPS (spec "Beats", roadmap D82): all the time on
+//! external power and through its grace on battery; after that, and with a
+//! map point, it rests, searching at boot and when the heartbeats of its
+//! fixed relay neighbours change more than fading explains; a far fix
+//! keeps it on until it is carried.
 
 mod common;
 
-use bark_proto::gps::RelayGps;
-use bark_proto::{AppCommand, BatteryLevels, Config, Instant, Position, Relay};
+use bark_proto::{AppCommand, BatteryLevels, Config, Duration, Instant, Position, Relay};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -21,15 +20,19 @@ fn at(s: u64) -> Instant {
     Instant::ZERO + secs(s)
 }
 
-/// Five relays on USB 200 m apart, all hearing each other, node 0 with
-/// `mode`.
-fn row(mode: RelayGps) -> Harness<Relay> {
+/// The grace of the relays here, shorter than the design's hour.
+const GRACE: Duration = Duration::from_secs(300);
+
+/// Five relays on USB 200 m apart, all hearing each other, with battery
+/// levels, so that a fixed one on battery relays on past its grace
+/// (roadmap D81).
+fn row() -> Harness<Relay> {
     let nodes = (0..5)
         .map(|i| {
             let config = Config {
                 position: pos(200.0 * i as f64),
-                relay_gps: if i == 0 { mode } else { RelayGps::Always },
                 battery: Some(BatteryLevels::DESIGN),
+                grace: GRACE,
                 ..Config::default()
             };
             (Relay::new(config, i as u64 + 1), true)
@@ -52,49 +55,52 @@ fn searches(h: &Harness<Relay>, from: Instant) -> usize {
         .count()
 }
 
-/// By default a relay's GPS runs all the time and it never asks for a
-/// search, on USB or on battery.
-#[test]
-fn by_default_a_relay_tracks() {
-    let mut h = row(RelayGps::Always);
+/// Node 0 on battery from 600 s, past its grace from 900 s.
+fn resting() -> Harness<Relay> {
+    let mut h = row();
     h.run_until(at(600), |_| false);
-    assert!(h.nodes[0].core.gps_tracks());
     h.command(0, AppCommand::Power { external: false });
-    h.run_until(at(1200), |_| false);
-    assert!(h.nodes[0].core.gps_tracks());
-    assert_eq!(searches(&h, Instant::ZERO), 0);
+    h
 }
 
-/// With `Radio`, a relay tracks on USB and rests on battery, in its
-/// grace too; with a map point it rests on USB as well.
+/// On USB a relay's GPS runs and it never asks for a search; on battery
+/// it runs through the grace and then rests; back on USB it runs again.
 #[test]
-fn on_battery_it_rests() {
-    let mut h = row(RelayGps::Radio);
-    h.run_until(at(600), |_| false);
+fn it_runs_on_usb_and_through_the_grace() {
+    let mut h = resting();
     assert!(h.nodes[0].core.gps_tracks());
-    h.command(0, AppCommand::Power { external: false });
-    h.run_until(at(1200), |_| false);
+    h.run_until(at(600 + 290), |_| false);
+    assert!(h.nodes[0].core.gps_tracks());
+    h.run_until(at(600 + 310), |_| false);
     assert!(!h.nodes[0].core.sleepy());
     assert!(!h.nodes[0].core.gps_tracks());
     h.command(0, AppCommand::Power { external: true });
     assert!(h.nodes[0].core.gps_tracks());
-    h.command(0, AppCommand::SetPosition { position: pos(0.0) });
-    assert!(!h.nodes[0].core.gps_tracks());
+    assert_eq!(searches(&h, Instant::ZERO), 0);
 }
 
-/// Resting, a still relay searches at boot and not again while its
-/// neighbours' signals stay as they were; when every one of them drops by
-/// 15 dB, as stepping into a building does, it searches within two
-/// worst-case rotations.
+/// A relay with a map point rests its GPS on USB too: no fix may move it.
+#[test]
+fn a_map_point_rests_it() {
+    let mut h = row();
+    h.run_until(at(600), |_| false);
+    h.command(0, AppCommand::SetPosition { position: pos(0.0) });
+    assert!(!h.nodes[0].core.gps_tracks());
+    h.run_until(at(3000), |_| false);
+    assert_eq!(searches(&h, Instant::ZERO), 0);
+}
+
+/// Resting, a still relay does not search while its neighbours' signals
+/// stay as they were; when every one of them drops by 15 dB, as stepping
+/// into a building does, it searches within two worst-case rotations.
 #[test]
 fn the_radio_starts_a_search() {
-    let mut h = row(RelayGps::RadioEverywhere);
+    let mut h = resting();
     h.run_until(at(3000), |_| false);
     assert!(!h.nodes[0].core.gps_tracks());
-    assert_eq!(searches(&h, Instant::ZERO), 1, "{:?}", h.nodes[0].located);
-    let quiet = common::SIGNAL_DBM;
+    assert_eq!(searches(&h, Instant::ZERO), 0, "{:?}", h.nodes[0].located);
     for b in 1..5 {
-        h.set_rssi(0, b, quiet - 15);
+        h.set_rssi(0, b, common::SIGNAL_DBM - 15);
     }
     h.run_until(at(3000 + 2 * 195 + 15), |_| false);
     assert!(searches(&h, at(3000)) >= 1, "{:?}", h.nodes[0].located);
@@ -104,8 +110,8 @@ fn the_radio_starts_a_search() {
 /// and a near one sends the GPS back to rest.
 #[test]
 fn a_far_fix_keeps_it_on() {
-    let mut h = row(RelayGps::RadioEverywhere);
-    h.run_until(at(600), |_| false);
+    let mut h = resting();
+    h.run_until(at(1000), |_| false);
     assert!(!h.nodes[0].core.gps_tracks());
     h.command(
         0,
@@ -122,28 +128,15 @@ fn a_far_fix_keeps_it_on() {
     );
     assert!(!h.nodes[0].core.gps_tracks());
     for s in 0..=72 {
-        h.run_until(at(700 + s), |_| false);
+        h.run_until(at(1100 + s), |_| false);
         h.command(
             0,
             AppCommand::Fix {
                 position: pos(100.0 + s as f64),
             },
         );
+        assert!(h.nodes[0].core.gps_tracks() || h.nodes[0].core.carried());
     }
+    // Carried past its grace on battery, it turns sleepy (roadmap D81).
     assert!(h.nodes[0].core.carried());
-    assert!(h.nodes[0].core.gps_tracks());
-}
-
-/// With `Grace`, a fixed relay on battery, which relays on past its grace
-/// (roadmap D81), runs its GPS through the grace, then rests.
-#[test]
-fn through_the_grace_it_tracks() {
-    let mut h = row(RelayGps::Grace);
-    h.run_until(at(600), |_| false);
-    h.command(0, AppCommand::Power { external: false });
-    h.run_until(at(600 + 3500), |_| false);
-    assert!(h.nodes[0].core.gps_tracks());
-    h.run_until(at(600 + 3700), |_| false);
-    assert!(!h.nodes[0].core.sleepy());
-    assert!(!h.nodes[0].core.gps_tracks());
 }

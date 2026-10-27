@@ -113,7 +113,9 @@ pub struct Config {
     /// sleepy (spec "Sleepy nodes", roadmap D71). Listening draws
     /// [`crate::sniff::RX_CURRENT_UA`], 5.8 mA, so an hour of it is 0.68 %
     /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
-    /// would turn a node sleepy at every brief unplug.
+    /// would turn a node sleepy at every brief unplug. A fixed relay that
+    /// relays on past it (roadmap D81) rests its GPS from then (roadmap
+    /// D82).
     pub grace: Duration,
     /// The battery levels between which a fixed relay on battery relays
     /// past its grace, its readings calibrated (`relay/power.rs`, spec
@@ -122,9 +124,6 @@ pub struct Config {
     /// relay then turns sleepy at its grace's end, since a fixed one would
     /// otherwise relay until its battery browns out.
     pub battery: Option<BatteryLevels>,
-    /// Research switch: how a relay runs its GPS
-    /// (`docs/relay-gps-2026-10-26.md`); all the time in the design.
-    pub relay_gps: crate::gps::RelayGps,
 }
 
 /// A battery's open-circuit voltage, millivolts, at which a fixed relay
@@ -296,7 +295,6 @@ impl Config {
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
         battery: None,
-        relay_gps: crate::gps::RelayGps::Always,
     };
 }
 

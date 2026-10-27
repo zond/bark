@@ -412,8 +412,7 @@ pub enum Trace {
     /// (spec "Relay choice").
     AnchorCheck,
     /// A relay that rests its GPS and watches its radio closed a rotation
-    /// of surprises (research switch `Config::relay_gps`,
-    /// `node/relay/gps.rs`).
+    /// of surprises (`node/relay/gps.rs`, spec "Beats").
     MoveSign {
         /// The heartbeats of fixed relay neighbours in it.
         surprises: u8,

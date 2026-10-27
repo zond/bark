@@ -142,19 +142,6 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
-    pub relay_gps: Option<RelayGps>,
-}
-
-/// How a relay runs its GPS (`bark_proto::gps::RelayGps`, a research
-/// switch; `docs/relay-gps-2026-10-26.md`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(missing_docs)]
-pub enum RelayGps {
-    Always,
-    Radio,
-    Grace,
-    RadioEverywhere,
 }
 
 impl ProtocolOverrides {
@@ -202,15 +189,6 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
-        if let Some(g) = self.relay_gps {
-            use bark_proto::gps::RelayGps as R;
-            c.relay_gps = match g {
-                RelayGps::Always => R::Always,
-                RelayGps::Radio => R::Radio,
-                RelayGps::Grace => R::Grace,
-                RelayGps::RadioEverywhere => R::RadioEverywhere,
-            };
-        }
         c
     }
 }

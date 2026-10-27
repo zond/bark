@@ -4629,17 +4629,30 @@ mod tests {
         assert!(g.radio_ma > 5.8 && g.radio_ma < 7.0, "{g:?}");
     }
 
-    /// A relay that rests its GPS (`[protocol] relay_gps`) runs it only in
-    /// its searches: at boot, and when the radio says it may have moved.
+    /// A relay on battery runs its GPS through its grace and then rests it
+    /// (spec "Beats", roadmap D82): its GPS on battery draws far less than
+    /// the receiver's current, and more than its standby.
     #[test]
-    fn a_resting_relay_s_gps_is_counted() {
+    fn a_relay_s_gps_rests_after_its_grace() {
         let mut sc = block(7, 1800.0);
-        sc.protocol.relay_gps = Some(crate::scenario::RelayGps::RadioEverywhere);
+        sc.battery.on = true;
+        sc.battery.capacity_mah = 850.0;
+        sc.battery.cell = [1.0, 1.0];
+        sc.battery.charge_on_usb = [1.0, 1.0];
+        sc.battery.charge_on_battery = [1.0, 1.0];
+        sc.battery.read_s = 60.0;
+        // After the relays' first rotation, in which a report of the
+        // power sets their role at once.
+        sc.battery.outages = vec![[300.0, 1800.0]];
+        sc.protocol.grace_ms = Some(300_000);
         let mut sim = Sim::new(&sc).unwrap();
         sim.run();
         let g = sim.summary().relay_gps.expect("relays");
-        assert!(g.gps_ma[0] < 1.0, "{g:?}");
-        assert!(g.gps_ma[0] >= bark_proto::gps::GPS_STANDBY_UA as f64 / 1e3);
+        assert!(g.hours[1] > 0.0, "{g:?}");
+        // The grace is 300 s of the 1500 s on battery.
+        let bound = bark_proto::gps::GPS_CURRENT_UA as f64 / 1e3 * 300.0 / 1500.0;
+        assert!(g.gps_ma[1] < 1.2 * bound, "{g:?}");
+        assert!(g.gps_ma[1] > bark_proto::gps::GPS_STANDBY_UA as f64 / 1e3);
     }
 
     /// An interferer reaches walkers where they are: one that walks out of

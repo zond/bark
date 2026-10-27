@@ -1,11 +1,14 @@
-//! The board's GPS receiver, a Quectel L76K, and when a sleepy node runs
-//! it (spec "Position", "Beats"; `docs/gps-schedule-2026-10-25.md`).
+//! The board's GPS receiver, a Quectel L76K, and when a node runs it
+//! (spec "Position", "Beats"; `docs/gps-schedule-2026-10-25.md`,
+//! `docs/relay-gps-2026-10-26.md`).
 //!
 //! The figures are the L76K Hardware Design V1.0 (Quectel, 2021-10-20),
 //! Table 2 (page 11), at room temperature with every satellite at
 //! −130 dBm, about the open-sky level. A sleepy node runs a search only
 //! when its core asks for one ([`crate::Action::Locate`]), at the times
-//! spec "Beats" gives (roadmap D80).
+//! spec "Beats" gives (roadmap D80); a relay's runs while its core says
+//! so (`Node::gps_tracks`), and searches as a sleepy node's when it rests
+//! (roadmap D82).
 
 use crate::time::Duration;
 
@@ -45,24 +48,6 @@ pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 /// a sleepy node's 0.63 mA (spec "Delivery"), for a node that never sees
 /// the sky (roadmap D80).
 pub const BACKOFF: Duration = Duration::from_secs(8 * 3600);
-
-/// How a relay runs its GPS: a research switch
-/// (`docs/relay-gps-2026-10-26.md`). The spec's is [`RelayGps::Always`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RelayGps {
-    /// All the time, on external power and on battery (spec "Beats").
-    #[default]
-    Always,
-    /// All the time on external power; on battery in standby, but for a
-    /// search at boot and when the radio says the node may have moved
-    /// (`node/relay/gps.rs`).
-    Radio,
-    /// As [`RelayGps::Radio`], but on battery it runs all the time through
-    /// the node's grace (`Config::grace`) before it rests.
-    Grace,
-    /// As [`RelayGps::Radio`], on external power too.
-    RadioEverywhere,
-}
 
 /// A sleepy node's mean current with an anchor, µA: the radio's, S4's
 /// figure (spec "Delivery"), which [`BACKOFF`] keeps the GPS within a

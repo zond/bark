@@ -133,10 +133,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 && Self::can_relay()
                 && self.config.stored.is_some_and(|s| s.relay && !s.carried);
             let turns = sleepy && !kept;
-            if turns && !self.sleepy {
+            let was = self.sleepy;
+            self.sleepy = turns;
+            if turns && !was {
                 self.gps_due();
             }
-            self.sleepy = turns;
             self.unplugged = (sleepy && kept).then_some(now);
             let ends = self.boot_end(self.boot_from);
             self.stage = Stage::Booting(ends);

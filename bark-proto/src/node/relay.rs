@@ -2025,7 +2025,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if !took || !self.sleepy {
                     return;
                 }
-                if core::mem::take(&mut self.gps.at_choice) {
+                if self.gps_at_choice() {
                     // Where it chose from (`relay/gps.rs`).
                     self.anchored_at_fix();
                     return;
