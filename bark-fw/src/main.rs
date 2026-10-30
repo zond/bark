@@ -68,10 +68,21 @@ const USB_PACKET: u16 = 64;
 const LOG_BUFFER: usize = 2048;
 
 /// Which image this is, for the display and the log.
-const IMAGE: &str = match cfg!(feature = "console") {
-    false => "node",
-    true => "console",
+#[cfg(feature = "console")]
+const IMAGE: &str = match console::SURVEY {
+    None => "console",
+    Some(_) => "survey",
 };
+#[cfg(not(feature = "console"))]
+const IMAGE: &str = "node";
+
+// A survey is a console; set for a node build the variable would be
+// ignored, and the board would not do what was asked of it.
+#[cfg(not(feature = "console"))]
+const _: () = assert!(
+    option_env!("BARK_SURVEY").is_none(),
+    "BARK_SURVEY needs --features console"
+);
 
 /// The node's ID: the low 48 bits of the 64-bit factory device ID, all 32
 /// of DEVICEID[0] and the low 16 of DEVICEID[1] (nRF52840 Product
@@ -115,6 +126,10 @@ fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
     y += display::line_height(TEXT_SCALE);
     let mut line = display::Line::<32>::new();
     let _ = write!(line, "V{}", update::BARK_IMAGE_VERSION);
+    #[cfg(feature = "console")]
+    if let Some(ch) = console::SURVEY {
+        let _ = write!(line, " CH{}", ch.index());
+    }
     picture.text(line.bytes(), TEXT_SCALE, y);
     picture
 }

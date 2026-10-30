@@ -21,6 +21,7 @@
 //! beacon <k> <ms> [len]      send a frame every ms; stop with `stop`
 //! ping <k>                   send a ping on k, wait home for the pong
 //! status [reset]             uptime, battery, settings, counters
+//! survey [n]                 the survey build's noise log, the last n minutes
 //! stage <header hex>         start staging an image (`bark_image::Header`)
 //! chunk <offset> <hex>       write up to 256 bytes of it, in order
 //! commit                     check it and ask the loader to swap it in
@@ -32,14 +33,25 @@
 //! Bench frames start with a heartbeat's first byte on channel 15, which no
 //! node sends and nodes reject (spec "Packet formats"): byte 0 is `0x8F`,
 //! byte 1 the format version, as in every packet, byte 2 the kind, in the
-//! heartbeat's flags byte, bytes 3..7 a big-endian sequence number, byte 7
-//! the sender's home channel, and the rest `byte[i] = i`. A heartbeat heard is printed with
-//! its sender's ID, the newest format it speaks and its map point flag.
+//! heartbeat's flags byte, byte 3 the kind's argument (the sender's home
+//! channel, or a survey frame's transmit power as a signed byte), bytes
+//! 4..8 a big-endian sequence number, and the rest `byte[i] = i`. A
+//! heartbeat heard is printed with its sender's ID, the newest format it
+//! speaks and its map point flag.
+//!
+//! Built with `BARK_SURVEY=<channel>`, the console is a survey for a board
+//! left on battery away from the host: from boot, with no host needed, it
+//! beacons on that channel through every frame length and power, each
+//! frame saying its power, and every minute reads the noise on every
+//! channel into a ring in RAM, which `survey` prints once the board is
+//! plugged in again ([`SURVEY`], [`Survey`]).
 
 use core::fmt;
 
 use crate::battery::Battery;
-use bark_proto::radio::{time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS};
+use bark_proto::radio::{
+    time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
+};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::{Packet, ACK_LEN, BENCH_FIRST, FORMAT, HEARTBEAT_LEN};
 use embassy_futures::select::{select, select3, Either, Either3};
@@ -51,7 +63,7 @@ use lora_phy::mod_params::{PacketStatus, RadioError};
 
 use crate::clock::Clock;
 use crate::radio::{Radio, Received, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
-use crate::update::{Flash, BARK_IMAGE_VERSION};
+use crate::update::{decimal, Flash, BARK_IMAGE_VERSION};
 use bark_image::boot::{Stager, CHUNK};
 use bark_image::HEADER_LEN;
 use embassy_nrf::nvmc::Nvmc;
@@ -147,24 +159,28 @@ impl Lines {
 const KIND_TEST: u8 = 0;
 const KIND_PING: u8 = 1;
 const KIND_PONG: u8 = 2;
-/// First byte, format, kind, sequence number, home channel.
+/// A survey beacon: its argument is the transmit power, dBm, as a signed
+/// byte.
+const KIND_SURVEY: u8 = 3;
+/// First byte, format, kind, argument, sequence number.
 const BENCH_HEADER: usize = 8;
 
 /// A bench frame's header fields.
 #[derive(Clone, Copy)]
 struct Bench {
     kind: u8,
+    /// The sender's home channel, or a survey frame's power.
+    arg: u8,
     seq: u32,
-    channel: u8,
 }
 
-fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, seq: u32, home: Channel) -> &[u8] {
+fn bench_frame(buf: &mut [u8; MAX_LEN], len: usize, kind: u8, arg: u8, seq: u32) -> &[u8] {
     let mut header = [0u8; BENCH_HEADER];
     header[0] = BENCH_FIRST;
     header[1] = FORMAT;
     header[2] = kind;
-    header[3..7].copy_from_slice(&seq.to_be_bytes());
-    header[7] = home.index();
+    header[3] = arg;
+    header[4..8].copy_from_slice(&seq.to_be_bytes());
     for (i, b) in buf.iter_mut().enumerate().take(len) {
         *b = if i < BENCH_HEADER { header[i] } else { i as u8 };
     }
@@ -177,10 +193,116 @@ fn parse_bench(frame: &[u8]) -> Option<Bench> {
     }
     Some(Bench {
         kind: frame[2],
-        seq: u32::from_be_bytes([frame[3], frame[4], frame[5], frame[6]]),
-        channel: frame[7],
+        arg: frame[3],
+        seq: u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]),
     })
 }
+
+/// The survey build's channel, from `BARK_SURVEY` at build time, or none.
+pub const SURVEY: Option<Channel> = match option_env!("BARK_SURVEY") {
+    None => None,
+    Some(v) => match Channel::new(decimal(v) as u8) {
+        Some(ch) => Some(ch),
+        None => panic!("BARK_SURVEY is a channel, 0 to 12"),
+    },
+};
+
+/// The survey beacon's frame lengths (roadmap Phase 2, the loss-curve
+/// row); for each, every power from [`MIN_TX_DBM`] to [`MAX_TX_DBM`] in
+/// 1 dB steps.
+const SURVEY_LENGTHS: [usize; 3] = [8, 64, 255];
+const SURVEY_POWERS: usize = (MAX_TX_DBM - MIN_TX_DBM) as usize + 1;
+const SURVEY_STEPS: usize = SURVEY_LENGTHS.len() * SURVEY_POWERS;
+
+/// The length and power of survey beacon `step`.
+fn survey_step(step: usize) -> (usize, i8) {
+    let len = SURVEY_LENGTHS[step / SURVEY_POWERS];
+    let power = MIN_TX_DBM + (step % SURVEY_POWERS) as i8;
+    (len, power)
+}
+
+/// How often the survey reads the noise.
+const SAMPLE_EVERY: Duration = Duration::from_secs(60);
+/// Readings a channel, back to back, as `noise <k> 100`: the 10th
+/// percentile then rests on ten readings.
+const SAMPLE_READINGS: usize = 100;
+/// Wait after the retune before the first reading: four symbol periods,
+/// from when a reading is right (`docs/bench-2026-10-30.md`, RSSI against
+/// dwell).
+const SAMPLE_DWELL: Duration = Duration::from_micros(4 * SYMBOL_TIME.as_micros());
+/// How long the ring reaches back: two days, in RAM the console build has
+/// spare, with a night and a day of margin over the 24 h a placement needs.
+const RING_HOURS: u64 = 48;
+const RING_LEN: usize = (RING_HOURS * 3600 / SAMPLE_EVERY.as_secs()) as usize;
+
+/// One minute's noise: the 10th percentile and the median of each
+/// channel's readings, whole dBm.
+#[derive(Clone, Copy)]
+struct Sample {
+    /// Uptime when it was taken.
+    at_s: u32,
+    p10: [i8; CHANNELS as usize],
+    median: [i8; CHANNELS as usize],
+}
+
+impl Sample {
+    const ZERO: Sample = Sample {
+        at_s: 0,
+        p10: [0; CHANNELS as usize],
+        median: [0; CHANNELS as usize],
+    };
+}
+
+/// The survey's noise log: the last [`RING_LEN`] samples.
+struct Ring {
+    samples: [Sample; RING_LEN],
+    /// Where the next sample goes.
+    next: usize,
+    /// How many are held, at most `RING_LEN`.
+    count: usize,
+}
+
+impl Ring {
+    /// The one ring, in `.bss` (all zero) rather than on a stack; once.
+    fn take() -> &'static mut Ring {
+        static RING: static_cell::ConstStaticCell<Ring> = static_cell::ConstStaticCell::new(Ring {
+            samples: [Sample::ZERO; RING_LEN],
+            next: 0,
+            count: 0,
+        });
+        RING.take()
+    }
+
+    fn push(&mut self, sample: Sample) {
+        self.samples[self.next] = sample;
+        self.next = (self.next + 1) % RING_LEN;
+        self.count = (self.count + 1).min(RING_LEN);
+    }
+
+    /// The newest `n` samples, oldest first.
+    fn newest(&self, n: usize) -> impl Iterator<Item = &Sample> {
+        let n = n.min(self.count);
+        let first = (self.next + RING_LEN - n) % RING_LEN;
+        (0..n).map(move |i| &self.samples[(first + i) % RING_LEN])
+    }
+}
+
+/// The survey build between commands: beacons on its channel through
+/// every length and power, and a noise reading every minute.
+struct Survey {
+    ch: Channel,
+    /// The next beacon's place in the cycle, `0..SURVEY_STEPS`.
+    step: usize,
+    next_beacon: Instant,
+    next_sample: Instant,
+    ring: &'static mut Ring,
+}
+
+/// A `survey` line's longest form, bytes, with the log's prefix: the pace
+/// at which its lines are printed, one per 64-byte USB packet and 1 ms
+/// frame, so that the log buffer never fills and drops them.
+const SURVEY_LINE: usize = 200;
+const SURVEY_LINE_DRAIN: Duration = Duration::from_millis(SURVEY_LINE.div_ceil(64) as u64);
 
 /// What `tx` sends.
 enum Payload<'l> {
@@ -204,6 +326,8 @@ enum Command<'l> {
     Stop,
     Ping(Channel),
     Status(bool),
+    /// The last n survey samples.
+    Survey(usize),
     Help,
     /// A header, as checked hex digits.
     Stage(&'l [u8]),
@@ -226,7 +350,7 @@ const ACK_TIMEOUT_US: u32 = 100_000;
 const HELP: &str =
     "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
-stage <header hex> | chunk <offset> <hex> | commit | reboot";
+survey [n] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim_start_matches('>');
@@ -271,7 +395,7 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             let period = number(arg())?;
             let len = optional(arg(), ACK_LEN)?;
             if !(BENCH_HEADER..=MAX_LEN).contains(&len) {
-                return Err("beacon: len must be 6..=255");
+                return Err("beacon: len must be 8..=255");
             }
             Command::Beacon(ch, period, len)
         }
@@ -282,6 +406,7 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             Some("reset") => Command::Status(true),
             Some(_) => return Err("status takes nothing or `reset`"),
         },
+        "survey" => Command::Survey(optional(arg(), usize::MAX)?),
         "help" | "?" => Command::Help,
         "stage" => Command::Stage(hex_bytes(
             arg().ok_or("stage needs the image's header in hex")?,
@@ -453,10 +578,13 @@ pub struct Console<'a> {
     flash: &'static Flash,
     /// The image being staged, between `stage` and `commit`.
     staging: Option<Stager<'static, Nvmc<'static>>>,
+    /// The survey, in a survey build.
+    survey: Option<Survey>,
 }
 
 impl<'a> Console<'a> {
-    /// A console on channel 0 at the highest allowed power.
+    /// A console on channel 0, or the survey's channel, at the highest
+    /// allowed power.
     pub fn new(
         radio: Radio<'a>,
         clock: &'a Clock,
@@ -469,7 +597,7 @@ impl<'a> Console<'a> {
             radio,
             clock,
             battery,
-            home: Channel::new(0).expect("channel 0 is in the plan"),
+            home: SURVEY.unwrap_or(Channel::new(0).expect("channel 0 is in the plan")),
             listening: false,
             power: MAX_TX_DBM,
             preamble: MIN_PREAMBLE_SYMBOLS,
@@ -478,6 +606,13 @@ impl<'a> Console<'a> {
             counters: Counters::default(),
             rx: [0; MAX_LEN],
             tx: [0; MAX_LEN],
+            survey: SURVEY.map(|ch| Survey {
+                ch,
+                step: 0,
+                next_beacon: Instant::now(),
+                next_sample: Instant::now(),
+                ring: Ring::take(),
+            }),
         }
     }
 
@@ -490,10 +625,29 @@ impl<'a> Console<'a> {
             self.home.index(),
             self.power
         );
+        if let Some(s) = &self.survey {
+            log::info!(
+                "survey ch={} lengths={} powers_dbm={}..={} sample_every_s={} ring_h={}",
+                s.ch.index(),
+                List(&SURVEY_LENGTHS),
+                MIN_TX_DBM,
+                MAX_TX_DBM,
+                SAMPLE_EVERY.as_secs(),
+                RING_HOURS
+            );
+        }
         loop {
             let beacon_at = self.beacon.as_ref().map(|b| b.next);
+            let survey_at = self
+                .survey
+                .as_ref()
+                .map(|s| s.next_beacon.min(s.next_sample));
+            let due = match (beacon_at, survey_at) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
             let beacon_due = async {
-                match beacon_at {
+                match due {
                     Some(t) => Timer::at(t).await,
                     None => core::future::pending().await,
                 }
@@ -526,7 +680,7 @@ impl<'a> Console<'a> {
                     Ok(())
                 }
                 Either3::Second(irq) => self.serve_frame(irq).await,
-                Either3::Third(()) => self.send_beacon().await,
+                Either3::Third(()) => self.tick().await,
             };
             if let Err(e) = result {
                 self.counters.radio_errors += 1;
@@ -571,7 +725,7 @@ impl<'a> Console<'a> {
                 let frame = match payload {
                     Payload::Len(len) => {
                         self.seq = self.seq.wrapping_add(1);
-                        bench_frame(&mut self.tx, len, KIND_TEST, self.seq, self.home)
+                        bench_frame(&mut self.tx, len, KIND_TEST, self.home.index(), self.seq)
                     }
                     Payload::Hex(hex) => decode_hex(hex, &mut self.tx),
                 };
@@ -745,6 +899,7 @@ impl<'a> Console<'a> {
             }
             Command::Ping(ch) => self.ping(ch).await?,
             Command::Status(reset) => self.status(reset).await,
+            Command::Survey(n) => self.print_survey(n).await,
             Command::Help => log::info!("{}", HELP),
             Command::Stage(hex) => {
                 let mut header = [0u8; HEADER_LEN];
@@ -831,13 +986,15 @@ impl<'a> Console<'a> {
         match received {
             Received::Frame { len, status } => {
                 self.counters.rx_ok += 1;
-                report_frame(ch, &self.rx[..len], &status, "ok", at_us);
+                let bench = parse_bench(&self.rx[..len]);
+                report_frame(ch, &self.rx[..len], &status, "ok", at_us, bench);
                 report_heartbeat(&self.rx[..len]);
-                Ok(Some(parse_bench(&self.rx[..len])))
+                Ok(Some(bench))
             }
             Received::CrcError { len, status } => {
                 self.counters.rx_crc_error += 1;
-                report_frame(ch, &self.rx[..len], &status, "error", at_us);
+                let bench = parse_bench(&self.rx[..len]);
+                report_frame(ch, &self.rx[..len], &status, "error", at_us, bench);
                 Ok(Some(None))
             }
             Received::HeaderError => {
@@ -858,11 +1015,11 @@ impl<'a> Console<'a> {
         if bench.kind != KIND_PING {
             return Ok(());
         }
-        let Some(reply) = Channel::new(bench.channel) else {
+        let Some(reply) = Channel::new(bench.arg) else {
             log::warn!(
                 "ping seq={} names channel {}, not in the plan",
                 bench.seq,
-                bench.channel
+                bench.arg
             );
             return Ok(());
         };
@@ -880,7 +1037,13 @@ impl<'a> Console<'a> {
             );
             return Ok(());
         }
-        let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PONG, bench.seq, self.home);
+        let frame = bench_frame(
+            &mut self.tx,
+            ACK_LEN,
+            KIND_PONG,
+            self.home.index(),
+            bench.seq,
+        );
         let timing = self
             .radio
             .transmit(reply, self.power, MIN_PREAMBLE_SYMBOLS, frame)
@@ -906,7 +1069,7 @@ impl<'a> Console<'a> {
     async fn ping(&mut self, ch: Channel) -> Result<(), RadioError> {
         self.seq = self.seq.wrapping_add(1);
         let seq = self.seq;
-        let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PING, seq, self.home);
+        let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PING, self.home.index(), seq);
         let timing = self
             .radio
             .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
@@ -948,6 +1111,22 @@ impl<'a> Console<'a> {
         Ok(())
     }
 
+    /// Whatever the timer came for: the beacon, the survey's beacon, the
+    /// survey's noise reading.
+    async fn tick(&mut self) -> Result<(), RadioError> {
+        let now = Instant::now();
+        if self.beacon.as_ref().is_some_and(|b| b.next <= now) {
+            self.send_beacon().await?;
+        }
+        if self.survey.as_ref().is_some_and(|s| s.next_beacon <= now) {
+            self.survey_beacon().await?;
+        }
+        if self.survey.as_ref().is_some_and(|s| s.next_sample <= now) {
+            self.survey_sample().await?;
+        }
+        Ok(())
+    }
+
     async fn send_beacon(&mut self) -> Result<(), RadioError> {
         let Some(beacon) = self.beacon.as_mut() else {
             return Ok(());
@@ -956,7 +1135,7 @@ impl<'a> Console<'a> {
         beacon.next = (beacon.next + beacon.period).max(Instant::now());
         let (ch, len) = (beacon.ch, beacon.len);
         self.seq = self.seq.wrapping_add(1);
-        let frame = bench_frame(&mut self.tx, len, KIND_TEST, self.seq, self.home);
+        let frame = bench_frame(&mut self.tx, len, KIND_TEST, self.home.index(), self.seq);
         let preamble = self.preamble;
         let timing = self.radio.transmit(ch, self.power, preamble, frame).await?;
         self.count_tx(len, preamble);
@@ -969,6 +1148,92 @@ impl<'a> Console<'a> {
             timing.tx_us
         );
         Ok(())
+    }
+
+    /// The next survey beacon: one frame, then silence of the rest of the
+    /// period the regulatory duty cycle allows it, so that no window
+    /// exceeds the cycle (spec "Regulatory limits").
+    async fn survey_beacon(&mut self) -> Result<(), RadioError> {
+        let Some(survey) = self.survey.as_mut() else {
+            return Ok(());
+        };
+        let (len, power) = survey_step(survey.step);
+        survey.step = (survey.step + 1) % SURVEY_STEPS;
+        let ch = survey.ch;
+        let preamble = self.preamble;
+        let period =
+            Duration::from_micros(airtime_us(len, preamble) * 100 / u64::from(DUTY_CYCLE_PERCENT));
+        self.seq = self.seq.wrapping_add(1);
+        let frame = bench_frame(&mut self.tx, len, KIND_SURVEY, power as u8, self.seq);
+        let sent = Instant::now();
+        self.radio.transmit(ch, power, preamble, frame).await?;
+        self.count_tx(len, preamble);
+        if let Some(survey) = self.survey.as_mut() {
+            survey.next_beacon = sent + period;
+        }
+        self.rest().await?;
+        Ok(())
+    }
+
+    /// One minute's noise reading on every channel, into the ring and the
+    /// log, as `noise <k> 100` would read each channel after the dwell.
+    async fn survey_sample(&mut self) -> Result<(), RadioError> {
+        let Some(survey) = self.survey.as_mut() else {
+            return Ok(());
+        };
+        survey.next_sample = (survey.next_sample + SAMPLE_EVERY).max(Instant::now());
+        let mut sample = Sample {
+            at_s: Instant::now().as_secs() as u32,
+            ..Sample::ZERO
+        };
+        let mut readings = [0i16; SAMPLE_READINGS];
+        for (i, ch) in Channel::all().enumerate() {
+            self.radio.retune(ch).await?;
+            Timer::after(SAMPLE_DWELL).await;
+            for reading in readings.iter_mut() {
+                *reading = self.radio.rssi().await?;
+            }
+            readings.sort_unstable();
+            sample.p10[i] = dbm(percentile(&readings, 10));
+            sample.median[i] = dbm(percentile(&readings, 50));
+        }
+        self.radio.retune(self.home).await?;
+        log::info!(
+            "survey t_s={} p10={} median={}",
+            sample.at_s,
+            List(&sample.p10),
+            List(&sample.median)
+        );
+        if let Some(survey) = self.survey.as_mut() {
+            survey.ring.push(sample);
+        }
+        Ok(())
+    }
+
+    /// The newest `n` samples of the ring, oldest first, paced for the log.
+    async fn print_survey(&mut self, n: usize) {
+        let Some(survey) = self.survey.as_ref() else {
+            log::warn!("survey: not a survey build (BARK_SURVEY at build time)");
+            return;
+        };
+        log::info!(
+            "survey ch={} step={} of {} samples={} of {} every_s={}",
+            survey.ch.index(),
+            survey.step,
+            SURVEY_STEPS,
+            survey.ring.count,
+            RING_LEN,
+            SAMPLE_EVERY.as_secs()
+        );
+        for sample in survey.ring.newest(n) {
+            log::info!(
+                "survey t_s={} p10={} median={}",
+                sample.at_s,
+                List(&sample.p10),
+                List(&sample.median)
+            );
+            Timer::after(SURVEY_LINE_DRAIN).await;
+        }
     }
 
     async fn status(&mut self, reset: bool) {
@@ -1014,17 +1279,48 @@ radio_errors={}",
     }
 }
 
-fn report_frame(ch: Channel, frame: &[u8], status: &PacketStatus, crc: &str, at_us: u32) {
-    log::info!(
-        "rx ch={} len={} rssi_dbm={} snr_db={} crc={} at_us={} bytes={}",
-        ch.index(),
-        frame.len(),
-        Quarter(status.rssi.quarter_dbm()),
-        Quarter(status.snr.quarter_db()),
-        crc,
-        at_us,
-        Hex(frame)
-    );
+/// A frame heard. A survey frame is one short line, since a host logs
+/// thousands: its sender's power in place of the bytes.
+fn report_frame(
+    ch: Channel,
+    frame: &[u8],
+    status: &PacketStatus,
+    crc: &str,
+    at_us: u32,
+    bench: Option<Bench>,
+) {
+    match bench {
+        Some(Bench {
+            kind: KIND_SURVEY,
+            arg,
+            seq,
+        }) => log::info!(
+            "rx ch={} len={} rssi_dbm={} snr_db={} crc={} at_us={} survey_power_dbm={} seq={}",
+            ch.index(),
+            frame.len(),
+            Quarter(status.rssi.quarter_dbm()),
+            Quarter(status.snr.quarter_db()),
+            crc,
+            at_us,
+            arg as i8,
+            seq
+        ),
+        _ => log::info!(
+            "rx ch={} len={} rssi_dbm={} snr_db={} crc={} at_us={} bytes={}",
+            ch.index(),
+            frame.len(),
+            Quarter(status.rssi.quarter_dbm()),
+            Quarter(status.snr.quarter_db()),
+            crc,
+            at_us,
+            Hex(frame)
+        ),
+    }
+}
+
+/// A whole-dBm reading in a byte; the chip's range fits.
+fn dbm(reading: i16) -> i8 {
+    reading.clamp(i8::MIN.into(), i8::MAX.into()) as i8
 }
 
 /// A heartbeat's sender, the newest format it speaks and whether it stands

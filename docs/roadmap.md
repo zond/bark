@@ -120,7 +120,7 @@ The bring-up order. Each step is a milestone on real boards; steps 1 to 3 come f
 
 Open on the bench, 2026-10-30, after the first two days:
 
-- A survey build of the console for a board left on battery away from the host: beacons at every power and length with each frame saying which, and a log of the noise floor by channel kept in memory until the board is plugged in again. One placement gives the RSSI calibration, the loss curve as far as the path allows, the noise floor away from the desk and, over a day, the fading of one link.
+- A survey build of the console for a board left on battery away from the host, built 2026-10-30 and not yet placed (`BARK_SURVEY=<channel>`, `bark-fw/README.md` "Survey build"): beacons at every power and length with each frame saying its power, and a log of the noise floor by channel kept in memory until the board is plugged in again. One placement gives the RSSI calibration, the loss curve as far as the path allows, the noise floor away from the desk and, over a day, the fading of one link.
 - Whether the desk's noise floor, 40 dB above thermal, is the room's (screens, chargers, the host's USB ground) or the board's: the survey build in a quiet room answers it.
 - The listen-before-talk with only the commands that change and the RSSI read inside the CAD, 2.5 ms where the driver's path costs 9.2 (`bench-2026-10-30.md`): a decision after D86, with the driver tracking what the chip has and re-sending everything after a sleep, a reset or an error, and a self-check of the reading inside the CAD at boot, since the datasheet documents GetRssiInst for receive only.
 - A listen-before-talk on the home channel answered by the listening receiver, and ACKs without one: simulator decisions.

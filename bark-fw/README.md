@@ -17,6 +17,7 @@ one of two things, chosen when it is built:
 |---|---|
 | `cargo build --release` | the protocol core: a relay on USB, sleepy on battery |
 | `cargo build --release --features console` | the measurement console (below) |
+| `BARK_SURVEY=<k> cargo build --release --features console` | the console as a survey on channel k, for a board left away from the host (Survey build, below) |
 
 Every board runs the same node. Its role is not a setting: the firmware
 reads whether USB power is present from the nRF52840's VBUS detection
@@ -361,8 +362,9 @@ and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 At boot every image writes one picture to the 1.54" e-paper
 (200 × 200, SSD1681 controller, `src/display.rs`): the board's node ID
 as twelve hex digits in two rows of six, 25 × 35 pixels each, the
-largest six fit across the panel, below them the image's name, `NODE` or
-`CONSOLE`, and its version as `V` and `BARK_IMAGE_VERSION`. The text
+largest six fit across the panel, below them the image's name, `NODE`,
+`CONSOLE` or `SURVEY`, and its version as `V` and `BARK_IMAGE_VERSION`,
+a survey's with its channel as `CH`. The text
 comes from a 5 × 7 bitmap font of the hex digits and the few letters
 those words need, scaled by whole pixels. A board can then be told from
 another unplugged, and the hex matches the `id=` of its log and its USB
@@ -415,7 +417,7 @@ retune times.
 |---|---|---|
 | `ch <k>` | set the home channel, where the radio listens between commands | `retune_us` |
 | `tx <k> <hex\|len>` | send one frame on k: hex bytes (`0a0b…`, or `0x…` to force hex), or a bench frame of len bytes (1 to 3 decimal digits) | `prepare_us`, `tx_us` (SetTx to TxDone), `airtime_us` (datasheet formula), `excess_us`, `rest_us` (back to listening) |
-| `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
+| `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`, or for a survey frame its sender's `survey_power_dbm` and `seq` in place of the bytes; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
 | `cad <k>` | one CAD (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us`, `rest_us` |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
@@ -426,6 +428,7 @@ retune times.
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | node ID, uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
@@ -441,10 +444,46 @@ listen-before-talk.
 Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
 `0x8F`, byte 1 the format version as in every packet, byte 2 the kind
-(0 test or beacon, 1 ping, 2 pong), bytes 3 to 6 a big-endian sequence
-number, byte 7 the sender's home channel, then `byte[i] = i`. RSSI is
-whole dBm (the driver drops the chip's half-dB step); packet RSSI and
-SNR are in quarter dB.
+(0 test or beacon, 1 ping, 2 pong, 3 survey), byte 3 the kind's
+argument, the sender's home channel or for a survey frame its transmit
+power in dBm as a signed byte, bytes 4 to 7 a big-endian sequence
+number, then `byte[i] = i`. RSSI is whole dBm (the driver drops the
+chip's half-dB step); packet RSSI and SNR are in quarter dB.
+
+### Survey build
+
+A console built with `BARK_SURVEY=<k>`, k a channel, surveys a place
+from the moment it boots, on battery and with no host: a board left on
+a windowsill, in another room or across the street, read back when it
+is plugged in again. It needs no command. The near board, on the host,
+listens with `rx <k> <ms>` for as long as the host logs.
+
+- **Beacons** on channel k, forever: a frame of 8, 64 and then 255
+  bytes, and for each length every transmit power from −9 to 10 dBm in
+  1 dB steps, 60 frames a cycle, each a survey bench frame saying its
+  power. After each frame the board is silent for the rest of the
+  period the 10 % duty cycle allows that frame, as `beacon` enforces
+  (spec "Regulatory limits"): 38 s a cycle, most of it the 255-byte
+  frames' 1.39 s periods, so each power and length is sent some 94
+  times an hour. The near board's `rx` lines
+  give, per power and length, the frames heard and their RSSI and SNR,
+  from which the loss curve and the RSSI calibration follow; the
+  frames it did not hear are the cycle's missing sequence numbers.
+- **Noise**, once a minute: on each of the 13 channels, a retune, a
+  wait of four symbol periods for the reading to settle
+  (`docs/bench-2026-10-30.md`, RSSI against dwell), then 100 RSSI
+  readings back to back, as `noise <k> 100`, kept as the 10th
+  percentile and the median in whole dBm. The minute's line is logged,
+  and kept in a ring in RAM of the last 48 hours (86 KiB, only in this
+  build), which `survey` prints when the board is back on the host:
+  one line a minute, paced so the log buffer never drops one, about
+  12 s for two days.
+
+The log never waits for a host: lines logged with no port open fill
+the 2 KiB buffer and newer ones are dropped (Log, below), so a survey
+board runs the same with and without one. Its home channel is k, so
+`ping k` from the near board is answered. The display says `SURVEY`
+and `CH<k>` (Display, above).
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
 and bench item C1, with a table that maps the results onto the simulator's
