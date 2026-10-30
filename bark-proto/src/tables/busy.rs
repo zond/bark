@@ -6,13 +6,13 @@
 //! sampled once per sweep: 1 if the RSSI exceeds the noise floor by
 //! `busy_threshold_db` (spec "Busy estimate": 6 dB), else 0. Values are fixed point with
 //! [`ONE`] = 2²⁴ meaning "always busy". The average is an EMA with
-//! coefficient `1 / busy_ema_inverse` (spec "Busy estimate": 1/600, ten minutes at one
-//! sample per second), except that its first `busy_ema_inverse` samples
+//! coefficient `1 / busy_ema_inverse` (spec "Busy estimate": 1/138, thirty minutes at
+//! one sample of a channel every 13 s), except that its first `busy_ema_inverse` samples
 //! use `1/n` for the `n`th sample: a plain running mean, so a node that has
 //! just booted has an unbiased estimate after its one-rotation listen
 //! (spec "Channel at boot") instead of one dragged towards an arbitrary start value. The
 //! integer division truncates, which biases the estimate by less than
-//! `busy_ema_inverse / ONE` (3.6 × 10⁻⁵ at 1/600).
+//! `busy_ema_inverse / ONE` (8.2 × 10⁻⁶ at 1/138).
 //!
 //! The home estimate counts only what would stay on the channel if the
 //! node moved (spec "Busy estimate", roadmap D24). Packets addressed to the node, and the
@@ -236,13 +236,15 @@ mod tests {
                 b.sample(ch(c), -122);
             }
         }
-        assert!(b.fraction(ch(2)) > ONE - 600);
-        // And decays with time constant 600 samples: e⁻¹ after 600.
-        for _ in 0..600 {
+        let n = Config::default().busy_ema_inverse as u32;
+        assert!(b.fraction(ch(2)) > ONE - n);
+        // And decays with time constant n samples: (1 − 1/n)ⁿ ≈ e⁻¹ after n.
+        for _ in 0..n {
             b.sample(ch(2), -125);
         }
         let f = b.fraction(ch(2)) as f64 / ONE as f64;
-        assert!((f - 0.3677).abs() < 0.002, "{f}");
+        let want = (1.0 - 1.0 / n as f64).powi(n as i32);
+        assert!((f - want).abs() < 0.002, "{f} against {want}");
     }
 
     #[test]

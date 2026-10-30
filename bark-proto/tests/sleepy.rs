@@ -199,7 +199,10 @@ fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
         // Past the window of the sleepy node's last beat.
         let last = beats(&h, s).last().unwrap().0;
         let window = HeardParams::from_config(&Config::default()).awake;
-        h.run_until(last + window + secs(1), |_| false);
+        let quiet = last + window + secs(1);
+        if quiet > h.now {
+            h.run_until(quiet, |_| false);
+        }
         let sent_at = h.now;
         let id = send(&mut h, r, s, b"wake up");
         assert!(h.run_until(sent_at + secs(400), |h| delivered_at(h, s, id).is_some()));
@@ -1218,6 +1221,8 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
         bytes: [0; MAX_FRAME],
     };
     frame.len = Packet::Data(data).encode(&mut frame.bytes).unwrap() as u8;
+    // Clear of R's sweep, which reads another channel on the whole second.
+    h.run_for(Duration::from_millis(300));
     h.inject(q, frame);
     let id = MsgId::of(dst_pos, dst_id, text);
     assert!(h.run_until(h.now + secs(700), |h| delivered_at(h, s, id).is_some()));

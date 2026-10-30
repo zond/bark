@@ -1475,10 +1475,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         !(self.sleepy && self.stage == Stage::Running)
     }
 
-    /// Each channel once per sweep interval, one reading at a time (spec "Busy estimate",
-    /// roadmap D13): one reading is away for less than the preamble leaves
-    /// the modem to lock on after it, so it costs no packet; thirteen in a
-    /// burst would.
+    /// Each channel once per sweep interval, one reading at a time (spec
+    /// "Busy estimate", roadmap D86): each reading of another channel loses
+    /// the packets whose preamble starts in a 1.5 ms window around it.
     fn sweep_step(&self) -> Duration {
         self.config.sweep_interval.div(CHANNELS as u64)
     }
@@ -1520,11 +1519,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.sweep.next_at <= now {
             self.sweep.next_at = now + self.sweep_step();
         }
+        self.neighbours.expire(now);
         if channel.index() + 1 < CHANNELS {
             return;
         }
         // Once per round of the channels.
-        self.neighbours.expire(now);
         if self.stage == Stage::Running && self.config.home_override.is_none() && self.sweeping() {
             self.move_rule(now);
         }
@@ -1825,7 +1824,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.beacon.next_at = next;
         }
         if self.sleepy {
-            // Its own beat stands in for the sweep's round of the tables.
+            // Its own beat stands in for the sweep's readings.
             self.neighbours.expire(now);
         }
     }

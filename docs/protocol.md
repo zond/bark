@@ -302,10 +302,20 @@ count exactly like peers.
 | | |
 |---|---|
 | reading | 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0 |
-| sweep | one reading per channel per second, spread evenly, one every 1 s / 13 ≈ 77 ms, channels in turn |
-| one reading | a retune (≈0.1 ms), a read (≈0.3 ms after it) and a retune home, ≈0.5 ms: ≈6.5 ms a second, 0.65% of the time off the home channel |
-| window | α ≈ 1/600 per sample, ≈10 minutes at one sample per channel per second |
+| a reading of another channel | taken four symbol periods, 1.02 ms, after the receiver starts on it |
+| a reading of the home channel | taken as the radio listens, without a restart |
+| sweep | one channel a second, channels in turn: each channel every 13 s |
+| window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
 | noise floor | calibrated per device at boot as a low percentile of RSSI readings over the first rotation, and recalibrated slowly |
+
+A reading of another channel takes 2.5 ms off the home channel:
+
+| | |
+|---|---|
+| retune there | 0.67 ms |
+| four symbol periods | 1.02 ms |
+| the read | 0.16 ms |
+| retune home | 0.67 ms |
 
 A reading is taken only when the modem reports no preamble detected and
 no packet in progress. On its home channel a node counts only what
@@ -315,7 +325,7 @@ would stay behind if it moved:
   of its own hand-overs, or its own transmission was on the air is set
   aside. Every other is the same 0/1 reading as on any other channel.
 - Whether a reading fell in the node's own packet is known only when
-  that packet ends, so a home reading is held until the next, one second
+  that packet ends, so a home reading is held until the next, 13 s
   later, longer than any packet (roadmap D24).
 - The radio keeps receiving while it reads its own channel
   (`core-interface.md`, Radio, rules 7 and 8): a home reading inside a
@@ -337,23 +347,38 @@ own receiver, which RSSI measures directly; counting neighbours per
 channel would not, since two neighbours that hear each other share a
 channel cleanly.
 
-*Why a sample per channel per second.* One sample per heartbeat
-interval would give 60 samples per window, ±4 points on a 10% channel,
-as large as the differences the rule acts on.
+*Why four symbol periods.* The receiver's RSSI is not right at once:
+it reads nothing for about 150 µs, then climbs a step each symbol
+period, and a strong signal reads as one fixed value whatever its level
+until about 1 ms. From four symbol periods it reads the level, and the
+settled home channel reads the same, so home needs no restart (roadmap
+D86, `bench-2026-10-30.md`). Read sooner, every other channel looks
+quieter than home, and a node moves at every chance the move rule
+gives ([channel moves](#channel-moves)).
 
-*Why spread readings.* Spread readings lose no packet. The modem needs a
-length `D` of preamble to lock on
+*Why one channel a second.* A reading of another channel deafens the
+node for `g` = 2.5 ms. The modem needs a length `D` of preamble to lock
+on, four symbols
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-so a gap of length `g` loses a packet whose preamble starts too late
-before it for the modem to have locked, or too early in it to leave `D`
-after it: a window of `g + 2D − P`, with `P` the 12-symbol preamble,
-3.1 ms ([physical layer](#physical-layer)).
+so a gap loses a packet whose preamble starts too late before it for
+the modem to have locked, or too early in it to leave `D` after it: a
+window of `g + 2D − P`, with `P` the 12-symbol preamble, 3.1 ms
+([physical layer](#physical-layer)). That is 2.5 + 2.0 − 3.1 = 1.5 ms
+a reading.
 
-For one spread reading 0.5 + 2.0 − 3.1 < 0. One burst of all 13
-readings, ≈5 ms, would lose 5 + 2.0 − 3.1 ≈ 4 ms of arrivals a second,
-0.4%. Spreading loses nothing as long as `D ≤ (P − g) / 2` ≈ 1.3 ms,
-5 symbols; if the bench shows the modem needs more, redo this
-comparison.
+| | one channel a second | every channel each second |
+|---|---|---|
+| deaf | 2.5 ms a second, 0.25 % | 33 ms, 3.3 % |
+| packet starts lost | 1.5 ms a second, 0.15 % | 19.5 ms, 1.9 % |
+| samples a channel in a window | 138 in 30 minutes | 600 in 10 minutes |
+
+Thirteen readings a second would cost every relay 2 % of what it hears;
+one a second costs a thirteenth of that. The price is fewer samples: 138
+a channel take 30 minutes, which only slows moves, and moves are meant
+to be rare ([channel moves](#channel-moves)). 138 samples give ±2.6
+points on a 10 % channel, half the difference the move rule acts on.
+In the simulator one channel a second delivers as many texts at the
+design rate and more at three times it (roadmap D86).
 
 ### Channel at boot
 
@@ -373,6 +398,12 @@ A config override fixes the home for bench work.
 
 *Why a random channel.* Nodes that hear nothing, and nodes switched on
 together after a power cut, then do not all start on channel 0.
+
+*Why 15 readings suffice.* The first rotation reads each channel 15
+times ([busy estimate](#busy-estimate)), ±8 points on a 10 % channel:
+enough to keep off a channel an interferer or a crowd of relays holds,
+not to rank quiet channels against each other. Ranking them is the move
+rule's, on its 30-minute window.
 
 *Why it keeps a home among the quietest.* The move at the end is a move
 like any other ([channel moves](#channel-moves)): neighbours that missed
@@ -2658,8 +2689,8 @@ relay on battery begins its grace again.
 home.* They change as it goes, its anchor at each relay it passes, and
 each change would be a write; after a reboot it is somewhere else.
 
-*Why not the noise floor.* The sweep takes 13 readings a second, and
-their 10th percentile is at the floor within seconds
+*Why not the noise floor.* The sweep takes a reading a second, and
+their 10th percentile is at the floor within a minute or two
 ([busy estimate](#busy-estimate)); kept, it would be written whenever it
 crossed a 1 dB step.
 
