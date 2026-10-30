@@ -110,17 +110,16 @@ pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
 /// The boot picture: the ID in two rows of six digits, large, then the
 /// image and its version.
 fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
-    // Six 5-pixel glyphs with a column between, at 5 pixels each, span
-    // 175 of the 200 columns: the largest the ID's halves fit.
-    const ID_SCALE: usize = 3;
+    // Twelve 5-pixel glyphs with a column between, at 2 pixels each, span
+    // 142 of the 200 columns: the largest the whole ID fits on one row,
+    // which reads as one word.
+    const ID_SCALE: usize = 2;
     const TEXT_SCALE: usize = 2;
-    const TOP: usize = 30;
+    const TOP: usize = 60;
     let mut picture = display::Picture::white();
     let mut y = TOP;
-    for half in hex.chunks(NodeId::LEN) {
-        picture.text(half, ID_SCALE, y);
-        y += display::line_height(ID_SCALE);
-    }
+    picture.text(hex, ID_SCALE, y);
+    y += display::line_height(ID_SCALE);
     y += display::line_height(TEXT_SCALE) / 2;
     picture.text(IMAGE.as_bytes(), TEXT_SCALE, y);
     y += display::line_height(TEXT_SCALE);
