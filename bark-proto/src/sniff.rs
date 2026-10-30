@@ -53,8 +53,11 @@ pub const DETECT_SYMBOLS: u64 = 4;
 /// From the end of a sleep to the start of the receive window: about
 /// 1 ms to save and restore the radio's state (datasheet §13.1.7, Figure
 /// 13-2: "around 1 ms"), and the TCXO's start, which the chip adds before
-/// each receive (Figure 13-3 note), 5 ms as the firmware programs it
-/// (`bark-fw/src/radio.rs`, `TCXO_START`).
+/// each receive (Figure 13-3 note). The cycle was derived for the 5 ms
+/// start first programmed; the firmware's 2 ms (`bark-fw/src/radio.rs`,
+/// `TCXO_START`, roadmap D87) makes the real wake 3 ms, and a shorter wake
+/// keeps both conditions (module documentation), so the cycle stands
+/// until it is derived again.
 pub const SNIFF_WAKE: Duration = Duration::from_millis(6);
 
 /// The step of the duty cycle's periods that is a whole number of

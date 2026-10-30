@@ -61,11 +61,13 @@ pub const MAX_AIRTIME: Duration =
 
 /// TCXO start-up the chip waits out, in full, each time it powers the TCXO
 /// (SetDIO3AsTCXOCtrl, DS §13.3.6). The radio idles in STDBY_XOSC, so this
-/// is paid only at power-up and after each CAD, which ends in STDBY_RC
-/// (DS Table 13-73). No source names the module's TCXO or its start-up
-/// time; 5 ms is an assumption with margin. A delay too short raises
-/// XOSC_START_ERR (DS §13.3.6).
-pub const TCXO_START: Duration = Duration::from_millis(5);
+/// is paid at power-up, after each CAD, which ends in STDBY_RC (DS Table
+/// 13-73), and at each wake of duty-cycled receive. No source names the
+/// module's TCXO or its start-up time. With 1 ms, CADs and transmissions
+/// worked on two boards at room temperature (docs/bench-2026-10-30.md);
+/// twice that leaves a factor two for a cold board or a slower part. A
+/// delay too short raises XOSC_START_ERR (DS §13.3.6).
+pub const TCXO_START: Duration = Duration::from_millis(2);
 
 /// A duty-cycled receive period in the chip's steps of 15.625 µs, 64 to
 /// the millisecond (DS §13.1.7).

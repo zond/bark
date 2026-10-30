@@ -215,9 +215,11 @@ Their cost is in [sleepy nodes alone](#sleepy-nodes-alone).
 The SX1262 receives duty-cycled on its own (datasheet §13.1.7,
 SetRxDutyCycle). It receives for a window `rx`, takes about 1 ms to
 save and restore its state, sleeps for `sleep`, starts its oscillator
-(the TCXO, 5 ms as the firmware sets it), and receives again: a cycle
-`C = rx + sleep + wake`, with `wake` = 6 ms. Every sleepy node has the
-same cycle:
+(the TCXO, 2 ms as the firmware sets it, roadmap D87), and receives
+again: a cycle `C = rx + sleep + wake`. The cycle is derived for `wake`
+= 6 ms, the oscillator's first setting of 5 ms; the 2 ms start makes
+each cycle 3 ms shorter, which keeps both conditions below. Every sleepy
+node has the same cycle:
 
 | Quantity | Value |
 |---|---|
@@ -553,11 +555,17 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 | channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
 | **rotation** | 13 heartbeats, which reach every neighbour once: ≈130 s, at most 13 × 15 s = 195 s |
 | lateness | none early; at most 992.9 ms after its slot |
-| deaf time | ≈17 ms per heartbeat, ≈0.2% |
+| deaf time | 27 ms per heartbeat (procedure below), 0.3 % |
 
 **Procedure.** Retune to channel k, listen before talking (CAD + RSSI,
-≈1 ms), up to three checks a random 0–200 ms apart; if every check is
+9.2 ms), up to three checks a random 0–200 ms apart; if every check is
 busy, skip; else send; retune home.
+
+| | |
+|---|---|
+| CAD | 6.7 ms: 0.75 ms to prepare it; 4.64 ms for its 8 symbols, half a symbol of processing and the oscillator's 2 ms start, since CAD ends with the oscillator stopped; 1.3 ms back to listening (roadmap D87) |
+| RSSI | a reading of channel k, 2.5 ms ([busy estimate](#busy-estimate)) |
+| transmission | 2.05 ms to prepare and start it, its airtime, 1.3 ms back to listening |
 
 No scanning is needed: every relay's heartbeat visits all channels, so a
 node listening on any one channel hears every relay in range within one
@@ -1052,8 +1060,9 @@ hand the message to someone else as well.
 So ACKs too arrive on the home channel, which a node leaves only to
 transmit ([home channel selection](#home-channel-selection)). A sleepy
 node's home channel is its anchor's, so traffic between them never
-retunes. A node is deaf for ≈18 ms per packet it forwards or ACKs; a
-sender that gets no ACK retries. That is the cost of one radio.
+retunes. A node is deaf for 30 ms per ACK it sends, its
+listen-before-talk, the transmission's own costs and the airtime
+([heartbeat](#heartbeat)); a sender that gets no ACK retries. That is the cost of one radio.
 
 #### Bans
 
