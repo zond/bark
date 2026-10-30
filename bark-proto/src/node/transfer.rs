@@ -1,7 +1,7 @@
 //! Per-hop transfer (spec "Hand-over"): one frame handed to one receiver
-//! until it answers or the sender gives up ([`Transfer`]), and the one
-//! reply this node can owe the sender of what it received ([`Replies`]):
-//! an ACK, taking or refusing.
+//! until it answers or the sender gives up ([`Transfer`]), and the replies
+//! this node owes the senders of what it received ([`Replies`]): an ACK
+//! each, taking or refusing.
 //!
 //! Both only keep the state between excursions; the node owns the radio
 //! (`mac.rs`), the frame and the duty-cycle budget, starts each excursion
@@ -32,6 +32,7 @@
 use crate::ids::NodeId;
 use crate::node::Rng;
 use crate::radio::Channel;
+use crate::tables::fixed::FixedVec;
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
 use crate::wire::Ack;
@@ -300,33 +301,58 @@ pub(crate) struct Owed {
     ready: Instant,
 }
 
-/// The one reply this node can owe (roadmap D29). It is sent with
-/// listen-before-talk, as the receiver of spec "The ACK" does, with the hand-over's
-/// backoff, and abandoned once its sender has stopped waiting.
+/// How many replies a node can owe at once (roadmap D29). One, because
+/// a node that owes a reply has the radio's next transmission promised:
+/// a second packet it took or refused meanwhile would be answered only
+/// after the first reply, and its sender may have stopped waiting by
+/// then. A relay takes or refuses a packet only when [`Replies::can_owe`]
+/// its reply; otherwise the node stays silent and the sender's retry
+/// brings the packet again.
+pub(crate) const REPLIES: usize = 1;
+
+/// The replies this node owes, in the order it took them on, sent with
+/// listen-before-talk, as the receiver of spec "The ACK" does, with the
+/// hand-over's backoff. One is abandoned once its sender has stopped
+/// waiting: a rule of this queue, not of its length.
 ///
-/// One place, because a node that owes a reply has the radio's next
-/// transmission promised: a second packet it took or refused meanwhile
-/// would be answered only after the first reply, and its sender may have
-/// stopped waiting by then. A relay takes or refuses a packet only when
-/// [`Replies::can_owe`] its reply; otherwise the node stays silent and the
-/// sender's retry brings the packet again.
-///
-/// `sending` says whether the owed reply is on the radio now, which the
-/// node knows from its excursion: a packet can arrive meanwhile, as the
-/// driver may hold a check while a reception ends (core-interface §3
+/// `sending` says whether the first owed reply is on the radio now, which
+/// the node knows from its excursion: a packet can arrive meanwhile, as
+/// the driver may hold a check while a reception ends (core-interface §3
 /// rule 8).
 #[derive(Clone)]
 pub(crate) struct Replies {
-    owed: Option<Owed>,
+    owed: FixedVec<Owed, REPLIES>,
+    /// The reply being sent takes a DATA for this node: once it has gone,
+    /// the node listens one hand-over for the next (spec "Delivery").
+    renew: bool,
 }
 
 impl Replies {
     pub(crate) const fn new() -> Self {
-        Replies { owed: None }
+        let none = Owed {
+            reply: Reply::Ack(Ack {
+                msg_id: crate::ids::MsgId(0),
+                from: NodeId::NONE,
+                to: NodeId::NONE,
+                refused: false,
+                wait: 0,
+            }),
+            channel: match Channel::new(0) {
+                Some(c) => c,
+                None => unreachable!(),
+            },
+            deadline: Instant::ZERO,
+            ready: Instant::ZERO,
+        };
+        Replies {
+            owed: FixedVec::new(none),
+            renew: false,
+        }
     }
 
-    /// Whether `reply` on `channel` can be owed now: the place is free, or
-    /// holds that reply already, for an earlier copy of the packet.
+    /// Whether `reply` on `channel` can be owed now: the queue has a
+    /// place, or holds that reply already, for an earlier copy of the
+    /// packet.
     pub(crate) fn can_owe(
         &mut self,
         reply: impl Into<Reply>,
@@ -336,30 +362,43 @@ impl Replies {
     ) -> bool {
         let reply = reply.into();
         self.forget_late(sending, now);
-        self.owed
-            .is_none_or(|o| o.reply == reply && o.channel == channel)
+        !self.owed.is_full() || self.owes(reply, channel)
     }
 
-    /// Owe `reply` on `channel` until `deadline`. A reply owed already
-    /// answers this copy too. Another one that has not started out gives
-    /// way, as the one whose packet is older; one being sent does not, and
-    /// `reply` is then not owed.
+    fn owes(&self, reply: Reply, channel: Channel) -> bool {
+        self.owed
+            .as_slice()
+            .iter()
+            .any(|o| o.reply == reply && o.channel == channel)
+    }
+
+    /// Owe `reply` on `channel` until `deadline`, `renews` saying whether
+    /// it takes a DATA for this node. A reply owed already answers this
+    /// copy too. With no place left, the oldest one that has not started
+    /// out gives way, as the one whose packet is older; if that is the one
+    /// being sent, `reply` is not owed.
     pub(crate) fn owe(
         &mut self,
         reply: impl Into<Reply>,
         channel: Channel,
         deadline: Instant,
+        renews: bool,
         sending: bool,
         now: Instant,
     ) {
         let reply = reply.into();
+        self.renew = renews;
         self.forget_late(sending, now);
-        if let Some(o) = self.owed {
-            if (o.reply == reply && o.channel == channel) || sending {
+        if self.owes(reply, channel) {
+            return;
+        }
+        if self.owed.is_full() {
+            if sending {
                 return;
             }
+            self.owed.remove(0);
         }
-        self.owed = Some(Owed {
+        let _ = self.owed.push(Owed {
             reply,
             channel,
             deadline,
@@ -367,34 +406,44 @@ impl Replies {
         });
     }
 
-    /// Drop the owed reply if its sender has stopped waiting, unless it is
-    /// being sent.
+    /// Drop the owed replies whose senders have stopped waiting, but the
+    /// one being sent.
     fn forget_late(&mut self, sending: bool, now: Instant) {
-        if !sending && self.owed.is_some_and(|o| o.deadline <= now) {
-            self.owed = None;
-        }
+        let mut i = 0;
+        self.owed.retain(|o| {
+            let keep = (sending && i == 0) || o.deadline > now;
+            i += 1;
+            keep
+        });
     }
 
-    /// The reply to start sending now, if it is ready; asked only while
-    /// the radio is free.
+    /// The reply to start sending now, if the first owed is ready; asked
+    /// only while the radio is free.
     pub(crate) fn due(&mut self, now: Instant) -> Option<Owed> {
         self.forget_late(false, now);
-        self.owed.filter(|o| o.ready <= now)
+        self.owed
+            .as_slice()
+            .first()
+            .filter(|o| o.ready <= now)
+            .copied()
     }
 
-    /// When the owed reply is ready to send, once the radio is free.
+    /// When the first owed reply is ready to send, once the radio is free.
     pub(crate) fn wake_at(&self) -> Option<Instant> {
-        self.owed.map(|o| o.ready)
+        self.owed.as_slice().first().map(|o| o.ready)
     }
 
     /// Whether a reply is owed.
     pub(crate) fn pending(&self) -> bool {
-        self.owed.is_some()
+        self.owed.len() > 0
     }
 
-    /// Give up the owed reply: no budget for it.
+    /// Give up the first owed reply: no budget for it.
     pub(crate) fn abandon(&mut self) {
-        self.owed = None;
+        self.renew = false;
+        if self.pending() {
+            self.owed.remove(0);
+        }
     }
 
     /// The check of the reply being sent completed. Returns the reply to
@@ -406,11 +455,11 @@ impl Replies {
         rng: &mut Rng,
         backoff_max: Duration,
     ) -> Option<Owed> {
-        let o = self.owed.as_mut()?;
+        let o = self.owed.as_mut_slice().first_mut()?;
         if busy {
             let ready = now + rng.duration(Duration::ZERO, backoff_max);
             if ready >= o.deadline {
-                self.owed = None;
+                self.owed.remove(0);
             } else {
                 o.ready = ready;
             }
@@ -419,9 +468,13 @@ impl Replies {
         Some(*o)
     }
 
-    /// The reply being sent left the antenna.
-    pub(crate) fn sent(&mut self) {
-        self.owed = None;
+    /// The reply being sent left the antenna. Returns whether the node
+    /// listens on for the next DATA.
+    pub(crate) fn sent(&mut self) -> bool {
+        if self.pending() {
+            self.owed.remove(0);
+        }
+        core::mem::take(&mut self.renew)
     }
 }
 
@@ -567,29 +620,29 @@ mod tests {
         let mut rng = Rng::new(4);
         let ch = Channel::new(3).unwrap();
         let mut a = Replies::new();
-        a.owe(ack(1), ch, at(100), false, at(0));
+        a.owe(ack(1), ch, at(100), false, false, at(0));
         assert!(
             a.can_owe(ack(1), ch, false, at(10)),
             "a copy is answered too"
         );
-        a.owe(ack(1), ch, at(110), false, at(10));
+        a.owe(ack(1), ch, at(110), false, false, at(10));
         assert!(!a.can_owe(ack(2), ch, false, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), false, at(10)));
         assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
         // Its check is on the radio: a packet that arrives meanwhile is
         // answered after it, or not at all.
-        a.owe(ack(2), ch, at(111), true, at(11));
+        a.owe(ack(2), ch, at(111), false, true, at(11));
+        let sent = a.checked(false, at(11), &mut rng, ms(50)).unwrap();
         assert_eq!(
-            a.checked(false, at(11), &mut rng, ms(50)),
-            Some(a.owed.unwrap()),
+            sent.reply,
+            Reply::Ack(ack(1)),
             "the reply being sent keeps its place"
         );
-        assert_eq!(a.owed.unwrap().reply, Reply::Ack(ack(1)));
-        a.sent();
+        assert!(!a.sent());
         assert!(!a.pending());
         assert!(a.can_owe(ack(2), ch, false, at(13)));
         // Busy until past the deadline: abandoned.
-        a.owe(ack(2), ch, at(100), false, at(60));
+        a.owe(ack(2), ch, at(100), false, false, at(60));
         a.due(at(60)).unwrap();
         let mut now = at(60);
         while a.pending() {
@@ -601,8 +654,8 @@ mod tests {
             }
         }
         // Not started: a newer one takes the place.
-        a.owe(ack(3), ch, at(300), false, at(200));
-        a.owe(ack(4), ch, at(301), false, at(200));
+        a.owe(ack(3), ch, at(300), false, false, at(200));
+        a.owe(ack(4), ch, at(301), true, false, at(200));
         assert_eq!(a.due(at(201)).unwrap().reply, Reply::Ack(ack(4)));
         // A lapsed one frees the place.
         assert!(!a.can_owe(ack(5), ch, false, at(300)));
@@ -613,9 +666,15 @@ mod tests {
             refused: true,
             ..ack(id)
         };
-        a.owe(busy(1), ch, at(500), false, at(400));
+        a.owe(busy(1), ch, at(500), false, false, at(400));
         assert!(a.can_owe(busy(1), ch, false, at(410)));
         assert!(!a.can_owe(busy(2), ch, false, at(410)));
         assert!(!a.can_owe(ack(1), ch, false, at(410)));
+        // Sent, a reply that took a DATA for this node has it listen on.
+        a.due(at(410)).unwrap();
+        assert!(!a.sent(), "a refusal took nothing");
+        a.owe(ack(6), ch, at(600), true, false, at(510));
+        a.due(at(510)).unwrap();
+        assert!(a.sent());
     }
 }

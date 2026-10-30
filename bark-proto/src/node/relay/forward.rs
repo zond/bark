@@ -40,11 +40,11 @@
 //! its sender on with a second copy. A relay that cannot afford even the
 //! reply stays silent, and its sender retries.
 //!
-//! A relay owes one reply at a time (`transfer.rs`, roadmap D29). A packet
-//! that arrives while it owes another one, its ACK still waiting for the
-//! channel, is neither taken nor refused: the relay says nothing, and the
-//! sender's retry brings the packet again. A copy of the packet the owed
-//! reply answers is answered by it too.
+//! A relay owes one reply at a time (`transfer::REPLIES`, roadmap D29). A
+//! packet that arrives while it owes another one, its ACK still waiting
+//! for the channel, is neither taken nor refused: the relay says nothing,
+//! and the sender's retry brings the packet again. A copy of the packet
+//! the owed reply answers is answered by it too.
 //!
 //! A packet is ACKed without being acted on only where that cannot end the
 //! last copy (roadmap D35). A hand-over under way whose frame has been on
@@ -588,8 +588,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
                 self.replies
-                    .owe(reply, d.sender_home, deadline, sending, now);
-                self.renew = false;
+                    .owe(reply, d.sender_home, deadline, false, sending, now);
             }
             return;
         }
@@ -600,11 +599,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
             return;
         }
-        self.replies
-            .owe(reply, d.sender_home, deadline, sending, now);
         // A sleepy node listens on once it has answered, for the next
         // (spec "Delivery").
-        self.renew = d.dst_id == self.me();
+        let renews = d.dst_id == self.me();
+        self.replies
+            .owe(reply, d.sender_home, deadline, renews, sending, now);
         if completes {
             self.handover_done(now, emit);
         }
@@ -1595,7 +1594,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.replies.abandon();
-            self.renew = false;
             return true;
         }
         self.radio.check(Job::Reply, o.channel, emit);
@@ -1617,7 +1615,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.radio.transmit(Job::Reply, frame, emit);
             } else {
                 self.replies.abandon();
-                self.renew = false;
             }
         }
     }

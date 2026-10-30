@@ -474,9 +474,6 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
-    /// The owed reply takes a DATA for this node: once it is sent, the
-    /// node listens one hand-over for the next.
-    renew: bool,
     /// The application's message, from when it is taken until its first
     /// hop takes it, it arrives here, or it is dropped (roadmap D29).
     own: Option<MsgId>,
@@ -578,7 +575,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             own_refusals: 0,
             held: None,
             feed_due: false,
-            renew: false,
             config,
             timers: Timers::UNSET,
             rng: Rng::new(0),
@@ -647,7 +643,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             own_refusals,
             held,
             feed_due,
-            renew,
         } = self;
         *stored = config.stored;
         *id = node_id;
@@ -694,7 +689,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *own_refusals = 0;
         *held = None;
         *feed_due = false;
-        *renew = false;
         *timers = Timers::UNSET;
         *c = config;
         *r = rng;
@@ -2223,8 +2217,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
                 Some(Job::Reply) => {
-                    self.replies.sent();
-                    if core::mem::take(&mut self.renew) {
+                    let listens_on = self.replies.sent();
+                    if listens_on {
                         self.took(now);
                     }
                 }
