@@ -290,23 +290,43 @@ pub struct RadioParams {
     /// Probability that CAD misses a LoRa signal above sensitivity.
     /// Assumption: 0 until measured.
     pub cad_miss_probability: f64,
-    /// Dwell on a channel before `GetRssiInst` is read, in µs. The
-    /// datasheet gives no settle time (DS §13.5.4). Assumption: 300 µs,
-    /// the design's figure; measure in Phase 2.
+    /// Dwell after the receiver starts on another channel before
+    /// `GetRssiInst` is read, µs. Default four symbol periods, 1024 µs:
+    /// the reading climbs a step a symbol period and is right from four
+    /// (docs/bench-2026-10-30.md, "The night alone, and two boards the
+    /// next morning"; spec "Busy estimate").
     pub rssi_dwell_us: u64,
-    /// DS Table 8-2: RX to FS, µs.
+    /// One `GetRssiInst` over the bus, µs. Measured, 155 µs
+    /// (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
+    pub rssi_read_us: u64,
+    /// Leaving RX for FS, µs. With `synth_hop_us` and `fs_to_rx_us` it
+    /// makes the retune between two channels, measured 668 µs whatever
+    /// the hop (docs/bench-2026-10-30.md): the commands, not the
+    /// synthesiser. The sum is measured; its split into the three is not.
     pub rx_to_fs_us: u64,
-    /// DS Table 8-2: FS to RX, µs (also DS Table 3-8 `TS_RX`).
+    /// FS back to RX, µs: the other half of the measured retune, see
+    /// `rx_to_fs_us`.
     pub fs_to_rx_us: u64,
-    /// DS Table 8-2: RX to TX, µs.
+    /// From the decision to transmit to the frame's first symbol, µs:
+    /// the transmit's preparation, 1.54 ms for a 64-byte frame, and its
+    /// excess over the airtime formula, 510 µs (docs/bench-2026-10-30.md,
+    /// "Step 1 numbers, one board"). Measured.
     pub rx_to_tx_us: u64,
-    /// DS Table 8-2: STBY_RC to RX, µs. CAD and TX both end in STBY_RC
-    /// (DS §13.1.8 SetCAD; the default RxTxFallbackMode), so this is the
-    /// cost of returning to listen after either.
+    /// Back to listening after a transmission or a CAD, µs. Measured,
+    /// 1.30 ms (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
     pub stby_to_rx_us: u64,
-    /// DS Table 3-7 `TS_HOP`: synthesiser hop time, µs, for a 10 MHz step;
-    /// an upper bound for our ≤ 1.5 MHz steps.
+    /// Synthesiser hop on top of the retune, µs: 0, since the measured
+    /// retune does not grow with the hop (see `rx_to_fs_us`).
     pub synth_hop_us: u64,
+    /// Preparing a CAD from listening, µs. Measured, 0.75 ms
+    /// (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
+    pub cad_prepare_us: u64,
+    /// From the CAD's start to the radio back in standby, µs: its
+    /// sampling, then the oscillator's restart, since CAD ends in
+    /// STDBY_RC (DS Table 13-73). Measured, 4.64 ms at the firmware's
+    /// 2 ms oscillator wait (docs/bench-2026-10-30.md, "The loader, on
+    /// the board").
+    pub cad_done_us: u64,
     /// Cut-off below sensitivity, in dB, under which a link is not stored.
     /// Default 10 dB: −129 dBm, 12.5 dB under the noise floor, where one
     /// omitted transmitter raises the floor by at most 0.24 dB.
@@ -326,12 +346,15 @@ impl Default for RadioParams {
             acr2_db: 60.0,
             cad_symbols: 8,
             cad_miss_probability: 0.0,
-            rssi_dwell_us: 300,
-            rx_to_fs_us: 15,
-            fs_to_rx_us: 41,
-            rx_to_tx_us: 92,
-            stby_to_rx_us: 83,
-            synth_hop_us: 30,
+            rssi_dwell_us: 4 * SYMBOL_TIME.as_micros(),
+            rssi_read_us: 155,
+            rx_to_fs_us: 334,
+            fs_to_rx_us: 334,
+            rx_to_tx_us: 1540 + 510,
+            stby_to_rx_us: 1300,
+            synth_hop_us: 0,
+            cad_prepare_us: 750,
+            cad_done_us: 4640,
             interference_margin_db: 10.0,
             reception: Reception::Curve,
         }
@@ -367,7 +390,7 @@ impl RadioParams {
     }
 
     /// Retune from RX on one channel to RX on another: RX→FS, hop, FS→RX
-    /// (86 µs by default).
+    /// (668 µs by default).
     pub fn retune(&self) -> Duration {
         Duration::from_micros(self.rx_to_fs_us + self.synth_hop_us + self.fs_to_rx_us)
     }
@@ -378,35 +401,34 @@ impl RadioParams {
         Duration::from_micros((2 * self.cad_symbols as u64 + 1) * SYMBOL_TIME.as_micros() / 2)
     }
 
-    /// Phases of a CAD on `channel`: leave RX (and hop if off the resting
-    /// channel), start the receiver, sample, return from STBY_RC to RX.
-    pub fn cad_phases(&self, off_channel: bool) -> [Phase; 3] {
-        let hop = if off_channel { self.synth_hop_us } else { 0 };
+    /// Phases of a CAD: its preparation, which sets the channel, so on
+    /// any channel alike; the sampling; the rest of the CAD and the return
+    /// to RX.
+    pub fn cad_phases(&self) -> [Phase; 3] {
+        let sampling = self.cad_time();
+        let after = Duration::from_micros(
+            self.cad_done_us.saturating_sub(sampling.as_micros()) + self.stby_to_rx_us,
+        );
         [
-            (
-                Duration::from_micros(self.rx_to_fs_us + hop + self.fs_to_rx_us),
-                Deaf::Retune,
-            ),
-            (self.cad_time(), Deaf::Cad),
-            (Duration::from_micros(self.stby_to_rx_us), Deaf::Retune),
+            (Duration::from_micros(self.cad_prepare_us), Deaf::Retune),
+            (sampling, Deaf::Cad),
+            (after, Deaf::Retune),
         ]
     }
 
-    /// Phases of an RSSI sample: retune there (if off channel), dwell,
-    /// retune back. On the resting channel there is no retune, and the
-    /// node keeps receiving through the dwell (docs/core-interface.md §3
-    /// rule 7): the phases then only time the reading.
+    /// Phases of an RSSI sample: retune there, dwell, read, retune back.
+    /// On the resting channel there is no retune and no dwell, since the
+    /// settled reading is the four-symbol one, and the node keeps receiving
+    /// (docs/core-interface.md §3 rule 7): the phases then only time the
+    /// read.
     pub fn rssi_phases(&self, off_channel: bool) -> [Phase; 3] {
-        let r = if off_channel {
-            self.retune()
+        let (r, dwell) = if off_channel {
+            (self.retune(), self.rssi_dwell_us + self.rssi_read_us)
         } else {
-            Duration::ZERO
+            (Duration::ZERO, self.rssi_read_us)
         };
-        [
-            (r, Deaf::Retune),
-            (Duration::from_micros(self.rssi_dwell_us), Deaf::Rssi),
-            (r, Deaf::Retune),
-        ]
+        let dwell = Duration::from_micros(dwell);
+        [(r, Deaf::Retune), (dwell, Deaf::Rssi), (r, Deaf::Retune)]
     }
 
     /// Phases of a transmission with `airtime` on air: RX→TX (plus a hop if
@@ -508,13 +530,15 @@ mod tests {
     #[test]
     fn excursion_costs() {
         let p = RadioParams::default();
-        assert_eq!(p.retune().as_micros(), 86);
+        // docs/bench-2026-10-30.md: a retune, a CAD at the 2 ms oscillator
+        // wait, a reading of another channel.
+        assert_eq!(p.retune().as_micros(), 668);
         assert_eq!(p.cad_time().as_micros(), 8 * 256 + 128);
         let total = |ph: [Phase; 3]| ph.iter().map(|x| x.0.as_micros()).sum::<u64>();
-        assert_eq!(total(p.cad_phases(true)), 86 + 2176 + 83);
-        assert_eq!(total(p.rssi_phases(false)), 300);
-        assert_eq!(total(p.rssi_phases(true)), 86 + 300 + 86);
+        assert_eq!(total(p.cad_phases()), 750 + 4640 + 1300);
+        assert_eq!(total(p.rssi_phases(false)), 155);
+        assert_eq!(total(p.rssi_phases(true)), 668 + 1024 + 155 + 668);
         let air = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
-        assert_eq!(total(p.tx_phases(false, air)), 92 + 11_840 + 83);
+        assert_eq!(total(p.tx_phases(false, air)), 2050 + 11_840 + 1300);
     }
 }

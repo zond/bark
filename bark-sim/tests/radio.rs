@@ -149,17 +149,17 @@ fn stronger_preamble_steals_the_lock_at_exactly_the_threshold() {
 fn receiver_mid_excursion_misses_packet_and_says_why() {
     let p = RadioParams::default();
     // R's excursion starts at 1.0 s. T1 is scripted at `tx_at`; its signal
-    // reaches the air rx_to_tx + hop = 122 µs later.
+    // reaches the air rx_to_tx + hop later.
     let lead = (p.rx_to_tx_us + p.synth_hop_us) as f64 / 1e6;
     let cases: [(ScriptAction, f64, &str); 5] = [
-        // 40 µs into a CAD on another channel: still retuning.
+        // 40 µs into a CAD: still preparing.
         (ScriptAction::Cad, 1.0 + 40e-6 - lead, "retune"),
-        // 1 ms into the CAD: sampling.
+        // 1 ms into the CAD, past its preparation: sampling.
         (ScriptAction::Cad, 1.001 - lead, "cad"),
         // 200 µs into an off-channel RSSI: dwelling.
         (
             ScriptAction::Rssi,
-            1.0 + (86.0 + 200.0) * 1e-6 - lead,
+            1.0 + (p.retune().as_micros() as f64 + 200.0) * 1e-6 - lead,
             "rssi",
         ),
         // 50 µs into R's own transmission: turnaround.
