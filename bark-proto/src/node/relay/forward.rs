@@ -1740,37 +1740,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|t| t - TTL_UNIT)
     }
 
-    /// When forwarding next needs the core. The ACK wait counts even while
-    /// an owed reply holds the radio; the rest only once the radio is free.
-    pub(super) fn forward_wakeup(&self) -> Option<Instant> {
-        let mut w: Option<Instant> = None;
-        let mut at = |t: Instant| w = Some(w.map_or(t, |w| w.min(t)));
-        if self.awaiting_ack() || self.radio.idle() {
-            if let Some(t) = self.flight_wake() {
-                at(t);
-            }
-        }
-        if self.radio.idle() {
-            if let Some(t) = self.replies.wake_at() {
-                at(t);
-            }
-        }
-        // A waiting entry, once nothing else is under way.
-        if self.handover_idle() && self.radio.idle() {
-            if let Some(t) = self.queue.earliest_due() {
-                at(t);
-            }
-        }
-        if let Some(t) = self.time_gone_at() {
-            at(t);
-        }
-        w
+    /// When forwarding next needs the core of its own accord, the radio
+    /// aside: a message's time running out.
+    pub(super) fn forward_deadline(&self) -> Option<Instant> {
+        self.time_gone_at()
     }
-}
 
-impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the hand-over in flight next needs the core, if it waits.
-    fn flight_wake(&self) -> Option<Instant> {
+    pub(super) fn flight_wake(&self) -> Option<Instant> {
         match self.in_flight()?.state {
             State::Waiting(_) | State::AwaitAck => Some(self.flight.until()),
             _ => None,

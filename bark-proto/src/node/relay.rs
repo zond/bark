@@ -116,7 +116,8 @@ use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 use forward::OWNER_RADIUS_M;
 use motion::Motion;
 
-/// Who started the outstanding excursion.
+/// A use of the radio: what owns the outstanding excursion, and what the
+/// scheduler starts (module documentation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Job {
     Sweep,
@@ -124,6 +125,11 @@ enum Job {
     HandOver,
     Reply,
 }
+
+/// The jobs in the order the scheduler serves them: an owed reply is
+/// worth nothing once its sender stops waiting; the heartbeat keeps its
+/// slot; a hand-over; the sweep's reading last.
+const JOBS: [Job; 4] = [Job::Reply, Job::Heartbeat, Job::HandOver, Job::Sweep];
 
 /// How much stronger, in the averaged RSSI of the neighbour table, another
 /// node must be to take a sleepy node from its anchor
@@ -1509,62 +1515,89 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// When the core next needs a wakeup: the earliest of its deadlines,
     /// of what the power, the GPS, the forwarding and the delivery derive
-    /// from their state, and of when a radio job is next ready.
+    /// from their state, and of when a job is next ready for the radio.
     fn due_at(&self) -> Option<Instant> {
+        let jobs = JOBS.iter().filter_map(|&job| self.ready_at(job));
         [
             self.timers.next(),
             self.grace_ends(),
             self.flush_ends(),
             self.gps_wakeup(),
-            self.forward_wakeup(),
+            self.forward_deadline(),
             self.delivery_wakeup(),
-            self.radio_jobs_due(),
         ]
         .into_iter()
         .flatten()
+        .chain(jobs)
         .min()
     }
 
-    /// When a radio job is next ready, once the radio is free: their
-    /// completion event wakes the core otherwise. The heartbeat and the
-    /// sweep wait while a hand-over waits for its ACK, which comes on the
-    /// home channel.
-    fn radio_jobs_due(&self) -> Option<Instant> {
-        if !self.radio.idle() || self.awaiting_ack() {
-            return None;
-        }
-        let heartbeat = self.heartbeats().then(|| {
-            let pending = self.beacon.announce.is_some()
-                || self.beacon.current.is_some()
-                || self.beacon.change.is_some();
-            let due = if pending {
-                self.beacon.ready_at
-            } else {
-                // A relay's answer may come before its next slot.
-                let answer = self.answer_due().map(|(_, _, at)| at);
-                answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
-            };
-            due.max(self.beacon.ready_at)
-        });
-        let sweep = self.sweeping().then_some(self.sweep.next_at);
-        earlier(heartbeat, sweep)
-    }
-
-    /// Start whatever is ready until the radio is busy or nothing is.
-    fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+    /// Serve the radio: feed the send queue, then start the first job that
+    /// is ready, in [`JOBS`]'s order, until one has taken the radio or
+    /// none is ready. A job that was ready but needed no excursion lets
+    /// the next be tried.
+    fn schedule(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
         if self.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
         while self.radio.idle() {
             self.prepare(now, emit);
-            let awaiting = self.awaiting_ack();
-            let started = self.start_reply(now, emit)
-                || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
-                || self.start_handover(now, emit)
-                || (!awaiting && self.sweep_due(now) && self.start_sweep(emit));
-            if !started {
+            if !JOBS.iter().any(|&job| self.start_job(job, now, emit)) {
                 break;
+            }
+        }
+    }
+
+    /// Start `job` if it is ready. The heartbeat and the sweep would take
+    /// the node off its home channel, where the ACK of a hand-over
+    /// arrives, so neither starts while one is awaited.
+    fn start_job(&mut self, job: Job, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+        match job {
+            Job::Reply => self.start_reply(now, emit),
+            Job::Heartbeat => {
+                !self.awaiting_ack() && self.beacon_due(now) && self.start_heartbeat(now, emit)
+            }
+            Job::HandOver => self.start_handover(now, emit),
+            Job::Sweep => !self.awaiting_ack() && self.sweep_due(now) && self.start_sweep(emit),
+        }
+    }
+
+    /// When `job` is next ready of its own accord, if it will be. Jobs
+    /// that need the radio free say so only while it is: its completion
+    /// event wakes the core otherwise. The hand-over's ACK wait counts
+    /// even while an owed reply holds the radio.
+    fn ready_at(&self, job: Job) -> Option<Instant> {
+        let free = self.radio.idle();
+        match job {
+            Job::Reply => self.replies.wake_at().filter(|_| free),
+            Job::Heartbeat => {
+                if !free || self.awaiting_ack() || !self.heartbeats() {
+                    return None;
+                }
+                let pending = self.beacon.announce.is_some()
+                    || self.beacon.current.is_some()
+                    || self.beacon.change.is_some();
+                let due = if pending {
+                    self.beacon.ready_at
+                } else {
+                    // A relay's answer may come before its next slot.
+                    let answer = self.answer_due().map(|(_, _, at)| at);
+                    answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
+                };
+                Some(due.max(self.beacon.ready_at))
+            }
+            Job::HandOver => {
+                let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
+                // A waiting entry, once nothing else is under way.
+                let queued = self
+                    .queue
+                    .earliest_due()
+                    .filter(|_| self.handover_idle() && free);
+                earlier(flight, queued)
+            }
+            Job::Sweep => {
+                (free && !self.awaiting_ack() && self.sweeping()).then_some(self.sweep.next_at)
             }
         }
     }
@@ -2227,7 +2260,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::App(cmd) => self.app(cmd, now, emit),
         }
         self.fire(now, emit);
-        self.pump(now, emit);
+        self.schedule(now, emit);
         self.timers.app_ready_at = self.send_ready_at(now);
         if woke.get() {
             self.timers.sniff_until = None;
