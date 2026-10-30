@@ -243,7 +243,7 @@ const UPTIME_EVERY: u32 = 20;
 /// current, a blink would wake the CPU twice a second, and the crystal,
 /// once started, runs on while the CPU sleeps, where the internal
 /// oscillator starts only while something needs it.
-async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P0_15>) {
+async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P1_01>) {
     use embassy_futures::select::{select, Either};
     use embassy_nrf::gpio::{Level, Output, OutputDrive};
     // LED assumed active low (board.rs, Leds): start dark.

@@ -116,7 +116,7 @@ Unverified, in the order they will fail if wrong:
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
   time and the node turns a relay on the cable at once.
-- The green LED is on P0.15 and active low.
+- The green LED is on P1.01 (the board's label, 2026-10-30) and active low.
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
 - A panic message survives the soft reset through the bootloader and the
   loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
