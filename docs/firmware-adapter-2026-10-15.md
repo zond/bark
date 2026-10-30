@@ -15,7 +15,7 @@ at a time:
    fires early is waited out again), `Received` with the frame's bytes, channel, RSSI and SNR,
    or the application's `Send`.
 3. Carry out what the core emits. `Listen` retunes at once. `Trace` and `App` go to the log.
-   `Cad`, `Rssi` and `Transmit` are kept, and the next step performs the excursion, puts the
+   `Lbt`, `Rssi` and `Transmit` are kept, and the next step performs the excursion, puts the
    radio back on the resting channel and hands the core its completion.
 
 The radio, the clock and the application are traits. On the board they are the SX1262 through
@@ -27,10 +27,10 @@ Details that follow from the contract (`core-interface.md`):
 - **Never early.** The board's clock counts 32 768 Hz ticks; a deadline is rounded up to the
   next tick, and the loop checks `now >= next_wakeup()` before it delivers a wakeup.
 - **A check waits for a packet in progress** (`core-interface.md` "Radio" rule 8; spec "Busy estimate"). The radio reports a
-  packet when it detects its preamble or header. A CAD, or an RSSI reading on another channel,
+  packet when it detects its preamble or header. A listen-before-talk, or an RSSI reading on another channel,
   asked for while one is arriving waits until it ends, at most one longest frame (138.6 ms).
   The frame reaches the core meanwhile, as in the simulator. A transmission never waits.
-- **Every excursion completes.** If the radio fails, a CAD reports busy and an RSSI reading
+- **Every excursion completes.** If the radio fails, a listen-before-talk reports busy and an RSSI reading
   0 dBm, the top of the radio's scale, so the core does not transmit on a check it never got; a
   failed transmission still reports `TxDone`, and the retries of spec "Hand-over" cover the frame.
   The radio is set listening again on the next step.
@@ -72,7 +72,7 @@ leaves 97 KiB for the stack.
 shows wakeups delivered at the instant asked for, also when the timer fires early; a frame on
 the resting channel reaching the core with its bytes when it ends, and one on another channel
 not; a transmission going out on its channel, `TxDone` one airtime later, and the radio back
-on the resting channel; a CAD waiting for the packet in progress and running after it; and
+on the resting channel; a listen-before-talk waiting for the packet in progress and running after it; and
 that wait ending after one longest frame. With a real `Relay` for 20 simulated seconds it
 shows the relay booting on its home channel, taking a neighbour's heartbeat into its table,
 sweeping the channels with a 300 µs dwell, sending its own heartbeat, and delivering its

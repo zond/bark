@@ -41,9 +41,10 @@ pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYM
 /// §13.5.4); the bench found one.
 pub const RSSI_DWELL: Duration = RSSI_SETTLE;
 
-/// RSSI reported for a reading the radio failed to take: the top of its
-/// scale (GetRssiInst gives −raw/2 dBm, raw ≥ 0; DS §13.5.4), so the core
-/// takes the channel as busy rather than transmit on a reading it never got.
+/// RSSI reported for a reading the radio failed to take, in a sweep or a
+/// listen-before-talk: the top of its scale (GetRssiInst gives −raw/2 dBm,
+/// raw ≥ 0; DS §13.5.4), so the core takes the channel as busy rather than
+/// transmit on a reading it never got.
 pub const FAILED_RSSI_DBM: i16 = 0;
 
 /// How often the driver reads the battery while on battery and reports it
@@ -98,9 +99,12 @@ pub trait Radio {
     /// `buf`. The radio keeps listening. Short, and not cancel-safe.
     async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, Self::Error>;
 
-    /// Channel activity detection on `channel`: whether a LoRa preamble was
-    /// seen. Leaves the radio not listening.
-    async fn cad(&mut self, channel: Channel) -> Result<bool, Self::Error>;
+    /// Listen before talking on `channel`: one channel activity detection
+    /// with the RSSI read while it samples, four symbol periods in
+    /// (`radio::RSSI_SETTLE`). Returns whether a LoRa preamble was seen and
+    /// the reading in dBm, on the footing of a reading taken while
+    /// listening. Leaves the radio not listening.
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Self::Error>;
 
     /// Instantaneous RSSI on the channel being listened to, dBm.
     async fn rssi(&mut self) -> Result<i16, Self::Error>;
@@ -340,7 +344,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// for at most one longest frame (core-interface §3 rule 8).
     fn holds(&mut self, action: &Action, now: Instant) -> bool {
         let leaves = match action {
-            Action::Cad(_) => true,
+            Action::Lbt(_) => true,
             // A duty-cycled radio reads no RSSI: it must listen first.
             Action::Rssi(c) => self.listening != Some(*c) || self.sniffing,
             _ => false,
@@ -457,7 +461,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 resting = Some(c);
                 sniff = None;
             }
-            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 assert!(
                     excursion.is_none(),
                     "second excursion outstanding (docs/core-interface.md §3 rule 1)"
@@ -487,16 +491,16 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// rule 2: every excursion completes with exactly one event).
     async fn perform(&mut self, action: Action) -> Event<'static> {
         let done = match action {
-            Action::Cad(channel) => {
+            Action::Lbt(channel) => {
                 self.deaf();
-                let busy = match self.radio.cad(channel).await {
-                    Ok(busy) => busy,
+                let (busy, dbm) = match self.radio.lbt(channel).await {
+                    Ok(result) => result,
                     Err(e) => {
                         self.failed(e);
-                        true
+                        (true, FAILED_RSSI_DBM)
                     }
                 };
-                Event::CadDone { channel, busy }
+                Event::LbtDone { channel, busy, dbm }
             }
             Action::Rssi(channel) => {
                 if self.listening != Some(channel) || self.sniffing {

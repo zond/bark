@@ -184,8 +184,7 @@ enum Stage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Check {
     Idle,
-    Cad,
-    Rssi,
+    Lbt,
     Tx,
 }
 
@@ -1709,9 +1708,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Trace(Trace::HeartbeatDeferred { until }));
             return false;
         }
-        self.beacon.check = Check::Cad;
+        self.beacon.check = Check::Lbt;
         self.radio
-            .start(Job::Heartbeat, Action::Cad(f.channel), emit);
+            .start(Job::Heartbeat, Action::Lbt(f.channel), emit);
         true
     }
 
@@ -1749,21 +1748,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        if self.beacon.check == Check::Cad {
-            self.beacon.check = Check::Rssi;
-            self.radio
-                .start(Job::Heartbeat, Action::Rssi(f.channel), emit);
-        } else {
-            self.beacon.check = Check::Tx;
-            match self.beacon.current {
-                Some((_, Beat::Change)) => emit(Action::Trace(Trace::Changed)),
-                Some((_, Beat::Answer(_))) => emit(Action::Trace(Trace::Answer)),
-                Some((_, Beat::Slot)) if self.beacon.burst > 0 => emit(Action::Trace(Trace::Burst)),
-                _ => {}
-            }
-            self.budget.record(mac::airtime(&f), now);
-            self.radio.start(Job::Heartbeat, Action::Transmit(f), emit);
+        self.beacon.check = Check::Tx;
+        match self.beacon.current {
+            Some((_, Beat::Change)) => emit(Action::Trace(Trace::Changed)),
+            Some((_, Beat::Answer(_))) => emit(Action::Trace(Trace::Answer)),
+            Some((_, Beat::Slot)) if self.beacon.burst > 0 => emit(Action::Trace(Trace::Burst)),
+            _ => {}
         }
+        self.budget.record(mac::airtime(&f), now);
+        self.radio.start(Job::Heartbeat, Action::Transmit(f), emit);
     }
 
     /// The heartbeat went out, or was skipped (spec "Heartbeat"). On a fixed
@@ -2071,7 +2064,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         let mut wake = |a: Action| {
             let radio = matches!(
                 a,
-                Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+                Action::Listen(_) | Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
             );
             woke.set(woke.get() || radio);
             emit(a)
@@ -2086,18 +2079,21 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::Received {
                 bytes, rssi_dbm, ..
             } => self.received(bytes, rssi_dbm, now, emit),
-            Event::CadDone { busy, .. } => match self.radio.complete() {
-                Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
-                Some(Job::HandOver) => self.handover_check(busy, now, emit),
-                Some(Job::Reply) => self.reply_check(busy, now, emit),
-                Some(Job::Sweep) | None => {}
-            },
+            // The channel is clear only if neither the CAD saw a preamble
+            // nor the reading was above the busy threshold (spec
+            // "Heartbeat", "Busy estimate").
+            Event::LbtDone { busy, dbm, .. } => {
+                let busy = busy || dbm > threshold;
+                match self.radio.complete() {
+                    Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
+                    Some(Job::HandOver) => self.handover_check(busy, now, emit),
+                    Some(Job::Reply) => self.reply_check(busy, now, emit),
+                    Some(Job::Sweep) | None => {}
+                }
+            }
             Event::RssiSample { channel, dbm } => match self.radio.complete() {
                 Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
-                Some(Job::Heartbeat) => self.heartbeat_check(dbm > threshold, now, emit),
-                Some(Job::HandOver) => self.handover_check(dbm > threshold, now, emit),
-                Some(Job::Reply) => self.reply_check(dbm > threshold, now, emit),
-                None => {}
+                Some(Job::Heartbeat | Job::HandOver | Job::Reply) | None => {}
             },
             Event::TxDone => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
@@ -2347,7 +2343,7 @@ mod tests {
     fn on_battery<const H: usize, const Q: usize>(r: &mut Node<H, Q>) -> Vec<Action> {
         let mut pending = Vec::new();
         let mut keep = |a: Action| {
-            if matches!(a, Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)) {
+            if matches!(a, Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)) {
                 pending.push(a);
             }
         };
@@ -2378,9 +2374,10 @@ mod tests {
         let mut sent = Vec::new();
         loop {
             let event = match pending.pop() {
-                Some(Action::Cad(channel)) => Event::CadDone {
+                Some(Action::Lbt(channel)) => Event::LbtDone {
                     channel,
                     busy: false,
+                    dbm: -130,
                 },
                 Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
                 Some(Action::Transmit(f)) => {
@@ -2398,7 +2395,7 @@ mod tests {
                 },
             };
             r.handle(event, *now, &mut |a| match a {
-                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
                 _ => {}
             });
         }
@@ -2458,9 +2455,10 @@ mod tests {
         let mut pending: Vec<Action> = Vec::new();
         for _ in 0..10_000 {
             let event = match pending.pop() {
-                Some(Action::Cad(channel)) => Event::CadDone {
+                Some(Action::Lbt(channel)) => Event::LbtDone {
                     channel,
                     busy: false,
+                    dbm: -130,
                 },
                 Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
                 Some(Action::Transmit(f)) => {
@@ -2480,7 +2478,7 @@ mod tests {
                 break;
             }
             s.handle(event, now, &mut |a| match a {
-                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
                 _ => {}
             });
         }
@@ -2683,7 +2681,7 @@ mod tests {
         r.feed_due = true;
         let mut checked = None;
         r.handle(Event::Wakeup, now, &mut |a| {
-            if let Action::Cad(c) = a {
+            if let Action::Lbt(c) = a {
                 checked = Some(c);
             }
         });
@@ -2757,13 +2755,14 @@ mod tests {
         let mut actions = Vec::new();
         r.handle(received(&a_bytes), now, &mut |x| actions.push(x));
         assert!(taken(&actions, &a));
-        assert!(actions.contains(&Action::Cad(a_home)), "{actions:?}");
+        assert!(actions.contains(&Action::Lbt(a_home)), "{actions:?}");
         // A's channel is busy: its ACK waits a backoff.
         now += Duration::from_millis(1);
         r.handle(
-            Event::CadDone {
+            Event::LbtDone {
                 channel: a_home,
                 busy: true,
+                dbm: -130,
             },
             now,
             &mut |_| {},
@@ -2922,7 +2921,7 @@ mod tests {
             let mut pending = Vec::new();
             r.handle(event, *now, &mut |a| match a {
                 Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
-                Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
                 _ => {}
             });
             // Send the reply, so the next packet can be answered.
@@ -2999,7 +2998,7 @@ mod tests {
             };
             let mut pending = Vec::new();
             r.handle(event, *now, &mut |a| {
-                if matches!(a, Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)) {
+                if matches!(a, Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)) {
                     pending.push(a)
                 }
             });
@@ -3119,9 +3118,10 @@ mod tests {
         r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
         loop {
             let event = match pending.pop() {
-                Some(Action::Cad(channel)) => Event::CadDone {
+                Some(Action::Lbt(channel)) => Event::LbtDone {
                     channel,
                     busy: false,
+                    dbm: -130,
                 },
                 Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
                 Some(Action::Transmit(f)) => {
@@ -3248,9 +3248,10 @@ mod tests {
         r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
         loop {
             let event = match pending.pop().expect("the offer is sent") {
-                Action::Cad(channel) => Event::CadDone {
+                Action::Lbt(channel) => Event::LbtDone {
                     channel,
                     busy: false,
+                    dbm: -130,
                 },
                 Action::Rssi(channel) => Event::RssiSample { channel, dbm: -130 },
                 Action::Transmit(f) => {
@@ -3503,7 +3504,7 @@ mod tests {
         r.handle(event, *now, &mut |a| match a {
             Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
             Action::Trace(Trace::Dropped { reason, .. }) => dropped = Some(reason),
-            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
             _ => {}
         });
         let until = *now + Duration::from_millis(100);

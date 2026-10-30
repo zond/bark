@@ -108,15 +108,12 @@ fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
     let (from, to) = (at(200), at(260));
     h.run_until(to, |_| false);
     let checks = &h.nodes[0].checks;
-    // A heartbeat's listen-before-talk is a CAD and then an RSSI reading of
-    // the same channel; every other reading is the sweep's.
-    let lbt = |k: usize| {
-        k > 0
-            && matches!((checks[k - 1].2, checks[k].2), (Action::Cad(a), Action::Rssi(b)) if a == b)
-    };
-    let sweep: Vec<_> = (0..checks.len())
-        .filter(|&k| checks[k].0 >= from && matches!(checks[k].2, Action::Rssi(_)) && !lbt(k))
-        .map(|k| checks[k])
+    // Every RSSI reading is the sweep's: a heartbeat's listen-before-talk
+    // reads the channel inside its own check.
+    let sweep: Vec<_> = checks
+        .iter()
+        .filter(|c| c.0 >= from && matches!(c.2, Action::Rssi(_)))
+        .copied()
         .collect();
     let step = c.sweep_interval.div(CHANNELS as u64);
     let expected = to.since(from).as_micros() / step.as_micros();

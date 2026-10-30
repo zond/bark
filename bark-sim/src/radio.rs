@@ -656,7 +656,7 @@ impl Sim {
         }
         st.arrivals.push(a);
         if let Some(ex) = &mut st.ex {
-            if ex.kind == ExKind::Cad
+            if ex.kind == ExKind::Lbt
                 && a.lora
                 && a.channel == ex.channel.index()
                 && a.dbm >= sens

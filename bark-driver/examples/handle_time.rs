@@ -27,7 +27,8 @@ const NEIGHBOURS: usize = 64;
 const RUN: Duration = Duration::from_secs(600);
 /// Runs whose shortest time per call is kept.
 const REPEATS: usize = 5;
-/// CAD at SF5 with 8 symbols, plus half a symbol (SX1261/2 DS §6.1.5).
+/// A listen-before-talk's CAD at SF5 with 8 symbols, plus half a symbol
+/// (SX1261/2 DS §6.1.5).
 const CAD_TIME: Duration = Duration::from_micros(2176);
 
 #[derive(Clone, Copy, PartialEq)]
@@ -40,7 +41,7 @@ enum Kind {
 /// An excursion's completion, owned.
 #[derive(Clone, Copy)]
 enum Done {
-    Cad(Channel),
+    Lbt(Channel),
     Rssi(Channel),
     Tx,
 }
@@ -133,9 +134,10 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                 snr_db: 8,
                 bytes: &frame[..len],
             },
-            (_, Some(Done::Cad(channel))) => Event::CadDone {
+            (_, Some(Done::Lbt(channel))) => Event::LbtDone {
                 channel,
                 busy: false,
+                dbm: -120,
             },
             (_, Some(Done::Rssi(channel))) => Event::RssiSample { channel, dbm: -120 },
             (_, Some(Done::Tx)) => Event::TxDone,
@@ -144,7 +146,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
         let mut asked = None;
         let start = Wall::now();
         relay.handle(event, now, &mut |a| match a {
-            Action::Cad(c) => asked = Some((now + CAD_TIME, Done::Cad(c))),
+            Action::Lbt(c) => asked = Some((now + CAD_TIME, Done::Lbt(c))),
             Action::Rssi(c) => asked = Some((now, Done::Rssi(c))),
             Action::Transmit(f) => {
                 asked = Some((now + time_on_air(f.len, f.preamble_symbols), Done::Tx))

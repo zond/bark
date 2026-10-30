@@ -1740,11 +1740,15 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     };
     let (handed_at, _) = data_to(p, c)[0];
     assert!(handed_at < moved_at, "P moved before handing to C");
+    // Every attempt of the return, a retry included if the ACK of the
+    // first was lost to the carrier, goes to the new home.
     let returns = data_to(c, p);
-    assert_eq!(returns.len(), 1, "{returns:?}");
-    let (returned_at, channel) = returns[0];
+    assert!(!returns.is_empty());
+    let (returned_at, _) = returns[0];
     assert!(returned_at > moved_at, "C returned before P moved");
-    assert_eq!(channel, new, "returned to P's old home");
+    for (_, channel) in &returns {
+        assert_eq!(*channel, new, "returned to P's old home");
+    }
     assert!(traces(&h, c).contains(&Trace::ReturnedToParent {
         msg_id: id,
         to: core(&h, p).id()

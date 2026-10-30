@@ -8,7 +8,7 @@ use core::cell::Cell;
 use bark_driver::Heard;
 use bark_proto::radio::{
     time_on_air, Channel, BANDWIDTH_HZ, CHANNEL_0_HZ, CODING_RATE_DENOMINATOR, MAX_ERP_DBM,
-    SPREADING_FACTOR, SYMBOL_TIME,
+    RSSI_SETTLE, SPREADING_FACTOR, SYMBOL_TIME,
 };
 use bark_proto::sniff::{LONG_PREAMBLE_SYMBOLS, SNIFF_RX, SNIFF_SLEEP};
 use bark_proto::{Frame, MAX_FRAME};
@@ -508,8 +508,14 @@ impl bark_driver::Radio for Radio<'_> {
         Radio::service(self, buf).await
     }
 
-    async fn cad(&mut self, channel: Channel) -> Result<bool, RadioError> {
-        Radio::cad(self, channel).await.map(|(busy, _, _)| busy)
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), RadioError> {
+        let (busy, _, _) = Radio::cad(self, channel).await?;
+        // The reading after the CAD, with the receiver started on the
+        // channel and settled.
+        self.rest(channel).await?;
+        Timer::after(Duration::from_micros(RSSI_SETTLE.as_micros())).await;
+        let dbm = Radio::rssi(self).await?;
+        Ok((busy, dbm))
     }
 
     async fn rssi(&mut self) -> Result<i16, RadioError> {

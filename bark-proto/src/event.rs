@@ -2,10 +2,10 @@
 //!
 //! The contract between the two is in `docs/core-interface.md`. In short: the
 //! driver keeps the radio listening on the channel of the last
-//! [`Action::Listen`]; CAD, RSSI and transmit are excursions that the driver
-//! performs and then reports with exactly one completion event, after which
-//! the radio is listening again; the core has at most one radio excursion
-//! outstanding at a time.
+//! [`Action::Listen`]; a listen-before-talk, an RSSI reading and a transmit
+//! are excursions that the driver performs and then reports with exactly
+//! one completion event, after which the radio is listening again; the core
+//! has at most one radio excursion outstanding at a time.
 
 use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
@@ -65,12 +65,15 @@ pub enum Event<'a> {
         /// The LoRa payload.
         bytes: &'a [u8],
     },
-    /// Completion of [`Action::Cad`].
-    CadDone {
+    /// Completion of [`Action::Lbt`].
+    LbtDone {
         /// Channel that was checked.
         channel: Channel,
-        /// Whether a LoRa preamble was detected.
+        /// Whether the channel activity detection saw a LoRa preamble.
         busy: bool,
+        /// The instantaneous RSSI in dBm read while it sampled, on the
+        /// footing of a reading taken while listening.
+        dbm: i16,
     },
     /// Completion of [`Action::Rssi`].
     RssiSample {
@@ -235,9 +238,12 @@ pub enum Action {
     /// Set the resting channel. Takes effect at once; the driver listens here
     /// whenever no excursion is in progress.
     Listen(Channel),
-    /// Perform channel activity detection on `channel`; report `Event::CadDone`.
-    Cad(Channel),
+    /// Listen before talking on `channel`: one channel activity detection
+    /// with the RSSI read while it samples; report `Event::LbtDone`. The
+    /// two together say whether the channel is clear (spec "Heartbeat").
+    Lbt(Channel),
     /// Sample instantaneous RSSI on `channel`; report `Event::RssiSample`.
+    /// The busy sweep's reading (spec "Busy estimate").
     Rssi(Channel),
     /// Transmit a frame; report `Event::TxDone`.
     Transmit(Frame),
@@ -246,7 +252,7 @@ pub enum Action {
     /// [`crate::sniff::SNIFF_CYCLE`], so that it catches every frame with
     /// the long preamble ([`crate::sniff::LONG_PREAMBLE_SYMBOLS`]) and may
     /// miss any other. What it catches is `Event::Received` as ever. The
-    /// core's next `Listen`, `Cad`, `Rssi` or `Transmit` ends it sooner;
+    /// core's next `Listen`, `Lbt`, `Rssi` or `Transmit` ends it sooner;
     /// once it ends the radio listens on the resting channel again
     /// (`docs/core-interface.md` §3 rule 10). Only a sleepy node asks for
     /// it, between its windows.

@@ -9,8 +9,9 @@
 //!
 //! # A hand-over
 //!
-//! 1. Listen before talking on the receiver's home channel: CAD, then RSSI.
-//!    If either finds the channel busy, wait a random 0–`hop_backoff_max`
+//! 1. Listen before talking on the receiver's home channel: one check, a
+//!    CAD with the RSSI read while it samples ([`Action::Lbt`]). If it
+//!    finds the channel busy, wait a random 0–`hop_backoff_max`
 //!    (spec "Hand-over": 50 ms) and check again; once the checks of one attempt have
 //!    found it busy for [`LBT_GIVE_UP`] (500 ms), give up ([`Check::GaveUp`]).
 //! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
@@ -44,10 +45,8 @@ pub(crate) enum Step {
     /// Start listen-before-talk at this instant: the first attempt, a
     /// busy backoff, a retry, or a wait for the duty-cycle budget.
     Wait(Instant),
-    /// The CAD excursion is outstanding.
-    Cad,
-    /// The RSSI excursion is outstanding.
-    Rssi,
+    /// The listen-before-talk excursion is outstanding.
+    Lbt,
     /// The frame is on air.
     Tx,
     /// Listening home for the ACK until this instant.
@@ -57,7 +56,7 @@ pub(crate) enum Step {
 /// What a listen-before-talk check led to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Check {
-    /// The channel is clear: go on, to RSSI after CAD, to transmit after RSSI.
+    /// The channel is clear: transmit.
     Clear,
     /// Busy: the hand-over waits a random backoff.
     Busy,
@@ -172,13 +171,13 @@ impl Transfer {
         self.step = Step::Wait(until);
     }
 
-    /// Listen-before-talk starts: the caller issues the CAD.
+    /// Listen-before-talk starts: the caller issues the check.
     pub(crate) fn begin_lbt(&mut self, now: Instant) {
         self.lbt_since.get_or_insert(now);
-        self.step = Step::Cad;
+        self.step = Step::Lbt;
     }
 
-    /// A CAD or RSSI check completed.
+    /// The listen-before-talk check completed.
     pub(crate) fn checked(
         &mut self,
         busy: bool,
@@ -187,9 +186,6 @@ impl Transfer {
         backoff_max: Duration,
     ) -> Check {
         if !busy {
-            if self.step == Step::Cad {
-                self.step = Step::Rssi;
-            }
             return Check::Clear;
         }
         let since = self.lbt_since.unwrap_or(now);
@@ -315,8 +311,7 @@ pub(crate) struct Owed {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReplyStep {
     Idle,
-    Cad,
-    Rssi,
+    Lbt,
     Tx,
 }
 
@@ -420,23 +415,22 @@ impl Replies {
         self.step = ReplyStep::Idle;
     }
 
-    /// The CAD of the owed reply starts.
+    /// The listen-before-talk of the owed reply starts.
     pub(crate) fn begin(&mut self) -> Option<Action> {
         let o = self.owed?;
-        self.step = ReplyStep::Cad;
-        Some(Action::Cad(o.channel))
+        self.step = ReplyStep::Lbt;
+        Some(Action::Lbt(o.channel))
     }
 
-    /// A check of the reply being sent completed. Returns the next
-    /// excursion's channel and whether it is the transmission, or `None`
-    /// if the reply now waits or was abandoned.
+    /// The check of the reply being sent completed. Returns the reply to
+    /// transmit, or `None` if it now waits or was abandoned.
     pub(crate) fn checked(
         &mut self,
         busy: bool,
         now: Instant,
         rng: &mut Rng,
         backoff_max: Duration,
-    ) -> Option<(Owed, bool)> {
+    ) -> Option<Owed> {
         let o = self.owed.as_mut()?;
         if busy {
             self.step = ReplyStep::Idle;
@@ -450,13 +444,9 @@ impl Replies {
         }
         let o = *o;
         match self.step {
-            ReplyStep::Cad => {
-                self.step = ReplyStep::Rssi;
-                Some((o, false))
-            }
-            ReplyStep::Rssi => {
+            ReplyStep::Lbt => {
                 self.step = ReplyStep::Tx;
-                Some((o, true))
+                Some(o)
             }
             ReplyStep::Idle | ReplyStep::Tx => None,
         }
@@ -504,8 +494,7 @@ mod tests {
             let now = t.wake_at().unwrap();
             assert!(t.due(now));
             t.begin_lbt(now);
-            assert_eq!(t.checked(false, now, &mut rng, ms(50)), Check::Clear);
-            assert_eq!(t.step(), Step::Rssi);
+            assert_eq!(t.step(), Step::Lbt);
             assert_eq!(t.checked(false, now, &mut rng, ms(50)), Check::Clear);
             t.transmitting();
             t.sent(now, ms(100));
@@ -622,19 +611,15 @@ mod tests {
         assert!(!a.can_owe(ack(2), ch, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), at(10)));
         assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
-        assert_eq!(a.begin(), Some(Action::Cad(ch)));
+        assert_eq!(a.begin(), Some(Action::Lbt(ch)));
         assert_eq!(a.due(at(10)), None, "one at a time");
         a.owe(ack(2), ch, at(111), at(11));
         assert_eq!(
             a.checked(false, at(11), &mut rng, ms(50)),
-            Some((a.owed.unwrap(), false)),
+            Some(a.owed.unwrap()),
             "the reply being sent keeps its place"
         );
         assert_eq!(a.owed.unwrap().reply, Reply::Ack(ack(1)));
-        assert_eq!(
-            a.checked(false, at(12), &mut rng, ms(50)).map(|(_, tx)| tx),
-            Some(true)
-        );
         a.sent();
         assert!(!a.pending());
         assert!(a.can_owe(ack(2), ch, at(13)));

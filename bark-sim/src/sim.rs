@@ -90,7 +90,7 @@ pub(crate) enum Ev {
 /// Kind of excursion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExKind {
-    Cad,
+    Lbt,
     Rssi,
     Transmit,
 }
@@ -106,9 +106,10 @@ pub(crate) struct Excursion {
     pub reasons: [Deaf; 3],
     /// Started by a scripted event: complete into the log, not the core.
     pub scripted: bool,
-    /// CAD: a qualifying signal overlapped the sampling window.
+    /// Listen-before-talk: a qualifying signal overlapped the CAD's
+    /// sampling window.
     pub cad_seen: bool,
-    /// RSSI: the value read.
+    /// Listen-before-talk and RSSI: the value read.
     pub rssi_dbm: Option<i16>,
     /// Whether the node stops receiving for it. An RSSI reading on the
     /// resting channel does not (docs/core-interface.md §3 rule 7).
@@ -558,16 +559,18 @@ struct Offer {
 /// A scripted excursion's result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScriptResult {
-    /// CAD finished.
-    Cad {
+    /// A listen-before-talk finished.
+    Lbt {
         /// Node.
         node: u32,
         /// When.
         at: Instant,
         /// Channel.
         channel: u8,
-        /// Detected.
+        /// The CAD detected a preamble.
         busy: bool,
+        /// The RSSI read while it sampled.
+        dbm: i16,
     },
     /// RSSI read.
     Rssi {
@@ -593,7 +596,7 @@ impl ScriptResult {
     /// When the excursion completed.
     pub fn at(&self) -> Instant {
         match *self {
-            ScriptResult::Cad { at, .. }
+            ScriptResult::Lbt { at, .. }
             | ScriptResult::Rssi { at, .. }
             | ScriptResult::TxDone { at, .. } => at,
         }
@@ -1485,7 +1488,7 @@ impl Sim {
                 e.action,
                 ScriptAction::Listen
                     | ScriptAction::Transmit
-                    | ScriptAction::Cad
+                    | ScriptAction::Lbt
                     | ScriptAction::Rssi
             ) && channel.is_none()
             {
@@ -2401,7 +2404,7 @@ impl Sim {
         let traced = (!scripted && self.tracer.is_some()).then_some(a);
         if matches!(
             a,
-            Action::Listen(_) | Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+            Action::Listen(_) | Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
         ) {
             // Any use of the radio ends a sniff (core-interface §3 rule 10).
             self.wake(node);
@@ -2418,7 +2421,7 @@ impl Sim {
             Action::Sniff(until) => self.sniff(node, true_time(until)),
             Action::Locate(until) => self.locate(node, true_time(until)),
             Action::Listen(c) => self.listen(node, c),
-            Action::Cad(c) => self.check(node, ExKind::Cad, c, scripted),
+            Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Transmit(f) => {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
@@ -2972,8 +2975,9 @@ impl Sim {
         }
     }
 
-    /// A CAD or RSSI reading. One that would take the node off a packet it
-    /// is receiving waits for the packet's end, at most one longest frame
+    /// A listen-before-talk or an RSSI reading. One that would take the
+    /// node off a packet it is receiving waits for the packet's end, at
+    /// most one longest frame
     /// (docs/core-interface.md §3 rule 8; spec "Busy estimate": a reading is taken
     /// only when no packet is in progress). Scripted checks are not held.
     fn check(&mut self, node: u32, kind: ExKind, c: Channel, scripted: bool) {
@@ -3047,7 +3051,7 @@ impl Sim {
         }
         let off = st.resting != Some(c);
         let phases = match kind {
-            ExKind::Cad => self.radio.cad_phases(),
+            ExKind::Lbt => self.radio.lbt_phases(),
             ExKind::Rssi => self.radio.rssi_phases(off),
             ExKind::Transmit => {
                 let f = frame.as_ref().expect("transmit has a frame");
@@ -3081,13 +3085,17 @@ impl Sim {
         st.ex_gen = st.ex_gen.wrapping_add(1);
         let g = st.ex_gen;
         match kind {
-            ExKind::Cad => {
+            ExKind::Lbt => {
                 self.metrics.nodes[node as usize].cad += 1;
                 // Signals already on the air that overlap the sampling window.
                 let sens = self.sens_dbm;
                 ex.cad_seen = st.arrivals.iter().any(|a| {
                     a.lora && a.channel == c.index() && a.dbm >= sens && a.end > bounds[0]
                 });
+                // The reading is taken inside the sampling, once the
+                // receiver has settled (`RadioParams::rssi_dwell_us`).
+                let read = bounds[0] + Duration::from_micros(self.radio.rssi_dwell_us);
+                self.push(read.min(bounds[1]), Ev::RssiRead(node, g));
             }
             ExKind::Rssi => {
                 self.metrics.nodes[node as usize].rssi += 1;
@@ -3146,7 +3154,7 @@ impl Sim {
         if !st.alive || st.ex_gen != g {
             return;
         }
-        let ex = st.ex.as_ref().expect("RSSI read during an RSSI excursion");
+        let ex = st.ex.as_ref().expect("RSSI read during an excursion");
         let c = ex.channel.index();
         let mw = self.noise_mw + self.in_channel_mw(node, c, None);
         let dbm = phy::dbm(mw).round() as i16;
@@ -3169,11 +3177,12 @@ impl Sim {
         }
         let c = ex.channel;
         let result = match ex.kind {
-            ExKind::Cad => {
+            ExKind::Lbt => {
                 let miss = ex.cad_seen && st.cad_rng.chance(self.radio.cad_miss_probability);
-                Event::CadDone {
+                Event::LbtDone {
                     channel: c,
                     busy: ex.cad_seen && !miss,
+                    dbm: ex.rssi_dbm.expect("RSSI read before end"),
                 }
             }
             ExKind::Rssi => Event::RssiSample {
@@ -3185,11 +3194,12 @@ impl Sim {
         if ex.scripted {
             let at = self.now;
             self.script_log.push(match result {
-                Event::CadDone { channel, busy } => ScriptResult::Cad {
+                Event::LbtDone { channel, busy, dbm } => ScriptResult::Lbt {
                     node,
                     at,
                     channel: channel.index(),
                     busy,
+                    dbm,
                 },
                 Event::RssiSample { channel, dbm } => ScriptResult::Rssi {
                     node,
@@ -3921,7 +3931,7 @@ impl Sim {
             ScriptAction::Start => self.start(node, BootKind::Start),
             ScriptAction::Sniff => self.apply(node, Action::Sniff(self.end), true),
             ScriptAction::Listen => self.listen(node, channel.expect("validated")),
-            ScriptAction::Cad => self.apply(node, Action::Cad(channel.expect("validated")), true),
+            ScriptAction::Lbt => self.apply(node, Action::Lbt(channel.expect("validated")), true),
             ScriptAction::Rssi => self.apply(node, Action::Rssi(channel.expect("validated")), true),
             ScriptAction::Transmit => {
                 // A test signal no node takes for a packet: a bench

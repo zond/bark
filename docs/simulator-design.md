@@ -34,7 +34,7 @@ Discrete-event, microsecond resolution, single-threaded, deterministic for a giv
 
 ### 3.2 Radio state per node
 
-`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Cad`, `Rssi`, `Transmit`, `Sniff`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (spec "Busy estimate"), heartbeat deafness (§7) and the per-hop retune cost (spec "Hand-over") are measured rather than assumed.
+`Listening(channel)`, `Deaf(reason, until)` for retune, sweep, CAD, TX and turnaround, `Transmitting(channel, until)`. The protocol core emits actions (`Listen`, `Lbt`, `Rssi`, `Transmit`, `Sniff`; `core-interface.md` §3); the simulator applies the datasheet timings and reports results as events. A node that is not `Listening(c)` for the whole duration of a packet on `c` does not receive it. This is how sweep loss (spec "Busy estimate"), heartbeat deafness (§7) and the per-hop retune cost (spec "Hand-over") are measured rather than assumed.
 
 ### 3.3 Reception
 

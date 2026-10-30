@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82; one listen-before-talk excursion, `Action::Lbt` and `Event::LbtDone`, in place of a CAD and a reading (§3, §5), 2026-10-30, roadmap D88. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -48,14 +48,14 @@ kept of the core's state before the reboot, if anything, in `Config::stored` (§
 ## 3. Radio
 
 The driver owns one half-duplex LoRa radio that is either listening on a channel or away on
-an **excursion**: a channel activity check (`Action::Cad`), a signal strength reading
+an **excursion**: a listen-before-talk (`Action::Lbt`), a signal strength reading
 (`Action::Rssi`) or a transmission (`Action::Transmit`). `Action::Listen(c)` is not an excursion: it sets the resting channel,
 takes effect at once, and the radio listens on `c` whenever no excursion is in progress.
 
 Rules:
 
-1. **One excursion outstanding.** After emitting `Cad`, `Rssi` or `Transmit` the core waits
-   for its completion event (`CadDone`, `RssiSample`, `TxDone`) before emitting another.
+1. **One excursion outstanding.** After emitting `Lbt`, `Rssi` or `Transmit` the core waits
+   for its completion event (`LbtDone`, `RssiSample`, `TxDone`) before emitting another.
    A driver may treat a violation as a bug and panic.
 2. **Every excursion completes with exactly one event**, then the radio is listening on the
    resting channel again. The driver pays the retune, settle, CAD, RSSI and airtime costs and
@@ -73,15 +73,20 @@ Rules:
    frame can have, which the datasheet asks where the length varies (§6.1.4); it still
    receives the short one.
 5. **Listen-before-talk is the core's job.** The driver never checks the channel on its own;
-   the core issues `Cad` or `Rssi` and decides.
+   the core issues `Lbt` or `Rssi` and decides. `Lbt(c)` is one channel activity detection
+   on `c` with the instantaneous RSSI read while it samples, four symbol periods in
+   (`radio::RSSI_SETTLE`), reported together in `LbtDone`: whether a preamble was seen, and
+   the reading on the footing of one taken while listening, which the driver puts it on
+   (spec "Heartbeat"). From listening to listening it costs the CAD's preparation and
+   sampling and the return, about 3 ms (spec "Heartbeat").
 6. **Duty cycle is the core's job.** The core keeps the duty-cycle budget (spec "Duty cycle cap") and
    defers; the driver never drops a frame.
 7. **`Rssi` on the resting channel is not an excursion.** The radio keeps receiving while it
    reads its own channel, so the core may issue it at any time; it still completes with
    `RssiSample`. `Rssi` on another channel is an excursion: a retune, a wait of
    `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts there, the
-   read and a retune back, 2.5 ms (spec "Busy estimate").
-8. **The driver may hold a `Cad` or `Rssi` excursion while a reception is in progress**, by at
+   read and a retune back, 1.8 ms (spec "Busy estimate").
+8. **The driver may hold an `Lbt` or `Rssi` excursion while a reception is in progress**, by at
    most the airtime of a full frame with the long preamble, 492.9 ms, so that a sweep does not
    cut a packet short (spec "Busy estimate").
    `Transmit` is never held. The core's timeouts allow for the hold.
@@ -94,7 +99,7 @@ Rules:
     `sniff::SNIFF_SLEEP` (349.125 ms, 22 344 steps). The radio then catches every frame
     whose preamble is `sniff::LONG_PREAMBLE_SYMBOLS` long and may miss any other; what it
     catches is `Received` as ever, and after it the driver starts the cycle again. The
-    sniff ends at `until`, or sooner at the core's next `Listen`, `Cad`, `Rssi` or
+    sniff ends at `until`, or sooner at the core's next `Listen`, `Lbt`, `Rssi` or
     `Transmit`, which the driver carries out as ever, the radio then listening on the
     resting channel again; `until` is when the core next needs the radio of its own
     accord. The driver may let a packet already under way end first, by at most the
@@ -204,11 +209,11 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 |---|---|---|
 | Clock | event-heap time | embassy monotonic |
 | Wakeup when `now >= next_wakeup()` | heap entry per core, lazily invalidated | one embassy timer |
-| `Listen` | update the per-channel listener set | `rx_switch_channel` |
-| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(384, 22 344) from STDBY_RC, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command (`bark-driver`, `bark-fw/src/radio.rs`) |
-| `Cad` | deaf for CAD duration, result from the reception model | `prepare_for_cad` + `cad` |
-| `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `get_rssi`, on another channel `RSSI_SETTLE` after the retune |
-| `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |
+| `Listen` | update the per-channel listener set | standby, frequency and receive, each only if the chip does not hold it already (`bark-driver/src/sx1262.rs`) |
+| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(384, 22 344) from STDBY_RC with the probed oscillator delay, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command and its whole configuration sent again after (`bark-driver/src/sx1262.rs`) |
+| `Lbt` | deaf for the preparation, the CAD's sampling and the return; the CAD's result from the reception model, the reading the dB sum at the node `rssi_dwell_us` into the sampling | standby, frequency, CAD; `GetRssiInst` four symbol periods in, less the offset measured at boot; the result read and cleared; frequency and receive with the short oscillator delay (`bark-driver/src/sx1262.rs`) |
+| `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `GetRssiInst`, on another channel `RSSI_SETTLE` after the retune |
+| `Transmit` | deaf for airtime, deliveries to hearers via the reception model | standby, frequency and packet parameters if they differ, the payload, transmit; then packet parameters and receive |
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |

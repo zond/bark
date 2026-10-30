@@ -25,7 +25,8 @@ use std::collections::{HashMap, HashSet};
 /// Synthesiser retune and settle, of the order the SX1262 datasheet gives
 /// for a frequency change plus PLL lock.
 pub const RETUNE: Duration = Duration::from_micros(200);
-/// Channel activity detection over four symbols.
+/// A listen-before-talk's channel activity detection over four symbols,
+/// the RSSI read inside it.
 pub const CAD: Duration = Duration::from_micros(4 * SYMBOL_TIME.as_micros());
 /// One RSSI reading after the receiver settles (spec "Busy estimate": ≈0.3 ms).
 pub const RSSI: Duration = Duration::from_micros(300);
@@ -36,7 +37,7 @@ pub const SIGNAL_DBM: i16 = -80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
-    Cad,
+    Lbt,
     Rssi,
     Tx,
 }
@@ -77,8 +78,8 @@ pub struct SimNode<C: Core> {
     pub power: Option<bool>,
     /// Every transmission: start and airtime.
     pub airtime: Vec<(Instant, Duration)>,
-    /// Every CAD and RSSI check as it began: start, end, the action, and
-    /// whether it took the node off its resting channel.
+    /// Every listen-before-talk and RSSI check as it began: start, end,
+    /// the action, and whether it took the node off its resting channel.
     pub checks: Vec<(Instant, Instant, Action, bool)>,
     pub app: Vec<(Instant, AppEvent)>,
     /// What it told its application of its first rotation.
@@ -345,22 +346,21 @@ impl<C: Core> Harness<C> {
                 continue;
             }
             self.nodes[i].ex = None;
+            let dbm = if self.jammed_at(i, ex.channel, ex.end) {
+                SIGNAL_DBM
+            } else {
+                self.strongest(i, ex.channel, ex.end).unwrap_or(NOISE_DBM)
+            };
             let ev = match ex.kind {
-                Kind::Cad => Event::CadDone {
+                Kind::Lbt => Event::LbtDone {
                     channel: ex.channel,
                     busy: self.on_air(i, ex.channel, ex.start, ex.end),
+                    dbm,
                 },
-                Kind::Rssi => {
-                    let dbm = if self.jammed_at(i, ex.channel, ex.end) {
-                        SIGNAL_DBM
-                    } else {
-                        self.strongest(i, ex.channel, ex.end).unwrap_or(NOISE_DBM)
-                    };
-                    Event::RssiSample {
-                        channel: ex.channel,
-                        dbm,
-                    }
-                }
+                Kind::Rssi => Event::RssiSample {
+                    channel: ex.channel,
+                    dbm,
+                },
                 Kind::Tx => Event::TxDone,
             };
             self.deliver(i, ev);
@@ -468,7 +468,7 @@ impl<C: Core> Harness<C> {
         if matches!(
             a,
             Action::Listen(_)
-                | Action::Cad(_)
+                | Action::Lbt(_)
                 | Action::Rssi(_)
                 | Action::Transmit(_)
                 | Action::Sniff(_)
@@ -495,13 +495,13 @@ impl<C: Core> Harness<C> {
             Action::Store(s) => self.nodes[i].stored = Some(s),
             Action::Locate(until) => self.nodes[i].located.push((now, until)),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
-            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_) => {
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => {
                 let n = &self.nodes[i];
                 assert!(
                     n.ex.is_none() && n.held.is_none(),
                     "core {i} started {a:?} with an excursion outstanding (rule 1)"
                 );
-                let off = matches!(a, Action::Cad(c) | Action::Rssi(c) if n.resting != Some(c));
+                let off = matches!(a, Action::Lbt(c) | Action::Rssi(c) if n.resting != Some(c));
                 match self.receiving(i) {
                     Some(end) if off => self.nodes[i].held = Some((a, end)),
                     _ => self.begin(i, a),
@@ -515,7 +515,7 @@ impl<C: Core> Harness<C> {
         self.excursions += 1;
         let resting = self.nodes[i].resting;
         let (kind, channel, cost, deaf) = match a {
-            Action::Cad(c) => (Kind::Cad, c, RETUNE + CAD + RETUNE, true),
+            Action::Lbt(c) => (Kind::Lbt, c, RETUNE + CAD + RETUNE, true),
             Action::Rssi(c) if resting == Some(c) => (Kind::Rssi, c, RSSI, false),
             Action::Rssi(c) => (Kind::Rssi, c, RETUNE + RSSI + RETUNE, true),
             Action::Transmit(f) => {

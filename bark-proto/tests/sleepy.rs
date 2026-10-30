@@ -1164,8 +1164,14 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
             .map(|(_, f)| f.preamble_symbols)
             .collect::<Vec<_>>()
     };
-    assert_eq!(data(a), [LONG_PREAMBLE_SYMBOLS]);
-    assert_eq!(data(s), [bark_proto::radio::MIN_PREAMBLE_SYMBOLS]);
+    // A retry, if S's own beat cut the first attempt, has the long
+    // preamble as well.
+    assert!(!data(a).is_empty());
+    assert!(data(a).iter().all(|&p| p == LONG_PREAMBLE_SYMBOLS));
+    assert!(!data(s).is_empty());
+    assert!(data(s)
+        .iter()
+        .all(|&p| p == bark_proto::radio::MIN_PREAMBLE_SYMBOLS));
     // Each of S's beats goes on A's channel too, just before it.
     let from = h.now;
     h.run_for(beat_period(Config::default().delivery_ttl).mul(6));

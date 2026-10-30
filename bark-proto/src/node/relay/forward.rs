@@ -1218,7 +1218,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.handover.begin_lbt(now);
         self.radio
-            .start(Job::HandOver, Action::Cad(out.frame.channel), emit);
+            .start(Job::HandOver, Action::Lbt(out.frame.channel), emit);
         true
     }
 
@@ -1233,16 +1233,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
     }
 
-    /// A CAD or RSSI check of the current hand-over completed.
+    /// The listen-before-talk check of the current hand-over completed.
     pub(super) fn handover_check(
         &mut self,
         busy: bool,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        let step = self.handover.step();
         // The hand-over may have ended meanwhile (spec "Receiving DATA" case 5).
-        if !matches!(step, Step::Cad | Step::Rssi) {
+        if self.handover.step() != Step::Lbt {
             return;
         }
         let Some(out) = self.queue.current().copied() else {
@@ -1250,10 +1249,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let backoff = self.config.hop_backoff_max;
         match self.handover.checked(busy, now, &mut self.rng, backoff) {
-            Check::Clear if step == Step::Cad => {
-                self.radio
-                    .start(Job::HandOver, Action::Rssi(out.frame.channel), emit)
-            }
             Check::Clear => self.transmit_current(out, now, emit),
             Check::Busy => {}
             Check::GaveUp => self.handover_gave_up(out, now, emit),
@@ -1604,8 +1599,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return true;
         }
         match self.replies.begin() {
-            Some(cad) => {
-                self.radio.start(Job::Reply, cad, emit);
+            Some(lbt) => {
+                self.radio.start(Job::Reply, lbt, emit);
                 true
             }
             None => false,
@@ -1614,20 +1609,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     pub(super) fn reply_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let backoff = self.config.hop_backoff_max;
-        match self.replies.checked(busy, now, &mut self.rng, backoff) {
-            Some((o, false)) => self.radio.start(Job::Reply, Action::Rssi(o.channel), emit),
-            Some((o, true)) => {
-                let frame = reply_frame(o);
-                let airtime = mac::airtime(&frame);
-                if self.can_reply(airtime, now) {
-                    self.budget.record(airtime, now);
-                    self.radio.start(Job::Reply, Action::Transmit(frame), emit);
-                } else {
-                    self.replies.abandon();
-                    self.renew = false;
-                }
+        if let Some(o) = self.replies.checked(busy, now, &mut self.rng, backoff) {
+            let frame = reply_frame(o);
+            let airtime = mac::airtime(&frame);
+            if self.can_reply(airtime, now) {
+                self.budget.record(airtime, now);
+                self.radio.start(Job::Reply, Action::Transmit(frame), emit);
+            } else {
+                self.replies.abandon();
+                self.renew = false;
             }
-            None => {}
         }
     }
 

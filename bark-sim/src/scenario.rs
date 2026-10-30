@@ -292,8 +292,9 @@ pub enum ScriptAction {
     /// Driver-level transmit of `len` bytes with `preamble_symbols`; a test
     /// signal. The completion is logged, not given to the core.
     Transmit,
-    /// Driver-level CAD; the result is logged, not given to the core.
-    Cad,
+    /// Driver-level listen-before-talk, a CAD with the RSSI read inside
+    /// it; the result is logged, not given to the core.
+    Lbt,
     /// Driver-level RSSI sample; the result is logged, not given to the core.
     Rssi,
     /// Driver-level `Sniff` on the resting channel until the run ends, as
@@ -317,7 +318,7 @@ pub struct ScriptedEvent {
     pub node: String,
     /// What.
     pub action: ScriptAction,
-    /// Channel for listen, transmit, cad and rssi.
+    /// Channel for listen, transmit, lbt and rssi.
     #[serde(default)]
     pub channel: Option<u8>,
     /// Payload bytes for transmit.

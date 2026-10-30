@@ -22,8 +22,8 @@ use bark_proto::{
 };
 use embassy_futures::poll_once;
 
-/// CAD time at SF5 with the driver's 8 symbols, plus half a symbol of
-/// processing (SX1261/2 DS §6.1.5).
+/// A listen-before-talk's CAD time at SF5 with the driver's 8 symbols,
+/// plus half a symbol of processing (SX1261/2 DS §6.1.5).
 const CAD_TIME: Duration = Duration::from_micros(17 * SYMBOL_TIME.as_micros() / 2);
 
 /// What the fake radio was asked to do. A frame by value, as the core's
@@ -33,7 +33,7 @@ const CAD_TIME: Duration = Duration::from_micros(17 * SYMBOL_TIME.as_micros() / 
 enum Op {
     Listen(Channel),
     Sniff(Channel),
-    Cad(Channel),
+    Lbt(Channel),
     Rssi(Channel),
     Transmit(Frame),
 }
@@ -261,11 +261,11 @@ impl Radio for FakeRadio {
         Ok(Heard::Nothing)
     }
 
-    async fn cad(&mut self, channel: Channel) -> Result<bool, ()> {
-        self.world.op(Op::Cad(channel));
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), ()> {
+        self.world.op(Op::Lbt(channel));
         self.deaf();
         self.world.sleep(self.world.now() + CAD_TIME).await;
-        Ok(self.cad_busy)
+        Ok((self.cad_busy, climb(CAD_TIME)))
     }
 
     async fn rssi(&mut self) -> Result<i16, ()> {
@@ -442,7 +442,7 @@ impl Core for Scripted {
                     emit(Action::Transmit(frame(ch(5), b"out")));
                 }
                 if self.check.contains(&due) {
-                    emit(Action::Cad(self.home));
+                    emit(Action::Lbt(self.home));
                 }
                 for (_, a) in self.then.iter().filter(|(t, _)| *t == due) {
                     emit(*a);
@@ -450,7 +450,7 @@ impl Core for Scripted {
                 "wakeup".into()
             }
             Event::TxDone => "tx done".into(),
-            Event::CadDone { busy, .. } => format!("cad busy={busy}"),
+            Event::LbtDone { busy, dbm, .. } => format!("lbt busy={busy} dbm={dbm}"),
             other => format!("{other:?}"),
         };
         self.seen.push((now, text));
@@ -565,11 +565,11 @@ fn a_check_waits_for_the_packet_in_progress() {
             (0, "boot"),
             (50_000, "wakeup"),
             (60_000, format!("rx 3 {:?}", bytes.to_vec()).as_str()),
-            (cad_done.as_micros(), "cad busy=false"),
+            (cad_done.as_micros(), "lbt busy=false dbm=-80"),
             (400_000, "wakeup"),
         ]
     );
-    assert_eq!(world.ops()[1], (end, Op::Cad(ch(3))));
+    assert_eq!(world.ops()[1], (end, Op::Lbt(ch(3))));
     assert_eq!(d.stats().held, 1);
 }
 
@@ -625,7 +625,7 @@ fn a_hold_is_bounded() {
         started: false,
     });
     run_until(&mut d, &world, at_ms(1000));
-    assert_eq!(world.ops()[1], (at_ms(50) + MAX_AIRTIME, Op::Cad(ch(3))));
+    assert_eq!(world.ops()[1], (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3))));
     assert_eq!(world.0.borrow().lost, 1, "cut short by the check");
 }
 
@@ -786,7 +786,7 @@ fn a_sniff_starts_again_after_each_frame() {
     assert_eq!(world.0.borrow().lost, 0);
 }
 
-/// The core's next `Listen`, `Cad`, `Rssi` or `Transmit` ends a sniff
+/// The core's next `Listen`, `Lbt`, `Rssi` or `Transmit` ends a sniff
 /// before its end; the radio is carried out as ever and listens after.
 #[test]
 fn the_next_radio_action_ends_a_sniff() {
@@ -795,8 +795,8 @@ fn the_next_radio_action_ends_a_sniff() {
     let tx_done = t + time_on_air(3, MIN_PREAMBLE_SYMBOLS);
     let cases = [
         (
-            Action::Cad(ch(3)),
-            vec![(t, Op::Cad(ch(3))), (cad_done, Op::Listen(ch(3)))],
+            Action::Lbt(ch(3)),
+            vec![(t, Op::Lbt(ch(3))), (cad_done, Op::Listen(ch(3)))],
         ),
         (
             Action::Transmit(frame(ch(5), b"out")),
@@ -900,7 +900,7 @@ fn a_check_that_ends_a_sniff_waits_for_the_packet() {
         steps += 1;
         assert!(steps < 100, "the loop spins");
     }
-    assert_eq!(world.ops()[2], (at_ms(50) + MAX_AIRTIME, Op::Cad(ch(3))));
+    assert_eq!(world.ops()[2], (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3))));
 }
 
 /// The power the application tells reaches the core right after the boot

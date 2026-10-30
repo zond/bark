@@ -235,7 +235,7 @@ impl Tracer {
             Action::Store(s) => {
                 let _ = write!(what, "store {s:?}");
             }
-            Action::Cad(_) | Action::Rssi(_) => return,
+            Action::Lbt(_) | Action::Rssi(_) => return,
         }
         self.line(t, node, &what);
     }

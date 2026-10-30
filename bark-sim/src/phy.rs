@@ -294,37 +294,53 @@ pub struct RadioParams {
     /// `GetRssiInst` is read, µs. Default `radio::RSSI_SETTLE`, four
     /// symbol periods, 1024 µs, when the reading is right.
     pub rssi_dwell_us: u64,
-    /// One `GetRssiInst` over the bus, µs. Measured, 155 µs
-    /// (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
+    /// One `GetRssiInst` over the bus, µs. Measured, 49 µs on the bus
+    /// driven blocking (docs/bench-2026-10-30.md, "What the retune is
+    /// made of, an experiment").
     pub rssi_read_us: u64,
     /// Leaving RX for FS, µs. With `synth_hop_us` and `fs_to_rx_us` it
-    /// makes the retune between two channels, measured 668 µs whatever
-    /// the hop (docs/bench-2026-10-30.md): the commands, not the
-    /// synthesiser. The sum is measured; its split into the three is not.
+    /// makes the retune between two channels: standby, frequency and
+    /// receive, measured 355 µs whatever the hop
+    /// (docs/bench-2026-10-30.md, "A listen-before-talk with fewer
+    /// commands, an experiment"). The sum is measured; its split into the
+    /// three is not.
     pub rx_to_fs_us: u64,
     /// FS back to RX, µs: the other half of the measured retune, see
     /// `rx_to_fs_us`.
     pub fs_to_rx_us: u64,
     /// From the decision to transmit to the frame's first symbol, µs:
-    /// the transmit's preparation, 1.54 ms for a 64-byte frame, and its
-    /// excess over the airtime formula, 510 µs (docs/bench-2026-10-30.md,
-    /// "Step 1 numbers, one board"). Measured.
+    /// the transmit's preparation and its excess over the airtime
+    /// formula. Measured on the bus driven blocking with every command
+    /// sent, a 64-byte frame between the 0.91 and 1.15 ms of 9 and 255
+    /// bytes, and 356 µs of excess (docs/bench-2026-10-30.md, "What the
+    /// retune is made of, an experiment"). TO MEASURE with only the
+    /// commands that change (roadmap D88).
     pub rx_to_tx_us: u64,
-    /// Back to listening after a transmission or a CAD, µs. Measured,
-    /// 1.30 ms (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
+    /// Back to listening after a transmission, µs: the packet
+    /// parameters, the frequency and receive from the standby the
+    /// transmission ends in. Measured 0.84 ms on the bus driven blocking
+    /// with every command sent (docs/bench-2026-10-30.md, "What the
+    /// retune is made of, an experiment"). TO MEASURE with only the
+    /// commands that change (roadmap D88).
     pub stby_to_rx_us: u64,
     /// Synthesiser hop on top of the retune, µs: 0, since the measured
     /// retune does not grow with the hop (see `rx_to_fs_us`).
     pub synth_hop_us: u64,
-    /// Preparing a CAD from listening, µs. Measured, 0.75 ms
-    /// (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
-    pub cad_prepare_us: u64,
-    /// From the CAD's start to the radio back in standby, µs: its
-    /// sampling, then the oscillator's restart, since CAD ends in
-    /// STDBY_RC (DS Table 13-73). Measured, 4.64 ms at the firmware's
-    /// 2 ms oscillator wait (docs/bench-2026-10-30.md, "The loader, on
-    /// the board").
-    pub cad_done_us: u64,
+    /// Preparing a listen-before-talk from listening, µs: standby, the
+    /// frequency and the CAD's start. Measured, 464 µs
+    /// (docs/bench-2026-10-30.md, "A listen-before-talk with fewer
+    /// commands, an experiment").
+    pub lbt_prepare_us: u64,
+    /// From the CAD's end to listening on the resting channel, µs: the
+    /// result read and cleared, the frequency, receive, and the
+    /// oscillator's restart from the standby a CAD ends in, programmed
+    /// short since it stopped under a millisecond before
+    /// (`bark_driver::tcxo::SHORT`). Derived from the bench, not
+    /// measured: the 2.25 ms back to receiving less the 2 ms start inside
+    /// it, plus the short start (docs/bench-2026-10-30.md, "A
+    /// listen-before-talk with fewer commands, an experiment", "The
+    /// oscillator's start, probed"). TO MEASURE (roadmap D88).
+    pub lbt_return_us: u64,
     /// Cut-off below sensitivity, in dB, under which a link is not stored.
     /// Default 10 dB: −129 dBm, 12.5 dB under the noise floor, where one
     /// omitted transmitter raises the floor by at most 0.24 dB.
@@ -345,14 +361,14 @@ impl Default for RadioParams {
             cad_symbols: 8,
             cad_miss_probability: 0.0,
             rssi_dwell_us: RSSI_SETTLE.as_micros(),
-            rssi_read_us: 155,
-            rx_to_fs_us: 334,
-            fs_to_rx_us: 334,
-            rx_to_tx_us: 1540 + 510,
-            stby_to_rx_us: 1300,
+            rssi_read_us: 49,
+            rx_to_fs_us: 178,
+            fs_to_rx_us: 177,
+            rx_to_tx_us: 1000 + 356,
+            stby_to_rx_us: 840,
             synth_hop_us: 0,
-            cad_prepare_us: 750,
-            cad_done_us: 4640,
+            lbt_prepare_us: 464,
+            lbt_return_us: 350,
             interference_margin_db: 10.0,
             reception: Reception::Curve,
         }
@@ -388,7 +404,7 @@ impl RadioParams {
     }
 
     /// Retune from RX on one channel to RX on another: RX→FS, hop, FS→RX
-    /// (668 µs by default).
+    /// (355 µs by default).
     pub fn retune(&self) -> Duration {
         Duration::from_micros(self.rx_to_fs_us + self.synth_hop_us + self.fs_to_rx_us)
     }
@@ -399,18 +415,14 @@ impl RadioParams {
         Duration::from_micros((2 * self.cad_symbols as u64 + 1) * SYMBOL_TIME.as_micros() / 2)
     }
 
-    /// Phases of a CAD: its preparation, which sets the channel, so on
-    /// any channel alike; the sampling; the rest of the CAD and the return
-    /// to RX.
-    pub fn cad_phases(&self) -> [Phase; 3] {
-        let sampling = self.cad_time();
-        let after = Duration::from_micros(
-            self.cad_done_us.saturating_sub(sampling.as_micros()) + self.stby_to_rx_us,
-        );
+    /// Phases of a listen-before-talk: its preparation, which sets the
+    /// channel, so on any channel alike; the CAD's sampling, with the RSSI
+    /// read `rssi_dwell_us` into it; the return to listening.
+    pub fn lbt_phases(&self) -> [Phase; 3] {
         [
-            (Duration::from_micros(self.cad_prepare_us), Deaf::Retune),
-            (sampling, Deaf::Cad),
-            (after, Deaf::Retune),
+            (Duration::from_micros(self.lbt_prepare_us), Deaf::Retune),
+            (self.cad_time(), Deaf::Cad),
+            (Duration::from_micros(self.lbt_return_us), Deaf::Retune),
         ]
     }
 
@@ -528,15 +540,16 @@ mod tests {
     #[test]
     fn excursion_costs() {
         let p = RadioParams::default();
-        // docs/bench-2026-10-30.md: a retune, a CAD at the 2 ms oscillator
-        // wait, a reading of another channel.
-        assert_eq!(p.retune().as_micros(), 668);
+        // docs/bench-2026-10-30.md: a retune of three commands, a
+        // listen-before-talk with the reading inside the CAD, a reading
+        // of another channel.
+        assert_eq!(p.retune().as_micros(), 355);
         assert_eq!(p.cad_time().as_micros(), 8 * 256 + 128);
         let total = |ph: [Phase; 3]| ph.iter().map(|x| x.0.as_micros()).sum::<u64>();
-        assert_eq!(total(p.cad_phases()), 750 + 4640 + 1300);
-        assert_eq!(total(p.rssi_phases(false)), 155);
-        assert_eq!(total(p.rssi_phases(true)), 668 + 1024 + 155 + 668);
+        assert_eq!(total(p.lbt_phases()), 464 + 2176 + 350);
+        assert_eq!(total(p.rssi_phases(false)), 49);
+        assert_eq!(total(p.rssi_phases(true)), 355 + 1024 + 49 + 355);
         let air = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
-        assert_eq!(total(p.tx_phases(false, air)), 2050 + 11_840 + 1300);
+        assert_eq!(total(p.tx_phases(false, air)), 1356 + 11_840 + 840);
     }
 }

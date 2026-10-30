@@ -152,10 +152,10 @@ fn receiver_mid_excursion_misses_packet_and_says_why() {
     // reaches the air rx_to_tx + hop later.
     let lead = (p.rx_to_tx_us + p.synth_hop_us) as f64 / 1e6;
     let cases: [(ScriptAction, f64, &str); 5] = [
-        // 40 µs into a CAD: still preparing.
-        (ScriptAction::Cad, 1.0 + 40e-6 - lead, "retune"),
-        // 1 ms into the CAD, past its preparation: sampling.
-        (ScriptAction::Cad, 1.001 - lead, "cad"),
+        // 40 µs into a listen-before-talk: still preparing.
+        (ScriptAction::Lbt, 1.0 + 40e-6 - lead, "retune"),
+        // 1 ms into it, past its preparation: the CAD sampling.
+        (ScriptAction::Lbt, 1.001 - lead, "cad"),
         // 200 µs into an off-channel RSSI: dwelling.
         (
             ScriptAction::Rssi,
@@ -206,7 +206,7 @@ fn reception_aborted_by_an_excursion_is_counted_deaf() {
     let sc = trio(-90.0, -200.0).script_tx(1.0, "T1", 3, 40, 12).script(
         1.005,
         "R",
-        ScriptAction::Cad,
+        ScriptAction::Lbt,
         Some(7),
     );
     let r = rx(&run(&sc), 2);
@@ -280,21 +280,21 @@ fn below_sensitivity_is_counted_and_still_interferes() {
 }
 
 #[test]
-fn cad_sees_lora_above_sensitivity_and_rssi_sums_power() {
+fn lbt_sees_lora_above_sensitivity_and_rssi_sums_power() {
     let p = RadioParams::default();
     // T1 transmits on 5 at -100 dBm; R does CAD and later RSSI on 5 while it is on air.
     let sc = trio(-100.0, -200.0)
         .script_tx(1.0, "T1", 5, 100, 12)
-        .script(1.002, "R", ScriptAction::Cad, Some(5))
+        .script(1.002, "R", ScriptAction::Lbt, Some(5))
         .script(1.010, "R", ScriptAction::Rssi, Some(5))
-        .script(1.030, "R", ScriptAction::Cad, Some(5))
+        .script(1.030, "R", ScriptAction::Lbt, Some(5))
         .script(1.040, "R", ScriptAction::Rssi, Some(5));
     let sim = run(&sc);
     let got: Vec<_> = sim
         .script_log
         .iter()
         .filter_map(|r| match *r {
-            ScriptResult::Cad { busy, .. } => Some(format!("cad {busy}")),
+            ScriptResult::Lbt { busy, dbm, .. } => Some(format!("lbt {busy} {dbm}")),
             ScriptResult::Rssi { dbm, .. } => Some(format!("rssi {dbm}")),
             _ => None,
         })
@@ -308,22 +308,22 @@ fn cad_sees_lora_above_sensitivity_and_rssi_sums_power() {
     assert_eq!(
         got,
         vec![
-            "cad true".to_string(),
+            format!("lbt true {with_signal}"),
             format!("rssi {with_signal}"),
-            "cad true".into(),
+            format!("lbt true {with_signal}"),
             format!("rssi {with_signal}")
         ]
     );
     // Quiet channel: CAD false, RSSI at the noise floor.
     let sim = run(&trio(-100.0, -200.0)
-        .script(1.0, "R", ScriptAction::Cad, Some(5))
+        .script(1.0, "R", ScriptAction::Lbt, Some(5))
         .script(1.1, "R", ScriptAction::Rssi, Some(5)));
     assert_eq!(
         sim.script_log
             .iter()
             .filter(|r| matches!(
                 r,
-                ScriptResult::Cad { busy: false, .. } | ScriptResult::Rssi { .. }
+                ScriptResult::Lbt { busy: false, .. } | ScriptResult::Rssi { .. }
             ))
             .count(),
         2
@@ -335,20 +335,20 @@ fn cad_sees_lora_above_sensitivity_and_rssi_sums_power() {
     // CAD misses with probability 1 never report busy.
     let mut sc = trio(-100.0, -200.0)
         .script_tx(1.0, "T1", 5, 100, 12)
-        .script(1.002, "R", ScriptAction::Cad, Some(5));
+        .script(1.002, "R", ScriptAction::Lbt, Some(5));
     sc.radio.cad_miss_probability = 1.0;
     let sim = run(&sc);
     assert!(sim
         .script_log
         .iter()
-        .any(|r| matches!(r, ScriptResult::Cad { busy: false, .. })));
+        .any(|r| matches!(r, ScriptResult::Lbt { busy: false, .. })));
 }
 
 #[test]
-fn interferers_are_heard_by_rssi_and_by_cad_only_if_lora_like() {
+fn interferers_are_heard_by_rssi_and_by_the_cad_only_if_lora_like() {
     for lora in [false, true] {
         let mut sc = trio(-100.0, -200.0)
-            .script(1.0, "R", ScriptAction::Cad, Some(6))
+            .script(1.0, "R", ScriptAction::Lbt, Some(6))
             .script(1.1, "R", ScriptAction::Rssi, Some(6));
         sc.links.reference_loss_db = Some(40.0);
         sc.links.exponent = 2.0;
@@ -364,12 +364,15 @@ fn interferers_are_heard_by_rssi_and_by_cad_only_if_lora_like() {
         });
         let sim = run(&sc);
         // 100 m at exponent 2 from 40 dB at 1 m: 80 dB loss, -80 dBm.
-        assert!(sim.script_log.contains(&ScriptResult::Cad {
-            node: 2,
-            at: sim.script_log[0].at(),
-            channel: 6,
-            busy: lora
-        }));
+        assert!(sim.script_log.iter().any(|r| matches!(
+            *r,
+            ScriptResult::Lbt {
+                node: 2,
+                channel: 6,
+                busy,
+                ..
+            } if busy == lora
+        )));
         assert!(sim
             .script_log
             .iter()

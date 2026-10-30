@@ -45,7 +45,7 @@ impl<O: Copy> Radio<O> {
         debug_assert!(self.out.is_none(), "second excursion outstanding");
         debug_assert!(matches!(
             action,
-            Action::Cad(_) | Action::Rssi(_) | Action::Transmit(_)
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
         ));
         self.out = Some(owner);
         emit(action);
