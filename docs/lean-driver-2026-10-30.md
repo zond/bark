@@ -130,39 +130,42 @@ each field saying which measurement it is:
 
 A listen-before-talk is then 3.1 ms from listening to listening where
 it charged 9.2, and a reading of another channel 1.9 ms where it charged
-2.5. The simulator runs below were made at the note's first defaults,
-from the bench's experiment before the board ran this driver: the
-retune 355, the read 49, `lbt_prepare_us` 464, `lbt_return_us` 350,
-`rx_to_tx_us` 1356, `stby_to_rx_us` 840; a listen-before-talk 3.0 ms.
+2.5.
 
 ## Measured in the simulator
 
 Main at `1bce3d6`, with the costs D86 set from the bench, against this
-branch: `s4-capacity.toml` at the design rate and at three times it
-(`per_leaf_per_hour` 2.875), `dense-power.toml` seed 1. Delivered of
-the texts sent in the settled hour, the whole run's airtime, and the
-latency of every delivered text.
+branch at the board's costs above: `s4-capacity.toml` at the design
+rate and at three times it (`per_leaf_per_hour` 2.875),
+`dense-power.toml` seed 1. Delivered of the texts sent in the settled
+hour, the whole run's airtime, and the latency of every delivered text.
 
 | Run | | delivered | airtime, s | p50 | p90 |
 |---|---|---|---|---|---|
 | S4 ×1, seed 1 | main | 93.5 % | 51 677 | 1.79 s | 195 s |
-| | D88 | 93.6 % | 51 588 | 1.65 s | 195 s |
+| | D88 | 93.5 % | 51 190 | 1.63 s | 192 s |
 | S4 ×3, seed 1 | main | 44.5 % | 188 418 | 211 s | 783 s |
-| | D88 | 58.0 % | 172 863 | 150 s | 683 s |
+| | D88 | 56.2 % | 172 688 | 151 s | 678 s |
 | S4 ×3, seed 2 | main | 45.3 % | 187 107 | 209 s | 771 s |
-| | D88 | 57.8 % | 170 987 | 149 s | 660 s |
+| | D88 | 56.8 % | 171 690 | 154 s | 668 s |
 | S4 ×3, seed 3 | main | 43.7 % | 211 415 | 270 s | 850 s |
-| | D88 | 57.1 % | 186 247 | 179 s | 699 s |
+| | D88 | 58.9 % | 188 141 | 173 s | 690 s |
 | dense-power, seed 1 | main | 81.9 % | 1 932 955 | 60.6 s | 412 s |
-| | D88 | 90.2 % | 1 190 447 | 21.7 s | 306 s |
+| | D88 | 89.5 % | 1 368 119 | 33.8 s | 330 s |
 
 At the design rate nothing changes: the network is far from its limit.
-At three times the rate the lean listen-before-talk gives back 13 points
+At three times the rate the lean listen-before-talk gives back 12 points
 of the 18 the measured costs took (D86 measured 62 % before them), with
 less airtime, since fewer hand-overs are retried, and shorter waits.
 `dense-power` seed 1, which storms at the measured costs, still storms
-with four times the airtime of a run without one (295 000 s, D86), but
-less than half as badly; its cause is still a later item.
+with four and a half times the airtime of a run without one (295 000 s,
+D86), but at a third less than before; its cause is a later item. The
+same runs at the note's first defaults, from the bench's experiment
+before the board ran this driver (the retune 355, the read 49,
+`lbt_prepare_us` 464, `lbt_return_us` 350, `rx_to_tx_us` 1356,
+`stby_to_rx_us` 840), came out the same within the seeds: S4 at three
+times the rate 58.0 / 57.8 / 57.1 %, `dense-power` 90.2 % with
+1 190 000 s of airtime.
 
 ## What the bench still has to confirm
 
