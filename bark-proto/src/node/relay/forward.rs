@@ -58,7 +58,8 @@
 //! # The send queue (spec "Send queue")
 //!
 //! Every packet this relay sends for a message goes through the send
-//! queue, one hand-over at a time ([`Transfer`]). A forward is addressed
+//! queue, one hand-over in flight at a time ([`IN_FLIGHT`]); each place
+//! carries its own hand-over ([`HandOver`]). A forward is addressed
 //! when its hand-over starts, by the one next-hop function of spec "Next hop", and
 //! readdressed by it after a failure; with no candidate left it becomes a
 //! return to the parent, or at the origin a drop. The hop count a packet
@@ -109,8 +110,9 @@
 //! Waiting entries keep their airtime in admission, and the queue hands
 //! over the first entry that is due. The application's own message waits
 //! the same way, longer after refusals in a row ([`hold`]); one for a node
-//! this one holds for that finds the delivery queue full is set aside ([`Held`]) until
-//! the queue has a place (spec "Return to parent"). Either way the application is given no
+//! this one holds for that finds the delivery queue full is set aside in
+//! its place ([`State::Held`]) until the queue has a place
+//! (spec "Return to parent"). Either way the application is given no
 //! other meanwhile.
 //!
 //! A sleepy node with an anchor hands its own message to the anchor
@@ -136,13 +138,15 @@
 //! D44). A packet that comes with its time gone is taken as no work, and
 //! ends here. At its owner the delivery queue takes over.
 //!
-//! [`Transfer`]: crate::node::transfer::Transfer
+//! [`HandOver`]: crate::node::transfer::HandOver
+//! [`IN_FLIGHT`]: crate::node::transfer::IN_FLIGHT
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::node::transfer::{Check, Missed, Owed, Reply, Step};
+use crate::node::transfer::{self, Check, HandOver, Missed, Owed, Reply, IN_FLIGHT};
+use crate::node::Rng;
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
@@ -152,7 +156,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
@@ -175,8 +179,8 @@ enum Case {
 /// frame it carries by value costs nothing.
 #[allow(clippy::large_enum_variant)]
 enum Routed {
-    /// Addressed: send this frame, expecting this ACK.
-    To(Outgoing, Ack),
+    /// Addressed: send this frame, whose receiver its ACK names.
+    To(Outgoing),
     /// Dropped or delivered here; it leaves the queue.
     Done,
     /// The application's message, for a node this one holds for, waits
@@ -184,14 +188,6 @@ enum Routed {
     Hold,
     /// Every candidate left is banned: it waits in its place until then.
     Wait(Instant),
-}
-
-/// The application's message for a node this one holds for, set aside while
-/// the delivery queue is full (roadmap D29). It keeps its place and
-/// airtime in the send queue's admission.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct Held {
-    pub(super) out: Outgoing,
 }
 
 /// The frame of the owed reply. Its receiver is listening for it.
@@ -224,12 +220,40 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The ACK by which `from` takes this relay's offer of `msg_id`.
     fn expect(&self, msg_id: MsgId, from: NodeId) -> Ack {
-        Ack {
-            msg_id,
-            from,
-            to: self.me(),
-            refused: false,
-            wait: 0,
+        transfer::expect(msg_id, from, self.me())
+    }
+
+    /// The send queue's current entry while its hand-over is under way.
+    pub(super) fn in_flight(&self) -> Option<&Outgoing> {
+        self.queue.current().filter(|o| o.in_flight())
+    }
+
+    /// Hand-overs under way, against [`IN_FLIGHT`].
+    fn flights(&self) -> usize {
+        usize::from(self.in_flight().is_some())
+    }
+
+    pub(super) fn handover_idle(&self) -> bool {
+        self.in_flight().is_none()
+    }
+
+    /// Whether the hand-over under way listens at home for its ACK.
+    pub(super) fn awaiting_ack(&self) -> bool {
+        self.in_flight().is_some_and(|o| o.state == State::AwaitAck)
+    }
+
+    /// The hand-over of the send queue's current entry, to advance, with
+    /// the random source its waits draw from.
+    pub(super) fn handover(&mut self) -> Option<(HandOver<'_>, &mut Rng)> {
+        let me = self.id;
+        let out = self.queue.current_mut()?;
+        Some((HandOver::of(out, &mut self.flight, me), &mut self.rng))
+    }
+
+    /// Give the hand-over under way up: its entry is queued again.
+    pub(super) fn cancel_handover(&mut self) {
+        if let Some((mut h, _)) = self.handover() {
+            h.cancel();
         }
     }
 
@@ -265,7 +289,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     ) -> Duration {
         let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
-                let queued = self.queue.airtime() + self.held_airtime();
+                let queued = self.queue.airtime();
                 self.budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
                     .map_or(self.config.delivery_ttl, |t| t.since(now))
@@ -303,7 +327,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     ) -> Result<u8, DropReason> {
         let current = self.queue.current().filter(|_| freed);
         let current_air = current.map_or(Duration::ZERO, |o| mac::airtime(&o.frame));
-        let queued = self.queue.airtime() - current_air + self.held_airtime();
+        let queued = self.queue.airtime() - current_air;
         let regular = self.regular() - usize::from(current.is_some_and(|o| o.place == 0));
         let why = if regular >= SEND_QUEUE {
             DropReason::SendQueueFull
@@ -342,15 +366,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Entries in the regular room, the held message counting as one.
+    /// Entries in the regular room, one set aside for the delivery queue
+    /// counting as one.
     fn regular(&self) -> usize {
-        self.queue.regular() + usize::from(self.held.is_some())
-    }
-
-    fn held_airtime(&self) -> Duration {
-        self.held
-            .as_ref()
-            .map_or(Duration::ZERO, |h| mac::airtime(&h.out.frame))
+        self.queue.regular()
     }
 
     /// Whether a reply may spend `airtime` now: it must leave the
@@ -669,21 +688,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// and only the ACK been lost, and the copy now offered here may be
     /// that one, come back.
     fn holds(&self, id: MsgId) -> bool {
-        let sent = !self.handover.idle() && self.handover.transmitted();
+        let sent = self.in_flight().is_some_and(|o| o.transmitted());
         let current = self.queue.current_index().filter(|_| sent);
         self.queue
             .iter()
             .enumerate()
             .any(|(i, o)| Some(i) != current && o.msg_id() == Some(id))
-            || self.held.and_then(|h| h.out.msg_id()) == Some(id)
     }
 
     /// Whether the current hand-over is of message `id` to `to`, sent at
     /// least once.
     fn handing(&self, id: MsgId, to: NodeId) -> bool {
-        !self.handover.idle()
-            && self.handover.transmitted()
-            && self.handover.expect() == self.expect(id, to)
+        self.in_flight()
+            .filter(|o| o.transmitted())
+            .and_then(|o| o.expect(self.me()))
+            == Some(self.expect(id, to))
     }
 
     /// Where a new record goes: never in place of the record of a message
@@ -694,8 +713,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut held = [MsgId(0); HELD + 1];
         let mut n = 0;
         if self.records.is_full() {
-            let aside = self.held.and_then(|h| h.out.msg_id());
-            for id in self.queue.iter().filter_map(Outgoing::msg_id).chain(aside) {
+            for id in self.queue.iter().filter_map(Outgoing::msg_id) {
                 held[n] = id;
                 n += 1;
             }
@@ -800,10 +818,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.own.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
-        let need = self.queue.airtime()
-            + self.held_airtime()
-            + self.data_airtime(MAX_PAYLOAD)
-            + REPLY_RESERVE;
+        let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
         let bucket = self
             .budget
             .allowed_at(Duration::ZERO, need, now)
@@ -822,14 +837,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.own_refusals = 0;
     }
 
-    /// Deliver the held message once the delivery queue has a place.
+    /// Deliver the message set aside once the delivery queue has a place.
     pub(super) fn release_held(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Some(h) = self.held else { return };
+        let Some(i) = self.queue.iter().position(Outgoing::held) else {
+            return;
+        };
         if !self.delivery.has_room(now) {
             return;
         }
-        self.held = None;
-        if let Ok(Packet::Data(d)) = Packet::decode(h.out.frame.payload()) {
+        let Some(h) = self.queue.remove(i) else {
+            return;
+        };
+        if let Ok(Packet::Data(d)) = Packet::decode(h.frame.payload()) {
             self.arrive(d.msg_id(), &d, now, emit);
         }
     }
@@ -887,11 +906,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if dst_id != self.me() && !self.delivery.has_room(now) {
                 // At its owner: the delivery queue, not its time left,
                 // ends it from here (spec "Delivery queue").
-                let out = Outgoing::new(
-                    data_frame(&d, self.home, self.forward_preamble()),
-                    Kind::Forward,
-                );
-                self.held = Some(Held { out });
+                // Admission left it a place, as for any message of the
+                // application's.
+                let out = Outgoing {
+                    state: State::Held,
+                    ..Outgoing::new(
+                        data_frame(&d, self.home, self.forward_preamble()),
+                        Kind::Forward,
+                    )
+                };
+                let _ = self.queue.push(out);
             } else {
                 self.arrive(id, &d, now, emit);
             }
@@ -908,7 +932,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// in the queue.
     pub(super) fn prepare(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.make_way(now);
-        while self.handover.idle() {
+        while self.flights() < IN_FLIGHT {
             let Some(i) = self.queue.next_due(now) else {
                 return;
             };
@@ -923,13 +947,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let routed = match out.kind {
                 Kind::Forward => self.route(out, now, emit),
                 Kind::Return => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(d)) => Routed::To(out, self.expect(d.msg_id(), d.dst_hop)),
+                    Ok(Packet::Data(_)) => Routed::To(out),
                     _ => Routed::Done,
                 },
                 // Stays in the delivery queue while its node sleeps.
                 Kind::Deliver => match Packet::decode(out.frame.payload()) {
                     Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) || self.early(&out) => {
-                        Routed::To(out, self.expect(d.msg_id(), d.dst_hop))
+                        Routed::To(out)
                     }
                     Ok(Packet::Data(d)) => {
                         emit(Action::Trace(Trace::DeliveryWaits {
@@ -944,16 +968,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // Goes whether or not its node is in a window
                 // (`relay/delivery.rs`).
                 Kind::Direct => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(d)) => Routed::To(out, self.expect(d.msg_id(), d.dst_hop)),
+                    Ok(Packet::Data(_)) => Routed::To(out),
                     _ => Routed::Done,
                 },
             };
             match routed {
-                Routed::To(out, expect) => {
+                Routed::To(out) => {
                     if let Some(current) = self.queue.current_mut() {
                         *current = out;
                     }
-                    self.handover.start(expect, out.tries, now);
+                    if let Some((mut h, _)) = self.handover() {
+                        h.start(now);
+                    }
                 }
                 Routed::Done => {
                     self.queue.take_current();
@@ -961,9 +987,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     self.feed_due = true;
                 }
                 Routed::Hold => {
-                    if let Some(out) = self.queue.take_current() {
-                        self.held = Some(Held { out });
+                    if let Some(current) = self.queue.current_mut() {
+                        current.state = State::Held;
                     }
+                    self.queue.deselect();
                     self.skipped = 0;
                     self.feed_due = true;
                 }
@@ -983,21 +1010,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// unanswered attempts; a forward is addressed again when its turn
     /// comes, so it starts afresh.
     fn make_way(&mut self, now: Instant) {
-        let waiting = matches!(self.handover.step(), Step::Wait(_)) && self.radio.idle();
         let Some(current) = self.queue.current().copied() else {
             return;
         };
+        let waiting = matches!(current.state, State::Waiting(_)) && self.radio.idle();
         if !waiting || current.kind.delivers() || self.queue.delivery_due(now).is_none() {
             return;
         }
-        let tries = match current.kind {
-            Kind::Forward => 0,
-            _ => self.handover.attempts(),
-        };
         if let Some(c) = self.queue.current_mut() {
-            c.tries = tries;
+            if c.kind == Kind::Forward {
+                c.tries = 0;
+            }
+            c.state = State::Queued;
         }
-        self.handover.cancel();
         self.skipped = 0;
     }
 
@@ -1044,7 +1069,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
-            return Routed::To(Outgoing { frame, ..out }, self.expect(id, to));
+            // Addressed afresh, its attempts start afresh (module
+            // documentation).
+            return Routed::To(Outgoing {
+                frame,
+                tries: 0,
+                ..out
+            });
         }
         if let Some(t) = self.ban_ends(&record, now) {
             if self.own == Some(id) {
@@ -1077,14 +1108,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     home,
                     self.preamble_to(parent),
                 );
-                Routed::To(
-                    Outgoing {
-                        frame,
-                        kind: Kind::Return,
-                        ..out
-                    },
-                    self.expect(id, parent),
-                )
+                Routed::To(Outgoing {
+                    frame,
+                    kind: Kind::Return,
+                    tries: 0,
+                    ..out
+                })
             }
             None => {
                 self.drop_msg(id, DropReason::NoRoute, emit);
@@ -1208,7 +1237,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Start listen-before-talk for the current hand-over if it is due and
     /// the budget lets it (spec "Duty cycle cap": deferred, never dropped).
     pub(super) fn start_handover(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        if !self.handover.due(now) {
+        if !self.handover().is_some_and(|(h, _)| h.due(now)) {
             return false;
         }
         let Some(out) = self.readdress(now) else {
@@ -1218,7 +1247,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.defer_handover(&out, now, emit);
             return false;
         }
-        self.handover.begin_lbt(now);
+        if let Some((mut h, _)) = self.handover() {
+            h.begin_lbt(now);
+        }
         self.radio.check(Job::HandOver, out.frame.channel, emit);
         true
     }
@@ -1229,7 +1260,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .budget
             .allowed_at(airtime, REPLY_RESERVE, now)
             .unwrap_or(now + self.config.heartbeat_max);
-        self.handover.defer(until);
+        if let Some((mut h, _)) = self.handover() {
+            h.defer(until);
+        }
         let msg_id = out.msg_id().unwrap_or_default();
         emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
     }
@@ -1242,14 +1275,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         // The hand-over may have ended meanwhile (spec "Receiving DATA" case 5).
-        if self.handover.step() != Step::Radio {
-            return;
-        }
         let Some(out) = self.queue.current().copied() else {
             return;
         };
+        if out.state != State::Radio {
+            return;
+        }
         let backoff = self.config.hop_backoff_max;
-        match self.handover.checked(busy, now, &mut self.rng, backoff) {
+        let Some((mut h, rng)) = self.handover() else {
+            return;
+        };
+        match h.checked(busy, now, rng, backoff) {
             Check::Clear => self.transmit_current(out, now, emit),
             Check::Busy => {}
             Check::GaveUp => self.handover_gave_up(out, now, emit),
@@ -1261,7 +1297,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// first, and the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.replies.wake_at().is_some_and(|t| t <= now) {
-            self.handover.hold(now);
+            if let Some((mut h, _)) = self.handover() {
+                h.hold(now);
+            }
             return;
         }
         let mut frame = out.frame;
@@ -1273,12 +1311,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Instant::MAX => d.time_left,
                 ends => Data::units(ends.since(now)),
             };
-            let (Some(hops), false) = (self.count(&d, id, out.kind), gone(&out, now)) else {
+            let (Some(hops), false) = (self.count(&d, id, &out), gone(&out, now)) else {
                 let reason = match gone(&out, now) {
                     true => DropReason::Expired,
                     false => DropReason::HopCap,
                 };
-                self.handover.cancel();
                 self.queue.take_current();
                 self.skipped = 0;
                 self.feed_due = true;
@@ -1321,8 +1358,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// readdressed it would offer a count it had already used. `None` past
     /// the hop cap, but for a delivery: its search has ended, and the cap
     /// ends searches, so it goes at the cap.
-    fn count(&self, d: &Data<'_>, id: MsgId, kind: Kind) -> Option<u8> {
-        if self.handover.transmitted() {
+    fn count(&self, d: &Data<'_>, id: MsgId, out: &Outgoing) -> Option<u8> {
+        if out.transmitted() {
             return Some(d.hops);
         }
         debug_assert!(
@@ -1335,7 +1372,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(r) if self.anchored_sleepy() && self.own == Some(id) && r.parent().is_none() => {
                 Some(0)
             }
-            Some(r) if kind.delivers() => Some(r.highest_hops().saturating_add(1)),
+            Some(r) if out.kind.delivers() => Some(r.highest_hops().saturating_add(1)),
             Some(r) => r.highest_hops().checked_add(1),
             None => Some(d.hops),
         }
@@ -1346,14 +1383,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match out.kind {
             Kind::Forward => {
                 // Choose again, past this neighbour (spec "Hand-over" step 2).
-                let to = self.handover.expect().from;
+                let to = out.expect(self.me()).map_or(NodeId::NONE, |e| e.from);
                 if let Some(slot) = self.neighbours.slot_of(to) {
                     self.skipped |= 1 << slot;
                 }
             }
             Kind::Return | Kind::Deliver | Kind::Direct => {
                 let (max, retry) = (self.config.hop_attempts, self.retry_unit());
-                if self.handover.lost_attempt(now, max, &mut self.rng, retry) == Missed::Failed {
+                let Some((mut h, rng)) = self.handover() else {
+                    return;
+                };
+                if h.lost_attempt(now, max, rng, retry) == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
                 }
             }
@@ -1365,13 +1405,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
-        } else if self.handover.acked(ack) {
+        } else if self.handover().is_some_and(|(mut h, _)| h.acked(ack)) {
             self.handover_done(now, emit);
         }
     }
 
     fn refused(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if !self.handover.answered_by(ack) {
+        if !self
+            .in_flight()
+            .is_some_and(|o| o.answered_by(ack, self.id))
+        {
             return;
         }
         let Some(out) = self.queue.current().copied() else {
@@ -1392,7 +1435,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // A sleepy node's own message goes back to its application,
             // which may offer it again once the wait is over: refused at
             // the origin, it does not age here (spec "A sleepy node's own message").
-            self.handover.cancel();
             self.queue.take_current();
             self.skipped = 0;
             self.feed_due = true;
@@ -1410,11 +1452,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if let Some(slot) = slot {
                     self.skipped |= 1 << slot;
                 }
-                self.handover.cancel();
+                self.cancel_handover();
             }
             // No other receiver: wait for the ban, and let the queue move.
             Kind::Return | Kind::Deliver | Kind::Direct => {
-                let tries = self.handover.refused();
+                let tries = self.handover().map_or(0, |(mut h, _)| h.refused());
                 self.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
                     current.not_before = now + wait;
@@ -1426,7 +1468,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The current hand-over succeeded: its receiver has the packet.
     pub(super) fn handover_done(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.handover.cancel();
         self.skipped = 0;
         let Some(out) = self.queue.take_current() else {
             return;
@@ -1624,9 +1665,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         // This runs on every event; only an ACK wait that ran out needs the
         // retry unit's two airtimes.
-        if matches!(self.handover.step(), Step::AwaitAck(deadline) if now >= deadline) {
+        if self.awaiting_ack() {
             let (max, retry) = (self.config.hop_attempts, self.retry_unit());
-            if self.handover.timeout(now, max, &mut self.rng, retry) == Some(Missed::Failed) {
+            let missed = self
+                .handover()
+                .and_then(|(mut h, rng)| h.timeout(now, max, rng, retry));
+            if missed == Some(Missed::Failed) {
                 if let Some(out) = self.queue.current().copied() {
                     self.handover_failed(out, true, now, emit);
                 }
@@ -1652,12 +1696,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .queue
                 .iter()
                 .enumerate()
-                .position(|(i, o)| Some(i) != under_way && gone(o, now));
+                .position(|(i, o)| Some(i) != under_way && !o.held() && gone(o, now));
             let Some(i) = found else { break };
             let id = self.queue.iter().nth(i).and_then(Outgoing::msg_id);
             if self.queue.current_index() == Some(i) {
                 // Not yet on air: waiting its turn, for the bucket or to retry.
-                self.handover.cancel();
+                self.cancel_handover();
                 self.skipped = 0;
             }
             let mut k = 0;
@@ -1672,8 +1716,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The send queue's entry whose frame is on air or waiting for its ACK.
     fn under_way(&self) -> Option<usize> {
-        let on_air = self.handover.awaiting_ack()
-            || self.radio.step_of(Job::HandOver) == Some(mac::Step::Tx);
+        let on_air =
+            self.awaiting_ack() || self.radio.step_of(Job::HandOver) == Some(mac::Step::Tx);
         self.queue.current_index().filter(|_| on_air)
     }
 
@@ -1689,7 +1733,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue
             .iter()
             .enumerate()
-            .filter(|(i, _)| Some(*i) != under_way)
+            .filter(|(i, o)| Some(*i) != under_way && !o.held())
             .map(|(_, o)| o.expires)
             .min()
             .filter(|&t| t != Instant::MAX)
@@ -1701,8 +1745,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn forward_wakeup(&self) -> Option<Instant> {
         let mut w: Option<Instant> = None;
         let mut at = |t: Instant| w = Some(w.map_or(t, |w| w.min(t)));
-        if self.handover.awaiting_ack() || self.radio.idle() {
-            if let Some(t) = self.handover.wake_at() {
+        if self.awaiting_ack() || self.radio.idle() {
+            if let Some(t) = self.flight_wake() {
                 at(t);
             }
         }
@@ -1712,7 +1756,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         // A waiting entry, once nothing else is under way.
-        if self.handover.idle() && self.radio.idle() {
+        if self.handover_idle() && self.radio.idle() {
             if let Some(t) = self.queue.earliest_due() {
                 at(t);
             }
@@ -1721,6 +1765,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             at(t);
         }
         w
+    }
+}
+
+impl<const H: usize, const Q: usize> Node<H, Q> {
+    /// When the hand-over in flight next needs the core, if it waits.
+    fn flight_wake(&self) -> Option<Instant> {
+        match self.in_flight()?.state {
+            State::Waiting(_) | State::AwaitAck => Some(self.flight.until()),
+            _ => None,
+        }
     }
 }
 

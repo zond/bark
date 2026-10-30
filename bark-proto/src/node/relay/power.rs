@@ -54,6 +54,7 @@ use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
     BATTERY_REST, BATTERY_SCALE_ONE,
 };
+use crate::tables::send_queue::{Outgoing, State};
 use crate::time::{Duration, Instant};
 
 /// What a node's power says of its cell (module documentation), with
@@ -306,15 +307,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.delivery.clear();
         self.heard.clear();
-        if let Some(h) = self.held.take() {
+        let held = self.queue.iter().position(Outgoing::held);
+        if let Some(h) = held.and_then(|i| self.queue.remove(i)) {
             // Its own message for a node it held for: routed on, as a
-            // sleepy node owns no other node's message.
-            if let Some(msg_id) = h.out.msg_id().filter(|_| self.queue.push(h.out).is_err()) {
-                emit(Action::Trace(Trace::Dropped {
-                    msg_id,
-                    reason: DropReason::SendQueueFull,
-                }));
-            }
+            // sleepy node owns no other node's message, behind what is
+            // queued.
+            let _ = self.queue.push(Outgoing {
+                state: State::Queued,
+                ..h
+            });
         }
         self.timers.clear_move();
         self.beacon.announce = None;

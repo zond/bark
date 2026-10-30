@@ -97,7 +97,7 @@ use crate::event::{Action, AppCommand, AppEvent, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::{self, Excursion};
-use crate::node::transfer::{Replies, Step, Transfer};
+use crate::node::transfer::{Flight, Replies};
 use crate::node::{burst_gap, heartbeat_interval, heartbeat_lag, Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
@@ -110,7 +110,7 @@ use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE};
 use crate::tables::heard::{beat_period, Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours, BEATS};
 use crate::tables::records::Records;
-use crate::tables::send_queue::{Kind, SendQueue};
+use crate::tables::send_queue::{Kind, SendQueue, State};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 use forward::OWNER_RADIUS_M;
@@ -410,7 +410,8 @@ enum Beat {
 pub struct Load {
     /// Airtime in the duty-cycle bucket (spec "Duty cycle cap").
     pub bucket: Duration,
-    /// Frames in the send queue, hop places included (spec "Send queue").
+    /// Frames in the send queue, hop places included, but for one set
+    /// aside for the delivery queue (spec "Send queue").
     pub send_queue: usize,
     /// Messages waiting for a sleepy node (spec "Delivery queue").
     pub delivery_queue: usize,
@@ -462,8 +463,9 @@ pub struct Node<const H: usize, const Q: usize> {
     charge: Charge,
     config: Config,
     timers: Timers,
-    /// The hand-over of `queue`'s current entry.
-    handover: Transfer,
+    /// What the radio side keeps of the hand-over in flight, that of
+    /// `queue`'s current entry.
+    flight: Flight,
     sweep: Sweep,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
@@ -495,9 +497,6 @@ pub struct Node<const H: usize, const Q: usize> {
     beacon: Beacon,
     budget: Budget,
     busy: BusyEstimator,
-    /// The application's message for a sleepy node this relay holds for, set aside
-    /// while the delivery queue is full.
-    held: Option<forward::Held>,
     delivered: Delivered,
     /// The sleepy nodes heard, for delivery.
     heard: Heard<H>,
@@ -563,7 +562,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             },
             records: Records::new(),
             queue: SendQueue::new(),
-            handover: Transfer::new(),
+            flight: Flight::NONE,
             skipped: 0,
             replies: Replies::new(),
             heard: Heard::from_config(&config),
@@ -573,7 +572,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivered: Delivered::new(),
             own: None,
             own_refusals: 0,
-            held: None,
             feed_due: false,
             config,
             timers: Timers::UNSET,
@@ -631,7 +629,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             beacon,
             records,
             queue,
-            handover,
+            flight,
             skipped,
             replies,
             heard,
@@ -641,7 +639,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivered,
             own,
             own_refusals,
-            held,
             feed_due,
         } = self;
         *stored = config.stored;
@@ -677,7 +674,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         records.clear();
         queue.clear();
-        *handover = Transfer::new();
+        *flight = Flight::NONE;
         *skipped = 0;
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
@@ -687,7 +684,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *delivered = Delivered::new();
         *own = None;
         *own_refusals = 0;
-        *held = None;
         *feed_due = false;
         *timers = Timers::UNSET;
         *c = config;
@@ -775,7 +771,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// hand-over, owed reply or heartbeat under way.
     fn radio_free(&self) -> bool {
         self.radio.idle()
-            && self.handover.idle()
+            && self.handover_idle()
             && !self.replies.pending()
             && self.beacon.current.is_none()
     }
@@ -1001,7 +997,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .iter()
             .filter_map(|o| o.msg_id())
             .chain(self.delivery.iter().map(|q| q.msg_id))
-            .chain(self.held.as_ref().and_then(|h| h.out.msg_id()))
     }
 
     /// Whether this relay has a record of message `id`: it has received
@@ -1038,7 +1033,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.queue
             .iter()
-            .filter(|o| o.kind == Kind::Forward)
+            .filter(|o| o.kind == Kind::Forward && !o.held())
             .filter_map(|o| self.records.get(o.msg_id()?))
             .filter(|r| !r.handed(slot) && r.parent().map(|(p, _)| p) != Some(to))
             .map(|r| r.highest_hops().saturating_add(1))
@@ -1051,14 +1046,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// (`relay/delivery.rs`). For a driver to sample; reading it changes
     /// nothing.
     pub fn sending_direct(&self) -> bool {
-        !self.handover.idle() && self.queue.current().is_some_and(|o| o.kind == Kind::Direct)
+        self.in_flight().is_some_and(|o| o.kind == Kind::Direct)
     }
 
     /// Whether a hand-over is under way: begun and not yet answered or
     /// given up, waits for a backoff, a retry or the bucket included. For
     /// a driver to sample; reading it changes nothing.
     pub fn handing_over(&self) -> bool {
-        !self.handover.idle()
+        !self.handover_idle()
     }
 
     /// How loaded the relay is at `now`, for a driver to sample. Reading
@@ -1066,7 +1061,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub fn load(&self, now: Instant) -> Load {
         Load {
             bucket: self.budget.available(now),
-            send_queue: self.queue.len(),
+            send_queue: self.queue.iter().filter(|o| !o.held()).count(),
             delivery_queue: self.delivery.len(),
             heard: self.heard.len(),
             neighbours: self.neighbours.len(),
@@ -1535,7 +1530,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// sweep wait while a hand-over waits for its ACK, which comes on the
     /// home channel.
     fn radio_jobs_due(&self) -> Option<Instant> {
-        if !self.radio.idle() || self.handover.awaiting_ack() {
+        if !self.radio.idle() || self.awaiting_ack() {
             return None;
         }
         let heartbeat = self.heartbeats().then(|| {
@@ -1563,7 +1558,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         while self.radio.idle() {
             self.prepare(now, emit);
-            let awaiting = self.handover.awaiting_ack();
+            let awaiting = self.awaiting_ack();
             let started = self.start_reply(now, emit)
                 || (!awaiting && self.beacon_due(now) && self.start_heartbeat(now, emit))
                 || self.start_handover(now, emit)
@@ -1985,7 +1980,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let me = self.me();
         let own = match Packet::decode(bytes) {
             Ok(Packet::Data(d)) => d.dst_hop == me,
-            Ok(Packet::Ack(a)) => self.handover.answered_by(a),
+            Ok(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
             _ => false,
         };
         if !own {
@@ -2213,8 +2208,13 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::TxDone => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
                 // Unless the hand-over was given up meanwhile (a displaced record).
-                Some(Job::HandOver) if self.handover.step() == Step::Radio => {
-                    self.handover.sent(now, self.config.ack_timeout)
+                Some(Job::HandOver) => {
+                    let timeout = self.config.ack_timeout;
+                    if let Some((mut h, _)) = self.handover() {
+                        if h.state() == State::Radio {
+                            h.sent(now, timeout);
+                        }
+                    }
                 }
                 Some(Job::Reply) => {
                     let listens_on = self.replies.sent();
@@ -2898,7 +2898,7 @@ mod tests {
         let ttl = r.config.delivery_ttl;
         let until = now + ttl + Duration::from_secs(1);
         drive(&mut r, &mut now, until);
-        assert!(r.held.is_none());
+        assert!(!r.queue.iter().any(|o| o.held()));
         assert_eq!(
             r.holding().count(),
             DELIVERY_QUEUE,
@@ -3079,7 +3079,7 @@ mod tests {
         );
         // What a relay holds stays within its places, so a record place
         // is always found.
-        assert!(r.queue.len() + usize::from(r.held.is_some()) <= HELD);
+        assert!(r.queue.len() <= HELD);
         assert!(r.record_place().is_some());
     }
 
@@ -3339,12 +3339,12 @@ mod tests {
             },
         ] {
             let actions = hear(&mut r, now, &Packet::Ack(answer));
-            assert!(r.handover.awaiting_ack(), "{answer:?} ended the hand-over");
+            assert!(r.awaiting_ack(), "{answer:?} ended the hand-over");
             assert!(!banned(&r, now), "{answer:?} banned D");
             assert!(!actions.iter().any(|a| matches!(a, Action::Trace(_))));
         }
         let actions = hear(&mut r, now, &Packet::Ack(to_me));
-        assert!(r.handover.idle() && r.queue.is_empty());
+        assert!(r.handover_idle() && r.queue.is_empty());
         assert!(actions.iter().any(|a| matches!(
             a,
             Action::Trace(Trace::Forwarded { msg_id, .. }) if *msg_id == id
@@ -3447,7 +3447,6 @@ mod tests {
             };
             let pending = hear(r, *now, &Packet::Ack(ack));
             r.queue.retain(|_, _| false);
-            r.handover.cancel();
             let until = *now + Duration::from_millis(100);
             drive_from(r, now, until, pending);
         };

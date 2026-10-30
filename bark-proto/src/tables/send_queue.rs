@@ -24,18 +24,20 @@
 //! the cap, where the message ends (spec "Hop count"). By induction downwards, every
 //! message held moves.
 //!
-//! Each entry is a frame and what kind of hand-over it is, which decides
-//! what happens when the hand-over fails (spec "Hand-over"). An entry whose receivers
-//! are all banned waits in its place until a ban ends (spec "Overload waits"). The next
-//! hand-over goes to a DATA to a sleepy node if one is due, since its node
-//! listens only briefly (spec "Delivery"); else to the first entry that is
-//! due, except that one that has
-//! waited goes first, the most travelled first: the place one higher is
-//! free only for the message that has come farthest, and a lower one
-//! offered first would be refused and ban the neighbour again. Choosing an
-//! entry does not move it: the hand-over refers to it where it stands, so
-//! of equals the one that arrived first is offered first, however often
-//! they wait (roadmap D31 rule 4).
+//! Each entry is a frame, what kind of hand-over it is, which decides
+//! what happens when the hand-over fails (spec "Hand-over"), and where
+//! its hand-over is ([`State`], `node/transfer.rs`). An entry whose
+//! receivers are all banned waits in its place until a ban ends (spec
+//! "Overload waits"). The next hand-over goes to a DATA to a sleepy node
+//! if one is due, since its node listens only briefly (spec "Delivery");
+//! else to the first entry that is due, except that one that has waited
+//! goes first, the most travelled first: the place one higher is free
+//! only for the message that has come farthest, and a lower one offered
+//! first would be refused and ban the neighbour again. Choosing an entry
+//! does not move it: the hand-over refers to it where it stands, so of
+//! equals the one that arrived first is offered first, however often they
+//! wait (roadmap D31 rule 4). One set aside for the delivery queue keeps
+//! its place and is never due.
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
@@ -89,6 +91,41 @@ impl Kind {
     }
 }
 
+/// Where a queued frame is in its hand-over (spec "Hand-over",
+/// `node/transfer.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Waiting its turn, due at `not_before`.
+    Queued,
+    /// The application's message for a node this one holds for, set aside
+    /// until the delivery queue has a place (spec "Return to parent"); it
+    /// keeps its place and its airtime in admission.
+    Held,
+    /// Addressed, and waiting for this until the instant the hand-over in
+    /// flight keeps.
+    Waiting(Wait),
+    /// On the radio: its channel checked, then its frame on air.
+    Radio,
+    /// Listening at home for its ACK until the instant the hand-over in
+    /// flight keeps.
+    AwaitAck,
+}
+
+/// What a hand-over waits for before its listen-before-talk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wait {
+    /// Its turn: nothing, once the radio is free.
+    Turn,
+    /// A random backoff after a busy check.
+    Backoff,
+    /// An owed reply, which goes first.
+    Reply,
+    /// The duty-cycle budget.
+    Budget,
+    /// The retry wait after a missed ACK.
+    Retry,
+}
+
 /// A queued frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outgoing {
@@ -97,10 +134,13 @@ pub struct Outgoing {
     pub frame: Frame,
     /// What it is for.
     pub kind: Kind,
+    /// Where its hand-over is.
+    pub state: State,
     /// Not handed over before this: it waits for a ban to end.
     pub not_before: Instant,
-    /// Transmissions of a return or a DATA to a sleepy node that went unanswered, kept
-    /// while it waits; a refusal does not count.
+    /// Transmissions that went unanswered: of the hand-over under way,
+    /// and of a return or a DATA to a sleepy node kept while it waits; a
+    /// refusal does not count.
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
@@ -116,11 +156,23 @@ impl Outgoing {
         Outgoing {
             frame,
             kind,
+            state: State::Queued,
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
             expires: Instant::MAX,
         }
+    }
+
+    /// Whether it is set aside for the delivery queue.
+    pub fn held(&self) -> bool {
+        self.state == State::Held
+    }
+
+    /// Whether its hand-over is under way: addressed and waiting, on the
+    /// radio or waiting for its ACK.
+    pub fn in_flight(&self) -> bool {
+        !matches!(self.state, State::Queued | State::Held)
     }
 
     /// The hop count the frame carries.
@@ -266,6 +318,24 @@ impl SendQueue {
         Some(self.frames.remove(i))
     }
 
+    /// No entry is the hand-over's.
+    pub fn deselect(&mut self) {
+        self.current = None;
+    }
+
+    /// Take entry `i` out, as it stands.
+    pub fn remove(&mut self, i: usize) -> Option<Outgoing> {
+        if i >= self.len() {
+            return None;
+        }
+        self.current = match self.current {
+            Some(c) if c == i => None,
+            Some(c) if c > i => Some(c - 1),
+            c => c,
+        };
+        Some(self.frames.remove(i))
+    }
+
     /// The entry the next hand-over goes to: a DATA to a sleepy node that
     /// is due, the first; else of those that have waited and are due, the
     /// most travelled, the earliest of equals; else the first that is due.
@@ -274,7 +344,7 @@ impl SendQueue {
         if self.is_empty() {
             return None;
         }
-        let due = |o: &Outgoing| o.not_before <= now;
+        let due = |o: &Outgoing| !o.held() && o.not_before <= now;
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
@@ -289,14 +359,14 @@ impl SendQueue {
     /// The first DATA from the delivery queue that is due.
     pub fn delivery_due(&self, now: Instant) -> Option<usize> {
         self.iter()
-            .position(|o| o.kind.delivers() && o.not_before <= now)
+            .position(|o| o.kind.delivers() && !o.held() && o.not_before <= now)
     }
 
     /// The entry of message `id`, if it waits beyond `now`, is due at
     /// `now`.
     pub fn due_now(&mut self, id: MsgId, now: Instant) {
         for o in self.frames.as_mut_slice() {
-            if o.not_before > now && o.msg_id() == Some(id) {
+            if !o.held() && o.not_before > now && o.msg_id() == Some(id) {
                 o.not_before = now;
             }
         }
@@ -304,7 +374,10 @@ impl SendQueue {
 
     /// When the earliest waiting entry is due.
     pub fn earliest_due(&self) -> Option<Instant> {
-        self.iter().map(|o| o.not_before).min()
+        self.iter()
+            .filter(|o| !o.held())
+            .map(|o| o.not_before)
+            .min()
     }
 
     /// Queued entries, in the order they arrived.

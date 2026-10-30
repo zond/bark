@@ -1,11 +1,14 @@
 //! Per-hop transfer (spec "Hand-over"): one frame handed to one receiver
-//! until it answers or the sender gives up ([`Transfer`]), and the replies
+//! until it answers or the sender gives up ([`HandOver`]), and the replies
 //! this node owes the senders of what it received ([`Replies`]): an ACK
 //! each, taking or refusing.
 //!
-//! Both only keep the state between excursions; the node owns the radio
-//! (`mac.rs`), the frame and the duty-cycle budget, starts each excursion
-//! and reports its completion here.
+//! A hand-over lives in its send-queue place ([`Outgoing`]): where it is,
+//! its transmissions so far and, in its frame, its receiver, which the ACK
+//! it expects names. What the radio side keeps of the one in flight is
+//! [`Flight`]. The node owns the radio (`mac.rs`), the frame and the
+//! duty-cycle budget, starts each excursion and reports its completion
+//! here.
 //!
 //! # A hand-over
 //!
@@ -33,23 +36,37 @@ use crate::ids::NodeId;
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::fixed::FixedVec;
+use crate::tables::send_queue::{Outgoing, State, Wait};
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::Ack;
+use crate::wire::{Ack, Packet};
 
-/// Where a hand-over is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Step {
-    /// No hand-over.
-    Idle,
-    /// Start listen-before-talk at this instant: the first attempt, a
-    /// busy backoff, a retry, or a wait for the duty-cycle budget.
-    Wait(Instant),
-    /// On the radio: the check of its channel, then the frame on air
-    /// (`mac::Excursion`).
-    Radio,
-    /// Listening home for the ACK until this instant.
-    AwaitAck(Instant),
+/// How many hand-overs the node has in flight at most: one, so that the
+/// radio listens at home for the ACK of the frame it sent, and the
+/// scheduler starts no other meanwhile (spec "Hand-over"). Raising it is
+/// a decision of its own.
+pub(crate) const IN_FLIGHT: usize = 1;
+
+/// What the radio side keeps of the hand-over in flight: until when it
+/// waits, and since when the checks of its attempt have found the channel
+/// busy.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Flight {
+    until: Instant,
+    /// `None` until a check of this attempt.
+    lbt_since: Option<Instant>,
+}
+
+impl Flight {
+    pub(crate) const NONE: Flight = Flight {
+        until: Instant::ZERO,
+        lbt_since: None,
+    };
+
+    /// Until when the hand-over in flight waits, or its ACK is due.
+    pub(crate) fn until(&self) -> Instant {
+        self.until
+    }
 }
 
 /// What a listen-before-talk check led to.
@@ -59,7 +76,7 @@ pub(crate) enum Check {
     Clear,
     /// Busy: the hand-over waits a random backoff.
     Busy,
-    /// Busy for the whole give-up time; the hand-over is idle again.
+    /// Busy for the whole give-up time; the place is queued again.
     GaveUp,
 }
 
@@ -68,97 +85,89 @@ pub(crate) enum Check {
 pub(crate) enum Missed {
     /// Waiting to try again.
     Retry,
-    /// Every attempt went unanswered; the hand-over is idle again.
+    /// Every attempt went unanswered; the place is queued again.
     Failed,
 }
 
-/// One hand-over (spec "Hand-over").
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Transfer {
-    step: Step,
-    /// Transmissions so far.
-    attempts: u8,
-    /// When this attempt's listen-before-talk began; `None` until it does.
-    lbt_since: Option<Instant>,
-    expect: Ack,
+/// The hand-over of one place, advanced through the place's state and
+/// the flight (spec "Hand-over").
+pub(crate) struct HandOver<'a> {
+    out: &'a mut Outgoing,
+    flight: &'a mut Flight,
+    /// This node, which the ACK names as `to`.
+    me: NodeId,
 }
 
-impl Transfer {
-    pub(crate) const fn new() -> Transfer {
-        Transfer {
-            step: Step::Idle,
-            attempts: 0,
-            lbt_since: None,
-            expect: Ack {
-                msg_id: crate::ids::MsgId(0),
-                from: NodeId::NONE,
-                to: NodeId::NONE,
-                refused: false,
-                wait: 0,
-            },
+/// The ACK by which `from` takes `me`'s offer of `msg_id`.
+pub(crate) fn expect(msg_id: crate::ids::MsgId, from: NodeId, me: NodeId) -> Ack {
+    Ack {
+        msg_id,
+        from,
+        to: me,
+        refused: false,
+        wait: 0,
+    }
+}
+
+impl Outgoing {
+    /// The ACK that takes this place's frame from `me`: the message and
+    /// the receiver are in the frame.
+    pub(crate) fn expect(&self, me: NodeId) -> Option<Ack> {
+        match Packet::decode(self.frame.payload()) {
+            Ok(Packet::Data(d)) => Some(expect(d.msg_id(), d.dst_hop, me)),
+            _ => None,
         }
     }
 
-    pub(crate) fn step(&self) -> Step {
-        self.step
-    }
-
-    pub(crate) fn idle(&self) -> bool {
-        self.step == Step::Idle
-    }
-
-    /// Transmissions so far.
-    pub(crate) fn attempts(&self) -> u8 {
-        self.attempts
-    }
-
-    /// Whether the frame has been on air at least once.
+    /// Whether the frame has been on air at least once in this hand-over.
     pub(crate) fn transmitted(&self) -> bool {
-        self.attempts > 0
+        self.tries > 0
     }
 
-    /// The ACK that takes this hand-over's frame.
-    pub(crate) fn expect(&self) -> Ack {
-        self.expect
+    /// Whether `ack` answers this place's hand-over, taking or refusing a
+    /// frame that has been sent.
+    pub(crate) fn answered_by(&self, ack: Ack, me: NodeId) -> bool {
+        self.in_flight() && self.transmitted() && self.expect(me).is_some_and(|e| ack.answers(&e))
+    }
+}
+
+impl<'a> HandOver<'a> {
+    pub(crate) fn of(out: &'a mut Outgoing, flight: &'a mut Flight, me: NodeId) -> Self {
+        HandOver { out, flight, me }
+    }
+
+    pub(crate) fn state(&self) -> State {
+        self.out.state
     }
 
     pub(crate) fn awaiting_ack(&self) -> bool {
-        matches!(self.step, Step::AwaitAck(_))
+        self.out.state == State::AwaitAck
     }
 
-    /// Begin a hand-over that ends with `expect`, ready at once, after
-    /// `attempts` unanswered transmissions made before it waited.
-    pub(crate) fn start(&mut self, expect: Ack, attempts: u8, now: Instant) {
-        *self = Transfer {
-            step: Step::Wait(now),
-            attempts,
+    /// Begin the hand-over of this place, ready at once, after the
+    /// unanswered transmissions it kept while it waited.
+    pub(crate) fn start(&mut self, now: Instant) {
+        *self.flight = Flight {
+            until: now,
             lbt_since: None,
-            expect,
         };
+        self.out.state = State::Waiting(Wait::Turn);
     }
 
-    /// Give the hand-over up without a result.
+    /// Give the hand-over up without a result: the place is queued again.
     pub(crate) fn cancel(&mut self) {
-        self.step = Step::Idle;
+        self.out.state = State::Queued;
     }
 
     /// Whether listen-before-talk is due to start.
     pub(crate) fn due(&self, now: Instant) -> bool {
-        matches!(self.step, Step::Wait(t) if t <= now)
-    }
-
-    /// The instant this hand-over next needs the core, if it is waiting.
-    pub(crate) fn wake_at(&self) -> Option<Instant> {
-        match self.step {
-            Step::Wait(t) | Step::AwaitAck(t) => Some(t),
-            _ => None,
-        }
+        matches!(self.out.state, State::Waiting(_)) && self.flight.until <= now
     }
 
     /// Hold the hand-over until `until`, without starting a new
     /// listen-before-talk period: to let an ACK this node owes go first.
     pub(crate) fn hold(&mut self, until: Instant) {
-        self.step = Step::Wait(until);
+        self.wait(Wait::Reply, until);
     }
 
     /// Hold the hand-over until the duty-cycle budget allows it. The
@@ -166,14 +175,19 @@ impl Transfer {
     /// a wait of minutes for the budget is not that, so the checks after
     /// it start a new period.
     pub(crate) fn defer(&mut self, until: Instant) {
-        self.lbt_since = None;
-        self.step = Step::Wait(until);
+        self.flight.lbt_since = None;
+        self.wait(Wait::Budget, until);
+    }
+
+    fn wait(&mut self, why: Wait, until: Instant) {
+        self.flight.until = until;
+        self.out.state = State::Waiting(why);
     }
 
     /// Listen-before-talk starts: the caller issues the check.
     pub(crate) fn begin_lbt(&mut self, now: Instant) {
-        self.lbt_since.get_or_insert(now);
-        self.step = Step::Radio;
+        self.flight.lbt_since.get_or_insert(now);
+        self.out.state = State::Radio;
     }
 
     /// The listen-before-talk check completed.
@@ -187,34 +201,39 @@ impl Transfer {
         if !busy {
             return Check::Clear;
         }
-        let since = self.lbt_since.unwrap_or(now);
+        let since = self.flight.lbt_since.unwrap_or(now);
         if now.since(since) >= LBT_GIVE_UP {
-            self.lbt_since = None;
-            self.step = Step::Idle;
+            self.flight.lbt_since = None;
+            self.out.state = State::Queued;
             return Check::GaveUp;
         }
-        self.step = Step::Wait(now + rng.duration(Duration::ZERO, backoff_max));
+        self.wait(
+            Wait::Backoff,
+            now + rng.duration(Duration::ZERO, backoff_max),
+        );
         Check::Busy
     }
 
-    /// The frame left the antenna: wait `ack_timeout` for the ACK.
+    /// The frame left the antenna: wait `ack_timeout` for the ACK. An
+    /// attempt is a transmission, counted here and nowhere else.
     pub(crate) fn sent(&mut self, now: Instant, ack_timeout: Duration) {
-        self.attempts = self.attempts.saturating_add(1);
-        self.lbt_since = None;
-        self.step = Step::AwaitAck(now + ack_timeout);
+        self.out.tries = self.out.tries.saturating_add(1);
+        self.flight.lbt_since = None;
+        self.flight.until = now + ack_timeout;
+        self.out.state = State::AwaitAck;
     }
 
     /// Whether `ack` answers this hand-over, taking or refusing a frame
     /// that has been sent.
     pub(crate) fn answered_by(&self, ack: Ack) -> bool {
-        !self.idle() && self.transmitted() && ack.answers(&self.expect)
+        self.out.answered_by(ack, self.me)
     }
 
     /// The receiver refused the hand-over, which gives it up: the
     /// unanswered transmissions before the refused one, to resume with.
     pub(crate) fn refused(&mut self) -> u8 {
-        self.step = Step::Idle;
-        self.attempts.saturating_sub(1)
+        self.out.state = State::Queued;
+        self.out.tries.saturating_sub(1)
     }
 
     /// An ACK arrived. Returns whether it takes this hand-over's frame,
@@ -222,7 +241,7 @@ impl Transfer {
     pub(crate) fn acked(&mut self, ack: Ack) -> bool {
         let taken = self.answered_by(ack) && !ack.refused;
         if taken {
-            self.step = Step::Idle;
+            self.out.state = State::Queued;
         }
         taken
     }
@@ -237,7 +256,7 @@ impl Transfer {
         rng: &mut Rng,
         retry_backoff: Duration,
     ) -> Missed {
-        self.attempts = self.attempts.saturating_add(1);
+        self.out.tries = self.out.tries.saturating_add(1);
         self.after_attempt(now, max, rng, retry_backoff)
     }
 
@@ -249,11 +268,10 @@ impl Transfer {
         rng: &mut Rng,
         retry_backoff: Duration,
     ) -> Option<Missed> {
-        match self.step {
-            Step::AwaitAck(deadline) if now >= deadline => {
-                Some(self.after_attempt(now, max, rng, retry_backoff))
-            }
-            _ => None,
+        if self.awaiting_ack() && now >= self.flight.until {
+            Some(self.after_attempt(now, max, rng, retry_backoff))
+        } else {
+            None
         }
     }
 
@@ -264,13 +282,13 @@ impl Transfer {
         rng: &mut Rng,
         retry_backoff: Duration,
     ) -> Missed {
-        if self.attempts >= max {
-            self.step = Step::Idle;
+        if self.out.tries >= max {
+            self.out.state = State::Queued;
             Missed::Failed
         } else {
-            self.lbt_since = None;
-            let window = retry_window(retry_backoff, self.attempts);
-            self.step = Step::Wait(now + rng.duration(Duration::ZERO, window));
+            self.flight.lbt_since = None;
+            let window = retry_window(retry_backoff, self.out.tries);
+            self.wait(Wait::Retry, now + rng.duration(Duration::ZERO, window));
             Missed::Retry
         }
     }
@@ -501,25 +519,72 @@ mod tests {
         }
     }
 
+    /// A place whose frame is a DATA of message `id` to the receiver
+    /// `ack(id).from`, and the flight: a hand-over to drive.
+    fn place(id: u32) -> (Outgoing, Flight) {
+        use crate::event::{Frame, MAX_FRAME};
+        use crate::position::Position;
+        use crate::radio::MIN_PREAMBLE_SYMBOLS;
+        use crate::tables::send_queue::Kind;
+        use crate::wire::Data;
+        let d = Data {
+            sender_home: Channel::new(3).unwrap(),
+            dst_hop: ack(id).from,
+            src_hop: ack(id).to,
+            dst_pos: Position { lat: 0, lon: 0 },
+            dst_id: NodeId([5; 6]),
+            hops: 1,
+            time_left: 1,
+            payload: &[id as u8],
+        };
+        let mut bytes = [0; MAX_FRAME];
+        let len = Packet::Data(d).encode(&mut bytes).unwrap() as u8;
+        let frame = Frame {
+            channel: d.sender_home,
+            preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            len,
+            bytes,
+        };
+        (Outgoing::new(frame, Kind::Forward), Flight::NONE)
+    }
+
+    /// The expected ACK names the message and the receiver of the frame
+    /// (roadmap D15).
+    fn names(id: u32) -> Ack {
+        let (out, _) = place(id);
+        let e = out.expect(ack(id).to).unwrap();
+        assert_eq!(e.msg_id, out.msg_id().unwrap());
+        assert_eq!((e.from, e.to), (ack(id).from, ack(id).to));
+        e
+    }
+
     #[test]
     fn three_attempts_then_failure() {
         let mut rng = Rng::new(1);
-        let mut t = Transfer::new();
-        t.start(ack(7), 0, at(0));
-        assert!(t.due(at(0)) && !t.transmitted());
+        let (mut out, mut flight) = place(7);
+        let expect = names(7);
+        let mut t = HandOver::of(&mut out, &mut flight, expect.to);
+        t.start(at(0));
+        assert!(t.due(at(0)) && !t.out.transmitted());
         for attempt in 0..3u64 {
-            let now = t.wake_at().unwrap();
+            let now = t.flight.until;
             assert!(t.due(now));
             t.begin_lbt(now);
-            assert_eq!(t.step(), Step::Radio);
+            assert_eq!(t.state(), State::Radio);
             assert_eq!(t.checked(false, now, &mut rng, ms(50)), Check::Clear);
             t.sent(now, ms(100));
             assert!(t.awaiting_ack());
+            assert_eq!(
+                t.out.tries,
+                attempt as u8 + 1,
+                "an attempt is a transmission"
+            );
             assert_eq!(t.timeout(now + ms(99), 3, &mut rng, ms(50)), None);
             let missed = t.timeout(now + ms(100), 3, &mut rng, ms(50)).unwrap();
             if attempt < 2 {
                 assert_eq!(missed, Missed::Retry);
-                let w = t.wake_at().unwrap();
+                assert_eq!(t.state(), State::Waiting(Wait::Retry));
+                let w = t.flight.until;
                 // Two units after the first transmission, four after the second.
                 let window = ms(50 << (attempt + 1));
                 assert!(
@@ -529,7 +594,7 @@ mod tests {
                 );
             } else {
                 assert_eq!(missed, Missed::Failed);
-                assert!(t.idle());
+                assert!(!t.out.in_flight());
             }
         }
     }
@@ -537,9 +602,11 @@ mod tests {
     #[test]
     fn ack_must_name_message_and_both_parties() {
         let mut rng = Rng::new(2);
-        let mut t = Transfer::new();
-        t.start(ack(7), 0, at(0));
-        assert!(!t.acked(ack(7)), "nothing sent yet");
+        let (mut out, mut flight) = place(7);
+        let expect = names(7);
+        let mut t = HandOver::of(&mut out, &mut flight, expect.to);
+        t.start(at(0));
+        assert!(!t.acked(expect), "nothing sent yet");
         t.begin_lbt(at(0));
         t.checked(false, at(0), &mut rng, ms(50));
         t.checked(false, at(1), &mut rng, ms(50));
@@ -548,13 +615,13 @@ mod tests {
         assert!(
             !t.acked(Ack {
                 from: NodeId([9; 6]),
-                ..ack(7)
+                ..expect
             }),
             "same message, other receiver (D19)"
         );
         let to_another = Ack {
             to: NodeId([9; 6]),
-            ..ack(7)
+            ..expect
         };
         assert!(
             !t.answered_by(to_another) && !t.acked(to_another),
@@ -562,36 +629,42 @@ mod tests {
         );
         let refused = Ack {
             refused: true,
-            ..ack(7)
+            ..expect
         };
         assert!(t.answered_by(refused) && !t.acked(refused), "a refusal");
-        assert!(!t.idle(), "a refusal is the role's to act on");
+        assert!(t.out.in_flight(), "a refusal is the role's to act on");
         // Late, during the retry backoff: still the receiver's ACK.
         assert_eq!(t.timeout(at(102), 3, &mut rng, ms(50)), Some(Missed::Retry));
-        assert!(t.acked(ack(7)));
-        assert!(t.idle());
+        assert!(t.acked(expect));
+        assert!(!t.out.in_flight());
     }
 
     #[test]
     fn busy_channel_backs_off_and_gives_up_after_500_ms() {
         let mut rng = Rng::new(3);
-        let mut t = Transfer::new();
-        t.start(ack(1), 0, at(0));
+        let (mut out, mut flight) = place(1);
+        let me = ack(1).to;
+        let mut t = HandOver::of(&mut out, &mut flight, me);
+        t.start(at(0));
         let mut now = at(0);
         let mut checks = 0;
         loop {
             t.begin_lbt(now);
             checks += 1;
             match t.checked(true, now, &mut rng, ms(50)) {
-                Check::Busy => now = t.wake_at().unwrap(),
+                Check::Busy => {
+                    assert_eq!(t.state(), State::Waiting(Wait::Backoff));
+                    now = t.flight.until;
+                }
                 Check::GaveUp => break,
                 Check::Clear => unreachable!(),
             }
         }
         assert!(now >= at(500) && now < at(550), "{now:?}");
-        assert!(checks > 10 && t.idle());
+        assert!(checks > 10 && !t.out.in_flight());
+        assert!(!t.out.transmitted(), "a busy channel is no attempt");
         // A retry starts a fresh 500 ms.
-        t.start(ack(1), 0, now);
+        t.start(now);
         t.begin_lbt(now);
         assert_eq!(
             t.checked(true, now + ms(499), &mut rng, ms(50)),
@@ -602,11 +675,14 @@ mod tests {
     #[test]
     fn a_budget_hold_starts_a_new_listen_before_talk_period() {
         let mut rng = Rng::new(5);
-        let mut t = Transfer::new();
-        t.start(ack(1), 0, at(0));
+        let (mut out, mut flight) = place(1);
+        let me = ack(1).to;
+        let mut t = HandOver::of(&mut out, &mut flight, me);
+        t.start(at(0));
         t.begin_lbt(at(0));
         assert_eq!(t.checked(true, at(0), &mut rng, ms(50)), Check::Busy);
         t.defer(at(60_000));
+        assert_eq!(t.state(), State::Waiting(Wait::Budget));
         t.begin_lbt(at(60_000));
         assert_eq!(
             t.checked(true, at(60_000), &mut rng, ms(50)),

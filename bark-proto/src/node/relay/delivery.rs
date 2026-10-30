@@ -294,7 +294,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         // A hand-over of it not yet on its way goes with it.
         let id = q.msg_id;
-        let active = !self.handover.idle();
+        let active = !self.handover_idle();
         self.queue.retain(|current, o| {
             (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
         });
@@ -320,7 +320,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
             .then_some(self.timers.delivery_retry_at);
         // A message of its own waits for a place (`release_held`).
-        let held = self.held.as_ref().and(self.delivery.stale_from());
+        let held = self
+            .queue
+            .iter()
+            .any(Outgoing::held)
+            .then(|| self.delivery.stale_from())
+            .flatten();
         earlier(retry, earlier(self.heard.next_expiry(), held))
     }
 }
