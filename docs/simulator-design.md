@@ -50,7 +50,7 @@ Interferers participate in steps 2 to 4 as transmitters that never carry packets
 
 ### 3.4 Listen-before-talk
 
-CAD: returns busy if any LoRa transmission on the channel at the node exceeds sensitivity, with a configurable miss probability (Semtech application note AN1200.48 gives detection rates; default 0). Duration per datasheet, about 1 ms at SF5 with 4 symbols. RSSI: returns the dB sum of everything on the channel at the node, including interferers and thermal noise; busy if above noise floor + 6 dB. Both make the node deaf for their duration.
+CAD: returns busy if any LoRa transmission on the channel at the node exceeds sensitivity, with a configurable miss probability (Semtech application note AN1200.48 gives detection rates; default 0). Duration per datasheet, about 2.2 ms at SF5 with 8 symbols; a listen-before-talk is one CAD with the RSSI read inside it (roadmap D88). RSSI: returns the dB sum of everything on the channel at the node, including interferers and thermal noise; busy if above noise floor + 6 dB. Both make the node deaf for their duration.
 
 ### 3.5 Busy estimate and sweep
 
