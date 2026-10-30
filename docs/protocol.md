@@ -475,7 +475,7 @@ whether it moves:
 | carried | after 72 s of far fixes with none near between |
 | fixed again | after four hours of fixes within the allowance of one place; it keeps the fix it has then |
 | map point | fixed at once; cleared, the next accepted fix is the place |
-| power | changes nothing: a carried node plugged in is a carried relay until it has stayed four hours, a fixed one keeps the fix it has then (roadmap D72) |
+| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has (roadmap D85) |
 
 Which fixes a node takes as its position, and what a carried node gives
 up, is in [nodes](#nodes). A node whose position changes heartbeats the
@@ -494,6 +494,19 @@ apart.
 sleepy nodes and strand it when it moved on. A node carried by mistake
 loses little, since its sleepy nodes have anchored elsewhere already
 (roadmap D70).
+
+*Why a node plugged in takes its first fix.* A sleepy node fixes only
+when the radio says it may have moved ([beats](#beats)), so its last fix
+may be hours and kilometres old. Measured from it, the fix at the place
+it was plugged in is a far fix, and the node would be carried for four
+hours there, holding no mail. Until it was plugged in nobody addressed
+it at its own position, only at its anchor's; from its first heartbeat
+as a relay its sleepy nodes and its own messages may, and their
+addresses change with its position ([node identity](#node-identity)). A
+relay's GPS runs on external power, so under the sky the first fix comes
+within a search's limit and few have the old place by then. A fix that
+comes later is of a node that does not see the sky, as likely a stray as
+a move, and is checked as any other.
 
 *Why no bound on the distance from the last fix.* Such a bound holds a
 node wherever one wrong rejection leaves it, since every true fix after
@@ -1806,8 +1819,9 @@ power at once (roadmap D71): nobody depends on it yet. A sleepy node
 plugged in is a relay at once:
 
 - it leaves its anchor;
-- its address becomes its own position, which it keeps from then on
-  unless it is carried ([position](#position));
+- its address becomes its own position: the place it has, or its first
+  fix within a search's limit if one comes ([position](#position)),
+  which it keeps from then on unless it is carried;
 - it heartbeats as a relay, the first time at once
   ([heartbeat](#heartbeat)). Its old anchor hears that heartbeat on the
   node's home channel until then, its own, and hands over what it holds
