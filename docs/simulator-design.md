@@ -54,7 +54,7 @@ CAD: returns busy if any LoRa transmission on the channel at the node exceeds se
 
 ### 3.5 Busy estimate and sweep
 
-The once-per-second 13-channel sweep (spec "Busy estimate") is modelled explicitly: 13 retunes, 13 RSSI samples, deaf for the total. The protocol core keeps `busy[c]` itself, so the move rule (spec "Channel moves") is the real code.
+The sweep (spec "Busy estimate"), one channel a second, is modelled explicitly: each reading of another channel is a retune, the dwell, the read and a retune back, and the node is deaf for all of it (`phy.rs`, the costs measured on the bench). The protocol core keeps `busy[c]` itself, so the move rule (spec "Channel moves") is the real code.
 
 ### 3.6 Airtime and duty cycle
 

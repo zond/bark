@@ -26,6 +26,13 @@ pub const CODING_RATE_DENOMINATOR: u8 = 5;
 pub const SYMBOL_TIME: Duration =
     Duration::from_micros((1u64 << SPREADING_FACTOR) * 1_000_000 / BANDWIDTH_HZ as u64);
 
+/// How long after the receiver starts on a channel its RSSI reading is
+/// right: four symbol periods. The reading climbs a step a symbol period
+/// and a strong signal reads as a fixed value until then
+/// (docs/bench-2026-10-30.md, "The night alone, and two boards the next
+/// morning"; spec "Busy estimate").
+pub const RSSI_SETTLE: Duration = SYMBOL_TIME.mul(4);
+
 /// Minimum preamble the SX126x accepts at SF5 and SF6 (datasheet §6.1.4:
 /// "for SF5 and SF6 the minimum preamble length is 12 symbols").
 pub const MIN_PREAMBLE_SYMBOLS: u16 = 12;

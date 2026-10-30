@@ -3047,7 +3047,7 @@ impl Sim {
         }
         let off = st.resting != Some(c);
         let phases = match kind {
-            ExKind::Cad => self.radio.cad_phases(off),
+            ExKind::Cad => self.radio.cad_phases(),
             ExKind::Rssi => self.radio.rssi_phases(off),
             ExKind::Transmit => {
                 let f = frame.as_ref().expect("transmit has a frame");

@@ -484,8 +484,8 @@ fn corridor_carries_crossing_flows() {
 /// The ring (`scenarios/ring.toml`): eight relays, each leaf sending to
 /// the leaf three relays on, every 2 s. The relays run at their duty cap
 /// with messages waiting for each other round the ring, and none is
-/// dropped for want of room (roadmap D31): seeds 1 to 40 deliver 0.966 to
-/// 0.986 of the settled phase (roadmap D75), where returning or dropping
+/// dropped for want of room (roadmap D31): seeds 1 to 40 deliver 0.958 to
+/// 0.982 of the settled phase (roadmap D86), where returning or dropping
 /// what found every neighbour busy delivered 0.49 to 0.66. The bound
 /// leaves room for the spread between seeds (`docs/ring-jam-2026-10-18.md`).
 ///
@@ -506,7 +506,7 @@ fn ring_carries_flows_that_wait_for_each_other() {
         let settled = &s.app.phases[1];
         assert_eq!(settled.phase, "settled");
         assert_eq!(settled.unreachable, 0, "the ring is connected");
-        assert!(settled.delivery_ratio >= 0.96, "seed {seed}: {}", s.table());
+        assert!(settled.delivery_ratio >= 0.95, "seed {seed}: {}", s.table());
         assert_eq!((s.app.duplicates, s.app.misdelivered), (0, 0));
         accounted(&sim, &format!("ring seed {seed}"));
     }

@@ -22,7 +22,7 @@
 use core::fmt::Debug;
 use core::future::pending;
 
-use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
 use bark_proto::wire::MAX_PAYLOAD;
@@ -36,10 +36,10 @@ use embassy_futures::select::{select3, Either3};
 /// check may be held for a reception in progress (core-interface §3 rule 8).
 pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
 
-/// Wait between retuning to another channel and reading its RSSI
-/// (spec "Busy estimate": read about 0.3 ms after the retune). The datasheet gives no
-/// settle time (SX1261/2 DS §13.5.4).
-pub const RSSI_DWELL: Duration = Duration::from_micros(300);
+/// Wait between retuning to another channel and reading its RSSI (spec
+/// "Busy estimate"). The datasheet gives no settle time (SX1261/2 DS
+/// §13.5.4); the bench found one.
+pub const RSSI_DWELL: Duration = RSSI_SETTLE;
 
 /// RSSI reported for a reading the radio failed to take: the top of its
 /// scale (GetRssiInst gives −raw/2 dBm, raw ≥ 0; DS §13.5.4), so the core

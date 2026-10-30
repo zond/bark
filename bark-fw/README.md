@@ -512,9 +512,9 @@ STDBY_RC, and on each start it waits out a programmed delay in full
 (DS §13.3.6). From STDBY_XOSC no start is needed: the chip reaches RX in
 62 µs and TX in 105 µs (DS Table 8-2). A retune is a SetStandby, a
 SetRfFrequency and the SetRx with its three set-up commands; the chip's
-part, about 62 µs plus the unlisted RX to STDBY_XOSC step, is close to the
-simulator's 86 µs (RX to FS, hop, FS to RX), and the SPI commands add to
-it. Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC
+part is about 62 µs plus the unlisted RX to STDBY_XOSC step, and the
+board measured 668 µs for the whole, the SPI commands the most of it
+(`docs/bench-2026-10-30.md`). Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC
 (DS Table 3-5), plus the TCXO's own current, nominally 1.5 mA (DS §4.1.4),
 which it also draws in RX (4.6 mA, DS Table 3-5). The radio listens
 whenever it is not transmitting or checking a channel, so it spends only
@@ -531,8 +531,9 @@ chip waits `2 × rx + sleep` for the header and no longer (DS §13.1.6,
 §13.1.7; `vendor/README.md`). In each sleep the chip keeps its
 configuration and its 64 kHz clock and powers the TCXO down: DIO3 supplies
 it only in STDBY_XOSC, FS, TX and RX (DS §13.3.6). Each wake costs about
-1 ms to restore its state and the 5 ms TCXO start (DS Figures 13-2 and
-13-3). The Rx gain register is lost in each sleep (DS §9.6); the firmware
+1 ms to restore its state and the 2 ms TCXO start (DS Figures 13-2 and
+13-3); the cycle was derived for a 6 ms wake, which only adds margin
+(`bark_proto::sniff::SNIFF_WAKE`). The Rx gain register is lost in each sleep (DS §9.6); the firmware
 uses the default power-saving gain, which is what the register returns to.
 After a frame the chip stops in standby, and the driver starts the cycle
 again once the core has the frame; any command to the chip is preceded by
@@ -555,7 +556,7 @@ against 6.1 mA listening, 30 to 44 times less. The core's own figure,
 `sniff::SNIFF_CURRENT_NA`, is 0.194 mA, from 5.8 mA for receive and wake.
 `scripts/measure.md` step 5 measures it.
 
-The programmed delay, 5 ms (`radio::TCXO_START`), is still paid where the
+The programmed delay, 2 ms (`radio::TCXO_START`), is still paid where the
 chip turns the TCXO off on its own: at power-up, after a calibration and
 after every CAD, which ends in STDBY_RC whatever the driver asks
 (DS Table 13-73). The driver returns to STDBY_XOSC at once, so the wait
@@ -607,17 +608,12 @@ on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 
 ## Risks
 
-- **Every CAD costs a TCXO start, assumed 5 ms.** No source names the
-  module's TCXO or its start-up time. Too short a delay raises
-  XOSC_START_ERR (the firmware does not read the chip's error flags yet)
-  and lets the chip run on a clock still settling. Too long a delay keeps
-  the radio deaf after each CAD, where the simulator counts 83 µs, and
-  widens the gap between a channel check and the transmission it clears.
-  `cad_us` minus the CAD's 2.2 ms shows the delay on the board; if the
-  TCXO's start-up can be measured or its part found, `TCXO_START` should
-  be cut to it with margin.
-- Retune, transmit and the return to listening are expected near the
-  simulator's figures, but only `ch`, `tx` and `rest_us` will show it.
+- **Every CAD costs a TCXO start, 2 ms.** No source names the module's
+  TCXO or its start-up time; 1 ms worked on two boards at room
+  temperature (`docs/bench-2026-10-30.md`, roadmap D87). Too short a delay
+  raises XOSC_START_ERR (the firmware does not read the chip's error flags
+  yet) and lets the chip run on a clock still settling; a cold board may
+  need more than the bench's.
 - The CAD parameters are fixed in the driver (8 symbols, detection peak
   SF + 13, minimum 10). Tuning them means patching it.
 - The sync word is 0x1424, the conventional private LoRa word, which other

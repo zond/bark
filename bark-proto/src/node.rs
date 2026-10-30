@@ -73,9 +73,9 @@ pub struct Config {
     /// that listens all the time (`sleepy_listens`), besides the retry on
     /// each of its beats (spec "Delivery queue": 60 s).
     pub delivery_retry: Duration,
-    /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/600).
+    /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/138).
     pub busy_ema_inverse: u16,
-    /// Interval between 13-channel RSSI sweeps (spec "Busy estimate": 1 s).
+    /// Interval between 13-channel RSSI sweeps (spec "Busy estimate": 13 s).
     pub sweep_interval: Duration,
     /// Busy threshold above noise floor in dB (spec "Busy estimate": 6).
     pub busy_threshold_db: u8,
@@ -262,6 +262,18 @@ const _: () = assert!(CARRY_AFTER.as_micros() == 72_000_000);
 /// Longest heartbeat interval (spec "Heartbeat": 15 s); the first rotation derives from it.
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
+/// One channel read a second, so each channel every 13 s: a reading of
+/// another channel deafens the node for 2.5 ms (spec "Busy estimate",
+/// roadmap D86).
+const SWEEP_INTERVAL: Duration = Duration::from_secs(CHANNELS as u64);
+
+/// The busy estimate's window (spec "Busy estimate": 30 minutes), as the
+/// samples a channel gets in it.
+const BUSY_EMA_INVERSE: u16 =
+    (Duration::from_secs(30 * 60).as_micros() / SWEEP_INTERVAL.as_micros()) as u16;
+
+const _: () = assert!(BUSY_EMA_INVERSE == 138);
+
 impl Config {
     /// The design's values, as a constant.
     pub const DEFAULT: Config = Config {
@@ -281,8 +293,8 @@ impl Config {
         fade_retry: Duration::from_secs(60),
         delivery_ttl: Duration::from_secs(600),
         delivery_retry: Duration::from_secs(60),
-        busy_ema_inverse: 600,
-        sweep_interval: Duration::from_secs(1),
+        busy_ema_inverse: BUSY_EMA_INVERSE,
+        sweep_interval: SWEEP_INTERVAL,
         busy_threshold_db: 6,
         move_threshold_percent: 5,
         move_dwell: Duration::from_secs(600),

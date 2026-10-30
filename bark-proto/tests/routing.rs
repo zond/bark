@@ -1657,6 +1657,9 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                 boot_listen: secs(5),
                 move_dwell: dwell,
                 move_wait_max: Duration::ZERO,
+                // A round of the channels a second, so that the move comes
+                // within a second of the dwell.
+                sweep_interval: secs(1),
                 stored: Some(Stored {
                     home: old,
                     place: pos(0.0, 0.0),
