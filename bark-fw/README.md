@@ -7,7 +7,8 @@ Current state (2026-10-25). It starts behind a loader of its own, which
 can swap in a staged image and swap it back (Updates, below). The firmware blinks the green LED at 1 Hz
 while on USB, logs over USB CDC-ACM (a banner with the firmware version
 and constants from `bark-proto`, the previous boot's panic message if
-there was one, an uptime line every 10 s while on USB), powers up the
+there was one, an uptime line every 10 s while on USB), shows the
+board's node ID on the e-paper (Display, below), powers up the
 SX1262 at bark's modulation (SF5, 125 kHz, CR 4/5, CRC on, private sync
 word, the receiver set for the 1396-symbol long preamble) and then does
 one of two things, chosen when it is built:
@@ -46,7 +47,7 @@ left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times. There is no application yet: the node sends no
-messages of its own. It does not touch GPS, e-paper or BLE (the GPS does
+messages of its own. It does not touch GPS or BLE (the GPS does
 get power, see Radio power below).
 
 ## Verified and unverified
@@ -153,6 +154,11 @@ Unverified, in the order they will fail if wrong:
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
 - Every console command. The timings it prints are its purpose; none has
   been seen.
+- The display (Display, below): the controller answers on SPIM3 at
+  4 MHz, BUSY falls after the reset, the software reset and the refresh,
+  the picture comes out black on white the right way up (`ROTATION` in
+  `src/display.rs` turns it if not), and the controller's deep sleep
+  keeps it on the glass.
 
 ## Toolchain
 
@@ -350,6 +356,31 @@ at most a copy). Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x2a000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
+## Display
+
+At boot every image writes one picture to the 1.54" e-paper
+(200 × 200, SSD1681 controller, `src/display.rs`): the board's node ID
+as twelve hex digits in two rows of six, 25 × 35 pixels each, the
+largest six fit across the panel, below them the image's name, `NODE` or
+`CONSOLE`, and its version as `V` and `BARK_IMAGE_VERSION`. The text
+comes from a 5 × 7 bitmap font of the hex digits and the few letters
+those words need, scaled by whole pixels. A board can then be told from
+another unplugged, and the hex matches the `id=` of its log and its USB
+serial number.
+
+The panel has its own SPI (SPIM3, 4 MHz) and its refresh runs as its
+own future beside the radio's start, so it delays nothing: the picture
+is rendered in microseconds, the 5000-byte RAM write is DMA, and every
+wait on the controller's BUSY line is on an interrupt and bounded at
+6 s, three times the 2 s full refresh the board's label gives. A
+controller that does not answer logs `display: busy past 6 s at <step>;
+no picture` and the boot goes on without it. The sequence is the
+controller's: reset, software reset, the driver output, data entry,
+RAM window, border and temperature settings, the picture into both RAM
+planes, one full refresh, then deep sleep mode 1, which holds the
+picture on the glass and draws nothing until a hardware reset. The
+front light (P1.11) stays off.
+
 ## Radio power
 
 At boot the firmware holds NRESET low, drives P0.13 (`PWR_EN`) and P0.12
@@ -526,8 +557,8 @@ What stays, and is not this firmware's to fix without a board:
 - The battery divider, about 12 µA all the time (`board.rs`, Battery).
 - The nRF52840's regulator runs as an LDO (embassy's default); the DC-DC
   needs an inductor the T-Echo may or may not have.
-- The e-paper and the external flash are not touched; their idle current
-  is unknown.
+- The e-paper's controller is in deep sleep after the boot picture and
+  the external flash is not touched; their idle current is unknown.
 
 The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a

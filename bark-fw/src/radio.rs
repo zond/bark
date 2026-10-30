@@ -111,7 +111,7 @@ const RESET_PULSE_US: u32 = 200;
 /// is far beyond a load switch's typical sub-millisecond ramp and costs
 /// nothing once per boot. NRESET is held low throughout, and the chip's own
 /// start-up is then gated on BUSY, so only the ramp itself is assumed.
-const RAIL_SETTLE: Duration = Duration::from_millis(10);
+pub const RAIL_SETTLE: Duration = Duration::from_millis(10);
 
 /// nRF52840 CPU clock, Hz (nRF52840 Product Specification, CLOCK).
 const CPU_HZ: u64 = 64_000_000;

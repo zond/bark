@@ -1,11 +1,12 @@
 //! bark firmware for the LILYGO T-Echo.
 //!
 //! Blinks the green LED at 1 Hz while on USB, logs over USB CDC-ACM,
-//! powers up the SX1262 at bark's modulation and runs the protocol core on
-//! it (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
+//! shows the node ID and the image on the e-paper (`display.rs`), powers
+//! up the SX1262 at bark's modulation and runs the protocol core on it
+//! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
 //! (`console.rs`) on the serial port. Reads the battery (`battery.rs`);
-//! touches no GPS, display or BLE.
+//! touches no GPS or BLE.
 
 #![no_std]
 #![no_main]
@@ -15,6 +16,7 @@ mod board;
 mod clock;
 #[cfg(feature = "console")]
 mod console;
+mod display;
 #[cfg(not(feature = "console"))]
 mod node;
 mod power;
@@ -24,10 +26,11 @@ mod store;
 mod update;
 
 use core::cell::Cell;
+use core::fmt::Write as _;
 
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
-use embassy_futures::join::join5;
+use embassy_futures::join::{join, join5};
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
@@ -41,6 +44,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
 });
 
@@ -90,6 +94,29 @@ pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
         hex[2 * i + 1] = digit(byte & 0x0F);
     }
     hex
+}
+
+/// The boot picture: the ID in two rows of six digits, large, then the
+/// image and its version.
+fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
+    // Six 5-pixel glyphs with a column between, at 5 pixels each, span
+    // 175 of the 200 columns: the largest the ID's halves fit.
+    const ID_SCALE: usize = 5;
+    const TEXT_SCALE: usize = 3;
+    const TOP: usize = 30;
+    let mut picture = display::Picture::white();
+    let mut y = TOP;
+    for half in hex.chunks(NodeId::LEN) {
+        picture.text(half, ID_SCALE, y);
+        y += display::line_height(ID_SCALE);
+    }
+    y += display::line_height(TEXT_SCALE) / 2;
+    picture.text(IMAGE.as_bytes(), TEXT_SCALE, y);
+    y += display::line_height(TEXT_SCALE);
+    let mut line = display::Line::<32>::new();
+    let _ = write!(line, "V{}", update::BARK_IMAGE_VERSION);
+    picture.text(line.bytes(), TEXT_SCALE, y);
+    picture
 }
 
 /// Heartbeat airtime as the core computes it (the heartbeat frame, minimum SF5
@@ -253,12 +280,19 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join5(
-        device.run(),
-        log_sink,
-        blink,
-        radio_task,
-        update::watchdog(p.WDT),
+    let picture = boot_picture(hex);
+    // After the radio's future, which raises the switched rail first thing.
+    let shown = display::show(board.eink, p.SPI3, Irqs, &picture);
+
+    join(
+        join5(
+            device.run(),
+            log_sink,
+            blink,
+            radio_task,
+            update::watchdog(p.WDT),
+        ),
+        shown,
     )
     .await;
 }
