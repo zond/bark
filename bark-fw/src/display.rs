@@ -33,10 +33,10 @@ pub const HEIGHT: usize = 200;
 const ROW_BYTES: usize = WIDTH / 8;
 
 /// Quarter turns clockwise from the controller's own orientation to the
-/// board's. The controller's row 0 is at whichever edge the flex cable
-/// enters; which edge that is on the T-Echo is unverified, so a picture
-/// that comes out on its side is fixed here, not in the drawing.
-const ROTATION: u8 = 0;
+/// board's. The controller's row 0 is at the edge the flex cable enters,
+/// which on the T-Echo is the board's right: drawn unturned, the picture
+/// came out a quarter turn clockwise (bench, 2026-10-30).
+const ROTATION: u8 = 1;
 
 /// A full refresh as the board's label gives it, 2 s (`board::Eink`).
 const REFRESH: Duration = Duration::from_secs(2);
@@ -154,7 +154,9 @@ pub const fn line_height(scale: usize) -> usize {
 
 /// The glyph of `c`: seven rows, the leftmost pixel in bit 4.
 fn glyph(c: u8) -> [u8; GLYPH_HEIGHT] {
-    match c {
+    // The font is capitals only; the ID's hex and the image's name are
+    // lowercase in the log and on the bus.
+    match c.to_ascii_uppercase() {
         b'0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
         b'1' => [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
         b'2' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
