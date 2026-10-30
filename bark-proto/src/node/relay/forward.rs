@@ -578,7 +578,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             refused: refusal.is_some(),
             wait,
         };
-        if !self.replies.can_owe(reply, d.sender_home, now) {
+        let sending = self.sending_reply();
+        if !self.replies.can_owe(reply, d.sender_home, sending, now) {
             // The packet could not be answered; its sender's retry
             // brings it again (spec "The ACK", roadmap D29).
             return;
@@ -586,7 +587,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
-                self.replies.owe(reply, d.sender_home, deadline, now);
+                self.replies
+                    .owe(reply, d.sender_home, deadline, sending, now);
                 self.renew = false;
             }
             return;
@@ -598,7 +600,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
             return;
         }
-        self.replies.owe(reply, d.sender_home, deadline, now);
+        self.replies
+            .owe(reply, d.sender_home, deadline, sending, now);
         // A sleepy node listens on once it has answered, for the next
         // (spec "Delivery").
         self.renew = d.dst_id == self.me();
@@ -1217,8 +1220,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return false;
         }
         self.handover.begin_lbt(now);
-        self.radio
-            .start(Job::HandOver, Action::Lbt(out.frame.channel), emit);
+        self.radio.check(Job::HandOver, out.frame.channel, emit);
         true
     }
 
@@ -1241,7 +1243,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         // The hand-over may have ended meanwhile (spec "Receiving DATA" case 5).
-        if self.handover.step() != Step::Lbt {
+        if self.handover.step() != Step::Radio {
             return;
         }
         let Some(out) = self.queue.current().copied() else {
@@ -1310,9 +1312,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             current.frame = frame;
         }
         self.budget.record(airtime, now);
-        self.handover.transmitting();
-        self.radio
-            .start(Job::HandOver, Action::Transmit(frame), emit);
+        self.radio.transmit(Job::HandOver, frame, emit);
     }
 
     /// The count the current hand-over of `d` carries (spec "Hop count"): stamped at
@@ -1598,13 +1598,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.renew = false;
             return true;
         }
-        match self.replies.begin() {
-            Some(lbt) => {
-                self.radio.start(Job::Reply, lbt, emit);
-                true
-            }
-            None => false,
-        }
+        self.radio.check(Job::Reply, o.channel, emit);
+        true
+    }
+
+    /// Whether the owed reply is on the radio.
+    fn sending_reply(&self) -> bool {
+        self.radio.step_of(Job::Reply).is_some()
     }
 
     pub(super) fn reply_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
@@ -1614,7 +1614,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let airtime = mac::airtime(&frame);
             if self.can_reply(airtime, now) {
                 self.budget.record(airtime, now);
-                self.radio.start(Job::Reply, Action::Transmit(frame), emit);
+                self.radio.transmit(Job::Reply, frame, emit);
             } else {
                 self.replies.abandon();
                 self.renew = false;
@@ -1675,7 +1675,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The send queue's entry whose frame is on air or waiting for its ACK.
     fn under_way(&self) -> Option<usize> {
-        let on_air = matches!(self.handover.step(), Step::Tx | Step::AwaitAck(_));
+        let on_air = self.handover.awaiting_ack()
+            || self.radio.step_of(Job::HandOver) == Some(mac::Step::Tx);
         self.queue.current_index().filter(|_| on_air)
     }
 

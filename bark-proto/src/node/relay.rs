@@ -11,16 +11,17 @@
 //!
 //! # Radio discipline
 //!
-//! Each use of the radio is a job with its own small state machine: the
-//! reply (an ACK, taking or refusing) this node owes, the heartbeat, the
-//! hand-over of one entry of the send queue, and the sweep. The node keeps
-//! at most one excursion outstanding (`docs/core-interface.md` §3 rule 1).
-//! When the radio is free it starts the first job that is ready, in that
-//! order: an owed reply is worth nothing once its sender stops waiting,
-//! 100 ms after the frame (spec "The ACK"). A job that has begun a sequence
-//! of excursions (CAD, RSSI, transmit) continues it from each completion
-//! event, so sequences never interleave; the hand-over alone lets an owed
-//! reply in before it transmits, since its frame can take 139 ms on air.
+//! Each use of the radio is a job: the reply (an ACK, taking or refusing)
+//! this node owes, the heartbeat, the hand-over of one entry of the send
+//! queue, and the sweep. Each is one excursion of the one shape
+//! (`mac::Excursion`): a check of a channel and, if it is clear, a
+//! transmission, or one reading; the job continues from the completion
+//! event. The node keeps at most one excursion outstanding
+//! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
+//! the first job that is ready, in that order: an owed reply is worth
+//! nothing once its sender stops waiting, 100 ms after the frame (spec
+//! "The ACK"). The hand-over alone lets an owed reply in before it
+//! transmits, since its frame can take 139 ms on air.
 //! While a hand-over waits for its ACK, only an owed reply uses the radio:
 //! the heartbeat and the sweep would take the node off its home channel,
 //! where the ACK arrives (spec "Hand-over"). Jobs that are not ready say when
@@ -95,7 +96,7 @@ use power::Charge;
 use crate::event::{Action, AppCommand, AppEvent, Event, Frame, Trace};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
-use crate::node::mac::{self, Radio};
+use crate::node::mac::{self, Excursion};
 use crate::node::transfer::{Replies, Step, Transfer};
 use crate::node::{burst_gap, heartbeat_interval, heartbeat_lag, Config, Core, Rng};
 use crate::position::Position;
@@ -335,14 +336,6 @@ impl Timers {
     }
 }
 
-/// Listen-before-talk progress of one heartbeat.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Check {
-    Idle,
-    Lbt,
-    Tx,
-}
-
 /// The busy sweep (spec "Busy estimate"): one RSSI reading at a time, channels in
 /// turn, spread over the sweep interval.
 struct Sweep {
@@ -376,7 +369,6 @@ struct Beacon {
     /// The heartbeat in progress: its channel, and which it is.
     current: Option<(Channel, Beat)>,
     busy_checks: u8,
-    check: Check,
     /// A sleepy node's beats still to come at the heartbeat interval after
     /// a change of anchor.
     quick: u8,
@@ -478,7 +470,7 @@ pub struct Node<const H: usize, const Q: usize> {
     /// A sleepy node's searches for a fix (`relay/gps.rs`).
     gps: gps::Gps,
     replies: Replies,
-    radio: Radio<Job>,
+    radio: Excursion<Job>,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
@@ -550,7 +542,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             low: false,
             charge: Charge::Battery,
             battery_scale: None,
-            radio: Radio::new(),
+            radio: Excursion::new(),
             busy: BusyEstimator::from_config(&config),
             budget: Budget::new(),
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
@@ -566,7 +558,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 announce: None,
                 current: None,
                 busy_checks: 0,
-                check: Check::Idle,
                 quick: 0,
                 reach_all: None,
                 reach_left: 0,
@@ -667,7 +658,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *low = false;
         *charge = Charge::Battery;
         *battery_scale = config.stored.and_then(|s| s.battery_scale);
-        *radio = Radio::new();
+        *radio = Excursion::new();
         *busy = BusyEstimator::from_config(&config);
         *budget = Budget::new();
         *neighbours = Neighbours::new(NeighbourParams::from_config(&config));
@@ -683,7 +674,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             announce: None,
             current: None,
             busy_checks: 0,
-            check: Check::Idle,
             quick: 0,
             reach_all: None,
             reach_left: 0,
@@ -793,7 +783,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.idle()
             && self.handover.idle()
             && !self.replies.pending()
-            && self.beacon.check == Check::Idle
             && self.beacon.current.is_none()
     }
 
@@ -1555,7 +1544,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.radio.idle() || self.handover.awaiting_ack() {
             return None;
         }
-        let heartbeat = (self.heartbeats() && self.beacon.check == Check::Idle).then(|| {
+        let heartbeat = self.heartbeats().then(|| {
             let pending = self.beacon.announce.is_some()
                 || self.beacon.current.is_some()
                 || self.beacon.change.is_some();
@@ -1613,8 +1602,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     fn start_sweep(&mut self, emit: &mut dyn FnMut(Action)) -> bool {
         self.sweep.next_at += self.sweep_step();
-        self.radio
-            .start(Job::Sweep, Action::Rssi(self.sweep.channel), emit);
+        self.radio.read(Job::Sweep, self.sweep.channel, emit);
         true
     }
 
@@ -1700,9 +1688,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// Asked only while the radio is free.
     fn beacon_due(&self, now: Instant) -> bool {
         self.heartbeats()
-            && self.beacon.check == Check::Idle
             && now >= self.beacon.ready_at
             && (self.beacon.current.is_some()
                 || self.beacon.announce.is_some()
@@ -1843,9 +1831,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Trace(Trace::HeartbeatDeferred { until }));
             return false;
         }
-        self.beacon.check = Check::Lbt;
-        self.radio
-            .start(Job::Heartbeat, Action::Lbt(f.channel), emit);
+        self.radio.check(Job::Heartbeat, f.channel, emit);
         true
     }
 
@@ -1868,7 +1854,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn heartbeat_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let f = self.heartbeat_frame();
         if busy {
-            self.beacon.check = Check::Idle;
             self.beacon.busy_checks += 1;
             if self.beacon.busy_checks >= self.config.lbt_attempts {
                 emit(Action::Trace(Trace::HeartbeatSkipped {
@@ -1883,7 +1868,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        self.beacon.check = Check::Tx;
         match self.beacon.current {
             Some((_, Beat::Change)) => emit(Action::Trace(Trace::Changed)),
             Some((_, Beat::Answer(_))) => emit(Action::Trace(Trace::Answer)),
@@ -1891,7 +1875,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => {}
         }
         self.budget.record(mac::airtime(&f), now);
-        self.radio.start(Job::Heartbeat, Action::Transmit(f), emit);
+        self.radio.transmit(Job::Heartbeat, f, emit);
     }
 
     /// The heartbeat went out, or was skipped (spec "Heartbeat"). On a fixed
@@ -1899,7 +1883,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that the next comes where and when its neighbours expect it; a
     /// sleeping node's beat, always on its home, has no rotation to keep.
     fn heartbeat_done(&mut self, now: Instant, sent: bool) {
-        self.beacon.check = Check::Idle;
         self.beacon.busy_checks = 0;
         match self.beacon.current.take() {
             Some((channel, Beat::Announce)) => {
@@ -2236,7 +2219,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::TxDone => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
                 // Unless the hand-over was given up meanwhile (a displaced record).
-                Some(Job::HandOver) if self.handover.step() == Step::Tx => {
+                Some(Job::HandOver) if self.handover.step() == Step::Radio => {
                     self.handover.sent(now, self.config.ack_timeout)
                 }
                 Some(Job::Reply) => {
