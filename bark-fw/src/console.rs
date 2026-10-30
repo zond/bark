@@ -373,6 +373,15 @@ impl fmt::Display for Hex<'_> {
     }
 }
 
+/// This board's node ID in hex.
+struct Id;
+
+impl fmt::Display for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(core::str::from_utf8(&crate::node_id_hex()).expect("hex digits are ASCII"))
+    }
+}
+
 /// A value in quarter units (dB or dBm) as a decimal.
 struct Quarter(i16);
 
@@ -476,7 +485,8 @@ impl<'a> Console<'a> {
     pub async fn run(&mut self, lines: &mut Lines) -> ! {
         self.recover().await;
         log::info!(
-            "console ready: ch={} power_dbm={}; `help` lists commands",
+            "console ready: id={} ch={} power_dbm={}; `help` lists commands",
+            Id,
             self.home.index(),
             self.power
         );
@@ -960,9 +970,10 @@ impl<'a> Console<'a> {
         let battery_mv = self.battery.read().await;
         let c = &self.counters;
         log::info!(
-            "status uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \
+            "status id={} uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \
 rx_header_error={} rx_no_frame={} tx={} tx_airtime_us={} cad={} cad_busy={} pongs_sent={} pongs_received={} \
 radio_errors={}",
+            Id,
             Instant::now().as_secs(),
             battery_mv,
             self.home.index(),

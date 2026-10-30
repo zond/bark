@@ -25,6 +25,7 @@ mod update;
 
 use core::cell::Cell;
 
+use bark_proto::NodeId;
 use embassy_executor::Spawner;
 use embassy_futures::join::join5;
 use embassy_nrf::config::{Config, HfclkSource};
@@ -36,14 +37,6 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 
-#[cfg(feature = "console")]
-bind_interrupts!(struct Irqs {
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
-    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    SAADC => embassy_nrf::saadc::InterruptHandler;
-});
-#[cfg(not(feature = "console"))]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
@@ -69,6 +62,35 @@ const USB_PACKET: u16 = 64;
 /// Log ring size in bytes. Lines logged before the host opens the port wait
 /// here; once it is full, new lines are dropped, so the banner survives.
 const LOG_BUFFER: usize = 2048;
+
+/// Which image this is, for the display and the log.
+const IMAGE: &str = match cfg!(feature = "console") {
+    false => "node",
+    true => "console",
+};
+
+/// The node's ID: the low 48 bits of the 64-bit factory device ID, all 32
+/// of DEVICEID[0] and the low 16 of DEVICEID[1] (nRF52840 Product
+/// Specification, FICR DEVICEID; spec "Node identity"). The same at every
+/// boot.
+pub fn node_id() -> NodeId {
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.deviceid(0).read() as u64;
+    let high = ficr.deviceid(1).read() as u64;
+    NodeId::from_u64(high << 32 | low)
+}
+
+/// The ID as twelve lowercase hex digits, the form every log line and the
+/// USB serial number use.
+pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
+    let digit = |n: u8| b"0123456789abcdef"[usize::from(n)];
+    let mut hex = [0u8; 2 * NodeId::LEN];
+    for (i, byte) in node_id().0.into_iter().enumerate() {
+        hex[2 * i] = digit(byte >> 4);
+        hex[2 * i + 1] = digit(byte & 0x0F);
+    }
+    hex
+}
 
 /// Heartbeat airtime as the core computes it (the heartbeat frame, minimum SF5
 /// preamble). A compile-time call into `bark-proto` for the target.
@@ -99,12 +121,19 @@ async fn main(_spawner: Spawner) {
     let p = embassy_nrf::init(config);
     let board = board::take_board!(p);
 
+    // The ID as the USB serial number, so that the host names each board's
+    // port by it (`/dev/serial/by-id/`). The descriptor is read for as
+    // long as the device runs.
+    static SERIAL: static_cell::StaticCell<[u8; 2 * NodeId::LEN]> = static_cell::StaticCell::new();
+    let hex: &'static [u8; 2 * NodeId::LEN] = SERIAL.init(node_id_hex());
+    let serial = core::str::from_utf8(hex).expect("hex digits are ASCII");
+
     // USB device with one CDC-ACM interface carrying the log.
     let driver = usb::Driver::new(board.usbd, Irqs, HardwareVbusDetect::new(Irqs));
     let mut usb_config = embassy_usb::Config::new(USB_VID, USB_PID);
     usb_config.manufacturer = Some("bark");
     usb_config.product = Some("bark T-Echo");
-    usb_config.serial_number = None;
+    usb_config.serial_number = Some(serial);
     // Current we ask the host for, mA: one unit load, granted by every port
     // without negotiation (USB 2.0 §7.2.1).
     usb_config.max_power = 100;
@@ -154,9 +183,11 @@ async fn main(_spawner: Spawner) {
     );
 
     log::info!(
-        "bark-fw {} on LILYGO T-Echo, image version {}",
+        "bark-fw {} on LILYGO T-Echo, {} image version {}, id={}",
         env!("CARGO_PKG_VERSION"),
-        update::BARK_IMAGE_VERSION
+        IMAGE,
+        update::BARK_IMAGE_VERSION,
+        serial
     );
     log::info!(
         "bark-proto: {} channels from {} Hz, spacing {} Hz, SF{}, symbol {} us, heartbeat {} us",

@@ -242,9 +242,10 @@ address ranges.
    the application. (Some file managers report an error on that disconnect;
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
-   appears on the host, and once it is opened the log shows
+   appears on the host, and once it is opened the log shows a banner
+   with the image, its version and the board's node ID (`id=`), then
    `radio up in N us`, then `node id=... at ... usb=true`, or
-   `console ready` from a console build.
+   `console ready: id=...` from a console build.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
@@ -393,7 +394,7 @@ retune times.
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
-| `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `status [reset]` | node ID, uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
@@ -559,8 +560,10 @@ on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 ## Log
 
 The firmware enumerates as USB VID:PID `1209:0001`, a pid.codes test ID that
-must not be used on distributed devices. On Linux it appears as
-`/dev/ttyACM0` (or the next free number; `dmesg | tail` says which).
+must not be used on distributed devices, with the board's node ID, twelve
+hex digits, as its serial number. On Linux it appears as `/dev/ttyACM0`
+(or the next free number; `dmesg | tail` says which) and, by board, as
+`/dev/serial/by-id/usb-bark_bark_T-Echo_<id>-if00`.
 
 CDC-ACM is a USB bulk pipe: the baud rate, parity and stop bits a terminal
 sets are ignored, so any value works. What matters is that the terminal
