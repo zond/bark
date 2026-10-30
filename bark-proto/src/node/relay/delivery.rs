@@ -214,7 +214,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Ok(());
         }
         // At a first far fix, or once its grace on battery is over.
-        let far = self.far() || self.leaving;
+        let far = self.far() || self.leaving();
         let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == Some(q.msg_id));
         let Some(q) = self
             .delivery

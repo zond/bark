@@ -171,6 +171,63 @@ pub struct Anchor {
     pub position: Position,
 }
 
+/// What the node is by its power (spec "Nodes", `relay/power.rs`), and
+/// what each needs. The heartbeat's flags are read off it
+/// (`heartbeat_frame`).
+#[derive(Clone, Copy, Debug)]
+enum Mode {
+    /// Not sleepy: it holds mail and heartbeats on its slots.
+    Relay(Power),
+    /// Sleepy: it holds mail for nobody, beats to its anchor and
+    /// receives duty-cycled between its windows (module documentation).
+    Sleepy(Sleep),
+}
+
+/// A relay's power (`relay/power.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Power {
+    External,
+    /// On battery since then: in its grace, or relaying on while it is
+    /// fixed with battery levels.
+    Battery(Instant),
+    /// Its grace over or its battery low, since then: it flushes its
+    /// delivery queue, and then turns sleepy.
+    Leaving(Instant),
+}
+
+/// What a sleepy node keeps.
+#[derive(Clone, Copy, Debug)]
+struct Sleep {
+    /// Its anchor, kept while it hears no better one.
+    anchor: Option<Anchor>,
+    /// It turned sleepy by its battery, so relays again when that is high.
+    by_battery: bool,
+    /// The rotations since it last heard its anchor's heartbeat where it
+    /// expected it.
+    misses: u8,
+    /// Its last check heard nothing at all: it is out of reach, and checks
+    /// again only once it hears something.
+    dark: bool,
+    /// Where it was when it chose or last confirmed its anchor, and how
+    /// far the anchor was then, metres.
+    chosen_from: Position,
+    reach_m: f32,
+}
+
+impl Sleep {
+    /// Sleepy from `at`, with no anchor yet.
+    const fn new(at: Position, by_battery: bool) -> Sleep {
+        Sleep {
+            anchor: None,
+            by_battery,
+            misses: 0,
+            dark: false,
+            chosen_from: at,
+            reach_m: 0.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
     /// Not started: the driver's first `Wakeup` starts it.
@@ -400,19 +457,10 @@ pub type SleepyNode = Node<0, 0>;
 #[repr(C)]
 pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
-    /// Since when a relay has been on battery, while its grace lasts;
-    /// once it is leaving, since when it has been leaving.
-    unplugged: Option<Instant>,
-    /// Sleepy: on battery (`relay/power.rs`). The four flags and the
-    /// scale fill one word.
-    sleepy: bool,
-    /// Its grace is over: it flushes, and then turns sleepy.
-    leaving: bool,
+    mode: Mode,
     /// Its battery read at or below the low level since it last read at
     /// or above the high one, or since its external power (`relay/power.rs`).
     low: bool,
-    /// It turned sleepy by its battery, so relays again when that is high.
-    battery_sleepy: bool,
     /// The scale of the driver's battery readings
     /// ([`crate::node::BATTERY_SCALE_ONE`] is one); `None` before the
     /// first calibration.
@@ -425,8 +473,6 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The hand-over of `queue`'s current entry.
     handover: Transfer,
     sweep: Sweep,
-    /// A sleepy node's anchor, kept while it hears no better one.
-    anchor: Option<Anchor>,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
     /// A sleepy node's searches for a fix (`relay/gps.rs`).
@@ -436,12 +482,6 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
-    /// The rotations since a node that sleeps last heard its anchor's
-    /// heartbeat where it expected it.
-    misses: u8,
-    /// Its last check heard nothing at all: it is out of reach, and checks
-    /// again only once it hears something.
-    dark: bool,
     /// The owed reply takes a DATA for this node: once it is sent, the
     /// node listens one hand-over for the next.
     renew: bool,
@@ -463,10 +503,6 @@ pub struct Node<const H: usize, const Q: usize> {
     home: Channel,
     plane: LocalPlane,
     rng: Rng,
-    /// Where the node was when it chose or last confirmed its anchor, and
-    /// how far the anchor was then, metres.
-    chosen_from: Position,
-    reach_m: f32,
     beacon: Beacon,
     budget: Budget,
     busy: BusyEstimator,
@@ -483,6 +519,16 @@ pub struct Node<const H: usize, const Q: usize> {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
+    /// A relay until its power says otherwise, unless it has no room for
+    /// a relay's mail (`relay/power.rs`): then sleepy at `at`.
+    const fn mode_at_boot(at: Position) -> Mode {
+        if Self::can_relay() {
+            Mode::Relay(Power::External)
+        } else {
+            Mode::Sleepy(Sleep::new(at, false))
+        }
+    }
+
     /// A relay with empty tables and the default configuration, not set
     /// up: built at compile time, so that a driver can keep a relay in a
     /// static and set it up in place with [`Relay::reset`]. A relay is
@@ -500,11 +546,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             plane: LocalPlane::ORIGIN,
             home: channel,
             stage: Stage::Off,
-            sleepy: !Self::can_relay(),
-            unplugged: None,
-            leaving: false,
+            mode: Self::mode_at_boot(config.position),
             low: false,
-            battery_sleepy: false,
             charge: Charge::Battery,
             battery_scale: None,
             radio: Radio::new(),
@@ -536,7 +579,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             skipped: 0,
             replies: Replies::new(),
             heard: Heard::from_config(&config),
-            anchor: None,
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
@@ -546,10 +588,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             held: None,
             feed_due: false,
             renew: false,
-            misses: 0,
-            dark: false,
-            chosen_from: Position { lat: 0, lon: 0 },
-            reach_m: 0.0,
             config,
             timers: Timers::UNSET,
             rng: Rng::new(0),
@@ -594,11 +632,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             rng: r,
             home: h,
             stage,
-            sleepy,
-            unplugged,
-            leaving,
+            mode,
             low,
-            battery_sleepy,
             charge,
             battery_scale,
             radio,
@@ -613,7 +648,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             skipped,
             replies,
             heard,
-            anchor,
             motion,
             gps,
             delivery,
@@ -623,23 +657,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             held,
             feed_due,
             renew,
-            misses,
-            dark,
-            chosen_from,
-            reach_m,
         } = self;
         *stored = config.stored;
         *id = node_id;
         *plane = LocalPlane::new(config.position);
         *h = home;
         *stage = Stage::Off;
-        // A relay until its power says otherwise, unless it has no room
-        // for a relay's mail (`relay/power.rs`).
-        *sleepy = !Self::can_relay();
-        *unplugged = None;
-        *leaving = false;
+        *mode = Self::mode_at_boot(config.position);
         *low = false;
-        *battery_sleepy = false;
         *charge = Charge::Battery;
         *battery_scale = config.stored.and_then(|s| s.battery_scale);
         *radio = Radio::new();
@@ -671,7 +696,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *skipped = 0;
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
-        *anchor = None;
         *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
@@ -681,10 +705,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *held = None;
         *feed_due = false;
         *renew = false;
-        *misses = 0;
-        *dark = false;
-        *chosen_from = config.position;
-        *reach_m = 0.0;
         *timers = Timers::UNSET;
         *c = config;
         *r = rng;
@@ -714,21 +734,33 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The position in this node's address (spec "Addresses"): its own, or
     /// for a sleepy node its anchor's while it has one.
     pub fn address(&self) -> Position {
-        match (self.sleepy, self.anchor) {
-            (true, Some(a)) => a.position,
-            _ => self.config.position,
-        }
+        self.anchor().map_or(self.config.position, |a| a.position)
     }
 
     /// A sleepy node's anchor, if it has chosen one.
     pub fn anchor(&self) -> Option<Anchor> {
-        self.anchor
+        self.sleep()?.anchor
+    }
+
+    /// What the node keeps as a sleepy node, if it is one.
+    fn sleep(&self) -> Option<&Sleep> {
+        match &self.mode {
+            Mode::Sleepy(s) => Some(s),
+            Mode::Relay(_) => None,
+        }
+    }
+
+    fn sleep_mut(&mut self) -> Option<&mut Sleep> {
+        match &mut self.mode {
+            Mode::Sleepy(s) => Some(s),
+            Mode::Relay(_) => None,
+        }
     }
 
     /// Whether this is a sleepy node with an anchor: it beats on its
     /// anchor's channel and listens in the windows after its beats.
     fn anchored_sleepy(&self) -> bool {
-        self.sleepy && self.anchor.is_some()
+        self.anchor().is_some()
     }
 
     /// How often a sleepy node without an anchor beats, at most (spec
@@ -741,7 +773,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// listen: it beats with the anchorless bit and the long preamble, and
     /// has no window (spec "Sleepy nodes alone").
     pub fn anchorless(&self) -> bool {
-        self.sleepy && self.anchor.is_none() && self.stage == Stage::Running
+        self.sleep().is_some_and(|s| s.anchor.is_none()) && self.stage == Stage::Running
     }
 
     /// The preamble the frames this node forwards are counted with before
@@ -770,7 +802,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// without is sent to with the long preamble whenever.
     fn may_sniff(&self, now: Instant) -> bool {
         let window = self.anchored_sleepy() && now < self.timers.awake_until;
-        self.sleepy
+        self.sleepy()
             && !self.config.sleepy_listens
             && self.stage == Stage::Running
             && !window
@@ -819,13 +851,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let keeps = self.anchored_sleepy()
             && !self.config.sleepy_listens
             && self.timers.rescan_ends.is_none();
-        let Some(a) = self.anchor.filter(|_| keeps) else {
+        let Some(a) = self.anchor().filter(|_| keeps) else {
             self.timers.watch_at = None;
             return;
         };
         let interval = heartbeat_interval(a.id, &self.config);
         if self.timers.watch_at.is_none() {
-            self.misses = 0;
+            self.set_misses(0);
             match self.neighbours.by_id(a.id) {
                 // Its last heartbeat heard was of its burst, in no slot
                 // (spec "Heartbeat"): it watches from the next it hears,
@@ -848,8 +880,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 offset_us: 0,
                 listened: to.since(from),
             }));
-            self.misses = self.misses.saturating_add(1);
-            if self.misses >= 2 && !self.dark {
+            let (misses, dark) = self.sleep().map_or((0, false), |s| (s.misses, s.dark));
+            self.set_misses(misses.saturating_add(1));
+            if misses.saturating_add(1) >= 2 && !dark {
                 self.timers.watch_at = None;
                 self.check_anchor(now, emit);
                 return;
@@ -872,25 +905,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
             self.anchored();
         }
-        self.misses = 0;
+        self.set_misses(0);
+    }
+
+    fn set_misses(&mut self, misses: u8) {
+        if let Some(s) = self.sleep_mut() {
+            s.misses = misses;
+        }
     }
 
     /// Whether the anchor's last heartbeat had neither the carried nor
     /// the sleepy flag: a check does not keep it otherwise
     /// (spec "Relay choice").
     fn anchor_holds_mail(&self) -> bool {
-        self.anchor
+        self.anchor()
             .and_then(|a| self.neighbours.get(a.id))
             .is_none_or(|n| n.holds_mail())
     }
 
     fn anchor_heard(&mut self, now: Instant) {
-        let Some(a) = self.anchor else { return };
+        let Some(a) = self.anchor() else { return };
         if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
             // Heard while checking: it is there (spec "Relay choice").
             self.anchored();
         }
-        self.misses = 0;
+        self.set_misses(0);
         let base = match (self.timers.watch_at, self.watch()) {
             (Some(at), Some((from, to))) if now >= from && now < to => {
                 now.min(at + drift(at.since(self.timers.watch_base)))
@@ -1078,7 +1117,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
-        self.beacon.burst = if self.sleepy { 0 } else { CHANNELS };
+        self.beacon.burst = if self.sleepy() { 0 } else { CHANNELS };
         if !self.gps_tracks() {
             self.gps_due();
         }
@@ -1099,16 +1138,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let kept = self.stored.filter(|_| carried);
         Stored {
             home: match kept {
-                Some(s) if self.sleepy => s.home,
+                Some(s) if self.sleepy() => s.home,
                 _ => self.home,
             },
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
             map_point: kept.map_or(self.motion.map_point, |s| s.map_point),
-            anchor: self.anchor.filter(|_| self.sleepy && !carried),
+            anchor: self.anchor().filter(|_| !carried),
             // Kept only where it is read (`relay/power.rs`), so that a node
             // without battery levels writes no more than before.
-            relay: !self.sleepy && self.config.battery.is_some(),
+            relay: !self.sleepy() && self.config.battery.is_some(),
             battery_scale: self.battery_scale,
         }
     }
@@ -1144,7 +1183,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             ends: None,
         }));
         let chooses = self.config.home_override.is_none() && self.config.stored.is_none();
-        if self.sleepy {
+        if self.sleepy() {
             if chooses && !self.home_is_quietest() {
                 let home = self.quietest();
                 self.retune(home, emit);
@@ -1191,7 +1230,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             relays: 0,
             ends: None,
         }));
-        self.anchor = Some(a);
+        self.set_anchor(Some(a));
         self.anchored();
         self.beacon.next_at = now;
         self.beacon.quick = 1;
@@ -1249,11 +1288,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that are not sleepy, and follow its home channel. Returns whether
     /// the anchor changed.
     fn reconsider_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        if !self.sleepy || self.stage != Stage::Running {
+        if !self.sleepy() || self.stage != Stage::Running {
             return false;
         }
         let current = self
-            .anchor
+            .anchor()
             .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
             .map(|(_, n)| *n);
         // Any node that is neither sleepy nor carried can hold a sleepy
@@ -1267,7 +1306,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .max_by(|a, b| a.rssi.total_cmp(&b.rssi))
                 .copied()
         };
-        let first = self.anchor.is_none();
+        let first = self.anchor().is_none();
         // The choice after the first anchor is made when its time comes,
         // whether or not the anchor is still in the table: left for later,
         // its time would wake the node at once, again and again.
@@ -1302,10 +1341,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         if let (Some(a), None) = (current, to) {
             // Kept: follow it to a new home, and to a new position.
-            self.anchor = Some(Anchor {
+            self.set_anchor(Some(Anchor {
                 id: a.id,
                 position: a.position,
-            });
+            }));
             if a.home != self.home && self.config.home_override.is_none() {
                 self.retune(a.home, emit);
                 // Its holder learns the new channel only from a beat there,
@@ -1345,10 +1384,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Make `to` the anchor: listen on its home, and beat there at once.
     fn take_anchor(&mut self, to: &Neighbour, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.anchor = Some(Anchor {
+        self.set_anchor(Some(Anchor {
             id: to.id,
             position: to.position,
-        });
+        }));
         if self.config.home_override.is_none() {
             self.retune(to.home, emit);
         }
@@ -1369,28 +1408,36 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn anchored(&mut self) {
         self.timers.rescan_ends = None;
         self.timers.watch_at = None;
-        self.chosen_from = self.config.position;
-        self.reach_m = self.anchor.map_or(0.0, |a| {
-            self.plane.point(a.position).distance_m(Default::default())
-        });
+        self.anchored_at_fix();
         let keep = self.anchored_sleepy() && !self.config.sleepy_listens;
         self.neighbours
-            .pin(self.anchor.filter(|_| keep).map(|a| a.id));
+            .pin(self.anchor().filter(|_| keep).map(|a| a.id));
     }
 
     /// The fix asked for at a new anchor came: the node chose from there
     /// (`relay/gps.rs`).
     fn anchored_at_fix(&mut self) {
-        self.chosen_from = self.config.position;
-        self.reach_m = self.anchor.map_or(0.0, |a| {
+        let at = self.config.position;
+        let reach_m = self.anchor().map_or(0.0, |a| {
             self.plane.point(a.position).distance_m(Default::default())
         });
+        if let Some(s) = self.sleep_mut() {
+            s.chosen_from = at;
+            s.reach_m = reach_m;
+        }
+    }
+
+    /// A sleepy node's anchor is `anchor`; a relay has none.
+    fn set_anchor(&mut self, anchor: Option<Anchor>) {
+        if let Some(s) = self.sleep_mut() {
+            s.anchor = anchor;
+        }
     }
 
     /// Give up an anchor that turned carried, with no other to take: the
     /// node is anchorless (spec "Sleepy nodes alone") and beats at once.
     fn leave_anchor(&mut self, now: Instant) {
-        self.anchor = None;
+        self.set_anchor(None);
         self.anchored();
         self.gps_due();
         self.beacon.next_at = now;
@@ -1415,7 +1462,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// anchor if none was (spec "Relay choice").
     fn anchor_checked(&mut self, since: Instant, now: Instant, emit: &mut dyn FnMut(Action)) {
         let heard = |n: &&Neighbour| n.holds_mail() && n.last_heard >= since;
-        let anchor = self.anchor.map(|a| a.id);
+        let anchor = self.anchor().map(|a| a.id);
         if self
             .neighbours
             .iter()
@@ -1441,7 +1488,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // only once it hears anything again.
             None => {
                 self.anchored();
-                self.dark = true;
+                if let Some(s) = self.sleep_mut() {
+                    s.dark = true;
+                }
             }
         }
     }
@@ -1552,7 +1601,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// while it boots; receiving duty-cycled it could not (module
     /// documentation).
     fn sweeping(&self) -> bool {
-        !(self.sleepy && self.stage == Stage::Running)
+        !(self.sleepy() && self.stage == Stage::Running)
     }
 
     /// Each channel once per sweep interval, one reading at a time (spec
@@ -1646,7 +1695,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match self.stage {
             Stage::Off => false,
-            Stage::Booting => !self.sleepy,
+            Stage::Booting => !self.sleepy(),
             Stage::Running => true,
         }
     }
@@ -1688,7 +1737,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn answer_due(&self) -> Option<(NodeId, Channel, Instant)> {
         // Nobody anchors to a node that holds no mail. A node in its first
         // rotation is heard by its burst instead (spec "Heartbeat").
-        if self.sleepy || self.motion.carried || self.leaving || self.booting() {
+        if self.sleepy() || self.motion.carried || self.leaving() || self.booting() {
             return None;
         }
         self.neighbours
@@ -1713,17 +1762,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         // A sleepy node without an anchor, and a relay in its burst, whose
         // neighbour table is new, ask to be answered (spec "Heartbeat").
-        let anchorless = if self.sleepy {
-            self.anchor.is_none()
-        } else {
-            self.beacon.burst > 0
+        let anchorless = match self.sleep() {
+            Some(s) => s.anchor.is_none(),
+            None => self.beacon.burst > 0,
         };
         let asker = match beat {
             Beat::Answer(id) => self.neighbours.get(id),
             _ => None,
         };
         let hb = Heartbeat {
-            sleepy: self.sleepy,
+            sleepy: self.sleepy(),
             anchorless,
             carried: self.motion.carried,
             home: self.home,
@@ -1885,7 +1933,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // The window after its beat (spec "Delivery").
             self.timers.awake_until = now + self.heard.params().awake;
         }
-        if self.sleepy && !self.booting() {
+        if self.sleepy() && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
             // this one went; with one, the rotation is not used.
             self.beacon.rotation = self.beacon.rotation.next();
@@ -1903,7 +1951,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             self.beacon.next_at = next;
         }
-        if self.sleepy {
+        if self.sleepy() {
             // Its own beat stands in for the sweep's readings.
             self.neighbours.expire(now);
         }
@@ -1925,9 +1973,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.set_aside_own(bytes, now);
-        if core::mem::take(&mut self.dark) {
+        if let Some(s) = self.sleep_mut().filter(|s| s.dark) {
             // Back in reach: its anchor's rotations count from here.
-            self.misses = 0;
+            s.dark = false;
+            s.misses = 0;
         }
         let decoded = Packet::decode(bytes);
         // A node's DATA says where it listens now (spec "Packet sender"),
@@ -2007,7 +2056,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // watch opens is not in a slot: an answer to a node without an
         // anchor, or the one after a move (spec "Relay choice"). It shows the
         // anchor alive but says nothing of its slots.
-        let off_slot = self.anchor.is_some_and(|a| a.id == hb.id)
+        let off_slot = self.anchor().is_some_and(|a| a.id == hb.id)
             && self.timers.watch_at.is_some()
             && self.watch().is_some_and(|(from, _)| started < from);
         // A relay's burst goes a burst gap a heartbeat: none of it is in a
@@ -2032,25 +2081,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         if hb.sleepy {
-            if !self.sleepy && !hb.anchorless && self.heard.heard(hb.id, hb.home, rssi, now) {
+            if !self.sleepy() && !hb.anchorless && self.heard.heard(hb.id, hb.home, rssi, now) {
                 self.deliver_now(hb.id, now);
             }
-            if self.anchor.is_some_and(|a| a.id == hb.id) {
+            if self.anchor().is_some_and(|a| a.id == hb.id) {
                 // Its anchor turned sleepy (`relay/power.rs`).
                 self.reconsider_anchor(now, emit);
             }
             return;
         }
-        if !self.sleepy {
+        if !self.sleepy() {
             self.heard_as_relay(hb.id, hb.home);
         }
-        if self.sleepy && self.booting() {
+        if self.sleepy() && self.booting() {
             // An anchor ends the first rotation, which chooses a home
             // for a node that hears none (spec "Channel at boot").
             self.finish_boot(now, emit);
         }
         self.reconsider_anchor(now, emit);
-        if self.anchor.is_some_and(|a| a.id == hb.id) {
+        if self.anchor().is_some_and(|a| a.id == hb.id) {
             if let (Some(at), Some((from, to))) = (self.timers.watch_at, self.watch()) {
                 if started >= from && started < to {
                     let offset = started.as_micros() as i64 - at.as_micros() as i64;
@@ -2096,13 +2145,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     _ => {
                         // A sleepy node's position is no news, but a
                         // change of its carried flag is.
-                        if self.map_point(position, now) || !self.sleepy {
+                        if self.map_point(position, now) || !self.sleepy() {
                             self.changed();
                         }
                         true
                     }
                 };
-                if !took || !self.sleepy {
+                if !took || !self.sleepy() {
                     return;
                 }
                 if self.gps_at_choice() {
@@ -2110,11 +2159,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     self.anchored_at_fix();
                     return;
                 }
+                let Some(s) = self.sleep() else { return };
                 let moved = self
                     .plane
-                    .point(self.chosen_from)
+                    .point(s.chosen_from)
                     .distance_m(Default::default());
-                if moved > move_bound_m(self.reach_m) {
+                if moved > move_bound_m(s.reach_m) {
                     self.check_anchor(now, emit);
                 }
             }
