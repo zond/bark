@@ -354,8 +354,8 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
 }
 
 /// A sleepy node that is not carried, plugged in, is fixed at once where it
-/// is then, even with a run of far fixes begun, and keeps that position
-/// as a relay.
+/// is then, even with a run of far fixes begun; its first fix as a relay
+/// is its place (roadmap D85), which it keeps.
 #[test]
 fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
     for started in [false, true] {
@@ -375,8 +375,34 @@ fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
             fix(&mut h, s, here + 40.0 * (k % 2) as f64);
         }
         assert!(!h.nodes[s].core.carried(), "started: {started}");
-        assert_eq!(h.nodes[s].core.config().position, pos(here));
+        assert_eq!(h.nodes[s].core.config().position, pos(here + 40.0));
         assert_eq!(last_type(&h, s), RELAY);
+    }
+}
+
+/// A sleepy node plugged in at a place its last fix does not show takes
+/// its first fix within a search's limit as its place, and is not
+/// carried; one whose first fix comes later keeps the place it had, and
+/// a run of far fixes makes it carried (roadmap D85).
+#[test]
+fn a_sleepy_node_plugged_in_takes_its_first_fix_as_its_place() {
+    for (wait, carried) in [(10, false), (70, true)] {
+        let (r, s) = (0, 1);
+        let mut h = Harness::powered(vec![node(0.0, true, 41), node(20.0, false, 42)]);
+        h.link(r, s);
+        h.start_at(s, at(10));
+        h.run_until(at(1000), |_| false);
+        power(&mut h, s, true);
+        h.run_for(secs(wait));
+        fix(&mut h, s, 300.0);
+        let first = if carried { 20.0 } else { 300.0 };
+        assert_eq!(h.nodes[s].core.config().position, pos(first));
+        for _ in 0..10 {
+            h.run_for(secs(10));
+            fix(&mut h, s, 300.0);
+        }
+        assert_eq!(h.nodes[s].core.carried(), carried, "wait: {wait}");
+        assert_eq!(traced(&h, s, Trace::FarFix), usize::from(carried));
     }
 }
 
@@ -417,13 +443,18 @@ fn a_map_point_fixes_any_node() {
         let until = h.now + secs(400);
         h.run_until(until, pinned);
         assert!(pinned(&h), "external: {external}");
-        // A fix the node takes as its position replaces the map point; a
-        // fixed relay keeps its place, and so its map point.
-        fix(&mut h, n, 700.0);
+        // No fix replaces a map point (roadmap D84): only the application
+        // clears it, and the next accepted fix is the place.
+        fix(&mut h, n, 900.0);
+        assert_eq!(h.nodes[n].core.config().position, pos(700.0));
+        h.command(n, AppCommand::ClearMapPoint);
         let since = h.now;
         h.run_until(at(5000), |h| last_heartbeat_since(h, n, since).is_some());
         let after = last_heartbeat_since(&h, n, since).expect("a heartbeat");
-        assert_eq!(after.map_point, external, "external: {external}");
+        assert!(!after.map_point, "external: {external}");
+        fix(&mut h, n, 900.0);
+        assert_eq!(h.nodes[n].core.config().position, pos(900.0));
+        assert!(!h.nodes[n].core.carried(), "external: {external}");
     }
 }
 

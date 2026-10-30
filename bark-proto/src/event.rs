@@ -110,6 +110,10 @@ pub enum AppCommand<'a> {
         /// New position.
         position: Position,
     },
+    /// Clear the map point (spec "Position"): the node stays where it is
+    /// until its next accepted fix, which is its place, and the driver
+    /// hands fixes again.
+    ClearMapPoint,
     /// A GPS fix that passed the driver's plausibility checks (spec
     /// "Position"). Every node counts it toward turning carried or fixed
     /// again; a sleepy or carried node takes it as its position, and one
