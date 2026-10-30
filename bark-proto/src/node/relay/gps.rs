@@ -228,7 +228,7 @@ impl Gps {
 }
 
 /// `t` in whole seconds, rounded up, and at least 1.
-fn mark(t: Instant) -> u32 {
+pub(super) fn mark(t: Instant) -> u32 {
     (t.as_micros().div_ceil(1_000_000) as u32).max(1)
 }
 
@@ -415,7 +415,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // A search due while it cannot start is dropped.
         let due = if self.sleepy {
-            let held = now < self.gps_allowed_at();
+            // No fix is taken while a map point is set (roadmap D84).
+            let held = now < self.gps_allowed_at() || self.motion.map_point;
             self.gps.searches(|s| core::mem::take(&mut s.due)) && !held
         } else {
             let rests = !self.gps_tracks() && !self.motion.map_point;

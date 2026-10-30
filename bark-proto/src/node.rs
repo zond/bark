@@ -28,6 +28,11 @@ pub use relay::{Anchor, Load, Node, Relay, SleepyNode};
 pub struct Config {
     /// Own position.
     pub position: Position,
+    /// Whether `position` is the node's place: set when it was built or
+    /// placed, as on a bench board or in the simulator. Without it, and
+    /// without a stored place, the node has none until its first accepted
+    /// fix or a map point (spec "Position", roadmap D83).
+    pub placed: bool,
     /// The node's ID: on the board from the chip's hardware ID, in the
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
     /// its seed.
@@ -278,6 +283,7 @@ impl Config {
     /// The design's values, as a constant.
     pub const DEFAULT: Config = Config {
         position: Position { lat: 0, lon: 0 },
+        placed: true,
         node_id: NodeId::NONE,
         sleepy_listens: false,
         tx_power_dbm: 10,
