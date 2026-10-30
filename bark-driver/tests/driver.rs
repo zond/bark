@@ -269,9 +269,12 @@ impl Radio for FakeRadio {
     }
 
     async fn rssi(&mut self) -> Result<i16, ()> {
-        let ch = self.world.0.borrow().listening.expect("listening");
+        let (ch, since) = {
+            let w = self.world.0.borrow();
+            (w.listening.expect("listening"), w.listening_since)
+        };
         self.world.op(Op::Rssi(ch));
-        Ok(-120)
+        Ok(climb(self.world.now().since(since)))
     }
 
     async fn transmit(&mut self, frame: &Frame, _dbm: i8) -> Result<(), ()> {
@@ -280,6 +283,19 @@ impl Radio for FakeRadio {
         let airtime = time_on_air(frame.len, frame.preamble_symbols);
         self.world.sleep(self.world.now() + airtime).await;
         Ok(())
+    }
+}
+
+/// What the SX1262 reads on a quiet channel against the time since its
+/// receiver started (docs/bench-2026-10-30.md, "The night alone, and two
+/// boards the next morning"): nothing, then a step a symbol period up to
+/// the settled level.
+fn climb(since: Duration) -> i16 {
+    match since.as_micros() {
+        0..150 => -128,
+        150..400 => -90,
+        400..700 => -83,
+        _ => -80,
     }
 }
 
@@ -555,6 +571,40 @@ fn a_check_waits_for_the_packet_in_progress() {
     );
     assert_eq!(world.ops()[1], (end, Op::Cad(ch(3))));
     assert_eq!(d.stats().held, 1);
+}
+
+/// A reading of another channel waits until the reading is right, where
+/// the old 300 µs read 10 dB low; one of the resting channel is read as
+/// the radio listens, without a restart.
+#[test]
+fn a_reading_waits_for_the_receiver_to_settle() {
+    assert_eq!(climb(Duration::from_micros(300)), -90);
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(20), at_ms(100)]);
+    core.then.push((at_ms(10), Action::Rssi(ch(5))));
+    core.then.push((at_ms(20), Action::Rssi(ch(3))));
+    let mut d = driver(core, &world, Duration::ZERO);
+    run_until(&mut d, &world, at_ms(100));
+    let read = at_ms(10) + RSSI_DWELL;
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (at_ms(10), Op::Listen(ch(5))),
+            (read, Op::Rssi(ch(5))),
+            (read, Op::Listen(ch(3))),
+            (at_ms(20), Op::Rssi(ch(3))),
+        ]
+    );
+    let samples: Vec<_> = seen(&d)
+        .into_iter()
+        .filter(|(_, s)| s.starts_with("RssiSample"))
+        .collect();
+    assert_eq!(samples.len(), 2);
+    assert!(
+        samples.iter().all(|(_, s)| s.ends_with("dbm: -80 }")),
+        "{samples:?}"
+    );
 }
 
 /// A packet that never ends holds a check for at most one longest frame.

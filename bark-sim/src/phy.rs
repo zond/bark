@@ -6,7 +6,7 @@
 //! assumptions to be replaced by Phase 2 bench measurements. Every value is
 //! a default in [`RadioParams`]; scenarios override them.
 
-use bark_proto::radio::{time_on_air, BANDWIDTH_HZ, SPREADING_FACTOR, SYMBOL_TIME};
+use bark_proto::radio::{time_on_air, BANDWIDTH_HZ, RSSI_SETTLE, SPREADING_FACTOR, SYMBOL_TIME};
 use bark_proto::Duration;
 use serde::{Deserialize, Serialize};
 
@@ -291,10 +291,8 @@ pub struct RadioParams {
     /// Assumption: 0 until measured.
     pub cad_miss_probability: f64,
     /// Dwell after the receiver starts on another channel before
-    /// `GetRssiInst` is read, µs. Default four symbol periods, 1024 µs:
-    /// the reading climbs a step a symbol period and is right from four
-    /// (docs/bench-2026-10-30.md, "The night alone, and two boards the
-    /// next morning"; spec "Busy estimate").
+    /// `GetRssiInst` is read, µs. Default `radio::RSSI_SETTLE`, four
+    /// symbol periods, 1024 µs, when the reading is right.
     pub rssi_dwell_us: u64,
     /// One `GetRssiInst` over the bus, µs. Measured, 155 µs
     /// (docs/bench-2026-10-30.md, "Step 1 numbers, one board").
@@ -346,7 +344,7 @@ impl Default for RadioParams {
             acr2_db: 60.0,
             cad_symbols: 8,
             cad_miss_probability: 0.0,
-            rssi_dwell_us: 4 * SYMBOL_TIME.as_micros(),
+            rssi_dwell_us: RSSI_SETTLE.as_micros(),
             rssi_read_us: 155,
             rx_to_fs_us: 334,
             fs_to_rx_us: 334,

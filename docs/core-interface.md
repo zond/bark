@@ -78,7 +78,9 @@ Rules:
    defers; the driver never drops a frame.
 7. **`Rssi` on the resting channel is not an excursion.** The radio keeps receiving while it
    reads its own channel, so the core may issue it at any time; it still completes with
-   `RssiSample`. `Rssi` on another channel costs a retune and is an excursion.
+   `RssiSample`. `Rssi` on another channel is an excursion: a retune, a wait of
+   `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts there, the
+   read and a retune back, 2.5 ms (spec "Busy estimate").
 8. **The driver may hold a `Cad` or `Rssi` excursion while a reception is in progress**, by at
    most the airtime of a full frame with the long preamble, 492.9 ms, so that a sweep does not
    cut a packet short (spec "Busy estimate").
@@ -205,7 +207,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | `Listen` | update the per-channel listener set | `rx_switch_channel` |
 | `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(384, 22 344) from STDBY_RC, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command (`bark-driver`, `bark-fw/src/radio.rs`) |
 | `Cad` | deaf for CAD duration, result from the reception model | `prepare_for_cad` + `cad` |
-| `Rssi` | deaf for retune + sample, dB-sum at the node | `get_rssi` after retune |
+| `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `get_rssi`, on another channel `RSSI_SETTLE` after the retune |
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | `prepare_for_tx` + `tx` |
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
