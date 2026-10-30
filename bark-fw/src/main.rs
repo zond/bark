@@ -112,8 +112,8 @@ pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
 fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
     // Six 5-pixel glyphs with a column between, at 5 pixels each, span
     // 175 of the 200 columns: the largest the ID's halves fit.
-    const ID_SCALE: usize = 5;
-    const TEXT_SCALE: usize = 3;
+    const ID_SCALE: usize = 3;
+    const TEXT_SCALE: usize = 2;
     const TOP: usize = 30;
     let mut picture = display::Picture::white();
     let mut y = TOP;
