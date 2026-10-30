@@ -13,7 +13,7 @@
 //! ch <k>                     set the home channel
 //! tx <k> <hex|len>           send one frame
 //! rx <k> [ms]                listen on k for ms (default 10 s), reporting every frame
-//! cad <k>                    one channel activity detection, the listen-before-talk's
+//! cad <k>                    one channel activity detection alone, nothing read inside it
 //! lbt <k>                    one listen-before-talk: its phases and its reading
 //! tcxo                       the oscillator's probed delay and the last probe
 //! probe                      probe the oscillator's start now, below the delay in use
@@ -791,15 +791,15 @@ impl<'a> Console<'a> {
             }
             Command::Cad(ch) => {
                 self.listening = false;
-                let t = self.radio.lbt(ch).await?;
-                self.count_cad(t.busy);
+                let (busy, prepare, cad) = self.radio.cad_only(ch).await?;
+                self.count_cad(busy);
                 let rest_us = self.rest().await?;
                 log::info!(
                     "cad ch={} busy={} prepare_us={} cad_us={} rest_us={}",
                     ch.index(),
-                    t.busy,
-                    t.prepare.as_micros(),
-                    t.cad.as_micros(),
+                    busy,
+                    prepare.as_micros(),
+                    cad.as_micros(),
                     rest_us
                 );
             }

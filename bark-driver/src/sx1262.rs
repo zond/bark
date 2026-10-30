@@ -133,10 +133,17 @@ pub trait Chip {
     /// the regulator, the RF switch on DIO2, the packet type, the sync
     /// word, the buffer base, the retention list, the fallback to
     /// STDBY_XOSC after transmit and receive, the modulation with its
-    /// errata write, the IQ errata write, the CAD parameters, the
-    /// interrupt mask [`irq::ALL`] on DIO1, the symbol timeout and the
-    /// receiver gain. From a standby.
+    /// errata write, the IQ errata write, the interrupt mask [`irq::ALL`]
+    /// on DIO1, the symbol timeout and the receiver gain. From a standby.
     async fn configure(&mut self) -> Result<(), Self::Error>;
+
+    /// `SetCadParams` for [`CAD_SYMBOLS`] and the detection thresholds
+    /// (DS §13.4.8), sent before every `SetCAD`. Sent once with the
+    /// configuration, the CAD kept its length but found a beacon on its
+    /// channel 0.5 % of the time where the driver that sent it before
+    /// each CAD found it 10 %, the beacon's duty: the chip does not hold
+    /// the thresholds across a receive (`docs/lean-driver-2026-10-30.md`).
+    async fn cad_params(&mut self) -> Result<(), Self::Error>;
 
     /// `SetDIO3AsTCXOCtrl` with the board's voltage and `delay`, rounded
     /// up to the chip's steps (DS §13.3.6). From STDBY_RC.
@@ -676,31 +683,38 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.note(r)
     }
 
-    /// One CAD on `channel` with the RSSI read inside it: whether a
-    /// preamble was seen, and the reading as read, `None` if the read
-    /// came too late to be one. Leaves the chip in STDBY_RC.
+    /// One CAD on `channel`, with the RSSI read inside it if `read`:
+    /// whether a preamble was seen, and the reading as read, `None` if
+    /// there was none or the read came too late to be one. Leaves the
+    /// chip in STDBY_RC.
     async fn cad(
         &mut self,
         channel: Channel,
+        read: bool,
     ) -> Result<(bool, Option<i16>, [Duration; 3]), Error<C::Error>> {
         let t0 = self.clock.now();
         self.ready().await?;
         self.standby_xosc().await?;
         self.set_frequency(channel).await?;
         let cold = self.before_start().await?;
+        let r = self.chip.cad_params().await;
+        self.note(r)?;
         let r = self.chip.cad().await;
         self.note(r)?;
         self.held.mode = Mode::Cad;
         let started = self.clock.now();
-        self.clock.at(started + RSSI_SETTLE).await;
-        let t_read = self.clock.now();
-        let inside = if t_read <= started + CAD_SAMPLING {
-            let r = self.chip.rssi().await;
-            Some(self.note(r)?)
-        } else {
-            None
-        };
-        let read = self.clock.now().since(t_read);
+        let mut inside = None;
+        let mut read_took = Duration::ZERO;
+        if read {
+            self.clock.at(started + RSSI_SETTLE).await;
+            let t_read = self.clock.now();
+            if t_read <= started + CAD_SAMPLING {
+                let r = self.chip.rssi().await;
+                inside = Some(self.note(r)?);
+            }
+            read_took = self.clock.now().since(t_read);
+        }
+        let read = read_took;
         let r = self.chip.await_irq(Some(CAD_TIME + IRQ_SLACK)).await;
         self.note(r)?;
         let r = self.chip.irq_status().await;
@@ -725,7 +739,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// standby, or listening on `channel` if the reading is taken after
     /// the CAD.
     pub async fn lbt(&mut self, channel: Channel) -> Result<LbtTiming, Error<C::Error>> {
-        let (busy, inside, [prepare, read, cad]) = self.cad(channel).await?;
+        let (busy, inside, [prepare, read, cad]) = self.cad(channel, true).await?;
         let mut after = Duration::ZERO;
         let dbm = match (self.lbt, inside) {
             (LbtRead::Inside { offset_db }, Some(dbm)) => dbm - offset_db,
@@ -750,6 +764,17 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             cad,
             after,
         })
+    }
+
+    /// The CAD alone on `channel`, nothing read inside it, for the
+    /// console: whether a preamble was seen, and the preparation and the
+    /// CAD's time. Leaves the chip in STDBY_RC.
+    pub async fn cad_only(
+        &mut self,
+        channel: Channel,
+    ) -> Result<(bool, Duration, Duration), Error<C::Error>> {
+        let (busy, _, [prepare, _, cad]) = self.cad(channel, false).await?;
+        Ok((busy, prepare, cad))
     }
 
     /// Send `frame` at `dbm` conducted. Leaves the chip in STDBY_XOSC.
@@ -870,7 +895,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             self.listen(channel).await?;
             self.clock.at(self.clock.now() + RSSI_SETTLE).await;
             let listening = self.rssi().await?;
-            let (_, inside, _) = self.cad(channel).await?;
+            let (_, inside, _) = self.cad(channel, true).await?;
             let Some(inside) = inside else {
                 continue;
             };
@@ -946,6 +971,7 @@ mod tests {
         Calibrate,
         CalibrateImage,
         Configure,
+        CadParams,
         Tcxo(u64),
         Errors,
         ClearErrors,
@@ -1091,6 +1117,9 @@ mod tests {
         }
         async fn configure(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Configure)
+        }
+        async fn cad_params(&mut self) -> Result<(), &'static str> {
+            self.cmd(Cmd::CadParams)
         }
         async fn set_tcxo(&mut self, delay: Duration) -> Result<(), &'static str> {
             assert_eq!(self.mode, Mode::StandbyRc, "SetDIO3AsTCXOCtrl in STDBY_RC");
@@ -1312,6 +1341,7 @@ mod tests {
             [
                 Cmd::Standby(true),
                 Cmd::Freq(5),
+                Cmd::CadParams,
                 Cmd::Cad,
                 Cmd::Rssi,
                 Cmd::AwaitIrq,
@@ -1332,6 +1362,37 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, Cmd::Tcxo(_))), "{cmds:?}");
         assert_eq!(radio.stats().cold_starts, 0);
         assert_eq!(radio.tcxo().delay, Duration::from_micros(500));
+    }
+
+    /// The CAD's parameters go before every CAD, not once, and the busy
+    /// result is the chip's CadDetected flag, with or without the reading
+    /// inside.
+    #[test]
+    fn every_cad_sends_its_parameters_and_reports_the_detected_flag() {
+        let (mut radio, cmds, _) = booted(board());
+        let configured = radio.stats().configured;
+        take(&cmds);
+        for detected in [false, true, false] {
+            radio.chip().board.borrow_mut().detected = detected;
+            let t = run(radio.lbt(ch(5))).unwrap();
+            assert_eq!(t.busy, detected);
+            let sent = take(&cmds);
+            let at = sent
+                .iter()
+                .position(|c| *c == Cmd::CadParams)
+                .expect("parameters");
+            assert_eq!(sent[at + 1], Cmd::Cad);
+            run(radio.listen(ch(3))).unwrap();
+            take(&cmds);
+            let (busy, prepare, cad) = run(radio.cad_only(ch(5))).unwrap();
+            assert_eq!(busy, detected);
+            assert!(prepare < cad);
+            let sent = take(&cmds);
+            assert!(sent.windows(2).any(|w| w == [Cmd::CadParams, Cmd::Cad]));
+            assert!(!sent.contains(&Cmd::Rssi), "{sent:?}");
+            run(radio.listen(ch(3))).unwrap();
+        }
+        assert_eq!(radio.stats().configured, configured);
     }
 
     #[test]

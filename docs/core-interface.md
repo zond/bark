@@ -85,7 +85,7 @@ Rules:
    reads its own channel, so the core may issue it at any time; it still completes with
    `RssiSample`. `Rssi` on another channel is an excursion: a retune, a wait of
    `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts there, the
-   read and a retune back, 1.8 ms (spec "Busy estimate").
+   read and a retune back, 1.9 ms (spec "Busy estimate").
 8. **The driver may hold an `Lbt` or `Rssi` excursion while a reception is in progress**, by at
    most the airtime of a full frame with the long preamble, 492.9 ms, so that a sweep does not
    cut a packet short (spec "Busy estimate").

@@ -294,52 +294,46 @@ pub struct RadioParams {
     /// `GetRssiInst` is read, µs. Default `radio::RSSI_SETTLE`, four
     /// symbol periods, 1024 µs, when the reading is right.
     pub rssi_dwell_us: u64,
-    /// One `GetRssiInst` over the bus, µs. Measured, 49 µs on the bus
-    /// driven blocking (docs/bench-2026-10-30.md, "What the retune is
-    /// made of, an experiment").
+    /// One `GetRssiInst` over the bus, µs. Measured, 51 µs on the lean
+    /// driver (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub rssi_read_us: u64,
     /// Leaving RX for FS, µs. With `synth_hop_us` and `fs_to_rx_us` it
     /// makes the retune between two channels: standby, frequency and
-    /// receive, measured 355 µs whatever the hop
-    /// (docs/bench-2026-10-30.md, "A listen-before-talk with fewer
-    /// commands, an experiment"). The sum is measured; its split into the
-    /// three is not.
+    /// receive, measured 388 µs whatever the hop on the lean driver
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board"). The
+    /// sum is measured; its split into the three is not.
     pub rx_to_fs_us: u64,
     /// FS back to RX, µs: the other half of the measured retune, see
     /// `rx_to_fs_us`.
     pub fs_to_rx_us: u64,
     /// From the decision to transmit to the frame's first symbol, µs:
-    /// the transmit's preparation and its excess over the airtime
-    /// formula. Measured on the bus driven blocking with every command
-    /// sent, a 64-byte frame between the 0.91 and 1.15 ms of 9 and 255
-    /// bytes, and 356 µs of excess (docs/bench-2026-10-30.md, "What the
-    /// retune is made of, an experiment"). TO MEASURE with only the
-    /// commands that change (roadmap D88).
+    /// the transmit's preparation, standby, the packet parameters, the
+    /// payload and the start, and its excess over the airtime formula.
+    /// Measured on the lean driver: 547 µs to prepare 9 bytes and 794
+    /// for 255, so 602 for a 64-byte frame, and 163 µs of excess
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub rx_to_tx_us: u64,
-    /// Back to listening after a transmission, µs: the packet
+    /// Back to listening after a transmission, µs: the receiver's packet
     /// parameters, the frequency and receive from the standby the
-    /// transmission ends in. Measured 0.84 ms on the bus driven blocking
-    /// with every command sent (docs/bench-2026-10-30.md, "What the
-    /// retune is made of, an experiment"). TO MEASURE with only the
-    /// commands that change (roadmap D88).
+    /// transmission ends in. Measured, 369 µs on the lean driver
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub stby_to_rx_us: u64,
     /// Synthesiser hop on top of the retune, µs: 0, since the measured
     /// retune does not grow with the hop (see `rx_to_fs_us`).
     pub synth_hop_us: u64,
     /// Preparing a listen-before-talk from listening, µs: standby, the
-    /// frequency and the CAD's start. Measured, 464 µs
-    /// (docs/bench-2026-10-30.md, "A listen-before-talk with fewer
-    /// commands, an experiment").
+    /// frequency, the CAD's parameters and its start. Measured 359 µs
+    /// on the lean driver before the CAD's parameters moved into it
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board"), one
+    /// 51 µs command more since: 410, TO CONFIRM.
     pub lbt_prepare_us: u64,
     /// From the CAD's end to listening on the resting channel, µs: the
     /// result read and cleared, the frequency, receive, and the
     /// oscillator's restart from the standby a CAD ends in, programmed
     /// short since it stopped under a millisecond before
-    /// (`bark_driver::tcxo::SHORT`). Derived from the bench, not
-    /// measured: the 2.25 ms back to receiving less the 2 ms start inside
-    /// it, plus the short start (docs/bench-2026-10-30.md, "A
-    /// listen-before-talk with fewer commands, an experiment", "The
-    /// oscillator's start, probed"). TO MEASURE (roadmap D88).
+    /// (`bark_driver::tcxo::SHORT`). Measured, 505 to 515 µs on the
+    /// lean driver (docs/lean-driver-2026-10-30.md, "Measured on the
+    /// board").
     pub lbt_return_us: u64,
     /// Cut-off below sensitivity, in dB, under which a link is not stored.
     /// Default 10 dB: −129 dBm, 12.5 dB under the noise floor, where one
@@ -361,14 +355,14 @@ impl Default for RadioParams {
             cad_symbols: 8,
             cad_miss_probability: 0.0,
             rssi_dwell_us: RSSI_SETTLE.as_micros(),
-            rssi_read_us: 49,
-            rx_to_fs_us: 178,
-            fs_to_rx_us: 177,
-            rx_to_tx_us: 1000 + 356,
-            stby_to_rx_us: 840,
+            rssi_read_us: 51,
+            rx_to_fs_us: 194,
+            fs_to_rx_us: 194,
+            rx_to_tx_us: 602 + 163,
+            stby_to_rx_us: 369,
             synth_hop_us: 0,
-            lbt_prepare_us: 464,
-            lbt_return_us: 350,
+            lbt_prepare_us: 359 + 51,
+            lbt_return_us: 510,
             interference_margin_db: 10.0,
             reception: Reception::Curve,
         }
@@ -404,7 +398,7 @@ impl RadioParams {
     }
 
     /// Retune from RX on one channel to RX on another: RX→FS, hop, FS→RX
-    /// (355 µs by default).
+    /// (388 µs by default).
     pub fn retune(&self) -> Duration {
         Duration::from_micros(self.rx_to_fs_us + self.synth_hop_us + self.fs_to_rx_us)
     }
@@ -540,16 +534,16 @@ mod tests {
     #[test]
     fn excursion_costs() {
         let p = RadioParams::default();
-        // docs/bench-2026-10-30.md: a retune of three commands, a
+        // docs/lean-driver-2026-10-30.md: a retune of three commands, a
         // listen-before-talk with the reading inside the CAD, a reading
         // of another channel.
-        assert_eq!(p.retune().as_micros(), 355);
+        assert_eq!(p.retune().as_micros(), 388);
         assert_eq!(p.cad_time().as_micros(), 8 * 256 + 128);
         let total = |ph: [Phase; 3]| ph.iter().map(|x| x.0.as_micros()).sum::<u64>();
-        assert_eq!(total(p.lbt_phases()), 464 + 2176 + 350);
-        assert_eq!(total(p.rssi_phases(false)), 49);
-        assert_eq!(total(p.rssi_phases(true)), 355 + 1024 + 49 + 355);
+        assert_eq!(total(p.lbt_phases()), 410 + 2176 + 510);
+        assert_eq!(total(p.rssi_phases(false)), 51);
+        assert_eq!(total(p.rssi_phases(true)), 388 + 1024 + 51 + 388);
         let air = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
-        assert_eq!(total(p.tx_phases(false, air)), 1356 + 11_840 + 840);
+        assert_eq!(total(p.tx_phases(false, air)), 765 + 11_840 + 369);
     }
 }

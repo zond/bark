@@ -309,15 +309,15 @@ count exactly like peers.
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
 | noise floor | calibrated per device at boot as a low percentile of RSSI readings over the first rotation, and recalibrated slowly |
 
-A reading of another channel takes 1.8 ms off the home channel
+A reading of another channel takes 1.9 ms off the home channel
 (roadmap D88):
 
 | | |
 |---|---|
-| retune there: standby, the frequency, receive | 0.36 ms |
+| retune there: standby, the frequency, receive | 0.39 ms |
 | four symbol periods | 1.02 ms |
 | the read | 0.05 ms |
-| retune home | 0.36 ms |
+| retune home | 0.39 ms |
 
 A reading is taken only when the modem reports no preamble detected and
 no packet in progress. On its home channel a node counts only what
@@ -359,19 +359,19 @@ quieter than home, and a node moves at every chance the move rule
 gives ([channel moves](#channel-moves)).
 
 *Why one channel a second.* A reading of another channel deafens the
-node for `g` = 1.8 ms. The modem needs a length `D` of preamble to lock
+node for `g` = 1.9 ms. The modem needs a length `D` of preamble to lock
 on, four symbols
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
 so a gap loses a packet whose preamble starts too late before it for
 the modem to have locked, or too early in it to leave `D` after it: a
 window of `g + 2D − P`, with `P` the 12-symbol preamble, 3.1 ms
-([physical layer](#physical-layer)). That is 1.8 + 2.0 − 3.1 = 0.8 ms
+([physical layer](#physical-layer)). That is 1.9 + 2.0 − 3.1 = 0.8 ms
 a reading.
 
 | | one channel a second | every channel each second |
 |---|---|---|
-| deaf | 1.8 ms a second, 0.18 % | 23 ms, 2.3 % |
-| packet starts lost | 0.8 ms a second, 0.08 % | 10 ms, 1.0 % |
+| deaf | 1.9 ms a second, 0.19 % | 24 ms, 2.4 % |
+| packet starts lost | 0.8 ms a second, 0.08 % | 11 ms, 1.1 % |
 | samples a channel in a window | 138 in 30 minutes | 600 in 10 minutes |
 
 Thirteen readings a second would cost every relay 1 % of what it hears;
@@ -629,16 +629,16 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 | channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
 | **rotation** | 13 heartbeats, which reach every neighbour once: ≈130 s, at most 13 × 15 s = 195 s |
 | lateness | none early; at most 992.9 ms after its slot |
-| deaf time | 20 ms per heartbeat (procedure below), 0.2 % |
+| deaf time | 19 ms per heartbeat (procedure below), 0.2 % |
 
 **Procedure.** Retune to channel k, listen before talking (one check,
-3.0 ms), up to three checks a random 0–200 ms apart; if every check is
+3.1 ms), up to three checks a random 0–200 ms apart; if every check is
 busy, skip; else send; retune home.
 
 | | |
 |---|---|
-| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.0 ms: 0.46 ms to prepare it, standby, the frequency and the start; 2.18 ms for its 8 symbols and half a symbol of processing; 0.35 ms back to listening, the oscillator restarted with a short delay, since a detection stops it and it is restarted within a millisecond (roadmap D88) |
-| transmission | 1.36 ms to prepare and start it, its airtime, 0.84 ms back to listening |
+| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms: 0.41 ms to prepare it, standby, the frequency, the detection's parameters and its start; 2.18 ms for its 8 symbols and half a symbol of processing; 0.51 ms back to listening, the oscillator restarted with a short delay, since a detection stops it and it is restarted within a millisecond (roadmap D88) |
+| transmission | 0.71 ms to prepare and start it, 0.55 ms for its packet parameters, payload and start and 0.16 ms before the first symbol, its airtime, 0.37 ms back to listening |
 
 *Why the reading inside the detection.* Read after it, the reading
 needs the receiver started again on the channel and four symbol
@@ -1144,7 +1144,7 @@ hand the message to someone else as well.
 So ACKs too arrive on the home channel, which a node leaves only to
 transmit ([home channel selection](#home-channel-selection)). A sleepy
 node's home channel is its anchor's, so traffic between them never
-retunes. A node is deaf for 22 ms per ACK it sends, its
+retunes. A node is deaf for 21 ms per ACK it sends, its
 listen-before-talk, the transmission's own costs and the airtime
 ([heartbeat](#heartbeat)); a sender that gets no ACK retries. That is the cost of one radio.
 

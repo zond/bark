@@ -67,7 +67,7 @@ A> ch 0      (twelve channels, 1.5 MHz)
 
 `retune_us` with and without a hop. The radio retunes through
 STDBY_XOSC, so no TCXO start is expected: three commands, standby, the
-frequency and receive, 355 µs on the bench, the simulator's default
+frequency and receive, 388 µs on the bench, the simulator's default
 (spec "Busy estimate"); the chip's part is about 62 µs (STDBY_XOSC→RX,
 DS Table 8-2) plus the unlisted RX→STDBY_XOSC step. The probed delay
 on top means a TCXO start (see 1.1).
@@ -119,12 +119,13 @@ B> stop
 A> tcxo
 ```
 
-`cad` is the listen-before-talk printed as the CAD it is built on:
-`prepare_us` (standby, the frequency, SetCAD), `cad_us` (SetCAD to its
-result read and cleared: 8 symbols at SF5 ≈ 2.2 ms, with the RSSI read
-inside), `rest_us` (back to listening at home, the oscillator restarted
-with the short delay since a CAD ends in STDBY_RC, DS Table 13-73). `lbt`
-adds `dbm`, the reading on the footing of one while listening, and
+`cad` is the CAD alone, nothing read inside it: `prepare_us` (standby,
+the frequency, the CAD's parameters, SetCAD), `cad_us` (SetCAD to its
+result read and cleared: 8 symbols at SF5 ≈ 2.2 ms), `rest_us` (back to
+listening at home, the oscillator restarted with the short delay since a
+CAD ends in STDBY_RC, DS Table 13-73). Under the beacon its `busy` count
+is the CAD flag's alone and should match the beacon's duty. `lbt` reads
+inside the CAD and adds `dbm`, the reading on the footing of one while listening, and
 `inside_dbm` as read, `read_us`, `after_us` (a reading after the CAD, only
 if the self-check at boot chose that) and `total_us`; `tcxo` shows the
 delay in use, the last probe and `lbt_read`, the self-check's choice.
@@ -342,14 +343,14 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 | `cad_symbols` | 8 | fixed | the driver hard-codes 8 | 8 |
 | `cad_miss_probability` | 0 | 1.5 | 1 − busy count / expected count (rough) | |
 | `rssi_dwell_us` | 1024 (bench) | 1.3 | the settle dwell | |
-| `rssi_read_us` | 49 (bench) | 1.3 | `read_us` | |
-| `rx_to_fs_us` | 178 (bench) | 1.2 | with `fs_to_rx_us`: `ch` to the same channel, halved | |
-| `fs_to_rx_us` | 177 (bench) | 1.2 | see above | |
+| `rssi_read_us` | 51 (bench) | 1.3 | `read_us` | |
+| `rx_to_fs_us` | 194 (bench) | 1.2 | with `fs_to_rx_us`: `ch` to another channel, halved | |
+| `fs_to_rx_us` | 194 (bench) | 1.2 | see above | |
 | `synth_hop_us` | 0 (bench) | 1.2 | `ch` to another channel − `ch` to the same | |
-| `rx_to_tx_us` | 1356 (bench, every command) | 1.1 | `prepare_us` + `excess_us` for 64 bytes | |
-| `stby_to_rx_us` | 840 (bench, every command) | 1.1 | `rest_us` after `tx` | |
-| `lbt_prepare_us` | 464 (bench) | 1.5 | `prepare_us` of `lbt` | |
-| `lbt_return_us` | 350 (derived) | 1.5 | `rest_us` after `lbt` | |
+| `rx_to_tx_us` | 765 (bench) | 1.1 | `prepare_us` + `excess_us` for 64 bytes | |
+| `stby_to_rx_us` | 369 (bench) | 1.1 | `rest_us` after `tx` | |
+| `lbt_prepare_us` | 410 (bench 359 + the CAD's parameters) | 1.5 | `prepare_us` of `lbt` | |
+| `lbt_return_us` | 510 (bench) | 1.5 | `rest_us` after `lbt` | |
 | `interference_margin_db` | 10 | not measured | a modelling cut-off | 10 |
 
 The CAD phase in the simulator is its sampling time, computed from

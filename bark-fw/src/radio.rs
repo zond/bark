@@ -327,12 +327,15 @@ impl Chip for Hardware<'_> {
         // With the errata write for the transmit modulation.
         self.sx.set_modulation_params(&self.modulation).await?;
         self.sx.iq_errata(false).await?;
-        self.sx.cad_params(SF).await?;
         self.sx
             .irq_params(sx1262::irq::ALL, sx1262::irq::ALL)
             .await?;
         self.sx.symbol_timeout(0).await?;
         self.sx.rx_gain(false).await
+    }
+
+    async fn cad_params(&mut self) -> Result<(), RadioError> {
+        self.sx.cad_params(SF).await
     }
 
     async fn set_tcxo(&mut self, delay: Duration) -> Result<(), RadioError> {

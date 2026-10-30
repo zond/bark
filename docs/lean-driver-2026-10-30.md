@@ -1,8 +1,9 @@
 # The radio driven with only the commands that change
 
-**Date:** 2026-10-30. **Status:** built and measured in the simulator,
-adopted as roadmap D88; the bench has yet to confirm it. The bench note
-`bench-2026-10-30.md` has the measurements this rests on.
+**Date:** 2026-10-30. **Status:** built, measured in the simulator and
+run on board 1, adopted as roadmap D88; one regression found on the
+board and fixed, its retest open. The bench note `bench-2026-10-30.md`
+has the measurements this rests on.
 
 ## The question
 
@@ -39,9 +40,9 @@ holds the configuration, and sends an operation only what differs:
 
 | Operation | Commands |
 |---|---|
-| the configuration, once | regulator, RF switch, packet type, sync word, buffer base, retention list, fallback to STDBY_XOSC, modulation with its errata write, the IQ errata write, CAD parameters, one interrupt mask for receive, CAD and transmit, symbol timeout, receiver gain |
+| the configuration, once | regulator, RF switch, packet type, sync word, buffer base, retention list, fallback to STDBY_XOSC, modulation with its errata write, the IQ errata write, one interrupt mask for receive, CAD and transmit, symbol timeout, receiver gain |
 | retune | standby, frequency, receive |
-| listen-before-talk | standby, frequency, CAD; `GetRssiInst` four symbol periods in; the result read and cleared; then frequency and receive from the standby the CAD ends in |
+| listen-before-talk | standby, frequency, the CAD's parameters, CAD; `GetRssiInst` four symbol periods in; the result read and cleared; then frequency and receive from the standby the CAD ends in |
 | transmit | standby, frequency and packet parameters if they differ, the payload, transmit; then the receiver's packet parameters and receive |
 | duty-cycled receive | standby RC, frequency and packet parameters if they differ, the probed delay, the cycle |
 
@@ -86,25 +87,53 @@ phases and the reading, `tcxo`, which prints the delay in use and the
 last probe, and `probe`, which forces one. The node's 10 s `driver` line
 carries the delay, its errors and the cold starts.
 
+## Measured on the board
+
+Board 1, the branch merged with main, console image 6, medians at room
+temperature (2026-10-30, after the simulator runs below):
+
+| | |
+|---|---|
+| boot | radio up in 73.5 ms; the delay 500 µs after 8 probes, the lowest confirmed 250; the self-check's five pairs −1, 1, 1, 2, 3 dB, the offset 1 |
+| retune, `ch` to another channel | 386 to 389 µs; to the same channel nothing is sent, 10 µs |
+| a read | 51 µs; `rssi 5 1024`: retune 389, dwell 1071, read 51 |
+| `lbt 5`, quiet | prepare 359, CAD 2023 (one in five 2279), the read inside 51, back 505 to 515: 2.90 to 2.92 ms home to home; −78 dBm outside the CAD, −77 inside |
+| `tx 3 9` | prepare 547, 161 over the airtime, 369 back; 255 bytes: prepare 794, 165 over |
+| `sweep`, no dwell | 5.81 ms |
+| under a beacon on channel 5 at 10 % duty, −33 to −36 dBm | `lbt 5` 300 times: busy 37, each with the reading inside at −33 to −35 and the receive-mode reading at −33 to −36 |
+
+**A regression, fixed.** The same beacon test with the CAD flag alone
+(`cad 5`, 200 times) found it busy once, where the old driver, which
+sent the CAD's parameters before every CAD, found the beacon 10 % of
+the time, its duty. With the parameters sent once in the configuration
+the CAD kept its length, 8 symbols, but not its detection thresholds,
+so only a preamble, 3 ms of a 139 ms frame, set the flag. The
+parameters now go before every CAD, one command, 51 µs; `cad <k>` runs
+the CAD alone with nothing read inside it, so that the flag can be
+counted against `lbt`. Retest: `cad 5` under the beacon, busy at about
+the beacon's duty.
+
 ## The simulator's costs
 
-The simulator's cost model took the bench's numbers as defaults, each
-field saying which measurement it is; two are derived or measured with
-every command sent and marked to be measured on the lean path:
+The simulator's cost model carries the board's numbers as defaults,
+each field saying which measurement it is:
 
 | Field | µs | From |
 |---|---|---|
-| `rx_to_fs_us` + `fs_to_rx_us`, the retune | 355 | measured, three commands |
-| `rssi_read_us` | 49 | measured, the bus driven blocking |
-| `lbt_prepare_us` | 464 | measured, only what changes |
+| `rx_to_fs_us` + `fs_to_rx_us`, the retune | 388 | measured |
+| `rssi_read_us` | 51 | measured |
+| `lbt_prepare_us` | 410 | measured 359 before the CAD's parameters moved into it, one command more; to confirm |
 | the CAD's sampling | 2176 | derived, 8.5 symbols; measured 2.02 to 2.28 ms |
-| `lbt_return_us` | 350 | derived: 2.25 ms back to receiving less the 2 ms start inside it, plus the 100 µs short start; to measure |
-| `rx_to_tx_us` | 1356 | measured with every command on the blocking bus, 64 bytes; to measure |
-| `stby_to_rx_us` | 840 | measured with every command on the blocking bus; to measure |
+| `lbt_return_us` | 510 | measured |
+| `rx_to_tx_us` | 765 | measured, 602 to prepare 64 bytes between the 547 of 9 and the 794 of 255, and 163 over the airtime |
+| `stby_to_rx_us` | 369 | measured |
 
-A listen-before-talk is then 2.99 ms from listening to listening where
-it charged 9.2, and a reading of another channel 1.8 ms where it charged
-2.5.
+A listen-before-talk is then 3.1 ms from listening to listening where
+it charged 9.2, and a reading of another channel 1.9 ms where it charged
+2.5. The simulator runs below were made at the note's first defaults,
+from the bench's experiment before the board ran this driver: the
+retune 355, the read 49, `lbt_prepare_us` 464, `lbt_return_us` 350,
+`rx_to_tx_us` 1356, `stby_to_rx_us` 840; a listen-before-talk 3.0 ms.
 
 ## Measured in the simulator
 
@@ -137,17 +166,9 @@ less than half as badly; its cause is still a later item.
 
 ## What the bench still has to confirm
 
-- The phases of `lbt` against the defaults above: `prepare_us` (464),
-  `cad_us` (2.0 to 2.3 ms), `rest_us` (350, the short start inside it),
-  and `tx`'s `prepare_us`, `excess_us` and `rest_us` on the lean path.
-  They go to the simulator's defaults and spec "Heartbeat".
-- The self-check's offset on a quiet home channel, and whether the
-  reading inside a CAD stays within it under a signal: `lbt` under the
-  beacon, `dbm` against `rssi <k> 1024`. The bench saw the two agree
-  quiet and 3 to 7 dB apart under a signal, which the median of five
-  quiet pairs will not catch; if the offset under a signal matters, the
-  busy threshold's margin (spec "Busy estimate", 6 dB) is what it eats
-  into.
+- The CAD flag alone busy at the beacon's duty with the parameters
+  before each CAD (`cad 5` under the beacon), and `lbt`'s `prepare_us`
+  with that command in it, against the 410 the simulator now charges.
 - The probed delay at boot on each board, the error count in the
   `driver` line after a day, and `probe` after a night outside: whether
   a cold board's search lands higher and the hourly probe brings it
