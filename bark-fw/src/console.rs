@@ -12,7 +12,7 @@
 //! ```text
 //! ch <k>                     set the home channel
 //! tx <k> <hex|len>           send one frame
-//! rx <k> [ms]                listen on k for a frame (default 10 s)
+//! rx <k> [ms]                listen on k for ms (default 10 s), reporting every frame
 //! cad <k>                    one channel activity detection
 //! rssi <k> [dwell_us]        one RSSI reading
 //! sweep                      one RSSI reading on each channel
@@ -599,10 +599,15 @@ impl<'a> Console<'a> {
                     self.radio.retune(ch).await?;
                 }
                 let until = Instant::now() + Duration::from_millis(ms.into());
-                let heard = self.listen_until(ch, until, |_| true).await?;
-                if !heard {
-                    log::info!("rx ch={} timeout_ms={}", ch.index(), ms);
-                }
+                let (ok, errors) = (self.counters.rx_ok, self.counters.rx_crc_error);
+                self.listen_until(ch, until, |_| false).await?;
+                log::info!(
+                    "rx ch={} wait_ms={} frames={} crc_errors={}",
+                    ch.index(),
+                    ms,
+                    self.counters.rx_ok - ok,
+                    self.counters.rx_crc_error - errors
+                );
                 if ch != self.home {
                     self.radio.retune(self.home).await?;
                 }

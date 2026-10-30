@@ -415,7 +415,7 @@ retune times.
 |---|---|---|
 | `ch <k>` | set the home channel, where the radio listens between commands | `retune_us` |
 | `tx <k> <hex\|len>` | send one frame on k: hex bytes (`0a0b…`, or `0x…` to force hex), or a bench frame of len bytes (1 to 3 decimal digits) | `prepare_us`, `tx_us` (SetTx to TxDone), `airtime_us` (datasheet formula), `excess_us`, `rest_us` (back to listening) |
-| `rx <k> [ms]` | listen on k until a frame or ms (default 10 000) | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home` |
+| `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
 | `cad <k>` | one CAD (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us`, `rest_us` |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
