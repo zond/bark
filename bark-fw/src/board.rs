@@ -3,8 +3,12 @@
 //! Every pin the board wires to the nRF52840, grouped by function, as the
 //! embassy peripheral that owns it. Groups this firmware does not use yet are
 //! listed anyway so later work starts from here instead of re-researching the
-//! board. Source: `docs/implementation-research-2026-10-14.md` §2. None of
-//! it has been checked against a board yet.
+//! board. Source: `docs/implementation-research-2026-10-14.md` §2, checked
+//! against the board's back label, read on the bench 2026-10-30, which
+//! corrected two things: P1.11 is the display's front light, not a panel
+//! enable, and the green LED is on P1.01, not P0.15, which the label shows
+//! as an expansion-header pin. Polarities and what the label does not say
+//! (the rail switches' logic, the LEDs' wiring) are still unverified.
 //!
 //! [`take_board!`] moves the pins out of [`Peripherals`] so each driver takes
 //! exactly the pins it owns, by name, and the compiler rejects two drivers
@@ -20,9 +24,9 @@
 #![allow(dead_code)]
 
 use embassy_nrf::peripherals::{
-    P0_02, P0_03, P0_04, P0_11, P0_12, P0_13, P0_14, P0_15, P0_16, P0_17, P0_18, P0_19, P0_20,
-    P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_02, P1_04, P1_05,
-    P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15, USBD,
+    P0_02, P0_03, P0_04, P0_11, P0_12, P0_13, P0_14, P0_16, P0_17, P0_18, P0_19, P0_20, P0_21,
+    P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_01, P1_02, P1_03,
+    P1_04, P1_05, P1_06, P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15, USBD,
 };
 use embassy_nrf::Peri;
 #[cfg(doc)]
@@ -32,7 +36,9 @@ use embassy_nrf::Peripherals;
 ///
 /// DIO2 is wired inside the module to its RF switch (enable with
 /// `SetDio2AsRfSwitchCtrl`); the board has no RXEN/TXEN pins. DIO3 supplies
-/// the TCXO at 1.8 V (`SetDio3AsTcxoCtrl`). Neither reaches the nRF52840.
+/// the TCXO at 1.8 V (`SetDio3AsTcxoCtrl`); the label also brings it to
+/// P0.21, which this firmware leaves disconnected so as never to drive
+/// against the chip.
 pub struct Radio {
     /// SPI clock, P0.19.
     pub sck: Peri<'static, P0_19>,
@@ -48,6 +54,8 @@ pub struct Radio {
     pub busy: Peri<'static, P0_17>,
     /// DIO1, IRQ line (TxDone, RxDone, CadDone, timeouts), P0.20.
     pub dio1: Peri<'static, P0_20>,
+    /// DIO3, the TCXO supply the chip drives, P0.21. Never driven.
+    pub dio3: Peri<'static, P0_21>,
 }
 
 /// Power switching.
@@ -83,22 +91,25 @@ pub struct Gps {
 }
 
 /// 1.54" e-paper, SSD1681 controller (GDEH0154D67, 200 × 200), on SPI.
+/// The label gives a full refresh as 2 s and a partial one as 0.3 s.
 pub struct Eink {
     /// SPI clock, P0.31.
     pub sclk: Peri<'static, P0_31>,
-    /// SPI MOSI (write-only panel), P0.29.
+    /// SPI MOSI, P0.29.
     pub mosi: Peri<'static, P0_29>,
+    /// SPI MISO, P1.06. The panel is written only; nothing reads it.
+    pub miso: Peri<'static, P1_06>,
     /// Chip select, active low, P0.30.
     pub cs: Peri<'static, P0_30>,
     /// Data/command select, P0.28.
     pub dc: Peri<'static, P0_28>,
     /// Reset, active low, P0.02.
     pub reset: Peri<'static, P0_02>,
-    /// BUSY, P0.03.
+    /// BUSY, high while the controller is busy, P0.03.
     pub busy: Peri<'static, P0_03>,
-    /// Enable (`EN`), P1.11. What it switches (panel supply or front light)
-    /// and its polarity are unverified.
-    pub en: Peri<'static, P1_11>,
+    /// The front light (`BL`), P1.11. Not a panel enable: the panel needs
+    /// none. Left dark in every build; polarity unverified.
+    pub backlight: Peri<'static, P1_11>,
 }
 
 /// Buttons.
@@ -117,8 +128,10 @@ pub struct Buttons {
 /// LEDs. Polarity unverified: this firmware assumes active low (cathode on
 /// the pin), the usual wiring for an LED on an nRF52 GPIO.
 pub struct Leds {
-    /// Green LED, P0.15.
-    pub green: Peri<'static, P0_15>,
+    /// Red LED, P1.03.
+    pub red: Peri<'static, P1_03>,
+    /// Green LED, P1.01.
+    pub green: Peri<'static, P1_01>,
     /// Blue LED, P0.14.
     pub blue: Peri<'static, P0_14>,
 }
@@ -197,6 +210,7 @@ macro_rules! take_board {
                 reset: $p.P0_25,
                 busy: $p.P0_17,
                 dio1: $p.P0_20,
+                dio3: $p.P0_21,
             },
             power: $crate::board::Power {
                 radio_en: $p.P0_13,
@@ -212,11 +226,12 @@ macro_rules! take_board {
             eink: $crate::board::Eink {
                 sclk: $p.P0_31,
                 mosi: $p.P0_29,
+                miso: $p.P1_06,
                 cs: $p.P0_30,
                 dc: $p.P0_28,
                 reset: $p.P0_02,
                 busy: $p.P0_03,
-                en: $p.P1_11,
+                backlight: $p.P1_11,
             },
             buttons: $crate::board::Buttons {
                 user: $p.P1_10,
@@ -224,7 +239,8 @@ macro_rules! take_board {
                 touch: $p.P0_11,
             },
             leds: $crate::board::Leds {
-                green: $p.P0_15,
+                red: $p.P1_03,
+                green: $p.P1_01,
                 blue: $p.P0_14,
             },
             battery: $crate::board::Battery { adc: $p.P0_04 },

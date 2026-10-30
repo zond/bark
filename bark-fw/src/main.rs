@@ -1,11 +1,12 @@
 //! bark firmware for the LILYGO T-Echo.
 //!
 //! Blinks the green LED at 1 Hz while on USB, logs over USB CDC-ACM,
-//! powers up the SX1262 at bark's modulation and runs the protocol core on
-//! it (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
+//! shows the node ID and the image on the e-paper (`display.rs`), powers
+//! up the SX1262 at bark's modulation and runs the protocol core on it
+//! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
 //! (`console.rs`) on the serial port. Reads the battery (`battery.rs`);
-//! touches no GPS, display or BLE.
+//! touches no GPS or BLE.
 
 #![no_std]
 #![no_main]
@@ -15,6 +16,7 @@ mod board;
 mod clock;
 #[cfg(feature = "console")]
 mod console;
+mod display;
 #[cfg(not(feature = "console"))]
 mod node;
 mod power;
@@ -24,9 +26,11 @@ mod store;
 mod update;
 
 use core::cell::Cell;
+use core::fmt::Write as _;
 
+use bark_proto::NodeId;
 use embassy_executor::Spawner;
-use embassy_futures::join::join5;
+use embassy_futures::join::{join, join5};
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
@@ -36,18 +40,11 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 
-#[cfg(feature = "console")]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    SAADC => embassy_nrf::saadc::InterruptHandler;
-});
-#[cfg(not(feature = "console"))]
-bind_interrupts!(struct Irqs {
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
-    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
 });
 
@@ -69,6 +66,73 @@ const USB_PACKET: u16 = 64;
 /// Log ring size in bytes. Lines logged before the host opens the port wait
 /// here; once it is full, new lines are dropped, so the banner survives.
 const LOG_BUFFER: usize = 2048;
+
+/// Which image this is, for the display and the log.
+#[cfg(feature = "console")]
+const IMAGE: &str = match console::SURVEY {
+    None => "console",
+    Some(_) => "survey",
+};
+#[cfg(not(feature = "console"))]
+const IMAGE: &str = "node";
+
+// A survey is a console; set for a node build the variable would be
+// ignored, and the board would not do what was asked of it.
+#[cfg(not(feature = "console"))]
+const _: () = assert!(
+    option_env!("BARK_SURVEY").is_none(),
+    "BARK_SURVEY needs --features console"
+);
+
+/// The node's ID: the low 48 bits of the 64-bit factory device ID, all 32
+/// of DEVICEID[0] and the low 16 of DEVICEID[1] (nRF52840 Product
+/// Specification, FICR DEVICEID; spec "Node identity"). The same at every
+/// boot.
+pub fn node_id() -> NodeId {
+    let ficr = embassy_nrf::pac::FICR;
+    let low = ficr.deviceid(0).read() as u64;
+    let high = ficr.deviceid(1).read() as u64;
+    NodeId::from_u64(high << 32 | low)
+}
+
+/// The ID as twelve lowercase hex digits, the form every log line and the
+/// USB serial number use.
+pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
+    let digit = |n: u8| b"0123456789abcdef"[usize::from(n)];
+    let mut hex = [0u8; 2 * NodeId::LEN];
+    for (i, byte) in node_id().0.into_iter().enumerate() {
+        hex[2 * i] = digit(byte >> 4);
+        hex[2 * i + 1] = digit(byte & 0x0F);
+    }
+    hex
+}
+
+/// The boot picture: the ID in two rows of six digits, large, then the
+/// image and its version.
+fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
+    // Six 5-pixel glyphs with a column between, at 5 pixels each, span
+    // 175 of the 200 columns: the largest the ID's halves fit.
+    const ID_SCALE: usize = 3;
+    const TEXT_SCALE: usize = 2;
+    const TOP: usize = 30;
+    let mut picture = display::Picture::white();
+    let mut y = TOP;
+    for half in hex.chunks(NodeId::LEN) {
+        picture.text(half, ID_SCALE, y);
+        y += display::line_height(ID_SCALE);
+    }
+    y += display::line_height(TEXT_SCALE) / 2;
+    picture.text(IMAGE.as_bytes(), TEXT_SCALE, y);
+    y += display::line_height(TEXT_SCALE);
+    let mut line = display::Line::<32>::new();
+    let _ = write!(line, "V{}", update::BARK_IMAGE_VERSION);
+    #[cfg(feature = "console")]
+    if let Some(ch) = console::SURVEY {
+        let _ = write!(line, " CH{}", ch.index());
+    }
+    picture.text(line.bytes(), TEXT_SCALE, y);
+    picture
+}
 
 /// Heartbeat airtime as the core computes it (the heartbeat frame, minimum SF5
 /// preamble). A compile-time call into `bark-proto` for the target.
@@ -99,12 +163,19 @@ async fn main(_spawner: Spawner) {
     let p = embassy_nrf::init(config);
     let board = board::take_board!(p);
 
+    // The ID as the USB serial number, so that the host names each board's
+    // port by it (`/dev/serial/by-id/`). The descriptor is read for as
+    // long as the device runs.
+    static SERIAL: static_cell::StaticCell<[u8; 2 * NodeId::LEN]> = static_cell::StaticCell::new();
+    let hex: &'static [u8; 2 * NodeId::LEN] = SERIAL.init(node_id_hex());
+    let serial = core::str::from_utf8(hex).expect("hex digits are ASCII");
+
     // USB device with one CDC-ACM interface carrying the log.
     let driver = usb::Driver::new(board.usbd, Irqs, HardwareVbusDetect::new(Irqs));
     let mut usb_config = embassy_usb::Config::new(USB_VID, USB_PID);
     usb_config.manufacturer = Some("bark");
     usb_config.product = Some("bark T-Echo");
-    usb_config.serial_number = None;
+    usb_config.serial_number = Some(serial);
     // Current we ask the host for, mA: one unit load, granted by every port
     // without negotiation (USB 2.0 §7.2.1).
     usb_config.max_power = 100;
@@ -154,9 +225,11 @@ async fn main(_spawner: Spawner) {
     );
 
     log::info!(
-        "bark-fw {} on LILYGO T-Echo, image version {}",
+        "bark-fw {} on LILYGO T-Echo, {} image version {}, id={}",
         env!("CARGO_PKG_VERSION"),
-        update::BARK_IMAGE_VERSION
+        IMAGE,
+        update::BARK_IMAGE_VERSION,
+        serial
     );
     log::info!(
         "bark-proto: {} channels from {} Hz, spacing {} Hz, SF{}, symbol {} us, heartbeat {} us",
@@ -222,12 +295,19 @@ async fn main(_spawner: Spawner) {
         }
     };
 
-    join5(
-        device.run(),
-        log_sink,
-        blink,
-        radio_task,
-        update::watchdog(p.WDT),
+    let picture = boot_picture(hex);
+    // After the radio's future, which raises the switched rail first thing.
+    let shown = display::show(board.eink, p.SPI3, Irqs, &picture);
+
+    join(
+        join5(
+            device.run(),
+            log_sink,
+            blink,
+            radio_task,
+            update::watchdog(p.WDT),
+        ),
+        shown,
     )
     .await;
 }
@@ -243,7 +323,7 @@ const UPTIME_EVERY: u32 = 20;
 /// current, a blink would wake the CPU twice a second, and the crystal,
 /// once started, runs on while the CPU sleeps, where the internal
 /// oscillator starts only while something needs it.
-async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P0_15>) {
+async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P1_01>) {
     use embassy_futures::select::{select, Either};
     use embassy_nrf::gpio::{Level, Output, OutputDrive};
     // LED assumed active low (board.rs, Leds): start dark.

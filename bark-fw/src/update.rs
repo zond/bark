@@ -68,16 +68,14 @@ const fn same(a: &str, b: &str) -> bool {
     true
 }
 
-const fn decimal(s: &str) -> u32 {
+/// A build-time variable as a number; the build fails on anything else.
+pub const fn decimal(s: &str) -> u32 {
     let b = s.as_bytes();
-    assert!(!b.is_empty(), "BARK_IMAGE_VERSION is empty");
+    assert!(!b.is_empty(), "a build-time number is empty");
     let mut v: u32 = 0;
     let mut i = 0;
     while i < b.len() {
-        assert!(
-            b[i].is_ascii_digit(),
-            "BARK_IMAGE_VERSION is a decimal number"
-        );
+        assert!(b[i].is_ascii_digit(), "a build-time number has a non-digit");
         v = v * 10 + (b[i] - b'0') as u32;
         i += 1;
     }

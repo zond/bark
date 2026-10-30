@@ -7,7 +7,8 @@ Current state (2026-10-25). It starts behind a loader of its own, which
 can swap in a staged image and swap it back (Updates, below). The firmware blinks the green LED at 1 Hz
 while on USB, logs over USB CDC-ACM (a banner with the firmware version
 and constants from `bark-proto`, the previous boot's panic message if
-there was one, an uptime line every 10 s while on USB), powers up the
+there was one, an uptime line every 10 s while on USB), shows the
+board's node ID on the e-paper (Display, below), powers up the
 SX1262 at bark's modulation (SF5, 125 kHz, CR 4/5, CRC on, private sync
 word, the receiver set for the 1396-symbol long preamble) and then does
 one of two things, chosen when it is built:
@@ -16,6 +17,7 @@ one of two things, chosen when it is built:
 |---|---|
 | `cargo build --release` | the protocol core: a relay on USB, sleepy on battery |
 | `cargo build --release --features console` | the measurement console (below) |
+| `BARK_SURVEY=<k> cargo build --release --features console` | the console as a survey on channel k, for a board left away from the host (Survey build, below) |
 
 Every board runs the same node. Its role is not a setting: the firmware
 reads whether USB power is present from the nRF52840's VBUS detection
@@ -46,7 +48,7 @@ left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times. There is no application yet: the node sends no
-messages of its own. It does not touch GPS, e-paper or BLE (the GPS does
+messages of its own. It does not touch GPS or BLE (the GPS does
 get power, see Radio power below).
 
 ## Verified and unverified
@@ -116,7 +118,7 @@ Unverified, in the order they will fail if wrong:
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
   time and the node turns a relay on the cable at once.
-- The green LED is on P0.15 and active low.
+- The green LED is on P1.01 (the board's label, 2026-10-30) and active low.
 - USB enumerates as a CDC-ACM serial port and log lines arrive.
 - A panic message survives the soft reset through the bootloader and the
   loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
@@ -153,6 +155,11 @@ Unverified, in the order they will fail if wrong:
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
 - Every console command. The timings it prints are its purpose; none has
   been seen.
+- The display (Display, below): the controller answers on SPIM3 at
+  4 MHz, BUSY falls after the reset, the software reset and the refresh,
+  the picture comes out black on white the right way up (`ROTATION` in
+  `src/display.rs` turns it if not), and the controller's deep sleep
+  keeps it on the glass.
 
 ## Toolchain
 
@@ -242,9 +249,10 @@ address ranges.
    the application. (Some file managers report an error on that disconnect;
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
-   appears on the host, and once it is opened the log shows
+   appears on the host, and once it is opened the log shows a banner
+   with the image, its version and the board's node ID (`id=`), then
    `radio up in N us`, then `node id=... at ... usb=true`, or
-   `console ready` from a console build.
+   `console ready: id=...` from a console build.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
@@ -349,6 +357,32 @@ at most a copy). Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x2a000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
+## Display
+
+At boot every image writes one picture to the 1.54" e-paper
+(200 × 200, SSD1681 controller, `src/display.rs`): the board's node ID
+as twelve hex digits in two rows of six, 25 × 35 pixels each, the
+largest six fit across the panel, below them the image's name, `NODE`,
+`CONSOLE` or `SURVEY`, and its version as `V` and `BARK_IMAGE_VERSION`,
+a survey's with its channel as `CH`. The text
+comes from a 5 × 7 bitmap font of the hex digits and the few letters
+those words need, scaled by whole pixels. A board can then be told from
+another unplugged, and the hex matches the `id=` of its log and its USB
+serial number.
+
+The panel has its own SPI (SPIM3, 4 MHz) and its refresh runs as its
+own future beside the radio's start, so it delays nothing: the picture
+is rendered in microseconds, the 5000-byte RAM write is DMA, and every
+wait on the controller's BUSY line is on an interrupt and bounded at
+6 s, three times the 2 s full refresh the board's label gives. A
+controller that does not answer logs `display: busy past 6 s at <step>;
+no picture` and the boot goes on without it. The sequence is the
+controller's: reset, software reset, the driver output, data entry,
+RAM window, border and temperature settings, the picture into both RAM
+planes, one full refresh, then deep sleep mode 1, which holds the
+picture on the glass and draws nothing until a hardware reset. The
+front light (P1.11) stays off.
+
 ## Radio power
 
 At boot the firmware holds NRESET low, drives P0.13 (`PWR_EN`) and P0.12
@@ -383,7 +417,7 @@ retune times.
 |---|---|---|
 | `ch <k>` | set the home channel, where the radio listens between commands | `retune_us` |
 | `tx <k> <hex\|len>` | send one frame on k: hex bytes (`0a0b…`, or `0x…` to force hex), or a bench frame of len bytes (1 to 3 decimal digits) | `prepare_us`, `tx_us` (SetTx to TxDone), `airtime_us` (datasheet formula), `excess_us`, `rest_us` (back to listening) |
-| `rx <k> [ms]` | listen on k until a frame or ms (default 10 000) | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home` |
+| `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`, or for a survey frame its sender's `survey_power_dbm` and `seq` in place of the bytes; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
 | `cad <k>` | one CAD (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us`, `rest_us` |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
@@ -393,7 +427,8 @@ retune times.
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
-| `status [reset]` | uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `status [reset]` | node ID, uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
@@ -409,10 +444,46 @@ listen-before-talk.
 Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
 `0x8F`, byte 1 the format version as in every packet, byte 2 the kind
-(0 test or beacon, 1 ping, 2 pong), bytes 3 to 6 a big-endian sequence
-number, byte 7 the sender's home channel, then `byte[i] = i`. RSSI is
-whole dBm (the driver drops the chip's half-dB step); packet RSSI and
-SNR are in quarter dB.
+(0 test or beacon, 1 ping, 2 pong, 3 survey), byte 3 the kind's
+argument, the sender's home channel or for a survey frame its transmit
+power in dBm as a signed byte, bytes 4 to 7 a big-endian sequence
+number, then `byte[i] = i`. RSSI is whole dBm (the driver drops the
+chip's half-dB step); packet RSSI and SNR are in quarter dB.
+
+### Survey build
+
+A console built with `BARK_SURVEY=<k>`, k a channel, surveys a place
+from the moment it boots, on battery and with no host: a board left on
+a windowsill, in another room or across the street, read back when it
+is plugged in again. It needs no command. The near board, on the host,
+listens with `rx <k> <ms>` for as long as the host logs.
+
+- **Beacons** on channel k, forever: a frame of 8, 64 and then 255
+  bytes, and for each length every transmit power from −9 to 10 dBm in
+  1 dB steps, 60 frames a cycle, each a survey bench frame saying its
+  power. After each frame the board is silent for the rest of the
+  period the 10 % duty cycle allows that frame, as `beacon` enforces
+  (spec "Regulatory limits"): 38 s a cycle, most of it the 255-byte
+  frames' 1.39 s periods, so each power and length is sent some 94
+  times an hour. The near board's `rx` lines
+  give, per power and length, the frames heard and their RSSI and SNR,
+  from which the loss curve and the RSSI calibration follow; the
+  frames it did not hear are the cycle's missing sequence numbers.
+- **Noise**, once a minute: on each of the 13 channels, a retune, a
+  wait of four symbol periods for the reading to settle
+  (`docs/bench-2026-10-30.md`, RSSI against dwell), then 100 RSSI
+  readings back to back, as `noise <k> 100`, kept as the 10th
+  percentile and the median in whole dBm. The minute's line is logged,
+  and kept in a ring in RAM of the last 48 hours (86 KiB, only in this
+  build), which `survey` prints when the board is back on the host:
+  one line a minute, paced so the log buffer never drops one, about
+  12 s for two days.
+
+The log never waits for a host: lines logged with no port open fill
+the 2 KiB buffer and newer ones are dropped (Log, below), so a survey
+board runs the same with and without one. Its home channel is k, so
+`ping k` from the near board is answered. The display says `SURVEY`
+and `CH<k>` (Display, above).
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
 and bench item C1, with a table that maps the results onto the simulator's
@@ -525,8 +596,8 @@ What stays, and is not this firmware's to fix without a board:
 - The battery divider, about 12 µA all the time (`board.rs`, Battery).
 - The nRF52840's regulator runs as an LDO (embassy's default); the DC-DC
   needs an inductor the T-Echo may or may not have.
-- The e-paper and the external flash are not touched; their idle current
-  is unknown.
+- The e-paper's controller is in deep sleep after the boot picture and
+  the external flash is not touched; their idle current is unknown.
 
 The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a
@@ -559,8 +630,10 @@ on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 ## Log
 
 The firmware enumerates as USB VID:PID `1209:0001`, a pid.codes test ID that
-must not be used on distributed devices. On Linux it appears as
-`/dev/ttyACM0` (or the next free number; `dmesg | tail` says which).
+must not be used on distributed devices, with the board's node ID, twelve
+hex digits, as its serial number. On Linux it appears as `/dev/ttyACM0`
+(or the next free number; `dmesg | tail` says which) and, by board, as
+`/dev/serial/by-id/usb-bark_bark_T-Echo_<id>-if00`.
 
 CDC-ACM is a USB bulk pipe: the baud rate, parity and stop bits a terminal
 sets are ignored, so any value works. What matters is that the terminal

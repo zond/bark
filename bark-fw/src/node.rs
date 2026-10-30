@@ -1,8 +1,6 @@
 //! The protocol core on the board, a relay on USB and sleepy on battery
 //! (`power.rs`, spec "Nodes"), driven by `bark_driver::Driver` against
-//! the SX1262. Its node ID is the low 48 bits of the chip's factory
-//! device ID (nRF52840 Product Specification, FICR DEVICEID), the same at
-//! every boot ([`node_id`]).
+//! the SX1262. Its node ID is the chip's (`crate::node_id`).
 //!
 //! The node's position comes from `BARK_LAT` and `BARK_LON` (degrees) at
 //! build time until the phone app or the GPS can set it
@@ -13,7 +11,7 @@ use core::mem::MaybeUninit;
 
 use bark_driver::{App, Clock, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
-use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, NodeId, Position, Stored};
+use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
 use embassy_time::{Duration, Timer, TICK_HZ};
 
 use crate::battery::Battery;
@@ -123,7 +121,7 @@ pub fn config(stored: Option<Stored>) -> Config {
     log::info!("stored {:?}", stored);
     Config {
         position,
-        node_id: node_id(),
+        node_id: crate::node_id(),
         tx_power_dbm: MAX_TX_DBM,
         stored,
         // The board reads its battery (`battery.rs`). On the bench's USB,
@@ -133,15 +131,6 @@ pub fn config(stored: Option<Stored>) -> Config {
         battery: (option_env!("BARK_ON_BATTERY") != Some("1")).then_some(BatteryLevels::DESIGN),
         ..Config::default()
     }
-}
-
-/// The node's ID: the low 48 bits of the 64-bit factory device ID, all 32
-/// of DEVICEID[0] and the low 16 of DEVICEID[1] (spec "Node identity").
-fn node_id() -> NodeId {
-    let ficr = embassy_nrf::pac::FICR;
-    let low = ficr.deviceid(0).read() as u64;
-    let high = ficr.deviceid(1).read() as u64;
-    NodeId::from_u64(high << 32 | low)
 }
 
 /// All zero bytes are a node, though not a set-up one. rustc checks that
