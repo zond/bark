@@ -25,7 +25,6 @@ mod radio;
 mod store;
 mod update;
 
-use core::cell::Cell;
 use core::fmt::Write as _;
 
 use bark_proto::NodeId;
@@ -46,6 +45,7 @@ bind_interrupts!(struct Irqs {
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
     SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
+    TEMP => embassy_nrf::temp::InterruptHandler;
 });
 
 /// What the host types: commands for the console, or nothing to the node.
@@ -250,7 +250,6 @@ async fn main(_spawner: Spawner) {
     let clock = clock::Clock::new(p.TIMER1);
     #[cfg(not(feature = "console"))]
     let clock = clock::Clock::new();
-    let irq_deadline = Cell::new(None);
     let battery = battery::Battery::new(embassy_nrf::saadc::Saadc::new(
         p.SAADC,
         Irqs,
@@ -266,27 +265,45 @@ async fn main(_spawner: Spawner) {
         let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG).blocking_next_u64();
         (config, node::core(config, seed), flash)
     };
+    // Where the radio's self-check reads the channel at boot: the home
+    // channel if one is stored, else the console's or the first.
+    #[cfg(feature = "console")]
+    let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
+    #[cfg(not(feature = "console"))]
+    let channel = config
+        .stored
+        .map_or(bark_proto::Channel::new(0).expect("in the plan"), |s| {
+            s.home
+        });
     let radio_task = async {
         let t0 = clock.now();
-        match radio::Radio::new(
+        match radio::boot(
             board.radio,
             board.power,
             p.SPI2,
             Irqs,
-            &irq_deadline,
+            p.TEMP,
+            Irqs,
             &clock,
+            channel,
         )
         .await
         {
             Ok(radio) => {
-                log::info!("radio up in {} us", clock.since(t0));
+                log::info!(
+                    "radio up in {} us, tcxo {} us after {} probes, lbt reading {:?}",
+                    clock.since(t0),
+                    radio.tcxo().delay.as_micros(),
+                    radio.tcxo().probes,
+                    radio.lbt_read()
+                );
                 update::started(shared);
                 #[cfg(feature = "console")]
                 console::Console::new(radio, &clock, battery, shared)
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
-                node::run(core, radio, flash, battery, &config).await;
+                node::run(core, radio, flash, battery, &config, &clock).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.

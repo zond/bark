@@ -52,10 +52,9 @@ A prints one `rx ch=3 ... crc=ok` line per frame. B prints
 
 Expected: `excess_us` of a few hundred µs at most. The radio idles in
 STDBY_XOSC with the TCXO running, so SetTx waits for no TCXO start and
-the chip reaches TX in 105 µs (DS Table 8-2). The simulator assumes
-92 µs (RX→TX). An `excess_us` near 5 000 means the chip started the TCXO
-again (`radio::TCXO_START`): it was in STDBY_RC, and the driver's standby
-setting did not take.
+the chip reaches TX in 105 µs (DS Table 8-2); the bench measured 356 µs
+on the bus driven blocking. An `excess_us` the probed delay (`tcxo`)
+larger means the chip started the oscillator: it was in STDBY_RC.
 
 ### 1.2 Retune
 
@@ -67,10 +66,11 @@ A> ch 0      (twelve channels, 1.5 MHz)
 ```
 
 `retune_us` with and without a hop. The radio retunes through
-STDBY_XOSC, so no TCXO start is expected: the chip's part is about 62 µs
-(STDBY_XOSC→RX, DS Table 8-2) plus the unlisted RX→STDBY_XOSC step, against
-the simulator's 86 µs (spec "Busy estimate" assumes ≈0.1 ms); the SPI commands add to it.
-About 5 000 means a TCXO start (see 1.1).
+STDBY_XOSC, so no TCXO start is expected: three commands, standby, the
+frequency and receive, 355 µs on the bench, the simulator's default
+(spec "Busy estimate"); the chip's part is about 62 µs (STDBY_XOSC→RX,
+DS Table 8-2) plus the unlisted RX→STDBY_XOSC step. The probed delay
+on top means a TCXO start (see 1.1).
 
 ### 1.3 RSSI settle time and noise floor
 
@@ -107,21 +107,32 @@ A> sweep
 
 13 readings, `total_us`. Spec "Busy estimate" assumes about 5 ms for all 13.
 
-### 1.5 CAD
+### 1.5 CAD and listen-before-talk
 
 ```
 A> cad 5     (×20 with nothing on air: count busy=true, the false alarms)
+A> lbt 5     (×10: the phases and the reading)
 B> beacon 5 1390 255
 A> cad 5     (×50 while B beacons)
+A> lbt 5     (×10)
 B> stop
+A> tcxo
 ```
 
-`prepare_us`, `cad_us`, `rest_us`. `cad_us` contains the CAD itself, 8
-symbols at SF5 ≈ 2.2 ms, and the TCXO start after it (`radio::TCXO_START`,
-5 ms): CAD ends in STDBY_RC, which turns the TCXO off (DS Table 13-73), and
-the driver starts it again before it returns. B's frames are
-on air 10 % of the time, so about 5 of the 50 CADs land on one; if far
-fewer report busy, CAD misses frames or detects only the preamble.
+`cad` is the listen-before-talk printed as the CAD it is built on:
+`prepare_us` (standby, the frequency, SetCAD), `cad_us` (SetCAD to its
+result read and cleared: 8 symbols at SF5 ≈ 2.2 ms, with the RSSI read
+inside), `rest_us` (back to listening at home, the oscillator restarted
+with the short delay since a CAD ends in STDBY_RC, DS Table 13-73). `lbt`
+adds `dbm`, the reading on the footing of one while listening, and
+`inside_dbm` as read, `read_us`, `after_us` (a reading after the CAD, only
+if the self-check at boot chose that) and `total_us`; `tcxo` shows the
+delay in use, the last probe and `lbt_read`, the self-check's choice.
+B's frames are on air 10 % of the time, so about 5 of the 50 CADs land on
+one; if far fewer report busy, CAD misses frames or detects only the
+preamble. Under the beacon `dbm` should read the frame's level within a
+few dB of a `rssi 5 1024` taken the same way (`docs/bench-2026-10-30.md`
+saw 3 to 7 dB high before the offset).
 
 ### 1.6 Ping and the per-hop ACK budget (spec "Hand-over")
 
@@ -330,18 +341,21 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 | `acr2_db` | 60 | C1 | measurement 1 at ±2 | |
 | `cad_symbols` | 8 | fixed | the driver hard-codes 8 | 8 |
 | `cad_miss_probability` | 0 | 1.5 | 1 − busy count / expected count (rough) | |
-| `rssi_dwell_us` | 300 | 1.3 | settle dwell + `read_us` | |
-| `rx_to_fs_us` | 15 (DS) | 1.2 | with `fs_to_rx_us`: `ch` to the same channel, split 15 : 41 | |
-| `fs_to_rx_us` | 41 (DS) | 1.2 | see above | |
-| `synth_hop_us` | 30 (DS) | 1.2 | `ch` to another channel − `ch` to the same | |
-| `rx_to_tx_us` | 92 (DS) | 1.1 | `excess_us` | |
-| `stby_to_rx_us` | 83 (DS) | 1.1, 1.5 | `rest_us` after `tx` and `cad` | |
+| `rssi_dwell_us` | 1024 (bench) | 1.3 | the settle dwell | |
+| `rssi_read_us` | 49 (bench) | 1.3 | `read_us` | |
+| `rx_to_fs_us` | 178 (bench) | 1.2 | with `fs_to_rx_us`: `ch` to the same channel, halved | |
+| `fs_to_rx_us` | 177 (bench) | 1.2 | see above | |
+| `synth_hop_us` | 0 (bench) | 1.2 | `ch` to another channel − `ch` to the same | |
+| `rx_to_tx_us` | 1356 (bench, every command) | 1.1 | `prepare_us` + `excess_us` for 64 bytes | |
+| `stby_to_rx_us` | 840 (bench, every command) | 1.1 | `rest_us` after `tx` | |
+| `lbt_prepare_us` | 464 (bench) | 1.5 | `prepare_us` of `lbt` | |
+| `lbt_return_us` | 350 (derived) | 1.5 | `rest_us` after `lbt` | |
 | `interference_margin_db` | 10 | not measured | a modelling cut-off | 10 |
 
 The CAD phase in the simulator is its sampling time, computed from
-`cad_symbols` (2.2 ms at 8 symbols). `cad_us` in 1.5 exceeds it by the
-TCXO start after the CAD, when the radio hears nothing; the simulator has
-no field for that yet, so note the excess.
+`cad_symbols` (2.2 ms at 8 symbols); `cad_us` in 1.5 should match it
+within the interrupt's latency, and `prepare_us` and `rest_us` of `lbt`
+go to `lbt_prepare_us` and `lbt_return_us` (roadmap D88).
 
 Into a scenario file:
 

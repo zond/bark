@@ -9,12 +9,13 @@
 
 use core::mem::MaybeUninit;
 
-use bark_driver::{App, Clock, Driver, Outgoing};
+use bark_driver::{App, Driver, Outgoing};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
-use embassy_time::{Duration, Timer, TICK_HZ};
+use embassy_time::{Duration, Timer};
 
 use crate::battery::Battery;
+use crate::clock::Clock;
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
 use crate::store::Flash;
 
@@ -28,28 +29,13 @@ const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// radio that stays broken logs once a second instead of filling the log.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
-/// The embassy clock in the core's microseconds.
-pub struct Monotonic;
-
-impl Clock for Monotonic {
-    fn now(&self) -> Instant {
-        Instant::from_micros(embassy_time::Instant::now().as_micros())
-    }
-
-    async fn at(&self, t: Instant) {
-        // Round up to the next tick: a tick rounded down would fire before
-        // `t`, and the core must never be woken early (core-interface §2).
-        let ticks = (u128::from(t.as_micros()) * u128::from(TICK_HZ)).div_ceil(1_000_000);
-        Timer::at(embassy_time::Instant::from_ticks(ticks as u64)).await
-    }
-}
-
 /// No application yet (BLE comes later, roadmap D5): nothing to send, and
 /// what the core tells the application goes to the log. The power comes
 /// from USB (`power.rs`); what the core keeps goes to flash (`store.rs`).
 pub struct LogApp<'a> {
     flash: Flash,
     battery: Battery<'a>,
+    clock: &'a Clock,
 }
 
 impl App for LogApp<'_> {
@@ -84,7 +70,7 @@ impl App for LogApp<'_> {
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
             AppEvent::GivenBack { msg_id, retry_at } => {
-                let now = Monotonic.now();
+                let now = bark_driver::Clock::now(&self.clock);
                 log::warn!(
                     "given back id={:08x} reason=refused retry_in_ms={}",
                     msg_id.0,
@@ -92,7 +78,8 @@ impl App for LogApp<'_> {
                 )
             }
             AppEvent::Boot { relays, ends } => {
-                let left = ends.map(|t| t.since(Monotonic.now()).as_micros() / 1_000_000);
+                let now = bark_driver::Clock::now(&self.clock);
+                let left = ends.map(|t| t.since(now).as_micros() / 1_000_000);
                 log::info!("boot relays={} first_rotation_left_s={:?}", relays, left)
             }
         }
@@ -159,16 +146,21 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 }
 
 /// Run the core forever.
-pub async fn run(
+pub async fn run<'a>(
     core: &'static mut Role,
-    radio: Radio<'_>,
+    radio: Radio<'a>,
     flash: Flash,
-    battery: Battery<'_>,
+    battery: Battery<'a>,
     config: &Config,
+    clock: &'a Clock,
 ) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let app = LogApp { flash, battery };
-    let mut driver = Driver::new(Static(core), radio, Monotonic, app, dbm);
+    let app = LogApp {
+        flash,
+        battery,
+        clock,
+    };
+    let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
         "node id={:02x?} at {} {} power_dbm={} usb={}",
         config.node_id.0,
@@ -185,8 +177,11 @@ pub async fn run(
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             let s = driver.stats();
+            let r = driver.radio().stats();
+            let t = driver.radio().tcxo();
             log::info!(
-                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={}",
+                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} \
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -194,7 +189,12 @@ pub async fn run(
                 s.radio_errors,
                 s.sniffs,
                 s.longest_handle.as_micros(),
-                s.longest_away.as_micros()
+                s.longest_away.as_micros(),
+                r.resets,
+                r.configured,
+                r.cold_starts,
+                t.delay.as_micros(),
+                t.errors
             );
         }
     }

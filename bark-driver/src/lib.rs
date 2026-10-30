@@ -19,6 +19,12 @@
 // be `Send`, which is what the lint is about.
 #![allow(async_fn_in_trait)]
 
+#[cfg(test)]
+extern crate std;
+
+pub mod sx1262;
+pub mod tcxo;
+
 use core::fmt::Debug;
 use core::future::pending;
 

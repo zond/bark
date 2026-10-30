@@ -77,6 +77,13 @@ Verified on the host:
   core's `Sniff`, starts again after each frame, ends at the sniff's end or
   at the core's next use of the radio, waits for a packet under way, and
   starts again after a packet that never ends (2026-10-20).
+- The radio's command sequences, against a chip that records them
+  (`bark-driver/src/sx1262.rs`, the same `cargo test`): what is sent once,
+  what each operation sends, the whole configuration again after a reset,
+  a sleep or an error, the oscillator's delay short after a CAD and probed
+  after a sleep, the search for the delay at boot, the step up on a start
+  error and the probe below as the die warms, and the self-check of the
+  reading inside a CAD (2026-10-30, roadmap D88).
 - `scripts/uf2.py` produces UF2s that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, 256-byte payloads in ascending
   order inside `0x26000..0xF4000`; the loader's at `0x26000`, the
@@ -135,10 +142,13 @@ Unverified, in the order they will fail if wrong:
   shows as `Busy` or `DIO1` errors when the radio starts or on its first
   transmit or receive.
 - 8 MHz SPI works on the board's traces.
-- The driver's behaviour beyond what its source shows: CRC-failed frames
-  can be read back after the error (`get_rx_result` in continuous receive),
-  RSSI reads are valid immediately after a retune, and continuous receive
-  keeps running after a header or CRC error.
+- The chip's behaviour beyond what the datasheet says: CRC-failed frames
+  can be read back after the error, continuous receive keeps running after
+  a header or CRC error, `GetRssiInst` answers during a CAD as the bench
+  saw (the boot self-check guards it, Radio driver below), the
+  configuration sent once holds across every operation but a sleep, and a
+  delay of 100 µs restarts the oscillator cleanly within a millisecond of
+  a CAD's end (`docs/bench-2026-10-30.md`, roadmap D88).
 - Duty-cycled receive (`Radio::sniff`, below), in the order it would fail:
   the chip accepts SetRxDutyCycle(384, 22 344) and cycles; it catches a
   frame with the long preamble wherever it starts (`sniff::detects`);
@@ -418,7 +428,10 @@ retune times.
 | `ch <k>` | set the home channel, where the radio listens between commands | `retune_us` |
 | `tx <k> <hex\|len>` | send one frame on k: hex bytes (`0a0b…`, or `0x…` to force hex), or a bench frame of len bytes (1 to 3 decimal digits) | `prepare_us`, `tx_us` (SetTx to TxDone), `airtime_us` (datasheet formula), `excess_us`, `rest_us` (back to listening) |
 | `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`, or for a survey frame its sender's `survey_power_dbm` and `seq` in place of the bytes; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
-| `cad <k>` | one CAD (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us`, `rest_us` |
+| `cad <k>` | one listen-before-talk on k, printed as the CAD it is built on (8 symbols, the driver's fixed setting) | `busy`, `prepare_us`, `cad_us` (SetCAD to its result read and cleared), `rest_us` |
+| `lbt <k>` | one listen-before-talk on k: the CAD with the RSSI read inside it, then home (roadmap D88) | `busy`, `dbm` (on the footing of a reading while listening), `inside_dbm` (as read), `prepare_us`, `read_us`, `cad_us`, `after_us` (a reading after the CAD, if the self-check chose that), `rest_us`, `total_us` |
+| `tcxo` | the oscillator's delay in use and how it got there | `delay_us`, `short_us`, `step_us`, `probes`, `errors` (starts in use that set the flag), `cold_starts`, the last probe's `last_probe_us`, `last_ok`, `last_at_s`, `last_temp_qc` (die quarter degrees), `lbt_read` |
+| `probe` | probe the oscillator's start now, two steps below the delay in use, as the hourly re-probe does | `took_us`, then the `tcxo` line |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
@@ -427,7 +440,7 @@ retune times.
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
-| `status [reset]` | node ID, uptime, battery mV, channel, power, counters; `reset` zeroes the counters | |
+| `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`; `reset` zeroes the counters | |
 | `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
@@ -436,10 +449,9 @@ retune times.
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
-home channel answers it like an ACK (spec "The ACK"): CAD on the sender's
-home channel (named in the ping), then an 18-byte pong, then back home; it
-prints the time of each part. It does not do the RSSI half of
-listen-before-talk.
+home channel answers it like an ACK (spec "The ACK"): listen-before-talk
+on the sender's home channel (named in the ping), then an 18-byte pong,
+then back home; it prints the time of each part.
 
 Bench frames start with a heartbeat's first byte on channel 15, which no
 node sends and every node rejects (spec "Packet formats"): byte 0 is
@@ -447,8 +459,8 @@ node sends and every node rejects (spec "Packet formats"): byte 0 is
 (0 test or beacon, 1 ping, 2 pong, 3 survey), byte 3 the kind's
 argument, the sender's home channel or for a survey frame its transmit
 power in dBm as a signed byte, bytes 4 to 7 a big-endian sequence
-number, then `byte[i] = i`. RSSI is whole dBm (the driver drops the
-chip's half-dB step); packet RSSI and SNR are in quarter dB.
+number, then `byte[i] = i`. RSSI, packet RSSI and SNR are whole dB (the
+chip's half and quarter steps rounded down).
 
 ### Survey build
 
@@ -491,53 +503,94 @@ radio parameters.
 
 ## Radio driver
 
-`lora-phy`, copied into `vendor/lora-phy` from revision `7a9c2ec` of the
-lora-rs `main` branch (2026-10-06; roadmap D4, D20); `vendor/README.md` lists
-what differs from upstream and how to update it. That revision reports
-payload and header CRC failures as errors instead of returning the bytes as
-a good frame, and has `get_rssi`, `rx_switch_channel` and quarter-dB packet
-RSSI. The firmware gives the
-driver its own board interface (`radio::Pins`) instead of the driver's
-generic SX126x one: the generic one polls BUSY immediately after each
-command, but BUSY may take up to 600 ns to rise (DS §8.3.1), so the poll
-can see the previous low and send the next command too early. Ours waits
-out the rise first, bounds every BUSY wait (17 ms, twice a calibration plus
-a TCXO start) and can bound the wait for DIO1, so a radio that does not
-answer gives an error instead of a hung console.
+The radio is driven in two layers (roadmap D88). `bark-driver/src/sx1262.rs`,
+in the host workspace and tested there, keeps what the chip holds and sends
+an operation only what it changes: the settings that never change go once,
+a retune is standby, frequency and receive, a listen-before-talk is the
+CAD's preparation and sampling with the RSSI read inside it, and the whole
+configuration goes again after a reset, a sleep or an error, when the chip
+may not hold it. `src/radio.rs` is the chip on this board, one command at a
+time: power-up, the pins, the SPI bus, and the encoding of each command
+from `lora-phy`, copied into `vendor/lora-phy` from revision `7a9c2ec` of
+the lora-rs `main` branch (2026-10-06; roadmap D4, D20); `vendor/README.md`
+lists what differs from upstream, the one-command methods among it, and how
+to update it.
+
+The bus is driven blocking inside the asynchronous device: a command is a
+few bytes at 8 MHz, and the interrupt and executor wake of a DMA transfer
+cost 35 µs more on each, a third of every command on the bench. The pins
+are the firmware's own board interface (`radio::Pins`) rather than the
+driver's generic SX126x one: the generic one polls BUSY immediately after
+each command, but BUSY may take up to 600 ns to rise (DS §8.3.1), so the
+poll can see the previous low and send the next command too early. Ours
+waits out the rise first, bounds every BUSY wait (15 ms, twice a
+calibration plus the longest oscillator delay the search allows) and
+bounds the wait for DIO1 in every operation, so a radio that does not
+answer gives an error, after which the chip is reset and configured again,
+instead of a hung console.
 
 Between operations the radio waits in STDBY_XOSC, with its oscillator
 running, and transmit and receive end there (SetRxTxFallbackMode). The
 SX1262 powers the T-Echo's TCXO from DIO3 in every mode but sleep and
-STDBY_RC, and on each start it waits out a programmed delay in full
-(DS §13.3.6). From STDBY_XOSC no start is needed: the chip reaches RX in
-62 µs and TX in 105 µs (DS Table 8-2). A retune is a SetStandby, a
-SetRfFrequency and the SetRx with its three set-up commands; the chip's
-part is about 62 µs plus the unlisted RX to STDBY_XOSC step, and the
-board measured 668 µs for the whole, the SPI commands the most of it
-(`docs/bench-2026-10-30.md`). Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC
-(DS Table 3-5), plus the TCXO's own current, nominally 1.5 mA (DS §4.1.4),
-which it also draws in RX (4.6 mA, DS Table 3-5). The radio listens
-whenever it is not transmitting or checking a channel, so it spends only
-the moments between operations in standby and the extra current does not
-matter.
+STDBY_RC, and on each start it waits out a programmed delay in full, with
+no ready signal; a delay too short sets XOSC_START_ERR and lets the chip
+run on a clock still settling, which costs a few dB at the start of a
+frame, and a delay of zero hangs it (DS §13.3.6,
+`docs/bench-2026-10-30.md`). From STDBY_XOSC no start is needed: the chip
+reaches RX in 62 µs and TX in 105 µs (DS Table 8-2). A CAD ends in
+STDBY_RC whatever the driver asks (DS Table 13-73), so every
+listen-before-talk restarts the oscillator; restarted within a
+millisecond of stopping it is still running and needs no delay, so that
+restart is programmed at 100 µs (`bark_driver::tcxo::SHORT`). Every other
+start is cold and takes a delay the board probes for itself
+(`bark_driver::tcxo`): at boot a binary search over 0.25 to 4 ms in
+0.25 ms steps, each probe a standby with the oscillator off for 2 ms, the
+delay programmed, the errors cleared, a receive and the error word read;
+four more probes at the step found, since the flag flickers at the edge;
+and one step of margin. In use the flag is read after every cold start and
+the delay stepped up at once when it is set, which covers a board getting
+cold; and once an hour at most, when the processor's die temperature has
+moved 3 °C since the delay settled, a probe two steps below it brings it
+down a step if that passes, which recovers the margin as it warms. The
+console's `tcxo` and `probe` show it; the node's 10 s `driver` line
+carries `tcxo_us` and `tcxo_errors`.
+
+A listen-before-talk reads the channel's RSSI four symbol periods into the
+CAD, where the bench found the reading settled; the datasheet documents
+`GetRssiInst` for receive only, so at boot the radio takes five pairs of
+readings on its home channel, one inside a CAD and one while listening,
+and keeps the median difference as the offset it takes off every reading
+inside a CAD. If a pair has no reading inside, or the offset is beyond
+12 dB, twice the largest the bench saw, the reading is taken after the CAD
+instead, with the receiver started on the channel and settled, 1.1 ms more.
+The choice and the offset are logged at boot (`radio up`, `lbt reading`).
+
+Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC (DS Table
+3-5), plus the TCXO's own current, nominally 1.5 mA (DS §4.1.4), which it
+also draws in RX (4.6 mA, DS Table 3-5). The radio listens whenever it is
+not transmitting or checking a channel, so it spends only the moments
+between operations in standby and the extra current does not matter.
 
 A sleepy node's radio receives duty-cycled whenever its core allows it
 (`Action::Sniff`, `docs/core-interface.md` §3 rule 10): SetRxDutyCycle
 (DS §13.1.7) with a 6 ms window (384 steps of 15.625 µs) and a 349.125 ms
 sleep (22 344 steps), `bark_proto::sniff`. The command is sent in
-STDBY_RC, where the datasheet starts the cycle, and the receive timer
-stops at a header rather than at a preamble, so that after a preamble the
-chip waits `2 × rx + sleep` for the header and no longer (DS §13.1.6,
-§13.1.7; `vendor/README.md`). In each sleep the chip keeps its
-configuration and its 64 kHz clock and powers the TCXO down: DIO3 supplies
-it only in STDBY_XOSC, FS, TX and RX (DS §13.3.6). Each wake costs about
-1 ms to restore its state and the 2 ms TCXO start (DS Figures 13-2 and
-13-3); the cycle was derived for a 6 ms wake, which only adds margin
-(`bark_proto::sniff::SNIFF_WAKE`). The Rx gain register is lost in each sleep (DS §9.6); the firmware
-uses the default power-saving gain, which is what the register returns to.
-After a frame the chip stops in standby, and the driver starts the cycle
-again once the core has the frame; any command to the chip is preceded by
-a falling NSS edge, which wakes it.
+STDBY_RC, where the datasheet starts the cycle, with the probed oscillator
+delay, since each wake is a cold start, and the receive timer stops at a
+header rather than at a preamble, so that after a preamble the chip waits
+`2 × rx + sleep` for the header and no longer (DS §13.1.6, §13.1.7;
+`vendor/README.md`). In each sleep the chip keeps its configuration and
+its 64 kHz clock and powers the TCXO down: DIO3 supplies it only in
+STDBY_XOSC, FS, TX and RX (DS §13.3.6). Each wake costs about 1 ms to
+restore its state and the TCXO start (DS Figures 13-2 and 13-3); the cycle
+was derived for a 6 ms wake, which only adds margin
+(`bark_proto::sniff::SNIFF_WAKE`). The receiver gain register is kept on
+the chip's retention list, with the transmit modulation errata bit, so
+that the cycle's own wakes restore them. After a frame the chip stops in
+standby, and the driver starts the cycle again once the core has the
+frame, sending the whole configuration first, since the chip slept; any
+command to the chip is preceded by a falling NSS edge, which wakes it, and
+the error word is read for a start error in the cycle's wakes.
 
 The radio's expected current in the cycle, from the datasheet: the window
 in receive at 4.6 mA (DS Table 3-5, DC-DC, LoRa 125 kHz, power-saving
@@ -556,12 +609,10 @@ against 6.1 mA listening, 30 to 44 times less. The core's own figure,
 `sniff::SNIFF_CURRENT_NA`, is 0.194 mA, from 5.8 mA for receive and wake.
 `scripts/measure.md` step 5 measures it.
 
-The programmed delay, 2 ms (`radio::TCXO_START`), is still paid where the
-chip turns the TCXO off on its own: at power-up, after a calibration and
-after every CAD, which ends in STDBY_RC whatever the driver asks
-(DS Table 13-73). The driver returns to STDBY_XOSC at once, so the wait
-falls inside the CAD (the console's `cad_us`), not inside the next
-operation.
+The probed delay is paid at power-up, after a calibration, at each of the
+cycle's wakes, and after a CAD only if more than a millisecond passed
+before the next command; the short one after every other CAD, inside the
+return to listening (the console's `lbt`, `rest_us`).
 
 ## The current on battery
 
@@ -608,12 +659,14 @@ on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 
 ## Risks
 
-- **Every CAD costs a TCXO start, 2 ms.** No source names the module's
-  TCXO or its start-up time; 1 ms worked on two boards at room
-  temperature (`docs/bench-2026-10-30.md`, roadmap D87). Too short a delay
-  raises XOSC_START_ERR (the firmware does not read the chip's error flags
-  yet) and lets the chip run on a clock still settling; a cold board may
-  need more than the bench's.
+- **The oscillator's start on a cold board is unmeasured.** The search
+  at boot and the step up on every start error in use follow it wherever
+  it goes, up to 4 ms; until the flag clears, the chip runs on a clock
+  still settling for a few dB at the start of each frame (roadmap D88).
+- **The reading inside a CAD is undocumented.** The boot self-check
+  guards it on one channel at one moment; a chip whose reading inside a
+  CAD drifts from its reading in receive later would mis-set the busy
+  verdict by the drift (roadmap D88).
 - The CAD parameters are fixed in the driver (8 symbols, detection peak
   SF + 13, minimum 10). Tuning them means patching it.
 - The sync word is 0x1424, the conventional private LoRa word, which other

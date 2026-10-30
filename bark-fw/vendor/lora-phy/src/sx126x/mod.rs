@@ -231,6 +231,234 @@ where
     }
 }
 
+/// One command at a time, for a caller that keeps track of what the chip
+/// holds and sends only what changes (bark's `bark-driver/src/sx1262.rs`).
+/// Each method sends exactly the command named and waits for BUSY to fall;
+/// none assumes or records a mode. The [`RadioKind`] methods below send
+/// sequences that repeat settings, which is safe and slow.
+impl<SPI, IV, C> Sx126x<SPI, IV, C>
+where
+    SPI: SpiDevice<u8>,
+    IV: InterfaceVariant,
+    C: Sx126xVariant,
+{
+    /// The board interface: its pins, for a caller that bounds its own
+    /// interrupt waits.
+    pub fn iv_mut(&mut self) -> &mut IV {
+        &mut self.intf.iv
+    }
+
+    /// SetStandby: STDBY_XOSC or STDBY_RC (datasheet §13.1.2).
+    pub async fn standby(&mut self, xosc: bool) -> Result<(), RadioError> {
+        let mode = if xosc { StandbyMode::XOSC } else { StandbyMode::RC };
+        self.intf.write(&[OpCode::SetStandby.value(), mode.value()], false).await
+    }
+
+    /// SetDIO3AsTCXOCtrl with `delay_us` rounded up to the chip's 15.625 µs
+    /// steps (§13.3.6). Valid in STDBY_RC.
+    pub async fn tcxo(&mut self, voltage: TcxoCtrlVoltage, delay_us: u32) -> Result<(), RadioError> {
+        let timeout = (delay_us * 64).div_ceil(1000);
+        let cmd = [
+            OpCode::SetTCXOMode.value(),
+            voltage.value() & 0x07,
+            Self::timeout_1(timeout),
+            Self::timeout_2(timeout),
+            Self::timeout_3(timeout),
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// GetDeviceErrors (§13.5.6): the error word.
+    pub async fn device_errors(&mut self) -> Result<u16, RadioError> {
+        let mut buf = [0u8; 2];
+        self.intf
+            .read_with_status(&[OpCode::GetDeviceErrors.value()], &mut buf)
+            .await?;
+        Ok(u16::from_be_bytes(buf))
+    }
+
+    /// ClearDeviceErrors (§13.5.7).
+    pub async fn clear_device_errors(&mut self) -> Result<(), RadioError> {
+        let mut buf = [0u8; 2];
+        self.intf
+            .read_with_status(&[OpCode::ClearDeviceErrors.value()], &mut buf)
+            .await?;
+        Ok(())
+    }
+
+    /// Calibrate every block (§13.1.12), and wait for it: BUSY stays high
+    /// through the calibration. From STDBY_RC.
+    pub async fn calibrate_all(&mut self) -> Result<(), RadioError> {
+        self.intf
+            .write(&[OpCode::Calibrate.value(), 0b0111_1111], false)
+            .await?;
+        self.intf.iv.wait_on_busy().await
+    }
+
+    /// SetRegulatorMode to the DC-DC converter (§13.1.14).
+    pub async fn regulator_dcdc(&mut self) -> Result<(), RadioError> {
+        let cmd = [OpCode::SetRegulatorMode.value(), RegulatorMode::UseDCDC.value()];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// SetDIO2AsRfSwitchCtrl (§13.3.5).
+    pub async fn dio2_rf_switch(&mut self, on: bool) -> Result<(), RadioError> {
+        self.intf
+            .write(&[OpCode::SetDIO2AsRfSwitchCtrl.value(), on as u8], false)
+            .await
+    }
+
+    /// SetPacketType LoRa (§13.4.2).
+    pub async fn packet_type_lora(&mut self) -> Result<(), RadioError> {
+        self.intf
+            .write(&[OpCode::SetPacketType.value(), PacketType::LoRa.value()], false)
+            .await
+    }
+
+    /// SetBufferBaseAddress, both at 0 (§13.2.3).
+    pub async fn buffer_base_zero(&mut self) -> Result<(), RadioError> {
+        self.set_tx_rx_buffer_base_address(0, 0).await
+    }
+
+    /// The registers kept across the sleep of a duty-cycled receive: the
+    /// receiver gain and the transmit modulation errata bit.
+    pub async fn retention_list(&mut self) -> Result<(), RadioError> {
+        self.update_retention_list().await
+    }
+
+    /// SetRxTxFallbackMode to STDBY_XOSC (Table 13-23), so that
+    /// transmit and receive end with the oscillator running.
+    pub async fn fallback_stdby_xosc(&mut self) -> Result<(), RadioError> {
+        self.intf
+            .write(&[OpCode::SetTxFallbackMode.value(), FALLBACK_STDBY_XOSC], false)
+            .await
+    }
+
+    /// SetPacketParams alone (§13.4.6), without the inverted-IQ errata
+    /// write of [`RadioKind::set_packet_params`], which [`Self::iq_errata`]
+    /// sends once.
+    pub async fn packet_params(&mut self, pkt_params: &PacketParams) -> Result<(), RadioError> {
+        let cmd = [
+            OpCode::SetPacketParams.value(),
+            ((pkt_params.preamble_length >> 8) & 0xFF) as u8,
+            (pkt_params.preamble_length & 0xFF) as u8,
+            pkt_params.implicit_header as u8,
+            pkt_params.payload_length,
+            pkt_params.crc_on as u8,
+            pkt_params.iq_inverted as u8,
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// The inverted-IQ errata write (DS.SX1261-2.W.APP §15.4): bit 2 of
+    /// register 0x0736 cleared for inverted IQ, set otherwise.
+    pub async fn iq_errata(&mut self, iq_inverted: bool) -> Result<(), RadioError> {
+        let val = self.reg_r_8(Register::IQPolarity).await?;
+        if iq_inverted {
+            self.reg_w_8(Register::IQPolarity, val & 0xfb).await
+        } else {
+            self.reg_w_8(Register::IQPolarity, val | 0b100).await
+        }
+    }
+
+    /// SetCadParams for 8 symbols at this spreading factor, with the
+    /// detection thresholds of Semtech's CAD application note, exit to
+    /// standby and no timeout (§13.4.8); the values [`RadioKind::do_cad`]
+    /// sends.
+    pub async fn cad_params(&mut self, spreading_factor: SpreadingFactor) -> Result<(), RadioError> {
+        let sf = spreading_factor_value(spreading_factor)?;
+        let cmd = [
+            OpCode::SetCADParams.value(),
+            CADSymbols::_8.value(),
+            sf + 13u8,
+            10u8,
+            0x00u8,
+            0x00u8,
+            0x00u8,
+            0x00u8,
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// SetDioIrqParams with `irq` enabled and `dio1` routed to DIO1, DIO2
+    /// and DIO3 none (§13.3.1).
+    pub async fn irq_params(&mut self, irq: u16, dio1: u16) -> Result<(), RadioError> {
+        let cmd = [
+            OpCode::CfgDIOIrq.value(),
+            (irq >> 8) as u8,
+            irq as u8,
+            (dio1 >> 8) as u8,
+            dio1 as u8,
+            0,
+            0,
+            0,
+            0,
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// SetLoRaSymbNumTimeout (§13.4.9): 0 for none.
+    pub async fn symbol_timeout(&mut self, symbols: u16) -> Result<(), RadioError> {
+        self.set_lora_symbol_num_timeout(symbols).await
+    }
+
+    /// The receiver gain register (§9.6): boosted or power saving.
+    pub async fn rx_gain(&mut self, boost: bool) -> Result<(), RadioError> {
+        let val = if boost { 0x96 } else { 0x94 };
+        self.reg_w_8(Register::RxGain, val).await
+    }
+
+    /// SetRx continuous (§13.1.5).
+    pub async fn rx_continuous(&mut self) -> Result<(), RadioError> {
+        let cmd = [
+            OpCode::SetRx.value(),
+            Self::timeout_1(RX_CONTINUOUS_TIMEOUT),
+            Self::timeout_2(RX_CONTINUOUS_TIMEOUT),
+            Self::timeout_3(RX_CONTINUOUS_TIMEOUT),
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// SetRxDutyCycle with these periods in the chip's 15.625 µs steps
+    /// (§13.1.7). From STDBY_RC.
+    pub async fn rx_duty_cycle(&mut self, rx_steps: u32, sleep_steps: u32) -> Result<(), RadioError> {
+        let cmd = [
+            OpCode::SetRxDutyCycle.value(),
+            Self::timeout_1(rx_steps),
+            Self::timeout_2(rx_steps),
+            Self::timeout_3(rx_steps),
+            Self::timeout_1(sleep_steps),
+            Self::timeout_2(sleep_steps),
+            Self::timeout_3(sleep_steps),
+        ];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// SetCAD (§13.1.8).
+    pub async fn start_cad(&mut self) -> Result<(), RadioError> {
+        self.intf.write(&[OpCode::SetCAD.value()], false).await
+    }
+
+    /// SetTx without a timeout (§13.1.4).
+    pub async fn start_tx(&mut self) -> Result<(), RadioError> {
+        let cmd = [OpCode::SetTx.value(), 0, 0, 0];
+        self.intf.write(&cmd, false).await
+    }
+
+    /// GetIrqStatus (§13.3.3): the flags.
+    pub async fn irq_status(&mut self) -> Result<u16, RadioError> {
+        let mut buf = [0u8; 2];
+        let status = self
+            .intf
+            .read_with_status(&[OpCode::GetIrqStatus.value()], &mut buf)
+            .await?;
+        if OpStatusErrorMask::is_error(status) {
+            return Err(RadioError::OpError(status));
+        }
+        Ok(u16::from_be_bytes(buf))
+    }
+}
+
 impl<SPI, IV, C> RadioKind for Sx126x<SPI, IV, C>
 where
     SPI: SpiDevice<u8>,

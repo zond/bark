@@ -13,7 +13,10 @@
 //! ch <k>                     set the home channel
 //! tx <k> <hex|len>           send one frame
 //! rx <k> [ms]                listen on k for ms (default 10 s), reporting every frame
-//! cad <k>                    one channel activity detection
+//! cad <k>                    one channel activity detection, the listen-before-talk's
+//! lbt <k>                    one listen-before-talk: its phases and its reading
+//! tcxo                       the oscillator's probed delay and the last probe
+//! probe                      probe the oscillator's start now, below the delay in use
 //! rssi <k> [dwell_us]        one RSSI reading
 //! sweep                      one RSSI reading on each channel
 //! noise <k> <n> [gap_us]     n RSSI readings: min, p10, median, max
@@ -49,20 +52,22 @@
 use core::fmt;
 
 use crate::battery::Battery;
+use bark_driver::sx1262::{irq, TxTiming};
+use bark_driver::{tcxo, Heard};
 use bark_proto::radio::{
     time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
 };
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::{Packet, ACK_LEN, BENCH_FIRST, FORMAT, HEARTBEAT_LEN};
+use bark_proto::Frame;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::{Duration, Instant, Timer};
 use embassy_usb_logger::ReceiverHandler;
-use lora_phy::mod_params::{PacketStatus, RadioError};
 
 use crate::clock::Clock;
-use crate::radio::{Radio, Received, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
+use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
 use crate::update::{decimal, Flash, BARK_IMAGE_VERSION};
 use bark_image::boot::{Stager, CHUNK};
 use bark_image::HEADER_LEN;
@@ -317,6 +322,9 @@ enum Command<'l> {
     Tx(Channel, Payload<'l>),
     Rx(Channel, u32),
     Cad(Channel),
+    Lbt(Channel),
+    Tcxo,
+    Probe,
     Rssi(Channel, u32),
     Sweep,
     Noise(Channel, usize, u32),
@@ -348,7 +356,7 @@ const PING_WAIT: Duration = Duration::from_millis(1000);
 const ACK_TIMEOUT_US: u32 = 100_000;
 
 const HELP: &str =
-    "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | rssi <k> [dwell_us] | sweep | \
+    "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
 survey [n] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
 
@@ -368,6 +376,9 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
         }
         "rx" => Command::Rx(channel(arg())?, optional(arg(), RX_DEFAULT_MS)?),
         "cad" => Command::Cad(channel(arg())?),
+        "lbt" => Command::Lbt(channel(arg())?),
+        "tcxo" => Command::Tcxo,
+        "probe" => Command::Probe,
         "rssi" => Command::Rssi(channel(arg())?, optional(arg(), 0)?),
         "sweep" => Command::Sweep,
         "noise" => {
@@ -507,17 +518,6 @@ impl fmt::Display for Id {
     }
 }
 
-/// A value in quarter units (dB or dBm) as a decimal.
-struct Quarter(i16);
-
-impl fmt::Display for Quarter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let sign = if self.0 < 0 { "-" } else { "" };
-        let q = self.0.unsigned_abs();
-        write!(f, "{}{}.{:02}", sign, q / 4, (q % 4) * 25)
-    }
-}
-
 /// Comma-separated values.
 struct List<'l, T>(&'l [T]);
 
@@ -538,9 +538,8 @@ struct Counters {
     rx_ok: u32,
     rx_crc_error: u32,
     rx_header_error: u32,
-    /// A preamble interrupt with no frame after it within the longest
-    /// frame's airtime.
-    rx_no_frame: u32,
+    /// Packets that began, a preamble or a header seen.
+    rx_started: u32,
     tx: u32,
     tx_airtime_us: u64,
     cad: u32,
@@ -656,7 +655,7 @@ impl<'a> Console<'a> {
             let radio = &mut self.radio;
             let irq = async {
                 match listening {
-                    true => radio.wait_irq().await,
+                    true => radio.wait().await,
                     false => core::future::pending().await,
                 }
             };
@@ -699,21 +698,48 @@ impl<'a> Console<'a> {
     }
 
     /// Listen at home again, returning the time it took.
-    async fn rest(&mut self) -> Result<u32, RadioError> {
+    async fn rest(&mut self) -> Result<u32, Error> {
         self.listening = false;
         let t0 = self.clock.now();
-        self.radio.rest(self.home).await?;
+        self.radio.listen(self.home).await?;
         self.listening = true;
         Ok(self.clock.since(t0))
     }
 
-    async fn execute(&mut self, command: Command<'_>) -> Result<(), RadioError> {
+    /// Send the first `len` bytes of the transmit buffer on `ch` at `dbm`
+    /// after `preamble` symbols.
+    async fn transmit(
+        &mut self,
+        ch: Channel,
+        dbm: i8,
+        preamble: u16,
+        len: usize,
+    ) -> Result<TxTiming, Error> {
+        let frame = Frame {
+            channel: ch,
+            preamble_symbols: preamble,
+            len: len as u8,
+            bytes: self.tx,
+        };
+        self.listening = false;
+        self.radio.transmit(&frame, dbm).await
+    }
+
+    /// Listen on `ch`, which may be home.
+    async fn listen(&mut self, ch: Channel) -> Result<(), Error> {
+        self.listening = false;
+        self.radio.listen(ch).await?;
+        self.listening = ch == self.home;
+        Ok(())
+    }
+
+    async fn execute(&mut self, command: Command<'_>) -> Result<(), Error> {
         match command {
             Command::Ch(ch) => {
                 let t0 = self.clock.now();
-                self.radio.retune(ch).await?;
-                let retune_us = self.clock.since(t0);
                 self.home = ch;
+                self.listen(ch).await?;
+                let retune_us = self.clock.since(t0);
                 log::info!(
                     "ch ch={} hz={} retune_us={}",
                     ch.index(),
@@ -730,28 +756,27 @@ impl<'a> Console<'a> {
                     Payload::Hex(hex) => decode_hex(hex, &mut self.tx),
                 };
                 let len = frame.len();
-                let preamble = self.preamble;
-                let timing = self.radio.transmit(ch, self.power, preamble, frame).await?;
+                let (preamble, power) = (self.preamble, self.power);
+                let timing = self.transmit(ch, power, preamble, len).await?;
                 let airtime_us = airtime_us(len, preamble);
                 self.count_tx(len, preamble);
                 let rest_us = self.rest().await?;
+                let tx_us = timing.tx.as_micros();
                 log::info!(
                     "tx ch={} len={} preamble={} power_dbm={} prepare_us={} tx_us={} airtime_us={} excess_us={} rest_us={}",
                     ch.index(),
                     len,
                     preamble,
                     self.power,
-                    timing.prepare_us,
-                    timing.tx_us,
+                    timing.prepare.as_micros(),
+                    tx_us,
                     airtime_us,
-                    timing.tx_us as i64 - airtime_us as i64,
+                    tx_us as i64 - airtime_us as i64,
                     rest_us
                 );
             }
             Command::Rx(ch, ms) => {
-                if ch != self.home {
-                    self.radio.retune(ch).await?;
-                }
+                self.listen(ch).await?;
                 let until = Instant::now() + Duration::from_millis(ms.into());
                 let (ok, errors) = (self.counters.rx_ok, self.counters.rx_crc_error);
                 self.listen_until(ch, until, |_| false).await?;
@@ -762,28 +787,56 @@ impl<'a> Console<'a> {
                     self.counters.rx_ok - ok,
                     self.counters.rx_crc_error - errors
                 );
-                if ch != self.home {
-                    self.radio.retune(self.home).await?;
-                }
+                self.rest().await?;
             }
             Command::Cad(ch) => {
-                let (busy, prepare_us, cad_us) = self.radio.cad(ch).await?;
-                self.count_cad(busy);
+                self.listening = false;
+                let t = self.radio.lbt(ch).await?;
+                self.count_cad(t.busy);
                 let rest_us = self.rest().await?;
                 log::info!(
                     "cad ch={} busy={} prepare_us={} cad_us={} rest_us={}",
                     ch.index(),
-                    busy,
-                    prepare_us,
-                    cad_us,
+                    t.busy,
+                    t.prepare.as_micros(),
+                    t.cad.as_micros(),
                     rest_us
                 );
             }
+            Command::Lbt(ch) => {
+                self.listening = false;
+                let t0 = self.clock.now();
+                let t = self.radio.lbt(ch).await?;
+                self.count_cad(t.busy);
+                let rest_us = self.rest().await?;
+                let total_us = self.clock.since(t0);
+                log::info!(
+                    "lbt ch={} busy={} dbm={} inside_dbm={:?} prepare_us={} read_us={} cad_us={} after_us={} rest_us={} total_us={}",
+                    ch.index(),
+                    t.busy,
+                    t.dbm,
+                    t.inside_dbm,
+                    t.prepare.as_micros(),
+                    t.read.as_micros(),
+                    t.cad.as_micros(),
+                    t.after.as_micros(),
+                    rest_us,
+                    total_us
+                );
+            }
+            Command::Tcxo => self.report_tcxo(),
+            Command::Probe => {
+                self.listening = false;
+                let t0 = self.clock.now();
+                self.radio.reprobe().await?;
+                let probe_us = self.clock.since(t0);
+                self.rest().await?;
+                log::info!("probe took_us={}", probe_us);
+                self.report_tcxo();
+            }
             Command::Rssi(ch, dwell_us) => {
                 let t0 = self.clock.now();
-                if ch != self.home {
-                    self.radio.retune(ch).await?;
-                }
+                self.listen(ch).await?;
                 let retune_us = self.clock.since(t0);
                 let t1 = self.clock.now();
                 if dwell_us > 0 {
@@ -793,9 +846,7 @@ impl<'a> Console<'a> {
                 let t2 = self.clock.now();
                 let dbm = self.radio.rssi().await?;
                 let read_us = self.clock.since(t2);
-                if ch != self.home {
-                    self.radio.retune(self.home).await?;
-                }
+                self.rest().await?;
                 log::info!(
                     "rssi ch={} dbm={} retune_us={} dwell_us={} read_us={}",
                     ch.index(),
@@ -809,28 +860,24 @@ impl<'a> Console<'a> {
                 let mut dbm = [0i16; CHANNELS as usize];
                 let t0 = self.clock.now();
                 for (ch, reading) in Channel::all().zip(dbm.iter_mut()) {
-                    self.radio.retune(ch).await?;
+                    self.listen(ch).await?;
                     *reading = self.radio.rssi().await?;
                 }
-                self.radio.retune(self.home).await?;
+                self.rest().await?;
                 let total_us = self.clock.since(t0);
                 log::info!("sweep total_us={} dbm={}", total_us, List(&dbm));
             }
             Command::Noise(ch, n, gap_us) => {
                 let mut samples = [0i16; NOISE_MAX];
                 let t0 = self.clock.now();
-                if ch != self.home {
-                    self.radio.retune(ch).await?;
-                }
+                self.listen(ch).await?;
                 for sample in samples.iter_mut().take(n) {
                     *sample = self.radio.rssi().await?;
                     if gap_us > 0 {
                         Timer::after_micros(gap_us.into()).await;
                     }
                 }
-                if ch != self.home {
-                    self.radio.retune(self.home).await?;
-                }
+                self.rest().await?;
                 let total_us = self.clock.since(t0);
                 let samples = &mut samples[..n];
                 samples.sort_unstable();
@@ -957,9 +1004,9 @@ impl<'a> Console<'a> {
         ch: Channel,
         until: Instant,
         mut accept: impl FnMut(Option<Bench>) -> bool,
-    ) -> Result<bool, RadioError> {
+    ) -> Result<bool, Error> {
         loop {
-            match select(Timer::at(until), self.radio.wait_irq()).await {
+            match select(Timer::at(until), self.radio.wait()).await {
                 Either::First(()) => return Ok(false),
                 Either::Second(result) => {
                     result?;
@@ -972,41 +1019,48 @@ impl<'a> Console<'a> {
         }
     }
 
-    /// Take the frame an interrupt announced and report it. `None` if
-    /// there was no frame; `Some(bench header)` otherwise.
-    async fn receive(&mut self, ch: Channel) -> Result<Option<Option<Bench>>, RadioError> {
-        let received = match self.radio.receive(&mut self.rx).await {
-            Err(RadioError::DIO1) => {
-                self.counters.rx_no_frame += 1;
-                return Ok(None);
-            }
-            other => other?,
-        };
+    /// Take what an interrupt announced and report it. `None` if there
+    /// was no frame; `Some(bench header)` otherwise.
+    async fn receive(&mut self, ch: Channel) -> Result<Option<Option<Bench>>, Error> {
+        let heard = self.radio.service(&mut self.rx).await?;
         let at_us = self.clock.now();
-        match received {
-            Received::Frame { len, status } => {
+        match heard {
+            Heard::Frame {
+                len,
+                rssi_dbm,
+                snr_db,
+            } => {
+                let len = usize::from(len);
                 self.counters.rx_ok += 1;
                 let bench = parse_bench(&self.rx[..len]);
-                report_frame(ch, &self.rx[..len], &status, "ok", at_us, bench);
+                report_frame(ch, &self.rx[..len], rssi_dbm, snr_db, "ok", at_us, bench);
                 report_heartbeat(&self.rx[..len]);
                 Ok(Some(bench))
             }
-            Received::CrcError { len, status } => {
+            Heard::Failed if self.radio.last_flags() & irq::CRC_ERR != 0 => {
+                // The bytes are in the chip's buffer still: what arrived.
                 self.counters.rx_crc_error += 1;
+                let (len, rssi_dbm, snr_db) = self.radio.read_last_frame(&mut self.rx).await?;
+                let len = usize::from(len);
                 let bench = parse_bench(&self.rx[..len]);
-                report_frame(ch, &self.rx[..len], &status, "error", at_us, bench);
+                report_frame(ch, &self.rx[..len], rssi_dbm, snr_db, "error", at_us, bench);
                 Ok(Some(None))
             }
-            Received::HeaderError => {
+            Heard::Failed => {
                 self.counters.rx_header_error += 1;
                 log::info!("rx ch={} header_crc=error", ch.index());
                 Ok(None)
             }
+            Heard::Started => {
+                self.counters.rx_started += 1;
+                Ok(None)
+            }
+            Heard::Nothing => Ok(None),
         }
     }
 
     /// While resting: report the frame and answer a ping.
-    async fn serve_frame(&mut self, irq: Result<(), RadioError>) -> Result<(), RadioError> {
+    async fn serve_frame(&mut self, irq: Result<(), Error>) -> Result<(), Error> {
         irq?;
         let Some(Some(bench)) = self.receive(self.home).await? else {
             return Ok(());
@@ -1024,10 +1078,11 @@ impl<'a> Console<'a> {
             return Ok(());
         };
         // Listen before talk as a receiver does before an ACK
-        // (spec "The ACK"), CAD only.
-        let (busy, cad_prepare_us, cad_us) = self.radio.cad(reply).await?;
-        self.count_cad(busy);
-        if busy {
+        // (spec "The ACK").
+        self.listening = false;
+        let check = self.radio.lbt(reply).await?;
+        self.count_cad(check.busy);
+        if check.busy {
             let rest_us = self.rest().await?;
             log::info!(
                 "pong ch={} seq={} busy=true sent=false rest_us={}",
@@ -1037,42 +1092,43 @@ impl<'a> Console<'a> {
             );
             return Ok(());
         }
-        let frame = bench_frame(
+        bench_frame(
             &mut self.tx,
             ACK_LEN,
             KIND_PONG,
             self.home.index(),
             bench.seq,
         );
+        let power = self.power;
         let timing = self
-            .radio
-            .transmit(reply, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+            .transmit(reply, power, MIN_PREAMBLE_SYMBOLS, ACK_LEN)
             .await?;
         let turnaround_us = self.clock.since(t_rx);
         self.count_tx(ACK_LEN, MIN_PREAMBLE_SYMBOLS);
         self.counters.pongs_sent += 1;
         let rest_us = self.rest().await?;
         log::info!(
-            "pong ch={} seq={} cad_prepare_us={} cad_us={} tx_prepare_us={} tx_us={} rx_to_tx_done_us={} rest_us={}",
+            "pong ch={} seq={} lbt_prepare_us={} cad_us={} lbt_dbm={} tx_prepare_us={} tx_us={} rx_to_tx_done_us={} rest_us={}",
             reply.index(),
             bench.seq,
-            cad_prepare_us,
-            cad_us,
-            timing.prepare_us,
-            timing.tx_us,
+            check.prepare.as_micros(),
+            check.cad.as_micros(),
+            check.dbm,
+            timing.prepare.as_micros(),
+            timing.tx.as_micros(),
             turnaround_us,
             rest_us
         );
         Ok(())
     }
 
-    async fn ping(&mut self, ch: Channel) -> Result<(), RadioError> {
+    async fn ping(&mut self, ch: Channel) -> Result<(), Error> {
         self.seq = self.seq.wrapping_add(1);
         let seq = self.seq;
-        let frame = bench_frame(&mut self.tx, ACK_LEN, KIND_PING, self.home.index(), seq);
+        bench_frame(&mut self.tx, ACK_LEN, KIND_PING, self.home.index(), seq);
+        let power = self.power;
         let timing = self
-            .radio
-            .transmit(ch, self.power, MIN_PREAMBLE_SYMBOLS, frame)
+            .transmit(ch, power, MIN_PREAMBLE_SYMBOLS, ACK_LEN)
             .await?;
         let t_sent = self.clock.now();
         let until = Instant::now() + PING_WAIT;
@@ -1093,8 +1149,8 @@ impl<'a> Console<'a> {
                 "ping ch={} seq={} tx_prepare_us={} tx_us={} rest_us={} rtt_us={} ack_timeout_us={} within={}",
                 ch.index(),
                 seq,
-                timing.prepare_us,
-                timing.tx_us,
+                timing.prepare.as_micros(),
+                timing.tx.as_micros(),
                 rest_us,
                 rtt_us,
                 ACK_TIMEOUT_US,
@@ -1113,7 +1169,7 @@ impl<'a> Console<'a> {
 
     /// Whatever the timer came for: the beacon, the survey's beacon, the
     /// survey's noise reading.
-    async fn tick(&mut self) -> Result<(), RadioError> {
+    async fn tick(&mut self) -> Result<(), Error> {
         let now = Instant::now();
         if self.beacon.as_ref().is_some_and(|b| b.next <= now) {
             self.send_beacon().await?;
@@ -1127,7 +1183,7 @@ impl<'a> Console<'a> {
         Ok(())
     }
 
-    async fn send_beacon(&mut self) -> Result<(), RadioError> {
+    async fn send_beacon(&mut self) -> Result<(), Error> {
         let Some(beacon) = self.beacon.as_mut() else {
             return Ok(());
         };
@@ -1135,9 +1191,9 @@ impl<'a> Console<'a> {
         beacon.next = (beacon.next + beacon.period).max(Instant::now());
         let (ch, len) = (beacon.ch, beacon.len);
         self.seq = self.seq.wrapping_add(1);
-        let frame = bench_frame(&mut self.tx, len, KIND_TEST, self.home.index(), self.seq);
-        let preamble = self.preamble;
-        let timing = self.radio.transmit(ch, self.power, preamble, frame).await?;
+        bench_frame(&mut self.tx, len, KIND_TEST, self.home.index(), self.seq);
+        let (preamble, power) = (self.preamble, self.power);
+        let timing = self.transmit(ch, power, preamble, len).await?;
         self.count_tx(len, preamble);
         self.rest().await?;
         log::info!(
@@ -1145,7 +1201,7 @@ impl<'a> Console<'a> {
             ch.index(),
             self.seq,
             len,
-            timing.tx_us
+            timing.tx.as_micros()
         );
         Ok(())
     }
@@ -1153,7 +1209,7 @@ impl<'a> Console<'a> {
     /// The next survey beacon: one frame, then silence of the rest of the
     /// period the regulatory duty cycle allows it, so that no window
     /// exceeds the cycle (spec "Regulatory limits").
-    async fn survey_beacon(&mut self) -> Result<(), RadioError> {
+    async fn survey_beacon(&mut self) -> Result<(), Error> {
         let Some(survey) = self.survey.as_mut() else {
             return Ok(());
         };
@@ -1164,9 +1220,9 @@ impl<'a> Console<'a> {
         let period =
             Duration::from_micros(airtime_us(len, preamble) * 100 / u64::from(DUTY_CYCLE_PERCENT));
         self.seq = self.seq.wrapping_add(1);
-        let frame = bench_frame(&mut self.tx, len, KIND_SURVEY, power as u8, self.seq);
+        bench_frame(&mut self.tx, len, KIND_SURVEY, power as u8, self.seq);
         let sent = Instant::now();
-        self.radio.transmit(ch, power, preamble, frame).await?;
+        self.transmit(ch, power, preamble, len).await?;
         self.count_tx(len, preamble);
         if let Some(survey) = self.survey.as_mut() {
             survey.next_beacon = sent + period;
@@ -1177,7 +1233,7 @@ impl<'a> Console<'a> {
 
     /// One minute's noise reading on every channel, into the ring and the
     /// log, as `noise <k> 100` would read each channel after the dwell.
-    async fn survey_sample(&mut self) -> Result<(), RadioError> {
+    async fn survey_sample(&mut self) -> Result<(), Error> {
         let Some(survey) = self.survey.as_mut() else {
             return Ok(());
         };
@@ -1188,7 +1244,7 @@ impl<'a> Console<'a> {
         };
         let mut readings = [0i16; SAMPLE_READINGS];
         for (i, ch) in Channel::all().enumerate() {
-            self.radio.retune(ch).await?;
+            self.listen(ch).await?;
             Timer::after(SAMPLE_DWELL).await;
             for reading in readings.iter_mut() {
                 *reading = self.radio.rssi().await?;
@@ -1197,7 +1253,7 @@ impl<'a> Console<'a> {
             sample.p10[i] = dbm(percentile(&readings, 10));
             sample.median[i] = dbm(percentile(&readings, 50));
         }
-        self.radio.retune(self.home).await?;
+        self.rest().await?;
         log::info!(
             "survey t_s={} p10={} median={}",
             sample.at_s,
@@ -1239,10 +1295,11 @@ impl<'a> Console<'a> {
     async fn status(&mut self, reset: bool) {
         let battery_mv = self.battery.read().await;
         let c = &self.counters;
+        let r = self.radio.stats();
         log::info!(
             "status id={} uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \
-rx_header_error={} rx_no_frame={} tx={} tx_airtime_us={} cad={} cad_busy={} pongs_sent={} pongs_received={} \
-radio_errors={}",
+rx_header_error={} rx_started={} tx={} tx_airtime_us={} cad={} cad_busy={} pongs_sent={} pongs_received={} \
+radio_errors={} resets={} configured={} cold_starts={} tcxo_us={}",
             Id,
             Instant::now().as_secs(),
             battery_mv,
@@ -1253,18 +1310,52 @@ radio_errors={}",
             c.rx_ok,
             c.rx_crc_error,
             c.rx_header_error,
-            c.rx_no_frame,
+            c.rx_started,
             c.tx,
             c.tx_airtime_us,
             c.cad,
             c.cad_busy,
             c.pongs_sent,
             c.pongs_received,
-            c.radio_errors
+            c.radio_errors,
+            r.resets,
+            r.configured,
+            r.cold_starts,
+            self.radio.tcxo().delay.as_micros()
         );
         if reset {
             self.counters = Counters::default();
             log::info!("status counters reset");
+        }
+    }
+
+    /// The oscillator's delay and the last probe (`bark_driver::tcxo`).
+    fn report_tcxo(&self) {
+        let t = self.radio.tcxo();
+        let r = self.radio.stats();
+        match t.last {
+            Some(p) => log::info!(
+                "tcxo delay_us={} short_us={} step_us={} probes={} errors={} cold_starts={} last_probe_us={} last_ok={} last_at_s={} last_temp_qc={:?} lbt_read={:?}",
+                t.delay.as_micros(),
+                tcxo::SHORT.as_micros(),
+                tcxo::STEP.as_micros(),
+                t.probes,
+                t.errors,
+                r.cold_starts,
+                p.delay.as_micros(),
+                p.ok,
+                p.at.as_micros() / 1_000_000,
+                p.temp,
+                self.radio.lbt_read()
+            ),
+            None => log::info!(
+                "tcxo delay_us={} short_us={} probes=0 errors={} cold_starts={} lbt_read={:?}",
+                t.delay.as_micros(),
+                tcxo::SHORT.as_micros(),
+                t.errors,
+                r.cold_starts,
+                self.radio.lbt_read()
+            ),
         }
     }
 
@@ -1284,7 +1375,8 @@ radio_errors={}",
 fn report_frame(
     ch: Channel,
     frame: &[u8],
-    status: &PacketStatus,
+    rssi_dbm: i16,
+    snr_db: i8,
     crc: &str,
     at_us: u32,
     bench: Option<Bench>,
@@ -1298,8 +1390,8 @@ fn report_frame(
             "rx ch={} len={} rssi_dbm={} snr_db={} crc={} at_us={} survey_power_dbm={} seq={}",
             ch.index(),
             frame.len(),
-            Quarter(status.rssi.quarter_dbm()),
-            Quarter(status.snr.quarter_db()),
+            rssi_dbm,
+            snr_db,
             crc,
             at_us,
             arg as i8,
@@ -1309,8 +1401,8 @@ fn report_frame(
             "rx ch={} len={} rssi_dbm={} snr_db={} crc={} at_us={} bytes={}",
             ch.index(),
             frame.len(),
-            Quarter(status.rssi.quarter_dbm()),
-            Quarter(status.snr.quarter_db()),
+            rssi_dbm,
+            snr_db,
             crc,
             at_us,
             Hex(frame)

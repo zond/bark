@@ -24,6 +24,12 @@ library does not offer (roadmap D20). Changes from the upstream revision:
   bound on the wait for the header applies (§13.1.6, §13.1.7). Other receive modes send
   the same commands as before.
 
+- `src/sx126x/mod.rs`, an `impl Sx126x` block of one-command methods (`standby`,
+  `tcxo`, `device_errors`, `rx_continuous`, `start_cad`, `irq_status`, ...) and
+  `iv_mut`, for a caller that keeps track of what the chip holds and sends only what
+  changes (`bark-driver/src/sx1262.rs`, roadmap D88). They add to the crate and change
+  nothing in it.
+
 To move to a newer upstream revision: replace the directory with that revision's
 `lora-phy`, reapply the changes listed here, and review the upstream diff as for
 any driver update.
