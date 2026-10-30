@@ -138,7 +138,7 @@
 //!
 //! [`Transfer`]: crate::node::transfer::Transfer
 
-use super::{Job, Node, Stage};
+use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
@@ -274,8 +274,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         // Only the room is a line; a pushback passes on as it is, so it
         // cannot grow around a loop of relays.
-        let slot = self.promised.max(now + room);
-        self.promised = slot + BAN;
+        let slot = self.timers.promised.max(now + room);
+        self.timers.promised = slot + BAN;
         slot.since(now).max(pushback)
     }
 
@@ -785,7 +785,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// banned; for a sleepy node with a live anchor, not the anchor.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.is_none()
-            && now >= self.retry_at
+            && now >= self.timers.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
@@ -806,7 +806,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .budget
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now);
-        let retry = Some(self.retry_at).filter(|&t| t > now);
+        let retry = Some(self.timers.retry_at).filter(|&t| t > now);
         [bucket, self.bans_end(now), retry]
             .into_iter()
             .flatten()
@@ -1052,7 +1052,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return Routed::Wait(t);
         }
-        if let Stage::Booting(ends) = self.stage {
+        if let Some(ends) = self.timers.boot_ends {
             if self.own == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
                 // Until it hears a relay, or its first rotation ends
                 // (`heard`).
@@ -1397,12 +1397,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.queue.take_current();
             self.skipped = 0;
             self.feed_due = true;
-            self.retry_at = now + wait;
+            self.timers.retry_at = now + wait;
             self.records.forget(msg_id);
             self.drop_msg(msg_id, DropReason::Pushback, emit);
             emit(Action::App(AppEvent::GivenBack {
                 msg_id,
-                retry_at: self.retry_at,
+                retry_at: self.timers.retry_at,
             }));
             return;
         }

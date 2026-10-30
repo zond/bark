@@ -175,9 +175,107 @@ pub struct Anchor {
 enum Stage {
     /// Not started: the driver's first `Wakeup` starts it.
     Off,
-    /// In its first rotation (spec "Channel at boot"), until then.
-    Booting(Instant),
+    /// In its first rotation (spec "Channel at boot"), until
+    /// `Timers::boot_ends`.
+    Booting,
     Running,
+}
+
+/// The node's deadlines, each named for what it times. [`Timers::next`]
+/// is the earliest that needs the core of its own accord; the wake-up is
+/// derived from it and from what the tables and the radio jobs say, in
+/// `Node::due_at`, and nowhere else. The firing is `Node::fire`.
+#[derive(Clone, Copy, Debug)]
+struct Timers {
+    /// When the first rotation began.
+    boot_from: Instant,
+    /// When it ends, while it runs (spec "Channel at boot").
+    boot_ends: Option<Instant>,
+    /// When the rotation a node that sleeps listens to check its anchor
+    /// ends, while it does (spec "Relay choice").
+    rescan_ends: Option<Instant>,
+    /// Until when a sleepy node that has just taken its first anchor
+    /// listens, a worst-case rotation, to take the strongest node it heard
+    /// at its end (spec "Relay choice").
+    choosing: Option<Instant>,
+    /// When a node that sleeps expects its anchor's next heartbeat on its
+    /// channel, and from when it expected the last.
+    watch_at: Option<Instant>,
+    watch_base: Instant,
+    /// Until when a sleepy node listens after its beat or a message it
+    /// took (spec "Delivery").
+    awake_until: Instant,
+    /// When the window it listens in ends, while it is awake.
+    window_ends: Option<Instant>,
+    /// Until when the driver was told the radio may receive duty-cycled
+    /// (module documentation).
+    sniff_until: Option<Instant>,
+    /// When the bucket will fit the DATA to a sleepy node the send queue
+    /// last had no room for, as a hand-over the bucket cannot fit yet is
+    /// deferred.
+    feed_at: Option<Instant>,
+    /// When queued deliveries are next retried (spec "Delivery queue":
+    /// every 60 s).
+    delivery_retry_at: Instant,
+    /// When the bucket lets the application send, if only it is missing.
+    app_ready_at: Option<Instant>,
+    /// Before this the application is not offered a send: the wait the
+    /// last refusal of its message asked for
+    /// (spec "A sleepy node's own message").
+    retry_at: Instant,
+    /// When the bucket will have refilled what the senders it refused
+    /// were told to come back for (spec "Bans").
+    promised: Instant,
+    /// The move rule (spec "Channel moves"): since when the home's excess
+    /// has lasted, and when to move.
+    excess_since: Option<Instant>,
+    move_at: Option<Instant>,
+}
+
+impl Timers {
+    const UNSET: Timers = Timers {
+        boot_from: Instant::ZERO,
+        boot_ends: None,
+        rescan_ends: None,
+        choosing: None,
+        watch_at: None,
+        watch_base: Instant::ZERO,
+        awake_until: Instant::ZERO,
+        window_ends: None,
+        sniff_until: None,
+        feed_at: None,
+        delivery_retry_at: Instant::ZERO,
+        app_ready_at: None,
+        retry_at: Instant::ZERO,
+        promised: Instant::ZERO,
+        excess_since: None,
+        move_at: None,
+    };
+
+    /// The earliest deadline armed that needs the core when it comes.
+    /// Those that do not: `watch_at`, whose window `window_ends` carries;
+    /// `sniff_until`, the driver's; `retry_at`, which `app_ready_at`
+    /// carries; `promised` and `excess_since`, which are not waited for.
+    fn next(&self) -> Option<Instant> {
+        [
+            self.boot_ends,
+            self.rescan_ends,
+            self.choosing,
+            self.window_ends,
+            self.feed_at,
+            self.app_ready_at,
+            self.move_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// The move rule starts over.
+    fn clear_move(&mut self) {
+        self.excess_since = None;
+        self.move_at = None;
+    }
 }
 
 /// Listen-before-talk progress of one heartbeat.
@@ -258,13 +356,6 @@ enum Beat {
     Change,
 }
 
-/// The move rule's timers (spec "Channel moves").
-#[derive(Default)]
-struct Mover {
-    excess_since: Option<Instant>,
-    move_at: Option<Instant>,
-}
-
 /// A snapshot of a relay's tables and budget ([`Relay::load`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Load {
@@ -330,9 +421,7 @@ pub struct Node<const H: usize, const Q: usize> {
     /// when on battery its next reading is taken as a full cell's.
     charge: Charge,
     config: Config,
-    /// Until when a sleepy node listens after its beat or a message it
-    /// took (spec "Delivery").
-    awake_until: Instant,
+    timers: Timers,
     /// The hand-over of `queue`'s current entry.
     handover: Transfer,
     sweep: Sweep,
@@ -342,36 +431,13 @@ pub struct Node<const H: usize, const Q: usize> {
     motion: Motion,
     /// A sleepy node's searches for a fix (`relay/gps.rs`).
     gps: gps::Gps,
-    mover: Mover,
     replies: Replies,
     radio: Radio<Job>,
-    /// When the bucket will fit the DATA to a sleepy node the send queue last had no
-    /// room for, as a hand-over the bucket cannot fit yet is deferred.
-    feed_at: Option<Instant>,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
-    /// Until when a sleepy node that has just taken its first anchor
-    /// listens, a worst-case rotation, to take the strongest node it heard
-    /// at its end (spec "Relay choice").
-    choosing: Option<Instant>,
-    /// Since when a node that sleeps listens a rotation to check its
-    /// anchor.
-    rescan: Option<Instant>,
-    /// When the window it listens in ends, while it is awake.
-    window_ends: Option<Instant>,
-    /// When the bucket lets the application send, if only it is missing.
-    app_ready_at: Option<Instant>,
-    /// When the first rotation began.
-    boot_from: Instant,
-    /// Until when the driver was told the radio may receive duty-cycled
-    /// (module documentation).
-    sniffing: Option<Instant>,
-    /// When a node that sleeps expects its anchor's next heartbeat on its
-    /// channel, from when it expected the last, and the rotations since it
-    /// last heard one there.
-    watch_at: Option<Instant>,
-    watch_base: Instant,
+    /// The rotations since a node that sleeps last heard its anchor's
+    /// heartbeat where it expected it.
     misses: u8,
     /// Its last check heard nothing at all: it is out of reach, and checks
     /// again only once it hears something.
@@ -385,14 +451,6 @@ pub struct Node<const H: usize, const Q: usize> {
     /// Refusals in a row of `own` by banned neighbours: each doubles the
     /// hold before it is offered again (`budget::hold`).
     own_refusals: u8,
-    /// Before this the application is not offered a send: the wait the
-    /// last refusal of its message asked for (spec "A sleepy node's own message").
-    retry_at: Instant,
-    /// When the bucket will have refilled what the senders it refused
-    /// were told to come back for (spec "Bans").
-    promised: Instant,
-    /// When queued deliveries are next retried (spec "Delivery queue": every 60 s).
-    delivery_retry_at: Instant,
     /// Neighbour slots the current forward passed over because
     /// listen-before-talk gave up on them, they refused it, or its
     /// attempts went unanswered (spec "Hand-over"); not tried.
@@ -449,7 +507,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             battery_sleepy: false,
             charge: Charge::Battery,
             battery_scale: None,
-            boot_from: Instant::ZERO,
             radio: Radio::new(),
             busy: BusyEstimator::from_config(&config),
             budget: Budget::new(),
@@ -473,10 +530,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 change: None,
                 burst: 0,
             },
-            mover: Mover {
-                excess_since: None,
-                move_at: None,
-            },
             records: Records::new(),
             queue: SendQueue::new(),
             handover: Transfer::new(),
@@ -488,28 +541,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
-            delivery_retry_at: Instant::ZERO,
-            app_ready_at: None,
             own: None,
             own_refusals: 0,
-            retry_at: Instant::ZERO,
-            promised: Instant::ZERO,
             held: None,
             feed_due: false,
-            feed_at: None,
-            sniffing: None,
-            awake_until: Instant::ZERO,
-            choosing: None,
             renew: false,
-            rescan: None,
-            window_ends: None,
-            watch_at: None,
-            watch_base: Instant::ZERO,
             misses: 0,
             dark: false,
             chosen_from: Position { lat: 0, lon: 0 },
             reach_m: 0.0,
             config,
+            timers: Timers::UNSET,
             rng: Rng::new(0),
         }
     };
@@ -545,6 +587,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // large tables are emptied where they lie.
         let Node {
             config: c,
+            timers,
             stored,
             id,
             plane,
@@ -558,14 +601,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             battery_sleepy,
             charge,
             battery_scale,
-            boot_from,
             radio,
             busy,
             budget,
             neighbours,
             sweep,
             beacon,
-            mover,
             records,
             queue,
             handover,
@@ -577,23 +618,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             gps,
             delivery,
             delivered,
-            delivery_retry_at,
-            app_ready_at,
             own,
             own_refusals,
-            retry_at,
-            promised,
             held,
             feed_due,
-            feed_at,
-            sniffing,
-            awake_until,
-            choosing,
             renew,
-            rescan,
-            window_ends,
-            watch_at,
-            watch_base,
             misses,
             dark,
             chosen_from,
@@ -613,7 +642,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *battery_sleepy = false;
         *charge = Charge::Battery;
         *battery_scale = config.stored.and_then(|s| s.battery_scale);
-        *boot_from = Instant::ZERO;
         *radio = Radio::new();
         *busy = BusyEstimator::from_config(&config);
         *budget = Budget::new();
@@ -637,7 +665,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             change: None,
             burst: 0,
         };
-        *mover = Mover::default();
         records.clear();
         queue.clear();
         *handover = Transfer::new();
@@ -649,27 +676,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
-        *delivery_retry_at = Instant::ZERO;
-        *app_ready_at = None;
         *own = None;
         *own_refusals = 0;
-        *retry_at = Instant::ZERO;
-        *promised = Instant::ZERO;
         *held = None;
         *feed_due = false;
-        *feed_at = None;
-        *sniffing = None;
-        *awake_until = Instant::ZERO;
-        *choosing = None;
         *renew = false;
-        *rescan = None;
-        *window_ends = None;
-        *watch_at = None;
-        *watch_base = Instant::ZERO;
         *misses = 0;
         *dark = false;
         *chosen_from = config.position;
         *reach_m = 0.0;
+        *timers = Timers::UNSET;
         *c = config;
         *r = rng;
     }
@@ -687,7 +703,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Before when its application should not offer a message again: the
     /// wait the last refusal of its message asked for.
     pub fn retry_at(&self) -> Instant {
-        self.retry_at
+        self.timers.retry_at
     }
 
     /// This node's ID (spec "Addresses").
@@ -753,13 +769,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// documentation). Only a node with an anchor has windows: one
     /// without is sent to with the long preamble whenever.
     fn may_sniff(&self, now: Instant) -> bool {
-        let window = self.anchored_sleepy() && now < self.awake_until;
+        let window = self.anchored_sleepy() && now < self.timers.awake_until;
         self.sleepy
             && !self.config.sleepy_listens
             && self.stage == Stage::Running
             && !window
-            && self.choosing.is_none()
-            && self.rescan.is_none()
+            && self.timers.choosing.is_none()
+            && self.timers.rescan_ends.is_none()
             && self.radio_free()
             && !self
                 .watch()
@@ -785,8 +801,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// expected later by the drift when its slot was as early as the
     /// drift allowed. It may come later by the drift, and by that lag.
     fn watch(&self) -> Option<(Instant, Instant)> {
-        let at = self.watch_at?;
-        let drift = drift(at.since(self.watch_base));
+        let at = self.timers.watch_at?;
+        let drift = drift(at.since(self.timers.watch_base));
         let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         Some((
             at - drift.mul(3),
@@ -800,26 +816,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the anchor is gone, and the node listens a rotation to choose again
     /// (spec "Relay choice").
     fn watch_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let keeps = self.anchored_sleepy() && !self.config.sleepy_listens && self.rescan.is_none();
+        let keeps = self.anchored_sleepy()
+            && !self.config.sleepy_listens
+            && self.timers.rescan_ends.is_none();
         let Some(a) = self.anchor.filter(|_| keeps) else {
-            self.watch_at = None;
+            self.timers.watch_at = None;
             return;
         };
         let interval = heartbeat_interval(a.id, &self.config);
-        if self.watch_at.is_none() {
+        if self.timers.watch_at.is_none() {
             self.misses = 0;
             match self.neighbours.by_id(a.id) {
                 // Its last heartbeat heard was of its burst, in no slot
                 // (spec "Heartbeat"): it watches from the next it hears,
                 // awake while it chooses, and else listening a rotation.
                 Some((_, n)) if n.anchorless => {
-                    if self.choosing.is_none() {
+                    if self.timers.choosing.is_none() {
                         self.check_anchor(now, emit);
                     }
                 }
                 Some((_, n)) => {
-                    self.watch_base = n.beat_at;
-                    self.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
+                    self.timers.watch_base = n.beat_at;
+                    self.timers.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
                 }
                 None => {}
             }
@@ -832,11 +850,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
             self.misses = self.misses.saturating_add(1);
             if self.misses >= 2 && !self.dark {
-                self.watch_at = None;
+                self.timers.watch_at = None;
                 self.check_anchor(now, emit);
                 return;
             }
-            self.watch_at = self.watch_at.map(|t| t + interval.mul(CHANNELS as u64));
+            self.timers.watch_at = self
+                .timers
+                .watch_at
+                .map(|t| t + interval.mul(CHANNELS as u64));
         }
     }
 
@@ -848,7 +869,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A heartbeat of the anchor outside its slots was heard: the anchor
     /// is alive, and the time its next is expected stays as it was.
     fn anchor_alive(&mut self) {
-        if self.rescan.is_some() && self.anchor_holds_mail() {
+        if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
             self.anchored();
         }
         self.misses = 0;
@@ -865,14 +886,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor else { return };
-        if self.rescan.is_some() && self.anchor_holds_mail() {
+        if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
             // Heard while checking: it is there (spec "Relay choice").
             self.anchored();
         }
         self.misses = 0;
-        let base = match (self.watch_at, self.watch()) {
+        let base = match (self.timers.watch_at, self.watch()) {
             (Some(at), Some((from, to))) if now >= from && now < to => {
-                now.min(at + drift(at.since(self.watch_base)))
+                now.min(at + drift(at.since(self.timers.watch_base)))
             }
             _ => now,
         };
@@ -882,25 +903,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 beat_at: base,
                 ..*n
             };
-            self.watch_base = base;
-            self.watch_at = Some(Neighbours::next_beat(&n, interval, self.home));
+            self.timers.watch_base = base;
+            self.timers.watch_at = Some(Neighbours::next_beat(&n, interval, self.home));
         }
     }
 
     /// Tell the driver the radio may receive duty-cycled, if it may and
     /// has not been told.
     fn sniff(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.sniffing.is_some_and(|t| t > now) {
+        if self.timers.sniff_until.is_some_and(|t| t > now) {
             return;
         }
         // The ends of the windows it listens in, and the start of the next
         // for its anchor's heartbeat, need the core, to say so.
-        self.window_ends = None;
+        self.timers.window_ends = None;
         if self.anchored_sleepy() {
             let ahead = |t: Option<Instant>| t.filter(|&t| t > now);
             let watch = self.watch();
-            self.window_ends = earlier(
-                earlier(ahead(Some(self.awake_until)), ahead(self.choosing)),
+            self.timers.window_ends = earlier(
+                earlier(
+                    ahead(Some(self.timers.awake_until)),
+                    ahead(self.timers.choosing),
+                ),
                 earlier(ahead(watch.map(|w| w.0)), ahead(watch.map(|w| w.1))),
             );
         }
@@ -909,7 +933,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let until = self.radio_due();
         if until > now {
-            self.sniffing = Some(until);
+            self.timers.sniff_until = Some(until);
             emit(Action::Sniff(until));
         }
     }
@@ -917,7 +941,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// This node has answered a DATA addressed to it: it listens one
     /// hand-over for the next (spec "Delivery").
     fn took(&mut self, now: Instant) {
-        self.awake_until = now + self.heard.params().linger;
+        self.timers.awake_until = now + self.heard.params().linger;
     }
 
     /// The heard table.
@@ -1038,9 +1062,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// heartbeats from its first slot, on its stored home or a random
     /// channel, and takes traffic from the first neighbour it hears.
     fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.boot_from = now;
+        self.timers.boot_from = now;
         let ends = self.boot_end(now);
-        self.stage = Stage::Booting(ends);
+        self.stage = Stage::Booting;
+        self.timers.boot_ends = Some(ends);
         self.sweep.next_at = now;
         if self.config.stored.is_some_and(|s| s.carried) {
             // Still since now: no clock ran while it was off.
@@ -1113,6 +1138,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// heard, or is anchorless.
     fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
+        self.timers.boot_ends = None;
         emit(Action::App(AppEvent::Boot {
             relays: self.relays_known(now),
             ends: None,
@@ -1160,6 +1186,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the first, and takes the strongest relay heard if it hears none.
     fn resume_anchor(&mut self, a: Anchor, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
+        self.timers.boot_ends = None;
         emit(Action::App(AppEvent::Boot {
             relays: 0,
             ends: None,
@@ -1244,18 +1271,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // The choice after the first anchor is made when its time comes,
         // whether or not the anchor is still in the table: left for later,
         // its time would wake the node at once, again and again.
-        let chosen = self.choosing.is_some_and(|t| now >= t);
+        let chosen = self.timers.choosing.is_some_and(|t| now >= t);
         if chosen {
-            self.choosing = None;
+            self.timers.choosing = None;
         }
         if current.is_some_and(|a| !a.holds_mail()) {
             // It holds mail no more, carried or sleepy: another, at once
             // if one is live, else the one a rotation's listen finds.
             let to = strongest(None, 0);
-            if to.is_none() && self.rescan.is_some() {
+            if to.is_none() && self.timers.rescan_ends.is_some() {
                 return false;
             }
-            if self.rescan.is_none() && current.is_some_and(|a| a.carried) {
+            if self.timers.rescan_ends.is_none() && current.is_some_and(|a| a.carried) {
                 emit(Action::Trace(Trace::AnchorCarried));
             }
             match to {
@@ -1293,7 +1320,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return false;
         };
         if first && !self.config.sleepy_listens {
-            self.choosing = Some(now + self.config.boot_listen);
+            self.timers.choosing = Some(now + self.config.boot_listen);
         }
         self.take_anchor(&to, now, emit);
         true
@@ -1325,7 +1352,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.config.home_override.is_none() {
             self.retune(to.home, emit);
         }
-        if self.sniffing.is_some() {
+        if self.timers.sniff_until.is_some() {
             // It receives duty-cycled no longer, and listens now to choose.
             emit(Action::Listen(self.home));
         }
@@ -1340,8 +1367,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// whether or not it hears it, and measures its moves from here
     /// (module documentation).
     fn anchored(&mut self) {
-        self.rescan = None;
-        self.watch_at = None;
+        self.timers.rescan_ends = None;
+        self.timers.watch_at = None;
         self.chosen_from = self.config.position;
         self.reach_m = self.anchor.map_or(0.0, |a| {
             self.plane.point(a.position).distance_m(Default::default())
@@ -1373,10 +1400,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Listen a worst-case rotation, from `now`, to check the anchor of a
     /// node that sleeps (module documentation).
     pub(super) fn check_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if !self.anchored_sleepy() || self.config.sleepy_listens || self.rescan.is_some() {
+        if !self.anchored_sleepy()
+            || self.config.sleepy_listens
+            || self.timers.rescan_ends.is_some()
+        {
             return;
         }
-        self.rescan = Some(now);
+        self.timers.rescan_ends = Some(now + self.config.boot_listen);
         emit(Action::Trace(Trace::AnchorCheck));
     }
 
@@ -1416,23 +1446,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    fn timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if let Stage::Booting(until) = self.stage {
-            if now >= until {
-                self.finish_boot(now, emit);
-            }
+    /// Fire what is due at `now`: the first rotation's end, the check of
+    /// the anchor, the first choice, the anchor's heartbeat and the move
+    /// rule, then the power's, the GPS's, the forwarding's and the
+    /// delivery's deadlines, in that order.
+    fn fire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.timers.boot_ends.is_some_and(|t| now >= t) {
+            self.finish_boot(now, emit);
         }
-        if let Some(since) = self.rescan {
-            if now >= since + self.config.boot_listen {
-                self.anchor_checked(since, now, emit);
-            }
+        if let Some(ends) = self.timers.rescan_ends.filter(|&t| now >= t) {
+            self.anchor_checked(ends - self.config.boot_listen, now, emit);
         }
-        if self.choosing.is_some_and(|t| now >= t) {
+        if self.timers.choosing.is_some_and(|t| now >= t) {
             self.reconsider_anchor(now, emit);
         }
         self.watch_anchor(now, emit);
-        if self.sweeping() && self.mover.move_at.is_some_and(|t| now >= t) {
-            self.mover = Mover::default();
+        if self.timers.move_at.is_some_and(|t| now >= t) {
+            self.timers.clear_move();
             // Re-check after the random wait (spec "Channel moves").
             if self.excess() {
                 let old = self.home;
@@ -1444,12 +1474,59 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
             }
         }
+        self.power_timers(now, emit);
+        self.gps_timers(now, emit);
+        self.forward_timers(now, emit);
+        self.delivery_timers(now);
+    }
+
+    /// When the core next needs a wakeup: the earliest of its deadlines,
+    /// of what the power, the GPS, the forwarding and the delivery derive
+    /// from their state, and of when a radio job is next ready.
+    fn due_at(&self) -> Option<Instant> {
+        [
+            self.timers.next(),
+            self.grace_ends(),
+            self.flush_ends(),
+            self.gps_wakeup(),
+            self.forward_wakeup(),
+            self.delivery_wakeup(),
+            self.radio_jobs_due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// When a radio job is next ready, once the radio is free: their
+    /// completion event wakes the core otherwise. The heartbeat and the
+    /// sweep wait while a hand-over waits for its ACK, which comes on the
+    /// home channel.
+    fn radio_jobs_due(&self) -> Option<Instant> {
+        if !self.radio.idle() || self.handover.awaiting_ack() {
+            return None;
+        }
+        let heartbeat = (self.heartbeats() && self.beacon.check == Check::Idle).then(|| {
+            let pending = self.beacon.announce.is_some()
+                || self.beacon.current.is_some()
+                || self.beacon.change.is_some();
+            let due = if pending {
+                self.beacon.ready_at
+            } else {
+                // A relay's answer may come before its next slot.
+                let answer = self.answer_due().map(|(_, _, at)| at);
+                answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
+            };
+            due.max(self.beacon.ready_at)
+        });
+        let sweep = self.sweeping().then_some(self.sweep.next_at);
+        earlier(heartbeat, sweep)
     }
 
     /// Start whatever is ready until the radio is busy or nothing is.
     fn pump(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
-        if self.feed_due || self.feed_at.is_some_and(|t| t <= now) {
+        if self.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
         while self.radio.idle() {
@@ -1544,12 +1621,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     fn move_rule(&mut self, now: Instant) {
         if !self.excess() {
-            self.mover = Mover::default();
+            self.timers.clear_move();
             return;
         }
-        let since = *self.mover.excess_since.get_or_insert(now);
-        if self.mover.move_at.is_none() && now.since(since) >= self.config.move_dwell {
-            self.mover.move_at =
+        let since = *self.timers.excess_since.get_or_insert(now);
+        if self.timers.move_at.is_none() && now.since(since) >= self.config.move_dwell {
+            self.timers.move_at =
                 Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
         }
     }
@@ -1569,7 +1646,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match self.stage {
             Stage::Off => false,
-            Stage::Booting(_) => !self.sleepy,
+            Stage::Booting => !self.sleepy,
             Stage::Running => true,
         }
     }
@@ -1796,7 +1873,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // A sleepy node's heartbeat on its anchor's channel is a
                 // beat to whoever hears it: its window follows.
                 if sent && self.anchored_sleepy() && channel == self.home {
-                    self.awake_until = now + self.heard.params().awake;
+                    self.timers.awake_until = now + self.heard.params().awake;
                 }
                 return;
             }
@@ -1806,7 +1883,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.beacon.reach_all = None;
         if sent && self.anchored_sleepy() {
             // The window after its beat (spec "Delivery").
-            self.awake_until = now + self.heard.params().awake;
+            self.timers.awake_until = now + self.heard.params().awake;
         }
         if self.sleepy && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
@@ -1931,7 +2008,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // anchor, or the one after a move (spec "Relay choice"). It shows the
         // anchor alive but says nothing of its slots.
         let off_slot = self.anchor.is_some_and(|a| a.id == hb.id)
-            && self.watch_at.is_some()
+            && self.timers.watch_at.is_some()
             && self.watch().is_some_and(|(from, _)| started < from);
         // A relay's burst goes a burst gap a heartbeat: none of it is in a
         // slot (spec "Heartbeat").
@@ -1942,7 +2019,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.skipped &= !(1 << slot);
-            if let (Stage::Booting(ends), false) = (self.stage, hb.sleepy) {
+            if let (Some(ends), false) = (self.timers.boot_ends, hb.sleepy) {
                 // A relay learned in the first rotation: the application
                 // shows it, and its own message waits no longer.
                 emit(Action::App(AppEvent::Boot {
@@ -1974,7 +2051,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.reconsider_anchor(now, emit);
         if self.anchor.is_some_and(|a| a.id == hb.id) {
-            if let (Some(at), Some((from, to))) = (self.watch_at, self.watch()) {
+            if let (Some(at), Some((from, to))) = (self.timers.watch_at, self.watch()) {
                 if started >= from && started < to {
                     let offset = started.as_micros() as i64 - at.as_micros() as i64;
                     emit(Action::Trace(Trace::AnchorWatch {
@@ -2122,85 +2199,21 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             },
             Event::App(cmd) => self.app(cmd, now, emit),
         }
-        self.timers(now, emit);
-        self.power_timers(now, emit);
-        self.gps_timers(now, emit);
-        self.forward_timers(now, emit);
-        self.delivery_timers(now);
+        self.fire(now, emit);
         self.pump(now, emit);
-        self.app_ready_at = self.send_ready_at(now);
+        self.timers.app_ready_at = self.send_ready_at(now);
         if woke.get() {
-            self.sniffing = None;
+            self.timers.sniff_until = None;
         }
         self.sniff(now, emit);
         self.keep(emit);
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
-        let mut w: Option<Instant> = None;
-        let mut at = |t: Instant| w = Some(w.map_or(t, |w| w.min(t)));
-        match self.stage {
-            Stage::Off => return Some(Instant::ZERO),
-            Stage::Booting(until) => at(until),
-            Stage::Running => {}
+        if self.stage == Stage::Off {
+            return Some(Instant::ZERO);
         }
-        if let (Some(t), false) = (self.mover.move_at, !self.sweeping()) {
-            at(t);
-        }
-        if let Some(t) = self.forward_wakeup() {
-            at(t);
-        }
-        if let (Some(t), true) = (self.replies.wake_at(), self.radio.idle()) {
-            at(t);
-        }
-        if let Some(t) = self.delivery_wakeup() {
-            at(t);
-        }
-        if let Some(t) = self.rescan {
-            at(t + self.config.boot_listen);
-        }
-        if let Some(t) = self.choosing {
-            at(t);
-        }
-        if let Some(t) = self.grace_ends() {
-            at(t);
-        }
-        if let Some(t) = self.flush_ends() {
-            at(t);
-        }
-        if let Some(t) = self.gps_wakeup() {
-            at(t);
-        }
-        if let Some(t) = self.window_ends {
-            at(t);
-        }
-
-        // The application waits for the bucket (core-interface §4).
-        if let Some(t) = self.app_ready_at {
-            at(t);
-        }
-        let awaiting = self.handover.awaiting_ack();
-        // Radio jobs only once the radio is free: their completion event
-        // wakes the core otherwise.
-        if self.radio.idle() && !awaiting {
-            if self.heartbeats() && self.beacon.check == Check::Idle {
-                let pending = self.beacon.announce.is_some()
-                    || self.beacon.current.is_some()
-                    || self.beacon.change.is_some();
-                let due = if pending {
-                    self.beacon.ready_at
-                } else {
-                    // A relay's answer may come before its next slot.
-                    let answer = self.answer_due().map(|(_, _, at)| at);
-                    answer.map_or(self.beacon.next_at, |t| t.min(self.beacon.next_at))
-                };
-                at(due.max(self.beacon.ready_at));
-            }
-            if self.sweeping() {
-                at(self.sweep.next_at);
-            }
-        }
-        w
+        self.due_at()
     }
 
     fn accepts_send(&self, now: Instant) -> bool {

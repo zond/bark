@@ -48,7 +48,7 @@
 //! [`Config::grace`]: crate::Config::grace
 //! [`Config::battery`]: crate::Config::battery
 
-use super::{Mover, Node, Stage};
+use super::{Node, Stage};
 use crate::event::{Action, AppEvent, DropReason, Trace};
 use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
@@ -126,7 +126,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             (false, Charge::Usb(_)) => Charge::Battery,
             (false, c) => c,
         };
-        if let Stage::Booting(_) = self.stage {
+        if self.stage == Stage::Booting {
             // A fixed relay rebooted on battery relays on, its grace
             // counted from the boot.
             let kept = self.config.battery.is_some()
@@ -139,8 +139,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.gps_due();
             }
             self.unplugged = (sleepy && kept).then_some(now);
-            let ends = self.boot_end(self.boot_from);
-            self.stage = Stage::Booting(ends);
+            let ends = self.boot_end(self.timers.boot_from);
+            self.timers.boot_ends = Some(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
             if let Some(a) = anchor.filter(|_| sleepy && self.anchor.is_none()) {
                 self.resume_anchor(a, now, emit);
@@ -302,7 +302,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }));
             }
         }
-        self.mover = Mover::default();
+        self.timers.clear_move();
         self.beacon.announce = None;
         self.beacon.reach_all = None;
         self.beacon.reach_left = 0;
@@ -324,12 +324,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Forget whatever a sleepy node listens for: its windows, the watch
     /// for its anchor's heartbeat, a choice or a check under way.
     fn unwatch(&mut self) {
-        self.awake_until = Instant::ZERO;
-        self.choosing = None;
-        self.rescan = None;
-        self.watch_at = None;
+        self.timers.awake_until = Instant::ZERO;
+        self.timers.choosing = None;
+        self.timers.rescan_ends = None;
+        self.timers.watch_at = None;
         self.misses = 0;
         self.dark = false;
-        self.window_ends = None;
+        self.timers.window_ends = None;
     }
 }

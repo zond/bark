@@ -155,7 +155,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// ends (`feed_due`).
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
         self.feed_due = false;
-        self.feed_at = None;
+        self.timers.feed_at = None;
         let mut i = 0;
         // The windows first: their nodes listen only briefly.
         loop {
@@ -165,14 +165,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let first = !self.delivery.iter().take(i).any(|q| q.node == node);
             if first {
                 if let Err(at) = self.try_deliver(node, retry, now) {
-                    self.feed_at = at;
+                    self.timers.feed_at = at;
                     return;
                 }
             }
             i += 1;
         }
         if let Err(at) = self.feed_direct(now) {
-            self.feed_at = at;
+            self.timers.feed_at = at;
         }
     }
 
@@ -180,7 +180,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// would.
     pub(super) fn deliver_now(&mut self, node: NodeId, now: Instant) {
         if let Err(Some(at)) = self.try_deliver(node, false, now) {
-            self.feed_at = Some(self.feed_at.map_or(at, |t| t.min(at)));
+            self.timers.feed_at = Some(self.timers.feed_at.map_or(at, |t| t.min(at)));
         }
     }
 
@@ -309,21 +309,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// delivery queue.
     pub(super) fn delivery_timers(&mut self, now: Instant) {
         self.heard.expire(now);
-        if self.config.sleepy_listens && now >= self.delivery_retry_at {
-            self.delivery_retry_at = now + self.config.delivery_retry;
+        if self.config.sleepy_listens && now >= self.timers.delivery_retry_at {
+            self.timers.delivery_retry_at = now + self.config.delivery_retry;
             self.feed(true, now);
         }
     }
 
-    /// When delivery next needs the core.
+    /// When delivery next needs the core, but for `Timers::feed_at`.
     pub(super) fn delivery_wakeup(&self) -> Option<Instant> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
-            .then_some(self.delivery_retry_at);
+            .then_some(self.timers.delivery_retry_at);
         // A message of its own waits for a place (`release_held`).
         let held = self.held.as_ref().and(self.delivery.stale_from());
-        earlier(
-            earlier(retry, self.feed_at),
-            earlier(self.heard.next_expiry(), held),
-        )
+        earlier(retry, earlier(self.heard.next_expiry(), held))
     }
 }
