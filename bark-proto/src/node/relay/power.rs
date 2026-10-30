@@ -259,7 +259,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.sleepy = false;
         self.battery_sleepy = false;
         self.gps_relay();
-        self.fixed_here();
+        self.fixed_here(now);
         self.anchor = None;
         self.unwatch();
         self.neighbours.pin(None);

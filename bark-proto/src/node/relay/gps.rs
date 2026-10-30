@@ -228,7 +228,7 @@ impl Gps {
 }
 
 /// `t` in whole seconds, rounded up, and at least 1.
-fn mark(t: Instant) -> u32 {
+pub(super) fn mark(t: Instant) -> u32 {
     (t.as_micros().div_ceil(1_000_000) as u32).max(1)
 }
 

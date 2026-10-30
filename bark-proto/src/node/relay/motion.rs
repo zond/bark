@@ -21,8 +21,10 @@
 //!
 //! [`Config::fixed_after`]: crate::Config::fixed_after
 
+use super::gps::mark;
 use super::Node;
 use crate::event::{Action, Trace};
+use crate::gps::SEARCH_LIMIT;
 use crate::node::{CARRY_AFTER, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::time::Instant;
@@ -39,9 +41,11 @@ pub(super) struct Motion {
     /// It has a place: the position it heartbeats is where it is. A
     /// board built without one has none until its first accepted fix.
     pub(super) placed: bool,
-    /// Its next accepted fix is its place, fixed, at once: it has none,
-    /// or its map point was cleared (roadmap D83, D84).
-    pub(super) first_fix: bool,
+    /// Until when its next accepted fix is its place, fixed, at once, in
+    /// whole seconds as the GPS keeps its times, 0 for never: for good if
+    /// it has none or its map point was cleared, for a search's limit
+    /// after it was plugged in (roadmap D83, D84, D85).
+    pub(super) first_fix: u32,
     /// Fixed: since when its fixes have been far, with none near since.
     far_since: Option<Instant>,
     /// The place its fixes are compared with, and, carried, since when
@@ -57,7 +61,7 @@ impl Motion {
             carried: false,
             map_point: false,
             placed: true,
-            first_fix: false,
+            first_fix: 0,
             far_since: None,
             still_at: at,
             still_since: Instant::ZERO,
@@ -76,7 +80,7 @@ impl Motion {
                 None => false,
             },
             placed,
-            first_fix: !placed,
+            first_fix: if placed { 0 } else { u32::MAX },
             ..Motion::fixed(config.position)
         }
     }
@@ -87,7 +91,7 @@ impl Motion {
             carried: true,
             map_point: false,
             placed: true,
-            first_fix: false,
+            first_fix: 0,
             far_since: None,
             still_at: at,
             still_since: now,
@@ -140,7 +144,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn clear_map_point(&mut self) {
         if self.motion.map_point {
             self.motion.map_point = false;
-            self.motion.first_fix = true;
+            self.motion.first_fix = u32::MAX;
             self.changed();
         }
     }
@@ -152,7 +156,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.motion.map_point {
             return false;
         }
-        if self.motion.first_fix && !self.motion.carried {
+        if mark(now) <= self.motion.first_fix && !self.motion.carried {
             self.place_at(at, now);
             return true;
         }
@@ -226,15 +230,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Plugged in: a carried node stays carried; a fixed one is fixed
-    /// where it is now, which it keeps as a relay until its first fix,
-    /// which is its place: a sleepy node's last fix may be hours old
-    /// (roadmap D80, D85).
-    pub(super) fn fixed_here(&mut self) {
+    /// where it is now, which it keeps as a relay unless a fix comes
+    /// within a search's limit: a sleepy node's last fix may be hours old
+    /// (roadmap D80), and one that sees the sky has a fix by then
+    /// (roadmap D85).
+    pub(super) fn fixed_here(&mut self, now: Instant) {
         if !self.motion.carried {
             let map_point = self.motion.map_point;
             self.motion = Motion {
                 map_point,
                 placed: self.motion.placed,
+                first_fix: if map_point {
+                    0
+                } else {
+                    mark(now + SEARCH_LIMIT)
+                },
                 ..Motion::fixed(self.config.position)
             };
         }
