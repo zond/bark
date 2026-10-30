@@ -122,7 +122,7 @@ each field saying which measurement it is:
 |---|---|---|
 | `rx_to_fs_us` + `fs_to_rx_us`, the retune | 388 | measured |
 | `rssi_read_us` | 51 | measured |
-| `lbt_prepare_us` | 410 | measured 359 before the CAD's parameters moved into it, one command more; to confirm |
+| `lbt_prepare_us` | 430 | measured with the CAD's parameters sent before each CAD; 359 without them |
 | the CAD's sampling | 2176 | derived, 8.5 symbols; measured 2.02 to 2.28 ms |
 | `lbt_return_us` | 510 | measured |
 | `rx_to_tx_us` | 765 | measured, 602 to prepare 64 bytes between the 547 of 9 and the 794 of 255, and 163 over the airtime |
@@ -166,9 +166,9 @@ less than half as badly; its cause is still a later item.
 
 ## What the bench still has to confirm
 
-- The CAD flag alone busy at the beacon's duty with the parameters
-  before each CAD (`cad 5` under the beacon), and `lbt`'s `prepare_us`
-  with that command in it, against the 410 the simulator now charges.
+- Confirmed 2026-10-30 evening: with the parameters before each CAD,
+  the CAD flag alone is busy 40 and 38 of 400 under the beacon, its
+  duty; `lbt`'s `prepare_us` is 430 µs and the whole 2.98 ms.
 - The probed delay at boot on each board, the error count in the
   `driver` line after a day, and `probe` after a night outside: whether
   a cold board's search lands higher and the hourly probe brings it

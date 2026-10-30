@@ -349,7 +349,7 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 | `synth_hop_us` | 0 (bench) | 1.2 | `ch` to another channel − `ch` to the same | |
 | `rx_to_tx_us` | 765 (bench) | 1.1 | `prepare_us` + `excess_us` for 64 bytes | |
 | `stby_to_rx_us` | 369 (bench) | 1.1 | `rest_us` after `tx` | |
-| `lbt_prepare_us` | 410 (bench 359 + the CAD's parameters) | 1.5 | `prepare_us` of `lbt` | |
+| `lbt_prepare_us` | 430 (bench, the CAD's parameters sent before each CAD) | 1.5 | `prepare_us` of `lbt` | |
 | `lbt_return_us` | 510 (bench) | 1.5 | `rest_us` after `lbt` | |
 | `interference_margin_db` | 10 | not measured | a modelling cut-off | 10 |
 

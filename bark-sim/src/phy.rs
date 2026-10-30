@@ -322,10 +322,9 @@ pub struct RadioParams {
     /// retune does not grow with the hop (see `rx_to_fs_us`).
     pub synth_hop_us: u64,
     /// Preparing a listen-before-talk from listening, µs: standby, the
-    /// frequency, the CAD's parameters and its start. Measured 359 µs
-    /// on the lean driver before the CAD's parameters moved into it
-    /// (docs/lean-driver-2026-10-30.md, "Measured on the board"), one
-    /// 51 µs command more since: 410, TO CONFIRM.
+    /// frequency, the CAD's parameters and its start. Measured 430 µs
+    /// on the lean driver with the CAD's parameters sent before each CAD
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub lbt_prepare_us: u64,
     /// From the CAD's end to listening on the resting channel, µs: the
     /// result read and cleared, the frequency, receive, and the
@@ -361,7 +360,7 @@ impl Default for RadioParams {
             rx_to_tx_us: 602 + 163,
             stby_to_rx_us: 369,
             synth_hop_us: 0,
-            lbt_prepare_us: 359 + 51,
+            lbt_prepare_us: 430,
             lbt_return_us: 510,
             interference_margin_db: 10.0,
             reception: Reception::Curve,
@@ -540,7 +539,7 @@ mod tests {
         assert_eq!(p.retune().as_micros(), 388);
         assert_eq!(p.cad_time().as_micros(), 8 * 256 + 128);
         let total = |ph: [Phase; 3]| ph.iter().map(|x| x.0.as_micros()).sum::<u64>();
-        assert_eq!(total(p.lbt_phases()), 410 + 2176 + 510);
+        assert_eq!(total(p.lbt_phases()), 430 + 2176 + 510);
         assert_eq!(total(p.rssi_phases(false)), 51);
         assert_eq!(total(p.rssi_phases(true)), 388 + 1024 + 51 + 388);
         let air = time_on_air(8, MIN_PREAMBLE_SYMBOLS);
