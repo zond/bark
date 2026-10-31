@@ -18,8 +18,8 @@
 //! # Radio discipline
 //!
 //! Each use of the radio is a job: the reply (an ACK, taking or refusing)
-//! this node owes, the heartbeat, the hand-over of one entry of the send
-//! queue, and the sweep. Each is one excursion of the one shape
+//! this node owes, the heartbeat, the hand-over of an entry of the send
+//! queue whose wait has ended, and the sweep. Each is one excursion of the one shape
 //! (`mac::Excursion`): a check of a channel and, if it is clear, a
 //! transmission, or one reading; the job continues from the completion
 //! event. The node keeps at most one excursion outstanding
@@ -68,7 +68,7 @@ use crate::tables::heard::{Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue, State};
-use crate::time::{earlier, Duration, Instant};
+use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use motion::Motion;
 
@@ -655,7 +655,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// (`relay/delivery.rs`). For a driver to sample; reading it changes
     /// nothing.
     pub fn sending_direct(&self) -> bool {
-        self.in_flight().is_some_and(|o| o.kind == Kind::Direct)
+        self.begun().any(|(_, o)| o.kind == Kind::Direct)
     }
 
     /// Whether a hand-over is under way: begun and not yet answered or
@@ -793,7 +793,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Start `job` if it is ready. The heartbeat and the sweep would take
     /// the node off its home channel, where the ACK of a hand-over
-    /// arrives, so neither starts while one is awaited.
+    /// arrives, so neither starts while one is awaited, nor does another
+    /// hand-over.
     fn start_job(&mut self, job: Job, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         match job {
             Job::Reply => self.start_reply(now, emit),
@@ -831,15 +832,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 Some(due.max(self.radio.beacon.ready_at))
             }
-            Job::HandOver => {
-                let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
-                // A waiting entry, once nothing else is under way.
-                let queued = self
-                    .queue
-                    .earliest_due()
-                    .filter(|_| self.handover_idle() && free);
-                earlier(flight, queued)
-            }
+            Job::HandOver => self.handover_wake(),
             Job::Sweep => (free && !self.awaiting_ack() && self.sweeping())
                 .then_some(self.radio.sweep.next_at),
         }
@@ -956,7 +949,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 // Unless the hand-over was given up meanwhile (a displaced record).
                 Some(Job::HandOver) => {
                     let timeout = self.config.ack_timeout;
-                    if let Some((mut h, _)) = self.handover() {
+                    if let Some((mut h, _)) = self.on_radio().and_then(|i| self.handover(i)) {
                         if h.state() == State::Radio {
                             h.sent(now, timeout);
                         }

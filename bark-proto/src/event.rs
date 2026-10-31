@@ -342,6 +342,13 @@ pub enum Trace {
         /// When the budget may next allow it.
         until: Instant,
     },
+    /// The frame of a hand-over went to the radio while another hand-over
+    /// under way waited between its attempts, for a backoff, a retry or
+    /// the bucket (spec "Waiting hand-overs").
+    ServedWhileWaiting {
+        /// The message.
+        msg_id: MsgId,
+    },
     /// A neighbour acknowledged the message, sent on toward the destination
     /// (spec "Next hop").
     Forwarded {

@@ -22,6 +22,15 @@ use crate::wire::ACK_LEN;
 /// up and chooses the next hop again (spec "Hand-over" step 2).
 pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 
+/// How long a sender listens at home for the ACK of a frame it sent: the
+/// ACK's airtime and the receiver's retune and listen-before-talk (spec
+/// "Hand-over" step 5).
+pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Transmissions a hand-over makes before it has failed (spec "Hand-over"
+/// step 6).
+pub const HOP_ATTEMPTS: u8 = 3;
+
 /// The longest one hand-over attempt takes: listen-before-talk until it
 /// gives up, a full frame on air, and the ACK timeout (spec "Message records",
 /// "Hand-over"): 738.6 ms with the design's 100 ms timeout.
@@ -104,6 +113,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), 280);
+        assert_eq!(size_of::<send_queue::Flight>(), 40);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full heard table over one TTL (spec "Delivery queue").
@@ -138,7 +148,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280 + send_queue::FLIGHTS * 40,
             ),
             (
                 "delivered",

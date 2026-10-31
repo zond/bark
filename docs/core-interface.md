@@ -257,10 +257,11 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-170 736 B (166.7 KiB, measured 2026-11-02): the tables and, in under 1 KiB around them, the
-medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
+170 880 B (166.9 KiB, measured 2026-11-02): the tables, the send queue's four flights among
+them (spec "Waiting hand-overs"), and, in under 1 KiB around them, the
+medium access, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 151 720 B (148.2 KiB), without the heard table and the delivery
+`SleepyNode` is 151 864 B (148.3 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM

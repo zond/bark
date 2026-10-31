@@ -294,10 +294,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         // A hand-over of it not yet on its way goes with it.
         let id = q.msg_id;
-        let active = !self.handover_idle();
-        self.queue.retain(|current, o| {
-            (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
-        });
+        self.queue
+            .retain(|under_way, o| under_way || !o.kind.delivers() || o.msg_id() != Some(id));
         self.forwarding.feed_due = true;
         emit(Action::Trace(Trace::Dropped {
             msg_id: id,

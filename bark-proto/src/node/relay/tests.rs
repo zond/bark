@@ -1997,3 +1997,353 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
         );
     }
 }
+// --- Waiting hand-overs (spec "Waiting hand-overs", roadmap D97) ---
+
+/// A relay past its boot that hears three neighbours, B to the north on
+/// channel 5, C to the east on channel 6 and D to the south on channel
+/// 5 again, with a forward queued for each in that order, toward a far
+/// point past it, each with the other two neighbours already tried, so
+/// that it has one candidate. Returns the relay, the time, the three
+/// messages' IDs and the three neighbours' IDs.
+fn three_forwards() -> (Relay, Instant, [MsgId; 3], [NodeId; 3]) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    assert!(!r.booting());
+    let me = r.config.position;
+    let home = r.home;
+    let (c5, c6) = (Channel::new(5).unwrap(), Channel::new(6).unwrap());
+    let places = [
+        (
+            Position {
+                lat: me.lat + 5_000,
+                ..me
+            },
+            c5,
+        ),
+        (
+            Position {
+                lon: me.lon + 5_000,
+                ..me
+            },
+            c6,
+        ),
+        (
+            Position {
+                lat: me.lat - 5_000,
+                ..me
+            },
+            c5,
+        ),
+    ];
+    let mut names = [NodeId::NONE; 3];
+    for (k, (p, ch)) in places.iter().enumerate() {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: *ch,
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(*p),
+            short: p.short(),
+        };
+        let f = mac::frame(&Packet::Heartbeat(hb), home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        r.handle(event, now, &mut |_| {});
+        names[k] = id_of(*p);
+    }
+    let slots: Vec<usize> = names
+        .iter()
+        .map(|n| r.neighbours.slot_of(*n).unwrap())
+        .collect();
+    let mut ids = [MsgId::default(); 3];
+    for (k, (p, _)) in places.iter().enumerate() {
+        let far = Position {
+            lat: me.lat + (p.lat - me.lat) * 20,
+            lon: me.lon + (p.lon - me.lon) * 20,
+        };
+        let payload = [k as u8];
+        let d = Data {
+            sender_home: home,
+            dst_hop: name(0),
+            src_hop: r.me(),
+            dst_pos: far,
+            dst_id: NOBODY,
+            hops: 2,
+            time_left: u8::MAX,
+            payload: &payload,
+        };
+        let parent = Some((name(7), Channel::new(6).unwrap()));
+        let mut record = Record::new(d.msg_id(), parent, 1, now);
+        for (j, slot) in slots.iter().enumerate() {
+            if j != k {
+                record.handed_to(*slot);
+            }
+        }
+        let at = r.record_place().unwrap();
+        r.records.put(at, record);
+        let f = mac::frame(&Packet::Data(d), home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        ids[k] = d.msg_id();
+    }
+    (r, now, ids, names)
+}
+
+/// What a relay sent, and what its radio did, driven on a quiet channel
+/// with nobody answering, `pending` the actions it has asked for
+/// already: the frames with their times, how many hand-overs were under
+/// way at most at once, and the traces. After every event at most one
+/// hand-over is on the radio and no more than the flights are under
+/// way.
+fn drive_counting(
+    r: &mut Relay,
+    now: &mut Instant,
+    until: Instant,
+    mut pending: Vec<Action>,
+) -> (Vec<(Instant, Frame)>, usize, Vec<Trace>) {
+    use crate::tables::send_queue::{State, FLIGHTS};
+    let mut sent = Vec::new();
+    let mut most = 0;
+    let mut traces = Vec::new();
+    loop {
+        let event = match pending.pop() {
+            Some(Action::Lbt(channel)) => Event::LbtDone {
+                channel,
+                busy: false,
+                dbm: -130,
+            },
+            Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+            Some(Action::Transmit(f)) => {
+                sent.push((*now, f));
+                *now += mac::airtime(&f);
+                Event::TxDone
+            }
+            Some(_) => continue,
+            None => match r.next_wakeup() {
+                Some(t) if t <= until => {
+                    *now = (*now).max(t);
+                    Event::Wakeup
+                }
+                _ => return (sent, most, traces),
+            },
+        };
+        r.handle(event, *now, &mut |a| match a {
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            Action::Trace(t) => traces.push(t),
+            _ => {}
+        });
+        let on_radio = r
+            .queue
+            .iter()
+            .filter(|o| matches!(o.state, State::Radio | State::AwaitAck))
+            .count();
+        assert!(
+            on_radio <= crate::node::transfer::IN_FLIGHT,
+            "{on_radio} on the radio"
+        );
+        let under_way = r.queue.flights().count();
+        assert!(under_way <= FLIGHTS, "{under_way} under way");
+        most = most.max(under_way);
+    }
+}
+
+/// The DATA frames `r` sent to `to`, by time.
+fn datas_to(sent: &[(Instant, Frame)], to: NodeId) -> Vec<Instant> {
+    sent.iter()
+        .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) if d.dst_hop == to => Some(*t),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A forward whose one candidate is banned waits in its place for the
+/// ban, and the forwards behind it go out meanwhile (spec "Overload waits", "Waiting hand-overs").
+#[test]
+fn a_place_waiting_for_a_ban_lets_another_go_out() {
+    use crate::tables::send_queue::State;
+    let (mut r, mut now, ids, [b, c, d]) = three_forwards();
+    let ban_ends = now + Duration::from_secs(30);
+    r.neighbours.refused(b, ban_ends);
+    let start = now;
+    let (sent, _, _) = drive_counting(&mut r, &mut now, start + Duration::from_secs(5), Vec::new());
+    assert!(datas_to(&sent, b).is_empty(), "B is banned");
+    // Three attempts at each, which never answers, and three more once
+    // the ban that follows ends.
+    assert!(datas_to(&sent, c).len() >= 3);
+    assert!(datas_to(&sent, d).len() >= 3);
+    let waiting = r.queue.iter().find(|o| o.msg_id() == Some(ids[0])).unwrap();
+    assert_eq!(waiting.state, State::Queued);
+    assert_eq!(waiting.not_before, ban_ends, "due when B's ban ends");
+}
+
+/// A hand-over whose frame went unanswered waits its retry wait with
+/// its own clock while the radio serves the next place, whose channel is
+/// another; a place to the channel it waits on waits for it, and goes
+/// once the hand-over has failed and waits for the ban (spec "Waiting hand-overs").
+#[test]
+fn a_retry_wait_keeps_its_own_clock_while_another_place_is_served() {
+    use crate::tables::send_queue::{State, Wait};
+    let (mut r, mut now, ids, [b, c, d]) = three_forwards();
+    let start = now;
+    // Drive until B's first frame is out and its ACK wait has run out:
+    // the hand-over then waits its retry wait.
+    let mut pending: Vec<Action> = Vec::new();
+    let mut sent: Vec<(Instant, Frame)> = Vec::new();
+    let deadline = loop {
+        let event = match pending.pop() {
+            Some(Action::Lbt(channel)) => Event::LbtDone {
+                channel,
+                busy: false,
+                dbm: -130,
+            },
+            Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+            Some(Action::Transmit(f)) => {
+                sent.push((now, f));
+                now += mac::airtime(&f);
+                Event::TxDone
+            }
+            Some(_) => continue,
+            None => {
+                now = now.max(r.next_wakeup().unwrap());
+                Event::Wakeup
+            }
+        };
+        r.handle(event, now, &mut |a| pending.push(a));
+        let i = r
+            .queue
+            .iter()
+            .position(|o| o.msg_id() == Some(ids[0]))
+            .unwrap();
+        if r.queue.get(i).unwrap().state == State::Waiting(Wait::Retry) {
+            break r.queue.flight_of(i).unwrap().until;
+        }
+        assert!(
+            now < start + Duration::from_secs(2),
+            "B's frame goes out unanswered"
+        );
+    };
+    let first_to_b = datas_to(&sent, b)[0];
+    assert!(deadline > now && deadline <= now + r.config.retry_backoff.mul(2));
+    // C's place, on another channel, is served meanwhile; D's, on B's
+    // channel, waits for B's hand-over. Three attempts at each, and
+    // three more once the ban that follows each failure ends.
+    let (more, most, traces) =
+        drive_counting(&mut r, &mut now, start + Duration::from_secs(6), pending);
+    sent.extend(more);
+    let to_b = datas_to(&sent, b);
+    let to_c = datas_to(&sent, c);
+    let to_d = datas_to(&sent, d);
+    assert!(
+        to_b.len() >= 3 && to_c.len() >= 3 && to_d.len() >= 3,
+        "B {to_b:?} C {to_c:?} D {to_d:?}"
+    );
+    assert_eq!(to_b[0], first_to_b);
+    assert!(to_b[1] >= deadline, "B's retry waited its own clock");
+    assert!(
+        to_c[0] > to_b[0] && to_c[0] < to_b[1],
+        "C went during B's retry wait: B {to_b:?}, C {to_c:?}"
+    );
+    assert!(
+        to_d[0] > to_b[2],
+        "D, on B's channel, waited for B's hand-over: B {to_b:?}, D {to_d:?}"
+    );
+    assert!(most >= 2, "two hand-overs under way at once");
+    let served = traces
+        .iter()
+        .filter(|t| matches!(t, Trace::ServedWhileWaiting { .. }))
+        .count();
+    assert!(
+        served >= 1,
+        "a frame went out while another hand-over waited"
+    );
+    assert_eq!(
+        r.queue.len(),
+        3,
+        "each waits for its neighbour's ban in its place"
+    );
+}
+
+/// With hand-overs under way to every neighbour, one is on the radio at
+/// a time and no more than the flights are under way: six forwards over
+/// two channels, nobody answering (spec "Waiting hand-overs").
+#[test]
+fn one_hand_over_is_on_the_radio_at_a_time() {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing, FLIGHTS};
+    use crate::wire::Data;
+    let (mut r, mut now, _, [b, c, d]) = three_forwards();
+    // Three more, one per neighbour, behind the first three.
+    let home = r.home;
+    let me = r.config.position;
+    let slots: Vec<usize> = [b, c, d]
+        .iter()
+        .map(|n| r.neighbours.slot_of(*n).unwrap())
+        .collect();
+    for k in 0..3u8 {
+        let far = match k {
+            0 => Position {
+                lat: me.lat + 100_000,
+                ..me
+            },
+            1 => Position {
+                lon: me.lon + 100_000,
+                ..me
+            },
+            _ => Position {
+                lat: me.lat - 100_000,
+                ..me
+            },
+        };
+        let payload = [10 + k];
+        let dd = Data {
+            sender_home: home,
+            dst_hop: name(0),
+            src_hop: r.me(),
+            dst_pos: far,
+            dst_id: NOBODY,
+            hops: 2,
+            time_left: u8::MAX,
+            payload: &payload,
+        };
+        let mut record = Record::new(
+            dd.msg_id(),
+            Some((name(7), Channel::new(6).unwrap())),
+            1,
+            now,
+        );
+        for (j, slot) in slots.iter().enumerate() {
+            if j != k as usize {
+                record.handed_to(*slot);
+            }
+        }
+        let at = r.record_place().unwrap();
+        r.records.put(at, record);
+        let f = mac::frame(&Packet::Data(dd), home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    }
+    let start = now;
+    let (sent, most, _) =
+        drive_counting(&mut r, &mut now, start + Duration::from_secs(8), Vec::new());
+    assert!((2..=FLIGHTS).contains(&most), "{most} under way at most");
+    // Three attempts at each of six, and more once the bans end.
+    assert!(datas_to(&sent, b).len() + datas_to(&sent, c).len() + datas_to(&sent, d).len() >= 18);
+}

@@ -157,10 +157,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// else stays behind, and the reading counts it as the sweep counts
     /// any channel's.
     pub(super) fn set_aside_own(&mut self, bytes: &[u8], now: Instant) {
-        let me = self.me();
         let own = match Packet::decode(bytes) {
-            Ok(Packet::Data(d)) => d.dst_hop == me,
-            Ok(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
+            Ok(Packet::Data(d)) => d.dst_hop == self.me(),
+            Ok(Packet::Ack(a)) => self.answered(a).is_some(),
             _ => false,
         };
         if !own {
