@@ -297,8 +297,8 @@ impl Timers {
 pub struct Load {
     /// Airtime in the duty-cycle bucket (spec "Duty cycle cap").
     pub bucket: Duration,
-    /// Frames in the send queue, hop places included, but for one set
-    /// aside for the delivery queue (spec "Send queue").
+    /// Frames in the send queue, hop places and a place held for the
+    /// delivery queue included (spec "Send queue").
     pub send_queue: usize,
     /// Messages waiting for a sleepy node (spec "Delivery queue").
     pub delivery_queue: usize,
@@ -673,7 +673,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub fn load(&self, now: Instant) -> Load {
         Load {
             bucket: self.radio.budget.available(now),
-            send_queue: self.queue.iter().filter(|o| !o.held()).count(),
+            send_queue: self.queue.len(),
             delivery_queue: self.delivery.len(),
             heard: self.heard.len(),
             neighbours: self.neighbours.len(),
