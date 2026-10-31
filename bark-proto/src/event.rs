@@ -115,9 +115,11 @@ pub enum AppCommand<'a> {
     /// hands fixes again.
     ClearMapPoint,
     /// A GPS fix that passed the driver's plausibility checks (spec
-    /// "Position"). Every node counts it toward turning carried or fixed
-    /// again; a sleepy or carried node takes it as its position, and one
-    /// that is neither keeps its own.
+    /// "Position"). A node counts it toward turning carried or fixed
+    /// again; a carried node, or a sleepy one without an anchor, takes it
+    /// as its position, a fixed relay keeps its place, and a sleepy node
+    /// with an anchor takes none: its position is its anchor's, and it
+    /// asks for no fix (roadmap D91).
     Fix {
         /// Where the fix puts the node.
         position: Position,
@@ -269,8 +271,9 @@ pub enum Action {
     Store(Stored),
     /// Run the GPS until this instant and hand the first fix that passes
     /// the checks as [`AppCommand::Fix`], then stop it; a later `Locate`
-    /// moves the end. Only a sleepy node asks: a relay's GPS runs all the
-    /// time (`crate::gps`, spec "Position").
+    /// moves the end, and one at or before now ends the search at once.
+    /// A sleepy node asks while it has no anchor, a resting relay at the
+    /// radio's sign of a move (`crate::gps`, spec "Position", "Beats").
     Locate(Instant),
     /// A protocol event for logs and the simulator's metrics. Carries no
     /// obligation; a driver may ignore it (`docs/core-interface.md` §3).

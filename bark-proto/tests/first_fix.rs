@@ -102,14 +102,18 @@ fn a_map_point_places_it() {
     assert!(!sent.is_empty() && sent.iter().all(|&p| p == pos(200.0)));
 }
 
-/// A sleepy node with no place may take an anchor but sends no beat; at
-/// its first fix it rebuilds its anchor's position near its place, and
-/// beats its own.
+/// A sleepy node with no place may take an anchor but sends no beat, and
+/// searches all the same, since without a fix of its own it cannot
+/// rebuild its anchor's position; at its first fix it rebuilds that near
+/// its place, beats it as its address, and searches no more.
 #[test]
 fn a_sleepy_node_with_no_place_waits_for_its_first_fix() {
     let mut h = pair(false);
     h.run_until(at(1000), |_| false);
     assert!(heartbeats(&h, 1, Instant::ZERO, pos(0.0)).is_empty());
+    assert!(h.nodes[1].core.anchor().is_some());
+    let searches = h.nodes[1].located.len();
+    assert_eq!(searches, 1, "{:?}", h.nodes[1].located);
     h.command(
         1,
         AppCommand::Fix {
@@ -119,8 +123,10 @@ fn a_sleepy_node_with_no_place_waits_for_its_first_fix() {
     assert!(!h.nodes[1].core.carried());
     let anchor = h.nodes[1].core.anchor().expect("an anchor");
     assert_eq!(anchor.position, pos(0.0));
+    assert_eq!(h.nodes[1].core.config().position, pos(30.0));
     let since = h.now;
     h.run_until(at(2000), |_| false);
     let sent = heartbeats(&h, 1, since, pos(0.0));
-    assert!(!sent.is_empty() && sent.iter().all(|&p| p == pos(30.0)));
+    assert!(!sent.is_empty() && sent.iter().all(|&p| p == pos(0.0)));
+    assert_eq!(h.nodes[1].located.len(), searches);
 }

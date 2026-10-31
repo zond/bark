@@ -12,12 +12,16 @@
 //!
 //! A node that is neither sleepy nor carried keeps its place as its
 //! position, so that no later fix, true or spoofed, moves it (roadmap
-//! D63). A sleepy or carried node takes each fix. A carried node owns
-//! nothing by position, holds mail for nobody and is nobody's anchor; it
-//! flags its heartbeats. At the first far fix of a run a node that holds
-//! mail flushes its delivery queue: each message goes to its node once,
-//! with the long preamble (`relay/delivery.rs`), since a node that is
-//! leaving will not hear its sleepy nodes' beats for long.
+//! D63). A carried node, and a sleepy node without an anchor, takes each
+//! fix. A sleepy node with an anchor takes none and measures nothing: it
+//! works by its anchor's position (`relay/anchor.rs`) and keeps the flag
+//! it had, carried or fixed, until it is anchorless or a relay again,
+//! where its fixes measure it as before (roadmap D91). A carried node
+//! owns nothing by position, holds mail for nobody and is nobody's
+//! anchor; it flags its heartbeats. At the first far fix of a run a node
+//! that holds mail flushes its delivery queue: each message goes to its
+//! node once, with the long preamble (`relay/delivery.rs`), since a node
+//! that is leaving will not hear its sleepy nodes' beats for long.
 //!
 //! [`Config::fixed_after`]: crate::Config::fixed_after
 
@@ -160,6 +164,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.place_at(at, now);
             return true;
         }
+        // With an anchor a sleepy node asks for no fix; one that comes all
+        // the same, the search it ended still running, is not taken.
+        if self.anchored_sleepy() {
+            return false;
+        }
         let far = self.plane.distance2(at, self.motion.still_at) > OWNER_RADIUS_M * OWNER_RADIUS_M;
         let takes = self.sleepy() || self.motion.carried;
         if takes {
@@ -213,9 +222,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.set_position(at);
         self.motion = Motion::fixed(at);
-        if let Some(s) = self.sleep_mut() {
-            s.chosen_from = at;
-        }
         if had && moved && !self.sleepy() {
             self.changed();
         }

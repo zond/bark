@@ -135,9 +135,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// there address it anew now and not a rotation later, and an old
     /// anchor learns to hand over its mail (spec "Heartbeat"). One
     /// heartbeat for any number of changes before it goes, sleepy or not
-    /// (roadmap D72). A position that changes with each fix, a sleepy or
-    /// carried node's, is not announced: its slots or beats carry it
-    /// (roadmap D71).
+    /// (roadmap D72). A position that changes with each fix, a carried
+    /// node's or an anchorless one's, is not announced: its slots or
+    /// beats carry it (roadmap D71).
     pub(super) fn changed(&mut self) {
         if self.stage == Stage::Running {
             self.radio.beacon.change.get_or_insert(self.home);
@@ -164,8 +164,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The heartbeat in progress. It carries the home at the moment it is
-    /// sent, so a move during its backoff still announces the new channel.
-    /// A sleepy node with an anchor beats on its home; a sleepy node
+    /// sent, so a move during its backoff still announces the new channel,
+    /// and the node's address, a sleepy node's anchor's position while it
+    /// has one. A sleepy node with an anchor beats on its home; a sleepy node
     /// without an anchor, a relay answering one, and a sleepy node's beat
     /// on its anchorless neighbours' channels, its home among them, send
     /// with the long preamble.
@@ -198,7 +199,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             format: crate::wire::FORMAT,
             map_point: self.motion.map_point,
             id: self.id,
-            short: self.config.position.short(),
+            short: self.address().short(),
         };
         let reaches_home = self.radio.beacon.reach_all.unwrap_or(0) & channel_bit(self.home) != 0;
         let preamble = match beat {
@@ -410,7 +411,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if hb.id == self.id {
             return;
         }
-        let position = hb.position(self.config.position);
+        // Rebuilt near the position the node works by, which with an
+        // anchor is within reach of every node it hears (spec "Beats").
+        let position = hb.position(self.address());
         // A fixed relay's averaged RSSI before this heartbeat, for a relay
         // that watches its radio for a sign that it moves (`relay/gps.rs`).
         let average = self

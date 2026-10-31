@@ -5,10 +5,10 @@
 //! The figures are the L76K Hardware Design V1.0 (Quectel, 2021-10-20),
 //! Table 2 (page 11), at room temperature with every satellite at
 //! −130 dBm, about the open-sky level. A sleepy node runs a search only
-//! when its core asks for one ([`crate::Action::Locate`]), at the times
-//! spec "Beats" gives (roadmap D80); a relay's runs while its core says
-//! so (`Node::gps_tracks`), and searches as a sleepy node's when it rests
-//! (roadmap D82).
+//! when its core asks for one ([`crate::Action::Locate`]), while it has
+//! no anchor (spec "Beats", roadmap D80, D91); a relay's runs while its
+//! core says so (`Node::gps_tracks`), and searches as a sleepy node's
+//! when it rests (roadmap D82).
 
 use crate::time::Duration;
 
