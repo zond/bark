@@ -183,6 +183,10 @@ pub enum DropReason {
     /// Held for a sleepy node by a node that turned sleepy itself, which
     /// holds nothing (spec "Delivery queue").
     Unplugged,
+    /// Received, and the ACK that takes it could not go out: not taken,
+    /// since a take is final only when its ACK has gone, and the sender's
+    /// retry brings it again (spec "The ACK"). Refused.
+    Unanswered,
 }
 
 /// Events for the application side: a message for it, a sleepy node's

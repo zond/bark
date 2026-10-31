@@ -527,6 +527,10 @@ pub struct DropCounts {
     /// "Delivery queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     pub unplugged: u64,
+    /// Received and not taken because the ACK that takes it could not go
+    /// out (spec "The ACK", roadmap D93); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unanswered: u64,
 }
 
 /// Whether a counter is zero: counters of what only some scenarios do are
@@ -553,6 +557,7 @@ impl DropCounts {
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::Pushback => &mut self.pushback,
             DropReason::Unplugged => &mut self.unplugged,
+            DropReason::Unanswered => &mut self.unanswered,
         };
         *c += 1;
     }
@@ -573,6 +578,7 @@ impl DropCounts {
             + self.payload_too_long
             + self.pushback
             + self.unplugged
+            + self.unanswered
     }
 }
 

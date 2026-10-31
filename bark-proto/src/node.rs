@@ -43,6 +43,17 @@ pub struct Config {
     /// all the time; this separates what sending on the beat costs from
     /// the rest. Off in the design.
     pub sleepy_listens: bool,
+    /// Research switch (roadmap D93): a DATA this node answers with an
+    /// ACK that takes it is acted on, taken into its send queue or
+    /// delivered, only once that ACK has left the antenna; an ACK that
+    /// cannot go out leaves the packet untaken, and the sender's retry
+    /// brings it again (spec "The ACK"). Off, the packet is taken on
+    /// reception, before the ACK.
+    pub take_at_ack: bool,
+    /// Research switch (roadmap D93): the ACK listens before talking on
+    /// the sender's home channel, with the hand-over's backoff, until the
+    /// sender's timeout (spec "The ACK"). Off, it goes at once.
+    pub ack_listens_first: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds: each node's fixed interval lies in between
@@ -286,6 +297,8 @@ impl Config {
         placed: true,
         node_id: NodeId::NONE,
         sleepy_listens: false,
+        take_at_ack: false,
+        ack_listens_first: true,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,

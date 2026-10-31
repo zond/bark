@@ -47,6 +47,16 @@
 //! and the sender's retry brings the packet again. A copy of the packet
 //! the owed reply answers is answered by it too.
 //!
+//! With `Config::take_at_ack` the take is final only when the ACK has
+//! gone out: the reply carries the DATA, and the relay acts on it at the
+//! ACK's `TxDone` ([`Relay::taken`]); an ACK that cannot go out, for want
+//! of budget or, with `Config::ack_listens_first`, of a clear channel
+//! before the sender's timeout, leaves the packet untaken, reported as
+//! refused for `DropReason::Unanswered`, and the sender's retry brings
+//! it again. Without the switch the relay acts on reception, before the
+//! ACK, and an ACK that never goes out leaves a copy the sender does not
+//! know of (spec "The ACK", roadmap D93).
+//!
 //! A packet is ACKed without being acted on only where that cannot end the
 //! last copy (roadmap D35). A copy from a node this relay did not hand
 //! the message to, while it holds none, is answered seen (case 6, roadmap
@@ -193,6 +203,43 @@ enum Case {
     /// and it holds none; or a retransmission of such a copy. Answered
     /// seen: the copy stays with its sender.
     Seen,
+}
+
+/// What a received DATA gives this relay to do, and whether it takes or
+/// refuses it (spec "Receiving DATA"), decided before the reply and acted
+/// on after it where the take waits for the ACK.
+#[derive(Clone, Copy, Debug)]
+struct Verdict {
+    case: Case,
+    /// The sender's neighbour-table slot.
+    slot: Option<usize>,
+    /// For a copy of a message the relay has a record of: whether it came
+    /// from a node that has the message from this relay, whether it
+    /// merges with a copy held here, and whether it is answered seen.
+    copy: Option<(bool, bool, bool)>,
+    /// This relay owns the destination, and acts on the packet.
+    owner: bool,
+    /// Its time is gone: no work, and the message ends here.
+    expired: bool,
+    /// When its time is gone.
+    expires: Instant,
+    /// A sleepy node's own message, count 0, whose search starts here.
+    fresh: bool,
+    /// Where a new record goes.
+    record_at: Option<usize>,
+    /// The send-queue place it takes; 0 the regular room.
+    place: u8,
+    /// Why it is refused, if it is.
+    refusal: Option<DropReason>,
+    /// The pushback its way on gave, for the wait a refusal tells.
+    pushback: Duration,
+}
+
+impl Verdict {
+    /// Whether the packet is work: sent on or delivered (cases 2 and 5).
+    fn acts(&self) -> bool {
+        matches!(self.case, Case::New | Case::Search)
+    }
 }
 
 /// What became of a forward when it was addressed. Short-lived, so the
@@ -589,9 +636,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A DATA packet addressed to this relay.
     pub(super) fn data(&mut self, d: Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
-        // Count 0: a sleepy node's own message, fresh work that starts its
-        // search here (spec "Packet sender", "Hop count").
-        let fresh = d.hops == 0;
         let repeat = self
             .records
             .get(id)
@@ -599,6 +643,82 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A packet from the relay this one is handing the message to shows
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
+        let v = self.verdict(&d, ACK_AIRTIME, completes, now);
+        let deadline = now + self.config.ack_timeout;
+        let air = self.data_airtime(d.payload.len());
+        let wait = v.refusal.map_or(0, |why| {
+            wait_units(self.refusal_wait(why, air, v.pushback, now))
+        });
+        let reply = Ack {
+            msg_id: id,
+            from: self.me(),
+            to: d.src_hop,
+            refused: v.refusal.is_some(),
+            wait,
+            seen: v.case == Case::Seen,
+        };
+        let sending = self.sending_reply();
+        if !self
+            .radio
+            .replies
+            .can_owe(reply, d.sender_home, sending, now)
+        {
+            // The packet could not be answered; its sender's retry
+            // brings it again (spec "The ACK", roadmap D29).
+            self.note_untaken(emit);
+            return;
+        }
+        if let Some(reason) = v.refusal {
+            emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
+            if self.can_reply(ACK_AIRTIME, now) {
+                self.radio
+                    .replies
+                    .owe(reply, d.sender_home, deadline, false, None, sending, now);
+                self.note_untaken(emit);
+            }
+            return;
+        }
+        if !self.can_reply(ACK_AIRTIME, now) {
+            emit(Action::Trace(Trace::Refused {
+                msg_id: id,
+                reason: DropReason::Budget,
+            }));
+            return;
+        }
+        // A sleepy node listens on once it has answered, for the next
+        // (spec "Delivery").
+        let renews = d.dst_id == self.me();
+        // Where the take waits for the ACK, the reply carries the DATA
+        // until it has gone out (module documentation). A packet that is
+        // no work is acted on now: nothing is lost if its ACK never goes.
+        let later = self.config.take_at_ack && v.acts();
+        let takes = later.then(|| data_frame(&d, d.sender_home, MIN_PREAMBLE_SYMBOLS));
+        self.radio
+            .replies
+            .owe(reply, d.sender_home, deadline, renews, takes, sending, now);
+        self.note_untaken(emit);
+        if completes {
+            self.handover_done(now, emit);
+        }
+        if !later {
+            self.act_on(&d, v, now, emit);
+        }
+    }
+
+    /// Whether `d` is taken or refused, and what it gives this relay to do
+    /// (spec "Receiving DATA"). `spend`: what the ACK that takes it will
+    /// cost the bucket, nothing once it has gone; `completes`: it comes
+    /// from the neighbour being handed the message, whose hand-over ends
+    /// first, giving up its place.
+    fn verdict(&self, d: &Data<'_>, spend: Duration, completes: bool, now: Instant) -> Verdict {
+        let id = d.msg_id();
+        // Count 0: a sleepy node's own message, fresh work that starts its
+        // search here (spec "Packet sender", "Hop count").
+        let fresh = d.hops == 0;
+        let repeat = self
+            .records
+            .get(id)
+            .is_some_and(|r| r.repeats(d.src_hop, d.hops));
         // From a neighbour that has the message from this relay: a return
         // (spec "Receiving DATA" case 5). The one being handed to has it
         // too, though its ACK has not come.
@@ -623,7 +743,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // packet is no work, and the message ends here.
         let expires = now + d.time_left() - self.data_airtime(d.payload.len());
         let expired = sends && now >= expires - TTL_UNIT;
-        let deadline = now + self.config.ack_timeout;
         let for_leaf = owner && d.dst_id != self.me();
         let record_at = match case {
             Case::New => self.record_place(),
@@ -647,7 +766,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(DropReason::NoRecord)
         } else if sends {
             let air = self.data_airtime(d.payload.len());
-            match self.admit(air, ACK_AIRTIME, d.hops, completes, now) {
+            match self.admit(air, spend, d.hops, completes, now) {
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(_) if pushback > Duration::ZERO => Some(DropReason::Banned),
                 Ok(k) => {
@@ -658,88 +777,59 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         } else if for_leaf && !self.delivery.has_room(now) {
             Some(DropReason::DeliveryFull)
-        } else if !self.affordable(ACK_AIRTIME, now) {
+        } else if !self.affordable(spend, now) {
             Some(DropReason::Budget)
         } else {
             None
         };
-        let air = self.data_airtime(d.payload.len());
-        let wait = refusal.map_or(0, |why| {
-            wait_units(self.refusal_wait(why, air, pushback, now))
-        });
-        let reply = Ack {
-            msg_id: id,
-            from: self.me(),
-            to: d.src_hop,
-            refused: refusal.is_some(),
-            wait,
-            seen: case == Case::Seen,
-        };
-        let sending = self.sending_reply();
-        if !self
-            .radio
-            .replies
-            .can_owe(reply, d.sender_home, sending, now)
-        {
-            // The packet could not be answered; its sender's retry
-            // brings it again (spec "The ACK", roadmap D29).
-            return;
+        Verdict {
+            case,
+            slot,
+            copy,
+            owner,
+            expired,
+            expires,
+            fresh,
+            record_at,
+            place,
+            refusal,
+            pushback,
         }
-        if let Some(reason) = refusal {
-            emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
-            if self.can_reply(ACK_AIRTIME, now) {
-                self.radio
-                    .replies
-                    .owe(reply, d.sender_home, deadline, false, sending, now);
-            }
-            return;
-        }
-        if !self.can_reply(ACK_AIRTIME, now) {
-            emit(Action::Trace(Trace::Refused {
-                msg_id: id,
-                reason: DropReason::Budget,
-            }));
-            return;
-        }
-        // A sleepy node listens on once it has answered, for the next
-        // (spec "Delivery").
-        let renews = d.dst_id == self.me();
-        self.radio
-            .replies
-            .owe(reply, d.sender_home, deadline, renews, sending, now);
-        if completes {
-            self.handover_done(now, emit);
-        }
-        if case == Case::New {
-            let parent = (!fresh).then_some((d.src_hop, d.sender_home));
+    }
+
+    /// Act on `d`, answered with verdict `v`: its record, then its work.
+    fn act_on(&mut self, d: &Data<'_>, v: Verdict, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let id = d.msg_id();
+        if v.case == Case::New {
+            let parent = (!v.fresh).then_some((d.src_hop, d.sender_home));
             let mut record = Record::new(id, parent, d.hops, now);
-            if owner {
+            if v.owner {
                 record.set_arrived();
             }
-            if let (true, Some(slot)) = (fresh, self.neighbours.slot_of(d.src_hop)) {
+            if let (true, Some(slot)) = (v.fresh, v.slot) {
                 // The sleepy node it came from has it, and would end the
                 // search there: it is tried.
                 record.handed_to(slot);
             }
-            if let Some(at) = record_at {
+            if let Some(at) = v.record_at {
                 self.records.put(at, record);
             }
         } else if let Some(r) = self.records.get_mut(id) {
-            if case == Case::Seen {
+            if v.case == Case::Seen {
                 // The sender has the message and searches on from its own
                 // record; it need not be offered this one.
                 r.seen(d.src_hop, d.hops, now);
-                if let Some(s) = slot {
+                if let Some(s) = v.slot {
                     r.handed_to(s);
                 }
             } else {
                 r.received(d.src_hop, d.hops, now);
             }
-            if owner {
+            if v.owner {
                 r.set_arrived();
             }
         }
-        if let Some((returned, merged, seen)) = copy {
+        if let Some((returned, merged, seen)) = v.copy {
             emit(Action::Trace(Trace::Copy {
                 msg_id: id,
                 returned,
@@ -747,19 +837,47 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 seen,
             }));
         }
-        match case {
+        match v.case {
             Case::AckOnly => {
                 self.delivered.offered(id, now);
             }
             // The copy stays with its sender, which goes on.
             Case::Seen => {}
-            Case::New | Case::Search if owner => {
-                self.arrive(id, &d, now, emit);
+            Case::New | Case::Search if v.owner => {
+                self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search if expired => {
+            Case::New | Case::Search if v.expired => {
                 self.drop_msg(id, DropReason::Expired, emit);
             }
-            Case::New | Case::Search => self.send_on(&d, place, expires, emit),
+            Case::New | Case::Search => self.send_on(d, v.place, v.expires, emit),
+        }
+    }
+
+    /// The ACK that takes the DATA in `frame` has left the antenna: the
+    /// take is final, and the relay acts on it now (`Config::take_at_ack`).
+    /// Nothing has changed since it was answered taken but the ACK's own
+    /// airtime, spent; should the room be gone after all, the copy ends
+    /// here, since its sender is done with it.
+    pub(super) fn taken(&mut self, frame: Frame, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Ok(Packet::Data(d)) = Packet::decode(frame.payload()) else {
+            return;
+        };
+        let v = self.verdict(&d, Duration::ZERO, false, now);
+        if let Some(why) = v.refusal {
+            self.drop_msg(d.msg_id(), why, emit);
+            return;
+        }
+        self.act_on(&d, v, now, emit);
+    }
+
+    /// Report a DATA that a reply given up left untaken
+    /// (`Config::take_at_ack`): refused, for its sender retries it.
+    fn note_untaken(&mut self, emit: &mut dyn FnMut(Action)) {
+        if let Some(msg_id) = self.radio.replies.untaken() {
+            emit(Action::Trace(Trace::Refused {
+                msg_id,
+                reason: DropReason::Unanswered,
+            }));
         }
     }
 
@@ -1795,19 +1913,40 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- The owed reply (spec "The ACK") ---
 
-    /// Start sending the owed reply, if it is ready. Without budget
+    /// Start sending the owed reply, if it is ready: its listen-before-talk,
+    /// or the transmission itself where it goes at once. Without budget
     /// for it the relay cannot reply (spec "Duty cycle cap"); the reply is abandoned.
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        let Some(o) = self.radio.replies.due(now) else {
+        let due = self.radio.replies.due(now);
+        self.note_untaken(emit);
+        let Some(o) = due else {
             return false;
         };
         let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
             self.radio.replies.abandon();
+            self.note_untaken(emit);
             return true;
         }
-        self.radio.excursion.check(Job::Reply, o.channel, emit);
+        if self.listens_first(o.reply) {
+            self.radio.excursion.check(Job::Reply, o.channel, emit);
+        } else {
+            self.transmit_reply(frame, now, emit);
+        }
         true
+    }
+
+    /// Whether `reply` listens before talking: an ACK does, unless
+    /// switched off (spec "The ACK", roadmap D93).
+    fn listens_first(&self, reply: Reply) -> bool {
+        match reply {
+            Reply::Ack(_) => self.config.ack_listens_first,
+        }
+    }
+
+    fn transmit_reply(&mut self, frame: Frame, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.radio.budget.record(mac::airtime(&frame), now);
+        self.radio.excursion.transmit(Job::Reply, frame, emit);
     }
 
     /// Whether the owed reply is on the radio.
@@ -1817,18 +1956,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     pub(super) fn reply_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let backoff = self.config.hop_backoff_max;
-        if let Some(o) = self
+        let checked = self
             .radio
             .replies
-            .checked(busy, now, &mut self.rng, backoff)
-        {
+            .checked(busy, now, &mut self.rng, backoff);
+        self.note_untaken(emit);
+        if let Some(o) = checked {
             let frame = reply_frame(o);
-            let airtime = mac::airtime(&frame);
-            if self.can_reply(airtime, now) {
-                self.radio.budget.record(airtime, now);
-                self.radio.excursion.transmit(Job::Reply, frame, emit);
+            if self.can_reply(mac::airtime(&frame), now) {
+                self.transmit_reply(frame, now, emit);
             } else {
                 self.radio.replies.abandon();
+                self.note_untaken(emit);
             }
         }
     }

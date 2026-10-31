@@ -32,7 +32,8 @@
 //! counts: the receiver has the frame. Whether it takes or refuses the
 //! frame, the role decides what follows (D27).
 
-use crate::ids::NodeId;
+use crate::event::Frame;
+use crate::ids::{MsgId, NodeId};
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::fixed::FixedVec;
@@ -318,6 +319,19 @@ pub(crate) struct Owed {
     deadline: Instant,
     /// Not before this: a listen-before-talk backoff.
     ready: Instant,
+    /// The DATA the reply takes, to be acted on once the reply has gone
+    /// out, where a take is final only then (`Config::take_at_ack`).
+    takes: Option<Frame>,
+}
+
+impl Owed {
+    /// The message a reply that was not sent leaves untaken, if it took one.
+    fn untaken(&self) -> Option<MsgId> {
+        match (self.takes, self.reply) {
+            (Some(_), Reply::Ack(a)) => Some(a.msg_id),
+            _ => None,
+        }
+    }
 }
 
 /// How many replies a node can owe at once (roadmap D29). One, because
@@ -331,8 +345,10 @@ pub(crate) const REPLIES: usize = 1;
 
 /// The replies this node owes, in the order it took them on, sent with
 /// listen-before-talk, as the receiver of spec "The ACK" does, with the
-/// hand-over's backoff. One is abandoned once its sender has stopped
-/// waiting: a rule of this queue, not of its length.
+/// hand-over's backoff, or at once (`Config::ack_listens_first`). One is
+/// abandoned once its sender has stopped waiting: a rule of this queue,
+/// not of its length. A reply abandoned that took a DATA leaves the DATA
+/// untaken, and the node reports it ([`Replies::untaken`]).
 ///
 /// `sending` says whether the first owed reply is on the radio now, which
 /// the node knows from its excursion: a packet can arrive meanwhile, as
@@ -344,6 +360,9 @@ pub(crate) struct Replies {
     /// The reply being sent takes a DATA for this node: once it has gone,
     /// the node listens one hand-over for the next (spec "Delivery").
     renew: bool,
+    /// The message of a reply abandoned since the node last asked, whose
+    /// DATA it left untaken.
+    untaken: Option<MsgId>,
 }
 
 impl Replies {
@@ -363,10 +382,12 @@ impl Replies {
             },
             deadline: Instant::ZERO,
             ready: Instant::ZERO,
+            takes: None,
         };
         Replies {
             owed: FixedVec::new(none),
             renew: false,
+            untaken: None,
         }
     }
 
@@ -393,16 +414,19 @@ impl Replies {
     }
 
     /// Owe `reply` on `channel` until `deadline`, `renews` saying whether
-    /// it takes a DATA for this node. A reply owed already answers this
-    /// copy too. With no place left, the oldest one that has not started
-    /// out gives way, as the one whose packet is older; if that is the one
-    /// being sent, `reply` is not owed.
+    /// it takes a DATA for this node and `takes` the DATA to act on once
+    /// it has gone out, if the take waits for that. A reply owed already
+    /// answers this copy too. With no place left, the oldest one that has
+    /// not started out gives way, as the one whose packet is older; if
+    /// that is the one being sent, `reply` is not owed.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn owe(
         &mut self,
         reply: impl Into<Reply>,
         channel: Channel,
         deadline: Instant,
         renews: bool,
+        takes: Option<Frame>,
         sending: bool,
         now: Instant,
     ) {
@@ -416,13 +440,14 @@ impl Replies {
             if sending {
                 return;
             }
-            self.owed.remove(0);
+            self.give_up(0);
         }
         let _ = self.owed.push(Owed {
             reply,
             channel,
             deadline,
             ready: now,
+            takes,
         });
     }
 
@@ -430,11 +455,29 @@ impl Replies {
     /// one being sent.
     fn forget_late(&mut self, sending: bool, now: Instant) {
         let mut i = 0;
-        self.owed.retain(|o| {
-            let keep = (sending && i == 0) || o.deadline > now;
-            i += 1;
-            keep
-        });
+        while i < self.owed.len() {
+            let o = self.owed.as_slice()[i];
+            if (sending && i == 0) || o.deadline > now {
+                i += 1;
+            } else {
+                self.give_up(i);
+            }
+        }
+    }
+
+    /// Remove the `i`-th owed reply unsent, noting the DATA it leaves
+    /// untaken.
+    fn give_up(&mut self, i: usize) {
+        if let Some(id) = self.owed.as_slice().get(i).and_then(Owed::untaken) {
+            self.untaken = Some(id);
+        }
+        self.owed.remove(i);
+    }
+
+    /// The message of a reply abandoned since last asked, whose DATA the
+    /// node did not take.
+    pub(crate) fn untaken(&mut self) -> Option<MsgId> {
+        self.untaken.take()
     }
 
     /// The reply to start sending now, if the first owed is ready; asked
@@ -462,7 +505,7 @@ impl Replies {
     pub(crate) fn abandon(&mut self) {
         self.renew = false;
         if self.pending() {
-            self.owed.remove(0);
+            self.give_up(0);
         }
     }
 
@@ -479,7 +522,7 @@ impl Replies {
         if busy {
             let ready = now + rng.duration(Duration::ZERO, backoff_max);
             if ready >= o.deadline {
-                self.owed.remove(0);
+                self.give_up(0);
             } else {
                 o.ready = ready;
             }
@@ -489,12 +532,15 @@ impl Replies {
     }
 
     /// The reply being sent left the antenna. Returns whether the node
-    /// listens on for the next DATA.
-    pub(crate) fn sent(&mut self) -> bool {
-        if self.pending() {
-            self.owed.remove(0);
-        }
-        core::mem::take(&mut self.renew)
+    /// listens on for the next DATA, and the DATA the reply took, to act
+    /// on now.
+    pub(crate) fn sent(&mut self) -> (bool, Option<Frame>) {
+        let takes = if self.pending() {
+            self.owed.remove(0).takes
+        } else {
+            None
+        };
+        (core::mem::take(&mut self.renew), takes)
     }
 }
 
@@ -705,29 +751,29 @@ mod tests {
         let mut rng = Rng::new(4);
         let ch = Channel::new(3).unwrap();
         let mut a = Replies::new();
-        a.owe(ack(1), ch, at(100), false, false, at(0));
+        a.owe(ack(1), ch, at(100), false, None, false, at(0));
         assert!(
             a.can_owe(ack(1), ch, false, at(10)),
             "a copy is answered too"
         );
-        a.owe(ack(1), ch, at(110), false, false, at(10));
+        a.owe(ack(1), ch, at(110), false, None, false, at(10));
         assert!(!a.can_owe(ack(2), ch, false, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), false, at(10)));
         assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
         // Its check is on the radio: a packet that arrives meanwhile is
         // answered after it, or not at all.
-        a.owe(ack(2), ch, at(111), false, true, at(11));
+        a.owe(ack(2), ch, at(111), false, None, true, at(11));
         let sent = a.checked(false, at(11), &mut rng, ms(50)).unwrap();
         assert_eq!(
             sent.reply,
             Reply::Ack(ack(1)),
             "the reply being sent keeps its place"
         );
-        assert!(!a.sent());
+        assert!(!a.sent().0);
         assert!(!a.pending());
         assert!(a.can_owe(ack(2), ch, false, at(13)));
         // Busy until past the deadline: abandoned.
-        a.owe(ack(2), ch, at(100), false, false, at(60));
+        a.owe(ack(2), ch, at(100), false, None, false, at(60));
         a.due(at(60)).unwrap();
         let mut now = at(60);
         while a.pending() {
@@ -739,8 +785,8 @@ mod tests {
             }
         }
         // Not started: a newer one takes the place.
-        a.owe(ack(3), ch, at(300), false, false, at(200));
-        a.owe(ack(4), ch, at(301), true, false, at(200));
+        a.owe(ack(3), ch, at(300), false, None, false, at(200));
+        a.owe(ack(4), ch, at(301), true, None, false, at(200));
         assert_eq!(a.due(at(201)).unwrap().reply, Reply::Ack(ack(4)));
         // A lapsed one frees the place.
         assert!(!a.can_owe(ack(5), ch, false, at(300)));
@@ -751,15 +797,60 @@ mod tests {
             refused: true,
             ..ack(id)
         };
-        a.owe(busy(1), ch, at(500), false, false, at(400));
+        a.owe(busy(1), ch, at(500), false, None, false, at(400));
         assert!(a.can_owe(busy(1), ch, false, at(410)));
         assert!(!a.can_owe(busy(2), ch, false, at(410)));
         assert!(!a.can_owe(ack(1), ch, false, at(410)));
         // Sent, a reply that took a DATA for this node has it listen on.
         a.due(at(410)).unwrap();
-        assert!(!a.sent(), "a refusal took nothing");
-        a.owe(ack(6), ch, at(600), true, false, at(510));
+        assert!(!a.sent().0, "a refusal took nothing");
+        a.owe(ack(6), ch, at(600), true, None, false, at(510));
         a.due(at(510)).unwrap();
-        assert!(a.sent());
+        assert!(a.sent().0);
+    }
+
+    /// A reply that takes a DATA hands it over once sent, and leaves it
+    /// untaken, reported once, when it is given up (roadmap D93).
+    #[test]
+    fn a_take_waits_for_its_reply() {
+        let mut rng = Rng::new(6);
+        let ch = Channel::new(3).unwrap();
+        let (out, _) = place(9);
+        let mut a = Replies::new();
+        a.owe(ack(9), ch, at(100), false, Some(out.frame), false, at(0));
+        assert_eq!(a.untaken(), None);
+        a.due(at(0)).unwrap();
+        assert_eq!(a.sent(), (false, Some(out.frame)), "sent: act on it");
+        assert_eq!(a.untaken(), None);
+        // Busy until the deadline: the DATA is not taken.
+        a.owe(ack(9), ch, at(200), false, Some(out.frame), false, at(100));
+        let mut now = at(100);
+        while a.pending() {
+            a.due(now).unwrap();
+            assert_eq!(a.checked(true, now, &mut rng, ms(50)), None);
+            now = a.wake_at().unwrap_or(at(200));
+        }
+        assert_eq!(a.untaken(), Some(MsgId(9)));
+        assert_eq!(a.untaken(), None, "reported once");
+        // Lapsed unsent, and abandoned for budget, alike.
+        a.owe(ack(9), ch, at(300), false, Some(out.frame), false, at(250));
+        assert!(!a.can_owe(ack(10), ch, false, at(299)));
+        assert_eq!(a.untaken(), None);
+        assert!(
+            a.can_owe(ack(10), ch, false, at(300)),
+            "lapsed: the place is free"
+        );
+        assert_eq!(a.untaken(), Some(MsgId(9)));
+        a.owe(ack(9), ch, at(400), false, Some(out.frame), false, at(350));
+        a.abandon();
+        assert_eq!(a.untaken(), Some(MsgId(9)));
+        // A refusal takes nothing to leave.
+        let busy = Ack {
+            refused: true,
+            ..ack(9)
+        };
+        a.owe(busy, ch, at(500), false, None, false, at(450));
+        a.abandon();
+        assert_eq!(a.untaken(), None);
     }
 }
