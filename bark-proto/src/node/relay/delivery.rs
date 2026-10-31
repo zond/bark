@@ -143,7 +143,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
         let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())
@@ -154,7 +154,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// bucket will fit the message that did not, or else when a hand-over
     /// ends (`feed_due`).
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
-        self.feed_due = false;
+        self.forwarding.feed_due = false;
         self.timers.feed_at = None;
         let mut i = 0;
         // The windows first: their nodes listen only briefly.
@@ -252,7 +252,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
         if let Some(e) = self.delivery.iter_mut().find(|e| e.msg_id == q.msg_id) {
             e.flushed |= q.relay_home.is_none();
@@ -283,7 +283,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             q.relay_home = Some(home);
             any = true;
         }
-        self.feed_due |= any;
+        self.forwarding.feed_due |= any;
     }
 
     /// Make a place in the full delivery queue for a message arriving at
@@ -298,7 +298,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue.retain(|current, o| {
             (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
         });
-        self.feed_due = true;
+        self.forwarding.feed_due = true;
         emit(Action::Trace(Trace::Dropped {
             msg_id: id,
             reason: DropReason::QueueExpired,

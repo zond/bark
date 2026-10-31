@@ -187,7 +187,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.motion.far_since = Some(now);
                 emit(Action::Trace(Trace::FarFix));
                 // A sleepy node holds nothing to flush.
-                self.feed_due |= !self.sleepy();
+                self.forwarding.feed_due |= !self.sleepy();
                 now
             }
         };
@@ -228,7 +228,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(a) = self.sleep_mut().and_then(|s| s.anchor.as_mut()) {
             a.position = Position::from_short(a.position.short(), at);
         }
-        self.beacon.next_at = now;
+        self.radio.beacon.next_at = now;
     }
 
     /// Plugged in: a carried node stays carried; a fixed one is fixed

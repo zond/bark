@@ -82,6 +82,32 @@ impl Charge {
     }
 }
 
+/// What the node knows of its battery (module documentation).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Battery {
+    /// Read at or below the low level since it last read at or above the
+    /// high one, or since its external power.
+    pub(super) low: bool,
+    /// The scale of the driver's readings ([`BATTERY_SCALE_ONE`] is one);
+    /// `None` before the first calibration.
+    pub(super) scale: Option<u16>,
+    /// Since when it has been on external power as last reported, or
+    /// when on battery its next reading is taken as a full cell's.
+    pub(super) charge: Charge,
+}
+
+impl Battery {
+    /// At boot: on battery, not low, with the scale kept from before the
+    /// reboot if any.
+    pub(super) const fn at_boot(scale: Option<u16>) -> Battery {
+        Battery {
+            low: false,
+            scale,
+            charge: Charge::Battery,
+        }
+    }
+}
+
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is sleepy now (module documentation).
     pub fn sleepy(&self) -> bool {
@@ -122,10 +148,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
         let s = Charge::secs(now);
-        self.charge = match (external, self.charge) {
+        self.battery.charge = match (external, self.battery.charge) {
             (true, Charge::Usb(since)) => Charge::Usb(since),
             (true, _) => {
-                self.low = false;
+                self.battery.low = false;
                 Charge::Usb(s)
             }
             // Long enough on the charger to be full: its first reading
@@ -181,30 +207,30 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reads the battery: the first reading a rest after a full
     /// charge calibrates the readings, and the levels apply to the
     /// calibrated one (module documentation).
-    pub(super) fn battery(&mut self, raw_mv: u16, now: Instant) {
+    pub(super) fn battery_read(&mut self, raw_mv: u16, now: Instant) {
         let Some(levels) = self.config.battery else {
             return;
         };
-        if matches!(self.charge, Charge::Usb(_)) || raw_mv == 0 {
+        if matches!(self.battery.charge, Charge::Usb(_)) || raw_mv == 0 {
             // On external power the reading is the charger's.
             return;
         }
-        if matches!(self.charge, Charge::Rested(t) if Charge::secs(now) >= t) {
-            self.charge = Charge::Battery;
+        if matches!(self.battery.charge, Charge::Rested(t) if Charge::secs(now) >= t) {
+            self.battery.charge = Charge::Battery;
             let scale = u32::from(BATTERY_FULL_MV) * BATTERY_SCALE_ONE / u32::from(raw_mv);
             let bound = BATTERY_SCALE_ONE * BATTERY_GAIN_BOUND_PERMILLE / 1000;
             if scale.abs_diff(BATTERY_SCALE_ONE) <= bound {
-                self.battery_scale = Some(scale as u16);
+                self.battery.scale = Some(scale as u16);
             }
         }
-        let millivolts = match self.battery_scale {
+        let millivolts = match self.battery.scale {
             Some(s) => (u32::from(raw_mv) * u32::from(s) / BATTERY_SCALE_ONE) as u16,
             None => raw_mv,
         };
         if millivolts <= levels.low_mv {
-            self.low = true;
+            self.battery.low = true;
         } else if millivolts >= levels.high_mv {
-            self.low = false;
+            self.battery.low = false;
         }
     }
 
@@ -236,14 +262,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match self.mode {
             Mode::Sleepy(s) => {
-                if s.by_battery && !self.low && !self.motion.carried {
+                if s.by_battery && !self.battery.low && !self.motion.carried {
                     self.turn_relay(Power::Battery(now), now, emit);
                 }
                 return;
             }
             Mode::Relay(Power::Leaving(_)) => {}
             Mode::Relay(power) => {
-                let leaves = if power != Power::External && self.low {
+                let leaves = if power != Power::External && self.battery.low {
                     emit(Action::Trace(Trace::BatteryLow));
                     true
                 } else if self.grace_ends().is_some_and(|t| now >= t) {
@@ -253,7 +279,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     false
                 };
                 if leaves {
-                    self.feed_due = true;
+                    self.forwarding.feed_due = true;
                     // What the network promises a node it cannot reach is a
                     // delivery TTL; a flush that the duty cap or a busy
                     // channel holds up longer would keep a node with a low
@@ -284,10 +310,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Its slots at a random phase, as at boot, without the first
         // rotation's burst: its neighbours know it.
         let interval = heartbeat_interval(self.id, &self.config);
-        self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
-        self.beacon.quick = 0;
-        self.beacon.burst = 0;
-        self.sweep.next_at = now;
+        self.radio.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
+        self.radio.beacon.quick = 0;
+        self.radio.beacon.burst = 0;
+        self.radio.sweep.next_at = now;
         // It listens all the time from now on.
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
@@ -297,7 +323,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.mode = Mode::Sleepy(Sleep::new(self.config.position, self.low));
+        self.mode = Mode::Sleepy(Sleep::new(self.config.position, self.battery.low));
         self.gps_sleepy();
         for q in self.delivery.iter() {
             emit(Action::Trace(Trace::Dropped {
@@ -318,21 +344,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             });
         }
         self.timers.clear_move();
-        self.beacon.announce = None;
-        self.beacon.reach_all = None;
-        self.beacon.reach_left = 0;
+        self.radio.beacon.announce = None;
+        self.radio.beacon.reach_all = None;
+        self.radio.beacon.reach_left = 0;
         self.unwatch();
         emit(Action::Trace(Trace::Role { sleepy: true }));
         // Said on the channel its neighbours and sleepy nodes know it by.
         let old = self.home;
-        self.beacon.change = None;
+        self.radio.beacon.change = None;
         self.changed();
         if !self.reconsider_anchor(now, emit) {
             self.leave_anchor(now);
         }
         if self.home == old && self.anchor().is_some() {
             // Its first beat, at once on the same channel, says it.
-            self.beacon.change = None;
+            self.radio.beacon.change = None;
         }
     }
 

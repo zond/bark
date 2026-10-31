@@ -23,6 +23,17 @@ pub(super) struct Sweep {
     pub(super) pending: Option<HomeReading>,
 }
 
+impl Sweep {
+    /// Before the first reading: from `channel`, due at once.
+    pub(super) const fn new(channel: Channel) -> Sweep {
+        Sweep {
+            next_at: Instant::ZERO,
+            channel,
+            pending: None,
+        }
+    }
+}
+
 /// A reading of the home channel awaiting [`Sweep::pending`]'s verdict.
 #[derive(Clone, Copy)]
 pub(super) struct HomeReading {
@@ -52,7 +63,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn sweep_due(&self, now: Instant) -> bool {
-        self.sweeping() && now >= self.sweep.next_at
+        self.sweeping() && now >= self.radio.sweep.next_at
     }
 
     /// Whether the node sweeps the channels: a relay, and a sleepy node
@@ -70,8 +81,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn start_sweep(&mut self, emit: &mut dyn FnMut(Action)) -> bool {
-        self.sweep.next_at += self.sweep_step();
-        self.radio.read(Job::Sweep, self.sweep.channel, emit);
+        self.radio.sweep.next_at += self.sweep_step();
+        self.radio
+            .excursion
+            .read(Job::Sweep, self.radio.sweep.channel, emit);
         true
     }
 
@@ -84,26 +97,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // A reading that fell in this relay's own packet says nothing
             // of what would stay behind, and is not taken.
             if let Some((c, dbm)) = self
+                .radio
                 .sweep
                 .pending
                 .take()
                 .and_then(|p| p.dbm.map(|d| (p.channel, d)))
             {
-                self.busy.sample(c, dbm);
+                self.radio.busy.sample(c, dbm);
             }
-            self.sweep.pending = Some(HomeReading {
+            self.radio.sweep.pending = Some(HomeReading {
                 channel,
                 at: now,
                 dbm: Some(dbm),
             });
         } else {
-            self.busy.sample(channel, dbm);
+            self.radio.busy.sample(channel, dbm);
         }
-        self.sweep.channel = channel.next();
+        self.radio.sweep.channel = channel.next();
         // A reading held up by receptions (core-interface rule 8) or by
         // a hand-over must not leave a backlog to take back to back.
-        if self.sweep.next_at <= now {
-            self.sweep.next_at = now + self.sweep_step();
+        if self.radio.sweep.next_at <= now {
+            self.radio.sweep.next_at = now + self.sweep_step();
         }
         self.neighbours.expire(now);
         if channel.index() + 1 < CHANNELS {
@@ -118,10 +132,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// `busy[home] − min busy` above the move threshold (spec "Channel moves").
     pub(super) fn excess(&self) -> bool {
         let min = Channel::all()
-            .map(|c| self.busy.fraction(c))
+            .map(|c| self.radio.busy.fraction(c))
             .min()
             .unwrap_or(0);
-        self.busy.fraction(self.home).saturating_sub(min)
+        self.radio.busy.fraction(self.home).saturating_sub(min)
             > percent(self.config.move_threshold_percent)
     }
 
@@ -156,7 +170,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // that sweeps has the shortest.
         let len = bytes.len().min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
-        if let Some(p) = &mut self.sweep.pending {
+        if let Some(p) = &mut self.radio.sweep.pending {
             if now.since(p.at) <= airtime {
                 p.dbm = None;
             }

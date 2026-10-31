@@ -369,7 +369,9 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     };
     let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
     let need = mac::airtime(&frame) + REPLY_RESERVE - short;
-    r.budget.record(r.budget.available(now) - need, now);
+    r.radio
+        .budget
+        .record(r.radio.budget.available(now) - need, now);
     let id = MsgId::of(dst, node, b"later");
     let mut record = crate::tables::records::Record::new(id, None, 0, now);
     record.set_arrived();
@@ -377,10 +379,11 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     r.records.put(at, record);
     let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
     r.delivery.push(q);
-    r.feed_due = true;
+    r.forwarding.feed_due = true;
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(r.queue.is_empty(), "taken with a spent bucket");
     let fits = r
+        .radio
         .budget
         .allowed_at(mac::airtime(&frame), REPLY_RESERVE, now)
         .unwrap();
@@ -475,7 +478,9 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     // forwards as well.
     let need = mac::airtime(&frame) + REPLY_RESERVE + Duration::from_millis(1);
     assert!(need < queued);
-    r.budget.record(r.budget.available(now) - need, now);
+    r.radio
+        .budget
+        .record(r.radio.budget.available(now) - need, now);
     let id = MsgId::of(dst, node, b"ahead");
     let mut record = crate::tables::records::Record::new(id, None, 0, now);
     record.set_arrived();
@@ -483,7 +488,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     r.records.put(at, record);
     let q = Queued::new(id, dst, node, b"ahead", u8::MAX, now).unwrap();
     r.delivery.push(q);
-    r.feed_due = true;
+    r.forwarding.feed_due = true;
     let mut checked = None;
     r.handle(Event::Wakeup, now, &mut |a| {
         if let Action::Lbt(c) = a {
@@ -572,7 +577,7 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
         now,
         &mut |_| {},
     );
-    assert!(r.replies.pending());
+    assert!(r.radio.replies.pending());
 
     now += Duration::from_millis(1);
     actions.clear();
@@ -665,7 +670,7 @@ fn the_application_waits_for_room() {
     let mut r = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
-    r.budget.record(DEPTH, now);
+    r.radio.budget.record(DEPTH, now);
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(!r.accepts_send(now));
     let ready = r.next_wakeup().expect("a wakeup for the application");
@@ -696,8 +701,8 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     now = Instant::ZERO + Duration::from_secs(10);
     // Room for replies, not for a full frame on top of the reserve.
-    let spend = r.budget.available(now) - Duration::from_millis(300);
-    r.budget.record(spend, now);
+    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
+    r.radio.budget.record(spend, now);
     let far = Position {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
@@ -776,8 +781,8 @@ fn a_waiting_message_keeps_its_record() {
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     now = Instant::ZERO + Duration::from_secs(10);
     // Room for replies only: what is taken waits in a hop place.
-    let spend = r.budget.available(now) - Duration::from_millis(300);
-    r.budget.record(spend, now);
+    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
+    r.radio.budget.record(spend, now);
     let far = Position {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
@@ -1372,8 +1377,8 @@ fn a_waiting_message_ends_with_its_time() {
     assert!(offers.iter().all(|(t, _)| *t < deadline - TTL_UNIT));
 
     // In a hop place, the same.
-    let spend = r.budget.available(now) - Duration::from_millis(300);
-    r.budget.record(spend, now);
+    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
+    r.radio.budget.record(spend, now);
     let (place, _, _) = offer_timed(&mut r, &mut now, far, 2, 2, 3);
     assert_eq!(place, Some(2));
     let until = now + TTL_UNIT.mul(2);
@@ -1390,8 +1395,8 @@ fn a_waiting_message_ends_with_its_time() {
 fn a_packet_in_the_network_is_taken_whatever_the_bans() {
     let (mut r, mut now, far) = with_every_neighbour_banned();
     assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
-    let spend = r.budget.available(now) - Duration::from_millis(300);
-    r.budget.record(spend, now);
+    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
+    r.radio.budget.record(spend, now);
     assert_eq!(offer_data(&mut r, &mut now, far, 2, 2), (Some(2), None));
 }
 
