@@ -662,6 +662,41 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
     assert!(h.nodes[s].core.holding().next().is_none());
 }
 
+/// A sleepy node whose anchor's channel is busy keeps its own message
+/// for the anchor, its only candidate, and hands it over once the
+/// channel clears (spec "Hand-over" step 2, roadmap D96): a busy
+/// channel ends no search.
+#[test]
+fn a_sleepy_node_waits_for_its_anchor_s_channel() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 73), node(50.0, true, 74)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    let anchor = h.nodes[s].core.home();
+    assert_eq!(anchor, h.nodes[r].core.home());
+    h.jam(s, anchor);
+    let id = send(&mut h, s, r, b"through the noise");
+    h.run_for(secs(10));
+    let dropped = |h: &Harness<Relay>| {
+        h.nodes[s]
+            .traces
+            .iter()
+            .any(|(_, t)| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
+    };
+    assert!(!dropped(&h), "{:?}", h.nodes[s].traces);
+    let busy = h.nodes[s]
+        .traces
+        .iter()
+        .filter(|(_, t)| matches!(t, Trace::ChannelBusy { msg_id, .. } if *msg_id == id))
+        .count();
+    assert!(busy >= 10, "{busy} give-ups");
+    assert!(h.nodes[s].core.holding().any(|m| m == id));
+    h.unjam(s, anchor);
+    assert!(h.run_until(h.now + secs(5), |h| delivered_at(h, r, id).is_some()));
+    assert!(!dropped(&h));
+}
+
 /// A sleepy node's own message that its anchor refuses goes back to the
 /// application with the wait the refusal asked for, and the node takes no
 /// message until that wait is over (spec "A sleepy node's own message").
