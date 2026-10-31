@@ -143,29 +143,29 @@ hour, the whole run's airtime, and the latency of every delivered text.
 | Run | | delivered | airtime, s | p50 | p90 |
 |---|---|---|---|---|---|
 | S4 ×1, seed 1 | main | 93.5 % | 51 677 | 1.79 s | 195 s |
-| | D88 | 93.5 % | 51 190 | 1.63 s | 192 s |
+| | D88 | 93.4 % | 49 656 | 1.64 s | 192 s |
 | S4 ×3, seed 1 | main | 44.5 % | 188 418 | 211 s | 783 s |
-| | D88 | 56.2 % | 172 688 | 151 s | 678 s |
+| | D88 | 59.7 % | 169 431 | 143 s | 654 s |
 | S4 ×3, seed 2 | main | 45.3 % | 187 107 | 209 s | 771 s |
-| | D88 | 56.8 % | 171 690 | 154 s | 668 s |
+| | D88 | 56.8 % | 173 508 | 160 s | 685 s |
 | S4 ×3, seed 3 | main | 43.7 % | 211 415 | 270 s | 850 s |
-| | D88 | 58.9 % | 188 141 | 173 s | 690 s |
+| | D88 | 63.8 % | 181 241 | 151 s | 645 s |
 | dense-power, seed 1 | main | 81.9 % | 1 932 955 | 60.6 s | 412 s |
-| | D88 | 89.5 % | 1 368 119 | 33.8 s | 330 s |
+| | D88 | 90.3 % | 1 134 454 | 20.2 s | 288 s |
 
 At the design rate nothing changes: the network is far from its limit.
-At three times the rate the lean listen-before-talk gives back 12 points
+At three times the rate the lean listen-before-talk gives back 15 points
 of the 18 the measured costs took (D86 measured 62 % before them), with
-less airtime, since fewer hand-overs are retried, and shorter waits.
-`dense-power` seed 1, which storms at the measured costs, still storms
-with four and a half times the airtime of a run without one (295 000 s,
-D86), but at a third less than before; its cause is a later item. The
-same runs at the note's first defaults, from the bench's experiment
-before the board ran this driver (the retune 355, the read 49,
-`lbt_prepare_us` 464, `lbt_return_us` 350, `rx_to_tx_us` 1356,
-`stby_to_rx_us` 840), came out the same within the seeds: S4 at three
-times the rate 58.0 / 57.8 / 57.1 %, `dense-power` 90.2 % with
-1 190 000 s of airtime.
+less airtime, since fewer hand-overs are retried, and shorter waits; the
+seeds spread seven points. `dense-power` seed 1, which storms at the
+measured costs, still storms with four times the airtime of a run
+without one (295 000 s, D86), but at well under half as much as before;
+its cause is a later item. The same runs at the note's first defaults,
+from the bench's experiment before the board ran this driver (the retune
+355, the read 49, `lbt_prepare_us` 464, `lbt_return_us` 350,
+`rx_to_tx_us` 1356, `stby_to_rx_us` 840), came out the same within the
+seeds: S4 at three times the rate 58.0 / 57.8 / 57.1 %, `dense-power`
+90.2 % with 1 190 000 s of airtime.
 
 ## What the bench still has to confirm
 
