@@ -310,10 +310,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Its slots at a random phase, as at boot, without the first
         // rotation's burst: its neighbours know it.
         let interval = heartbeat_interval(self.id, &self.config);
-        self.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
-        self.beacon.quick = 0;
-        self.beacon.burst = 0;
-        self.sweep.next_at = now;
+        self.radio.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
+        self.radio.beacon.quick = 0;
+        self.radio.beacon.burst = 0;
+        self.radio.sweep.next_at = now;
         // It listens all the time from now on.
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
@@ -344,21 +344,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             });
         }
         self.timers.clear_move();
-        self.beacon.announce = None;
-        self.beacon.reach_all = None;
-        self.beacon.reach_left = 0;
+        self.radio.beacon.announce = None;
+        self.radio.beacon.reach_all = None;
+        self.radio.beacon.reach_left = 0;
         self.unwatch();
         emit(Action::Trace(Trace::Role { sleepy: true }));
         // Said on the channel its neighbours and sleepy nodes know it by.
         let old = self.home;
-        self.beacon.change = None;
+        self.radio.beacon.change = None;
         self.changed();
         if !self.reconsider_anchor(now, emit) {
             self.leave_anchor(now);
         }
         if self.home == old && self.anchor().is_some() {
             // Its first beat, at once on the same channel, says it.
-            self.beacon.change = None;
+            self.radio.beacon.change = None;
         }
     }
 

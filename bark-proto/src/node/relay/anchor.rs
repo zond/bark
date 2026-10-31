@@ -134,7 +134,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a sleepy node next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     pub(super) fn radio_due(&self) -> Instant {
-        let beat = self.beacon.next_at.max(self.beacon.ready_at);
+        let beat = self.radio.beacon.next_at.max(self.radio.beacon.ready_at);
         let due = self.queue.earliest_due().map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
@@ -304,8 +304,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// period, the anchorless one without an anchor. A relay heartbeats on its fixed interval instead
     /// (`heartbeat_done`).
     pub(super) fn beat_interval(&mut self) -> Duration {
-        if self.beacon.quick > 0 {
-            self.beacon.quick -= 1;
+        if self.radio.beacon.quick > 0 {
+            self.radio.beacon.quick -= 1;
             return self
                 .rng
                 .duration(self.config.heartbeat_min, self.config.heartbeat_max);
@@ -386,7 +386,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // heartbeat: each beats at a random time within a heartbeat
                 // interval (spec "Beats").
                 let soon = now + self.rng.duration(Duration::ZERO, self.config.heartbeat_max);
-                self.beacon.next_at = self.beacon.next_at.min(soon);
+                self.radio.beacon.next_at = self.radio.beacon.next_at.min(soon);
             }
         }
         let Some(to) = to else {
@@ -418,8 +418,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Listen(self.home));
         }
         // Heard at once and again soon by the new holder.
-        self.beacon.next_at = now;
-        self.beacon.quick = 1;
+        self.radio.beacon.next_at = now;
+        self.radio.beacon.quick = 1;
         self.anchored();
         self.gps_anchor();
     }
@@ -462,8 +462,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.set_anchor(None);
         self.anchored();
         self.gps_due();
-        self.beacon.next_at = now;
-        self.beacon.quick = 0;
+        self.radio.beacon.next_at = now;
+        self.radio.beacon.quick = 0;
     }
 
     /// Listen a worst-case rotation, from `now`, to check the anchor of a

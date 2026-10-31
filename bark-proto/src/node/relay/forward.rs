@@ -335,7 +335,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
                 let queued = self.queue.airtime();
-                self.budget
+                self.radio
+                    .budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
                     .map_or(self.config.delivery_ttl, |t| t.since(now))
             }
@@ -351,7 +352,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether forwarding, or an ACK that takes on work, may spend
     /// `airtime` now: it must leave the reply reserve (spec "Duty cycle cap").
     pub(super) fn affordable(&self, airtime: Duration, now: Instant) -> bool {
-        self.budget.would_allow_keeping(airtime, REPLY_RESERVE, now)
+        self.radio
+            .budget
+            .would_allow_keeping(airtime, REPLY_RESERVE, now)
     }
 
     /// The place in the send queue for a frame of `airtime`, received with
@@ -376,7 +379,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let regular = self.regular() - usize::from(current.is_some_and(|o| o.place == 0));
         let why = if regular >= SEND_QUEUE {
             DropReason::SendQueueFull
-        } else if self.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
+        } else if self.radio.budget.available(now) < queued + airtime + spend + REPLY_RESERVE {
             DropReason::Budget
         } else {
             return Ok(0);
@@ -420,7 +423,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether a reply may spend `airtime` now: it must leave the
     /// heartbeat reserve (spec "Duty cycle cap").
     pub(super) fn can_reply(&self, airtime: Duration, now: Instant) -> bool {
-        self.budget
+        self.radio
+            .budget
             .would_allow_keeping(airtime, HEARTBEAT_RESERVE, now)
     }
 
@@ -520,7 +524,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let parent = record.parent().map(|(name, _)| name);
         let skipped = if blocks { self.forwarding.skipped } else { 0 };
         // Computed once: it takes a logarithm.
-        let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
+        let margin = Neighbours::margin_dbm(self.radio.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
@@ -645,7 +649,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             wait,
         };
         let sending = self.sending_reply();
-        if !self.replies.can_owe(reply, d.sender_home, sending, now) {
+        if !self
+            .radio
+            .replies
+            .can_owe(reply, d.sender_home, sending, now)
+        {
             // The packet could not be answered; its sender's retry
             // brings it again (spec "The ACK", roadmap D29).
             return;
@@ -653,7 +661,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(reason) = refusal {
             emit(Action::Trace(Trace::Refused { msg_id: id, reason }));
             if self.can_reply(ACK_AIRTIME, now) {
-                self.replies
+                self.radio
+                    .replies
                     .owe(reply, d.sender_home, deadline, false, sending, now);
             }
             return;
@@ -668,7 +677,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node listens on once it has answered, for the next
         // (spec "Delivery").
         let renews = d.dst_id == self.me();
-        self.replies
+        self.radio
+            .replies
             .owe(reply, d.sender_home, deadline, renews, sending, now);
         if completes {
             self.handover_done(now, emit);
@@ -867,6 +877,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
         let bucket = self
+            .radio
             .budget
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now);
@@ -1062,7 +1073,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(current) = self.queue.current().copied() else {
             return;
         };
-        let waiting = matches!(current.state, State::Waiting(_)) && self.radio.idle();
+        let waiting = matches!(current.state, State::Waiting(_)) && self.radio.excursion.idle();
         if !waiting || current.kind.delivers() || self.queue.delivery_due(now).is_none() {
             return;
         }
@@ -1299,13 +1310,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((mut h, _)) = self.handover() {
             h.begin_lbt(now);
         }
-        self.radio.check(Job::HandOver, out.frame.channel, emit);
+        self.radio
+            .excursion
+            .check(Job::HandOver, out.frame.channel, emit);
         true
     }
 
     fn defer_handover(&mut self, out: &Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         let airtime = mac::airtime(&out.frame);
         let until = self
+            .radio
             .budget
             .allowed_at(airtime, REPLY_RESERVE, now)
             .unwrap_or(now + self.config.heartbeat_max);
@@ -1345,7 +1359,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// relay's home channel as it is now (spec "Packet formats" `aux`). An owed ACK goes
     /// first, and the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.replies.wake_at().is_some_and(|t| t <= now) {
+        if self.radio.replies.wake_at().is_some_and(|t| t <= now) {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
@@ -1396,8 +1410,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(current) = self.queue.current_mut() {
             current.frame = frame;
         }
-        self.budget.record(airtime, now);
-        self.radio.transmit(Job::HandOver, frame, emit);
+        self.radio.budget.record(airtime, now);
+        self.radio.excursion.transmit(Job::HandOver, frame, emit);
     }
 
     /// The count the current hand-over of `d` carries (spec "Hop count"): stamped at
@@ -1680,33 +1694,37 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Start sending the owed reply, if it is ready. Without budget
     /// for it the relay cannot reply (spec "Duty cycle cap"); the reply is abandoned.
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        let Some(o) = self.replies.due(now) else {
+        let Some(o) = self.radio.replies.due(now) else {
             return false;
         };
         let frame = reply_frame(o);
         if !self.can_reply(mac::airtime(&frame), now) {
-            self.replies.abandon();
+            self.radio.replies.abandon();
             return true;
         }
-        self.radio.check(Job::Reply, o.channel, emit);
+        self.radio.excursion.check(Job::Reply, o.channel, emit);
         true
     }
 
     /// Whether the owed reply is on the radio.
     fn sending_reply(&self) -> bool {
-        self.radio.step_of(Job::Reply).is_some()
+        self.radio.excursion.step_of(Job::Reply).is_some()
     }
 
     pub(super) fn reply_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let backoff = self.config.hop_backoff_max;
-        if let Some(o) = self.replies.checked(busy, now, &mut self.rng, backoff) {
+        if let Some(o) = self
+            .radio
+            .replies
+            .checked(busy, now, &mut self.rng, backoff)
+        {
             let frame = reply_frame(o);
             let airtime = mac::airtime(&frame);
             if self.can_reply(airtime, now) {
-                self.budget.record(airtime, now);
-                self.radio.transmit(Job::Reply, frame, emit);
+                self.radio.budget.record(airtime, now);
+                self.radio.excursion.transmit(Job::Reply, frame, emit);
             } else {
-                self.replies.abandon();
+                self.radio.replies.abandon();
             }
         }
     }
@@ -1767,8 +1785,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The send queue's entry whose frame is on air or waiting for its ACK.
     fn under_way(&self) -> Option<usize> {
-        let on_air =
-            self.awaiting_ack() || self.radio.step_of(Job::HandOver) == Some(mac::Step::Tx);
+        let on_air = self.awaiting_ack()
+            || self.radio.excursion.step_of(Job::HandOver) == Some(mac::Step::Tx);
         self.queue.current_index().filter(|_| on_air)
     }
 

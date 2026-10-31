@@ -143,7 +143,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
         let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())
@@ -252,7 +252,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
         if let Some(e) = self.delivery.iter_mut().find(|e| e.msg_id == q.msg_id) {
             e.flushed |= q.relay_home.is_none();
