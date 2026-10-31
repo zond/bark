@@ -68,7 +68,7 @@ Rules:
    SF5, SX1262 datasheet §6.1.4) and `len <= MAX_FRAME`. The driver transmits at
    `Config::tx_power_dbm` on `Frame::channel` with `Frame::preamble_symbols` of preamble,
    then returns to the resting channel. The core asks for the shortest preamble, or for
-   `sniff::LONG_PREAMBLE_SYMBOLS` (1396, 357.4 ms) on a frame to a node that receives
+   `sniff::LONG_PREAMBLE_SYMBOLS` (927, 237.3 ms) on a frame to a node that receives
    duty-cycled (rule 10). The receiver is programmed for the long preamble, the longest a
    frame can have, which the datasheet asks where the length varies (§6.1.4); it still
    receives the short one.
@@ -87,7 +87,7 @@ Rules:
    `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts there, the
    read and a retune back, 1.9 ms (spec "Busy estimate").
 8. **The driver may hold an `Lbt` or `Rssi` excursion while a reception is in progress**, by at
-   most the airtime of a full frame with the long preamble, 492.9 ms, so that a sweep does not
+   most the airtime of a full frame with the long preamble, 372.8 ms, so that a sweep does not
    cut a packet short (spec "Busy estimate").
    `Transmit` is never held. The core's timeouts allow for the hold.
 9. **`Action::Trace` carries no obligation.** It reports protocol events (a dropped message
@@ -95,8 +95,10 @@ Rules:
    metrics and the firmware's log. A driver may ignore it.
 10. **`Action::Sniff(until)` lets the radio receive duty-cycled** on the resting channel
     until `until`: the SX1262's SetRxDutyCycle (datasheet §13.1.7) with a receive period of
-    `sniff::SNIFF_RX` (6 ms, 384 steps of 15.625 µs) and a sleep period of
-    `sniff::SNIFF_SLEEP` (349.125 ms, 22 344 steps). The radio then catches every frame
+    `sniff::SNIFF_RX` (3.75 ms, 240 steps of 15.625 µs) and a sleep period of
+    `sniff::SNIFF_SLEEP` (233.625 ms, 14 952 steps), or the periods `sniff::periods` gives
+    for the oscillator delay the driver probed, which keep the gap between two windows the
+    same for every node. The radio then catches every frame
     whose preamble is `sniff::LONG_PREAMBLE_SYMBOLS` long and may miss any other; what it
     catches is `Received` as ever, and after it the driver starts the cycle again. The
     sniff ends at `until`, or sooner at the core's next `Listen`, `Lbt`, `Rssi` or
@@ -222,7 +224,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Clock | event-heap time | embassy monotonic |
 | Wakeup when `now >= next_wakeup()` | heap entry per core, lazily invalidated | one embassy timer |
 | `Listen` | update the per-channel listener set | standby, frequency and receive, each only if the chip does not hold it already (`bark-driver/src/sx1262.rs`) |
-| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(384, 22 344) from STDBY_RC with the probed oscillator delay, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command and its whole configuration sent again after (`bark-driver/src/sx1262.rs`) |
+| `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(240, 14 952), or the periods for a longer probed delay, from STDBY_RC with that delay, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command and its whole configuration sent again after (`bark-driver/src/sx1262.rs`) |
 | `Lbt` | deaf for the preparation, the CAD's sampling and the return; the CAD's result from the reception model, the reading the dB sum at the node `rssi_dwell_us` into the sampling | standby, frequency, CAD; `GetRssiInst` four symbol periods in, less the offset measured at boot; the result read and cleared; frequency and receive with the short oscillator delay (`bark-driver/src/sx1262.rs`) |
 | `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `GetRssiInst`, on another channel `RSSI_SETTLE` after the retune |
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | standby, frequency and packet parameters if they differ, the payload, transmit; then packet parameters and receive |

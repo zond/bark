@@ -248,10 +248,10 @@ hour after the cable goes (spec "Sleepy nodes").
 ### 5.1 Every long preamble is caught
 
 On A, a bench frame of a DATA's length (36 bytes: the 29-byte DATA header
-and a short text) with the long preamble, 100 times, 5 s apart: 381.5 ms
-on air, 7.6 % of the period, under the console's 10 % cap. 5 s is not a
-multiple of S's 361.125 ms cycle, so the frames start at offsets spread
-over it (5000 mod 361.125 = 305.375 ms a step).
+and a short text) with the long preamble, 100 times, 5 s apart: 261.4 ms
+on air, 5.2 % of the period, under the console's 10 % cap. 5 s is not a
+multiple of S's 238.875 ms cycle, so the frames start at offsets spread
+over it (5000 mod 238.875 = 222.5 ms a step).
 
 ```
 A> preamble long
@@ -262,32 +262,35 @@ A> stop
 
 Note S's `frames` before and after: it should rise by 100. A frame that
 overlaps one of S's own beats (S sends one every 34.6 s on average, a
-369 ms frame A also prints as `rx`) cannot be caught, about 2 in 100;
+249 ms frame A also prints as `rx`) cannot be caught, about 1 in 100;
 count those apart. What the window catches depends on the preamble alone,
 not on what follows it, so the bench frame stands for a DATA (the
 roadmap's bench row).
 
 The control, which shows the radio really sleeps: the same with
 `preamble short`. A 12-symbol frame is caught only when it starts in or
-just before a window, 1.9 % of the time (`bark_proto::sniff`, the test
+just before a window, 2.0 % of the time (`bark_proto::sniff`, the test
 `a_short_preamble_is_caught_only_in_a_window`): about 2 of 100. Nearly all
 caught means S listens continuously and `Sniff` did not take.
 
 ### 5.2 How much preamble the cycle needs
 
 The long preamble is `sleep + wake + 2D` rounded up to whole 256 µs
-symbols, with `wake` = 6 ms (a TCXO start assumed at 5 ms and about 1 ms
-to restore the chip's state) and `D` = 4 symbols, the time to lock
-(spec "Duty-cycled receive and the long preamble"). Repeat 5.1 with
-`preamble 1300`, `preamble 1350`, `preamble 1380` and so on: the shortest
-preamble `L` that is caught 100 times in 100 gives
+symbols, with `wake` = 1.5 ms (the probed TCXO delay, 0.5 ms on the
+bench's board, and about 1 ms to restore the chip's state) and `D` = 4
+symbols, the time to lock
+(spec "Duty-cycled receive and the long preamble"). Check `tcxo` on S
+first: at a delay above 0.5 ms S sleeps that much less
+(`bark_proto::sniff::periods`) and the sum below is the same. Repeat 5.1
+with `preamble 880`, `preamble 900`, `preamble 915` and so on: the
+shortest preamble `L` that is caught 100 times in 100 gives
 
 ```
-wake + 2D = L × 256 µs − 349 125 µs
+wake + 2D = L × 256 µs − 233 625 µs
 ```
 
-which checks the two assumptions together; with `D` = 4 it is 1396
-symbols, with the wake 1 ms shorter 1392. 5.3 measures the wake alone.
+which checks the two assumptions together; with `D` = 4 it is 927
+symbols, with the wake 1 ms shorter 923. 5.3 measures the wake alone.
 
 ### 5.3 Current
 
@@ -299,24 +302,25 @@ Record each state for at least a minute:
 | State | When | Expected, radio alone (README) |
 |---|---|---|
 | Boot listen | from power-on to the end of the boot listen | listening, 6.1 mA (4.6 mA receive, DS Table 3-5, and the TCXO's nominal 1.5 mA, DS §4.1.4) |
-| Duty-cycled receive | after the boot listen, between beats | a pulse every 361.125 ms, 0.14 to 0.20 mA on average; between pulses 1.2 µA (DS Table 3-5) |
-| A beat | every 34.6 s on average | 369 ms at the transmit current, under 32 mA at +10 dBm (DS Table 3-6) |
+| Duty-cycled receive | after the boot listen, between beats | a pulse every 238.875 ms, 0.11 to 0.14 mA on average; between pulses 1.2 µA (DS Table 3-5) |
+| A beat | every 34.6 s on average | 249 ms at the transmit current, under 32 mA at +10 dBm (DS Table 3-6) |
 | Catching a frame | during 5.1, on USB: shape only | the pulse lasts the frame's airtime, then the cycle starts again |
 
 From the trace of duty-cycled receive:
 
-- The pulse period: 361.125 ms if the chip takes the periods as given.
+- The pulse period: 238.875 ms if the chip takes the periods as given, at a probed delay of 0.5 ms (`tcxo`); less by the delay's excess over that.
 - The pulse width and its two parts: the TCXO start and state restore
-  (`wake`, assumed 6 ms) at a lower level, then the 6 ms window at the
-  receive current. This replaces `SNIFF_WAKE` and `RX_CURRENT_UA` in
-  `bark_proto::sniff`, and with them the cycle and the long preamble.
+  (`wake`, 1.5 ms at a 0.5 ms delay) at a lower level, then the 3.75 ms
+  window at the receive current. This replaces `SNIFF_RESTORE` and
+  `RX_CURRENT_UA` in `bark_proto::sniff`, and with them the cycle and the
+  long preamble.
 - The level between pulses: everything on the board but the radio. The
   GPS is powered and dominates it (README); the rest is the MCU asleep,
   the battery divider's 12 µA and the parts not driven. A level well
   above their sum points at a clock kept running, the 32 MHz crystal or
   a TIMER (README); a 1 Hz square wave, the LED.
 - The average over whole cycles, between beats, against the README's
-  0.14 to 0.20 mA plus that level.
+  0.11 to 0.14 mA plus that level.
 
 ## Not measured here
 

@@ -7,15 +7,16 @@
 //! [`SNIFF_SLEEP`], wakes, and so on. A frame is caught only if its
 //! preamble covers enough of a receive window to be detected, so frames to
 //! such a node carry the [`LONG_PREAMBLE_SYMBOLS`] preamble. Every number
-//! here follows from the datasheet, the symbol time and the anchorless
-//! beat period; the tests below check each step.
+//! here follows from the datasheet, the symbol time, the bench's
+//! oscillator start and the anchorless beat period; the tests below check
+//! each step.
 //!
 //! # The two conditions
 //!
 //! The radio goes round a cycle of `C = rx + sleep + wake`: receive for
 //! `rx`, about 1 ms to save its state and later restore it, the sleep, and
-//! the TCXO's start before the next receive (§13.1.7, Figures 13-2 and
-//! 13-3). A preamble of length `L` starting at an arbitrary time is
+//! the oscillator's start before the next receive (§13.1.7, Figures 13-2
+//! and 13-3). A preamble of length `L` starting at an arbitrary time is
 //! detected if `D` of it falls inside one receive window. The worst start
 //! is just too late for one window, so the next must still hold `D` of it:
 //!
@@ -41,6 +42,16 @@
 //! `I_tx C / P`. The sum is least at `C = √(I_rx (rx + wake) P / I_tx)`,
 //! where the two are equal. Longer sleeps make every frame to the node
 //! longer; shorter ones make it listen more.
+//!
+//! # Each node's own periods
+//!
+//! The long preamble is one length for the whole network, but the wake
+//! is not: the oscillator's start is a delay each board probes for itself
+//! and steps up when it gets cold (roadmap D88). So what the network
+//! fixes is the gap a receiver is deaf for, `sleep + wake`, and the
+//! preamble that spans it; a node whose delay is longer than the one the
+//! cycle is derived for takes that much off its sleep, and widens its
+//! window by half of it to keep the second condition ([`periods`]).
 
 use crate::radio::{header_end, CHANNELS, SYMBOL_TIME};
 use crate::time::Duration;
@@ -50,15 +61,25 @@ use crate::time::Duration;
 /// lock on. To be measured in bring-up step 1.
 pub const DETECT_SYMBOLS: u64 = 4;
 
-/// From the end of a sleep to the start of the receive window: about
-/// 1 ms to save and restore the radio's state (datasheet §13.1.7, Figure
-/// 13-2: "around 1 ms"), and the TCXO's start, which the chip adds before
-/// each receive (Figure 13-3 note). The cycle was derived for the 5 ms
-/// start first programmed; the firmware's 2 ms (`bark-fw/src/radio.rs`,
-/// `TCXO_START`, roadmap D87) makes the real wake 3 ms, and a shorter wake
-/// keeps both conditions (module documentation), so the cycle stands
-/// until it is derived again.
-pub const SNIFF_WAKE: Duration = Duration::from_millis(6);
+/// From the end of a sleep to the start of the receive window, less the
+/// oscillator's start: about 1 ms to save and restore the radio's state
+/// (datasheet §13.1.7, Figure 13-2: "around 1 ms"). Not measured on the
+/// board: bench step 5.3 (`bark-fw/scripts/measure.md`) would.
+pub const SNIFF_RESTORE: Duration = Duration::from_millis(1);
+
+/// The oscillator's start the cycle is derived for: the delay the chip
+/// waits out before each receive of the cycle (Figure 13-3 note), as the
+/// firmware programs it. The firmware probes the delay at boot
+/// (`bark-driver/src/tcxo.rs`, roadmap D88): the bench's board lands at
+/// 0.5 ms at room temperature, which is also the least the probe can land
+/// on, a quarter-millisecond step and one of margin. A node whose delay
+/// is longer runs the periods [`periods`] gives for it.
+pub const SNIFF_TCXO_START: Duration = Duration::from_micros(500);
+
+/// The wake the cycle is derived for: the state restored and the
+/// oscillator started.
+pub const SNIFF_WAKE: Duration =
+    Duration::from_micros(SNIFF_RESTORE.as_micros() + SNIFF_TCXO_START.as_micros());
 
 /// The step of the duty cycle's periods that is a whole number of
 /// microseconds: the datasheet counts them in 15.625 µs (§13.1.7), and
@@ -90,9 +111,9 @@ pub const fn anchorless_beat_period(delivery_ttl: Duration) -> Duration {
 
 /// The beat interval the cycle is set for
 /// (spec "Duty-cycled receive and the long preamble"): the anchorless
-/// beat period it was first derived with. One cycle serves every sleepy node; at the mean anchorless
-/// interval of 34.6 s the least would be 274 ms, and this one costs 4 %
-/// more there.
+/// beat period it was first derived with. One cycle serves every sleepy
+/// node; at the mean anchorless interval of 34.6 s the least would be
+/// 181 ms, and this one costs 4 % more there.
 pub const CYCLE_BEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 const fn ceil_to(d: u64, step: u64) -> u64 {
@@ -120,13 +141,19 @@ const DETECT: u64 = DETECT_SYMBOLS * SYMBOL_TIME.as_micros();
 /// sync and the 8 of the header block (§6.1.4).
 const HEADER: u64 = header_end(0).as_micros();
 
-/// The receive window: half the wake, two detections and the header,
-/// and half a symbol, so that a preamble rounded up to a whole symbol
-/// still meets the second condition (module documentation); in steps.
-pub const SNIFF_RX: Duration = Duration::from_micros(ceil_to(
-    (SNIFF_WAKE.as_micros() + 2 * DETECT + HEADER + SYMBOL_TIME.as_micros()).div_ceil(2),
-    SNIFF_STEP.as_micros(),
-));
+/// The receive window for a wake: half the wake, two detections and the
+/// header, and half a symbol, so that a preamble rounded up to a whole
+/// symbol still meets the second condition (module documentation); in
+/// steps.
+const fn window(wake: Duration) -> Duration {
+    Duration::from_micros(ceil_to(
+        (wake.as_micros() + 2 * DETECT + HEADER + SYMBOL_TIME.as_micros()).div_ceil(2),
+        SNIFF_STEP.as_micros(),
+    ))
+}
+
+/// The receive window at the wake the cycle is derived for.
+pub const SNIFF_RX: Duration = window(SNIFF_WAKE);
 
 /// The sleep between windows: the cycle at which the receive windows cost
 /// what the node's own beats do (module documentation), less the window
@@ -145,13 +172,37 @@ pub const SNIFF_SLEEP: Duration = {
 pub const SNIFF_CYCLE: Duration =
     Duration::from_micros(SNIFF_RX.as_micros() + SNIFF_SLEEP.as_micros() + SNIFF_WAKE.as_micros());
 
+/// How long a receiver is deaf between two windows, the sleep and the
+/// wake: what the long preamble spans, the same for every node whatever
+/// its oscillator's start.
+pub const SNIFF_GAP: Duration =
+    Duration::from_micros(SNIFF_SLEEP.as_micros() + SNIFF_WAKE.as_micros());
+
+/// The window and the sleep a node runs the cycle with when its
+/// oscillator's delay is `tcxo_start`: the sleep shortened by what the
+/// delay exceeds [`SNIFF_TCXO_START`], so that its gap stays
+/// [`SNIFF_GAP`] and the long preamble is caught, and the window widened
+/// by half of that, so that the header is kept (module documentation).
+/// Both in whole steps; a delay below the derived one takes the derived
+/// periods, since the gap may be shorter but the preamble is not.
+pub const fn periods(tcxo_start: Duration) -> (Duration, Duration) {
+    if tcxo_start.as_micros() <= SNIFF_TCXO_START.as_micros() {
+        return (SNIFF_RX, SNIFF_SLEEP);
+    }
+    let wake = SNIFF_RESTORE.as_micros() + tcxo_start.as_micros();
+    let sleep = SNIFF_GAP.as_micros().saturating_sub(wake) / SNIFF_STEP.as_micros()
+        * SNIFF_STEP.as_micros();
+    (
+        window(Duration::from_micros(wake)),
+        Duration::from_micros(sleep),
+    )
+}
+
 /// The preamble of every frame to a sleepy node outside its windows, and
 /// of the beats of one without an anchor: the shortest that a duty-cycled
-/// receiver always catches,
-/// the sleep, the wake and two detections, in whole symbols.
+/// receiver always catches, the gap and two detections, in whole symbols.
 pub const LONG_PREAMBLE_SYMBOLS: u16 =
-    (SNIFF_SLEEP.as_micros() + SNIFF_WAKE.as_micros() + 2 * DETECT)
-        .div_ceil(SYMBOL_TIME.as_micros()) as u16;
+    (SNIFF_GAP.as_micros() + 2 * DETECT).div_ceil(SYMBOL_TIME.as_micros()) as u16;
 
 /// The radio's mean current in duty-cycled receive, nA: the window and
 /// the wake at [`RX_CURRENT_UA`], the sleep at [`SLEEP_CURRENT_NA`].
@@ -183,22 +234,59 @@ mod tests {
 
     #[test]
     fn the_numbers() {
-        assert_eq!(SNIFF_RX.as_micros(), 6_000);
-        assert_eq!(SNIFF_SLEEP.as_micros(), 349_125);
-        assert_eq!(SNIFF_CYCLE.as_micros(), 361_125);
-        assert_eq!(LONG_PREAMBLE_SYMBOLS, 1396);
-        // 357.4 ms of preamble; a heartbeat 368.7 ms, a full frame 492.9 ms.
+        assert_eq!(SNIFF_WAKE.as_micros(), 1_500);
+        assert_eq!(SNIFF_RX.as_micros(), 3_750);
+        assert_eq!(SNIFF_SLEEP.as_micros(), 233_625);
+        assert_eq!(SNIFF_CYCLE.as_micros(), 238_875);
+        assert_eq!(LONG_PREAMBLE_SYMBOLS, 927);
+        // 237.3 ms of preamble; a heartbeat 248.6 ms, a full frame 372.8 ms.
         assert_eq!(
             SYMBOL_TIME.mul(LONG_PREAMBLE_SYMBOLS as u64).as_micros(),
-            357_376
+            237_312
         );
         assert_eq!(
             time_on_air(crate::wire::HEARTBEAT_LEN as u8, LONG_PREAMBLE_SYMBOLS).as_micros(),
-            368_704
+            248_640
         );
-        assert_eq!(time_on_air(255, LONG_PREAMBLE_SYMBOLS).as_micros(), 492_864);
-        // 0.194 mA: 30 times less than listening.
-        assert_eq!(SNIFF_CURRENT_NA, 193_891);
+        assert_eq!(time_on_air(255, LONG_PREAMBLE_SYMBOLS).as_micros(), 372_800);
+        // 0.129 mA: 45 times less than listening.
+        assert_eq!(SNIFF_CURRENT_NA, 128_646);
+    }
+
+    /// The window is bound by the header's wait and the two detections,
+    /// not by the wake: without any wake it would still be 3 ms.
+    #[test]
+    fn the_window_is_bound_by_the_header_not_the_wake() {
+        assert_eq!(window(Duration::ZERO).as_micros(), 3_000);
+        assert_eq!(window(SNIFF_WAKE).as_micros(), 3_750);
+    }
+
+    /// A node whose oscillator's delay is longer than the derived one
+    /// keeps the gap, so the long preamble is caught, and widens its
+    /// window, so the header is kept, at every delay the firmware's probe
+    /// can land on, in its quarter-millisecond steps up to 4 ms.
+    #[test]
+    fn a_longer_oscillator_start_keeps_the_gap_and_both_conditions() {
+        let l = SYMBOL_TIME.mul(LONG_PREAMBLE_SYMBOLS as u64).as_micros();
+        for step in 1..=16u64 {
+            let delay = Duration::from_micros(250 * step);
+            let (rx, sleep) = periods(delay);
+            let wake =
+                SNIFF_RESTORE.as_micros() + delay.as_micros().max(SNIFF_TCXO_START.as_micros());
+            assert_eq!(sleep.as_micros() + wake, SNIFF_GAP.as_micros(), "{step}");
+            assert!(l >= sleep.as_micros() + wake + 2 * DETECT, "caught {step}");
+            assert!(
+                l + HEADER <= 2 * rx.as_micros() + sleep.as_micros(),
+                "kept {step}"
+            );
+            for p in [rx, sleep] {
+                assert_eq!(p.as_micros() * 64 % 1000, 0, "{step}");
+            }
+        }
+        assert_eq!(periods(SNIFF_TCXO_START), (SNIFF_RX, SNIFF_SLEEP));
+        assert_eq!(periods(Duration::from_micros(250)), (SNIFF_RX, SNIFF_SLEEP));
+        let (rx, sleep) = periods(Duration::from_millis(4));
+        assert_eq!((rx.as_micros(), sleep.as_micros()), (5_500, 230_125));
     }
 
     #[test]
@@ -227,17 +315,17 @@ mod tests {
         let p = CYCLE_BEAT_INTERVAL.as_micros() as f64;
         let cost = |c: f64| RX_CURRENT_UA as f64 * on / c + TX_CURRENT_UA as f64 * c / p;
         assert!(cost(c) <= cost(c * 0.9) && cost(c) <= cost(c * 1.1));
-        // Within 7 % of the least between 250 and 520 ms: the choice is flat.
-        for t in [250e3, 520e3] {
+        // Within 7 % of the least between 165 and 345 ms: the choice is flat.
+        for t in [165e3, 345e3] {
             assert!(cost(t) < cost(c) * 1.07, "{t}");
         }
         // At the mean anchorless interval, three quarters of the period:
-        // the least there is 274 ms, and this cycle costs 4 % more.
+        // the least there is 181 ms, and this cycle costs 4 % more.
         let ttl = crate::node::Config::default().delivery_ttl;
         let p = anchorless_beat_period(ttl).as_micros() as f64 * 0.75;
         let cost = |c: f64| RX_CURRENT_UA as f64 * on / c + TX_CURRENT_UA as f64 * c / p;
         let least = (RX_CURRENT_UA as f64 * on * p / TX_CURRENT_UA as f64).sqrt();
-        assert!((least / 1e3 - 274.0).abs() < 1.0, "{least}");
+        assert!((least / 1e3 - 181.0).abs() < 1.0, "{least}");
         assert!((cost(c) / cost(least) - 1.04).abs() < 0.005);
     }
 
@@ -260,8 +348,9 @@ mod tests {
             .step_by(5)
             .filter(|&s| detects(t0, cycle + s, pre).is_some())
             .count() as f64;
-        // A window of 6 ms and 3.07 ms of preamble: caught when it starts
-        // from 2.05 ms before a window opens to 1.02 ms before it closes.
+        // A window of 3.75 ms and 3.07 ms of preamble: caught when it
+        // starts from 2.05 ms before a window opens to 1.02 ms before it
+        // closes, 2.0 % of the cycle.
         let expected = (SNIFF_RX.as_micros() + pre.as_micros() - 2 * DETECT) as f64 / cycle as f64;
         assert!((caught / (cycle / 5) as f64 - expected).abs() < 0.001);
     }

@@ -808,13 +808,13 @@ mod tests {
     /// An anchorless entry expires two of its sender's worst-case
     /// rotations and a beat's lag after its last heartbeat: 26 beat
     /// periods of 600 / 13 s, and a long full frame, the ACK timeout and
-    /// two backoffs, 0.99 s.
+    /// two backoffs, 0.87 s.
     #[test]
     fn anchorless_entries_expire_after_two_rotations() {
         let mut t = Neighbours::new(params());
         assert_eq!(
             params().anchorless_expire_after,
-            Duration::from_micros(1_200_992_860)
+            Duration::from_micros(1_200_872_796)
         );
         hear_anchorless(&mut t, 0, -80, at(0));
         hear(&mut t, 1, 0, -80, at(1000));
@@ -836,7 +836,7 @@ mod tests {
         let mut t = Neighbours::new(params());
         let (min, max) = params().anchorless_rotations();
         assert_eq!(min, Duration::from_micros(299_999_999));
-        assert_eq!(max, Duration::from_micros(600_992_862));
+        assert_eq!(max, Duration::from_micros(600_872_798));
         let beat = |t: &mut Neighbours, s: u64| {
             hear_anchorless(t, 0, -80, at(s));
             t.beat_heard(id(0), Channel::new(0).unwrap(), at(s));

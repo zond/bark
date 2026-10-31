@@ -16,7 +16,7 @@
 use core::fmt::Debug;
 
 use bark_proto::radio::{time_on_air, Channel, RSSI_SETTLE, SYMBOL_TIME};
-use bark_proto::sniff::{LONG_PREAMBLE_SYMBOLS, SNIFF_RX, SNIFF_SLEEP};
+use bark_proto::sniff::{periods, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{Frame, MAX_FRAME};
 
 use crate::tcxo::{self, Probe, Search};
@@ -623,14 +623,17 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     }
 
     /// Receive duty-cycled on `channel` from any state (DS §13.1.7). The
-    /// cycle's wakes are cold starts, so they take the probed delay.
+    /// cycle's wakes are cold starts, so they take the probed delay, and
+    /// the periods follow it: a longer delay comes off the sleep, so that
+    /// the long preamble is still caught (`bark_proto::sniff`).
     pub async fn sniff(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
         self.ready().await?;
         self.standby_rc().await?;
         self.set_frequency(channel).await?;
         self.set_packet_params(RX_PACKET).await?;
         self.set_tcxo(self.tcxo.delay).await?;
-        let r = self.chip.rx_duty_cycle(SNIFF_RX, SNIFF_SLEEP).await;
+        let (rx, sleep) = periods(self.tcxo.delay);
+        let r = self.chip.rx_duty_cycle(rx, sleep).await;
         self.note(r)?;
         self.held.mode = Mode::Sniff;
         self.held.slept = true;
@@ -980,7 +983,8 @@ mod tests {
         Power(i8),
         Payload(usize),
         Rx,
-        RxDutyCycle,
+        /// The receive and sleep periods, µs.
+        RxDutyCycle(u64, u64),
         Cad,
         Tx,
         Rssi,
@@ -1155,9 +1159,13 @@ mod tests {
             self.mode = Mode::Rx;
             Ok(())
         }
-        async fn rx_duty_cycle(&mut self, _: Duration, _: Duration) -> Result<(), &'static str> {
+        async fn rx_duty_cycle(
+            &mut self,
+            rx: Duration,
+            sleep: Duration,
+        ) -> Result<(), &'static str> {
             assert_eq!(self.mode, Mode::StandbyRc, "SetRxDutyCycle from STDBY_RC");
-            self.cmd(Cmd::RxDutyCycle)?;
+            self.cmd(Cmd::RxDutyCycle(rx.as_micros(), sleep.as_micros()))?;
             self.start_osc();
             self.mode = Mode::Sniff;
             Ok(())
@@ -1481,7 +1489,11 @@ mod tests {
         run(radio.sniff(ch(3))).unwrap();
         assert_eq!(
             take(&cmds),
-            [Cmd::Standby(false), Cmd::Tcxo(500), Cmd::RxDutyCycle]
+            [
+                Cmd::Standby(false),
+                Cmd::Tcxo(500),
+                Cmd::RxDutyCycle(3_750, 233_625)
+            ]
         );
         // A packet ends the cycle in STDBY_RC.
         radio.chip().board.borrow_mut().flags = Some(irq::RX_DONE);
@@ -1564,6 +1576,32 @@ mod tests {
         b.inside_dbm = -50;
         let (radio, _, _) = booted(b);
         assert_eq!(radio.lbt_read(), LbtRead::After);
+    }
+
+    /// The cycle is derived for the least delay the probe can land on,
+    /// so a node's periods never lengthen its gap; a board whose delay
+    /// settled higher sleeps that much less, in a wider window.
+    #[test]
+    fn a_sniff_on_a_cold_board_takes_the_delay_off_its_sleep() {
+        assert_eq!(tcxo::MIN + MARGIN, bark_proto::sniff::SNIFF_TCXO_START);
+        assert_eq!(
+            STEP.as_micros() % bark_proto::sniff::SNIFF_STEP.as_micros(),
+            0
+        );
+        let mut b = board();
+        b.osc_start = Duration::from_micros(400);
+        let (mut radio, cmds, _) = booted(b);
+        assert_eq!(radio.tcxo().delay, Duration::from_micros(750));
+        take(&cmds);
+        run(radio.sniff(ch(3))).unwrap();
+        assert_eq!(
+            take(&cmds),
+            [
+                Cmd::Standby(false),
+                Cmd::Tcxo(750),
+                Cmd::RxDutyCycle(3_875, 233_375)
+            ]
+        );
     }
 
     #[test]
