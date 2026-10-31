@@ -485,28 +485,36 @@ fn a_weak_packet_frees_the_receiver_and_a_late_loss_deafens_it() {
 /// A receiver in duty-cycled receive (`Action::Sniff`) takes every frame
 /// with the long preamble, and a frame with the shortest only when it
 /// starts within a window: from two detections less than the preamble
-/// before one opens to a detection before it closes, 1.9 % of the cycle.
+/// before one opens to a detection before it closes, 2.0 % of the cycle.
 /// The rest it misses, counted as such.
 #[test]
 fn a_sniffing_receiver_takes_long_preambles_and_misses_most_short_ones() {
     use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS, SNIFF_CYCLE, SNIFF_RX};
-    // Frames half a second apart and a part of a cycle more, spread by
-    // the fractional parts of multiples of the golden ratio: the radio
-    // starts its cycle again after each frame it takes, so a train at a
-    // fixed step would fall in step with it.
+    // Frames half a second apart and a part of a cycle more, spread by a
+    // hash of their index, so that their starts fall evenly over the
+    // cycle: the radio starts its cycle again after each frame it takes,
+    // so a train at a fixed step, or one spread by a low-discrepancy
+    // sequence, falls in step with it, and some step of the sequence
+    // lands the frame after a caught one in a window again.
     let step = 0.5;
     let (short, long) = (2000, 50);
     let mut sc = trio(-100.0, -130.0).script(0.5, "R", ScriptAction::Sniff, None);
     sc.duration_s = 1.0 + step * (short + long) as f64 + 1.0;
     let cycle_s = SNIFF_CYCLE.as_micros() as f64 / 1e6;
+    let hash = |i: u64| {
+        let mut x = (i + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        x ^= x >> 31;
+        x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        (x ^ (x >> 29)) as f64 / 2f64.powi(64)
+    };
     for i in 0..short + long {
         let preamble = if i < short {
             MIN_PREAMBLE_SYMBOLS
         } else {
             LONG_PREAMBLE_SYMBOLS
         };
-        let spread = (i as f64 * 0.618_033_988_7).fract() * cycle_s;
-        sc = sc.script_tx(1.0 + step * i as f64 + spread / 2.0, "T1", 3, 8, preamble);
+        let spread = hash(i) * cycle_s;
+        sc = sc.script_tx(1.0 + step * i as f64 + spread, "T1", 3, 8, preamble);
     }
     let sim = run(&sc);
     let r = rx(&sim, 2);
