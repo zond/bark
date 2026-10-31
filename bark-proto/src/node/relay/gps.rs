@@ -244,11 +244,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// never with a map point, which no fix may move; a sleepy node's only
     /// in the searches it asks for.
     pub fn gps_tracks(&self) -> bool {
-        if self.sleepy || self.motion.map_point {
+        if self.sleepy() || self.motion.map_point {
             return false;
         }
         let w = self.gps.watch_now();
-        let rests = self.unplugged.is_some() && w.has(PAST_GRACE);
+        let rests = self.unplugged().is_some() && w.has(PAST_GRACE);
         self.motion.carried || w.has(FOLLOW) || !rests
     }
 
@@ -256,7 +256,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that it moves: then the heartbeats of its fixed relay neighbours go
     /// to [`Node::gps_surprise`].
     pub(super) fn gps_watches(&self) -> bool {
-        !self.sleepy && self.stage == Stage::Running && !self.motion.map_point && !self.gps_tracks()
+        !self.sleepy()
+            && self.stage == Stage::Running
+            && !self.motion.map_point
+            && !self.gps_tracks()
     }
 
     /// A heartbeat of a fixed relay neighbour came `surprise_db` from that
@@ -309,7 +312,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The node turned sleepy, or boots sleepy, or turned anchorless, or
     /// boots as a relay whose GPS rests: it searches.
     pub(super) fn gps_due(&mut self) {
-        if self.sleepy {
+        if self.sleepy() {
             self.gps.searches(|s| s.due = true);
         } else {
             self.gps.watch(|w| w.set(DUE, true));
@@ -328,7 +331,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the fix that came is the one asked for at a new anchor;
     /// the next is not.
     pub(super) fn gps_at_choice(&mut self) -> bool {
-        if !self.sleepy {
+        if !self.sleepy() {
             return false;
         }
         self.gps.searches(|s| core::mem::take(&mut s.at_choice))
@@ -337,14 +340,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A fix came: the search is over, and a relay follows a far one.
     pub(super) fn gps_fixed(&mut self) {
         self.gps.until = 0;
-        if self.sleepy {
+        if self.sleepy() {
             self.gps.searches(|s| s.failed_at = 0);
         }
     }
 
     /// A fix came to a relay and was handled: a far one keeps its GPS on.
     pub(super) fn gps_after_fix(&mut self) {
-        if !self.sleepy {
+        if !self.sleepy() {
             let far = self.far();
             self.gps.watch(|w| w.set(FOLLOW, far));
         }
@@ -369,7 +372,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a relay on battery rests its GPS: a grace after it lost
     /// external power.
     fn gps_grace_ends(&self) -> Option<Instant> {
-        Some(self.unplugged? + self.config.grace)
+        Some(self.unplugged()? + self.config.grace)
     }
 
     /// When a search may start again after one that found nothing.
@@ -381,7 +384,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// so that its address, its own position, is never older than what
     /// the network keeps for it (spec "Sleepy nodes alone").
     fn gps_anchorless_at(&self) -> Option<Instant> {
-        let anchorless = self.sleepy && self.anchor.is_none() && self.stage == Stage::Running;
+        let anchorless = self.anchorless();
         if !anchorless || self.gps.until > 0 {
             return None;
         }
@@ -393,11 +396,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Start a search that is due, and end one at its limit; note a
     /// relay's grace on battery passing.
     pub(super) fn gps_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if !self.sleepy {
+        if !self.sleepy() {
             // Once past, past until external power: the flush of a relay
             // leaving restarts `unplugged` for its own bound, and its GPS
             // is not to wake for it at a low battery.
-            let on_battery = self.unplugged.is_some();
+            let on_battery = self.unplugged().is_some();
             let ended = self.gps_grace_ends().is_some_and(|t| now >= t);
             self.gps.watch(|w| {
                 let past = on_battery && (ended || w.has(PAST_GRACE));
@@ -406,7 +409,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if at(self.gps.until).is_some_and(|t| now >= t) {
             self.gps.until = 0;
-            if self.sleepy {
+            if self.sleepy() {
                 self.gps.searches(|s| s.failed_at = mark(now));
             }
         }
@@ -414,7 +417,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.gps.searches(|s| s.due = true);
         }
         // A search due while it cannot start is dropped.
-        let due = if self.sleepy {
+        let due = if self.sleepy() {
             // No fix is taken while a map point is set (roadmap D84).
             let held = now < self.gps_allowed_at() || self.motion.map_point;
             self.gps.searches(|s| core::mem::take(&mut s.due)) && !held
@@ -426,7 +429,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         self.gps.until = mark(now + SEARCH_LIMIT);
-        if self.sleepy {
+        if self.sleepy() {
             self.gps.searches(|s| s.tried_at = mark(now));
         }
         emit(Action::Locate(at(self.gps.until).expect("just set")));
@@ -435,7 +438,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the core next needs a wakeup for its searches, and for a
     /// relay the end of its grace on battery.
     pub(super) fn gps_wakeup(&self) -> Option<Instant> {
-        let other = if self.sleepy {
+        let other = if self.sleepy() {
             self.gps_anchorless_at()
         } else {
             self.gps_grace_ends()

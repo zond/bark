@@ -1,4 +1,4 @@
-//! The radio discipline the roles share: one excursion at a time
+//! The radio discipline the jobs share: one excursion at a time
 //! (`docs/core-interface.md` §3 rule 1), and frame building.
 
 use crate::event::{Action, Frame, MAX_FRAME};
@@ -24,35 +24,63 @@ pub(crate) fn airtime(f: &Frame) -> Duration {
     time_on_air(f.len, f.preamble_symbols)
 }
 
-/// The one excursion a core may have outstanding, and which of its jobs
-/// started it, so the completion event goes back to that job.
-pub(crate) struct Radio<O: Copy> {
-    out: Option<O>,
+/// What the outstanding excursion is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// A listen-before-talk check; found clear, the owner transmits.
+    Check,
+    /// A transmission.
+    Tx,
+    /// A signal strength reading.
+    Read,
 }
 
-impl<O: Copy> Radio<O> {
+/// The one excursion a core may have outstanding, and the job that owns
+/// it: every job's use of the radio is a check on a channel and, if it
+/// is clear, a transmission, or one reading. The completion event goes
+/// back to the owner, which continues from there.
+pub(crate) struct Excursion<O: Copy + PartialEq> {
+    out: Option<(O, Step)>,
+}
+
+impl<O: Copy + PartialEq> Excursion<O> {
     pub(crate) const fn new() -> Self {
-        Radio { out: None }
+        Excursion { out: None }
     }
 
     pub(crate) fn idle(&self) -> bool {
         self.out.is_none()
     }
 
-    /// Start an excursion for `owner`. A second one while the first is
-    /// outstanding is a core bug.
-    pub(crate) fn start(&mut self, owner: O, action: Action, emit: &mut dyn FnMut(Action)) {
+    /// Where `owner`'s excursion is, if it has one outstanding.
+    pub(crate) fn step_of(&self, owner: O) -> Option<Step> {
+        self.out.filter(|(o, _)| *o == owner).map(|(_, s)| s)
+    }
+
+    /// Start a listen-before-talk check on `channel` for `owner`.
+    pub(crate) fn check(&mut self, owner: O, channel: Channel, emit: &mut dyn FnMut(Action)) {
+        self.start(owner, Step::Check, Action::Lbt(channel), emit);
+    }
+
+    /// Start a reading of `channel` for `owner`.
+    pub(crate) fn read(&mut self, owner: O, channel: Channel, emit: &mut dyn FnMut(Action)) {
+        self.start(owner, Step::Read, Action::Rssi(channel), emit);
+    }
+
+    /// Transmit `frame` for `owner`.
+    pub(crate) fn transmit(&mut self, owner: O, frame: Frame, emit: &mut dyn FnMut(Action)) {
+        self.start(owner, Step::Tx, Action::Transmit(frame), emit);
+    }
+
+    /// A second excursion while the first is outstanding is a core bug.
+    fn start(&mut self, owner: O, step: Step, action: Action, emit: &mut dyn FnMut(Action)) {
         debug_assert!(self.out.is_none(), "second excursion outstanding");
-        debug_assert!(matches!(
-            action,
-            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
-        ));
-        self.out = Some(owner);
+        self.out = Some((owner, step));
         emit(action);
     }
 
     /// The owner of the excursion that just completed, if one was outstanding.
     pub(crate) fn complete(&mut self) -> Option<O> {
-        self.out.take()
+        self.out.take().map(|(o, _)| o)
     }
 }

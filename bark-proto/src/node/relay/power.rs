@@ -48,12 +48,13 @@
 //! [`Config::grace`]: crate::Config::grace
 //! [`Config::battery`]: crate::Config::battery
 
-use super::{Mover, Node, Stage};
+use super::{Mode, Node, Power, Sleep, Stage};
 use crate::event::{Action, AppEvent, DropReason, Trace};
 use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
     BATTERY_REST, BATTERY_SCALE_ONE,
 };
+use crate::tables::send_queue::{Outgoing, State};
 use crate::time::{Duration, Instant};
 
 /// What a node's power says of its cell (module documentation), with
@@ -84,13 +85,22 @@ impl Charge {
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is sleepy now (module documentation).
     pub fn sleepy(&self) -> bool {
-        self.sleepy
+        matches!(self.mode, Mode::Sleepy(_))
     }
 
     /// Whether this relay's grace on battery is over: it holds no mail,
     /// and flushes what it holds before it turns sleepy.
     pub fn leaving(&self) -> bool {
-        self.leaving
+        matches!(self.mode, Mode::Relay(Power::Leaving(_)))
+    }
+
+    /// Since when a relay has been on battery, while its grace lasts;
+    /// once it is leaving, since when it has been leaving.
+    pub(super) fn unplugged(&self) -> Option<Instant> {
+        match self.mode {
+            Mode::Relay(Power::Battery(t) | Power::Leaving(t)) => Some(t),
+            Mode::Relay(Power::External) | Mode::Sleepy(_) => None,
+        }
     }
 
     /// Whether this node has room for the mail a relay holds.
@@ -104,7 +114,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// none, two, since a listening receiver misses one heartbeat in ten
     /// (spec "Channel at boot").
     pub(super) fn boot_end(&self, from: Instant) -> Instant {
-        let rotations = if self.sleepy { 2 } else { 1 };
+        let rotations = if self.sleepy() { 2 } else { 1 };
         from + self.config.boot_listen.mul(rotations)
     }
 
@@ -126,23 +136,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             (false, Charge::Usb(_)) => Charge::Battery,
             (false, c) => c,
         };
-        if let Stage::Booting(_) = self.stage {
+        if self.stage == Stage::Booting {
             // A fixed relay rebooted on battery relays on, its grace
             // counted from the boot.
             let kept = self.config.battery.is_some()
                 && Self::can_relay()
                 && self.config.stored.is_some_and(|s| s.relay && !s.carried);
             let turns = sleepy && !kept;
-            let was = self.sleepy;
-            self.sleepy = turns;
+            let was = self.sleepy();
+            // Nobody depends on a node that boots, so its mode follows
+            // each report; a sleepy node keeps what it has.
+            self.mode = match (turns, was) {
+                (true, true) => self.mode,
+                (true, false) => Mode::Sleepy(Sleep::new(self.config.position, false)),
+                (false, _) if sleepy => Mode::Relay(Power::Battery(now)),
+                (false, _) => Mode::Relay(Power::External),
+            };
             if turns && !was {
                 self.gps_due();
             }
-            self.unplugged = (sleepy && kept).then_some(now);
-            let ends = self.boot_end(self.boot_from);
-            self.stage = Stage::Booting(ends);
+            let ends = self.boot_end(self.timers.boot_from);
+            self.timers.boot_ends = Some(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
-            if let Some(a) = anchor.filter(|_| sleepy && self.anchor.is_none()) {
+            if let Some(a) = anchor.filter(|_| sleepy && self.anchor().is_none()) {
                 self.resume_anchor(a, now, emit);
             } else {
                 emit(Action::App(AppEvent::Boot {
@@ -152,18 +168,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        match (sleepy, self.sleepy) {
-            (false, true) => self.turn_relay(now, emit),
+        match (sleepy, self.mode) {
+            (false, Mode::Sleepy(_)) => self.turn_relay(Power::External, now, emit),
             // Back within the grace, or during the flush: it holds mail
             // again, and what was flushed stays queued.
-            (false, false) => {
-                self.unplugged = None;
-                self.leaving = false;
-            }
-            (true, false) => {
-                self.unplugged.get_or_insert(now);
-            }
-            (true, true) => {}
+            (false, Mode::Relay(_)) => self.mode = Mode::Relay(Power::External),
+            (true, Mode::Relay(Power::External)) => self.mode = Mode::Relay(Power::Battery(now)),
+            (true, _) => {}
         }
     }
 
@@ -200,7 +211,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the grace of a relay on battery ends, if it is under way and
     /// its end would turn the node (module documentation).
     pub(super) fn grace_ends(&self) -> Option<Instant> {
-        let t = self.unplugged.filter(|_| !self.leaving)?;
+        let Mode::Relay(Power::Battery(t)) = self.mode else {
+            return None;
+        };
         let ends = self.config.battery.is_none() || self.motion.carried;
         ends.then_some(t + self.config.grace)
     }
@@ -208,7 +221,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the flush of a relay leaving ends at the latest (module
     /// documentation).
     pub(super) fn flush_ends(&self) -> Option<Instant> {
-        let since = self.unplugged.filter(|_| self.leaving)?;
+        let Mode::Relay(Power::Leaving(since)) = self.mode else {
+            return None;
+        };
         Some(since + self.config.delivery_ttl)
     }
 
@@ -219,31 +234,35 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.stage != Stage::Running {
             return;
         }
-        if self.sleepy {
-            if self.battery_sleepy && !self.low && !self.motion.carried {
-                self.turn_relay(now, emit);
-                self.unplugged = Some(now);
+        match self.mode {
+            Mode::Sleepy(s) => {
+                if s.by_battery && !self.low && !self.motion.carried {
+                    self.turn_relay(Power::Battery(now), now, emit);
+                }
+                return;
             }
-            return;
+            Mode::Relay(Power::Leaving(_)) => {}
+            Mode::Relay(power) => {
+                let leaves = if power != Power::External && self.low {
+                    emit(Action::Trace(Trace::BatteryLow));
+                    true
+                } else if self.grace_ends().is_some_and(|t| now >= t) {
+                    emit(Action::Trace(Trace::GraceEnded));
+                    true
+                } else {
+                    false
+                };
+                if leaves {
+                    self.feed_due = true;
+                    // What the network promises a node it cannot reach is a
+                    // delivery TTL; a flush that the duty cap or a busy
+                    // channel holds up longer would keep a node with a low
+                    // battery listening until it is flat.
+                    self.mode = Mode::Relay(Power::Leaving(now));
+                }
+            }
         }
-        if !self.leaving {
-            if self.unplugged.is_some() && self.low {
-                self.leaving = true;
-                emit(Action::Trace(Trace::BatteryLow));
-            } else if self.grace_ends().is_some_and(|t| now >= t) {
-                self.leaving = true;
-                emit(Action::Trace(Trace::GraceEnded));
-            }
-            if self.leaving {
-                self.feed_due = true;
-                // What the network promises a node it cannot reach is a
-                // delivery TTL; a flush that the duty cap or a busy channel
-                // holds up longer would keep a node with a low battery
-                // listening until it is flat.
-                self.unplugged = Some(now);
-            }
-        }
-        if self.leaving && (self.flushed() || self.flush_ends().is_some_and(|t| now >= t)) {
+        if self.leaving() && (self.flushed() || self.flush_ends().is_some_and(|t| now >= t)) {
             self.turn_sleepy(now, emit);
         }
     }
@@ -254,13 +273,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         !self.delivery.iter().any(|q| !q.flushed) && !self.queue.iter().any(|o| o.kind.delivers())
     }
 
-    /// Plugged in: a relay at once, with its own position as its address.
-    fn turn_relay(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.sleepy = false;
-        self.battery_sleepy = false;
+    /// Plugged in, or its battery high again: a relay at once, on `power`,
+    /// with its own position as its address.
+    fn turn_relay(&mut self, power: Power, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.mode = Mode::Relay(power);
         self.gps_relay();
         self.fixed_here(now);
-        self.anchor = None;
         self.unwatch();
         self.neighbours.pin(None);
         // Its slots at a random phase, as at boot, without the first
@@ -279,11 +297,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.sleepy = true;
-        self.battery_sleepy = self.low;
+        self.mode = Mode::Sleepy(Sleep::new(self.config.position, self.low));
         self.gps_sleepy();
-        self.unplugged = None;
-        self.leaving = false;
         for q in self.delivery.iter() {
             emit(Action::Trace(Trace::Dropped {
                 msg_id: q.msg_id,
@@ -292,17 +307,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.delivery.clear();
         self.heard.clear();
-        if let Some(h) = self.held.take() {
+        let held = self.queue.iter().position(Outgoing::held);
+        if let Some(h) = held.and_then(|i| self.queue.remove(i)) {
             // Its own message for a node it held for: routed on, as a
-            // sleepy node owns no other node's message.
-            if let Some(msg_id) = h.out.msg_id().filter(|_| self.queue.push(h.out).is_err()) {
-                emit(Action::Trace(Trace::Dropped {
-                    msg_id,
-                    reason: DropReason::SendQueueFull,
-                }));
-            }
+            // sleepy node owns no other node's message, behind what is
+            // queued.
+            let _ = self.queue.push(Outgoing {
+                state: State::Queued,
+                ..h
+            });
         }
-        self.mover = Mover::default();
+        self.timers.clear_move();
         self.beacon.announce = None;
         self.beacon.reach_all = None;
         self.beacon.reach_left = 0;
@@ -315,7 +330,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.reconsider_anchor(now, emit) {
             self.leave_anchor(now);
         }
-        if self.home == old && self.anchor.is_some() {
+        if self.home == old && self.anchor().is_some() {
             // Its first beat, at once on the same channel, says it.
             self.beacon.change = None;
         }
@@ -324,12 +339,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Forget whatever a sleepy node listens for: its windows, the watch
     /// for its anchor's heartbeat, a choice or a check under way.
     fn unwatch(&mut self) {
-        self.awake_until = Instant::ZERO;
-        self.choosing = None;
-        self.rescan = None;
-        self.watch_at = None;
-        self.misses = 0;
-        self.dark = false;
-        self.window_ends = None;
+        self.timers.awake_until = Instant::ZERO;
+        self.timers.choosing = None;
+        self.timers.rescan_ends = None;
+        self.timers.watch_at = None;
+        if let Some(s) = self.sleep_mut() {
+            s.misses = 0;
+            s.dark = false;
+        }
+        self.timers.window_ends = None;
     }
 }

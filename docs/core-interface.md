@@ -251,17 +251,17 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-170 760 B (166.8 KiB, measured 2026-10-25): the tables and, in about 1 KiB around them, the
-medium access, the hand-over, its one owed reply, its application's message while it
-waits, and its stored state as handed back and as last kept, 56 B. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 151 744 B (148.2 KiB), without the heard table and the delivery
+170 464 B (166.5 KiB, measured 2026-10-31): the tables and, in under 1 KiB around them, the
+medium access, the hand-over in flight, its owed reply, and its stored state as handed
+back and as last kept, 56 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 151 448 B (147.9 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
 (spec "Implementation notes"), which leaves 234 KiB, 67 KiB more than a node needs. Checked by the tests in
-`tables/mod.rs` and `node/relay.rs`.
+`tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target it takes 174 KiB of stack to build one (measured

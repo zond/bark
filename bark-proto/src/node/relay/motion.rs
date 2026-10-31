@@ -161,7 +161,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return true;
         }
         let far = self.plane.distance2(at, self.motion.still_at) > OWNER_RADIUS_M * OWNER_RADIUS_M;
-        let takes = self.sleepy || self.motion.carried;
+        let takes = self.sleepy() || self.motion.carried;
         if takes {
             self.set_position(at);
         }
@@ -187,7 +187,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.motion.far_since = Some(now);
                 emit(Action::Trace(Trace::FarFix));
                 // A sleepy node holds nothing to flush.
-                self.feed_due |= !self.sleepy;
+                self.feed_due |= !self.sleepy();
                 now
             }
         };
@@ -213,8 +213,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.set_position(at);
         self.motion = Motion::fixed(at);
-        self.chosen_from = at;
-        if had && moved && !self.sleepy {
+        if let Some(s) = self.sleep_mut() {
+            s.chosen_from = at;
+        }
+        if had && moved && !self.sleepy() {
             self.changed();
         }
     }
@@ -223,7 +225,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// rebuilt from their short forms near it, and it heartbeats from now.
     fn first_place(&mut self, at: Position, now: Instant) {
         self.neighbours.rebuild(at);
-        if let Some(a) = &mut self.anchor {
+        if let Some(a) = self.sleep_mut().and_then(|s| s.anchor.as_mut()) {
             a.position = Position::from_short(a.position.short(), at);
         }
         self.beacon.next_at = now;
