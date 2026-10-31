@@ -28,7 +28,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Addressing | A position plus a 6-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery (a fixed relay only once its battery is low), carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
-| Position | From GPS unless a fix fails the checks or the app sets a map point; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
+| Position | From GPS unless a fix fails the checks or the app sets a map point, and a sleepy node's anchor's while it has one; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
 | Time | No network time, and GPS time is not used |
 
 ---
@@ -73,8 +73,10 @@ its own, and its heartbeat publishes each as a flag
 - **Carried**: its GPS says it moves ([position](#position)). A map
   point set in the app makes it not carried at once. Carried decides how
   the node uses its GPS: it takes each fix as its position, as a sleepy
-  node does too. A node that is neither keeps the place it stands as its
-  position. A carried relay is otherwise like any other.
+  node without an anchor does too. A node that is neither keeps the
+  place it stands as its position. A sleepy node with an anchor takes no
+  fix: its position is its anchor's, and it keeps the flag it has
+  ([beats](#beats)). A carried relay is otherwise like any other.
 
 *Why nothing to set.* The nRF52840 detects USB power itself, so a
 person's node relays on its charger and sleeps in a pocket.
@@ -497,11 +499,11 @@ A fix is dropped as unreliable, a sign of spoofing, when:
 A jammed receiver gives no fix, and the node keeps the position it has.
 
 Two fixes of a still node may differ by 50 m. That is the **allowance**
-the [owner](#owner) rule and the anchor's move check
-([relay choice](#relay-choice)) use.
+the [owner](#owner) rule uses.
 
-**Fixed and carried.** Every node, sleepy or not, measures from its fixes
-whether it moves:
+**Fixed and carried.** Every node measures from its fixes whether it
+moves, but a sleepy node with an anchor, which takes none and keeps the
+flag it has ([beats](#beats)):
 
 | | |
 |---|---|
@@ -521,18 +523,17 @@ once it has left it will hear none of its sleepy nodes' beats.
 *Why 72 s.* A walker at 1.4 m/s, a common walking pace, crosses the
 allowance's whole width, 2 × 50 m, in 72 of the L76K's one-a-second
 fixes. A still node's stray fix comes back inside; a walker's keeps
-going. A sleepy node takes a fix only when the radio says it may have
-moved ([beats](#beats)), so for it 72 s is two far fixes at least 72 s
-apart.
+going. A sleepy node without an anchor fixes once a delivery TTL
+([beats](#beats)), so for it 72 s is two far fixes at least 72 s apart.
 
 *Why four hours.* A node that stopped for less would take mail for new
 sleepy nodes and strand it when it moved on. A node carried by mistake
 loses little, since its sleepy nodes have anchored elsewhere already
 (roadmap D70).
 
-*Why a node plugged in takes its first fix.* A sleepy node fixes only
-when the radio says it may have moved ([beats](#beats)), so its last fix
-may be hours and kilometres old. Measured from it, the fix at the place
+*Why a node plugged in takes its first fix.* A sleepy node with an
+anchor takes no fix ([beats](#beats)), so its last fix may be hours and
+kilometres old. Measured from it, the fix at the place
 it was plugged in is a far fix, and the node would be carried for four
 hours there, holding no mail. Until it was plugged in nobody addressed
 it at its own position, only at its anchor's; from its first heartbeat
@@ -731,7 +732,8 @@ after four hours still.
 
 *Why not at each fix.* A carried relay's slots carry its position every
 T (roadmap D71); a sleepy node, carried or not, is a last resort to its
-neighbours, and its beats carry its last fix.
+neighbours, and its beats carry its address: its anchor's position, or
+its last fix without an anchor ([beats](#beats)).
 
 **The 256 intervals** are 39.1 ms apart, more than two heartbeats'
 airtime, 2 × 14.4 = 28.8 ms, so two nodes whose intervals differ slide
@@ -2057,14 +2059,10 @@ same:
   anchorless mode makes nodes at the edge of a relay's reach switch to
   and fro (roadmap D51).
 
-A node also checks after moving farther from where it last chose than
-takes the anchor's signal down by the switching margin:
-`r × (10^(8 / 36) − 1) = 0.67 r` for an anchor r away under the
-scenarios' path-loss exponent of 3.6, and no less than 50 m, the GPS
-allowance ([position](#position)).
-
 Between its windows a node hears no relay's heartbeat, so it switches by
-the rule above mainly while it checks. A node back from the dark keeps
+the rule above mainly while it checks. A node that moves checks when it
+has missed its anchor twice: it takes no fix of its own while it has one
+([beats](#beats)). A node back from the dark keeps
 its anchor: a new one would strand the messages sent to the old address
 (roadmap D46, D47).
 
@@ -2141,34 +2139,59 @@ later is in a pocket with no relay, whose nodes mostly know their way
 out already, from the time both were anchorless, so waiting a rotation
 costs them little.
 
-**GPS.** A sleepy node runs its GPS only when the radio says it may have
-moved (roadmap D80). It searches when it turns sleepy, when it takes an
-anchor or changes it, when it turns anchorless, and once a delivery TTL
-while it stays anchorless. A search ends at the first fix that passes
-the checks ([position](#position)) or after 60 s, and one that finds
-nothing holds every search back for 8 hours. The fix asked for at a new
-anchor is where the node chose from. A relay's GPS is in
-[position](#position).
+**GPS.** A sleepy node with an anchor works by the anchor's position: it
+is its address, the position its beats carry, the centre of its flat
+plane and the point it rebuilds the short positions it hears near
+([positions on the wire](#positions-on-the-wire)). It takes no fix, runs
+no search and measures nothing of its motion: it keeps the carried flag
+it had when it took the anchor until it is anchorless or a relay again
+([position](#position); roadmap D91). Its own place, the last it had by
+its own fixes, is what it stands at when plugged in
+([sleepy nodes](#sleepy-nodes)).
+
+Without an anchor a sleepy node runs its GPS (roadmap D80): it searches
+when it turns anchorless and once a delivery TTL while it stays so,
+since its address is then its own position
+([sleepy nodes alone](#sleepy-nodes-alone)). A search ends at the first
+fix that passes the checks ([position](#position)), after 60 s, or when
+the node takes an anchor; one that finds nothing holds every search
+back for 8 hours. A node with no place searches until it has one, anchor
+or not, since without a fix of its own it rebuilds no position it hears
+([position](#position)). A relay's GPS is in [position](#position).
 
 | | |
 |---|---|
-| search limit | 60 s: two of the 30 s frames that carry the satellites' orbits (IS-GPS-200), so that a cold start under the open sky, 30 s (L76K hardware design, Table 2), survives one lost frame |
+| with an anchor | no search: standby, 20 µA (L76K hardware design, Table 2) |
+| search limit | 60 s: two of the 30 s frames that carry the satellites' orbits (IS-GPS-200), so that a cold start under the open sky, 30 s (Table 2), survives one lost frame |
 | after a search that found nothing | none for 8 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 8 h keeps a node that never sees the sky within a tenth of its 0.63 mA ([delivery](#delivery)) |
 | between searches | standby, 20 µA, which keeps what a hot start, 2 s, needs (Table 2) |
 
-*Why only then.* Hearing its anchor each rotation says the node is
-within reach of a fixed relay, which is all its address needs: the
-address is the anchor's position. A new anchor, or none, is when it may
-have moved; the fix then keeps right the positions it rebuilds from
-short ones ([positions on the wire](#positions-on-the-wire)) after a
-long trip. Indoors the L76K, which acquires only 18 dB below the open
-sky, mostly finds nothing, and a search before each beat would hold it
-on at 29 mA, 1.2 days on the battery (roadmap D80).
+*Why none with an anchor.* Hearing its anchor each rotation says the
+node is within reach of a fixed relay, which is all its address needs:
+the address is the anchor's position. Its own fixes bought it two
+things. The carried flag, which nothing reads while it sleeps: a sleepy
+node holds mail for nobody and is nobody's anchor whatever the flag
+([nodes](#nodes)), and what the flag decides when the node is plugged
+in, the relay's own GPS settles then, a fixed node by its first fix
+within a search's limit and a carried one by four hours still
+([position](#position)). And a check of the anchor after a move of
+0.67 of the way to it, which the anchor missed twice makes a rotation or
+two later ([relay choice](#relay-choice)); measured with a fix at each
+anchor change, the check never fired, since the only fix came at the
+choice (roadmap D80, D91). Indoors the L76K, which acquires only 18 dB
+below the open sky, mostly finds nothing, and a search before each beat
+would hold it on at 29 mA, 1.2 days on the battery (roadmap D80).
 
-*Why the fix at a new anchor is where it chose from.* It comes after the
-choice. Measured from the position before, a node that moved since its
-last fix would check the anchor it has just chosen
-([relay choice](#relay-choice)).
+*Why the anchor's position serves to rebuild.* A short position is
+rebuilt as the one within half a period of the node's own, 19.5 km
+north-south ([positions on the wire](#positions-on-the-wire)), and every
+node a sleepy node hears is within the hearing radius, 3 km, of it, so
+within 6 km of its anchor. Its own fix served the same within reach of
+the relays it knew, and no better beyond: a node carried farther than
+half a period while it heard no relay rebuilds its next anchor's
+position a period off, and the fix a search found then would lie
+farther than the hearing radius from every relay it knows and be dropped
+([position](#position)). That trip is open item O19.
 
 A sleepy node with an anchor does not sweep the channels
 ([busy estimate](#busy-estimate)) or move its home channel by the busy
@@ -2260,7 +2283,7 @@ What it listens besides, checking its anchor after the dark, depends on
 how often it is out of reach (roadmap D47, D48, D50, D58).
 
 What a sleepy node with an anchor draws, in S4 at the design rate
-(`scenarios/s4-capacity.toml`, roadmap D80):
+(`scenarios/s4-capacity.toml`, roadmap D80, D91):
 
 | | mean current |
 |---|---|
@@ -2268,8 +2291,8 @@ What a sleepy node with an anchor draws, in S4 at the design rate
 | receiving duty-cycled | 0.18 mA |
 | transmitting: its beats and its own messages | 0.006 mA |
 | GPS standby ([beats](#beats)) | 0.020 mA |
-| GPS searches | 0.003 mA; at most 0.060 mA, one that finds nothing in 8 h |
-| **total** | **0.64 mA, 56 days on the 850 mAh battery; at most 0.69 mA, 51 days** |
+| GPS searches | none with an anchor (roadmap D91); without one at most 0.060 mA, one that finds nothing in 8 h |
+| **total** | **0.63 mA, 56 days on the 850 mAh battery; anchorless at most 0.69 mA, 51 days** |
 
 The microcontroller is not counted.
 
@@ -2607,7 +2630,7 @@ sender and is set on its own:
 |---|---|---|
 | 0 | sleepy | "I sleep. Reach me cheaply in my window after my beat, or at any time with the long preamble." ([nodes](#nodes)) |
 | 1 | anchorless | "I know no node that holds mail, one that is neither sleepy nor carried. If you are one, tell me." A sleepy node without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)), and a relay on the heartbeats of its burst, while its table is new; those are in no slot ([heartbeat](#heartbeat)) |
-| 2 | carried | "I move. I take each GPS fix and hold mail for nobody." ([nodes](#nodes)) |
+| 2 | carried | "I move. I hold mail for nobody, and take each GPS fix unless I sleep with an anchor." ([nodes](#nodes)) |
 | 3 | map point | "My position is a map point a person set in the app, not a GPS fix." ([position](#position)) |
 | 4–7 | | zero; a later format may define them |
 
@@ -2693,7 +2716,8 @@ to reorder only near-ties between candidate hops.
 **Short position.** The heartbeat carries a node's position in 4 bytes:
 the low 16 bits of its latitude count, then the low 16 bits of its
 longitude count, big-endian. A receiver rebuilds the full position as
-the one candidate within half a period of its own on each axis. DATA
+the one candidate within half a period of its own on each axis, a
+sleepy node's anchor's while it has one ([beats](#beats)). DATA
 `dst_pos` stays 7 bytes because in a large city a node may be more than
 half a period from the destination (roadmap D14).
 
@@ -2771,6 +2795,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
+| O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 
 ---
 

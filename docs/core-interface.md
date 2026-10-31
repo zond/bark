@@ -2,7 +2,7 @@
 
 **Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
 2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82; one listen-before-talk excursion, `Action::Lbt` and `Event::LbtDone`, in place of a CAD and a reading (§3, §5), 2026-10-30, roadmap D88. Roadmap decision D3. The types are in
+roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82; one listen-before-talk excursion, `Action::Lbt` and `Event::LbtDone`, in place of a CAD and a reading (§3, §5), 2026-10-30, roadmap D88; a sleepy node with an anchor takes no fix and asks for no search, and a `Locate` at or before now ends one (§4, §5), 2026-10-31, roadmap D91. Roadmap decision D3. The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -153,10 +153,12 @@ over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMa
 clears it: the node stays where it is and its next accepted fix is its place (roadmap
 D84). `AppCommand::Fix` hands the core a GPS fix that passed the driver's plausibility
 checks; the driver hands each one, and none while a map point is set, and the core takes
-none then. Every node, sleepy or not, decides from the fixes whether it is carried; a
-sleepy or carried node takes each fix, and one that is neither keeps its position
-(roadmap D70, D72). A node's address changes with its position, and a relay's sleepy
-nodes' with it (spec "Node identity").
+none then. A node decides from the fixes whether it is carried; a carried node, or a
+sleepy one without an anchor, takes each fix, a fixed relay keeps its position, and a
+sleepy node with an anchor takes none and keeps the flag it had: its position is its
+anchor's, which it beats and rebuilds the short positions it hears near, and
+`Node::address` gives it (roadmap D70, D72, D91). A node's address changes with its
+position, and a relay's sleepy nodes' with it (spec "Node identity").
 
 `Config::placed` says whether `Config::position` is the node's place: a board built
 with one, or the simulator's nodes. Without it and without a stored place the node has
@@ -165,9 +167,11 @@ accepted fix as its place (roadmap D83). Until then the driver checks its fixes 
 no neighbour, since the core cannot rebuild their positions.
 
 `Action::Locate(until)` asks the driver to run the GPS until `until` and hand the first
-fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end.
-A sleepy node asks at the events spec "Beats" names (roadmap D80), a resting relay at
-boot and at its radio's sign of motion (spec "Position", roadmap D82).
+fix that passes its checks as `AppCommand::Fix`, then stop it; a later one moves the end,
+and one at or before `now` ends the search at once. A sleepy node asks while it has no
+anchor, and ends the search under way when it takes one (spec "Beats", roadmap D80, D91);
+a resting relay asks at boot and at its radio's sign of motion (spec "Position", roadmap
+D82).
 
 `Node::gps_tracks` says whether the GPS is to run all the time now: a relay's on external
 power, for its grace on battery, while it follows a far fix and while it is carried, never
@@ -226,7 +230,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
-| GPS (§4) | `Action::Locate` starts a search; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `Node::gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
+| GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `Node::gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
 
 ## 6. Memory
