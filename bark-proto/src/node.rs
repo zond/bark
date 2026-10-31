@@ -206,10 +206,10 @@ pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
 
 /// The longest a heartbeat waits behind its slot: a hand-over attempt it
 /// may find under way, a full frame with the long preamble, to a sleepy
-/// node, and the ACK timeout, 592.86 ms, which is longer than
+/// node, and the ACK timeout, 472.8 ms, which is longer than
 /// a reception its check waits for, and two listen-before-talk backoffs
 /// before its last check, 400 ms (spec "Heartbeat", "Hand-over"):
-/// 992.86 ms.
+/// 872.8 ms.
 pub const fn heartbeat_lag(config: &Config) -> Duration {
     let attempt = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS).as_micros()
         + config.ack_timeout.as_micros();
@@ -223,7 +223,7 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 /// that the next says whether one did. An answer goes within a
 /// listen-before-talk backoff of the heartbeat, then waits behind its
 /// slot as any heartbeat may, [`heartbeat_lag`], and is on the air for a
-/// heartbeat's airtime: 200 + 992.86 + 14.40 ms = 1207.26 ms.
+/// heartbeat's airtime: 200 + 872.8 + 14.4 ms = 1087.2 ms.
 pub const fn burst_gap(config: &Config) -> Duration {
     let airtime = time_on_air(HEARTBEAT_LEN as u8, crate::radio::MIN_PREAMBLE_SYMBOLS);
     Duration::from_micros(

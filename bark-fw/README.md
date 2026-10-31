@@ -10,7 +10,7 @@ and constants from `bark-proto`, the previous boot's panic message if
 there was one, an uptime line every 10 s while on USB), shows the
 board's node ID on the e-paper (Display, below), powers up the
 SX1262 at bark's modulation (SF5, 125 kHz, CR 4/5, CRC on, private sync
-word, the receiver set for the 1396-symbol long preamble) and then does
+word, the receiver set for the 927-symbol long preamble) and then does
 one of two things, chosen when it is built:
 
 | Build | Runs |
@@ -150,13 +150,13 @@ Unverified, in the order they will fail if wrong:
   delay of 100 µs restarts the oscillator cleanly within a millisecond of
   a CAD's end (`docs/bench-2026-10-30.md`, roadmap D88).
 - Duty-cycled receive (`Radio::sniff`, below), in the order it would fail:
-  the chip accepts SetRxDutyCycle(384, 22 344) and cycles; it catches a
+  the chip accepts SetRxDutyCycle(240, 14 952) and cycles; it catches a
   frame with the long preamble wherever it starts (`sniff::detects`);
   after the frame it raises RxDone and stops in standby, and the driver
   starts it again; a preamble without a header ends in a timeout or in the
   cycle, and either way the cycle goes on; a falling NSS edge wakes the
   chip from its sleep, and a second try after a BUSY timeout covers an
-  edge lost as it goes to sleep; set for 1396 symbols the receiver still
+  edge lost as it goes to sleep; set for 927 symbols the receiver still
   takes the 12-symbol preamble in continuous receive. `scripts/measure.md`
   step 5 tests each.
 - Transmit power: the chip's 10 dBm setting gives about 10 dBm at the
@@ -436,7 +436,7 @@ retune times.
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
 | `power <dbm>` | transmit power, clamped to −9..10 dBm | the power in effect |
-| `preamble <short\|long\|n>` | preamble of `tx` and `beacon` frames: 12 symbols, the 1396 of a frame to a sleepy node, or n between | `symbols`, the airtime of a heartbeat, 13 bytes, and of a 255-byte frame |
+| `preamble <short\|long\|n>` | preamble of `tx` and `beacon` frames: 12 symbols, the 927 of a frame to a sleepy node, or n between | `symbols`, the airtime of a heartbeat, 13 bytes, and of a 255-byte frame |
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
@@ -573,8 +573,12 @@ between operations in standby and the extra current does not matter.
 
 A sleepy node's radio receives duty-cycled whenever its core allows it
 (`Action::Sniff`, `docs/core-interface.md` §3 rule 10): SetRxDutyCycle
-(DS §13.1.7) with a 6 ms window (384 steps of 15.625 µs) and a 349.125 ms
-sleep (22 344 steps), `bark_proto::sniff`. The command is sent in
+(DS §13.1.7) with a 3.75 ms window (240 steps of 15.625 µs) and a
+233.625 ms sleep (14 952 steps), `bark_proto::sniff`; a board whose probed
+delay is above the 0.5 ms the cycle is derived for takes the excess off
+its sleep and half of it onto its window (`sniff::periods`), so that the
+gap between its windows, and so the preamble that reaches it, is the same
+as every other node's. The command is sent in
 STDBY_RC, where the datasheet starts the cycle, with the probed oscillator
 delay, since each wake is a cold start, and the receive timer stops at a
 header rather than at a preamble, so that after a preamble the chip waits
@@ -582,9 +586,9 @@ header rather than at a preamble, so that after a preamble the chip waits
 `vendor/README.md`). In each sleep the chip keeps its configuration and
 its 64 kHz clock and powers the TCXO down: DIO3 supplies it only in
 STDBY_XOSC, FS, TX and RX (DS §13.3.6). Each wake costs about 1 ms to
-restore its state and the TCXO start (DS Figures 13-2 and 13-3); the cycle
-was derived for a 6 ms wake, which only adds margin
-(`bark_proto::sniff::SNIFF_WAKE`). The receiver gain register is kept on
+restore its state and the TCXO start (DS Figures 13-2 and 13-3), 1.5 ms
+at the delay the cycle is derived for (`bark_proto::sniff::SNIFF_WAKE`,
+roadmap D92). The receiver gain register is kept on
 the chip's retention list, with the transmit modulation errata bit, so
 that the cycle's own wakes restore them. After a frame the chip stops in
 standby, and the driver starts the cycle again once the core has the
@@ -594,19 +598,19 @@ the error word is read for a start error in the cycle's wakes.
 
 The radio's expected current in the cycle, from the datasheet: the window
 in receive at 4.6 mA (DS Table 3-5, DC-DC, LoRa 125 kHz, power-saving
-gain) and the TCXO at its nominal 1.5 mA (DS §4.1.4), 6.1 mA; the 6 ms of
-each wake, for which the datasheet gives no figure, between STDBY_RC's
+gain) and the TCXO at its nominal 1.5 mA (DS §4.1.4), 6.1 mA; the 1.5 ms
+of each wake, for which the datasheet gives no figure, between STDBY_RC's
 0.6 mA with the TCXO, 2.1 mA, and the full 6.1 mA; the sleep at 1.2 µA
 (DS Table 3-5, configuration kept and the 64 kHz clock on). Over the
-361.125 ms cycle:
+238.875 ms cycle:
 
 ```
-upper: (12 × 6.1 + 349.125 × 0.0012) / 361.125 = 0.204 mA
-lower: (6 × 6.1 + 6 × 2.1 + 349.125 × 0.0012) / 361.125 = 0.137 mA
+upper: (5.25 × 6.1 + 233.625 × 0.0012) / 238.875 = 0.135 mA
+lower: (3.75 × 6.1 + 1.5 × 2.1 + 233.625 × 0.0012) / 238.875 = 0.110 mA
 ```
 
-against 6.1 mA listening, 30 to 44 times less. The core's own figure,
-`sniff::SNIFF_CURRENT_NA`, is 0.194 mA, from 5.8 mA for receive and wake.
+against 6.1 mA listening, 45 to 55 times less. The core's own figure,
+`sniff::SNIFF_CURRENT_NA`, is 0.129 mA, from 5.8 mA for receive and wake.
 `scripts/measure.md` step 5 measures it.
 
 The probed delay is paid at power-up, after a calibration, at each of the
@@ -651,9 +655,9 @@ What stays, and is not this firmware's to fix without a board:
 - The e-paper's controller is in deep sleep after the boot picture and
   the external flash is not touched; their idle current is unknown.
 
-The radio's part is the cycle above, 0.14 to 0.20 mA, plus its beats and
+The radio's part is the cycle above, 0.11 to 0.14 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a
-369 ms frame with the long preamble at the transmit current, every 34.6 s
+249 ms frame with the long preamble at the transmit current, every 34.6 s
 on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 `scripts/measure.md` step 5 measures it in each state.
 

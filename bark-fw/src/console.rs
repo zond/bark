@@ -396,7 +396,7 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             word => {
                 let n = number(word)?;
                 if !(MIN_PREAMBLE_SYMBOLS..=LONG_PREAMBLE_SYMBOLS).contains(&n) {
-                    return Err("preamble: short, long or 12..=1396 symbols");
+                    return Err("preamble: short, long or 12..=927 symbols");
                 }
                 n
             }
