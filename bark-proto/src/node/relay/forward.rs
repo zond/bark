@@ -99,16 +99,22 @@
 //! the forward is routed again at once from the record, past that
 //! neighbour, by the same choice a return taken from a child gets; a
 //! return answered seen is dropped, its parent having gone on without
-//! it. When listen-before-talk gives up on a
-//! forward's neighbour (spec "Hand-over" step 2), the neighbour refuses it, or its
-//! three attempts go unanswered (step 6), it is set aside for this
-//! hand-over only (`skipped`): choosing again at once must not pick it
-//! again, but it stays a candidate for later choices. An unanswered frame
-//! is more often lost than its ACK, so the neighbour most likely lacks the
-//! message; marked tried, it would end its own search if it later got the
-//! message elsewhere and offered it here. A return and a DATA to a sleepy node have
-//! nowhere else to go; for them a give-up counts as one of the three
-//! attempts, and never as a failure against the neighbour.
+//! it. When a forward's neighbour refuses it, or its three attempts go
+//! unanswered and the failure demotes it (spec "Hand-over" step 6), it is
+//! set aside for this hand-over only (`skipped`): choosing again at once
+//! must not pick it again, but it stays a candidate for later choices. An
+//! unanswered frame is more often lost than its ACK, so the neighbour
+//! most likely lacks the message; marked tried, it would end its own
+//! search if it later got the message elsewhere and offered it here.
+//!
+//! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96).
+//! When listen-before-talk gives up on a forward's neighbour, the forward
+//! keeps the neighbour and its transmissions so far, waits a retry wait
+//! and listens again: the channel says nothing about the neighbour, and
+//! after a transmission the neighbour may hold the message, so offering
+//! it to the next candidate would split it. A return and a DATA to a
+//! sleepy node have nowhere else to go; for them a give-up counts as one
+//! of the three attempts, and never as a failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for
 //! [`BAN`], so no message takes it until then (spec "Bans", roadmap D27, D29,
@@ -286,9 +292,9 @@ pub(super) struct Forwarding {
     /// What the radio side keeps of the hand-over in flight, that of the
     /// send queue's current entry.
     pub(super) flight: Flight,
-    /// Neighbour slots the current forward passed over because
-    /// listen-before-talk gave up on them, they refused it, or its
-    /// attempts went unanswered (spec "Hand-over"); not tried.
+    /// Neighbour slots the current forward passed over because they
+    /// refused it or a failure demoted them (spec "Hand-over" step 6,
+    /// "Bans"); not tried.
     pub(super) skipped: u64,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
@@ -541,8 +547,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether any neighbour that is no last resort is open for the
     /// message of `record` at `now` ([`Self::tier`]): live, neither handed
     /// it nor its parent, and a candidate or one but for a ban. One set
-    /// aside for this hand-over and not banned, which listen-before-talk
-    /// gave up on, is not; with `blocks` false neither counts.
+    /// aside for this hand-over and not banned, which a failure demoted,
+    /// is not; with `blocks` false neither counts.
     fn others_open(&self, record: &Record, blocks: bool, now: Instant) -> bool {
         let parent = record.parent().map(|(name, _)| name);
         self.neighbours.live(now).any(|(slot, n)| {
@@ -1637,15 +1643,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map_or((MsgId::default(), NodeId::NONE), |e| (e.msg_id, e.from));
         match out.kind {
             Kind::Forward => {
-                // Choose again, past this neighbour (spec "Hand-over" step 2).
-                if let Some(slot) = self.neighbours.slot_of(to) {
-                    self.forwarding.skipped |= 1 << slot;
-                }
-                emit(Action::Trace(Trace::ChannelBusy {
-                    msg_id,
-                    to,
-                    until: now,
-                }));
+                // The channel says nothing about the neighbour: the same
+                // neighbour again, after a retry wait (spec "Hand-over"
+                // step 2, roadmap D96).
+                let unit = self.retry_unit();
+                let Some((mut h, rng)) = self.handover() else {
+                    return;
+                };
+                let until = h.channel_busy(now, rng, unit);
+                emit(Action::Trace(Trace::ChannelBusy { msg_id, to, until }));
             }
             Kind::Return | Kind::Deliver | Kind::Direct => {
                 let (max, retry) = (self.config.hop_attempts, self.retry_unit());

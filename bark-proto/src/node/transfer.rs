@@ -17,6 +17,12 @@
 //!    finds the channel busy, wait a random 0–`hop_backoff_max`
 //!    (spec "Hand-over": 50 ms) and check again; once the checks of one attempt have
 //!    found it busy for [`LBT_GIVE_UP`] (500 ms), give up ([`Check::GaveUp`]).
+//!    The role decides what a give-up is: a forward keeps its receiver
+//!    and its transmissions, waits the retry window of those
+//!    transmissions ([`HandOver::channel_busy`]) and goes back to 1 with
+//!    a fresh period, since a busy channel says nothing about the
+//!    receiver (roadmap D96); a return or a delivery, with nowhere else
+//!    to go, counts it as an attempt ([`HandOver::lost_attempt`]).
 //! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
 //! 3. No ACK: wait a random time in `[0, retry_window]` and go back to 1,
 //!    up to `hop_attempts` (3) transmissions; then the hand-over has
@@ -246,6 +252,26 @@ impl<'a> HandOver<'a> {
             self.out.state = State::Queued;
         }
         taken
+    }
+
+    /// Listen-before-talk gave up on the receiver's channel: wait the
+    /// retry window of the transmissions made so far, one unit before
+    /// any, and listen again. Returns when. The 0–50 ms backoff waits for
+    /// a frame to end; a channel busy for longer than any frame is held
+    /// by one hand-over after another, so the wait is in their unit and
+    /// grows with the attempts, as the retry wait does, so that senders
+    /// waiting for the same channel come apart (spec "Retry wait").
+    pub(crate) fn channel_busy(
+        &mut self,
+        now: Instant,
+        rng: &mut Rng,
+        retry_backoff: Duration,
+    ) -> Instant {
+        self.flight.lbt_since = None;
+        let window = retry_window(retry_backoff, self.out.tries);
+        let until = now + rng.duration(Duration::ZERO, window);
+        self.wait(Wait::Channel, until);
+        until
     }
 
     /// Count an attempt that could not be made, as if it had gone
@@ -702,6 +728,54 @@ mod tests {
             t.checked(true, now + ms(499), &mut rng, ms(50)),
             Check::Busy
         );
+    }
+
+    #[test]
+    fn a_busy_channel_keeps_the_receiver_and_waits_the_retry_window() {
+        let mut rng = Rng::new(4);
+        let (mut out, mut flight) = place(1);
+        let me = ack(1).to;
+        let expect = names(1);
+        let mut t = HandOver::of(&mut out, &mut flight, me);
+        t.start(at(0));
+        let give_up = |t: &mut HandOver<'_>, rng: &mut Rng, from: Instant| {
+            let mut now = from;
+            loop {
+                t.begin_lbt(now);
+                match t.checked(true, now, rng, ms(50)) {
+                    Check::Busy => now = t.flight.until,
+                    Check::GaveUp => return now,
+                    Check::Clear => unreachable!(),
+                }
+            }
+        };
+        // Before any transmission: one unit.
+        let now = give_up(&mut t, &mut rng, at(0));
+        let until = t.channel_busy(now, &mut rng, ms(100));
+        assert_eq!(t.state(), State::Waiting(Wait::Channel));
+        assert!(t.out.in_flight() && !t.out.transmitted());
+        assert!(until >= now && until <= now + ms(100), "{until:?}");
+        assert!(!t.due(now) && t.due(until));
+        assert_eq!(t.flight.until, until);
+        // A fresh 500 ms once it listens again.
+        t.begin_lbt(until);
+        assert_eq!(
+            t.checked(true, until + ms(499), &mut rng, ms(50)),
+            Check::Busy
+        );
+        t.checked(false, until + ms(500), &mut rng, ms(50));
+        t.sent(until + ms(500), ms(100));
+        assert_eq!(
+            t.timeout(until + ms(600), 3, &mut rng, ms(50)),
+            Some(Missed::Retry)
+        );
+        // After one transmission: two units, and the transmission kept.
+        let from = t.flight.until;
+        let now = give_up(&mut t, &mut rng, from);
+        let until = t.channel_busy(now, &mut rng, ms(100));
+        assert!(until >= now && until <= now + ms(200), "{until:?}");
+        assert_eq!(t.out.tries, 1, "a give-up is no attempt");
+        assert!(t.answered_by(expect), "the receiver may still answer");
     }
 
     #[test]
