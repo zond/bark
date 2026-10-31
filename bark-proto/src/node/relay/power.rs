@@ -11,9 +11,10 @@
 //! its address is its own position, and it heartbeats as a relay.
 //!
 //! The power changes only whether the node is sleepy. Whether it is
-//! carried is measured from its fixes alike in either role
-//! (`relay/motion.rs`): a carried node plugged in is a carried relay, and
-//! a fixed one is fixed where it is then.
+//! carried is measured from its fixes alike in either role, but for a
+//! sleepy node with an anchor, which takes none and keeps the flag it
+//! had (`relay/motion.rs`): a carried node plugged in is a carried relay,
+//! and a fixed one is fixed where it is then.
 //!
 //! A relay unplugged changes nothing for [`Config::grace`], so that a
 //! charger moved across the room costs nobody anything; power back within
@@ -174,13 +175,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // each report; a sleepy node keeps what it has.
             self.mode = match (turns, was) {
                 (true, true) => self.mode,
-                (true, false) => Mode::Sleepy(Sleep::new(self.config.position, false)),
+                (true, false) => Mode::Sleepy(Sleep::new(false)),
                 (false, _) if sleepy => Mode::Relay(Power::Battery(now)),
                 (false, _) => Mode::Relay(Power::External),
             };
-            if turns && !was {
-                self.gps_due();
-            }
             let ends = self.boot_end(self.timers.boot_from);
             self.timers.boot_ends = Some(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
@@ -303,6 +301,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// with its own position as its address.
     fn turn_relay(&mut self, power: Power, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.mode = Mode::Relay(power);
+        // Its anchor went with the mode: it works by its own position.
+        self.replane();
         self.gps_relay();
         self.fixed_here(now);
         self.unwatch();
@@ -323,7 +323,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.mode = Mode::Sleepy(Sleep::new(self.config.position, self.battery.low));
+        self.mode = Mode::Sleepy(Sleep::new(self.battery.low));
         self.gps_sleepy();
         for q in self.delivery.iter() {
             emit(Action::Trace(Trace::Dropped {

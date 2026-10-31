@@ -221,6 +221,8 @@ pub struct SleepSummary {
     pub gps_searches_per_h: f64,
     /// The share of those searches that found a fix.
     pub gps_found: f64,
+    /// Of those searches, how many the core ended at an anchor taken.
+    pub gps_ended: u64,
     /// Spells without an anchor past the first rotation, all and those that
     /// began after the first scripted removal (`Sim::anchorless_spells`).
     pub anchorless_spells: [(u64, u64, Option<f64>, Option<f64>); 2],
@@ -674,6 +676,7 @@ impl Sim {
         };
         let searches: u64 = nodes.iter().map(|m| m.gps.searches).sum();
         let found: u64 = nodes.iter().map(|m| m.gps.fixes).sum();
+        let ended: u64 = nodes.iter().map(|m| m.gps.ended).sum();
         Some(SleepSummary {
             listen_s_per_h: stats(&|m| hour(listen_us(m))),
             sniff_s_per_h: stats(&|m| hour(sniff_us(m))),
@@ -682,6 +685,7 @@ impl Sim {
             gps_ma,
             gps_searches_per_h: searches as f64 * 3.6e9 / window as f64 / nodes.len() as f64,
             gps_found: found as f64 / searches.max(1) as f64,
+            gps_ended: ended,
             anchorless_spells: [
                 self.anchorless_spells(Instant::ZERO),
                 self.anchorless_spells(self.removal.unwrap_or(Instant::MAX)),
@@ -915,9 +919,10 @@ impl Summary {
             );
             let _ = writeln!(
                 s,
-                "sleepy nodes' GPS: {:.2} searches an hour, {:.1} % found a fix; current {:.3} mA (median {:.3}, p90 {:.3}); with the radio {:.3} mA",
+                "sleepy nodes' GPS: {:.2} searches an hour, {:.1} % found a fix, {} ended at an anchor; current {:.3} mA (median {:.3}, p90 {:.3}); with the radio {:.3} mA",
                 z.gps_searches_per_h,
                 z.gps_found * 100.0,
+                z.gps_ended,
                 z.gps_ma[0],
                 z.gps_ma[1],
                 z.gps_ma[2],

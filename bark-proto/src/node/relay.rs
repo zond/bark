@@ -43,7 +43,6 @@ mod motion;
 mod power;
 mod sweep;
 
-use anchor::move_bound_m;
 use boot::random_channel;
 use heartbeat::Beacon;
 use sweep::Sweep;
@@ -165,22 +164,16 @@ struct Sleep {
     /// Its last check heard nothing at all: it is out of reach, and checks
     /// again only once it hears something.
     dark: bool,
-    /// Where it was when it chose or last confirmed its anchor, and how
-    /// far the anchor was then, metres.
-    chosen_from: Position,
-    reach_m: f32,
 }
 
 impl Sleep {
-    /// Sleepy from `at`, with no anchor yet.
-    const fn new(at: Position, by_battery: bool) -> Sleep {
+    /// Sleepy, with no anchor yet.
+    const fn new(by_battery: bool) -> Sleep {
         Sleep {
             anchor: None,
             by_battery,
             misses: 0,
             dark: false,
-            chosen_from: at,
-            reach_m: 0.0,
         }
     }
 }
@@ -371,11 +364,11 @@ pub struct Node<const H: usize, const Q: usize> {
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A relay until its power says otherwise, unless it has no room for
     /// a relay's mail (`relay/power.rs`): then sleepy at `at`.
-    const fn mode_at_boot(at: Position) -> Mode {
+    const fn mode_at_boot() -> Mode {
         if Self::can_relay() {
             Mode::Relay(Power::External)
         } else {
-            Mode::Sleepy(Sleep::new(at, false))
+            Mode::Sleepy(Sleep::new(false))
         }
     }
 
@@ -396,7 +389,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             plane: LocalPlane::ORIGIN,
             home: channel,
             stage: Stage::Off,
-            mode: Self::mode_at_boot(config.position),
+            mode: Self::mode_at_boot(),
             battery: Battery::at_boot(None),
             radio: Radio::new(&config, channel, channel),
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
@@ -472,7 +465,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *plane = LocalPlane::new(config.position);
         *h = home;
         *stage = Stage::Off;
-        *mode = Self::mode_at_boot(config.position);
+        *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored.and_then(|s| s.battery_scale));
         *radio = Radio::new(
             &config,
@@ -516,7 +509,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The position in this node's address (spec "Addresses"): its own, or
-    /// for a sleepy node its anchor's while it has one.
+    /// for a sleepy node its anchor's while it has one. It is the position
+    /// the node works by: it beats it, centres its plane on it and
+    /// rebuilds the short positions it hears near it (spec "Beats").
+    /// `Config::position` stays its own place, kept for when it is a
+    /// relay again (`relay/motion.rs`).
     pub fn address(&self) -> Position {
         self.anchor().map_or(self.config.position, |a| a.position)
     }
@@ -880,7 +877,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     fn set_position(&mut self, position: Position) {
         self.config.position = position;
-        self.plane = LocalPlane::new(position);
+        self.replane();
+    }
+
+    /// The plane is centred on the position the node works by, its
+    /// address, and every neighbour's point is on it.
+    pub(super) fn replane(&mut self) {
+        self.plane = LocalPlane::new(self.address());
         self.neighbours.replane(&self.plane);
     }
 
@@ -894,38 +897,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::Battery { millivolts } => self.battery_read(millivolts, now),
             AppCommand::ClearMapPoint => self.clear_map_point(),
-            AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
-                let took = match cmd {
-                    AppCommand::Fix { .. } => {
-                        self.gps_fixed();
-                        let took = self.fix(position, now, emit);
-                        self.gps_after_fix();
-                        took
-                    }
-                    _ => {
-                        // A sleepy node's position is no news, but a
-                        // change of its carried flag is.
-                        if self.map_point(position, now) || !self.sleepy() {
-                            self.changed();
-                        }
-                        true
-                    }
-                };
-                if !took || !self.sleepy() {
-                    return;
-                }
-                if self.gps_at_choice() {
-                    // Where it chose from (`relay/gps.rs`).
-                    self.anchored_at_fix();
-                    return;
-                }
-                let Some(s) = self.sleep() else { return };
-                let moved = self
-                    .plane
-                    .point(s.chosen_from)
-                    .distance_m(Default::default());
-                if moved > move_bound_m(s.reach_m) {
-                    self.check_anchor(now, emit);
+            AppCommand::Fix { position } => {
+                self.gps_fixed();
+                self.fix(position, now, emit);
+                self.gps_after_fix();
+            }
+            AppCommand::SetPosition { position } => {
+                // A sleepy node's position is no news, but a change of
+                // its carried flag is.
+                if self.map_point(position, now) || !self.sleepy() {
+                    self.changed();
                 }
             }
         }

@@ -1,12 +1,13 @@
-//! When a sleepy node runs its GPS (spec "Beats", roadmap D80): only
-//! when the radio says it may have moved, a minute at most, and not for
-//! eight hours after a search that found nothing.
+//! When a sleepy node runs its GPS (spec "Beats", roadmap D80, D91):
+//! only while it has no anchor, a minute at most, and not for eight
+//! hours after a search that found nothing.
 
 mod common;
 
 use bark_proto::gps::{BACKOFF, SEARCH_LIMIT};
+use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::Packet;
-use bark_proto::{AppCommand, Config, Instant, Position, Relay, Trace};
+use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -54,31 +55,33 @@ fn searches(h: &Harness<Relay>, i: usize, from: Instant) -> Vec<(Instant, Instan
         .collect()
 }
 
-/// An anchored node searches when it boots sleepy, once, and not at its
-/// beats; a search that finds nothing runs a minute. A relay never asks.
+/// A node that boots sleepy and anchors in its first rotation never
+/// searches: not at boot, not at the anchor, not at its beats. A relay
+/// on external power never asks.
 #[test]
-fn a_search_at_boot_and_none_at_beats() {
+fn no_search_with_an_anchor() {
     let mut h = pair();
     h.run_until(at(4000), |_| false);
     assert!(h.nodes[1].core.anchor().is_some());
-    let s = searches(&h, 1, Instant::ZERO);
-    assert_eq!(s.len(), 1, "{s:?}");
-    assert!(s[0].1.since(s[0].0) <= SEARCH_LIMIT + secs(1));
+    assert!(searches(&h, 1, Instant::ZERO).is_empty());
     assert!(beats(&h, 1, Instant::ZERO) > 10);
     assert!(searches(&h, 0, Instant::ZERO).is_empty(), "a relay asked");
 }
 
 /// An anchorless node searches once a delivery TTL while its searches
-/// find a fix, and after one that finds nothing, not for the back-off.
+/// find a fix, and after one that finds nothing, not for the back-off;
+/// a search that finds nothing runs a minute.
 #[test]
 fn a_failed_search_holds_the_next_back() {
     let mut h = pair();
     h.unlink(0, 1);
     h.run_until(at(3 * 3600), |_| false);
     assert!(h.nodes[1].core.anchorless());
-    // The search at boot, held back by its failure past the end of its
-    // first rotation.
-    assert_eq!(searches(&h, 1, Instant::ZERO).len(), 1);
+    // The search when it turns anchorless at its first rotation's end,
+    // held back by its failure.
+    let s = searches(&h, 1, Instant::ZERO);
+    assert_eq!(s.len(), 1, "{s:?}");
+    assert!(s[0].1.since(s[0].0) <= SEARCH_LIMIT + secs(1));
     h.run_until(at(10 * 3600), |_| false);
     let s = searches(&h, 1, Instant::ZERO);
     assert_eq!(s.len(), 2, "{s:?}");
@@ -104,26 +107,41 @@ fn a_failed_search_holds_the_next_back() {
     assert!(s.len() >= 15, "{s:?}");
 }
 
-/// The fix asked for at a new anchor is where the node chose from: one
-/// far from its last position does not check the anchor just chosen.
+/// A search under way ends when the node takes an anchor, with a
+/// `Locate` at that instant: it works by the anchor's position from
+/// then, and runs no search while it keeps one.
 #[test]
-fn the_fix_at_a_choice_is_where_the_node_chose() {
+fn a_search_under_way_ends_at_an_anchor() {
     let mut h = pair();
-    h.run_until(at(30), |h| h.nodes[1].core.anchor().is_some());
-    assert!(h.nodes[1].core.anchor().is_some());
-    // 400 m from where it was, farther than the move bound from the
-    // anchor 50 m away.
-    h.command(
-        1,
-        AppCommand::Fix {
-            position: pos(450.0),
-        },
-    );
-    h.run_until(at(2000), |_| false);
-    let checks = h.nodes[1]
-        .traces
+    // Nothing reaches the sleepy node: anchorless at its first rotation's
+    // end, it searches.
+    h.lose = Some(Box::new(|_, _, to, _| to == 1));
+    assert!(h.run_until(at(1000), |h| !searches(h, 1, Instant::ZERO).is_empty()));
+    let (started, until) = searches(&h, 1, Instant::ZERO)[0];
+    assert_eq!(until, started + SEARCH_LIMIT);
+    // The relay's answer to its beat reaches it, a heartbeat of the
+    // relay's with the long preamble on its channel (spec "Sleepy nodes alone"),
+    // put on the air here since the relay hears its beat only once a
+    // rotation: it anchors, and the search ends there.
+    h.lose = None;
+    h.run_for(secs(5));
+    let mut answer = h.nodes[0]
+        .sent
         .iter()
-        .filter(|(_, t)| *t == Trace::AnchorCheck)
-        .count();
-    assert_eq!(checks, 0);
+        .rev()
+        .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+        .map(|(_, f)| *f)
+        .expect("a heartbeat of the relay");
+    answer.channel = h.resting(1).expect("listening");
+    answer.preamble_symbols = LONG_PREAMBLE_SYMBOLS;
+    h.inject(0, answer);
+    assert!(h.run_until(until, |h| h.nodes[1].core.anchor().is_some()));
+    let s = searches(&h, 1, Instant::ZERO);
+    assert_eq!(s.len(), 2, "{s:?}");
+    assert_eq!(s[1].0, s[1].1, "{s:?}");
+    assert!(s[1].0 < until);
+    // With an anchor, none for hours.
+    h.run_until(at(4 * 3600), |_| false);
+    assert_eq!(searches(&h, 1, Instant::ZERO).len(), 2);
+    assert!(h.nodes[1].core.anchor().is_some());
 }

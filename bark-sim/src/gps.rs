@@ -3,7 +3,9 @@
 //! says it tracks (`Node::gps_tracks`) and in its searches.
 //!
 //! A search runs from the core's `Locate` until the first fix the driver
-//! hands or the end the core gave. A node under the sky gets its fix after
+//! hands or the end the core gave; a `Locate` at or before now ends it,
+//! as a sleepy node's does when it takes an anchor (roadmap D91). A node
+//! under the sky gets its fix after
 //! a hot start if it had one within the time the satellites' orbits serve,
 //! else after a cold start; a node that hears no sky gets none and runs to
 //! the end. Under the sky are the nodes placed outdoors or on a roof, the
@@ -39,10 +41,19 @@ pub(crate) struct Receiver {
 }
 
 impl Sim {
-    /// `node`'s core asks for a search until `until`. A search under way
-    /// that has heard no sky yet tries again from where the node is now.
+    /// `node`'s core asks for a search until `until`, or ends the one
+    /// under way with an `until` that has passed. A search under way that
+    /// has heard no sky yet tries again from where the node is now.
     pub(crate) fn locate(&mut self, node: u32, until: Instant) {
         let now = self.now;
+        if until <= now {
+            let r = self.receivers[node as usize];
+            if r.on.is_some() && now >= self.settle && !r.relay {
+                self.metrics.nodes[node as usize].gps.ended += 1;
+            }
+            self.gps_off(node);
+            return;
+        }
         let sky = self.hears_sky(node);
         let settled = now >= self.settle;
         let relay = !self.relay(node).sleepy();

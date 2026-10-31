@@ -1,13 +1,15 @@
 //! Sleepy and carried are two properties of a node, each measured on its
 //! own and each published as a heartbeat flag (spec "Nodes", "Position",
 //! roadmap D72): a node on battery in a pocket is both, and its power
-//! changes only whether it is sleepy.
+//! changes only whether it is sleepy. A sleepy node with an anchor takes
+//! no fix and keeps the flag it had (roadmap D91).
 
 mod common;
 
+use bark_proto::radio::Channel;
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::wire::{Heartbeat, Packet};
-use bark_proto::{AppCommand, AppEvent, Config, Delivery, Instant, MsgId, Position, Relay, Trace};
+use bark_proto::{AppCommand, Config, Instant, MsgId, Position, Relay, Stored, Trace};
 use common::{heartbeat_flags, secs, Harness, ANCHORLESS, CARRIED, RELAY, SLEEPY};
 
 /// A position `east` metres from a point in Kyiv.
@@ -29,6 +31,29 @@ fn node(east: f64, external: bool, seed: u64) -> (Relay, bool) {
         ..Config::default()
     };
     (Relay::new(config, seed), external)
+}
+
+/// A node at `east` on battery that boots carried, as one whose fixes
+/// walked before its reboot does (`store.rs`): a sleepy node with an
+/// anchor takes no fix, so this is how a carried sleepy node comes to be
+/// in these tests.
+fn carried_node(east: f64, seed: u64) -> (Relay, bool) {
+    let stored = Stored {
+        home: Channel::all().next().expect("a channel"),
+        place: pos(east),
+        carried: true,
+        map_point: false,
+        anchor: None,
+        relay: false,
+        battery_scale: None,
+    };
+    let config = Config {
+        position: pos(east),
+        fixed_after: secs(STILL),
+        stored: Some(stored),
+        ..Config::default()
+    };
+    (Relay::new(config, seed), false)
 }
 
 fn at(s: u64) -> Instant {
@@ -103,19 +128,12 @@ fn last_type(h: &Harness<Relay>, i: usize) -> u8 {
         .0
 }
 
-fn delivered_at(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Instant> {
-    h.nodes[i].app.iter().find_map(|(t, e)| match e {
-        AppEvent::Message { msg_id, .. } if *msg_id == id => Some(*t),
-        _ => None,
-    })
-}
-
-/// A relay R and two sleepy nodes S and P anchored to it; F, a relay, and
-/// L, a sleepy node with no relay in reach; G, a relay R knows. F, P and L
-/// walk until carried. Each of the four combinations heartbeats its own
-/// flags: a fixed relay none, a carried relay carried, a fixed sleepy
-/// node sleepy, a carried one sleepy and carried, and L all three; and a
-/// neighbour keeps both flags as heard.
+/// A relay R and two sleepy nodes S and P anchored to it, P booted
+/// carried; F, a relay, and L, a sleepy node with no relay in reach; G,
+/// a relay R knows. F and L walk until carried. Each of the four
+/// combinations heartbeats its own flags: a fixed relay none, a carried
+/// relay carried, a fixed sleepy node sleepy, a carried one sleepy and
+/// carried, and L all three; and a neighbour keeps both flags as heard.
 #[test]
 fn the_four_combinations_heartbeat_their_flags() {
     let (r, f, s, p, l, g) = (0, 1, 2, 3, 4, 5);
@@ -132,7 +150,13 @@ fn the_four_combinations_heartbeat_their_flags() {
     let mut h = Harness::powered(
         (1..)
             .zip(nodes)
-            .map(|(seed, (east, external))| node(east, external, seed))
+            .map(|(seed, (east, external))| {
+                if seed == p as u64 + 1 {
+                    carried_node(east, seed)
+                } else {
+                    node(east, external, seed)
+                }
+            })
             .collect(),
     );
     // Without G, R would know no relay that holds mail once F is carried,
@@ -149,9 +173,9 @@ fn the_four_combinations_heartbeat_their_flags() {
     h.run_until(at(1000), |_| false);
     let rid = h.nodes[r].core.id();
     assert_eq!(h.nodes[p].core.anchor().map(|a| a.id), Some(rid));
+    assert!(h.nodes[p].core.carried());
     assert!(h.nodes[l].core.anchorless());
     walk_until_carried(&mut h, f, 300.0);
-    walk_until_carried(&mut h, p, 30.0);
     walk_until_carried(&mut h, l, 5000.0);
     let from = h.now;
     h.run_for(secs(700));
@@ -172,103 +196,79 @@ fn the_four_combinations_heartbeat_their_flags() {
     assert_eq!(h.nodes[p].core.anchor().map(|a| a.id), Some(rid));
 }
 
-/// A sleepy node whose fixes walk for 72 s is carried and says so at once
-/// with a heartbeat on its home channel, flagged sleepy and carried. That
-/// heartbeat is a beat to its holder, which delivers in the window after
-/// it (spec "Heartbeat", "Delivery").
+/// A sleepy node with an anchor works by the anchor's position and takes
+/// no fix (spec "Beats", roadmap D91): fixes that walk away make it
+/// neither carried nor check its anchor, its beats carry the anchor's
+/// position, which its holder keeps it at, and its own place stays for
+/// when it is a relay again.
 #[test]
-fn a_sleepy_node_on_the_move_beats_carried_at_once() {
-    let (r, o, s) = (0, 1, 2);
-    let mut h = Harness::powered(vec![
-        node(0.0, true, 11),
-        node(300.0, true, 12),
-        node(20.0, false, 13),
-    ]);
-    h.link(r, o);
+fn a_sleepy_node_with_an_anchor_takes_no_fix() {
+    let (r, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, true, 11), node(20.0, false, 13)]);
     h.link(r, s);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
     let rid = h.nodes[r].core.id();
     assert_eq!(h.nodes[s].core.anchor().map(|a| a.id), Some(rid));
-    // Out of reach, S misses a delivery, and R holds the text for its
-    // window; back in reach, R hears none of S's beats until S is carried.
-    h.unlink(r, s);
-    let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
-    let text = b"for the walker";
-    h.command(
-        o,
-        AppCommand::Send {
-            dst_pos,
-            dst_id,
-            payload: text,
-        },
-    );
-    let id = MsgId::of(dst_pos, dst_id, text);
-    let waits = |h: &Harness<Relay>| {
-        h.nodes[r].traces.iter().any(
-            |(_, t)| matches!(t, Trace::DeliveryWaits { msg_id, tried: true, .. } if *msg_id == id),
-        )
-    };
-    assert!(h.run_until(h.now + secs(60), waits));
-    h.link(r, s);
-    h.lose = Some(Box::new(move |_, from, to, bytes| {
-        from == s
-            && to == r
-            && matches!(Packet::decode(bytes), Ok(Packet::Heartbeat(hb)) if !hb.carried)
-    }));
+    assert_eq!(h.nodes[s].core.address(), pos(0.0));
     let before = h.now;
-    walk_until_carried(&mut h, s, 20.0);
-    let turned = h.now - secs(1);
-    assert_eq!(traced(&h, s, Trace::Changed), 1);
-    assert_eq!(traced(&h, s, Trace::FarFix), 1);
-    let home = h.nodes[s].core.home().index();
-    let flagged: Vec<_> = heartbeats(&h, s, before)
-        .into_iter()
-        .filter(|b| b.0 == SLEEPY | CARRIED)
-        .collect();
-    assert_eq!(flagged.first().map(|b| b.1), Some(home), "on its home");
-    let delivered = delivered_at(&h, s, id);
-    assert!(
-        delivered.is_some_and(|t| t.since(turned) < secs(5)),
-        "{delivered:?}"
-    );
-    assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
-        t,
-        Trace::Delivered { msg_id, by: Delivery::Window, .. } if *msg_id == id
-    )));
-    // Walking on, it heartbeats for no fix beyond its beats.
-    let mut east = 20.0 + 14.0 * 10.0;
-    for _ in 0..30 {
+    let mut east = 20.0;
+    for _ in 0..40 {
         fix(&mut h, s, east);
         east += 14.0;
         h.run_for(secs(10));
     }
-    assert_eq!(traced(&h, s, Trace::Changed), 1);
-    assert_eq!(h.nodes[s].core.config().position, pos(east - 14.0));
+    assert!(!h.nodes[s].core.carried());
+    assert_eq!(traced(&h, s, Trace::FarFix), 0);
+    assert_eq!(traced(&h, s, Trace::Changed), 0);
+    assert_eq!(traced(&h, s, Trace::AnchorCheck), 0);
+    assert_eq!(h.nodes[s].core.config().position, pos(20.0));
+    assert_eq!(h.nodes[s].core.address(), pos(0.0));
+    let beats = heartbeats(&h, s, before);
+    assert!(!beats.is_empty() && beats.iter().all(|b| b.0 == SLEEPY));
+    let last = last_heartbeat_since(&h, s, before).expect("a beat");
+    assert_eq!(last.position(pos(0.0)), pos(0.0));
+    let sid = h.nodes[s].core.id();
+    let heard = h.nodes[r].core.neighbours().find(|n| n.id == sid).unwrap();
+    assert_eq!(heard.position, pos(0.0));
 }
 
-/// A sleepy node's fixes that stay within 50 m of one place for
-/// `fixed_after` make it fixed again, as a relay's do, and it says so at
-/// once with a beat flagged sleepy alone.
+/// Without an anchor a sleepy node measures from its fixes as any node
+/// does: walking makes it carried and staying makes it fixed again, each
+/// said at once with a beat. The flag it has when it takes an anchor
+/// stays, since with one it takes no fix (roadmap D91).
 #[test]
-fn a_sleepy_node_is_fixed_again_after_staying() {
-    let (r, s) = (0, 1);
+fn an_anchorless_node_measures_its_fixes_and_keeps_the_flag_at_an_anchor() {
+    let (r, l) = (0, 1);
     let mut h = Harness::powered(vec![node(0.0, true, 21), node(20.0, false, 22)]);
-    h.link(r, s);
-    h.start_at(s, at(10));
+    h.start_at(l, at(10));
     h.run_until(at(1000), |_| false);
-    let stop = walk_until_carried(&mut h, s, 20.0);
+    assert!(h.nodes[l].core.anchorless());
+    let stop = walk_until_carried(&mut h, l, 20.0);
+    assert_eq!(traced(&h, l, Trace::Changed), 1);
     let half = STILL / 2;
-    stand(&mut h, s, stop + 30.0, half);
-    assert!(h.nodes[s].core.carried(), "half the time still");
-    stand(&mut h, s, stop + 10.0, half + 60);
-    assert!(!h.nodes[s].core.carried());
-    assert_eq!(traced(&h, s, Trace::Carried { carried: false }), 1);
-    assert_eq!(traced(&h, s, Trace::Changed), 2);
-    assert_eq!(last_type(&h, s), SLEEPY);
-    // Still sleepy, it still takes each fix.
-    fix(&mut h, s, stop + 40.0);
-    assert_eq!(h.nodes[s].core.config().position, pos(stop + 40.0));
+    stand(&mut h, l, stop + 30.0, half);
+    assert!(h.nodes[l].core.carried(), "half the time still");
+    stand(&mut h, l, stop + 10.0, half + 60);
+    assert!(!h.nodes[l].core.carried());
+    assert_eq!(traced(&h, l, Trace::Carried { carried: false }), 1);
+    assert_eq!(traced(&h, l, Trace::Changed), 2);
+    assert_eq!(last_type(&h, l), SLEEPY | ANCHORLESS);
+    // Still anchorless, it takes each fix.
+    fix(&mut h, l, stop + 40.0);
+    assert_eq!(h.nodes[l].core.config().position, pos(stop + 40.0));
+    // Carried again as R comes in reach, it anchors carried, and stays so
+    // however long its fixes stand, since it takes none.
+    let stop = walk_until_carried(&mut h, l, stop + 40.0);
+    h.link(r, l);
+    let rid = h.nodes[r].core.id();
+    assert!(h.run_until(h.now + secs(700), |h| h.nodes[l].core.anchor().is_some()));
+    assert_eq!(h.nodes[l].core.anchor().map(|a| a.id), Some(rid));
+    stand(&mut h, l, stop, STILL + 120);
+    assert!(h.nodes[l].core.carried());
+    assert_eq!(h.nodes[l].core.config().position, pos(stop));
+    assert_eq!(h.nodes[l].core.address(), pos(0.0));
+    assert_eq!(last_type(&h, l), SLEEPY | CARRIED);
 }
 
 /// A carried sleepy node plugged in is a carried relay: it heartbeats
@@ -280,7 +280,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     let (r, c, t, o) = (0, 1, 2, 3);
     let mut h = Harness::powered(vec![
         node(0.0, true, 31),
-        node(20.0, false, 32),
+        carried_node(20.0, 32),
         node(200.0, false, 33),
         node(400.0, true, 34),
     ]);
@@ -291,7 +291,8 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     h.set_rssi(r, c, -60);
     h.start_at(c, at(10));
     h.run_until(at(1000), |_| false);
-    let stop = walk_until_carried(&mut h, c, 20.0);
+    let stop = 20.0;
+    assert!(h.nodes[c].core.carried() && h.nodes[c].core.anchor().is_some());
     power(&mut h, c, true);
     assert!(!h.nodes[c].core.sleepy() && h.nodes[c].core.carried());
     assert_eq!(traced(&h, c, Trace::Role { sleepy: false }), 1);
@@ -353,31 +354,31 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
         .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id)));
 }
 
-/// A sleepy node that is not carried, plugged in, is fixed at once where it
-/// is then, even with a run of far fixes begun; its first fix as a relay
+/// A sleepy node that is not carried, plugged in, is fixed at once at the
+/// place it has, its own and not its anchor's; its first fix as a relay
 /// is its place (roadmap D85), which it keeps.
 #[test]
 fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
-    for started in [false, true] {
-        let (r, s) = (0, 1);
-        let mut h = Harness::powered(vec![node(0.0, true, 41), node(20.0, false, 42)]);
-        h.link(r, s);
-        h.start_at(s, at(10));
-        h.run_until(at(1000), |_| false);
-        let here = if started { 100.0 } else { 40.0 };
-        fix(&mut h, s, here);
-        assert_eq!(traced(&h, s, Trace::FarFix), usize::from(started));
-        power(&mut h, s, true);
-        assert!(!h.nodes[s].core.carried());
-        assert_eq!(h.nodes[s].core.address(), pos(here));
-        for k in 1..=10 {
-            h.run_for(secs(10));
-            fix(&mut h, s, here + 40.0 * (k % 2) as f64);
-        }
-        assert!(!h.nodes[s].core.carried(), "started: {started}");
-        assert_eq!(h.nodes[s].core.config().position, pos(here + 40.0));
-        assert_eq!(last_type(&h, s), RELAY);
+    let (r, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, true, 41), node(20.0, false, 42)]);
+    h.link(r, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert_eq!(h.nodes[s].core.address(), pos(0.0));
+    power(&mut h, s, true);
+    assert!(!h.nodes[s].core.sleepy() && !h.nodes[s].core.carried());
+    assert_eq!(h.nodes[s].core.address(), pos(20.0));
+    let here = 100.0;
+    h.run_for(secs(10));
+    fix(&mut h, s, here);
+    assert_eq!(h.nodes[s].core.config().position, pos(here));
+    for k in 1..=10 {
+        h.run_for(secs(10));
+        fix(&mut h, s, here + 40.0 * (k % 2) as f64);
     }
+    assert!(!h.nodes[s].core.carried());
+    assert_eq!(h.nodes[s].core.config().position, pos(here));
+    assert_eq!(last_type(&h, s), RELAY);
 }
 
 /// A sleepy node plugged in at a place its last fix does not show takes
@@ -412,11 +413,19 @@ fn a_sleepy_node_plugged_in_takes_its_first_fix_as_its_place() {
 fn a_map_point_fixes_any_node() {
     for external in [false, true] {
         let (r, n) = (0, 1);
-        let mut h = Harness::powered(vec![node(0.0, true, 51), node(20.0, external, 52)]);
+        let carried = if external {
+            node(20.0, true, 52)
+        } else {
+            carried_node(20.0, 52)
+        };
+        let mut h = Harness::powered(vec![node(0.0, true, 51), carried]);
         h.link(r, n);
         h.start_at(n, at(10));
         h.run_until(at(1000), |_| false);
-        walk_until_carried(&mut h, n, 20.0);
+        if external {
+            walk_until_carried(&mut h, n, 20.0);
+        }
+        assert!(h.nodes[n].core.carried());
         let changes = traced(&h, n, Trace::Changed);
         h.command(
             n,

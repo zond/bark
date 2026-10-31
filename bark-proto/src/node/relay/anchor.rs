@@ -6,6 +6,15 @@
 //! It takes as its anchor the first node it hears that is neither sleepy
 //! nor carried, at once, and listens on the anchor's home channel; its
 //! address is the anchor's position and its own ID (spec "Addresses").
+//! The anchor's position is the position it works by while it has one
+//! ([`Node::address`]): it beats it, centres its plane on it and rebuilds
+//! the short positions it hears near it, and it takes no GPS fix and runs
+//! no search (`relay/gps.rs`, `relay/motion.rs`). Hearing the anchor's
+//! heartbeat each rotation says it is within reach of a fixed relay,
+//! which is all its address needs; what its own fixes bought it, the
+//! carried flag and a check of the anchor after a move, nothing reads
+//! while it sleeps, and the anchor missed twice checks it a rotation or
+//! two later (spec "Beats", roadmap D91).
 //! It stays awake for a worst-case rotation after that and then takes the
 //! strongest node it heard, without a margin; after that it moves only to
 //! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
@@ -62,7 +71,7 @@
 use super::{Anchor, Node, Stage};
 use crate::event::{Action, Trace};
 use crate::ids::NodeId;
-use crate::node::{heartbeat_interval, heartbeat_lag, OWNER_RADIUS_M};
+use crate::node::{heartbeat_interval, heartbeat_lag};
 use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::anchorless_beat_period;
 use crate::tables::heard::beat_period;
@@ -89,22 +98,6 @@ pub const CLOCK_DRIFT_PPM: u64 = 50;
 /// over `d`.
 fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
-}
-
-/// The path-loss exponent of the scenarios, fitted to the ranges of spec
-/// "Physical layer" (`scenarios/s4-capacity.toml`).
-pub const PATH_LOSS_EXPONENT: f32 = 3.6;
-
-/// How far a node that sleeps may move from where it chose or confirmed
-/// its anchor, `reach_m` away then, before it listens a rotation to check
-/// it (spec "Relay choice"): as far as takes the anchor's signal down by
-/// [`SWITCH_MARGIN_DB`] when moving straight away from it,
-/// `reach × (10^(margin / 10n) − 1)`, 0.67 of the distance to it; and no
-/// less than two GPS fixes of a node that has not moved may differ by
-/// ([`OWNER_RADIUS_M`]).
-pub fn move_bound_m(reach_m: f32) -> f32 {
-    let ratio = libm::powf(10.0, SWITCH_MARGIN_DB / (10.0 * PATH_LOSS_EXPONENT));
-    (reach_m * (ratio - 1.0)).max(OWNER_RADIUS_M)
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
@@ -421,38 +414,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.beacon.next_at = now;
         self.radio.beacon.quick = 1;
         self.anchored();
-        self.gps_anchor();
+        self.gps_anchor(now, emit);
     }
 
     /// The anchor was chosen or confirmed: a node that sleeps keeps it
-    /// whether or not it hears it, and measures its moves from here
-    /// (module documentation).
+    /// whether or not it hears it (module documentation).
     pub(super) fn anchored(&mut self) {
         self.timers.rescan_ends = None;
         self.timers.watch_at = None;
-        self.anchored_at_fix();
         let keep = self.anchored_sleepy() && !self.config.sleepy_listens;
         self.neighbours
             .pin(self.anchor().filter(|_| keep).map(|a| a.id));
     }
 
-    /// The fix asked for at a new anchor came: the node chose from there
-    /// (`relay/gps.rs`).
-    pub(super) fn anchored_at_fix(&mut self) {
-        let at = self.config.position;
-        let reach_m = self.anchor().map_or(0.0, |a| {
-            self.plane.point(a.position).distance_m(Default::default())
-        });
-        if let Some(s) = self.sleep_mut() {
-            s.chosen_from = at;
-            s.reach_m = reach_m;
-        }
-    }
-
-    /// A sleepy node's anchor is `anchor`; a relay has none.
+    /// A sleepy node's anchor is `anchor`; a relay has none. The node
+    /// works by its address, so the plane follows it.
     pub(super) fn set_anchor(&mut self, anchor: Option<Anchor>) {
+        let was = self.address();
         if let Some(s) = self.sleep_mut() {
             s.anchor = anchor;
+        }
+        if self.address() != was {
+            self.replane();
         }
     }
 

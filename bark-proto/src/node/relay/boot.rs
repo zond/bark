@@ -39,7 +39,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
         self.radio.beacon.burst = if self.sleepy() { 0 } else { CHANNELS };
-        if !self.gps_tracks() {
+        // A sleepy node searches once it is anchorless (`relay/gps.rs`).
+        if !self.sleepy() && !self.gps_tracks() {
             self.gps_due();
         }
         emit(Action::Listen(self.home));
