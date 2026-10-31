@@ -48,7 +48,8 @@ use boot::random_channel;
 use heartbeat::Beacon;
 use sweep::Sweep;
 
-use power::Charge;
+use forward::OwnMessage;
+use power::Battery;
 
 use crate::event::{Action, AppCommand, Event};
 use crate::geo::LocalPlane;
@@ -307,16 +308,8 @@ pub type SleepyNode = Node<0, 0>;
 pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
     mode: Mode,
-    /// Its battery read at or below the low level since it last read at
-    /// or above the high one, or since its external power (`relay/power.rs`).
-    low: bool,
-    /// The scale of the driver's battery readings
-    /// ([`crate::node::BATTERY_SCALE_ONE`] is one); `None` before the
-    /// first calibration.
-    battery_scale: Option<u16>,
-    /// Since when it has been on external power as last reported, or
-    /// when on battery its next reading is taken as a full cell's.
-    charge: Charge,
+    /// What it knows of its battery (`relay/power.rs`).
+    battery: Battery,
     config: Config,
     timers: Timers,
     /// What the radio side keeps of the hand-over in flight, that of
@@ -332,12 +325,8 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     feed_due: bool,
-    /// The application's message, from when it is taken until its first
-    /// hop takes it, it arrives here, or it is dropped (roadmap D29).
-    own: Option<MsgId>,
-    /// Refusals in a row of `own` by banned neighbours: each doubles the
-    /// hold before it is offered again (`budget::hold`).
-    own_refusals: u8,
+    /// The application's message (`relay/forward.rs`).
+    own: OwnMessage,
     /// Neighbour slots the current forward passed over because
     /// listen-before-talk gave up on them, they refused it, or its
     /// attempts went unanswered (spec "Hand-over"); not tried.
@@ -391,9 +380,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: channel,
             stage: Stage::Off,
             mode: Self::mode_at_boot(config.position),
-            low: false,
-            charge: Charge::Battery,
-            battery_scale: None,
+            battery: Battery::at_boot(None),
             radio: Excursion::new(),
             busy: BusyEstimator::from_config(&config),
             budget: Budget::new(),
@@ -426,8 +413,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
-            own: None,
-            own_refusals: 0,
+            own: OwnMessage::NONE,
             feed_due: false,
             config,
             timers: Timers::UNSET,
@@ -474,9 +460,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: h,
             stage,
             mode,
-            low,
-            charge,
-            battery_scale,
+            battery,
             radio,
             busy,
             budget,
@@ -494,7 +478,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivery,
             delivered,
             own,
-            own_refusals,
             feed_due,
         } = self;
         *stored = config.stored;
@@ -503,9 +486,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *h = home;
         *stage = Stage::Off;
         *mode = Self::mode_at_boot(config.position);
-        *low = false;
-        *charge = Charge::Battery;
-        *battery_scale = config.stored.and_then(|s| s.battery_scale);
+        *battery = Battery::at_boot(config.stored.and_then(|s| s.battery_scale));
         *radio = Excursion::new();
         *busy = BusyEstimator::from_config(&config);
         *budget = Budget::new();
@@ -538,8 +519,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
-        *own = None;
-        *own_refusals = 0;
+        *own = OwnMessage::NONE;
         *feed_due = false;
         *timers = Timers::UNSET;
         *c = config;
@@ -759,7 +739,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Kept only where it is read (`relay/power.rs`), so that a node
             // without battery levels writes no more than before.
             relay: !self.sleepy() && self.config.battery.is_some(),
-            battery_scale: self.battery_scale,
+            battery_scale: self.battery.scale,
         }
     }
 
@@ -943,7 +923,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
-            AppCommand::Battery { millivolts } => self.battery(millivolts, now),
+            AppCommand::Battery { millivolts } => self.battery_read(millivolts, now),
             AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::SetPosition { position } | AppCommand::Fix { position } => {
                 let took = match cmd {

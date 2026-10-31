@@ -212,6 +212,23 @@ fn preamble(n: &Neighbour) -> u16 {
     }
 }
 
+/// The application's own message, from when it is taken until its first
+/// hop takes it, it arrives here, or it is dropped (roadmap D29).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct OwnMessage {
+    pub(super) id: Option<MsgId>,
+    /// Refusals in a row by banned neighbours: each doubles the hold
+    /// before it is offered again (`budget::hold`).
+    pub(super) refusals: u8,
+}
+
+impl OwnMessage {
+    pub(super) const NONE: OwnMessage = OwnMessage {
+        id: None,
+        refusals: 0,
+    };
+}
+
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// This node's ID.
     pub(super) fn me(&self) -> NodeId {
@@ -380,7 +397,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     fn drop_msg(&mut self, msg_id: MsgId, reason: DropReason, emit: &mut dyn FnMut(Action)) {
-        if self.own == Some(msg_id) {
+        if self.own.id == Some(msg_id) {
             self.set_own(None);
         }
         emit(Action::Trace(Trace::Dropped { msg_id, reason }));
@@ -761,7 +778,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// node it is for, with the time it has left now.
     fn arrive(&mut self, id: MsgId, d: &Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (node, payload) = (d.dst_id, d.payload);
-        if self.own == Some(id) {
+        if self.own.id == Some(id) {
             self.set_own(None);
         }
         if node == self.me() {
@@ -804,7 +821,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// would be taken but without the ACK, and not every neighbour is
     /// banned; for a sleepy node with a live anchor, not the anchor.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
-        self.own.is_none()
+        self.own.id.is_none()
             && now >= self.timers.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
@@ -815,7 +832,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the application may send again, if only the bucket and bans
     /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.own.is_some() || self.regular() >= SEND_QUEUE {
+        if self.own.id.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
@@ -833,8 +850,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The application's message is now `own`; a new one, or none, has
     /// been refused no time yet.
     fn set_own(&mut self, own: Option<MsgId>) {
-        self.own = own;
-        self.own_refusals = 0;
+        self.own = OwnMessage {
+            id: own,
+            refusals: 0,
+        };
     }
 
     /// Deliver the message set aside once the delivery queue has a place.
@@ -1059,7 +1078,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
-            if self.own == Some(id) && d.dst_id != self.me() && !self.delivery.has_room(now) {
+            if self.own.id == Some(id) && d.dst_id != self.me() && !self.delivery.has_room(now) {
                 return Routed::Hold;
             }
             let time_left = Data::units(out.expires.since(now));
@@ -1078,22 +1097,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             });
         }
         if let Some(t) = self.ban_ends(&record, now) {
-            if self.own == Some(id) {
+            if self.own.id == Some(id) {
                 // Each offer costs the refuser a reply and hides its ACKs.
-                self.own_refusals = self.own_refusals.saturating_add(1);
-                return Routed::Wait(t.max(now + hold(self.own_refusals)));
+                self.own.refusals = self.own.refusals.saturating_add(1);
+                return Routed::Wait(t.max(now + hold(self.own.refusals)));
             }
             return Routed::Wait(t);
         }
         if let Some(ends) = self.timers.boot_ends {
-            if self.own == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
+            if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
                 // Until it hears a relay, or its first rotation ends
                 // (`heard`).
                 return Routed::Wait(ends);
             }
         }
         let alone = self.neighbours.live(now).next().is_none();
-        if self.sleepy() && self.own == Some(id) && alone {
+        if self.sleepy() && self.own.id == Some(id) && alone {
             // Until its time runs out (`expire`).
             return Routed::Wait(now + self.config.fade_retry);
         }
@@ -1369,7 +1388,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.records.get(id) {
             // A sleepy node hands its own message over as fresh work: the
             // node that takes it is its origin (module documentation).
-            Some(r) if self.anchored_sleepy() && self.own == Some(id) && r.parent().is_none() => {
+            Some(r)
+                if self.anchored_sleepy() && self.own.id == Some(id) && r.parent().is_none() =>
+            {
                 Some(0)
             }
             Some(r) if out.kind.delivers() => Some(r.highest_hops().saturating_add(1)),
@@ -1431,7 +1452,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.neighbours.answered(by, now);
             self.neighbours.refused(by, now + wait);
         }
-        if self.sleepy() && self.own == Some(msg_id) && out.kind == Kind::Forward {
+        if self.sleepy() && self.own.id == Some(msg_id) && out.kind == Kind::Forward {
             // A sleepy node's own message goes back to its application,
             // which may offer it again once the wait is over: refused at
             // the origin, it does not age here (spec "A sleepy node's own message").
@@ -1504,7 +1525,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let trace = match out.kind {
             Kind::Forward => {
-                if self.own == Some(id) {
+                if self.own.id == Some(id) {
                     self.set_own(None);
                 }
                 Trace::Forwarded {

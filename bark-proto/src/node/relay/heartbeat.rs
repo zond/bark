@@ -424,7 +424,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     relays: self.relays_known(now),
                     ends: Some(ends),
                 }));
-                if let Some(id) = self.own {
+                if let Some(id) = self.own.id {
                     self.queue.due_now(id, now);
                 }
             }
