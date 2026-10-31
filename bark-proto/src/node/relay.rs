@@ -48,14 +48,14 @@ use boot::random_channel;
 use heartbeat::Beacon;
 use sweep::Sweep;
 
-use forward::OwnMessage;
+use forward::{Forwarding, OwnMessage};
 use power::Battery;
 
 use crate::event::{Action, AppCommand, Event};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::Excursion;
-use crate::node::transfer::{Flight, Replies};
+use crate::node::transfer::Replies;
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS};
@@ -312,9 +312,8 @@ pub struct Node<const H: usize, const Q: usize> {
     battery: Battery,
     config: Config,
     timers: Timers,
-    /// What the radio side keeps of the hand-over in flight, that of
-    /// `queue`'s current entry.
-    flight: Flight,
+    /// What forwarding keeps beside the send queue (`relay/forward.rs`).
+    forwarding: Forwarding,
     sweep: Sweep,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
@@ -322,15 +321,8 @@ pub struct Node<const H: usize, const Q: usize> {
     gps: gps::Gps,
     replies: Replies,
     radio: Excursion<Job>,
-    /// The send queue may have room for the delivery queue: a hand-over
-    /// ended or the delivery queue changed.
-    feed_due: bool,
     /// The application's message (`relay/forward.rs`).
     own: OwnMessage,
-    /// Neighbour slots the current forward passed over because
-    /// listen-before-talk gave up on them, they refused it, or its
-    /// attempts went unanswered (spec "Hand-over"); not tried.
-    skipped: u64,
     /// What the node last told its driver to keep across a reboot, or
     /// was handed back at boot (`store.rs`).
     stored: Option<Stored>,
@@ -405,8 +397,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             },
             records: Records::new(),
             queue: SendQueue::new(),
-            flight: Flight::NONE,
-            skipped: 0,
+            forwarding: Forwarding::IDLE,
             replies: Replies::new(),
             heard: Heard::from_config(&config),
             motion: Motion::at_boot(&config),
@@ -414,7 +405,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivery: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             own: OwnMessage::NONE,
-            feed_due: false,
             config,
             timers: Timers::UNSET,
             rng: Rng::new(0),
@@ -469,8 +459,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             beacon,
             records,
             queue,
-            flight,
-            skipped,
+            forwarding,
             replies,
             heard,
             motion,
@@ -478,7 +467,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             delivery,
             delivered,
             own,
-            feed_due,
         } = self;
         *stored = config.stored;
         *id = node_id;
@@ -511,8 +499,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         records.clear();
         queue.clear();
-        *flight = Flight::NONE;
-        *skipped = 0;
+        *forwarding = Forwarding::IDLE;
         *replies = Replies::new();
         *heard = Heard::from_config(&config);
         *motion = Motion::at_boot(&config);
@@ -520,7 +507,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *delivery = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
-        *feed_due = false;
         *timers = Timers::UNSET;
         *c = config;
         *r = rng;
@@ -815,7 +801,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the next be tried.
     fn schedule(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
-        if self.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
+        if self.forwarding.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
         while self.radio.idle() {

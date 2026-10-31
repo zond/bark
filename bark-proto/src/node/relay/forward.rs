@@ -145,7 +145,7 @@ use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::node::transfer::{self, Check, HandOver, Missed, Owed, Reply, IN_FLIGHT};
+use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, IN_FLIGHT};
 use crate::node::Rng;
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
@@ -212,6 +212,31 @@ fn preamble(n: &Neighbour) -> u16 {
     }
 }
 
+/// What forwarding keeps beside the send queue: the one hand-over in
+/// flight, the neighbours the current forward has passed over, and
+/// whether the send queue may have room for the delivery queue.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Forwarding {
+    /// What the radio side keeps of the hand-over in flight, that of the
+    /// send queue's current entry.
+    pub(super) flight: Flight,
+    /// Neighbour slots the current forward passed over because
+    /// listen-before-talk gave up on them, they refused it, or its
+    /// attempts went unanswered (spec "Hand-over"); not tried.
+    pub(super) skipped: u64,
+    /// The send queue may have room for the delivery queue: a hand-over
+    /// ended or the delivery queue changed.
+    pub(super) feed_due: bool,
+}
+
+impl Forwarding {
+    pub(super) const IDLE: Forwarding = Forwarding {
+        flight: Flight::NONE,
+        skipped: 0,
+        feed_due: false,
+    };
+}
+
 /// The application's own message, from when it is taken until its first
 /// hop takes it, it arrives here, or it is dropped (roadmap D29).
 #[derive(Clone, Copy, Debug)]
@@ -264,7 +289,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn handover(&mut self) -> Option<(HandOver<'_>, &mut Rng)> {
         let me = self.id;
         let out = self.queue.current_mut()?;
-        Some((HandOver::of(out, &mut self.flight, me), &mut self.rng))
+        Some((
+            HandOver::of(out, &mut self.forwarding.flight, me),
+            &mut self.rng,
+        ))
     }
 
     /// Give the hand-over under way up: its entry is queued again.
@@ -451,7 +479,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             !n.last_resort()
                 && !record.handed(slot)
                 && Some(n.id) != parent
-                && (!blocks || self.skipped & (1 << slot) == 0 || self.neighbours.is_banned(n, now))
+                && (!blocks
+                    || self.forwarding.skipped & (1 << slot) == 0
+                    || self.neighbours.is_banned(n, now))
         })
     }
 
@@ -488,7 +518,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
-        let skipped = if blocks { self.skipped } else { 0 };
+        let skipped = if blocks { self.forwarding.skipped } else { 0 };
         // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
@@ -807,7 +837,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::DeliveryFull, emit);
                 return;
             }
-            Pushed::Queued => self.feed_due = true,
+            Pushed::Queued => self.forwarding.feed_due = true,
         }
         emit(Action::Trace(Trace::Queued { msg_id: id, node }));
         self.deliver_now(node, now);
@@ -958,7 +988,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if self.queue.current_index() != Some(i) {
                 // What was set aside belongs to the entry chosen before.
                 self.queue.select(i);
-                self.skipped = 0;
+                self.forwarding.skipped = 0;
             }
             let Some(out) = self.queue.current().copied() else {
                 return;
@@ -1002,22 +1032,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
                 Routed::Done => {
                     self.queue.take_current();
-                    self.skipped = 0;
-                    self.feed_due = true;
+                    self.forwarding.skipped = 0;
+                    self.forwarding.feed_due = true;
                 }
                 Routed::Hold => {
                     if let Some(current) = self.queue.current_mut() {
                         current.state = State::Held;
                     }
                     self.queue.deselect();
-                    self.skipped = 0;
-                    self.feed_due = true;
+                    self.forwarding.skipped = 0;
+                    self.forwarding.feed_due = true;
                 }
                 Routed::Wait(t) => {
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = t;
                     }
-                    self.skipped = 0;
+                    self.forwarding.skipped = 0;
                 }
             }
         }
@@ -1042,7 +1072,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             c.state = State::Queued;
         }
-        self.skipped = 0;
+        self.forwarding.skipped = 0;
     }
 
     /// Whether the delivery `out` goes outside its node's window, with the
@@ -1336,8 +1366,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     false => DropReason::HopCap,
                 };
                 self.queue.take_current();
-                self.skipped = 0;
-                self.feed_due = true;
+                self.forwarding.skipped = 0;
+                self.forwarding.feed_due = true;
                 self.drop_msg(id, reason, emit);
                 return;
             };
@@ -1406,7 +1436,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // Choose again, past this neighbour (spec "Hand-over" step 2).
                 let to = out.expect(self.me()).map_or(NodeId::NONE, |e| e.from);
                 if let Some(slot) = self.neighbours.slot_of(to) {
-                    self.skipped |= 1 << slot;
+                    self.forwarding.skipped |= 1 << slot;
                 }
             }
             Kind::Return | Kind::Deliver | Kind::Direct => {
@@ -1457,8 +1487,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // which may offer it again once the wait is over: refused at
             // the origin, it does not age here (spec "A sleepy node's own message").
             self.queue.take_current();
-            self.skipped = 0;
-            self.feed_due = true;
+            self.forwarding.skipped = 0;
+            self.forwarding.feed_due = true;
             self.timers.retry_at = now + wait;
             self.records.forget(msg_id);
             self.drop_msg(msg_id, DropReason::Pushback, emit);
@@ -1471,14 +1501,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match out.kind {
             Kind::Forward => {
                 if let Some(slot) = slot {
-                    self.skipped |= 1 << slot;
+                    self.forwarding.skipped |= 1 << slot;
                 }
                 self.cancel_handover();
             }
             // No other receiver: wait for the ban, and let the queue move.
             Kind::Return | Kind::Deliver | Kind::Direct => {
                 let tries = self.handover().map_or(0, |(mut h, _)| h.refused());
-                self.skipped = 0;
+                self.forwarding.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
                     current.not_before = now + wait;
                     current.tries = tries;
@@ -1489,11 +1519,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The current hand-over succeeded: its receiver has the packet.
     pub(super) fn handover_done(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.skipped = 0;
+        self.forwarding.skipped = 0;
         let Some(out) = self.queue.take_current() else {
             return;
         };
-        self.feed_due = true;
+        self.forwarding.feed_due = true;
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return;
         };
@@ -1574,7 +1604,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     for _ in 1..silences {
                         fade = fade.mul(2).min(self.config.delivery_ttl);
                     }
-                    self.skipped = 0;
+                    self.forwarding.skipped = 0;
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = ban.max(now + fade);
                         current.tries = 0;
@@ -1584,7 +1614,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if let Some(t) = self.wait_for(d.dst_hop, now) {
                     // The same neighbour again once its ban ends, with
                     // fresh attempts (roadmap D42, W).
-                    self.skipped = 0;
+                    self.forwarding.skipped = 0;
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = t;
                         current.tries = 0;
@@ -1596,7 +1626,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // Most likely the frame, not the ACK, was lost: the
                 // neighbour stays untried, set aside for this choice only.
                 if let Some(slot) = self.neighbours.slot_of(d.dst_hop) {
-                    self.skipped |= 1 << slot;
+                    self.forwarding.skipped |= 1 << slot;
                 }
             }
         }
@@ -1619,8 +1649,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
         }
         self.queue.take_current();
-        self.skipped = 0;
-        self.feed_due = true;
+        self.forwarding.skipped = 0;
+        self.forwarding.feed_due = true;
         if let Some(reason) = reason {
             self.drop_msg(id, reason, emit);
         }
@@ -1723,14 +1753,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if self.queue.current_index() == Some(i) {
                 // Not yet on air: waiting its turn, for the bucket or to retry.
                 self.cancel_handover();
-                self.skipped = 0;
+                self.forwarding.skipped = 0;
             }
             let mut k = 0;
             self.queue.retain(|_, _| {
                 k += 1;
                 k != i + 1
             });
-            self.feed_due = true;
+            self.forwarding.feed_due = true;
             self.drop_msg(id.unwrap_or_default(), DropReason::Expired, emit);
         }
     }
@@ -1770,7 +1800,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the hand-over in flight next needs the core, if it waits.
     pub(super) fn flight_wake(&self) -> Option<Instant> {
         match self.in_flight()?.state {
-            State::Waiting(_) | State::AwaitAck => Some(self.flight.until()),
+            State::Waiting(_) | State::AwaitAck => Some(self.forwarding.flight.until()),
             _ => None,
         }
     }

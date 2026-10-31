@@ -154,7 +154,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// bucket will fit the message that did not, or else when a hand-over
     /// ends (`feed_due`).
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
-        self.feed_due = false;
+        self.forwarding.feed_due = false;
         self.timers.feed_at = None;
         let mut i = 0;
         // The windows first: their nodes listen only briefly.
@@ -283,7 +283,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             q.relay_home = Some(home);
             any = true;
         }
-        self.feed_due |= any;
+        self.forwarding.feed_due |= any;
     }
 
     /// Make a place in the full delivery queue for a message arriving at
@@ -298,7 +298,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue.retain(|current, o| {
             (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
         });
-        self.feed_due = true;
+        self.forwarding.feed_due = true;
         emit(Action::Trace(Trace::Dropped {
             msg_id: id,
             reason: DropReason::QueueExpired,

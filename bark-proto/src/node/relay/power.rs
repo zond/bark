@@ -279,7 +279,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     false
                 };
                 if leaves {
-                    self.feed_due = true;
+                    self.forwarding.feed_due = true;
                     // What the network promises a node it cannot reach is a
                     // delivery TTL; a flush that the duty cap or a busy
                     // channel holds up longer would keep a node with a low

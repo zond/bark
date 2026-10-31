@@ -187,7 +187,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.motion.far_since = Some(now);
                 emit(Action::Trace(Trace::FarFix));
                 // A sleepy node holds nothing to flush.
-                self.feed_due |= !self.sleepy();
+                self.forwarding.feed_due |= !self.sleepy();
                 now
             }
         };

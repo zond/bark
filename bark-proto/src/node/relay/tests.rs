@@ -377,7 +377,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     r.records.put(at, record);
     let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
     r.delivery.push(q);
-    r.feed_due = true;
+    r.forwarding.feed_due = true;
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(r.queue.is_empty(), "taken with a spent bucket");
     let fits = r
@@ -483,7 +483,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     r.records.put(at, record);
     let q = Queued::new(id, dst, node, b"ahead", u8::MAX, now).unwrap();
     r.delivery.push(q);
-    r.feed_due = true;
+    r.forwarding.feed_due = true;
     let mut checked = None;
     r.handle(Event::Wakeup, now, &mut |a| {
         if let Action::Lbt(c) = a {

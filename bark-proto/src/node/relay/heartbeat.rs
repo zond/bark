@@ -416,7 +416,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
-            self.skipped &= !(1 << slot);
+            self.forwarding.skipped &= !(1 << slot);
             if let (Some(ends), false) = (self.timers.boot_ends, hb.sleepy) {
                 // A relay learned in the first rotation: the application
                 // shows it, and its own message waits no longer.
