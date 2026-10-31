@@ -365,8 +365,8 @@ pub enum Trace {
         /// The receiver.
         by: NodeId,
     },
-    /// A DATA of a message this node has a record of was taken, and was
-    /// not a retransmission (spec "Receiving DATA" cases 4 and 5).
+    /// A DATA of a message this node has a record of was answered, and
+    /// was not a retransmission (spec "Receiving DATA" cases 4 to 6).
     Copy {
         /// The message.
         msg_id: MsgId,
@@ -374,6 +374,9 @@ pub enum Trace {
         returned: bool,
         /// This node holds another copy, which goes on (case 4).
         merged: bool,
+        /// Answered seen: this node holds none and the copy stays with
+        /// its sender (case 6).
+        seen: bool,
     },
     /// Every attempt of a hand-over to a neighbour went unanswered, and a
     /// failure was counted against it (spec "Hand-over" step 6).

@@ -188,16 +188,18 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
     }
 }
 
-/// A relay that has had the message, and holds none of it now, takes it
-/// when it is offered and goes on with its own search (spec "Receiving DATA" case 5).
-/// O, P and Q all hear each other; only R reaches D.
+/// A relay that has had the message, and holds none of it now, answers
+/// seen to a copy offered by a node it did not hand the message to, and
+/// that node goes on with its own search (spec "Receiving DATA" case 6,
+/// "The ACK"). O, P and Q all hear each other; only R reaches D.
 ///
-/// O → P → Q → O: O goes on, to Q, its next candidate. For Q, O is a
-/// neighbour it handed the message to, so this is O's return: Q has
-/// nothing left and returns it to P, and P to O. O moves on to R, and R
-/// delivers to D. Nothing is sent straight back.
+/// O → P → Q → O: O handed it to P, not to Q, so O answers Q seen and
+/// keeps nothing. Q marks O tried, has nothing left and returns it to P,
+/// and P to O. O moves on to R, and R delivers to D. Before this rule O
+/// took Q's offer and went on with its own search, to Q, which took that
+/// as O's return: two hand-overs more.
 #[test]
-fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
+fn a_relay_that_had_the_message_answers_seen_and_the_sender_goes_on() {
     let (o, p, q, r, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -221,12 +223,49 @@ fn a_relay_that_had_the_message_goes_on_with_its_own_search() {
             to: name(to),
         })
     };
-    assert_eq!(forwards(&h, o, id), vec![name(p), name(q), name(r)]);
+    assert_eq!(forwards(&h, o, id), vec![name(p), name(r)]);
     assert_eq!(forwards(&h, p, id), vec![name(q)]);
-    assert_eq!(forwards(&h, q, id), vec![name(o)]);
+    assert_eq!(forwards(&h, q, id), vec![]);
+    assert!(seen(&h, q, id, o) && seen_at(&h, o, id));
     assert!(returned(q, p) && returned(p, o));
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
+}
+
+/// Relay `i` was answered seen by relay `by` for message `id`.
+fn seen(h: &Harness<Relay>, i: usize, id: MsgId, by: usize) -> bool {
+    let by = core(h, by).id();
+    traces(h, i).contains(&Trace::Seen { msg_id: id, by })
+}
+
+/// Relay `i` answered seen to a copy of message `id`.
+fn seen_at(h: &Harness<Relay>, i: usize, id: MsgId) -> bool {
+    traces(h, i).contains(&Trace::Copy {
+        msg_id: id,
+        returned: false,
+        merged: false,
+        seen: true,
+    })
+}
+
+/// The drops of message `id` at relay `i`, by reason.
+fn drops(h: &Harness<Relay>, i: usize, id: MsgId) -> Vec<DropReason> {
+    traces(h, i)
+        .into_iter()
+        .filter_map(|t| match t {
+            Trace::Dropped { msg_id, reason } if msg_id == id => Some(reason),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Relay `i` dropped message `id` once, for `reason`, and nothing else
+/// was dropped anywhere.
+fn only_dropped_at(h: &Harness<Relay>, i: usize, id: MsgId, reason: DropReason) {
+    for j in 0..h.nodes.len() {
+        let expected = if j == i { vec![reason] } else { vec![] };
+        assert_eq!(drops(h, j, id), expected, "relay {j}: {:?}", traces(h, j));
+    }
 }
 
 /// The forwards of message `id` at relay `i`, in order.
@@ -252,18 +291,15 @@ fn no_drops(h: &Harness<Relay>) {
     }
 }
 
-/// A relay that took the message from this one and then offers it back
-/// during its own search is taken for its return: this relay goes on with
-/// its search. Here the child had the message before this relay handed
-/// it over, and went on with its own search; as it has not tried this
-/// relay, the search comes back to it.
+/// A relay that had the message earlier in the same search, and holds
+/// none of it, answers seen to the copy a later relay offers it, and the
+/// search comes back to it by returns (spec "Receiving DATA" case 6).
 ///
-/// W → Y → C → X. X offers Y, which has had the message and holds none of
-/// it: it goes on with its own search, to X. For X, Y took the message from
-/// it, so this is Y's return: X goes on to Z, a dead end, and returns to
-/// C, which returns to Y. Y goes on to E, which reaches D. Before, Y sent
-/// X's offer straight back, and ACKing it only would have ended the only
-/// copy.
+/// W → Y → C → X. X offers Y, which handed the message to C and not to
+/// X: Y answers seen and X marks Y tried. X goes on to Z, a dead end,
+/// and returns to C, which returns to Y. Y goes on to E, which reaches
+/// D. Before this rule Y took X's offer and went on with its own search,
+/// to X, which took that as Y's return and only then went on to Z.
 ///
 /// ```text
 ///   W - Y - C          D (far east)
@@ -272,7 +308,7 @@ fn no_drops(h: &Harness<Relay>) {
 ///            X - Z
 /// ```
 #[test]
-fn an_earlier_child_that_had_the_message_is_a_return() {
+fn an_earlier_relay_answers_seen_and_the_search_comes_back_by_returns() {
     let (w, y, c, x, z, e, d) = (0, 1, 2, 3, 4, 5, 6);
     // One at a time: seven relays at once would overflow a test's stack.
     let at = [
@@ -296,22 +332,23 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
         traces(&h, x)
     );
     let name = |i| core(&h, i).id();
-    assert_eq!(forwards(&h, x, id), vec![name(y), name(z)]);
-    assert_eq!(forwards(&h, y, id), vec![name(c), name(x), name(e)]);
+    assert_eq!(forwards(&h, x, id), vec![name(z)]);
+    assert_eq!(forwards(&h, y, id), vec![name(c), name(e)]);
+    assert!(seen(&h, x, id, y) && seen_at(&h, y, id));
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
 }
 
 /// A neighbour whose hand-over failed, and which never had the message,
-/// later offers it here (spec "Receiving DATA" case 5): X's first six frames to Y are
-/// lost, two hand-overs with Y's ban waited out between them (roadmap
-/// D42), and the second demotes Y (spec "Neighbour table"). Y stays untried (roadmap D36),
-/// so X moves on to Z, and Z hands it to
-/// Y, which offers it to X. X holds none of it and takes it, and hands it
-/// to Y, its one candidate left. For Y, X is a neighbour it handed the
-/// message to, so this is X's return: Y goes on to E, which reaches D.
-/// Before, a failed hand-over marked Y tried, X dropped the message for
-/// want of a route, and E was never tried.
+/// later offers it here and is answered seen (spec "Receiving DATA" case 6):
+/// X's first six frames to Y are lost, two hand-overs with Y's ban
+/// waited out between them (roadmap D42), and the second demotes Y
+/// (spec "Neighbour table"). Y stays untried (roadmap D36), so X moves
+/// on to Z, and Z hands it to Y, which offers it to X. X holds none of
+/// it and never handed it to Y: X answers seen, and Y, marking X tried,
+/// goes on to E, which reaches D. Before this rule X took the copy and
+/// handed it to Y, its one candidate left, and Y, for which X was then a
+/// return, went on to E: two hand-overs more.
 ///
 /// ```text
 ///   E - Y - X          D (far east)
@@ -319,7 +356,7 @@ fn an_earlier_child_that_had_the_message_is_a_return() {
 ///   D     Z-+
 /// ```
 #[test]
-fn a_neighbour_whose_hand_over_failed_is_tried_again() {
+fn a_neighbour_whose_hand_over_failed_goes_on_when_it_offers() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -347,9 +384,10 @@ fn a_neighbour_whose_hand_over_failed_is_tried_again() {
     );
     h.run_for(secs(10));
     let name = |i| core(&h, i).id();
-    assert_eq!(forwards(&h, x, id), vec![name(z), name(y)]);
+    assert_eq!(forwards(&h, x, id), vec![name(z)]);
     assert_eq!(forwards(&h, z, id), vec![name(y)]);
-    assert_eq!(forwards(&h, y, id), vec![name(x), name(e)]);
+    assert_eq!(forwards(&h, y, id), vec![name(e)]);
+    assert!(seen(&h, y, id, x) && seen_at(&h, x, id));
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
     assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
@@ -491,17 +529,19 @@ fn returns(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
         .count()
 }
 
-/// A child returns the message to a parent that gave up on it (roadmap
-/// D35, A). P's hand-over to C is taken, but C's ACKs are lost, so P,
-/// once it has waited for C's ban and failed a second time, which demotes
-/// C (roadmap D42), moves on to S. S hands it to C while C is still offering it to S, so
-/// C takes it as S's return; C has nothing left and returns it to P,
-/// which holds none of it. Before, P took this for an offer from an
-/// earlier child and sent it straight back, and C, receiving it from its
-/// parent, only ACKed it: no copy was left, and T, which reaches D, was
-/// never tried. Now P takes it as C's return. C never ACKed it, so it is
-/// untried (roadmap D36), but banned and demoted, so P goes on to T at
-/// once.
+/// A child returns the message to a parent that gave up on it, and the
+/// return ends there (spec "Receiving DATA" case 6, "Return to parent";
+/// roadmap D35 A, D90). P's hand-over to C is taken, but C's ACKs are
+/// lost, so P, once it has waited for C's ban and failed a second time,
+/// which demotes C (roadmap D42), moves on to S. S hands it to C while C
+/// is still offering it to S, so C takes it as S's return; C has nothing
+/// left and returns it to P, which holds none of it. C never ACKed P, so
+/// it is not among the neighbours P handed the message to: P answers
+/// seen, and C, with nowhere else to go, drops the return. T, which
+/// reaches D, is never tried: the copy S carried merged into C's, and the
+/// one P gave up on was the last. Before this rule P took it as C's
+/// return and went on to T. The cost is six ACKs lost in a row on one
+/// link while the other copy comes back over it.
 ///
 /// ```text
 ///       C              D (far east)
@@ -511,7 +551,7 @@ fn returns(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
 ///       T -------------+
 /// ```
 #[test]
-fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
+fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
     let (p, c, s, t, d) = (0, 1, 2, 3, 4);
     let hasty = Config {
         retry_backoff: Duration::ZERO,
@@ -542,37 +582,44 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_goes_on() {
         ack_names(bytes) == Some((nc, np)) && !p_moved
     }));
     let id = send(&mut h, p, d, b"gave up");
+    let ended = |h: &Harness<Relay>| drops(h, c, id) == [DropReason::ReturnSeen];
     assert!(
-        h.run_until(h.now + secs(30), |h| delivered(h, d, id)),
-        "lost: P {:?} C {:?}",
+        h.run_until(h.now + secs(30), ended),
+        "the return did not end at C: P {:?} C {:?}",
         traces(&h, p),
         traces(&h, c)
     );
+    h.run_for(secs(10));
     let name = |i| core(&h, i).id();
-    assert_eq!(forwards(&h, p, id), vec![name(s), name(t)]);
+    assert_eq!(forwards(&h, p, id), vec![name(s)]);
     assert_eq!(forwards(&h, s, id), vec![name(c)]);
-    assert_eq!(returns(&h, c, id), 1);
-    assert_eq!(messages(&h, d, id), 1);
-    no_drops(&h);
+    assert_eq!(returns(&h, c, id), 0, "the return was not taken");
+    assert!(seen(&h, c, id, p) && seen_at(&h, p, id));
+    assert!(!delivered(&h, d, id), "no copy was left to reach D");
+    only_dropped_at(&h, c, id, DropReason::ReturnSeen);
+    assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
 }
 
-/// A parent offers the message again to a child it forgot (roadmap D35,
-/// B). P's message is for L, a leaf of Q's that is not there, and Q's
-/// delivery queue is full of its own messages for L, so Q refuses it
-/// (spec "Delivery queue") and P waits for each ban to end (spec "Overload waits"). Meanwhile P has tried
-/// C, a dead end, which returned it. C is then out of P's hearing long
-/// enough for its entry to expire, and comes back into a new slot, which
-/// clears the mark that P handed it the message (spec "Message records"). When Q next
-/// refuses, P offers it to C again. Before, C, which had returned it and
-/// holds none of it, only ACKed what came from its parent: no copy was
-/// left. Now C takes it and returns it at once, and P waits for Q, which
-/// takes it once its queue has room.
+/// A parent offers the message again to a child it forgot, and the child
+/// answers seen (spec "Receiving DATA" case 6; roadmap D35 B, D90). P's
+/// message is for L, a leaf of Q's that is not there, and Q's delivery
+/// queue is full of its own messages for L, so Q refuses it
+/// (spec "Delivery queue") and P waits for each ban to end
+/// (spec "Overload waits"). Meanwhile P has tried C, a dead end, which
+/// returned it. C is then out of P's hearing long enough for its entry to
+/// expire at P, and P's at C, and each comes back into a new slot, which
+/// clears the mark that the one handed the other the message
+/// (spec "Message records"). When Q next refuses, P offers it to C
+/// again. For C, P is now a node it did not hand the message to: C
+/// answers seen, and P, marking C tried, waits for Q, which takes it once
+/// its queue has room. Before this rule C took it and returned it at
+/// once: one hand-over more.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
 /// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in minutes, not
 /// hours.
 #[test]
-fn a_child_offered_the_message_again_by_its_parent_returns_it() {
+fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     use bark_proto::tables::delivery::DELIVERY_QUEUE;
     let (p, c, q) = (0, 1, 2);
     let quick = Config {
@@ -618,10 +665,10 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
         "C did not expire at P"
     );
     h.link(p, c);
-    let offered_again = |h: &Harness<Relay>| forwards(h, p, id).len() == 2;
+    let offered_again = |h: &Harness<Relay>| seen(h, p, id, c);
     assert!(
         h.run_until(h.now + secs(300), offered_again),
-        "P did not offer C again"
+        "P did not offer C again, or C did not answer seen"
     );
     assert!(h.now > returned_at + expiry);
     let queued = |h: &Harness<Relay>| {
@@ -638,8 +685,9 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     );
     // Q's ACK.
     h.run_for(secs(1));
-    assert_eq!(forwards(&h, p, id), vec![nc, nc, name(&h, q)]);
-    assert_eq!(returns(&h, c, id), 2);
+    assert_eq!(forwards(&h, p, id), vec![nc, name(&h, q)]);
+    assert_eq!(returns(&h, c, id), 1);
+    assert!(seen_at(&h, c, id));
     // Q's own messages expire in its queue; nothing else ends.
     for i in [p, c] {
         assert!(!traces(&h, i)
@@ -648,21 +696,18 @@ fn a_child_offered_the_message_again_by_its_parent_returns_it() {
     }
 }
 
-/// A copy taken for a retransmission (roadmap D35, C). X's hand-over to
+/// A copy with a count already seen is not a retransmission, and a
+/// return from a child that never ACKed is answered seen (spec
+/// "Receiving DATA" cases 3 and 6; roadmap D35 C, D90). X's hand-over to
 /// Y is taken, but Y's ACKs are lost, so X, once a second failure has
-/// demoted Y (roadmap D42), moves on to Z. Y and Z are dead
-/// ends and return it, Y after X has handed it to Z, and Z after Y, with
-/// the count Y's return raised X's highest to. Before, X took Y's return
-/// for an earlier child's offer and sent it straight back, where Y only
-/// ACKed it, and took Z's return for a retransmission of a packet it had
-/// handled, and only ACKed it: no copy was left, and W, which reaches D,
-/// was never tried. A retransmission is now the last packet's sender and
-/// count again. X, holding none, takes Y's return. Y never ACKed it, so
-/// it is untried (roadmap D36), but banned and demoted, so X goes on to
-/// W, which reaches D. Once the ban ends,
-/// a later return brings X its copy back and X offers Y again; Y returns
-/// it a second time and X, the origin with nothing left, drops that copy
-/// as a search ends. The message arrives once.
+/// demoted Y (roadmap D42), moves on to Z. Y and Z are dead ends and
+/// return it, Y after X has handed it to Z, and Z after Y, with the count
+/// Y's return raised X's highest to. Y never ACKed X, so X, holding none,
+/// answers Y seen, and Y drops the copy it carried; Z's is a return from
+/// a child, and Z's count is not the last packet's, so X goes on with its
+/// search, to W, which reaches D. The message arrives once. Before this
+/// rule X took Y's return too, and the search brought that copy back to Y
+/// and to X, which dropped it at the origin with nothing left.
 ///
 /// ```text
 ///       Y              D (far east)
@@ -715,24 +760,12 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
     // Z's return.
     h.run_for(secs(10));
     let name = |i| core(&h, i).id();
-    assert_eq!(forwards(&h, x, id), vec![name(z), name(w), name(y)]);
-    assert_eq!((returns(&h, y, id), returns(&h, z, id)), (2, 1));
+    assert_eq!(forwards(&h, x, id), vec![name(z), name(w)]);
+    assert_eq!((returns(&h, y, id), returns(&h, z, id)), (0, 1));
+    assert!(seen(&h, y, id, x) && seen_at(&h, x, id));
     assert_eq!(messages(&h, d, id), 1);
-    // The copy Y returned the second time, at the origin with nothing left.
-    let dropped = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::NoRoute,
-    };
-    let drops = traces(&h, x)
-        .into_iter()
-        .filter(|t| matches!(t, Trace::Dropped { .. }))
-        .collect::<Vec<_>>();
-    assert_eq!(drops, vec![dropped]);
-    for i in 1..5 {
-        assert!(!traces(&h, i)
-            .iter()
-            .any(|t| matches!(t, Trace::Dropped { .. })));
-    }
+    // The copy Y carried, which X had not handed it.
+    only_dropped_at(&h, y, id, DropReason::ReturnSeen);
     assert!((0..5).all(|i| core(&h, i).holding().next().is_none()));
 }
 
@@ -803,6 +836,7 @@ fn a_return_does_not_go_back_and_forth() {
         msg_id: id,
         returned: true,
         merged: false,
+        seen: false,
     };
     assert!(
         traces(&h, c).contains(&back),

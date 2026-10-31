@@ -94,6 +94,8 @@ const _: () = assert!(
 
 const ARRIVED: u8 = 1;
 const HAS_PARENT: u8 = 2;
+// The last packet was answered seen, not taken (spec "Receiving DATA").
+const LAST_SEEN: u8 = 4;
 
 /// Stands in for the parent's home at the origin, which has no parent.
 const NO_HOME: Channel = match Channel::new(0) {
@@ -107,7 +109,8 @@ pub struct Record {
     id: MsgId,
     parent: NodeId,
     /// The sender of the last packet of the message received here, with
-    /// `last_hops`: the same pair again is a retransmission (spec "Receiving DATA").
+    /// `last_hops`: the same pair again is a retransmission, answered as
+    /// the first was, taken or seen (spec "Receiving DATA").
     last_from: NodeId,
     /// The parent's home channel when the message arrived. A return goes
     /// to the parent's home as the neighbour table has it then, and to
@@ -190,12 +193,26 @@ impl Record {
     }
 
     /// A packet of the message from `from` with `hops` was received at
-    /// `now`.
+    /// `now`, and taken.
     pub fn received(&mut self, from: NodeId, hops: u8, now: Instant) {
+        self.flags &= !LAST_SEEN;
         self.last_active = now;
         self.last_from = from;
         self.last_hops = hops;
         self.highest_hops = self.highest_hops.max(hops);
+    }
+
+    /// A packet of the message from `from` with `hops` was received at
+    /// `now` and answered seen (spec "Receiving DATA" case 6): the same
+    /// packet again, sent because that answer was lost, gets it again.
+    pub fn seen(&mut self, from: NodeId, hops: u8, now: Instant) {
+        self.received(from, hops, now);
+        self.flags |= LAST_SEEN;
+    }
+
+    /// Whether the last packet was answered seen.
+    pub fn last_seen(&self) -> bool {
+        self.flags & LAST_SEEN != 0
     }
 
     /// A hand-over of the message with count `hops` succeeded. The next
@@ -205,9 +222,11 @@ impl Record {
         self.highest_hops = self.highest_hops.max(hops);
     }
 
-    /// The neighbour in neighbour-table `slot` acknowledged a hand-over of
-    /// the message, a forward or a return: it has it, is tried, and what it
-    /// sends back is a return (spec "Receiving DATA" case 5).
+    /// The neighbour in neighbour-table `slot` has had the message from
+    /// this relay or offered it one: it acknowledged a hand-over of it, a
+    /// forward or a return, or answered seen, or this relay answered seen
+    /// to its copy. It is tried, and what it sends next is a return
+    /// (spec "Message records", "Receiving DATA" case 5).
     pub fn handed_to(&mut self, slot: usize) {
         if slot < NEIGHBOURS {
             self.handed |= 1 << slot;
@@ -382,6 +401,12 @@ mod tests {
         assert_eq!((r.highest_hops(), r.last_active()), (3, at(1)));
         r.received(NodeId([5; 6]), 9, at(2));
         assert_eq!(r.highest_hops(), 9);
+        assert!(!r.last_seen());
+        r.seen(NodeId([6; 6]), 4, at(3));
+        assert!(r.repeats(NodeId([6; 6]), 4) && r.last_seen());
+        assert_eq!((r.highest_hops(), r.last_active()), (9, at(3)));
+        r.received(NodeId([6; 6]), 11, at(4));
+        assert!(!r.last_seen(), "taken: the answer changes with the packet");
         r.handed_over(12);
         r.handed_over(10);
         assert_eq!(r.highest_hops(), 12, "what it sent counts too");

@@ -18,7 +18,7 @@
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
-//! [`Relay::data`] classifies the packet by the five cases of spec "Receiving DATA" in
+//! [`Relay::data`] classifies the packet by the six cases of spec "Receiving DATA" in
 //! order and decides whether acting on it is work: sending it on, which
 //! may be a forward or a return, or a delivery. Work to send on goes into the
 //! send queue's regular room if it has a place and the bucket holds the
@@ -34,11 +34,12 @@
 //! delivery is refused when
 //! the delivery queue is full, or when the bucket holds less than the
 //! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
-//! owed before acting. A packet that gives no work (cases 1, 3 and 4) is
-//! ACKed from the reply reserve: the message has arrived, the packet was
-//! acted on already, or a copy held here goes on, and a refusal would send
-//! its sender on with a second copy. A relay that cannot afford even the
-//! reply stays silent, and its sender retries.
+//! owed before acting. A packet that gives no work (cases 1, 3, 4 and 6)
+//! is ACKed from the reply reserve: the message has arrived, the packet
+//! was answered already, a copy held here goes on, or the copy is seen
+//! (below), and a refusal would send its sender on with a second copy. A
+//! relay that cannot afford even the reply stays silent, and its sender
+//! retries.
 //!
 //! A relay owes one reply at a time (`transfer::REPLIES`, roadmap D29). A
 //! packet that arrives while it owes another one, its ACK still waiting
@@ -47,10 +48,20 @@
 //! the owed reply answers is answered by it too.
 //!
 //! A packet is ACKed without being acted on only where that cannot end the
-//! last copy (roadmap D35). A hand-over under way whose frame has been on
-//! air does not count as a copy held here: its receiver may have taken it,
-//! the ACK been lost, and the copy now offered be that one come back. A
-//! message delivered here, or waiting in the delivery queue, is only
+//! last copy (roadmap D35). A copy from a node this relay did not hand
+//! the message to, while it holds none, is answered seen (case 6, roadmap
+//! D90): the ACK's seen flag says the relay has the record and no copy,
+//! and the sender keeps the copy, marks this relay tried and goes on, so
+//! a split's copies do not start the search again at every relay they
+//! reach, and no copy ends. The relay counts the sender as tried too: it
+//! has the message, and searches on from its own record. The same packet
+//! again, its seen answer lost, is answered seen again. A return, from a
+//! node in the record's `handed` set or the one being handed to, is taken
+//! on with this relay's own search (case 5), as is a copy for a
+//! destination this relay owns now. A hand-over under way whose frame has
+//! been on air does not count as a copy held here: its receiver may have
+//! taken it, the ACK been lost, and the copy now offered be that one come
+//! back. A message delivered here, or waiting in the delivery queue, is only
 //! ACKed whatever its record says: the delivered window and the delivery
 //! queue remember it, and its record may have made way for newer ones
 //! (spec "Owner").
@@ -172,12 +183,16 @@ pub use crate::node::OWNER_RADIUS_M;
 enum Case {
     /// Case 2: no record.
     New,
-    /// Cases 1, 3 and 4: arrived, a retransmission, or a copy while
-    /// this relay holds one. ACK only.
+    /// Cases 1, 3 and 4: arrived, a retransmission of a packet taken, or a
+    /// copy while this relay holds one. ACK only.
     AckOnly,
-    /// Case 5: a copy, and this relay holds none. It goes on with its own
-    /// search.
+    /// Case 5: a return, or a copy for a destination this relay owns now,
+    /// and it holds none. It goes on with its own search.
     Search,
+    /// Case 6: a copy from a node this relay did not hand the message to,
+    /// and it holds none; or a retransmission of such a copy. Answered
+    /// seen: the copy stays with its sender.
+    Seen,
 }
 
 /// What became of a forward when it was addressed. Short-lived, so the
@@ -584,20 +599,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A packet from the relay this one is handing the message to shows
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
-        let case = self.classify(id, repeat);
+        // From a neighbour that has the message from this relay: a return
+        // (spec "Receiving DATA" case 5). The one being handed to has it
+        // too, though its ACK has not come.
+        let slot = self.neighbours.slot_of(d.src_hop);
+        let returned = completes
+            || self
+                .records
+                .get(id)
+                .zip(slot)
+                .is_some_and(|(r, s)| r.handed(s));
+        let owner_here = d.dst_id == self.me() || self.owns(d.dst_pos, now);
+        let case = self.classify(id, repeat, returned, owner_here);
         let copy = self
             .records
             .get(id)
             .filter(|r| !repeat && !r.arrived())
-            .map(|r| {
-                let returned = self
-                    .neighbours
-                    .slot_of(d.src_hop)
-                    .is_some_and(|s| r.handed(s));
-                (returned, case == Case::AckOnly)
-            });
-        let owner = case != Case::AckOnly && (d.dst_id == self.me() || self.owns(d.dst_pos, now));
-        let sends = case != Case::AckOnly && !owner;
+            .map(|_| (returned, case == Case::AckOnly, case == Case::Seen));
+        let acts = matches!(case, Case::New | Case::Search);
+        let owner = acts && owner_here;
+        let sends = acts && !owner;
         // The time left was stamped as the frame went on air. Gone, the
         // packet is no work, and the message ends here.
         let expires = now + d.time_left() - self.data_airtime(d.payload.len());
@@ -620,7 +641,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             Duration::ZERO
         };
-        let refusal = if case == Case::AckOnly || expired {
+        let refusal = if !acts || expired {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
@@ -652,7 +673,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             to: d.src_hop,
             refused: refusal.is_some(),
             wait,
-            seen: false,
+            seen: case == Case::Seen,
         };
         let sending = self.sending_reply();
         if !self
@@ -704,22 +725,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.records.put(at, record);
             }
         } else if let Some(r) = self.records.get_mut(id) {
-            r.received(d.src_hop, d.hops, now);
+            if case == Case::Seen {
+                // The sender has the message and searches on from its own
+                // record; it need not be offered this one.
+                r.seen(d.src_hop, d.hops, now);
+                if let Some(s) = slot {
+                    r.handed_to(s);
+                }
+            } else {
+                r.received(d.src_hop, d.hops, now);
+            }
             if owner {
                 r.set_arrived();
             }
         }
-        if let Some((returned, merged)) = copy {
+        if let Some((returned, merged, seen)) = copy {
             emit(Action::Trace(Trace::Copy {
                 msg_id: id,
                 returned,
                 merged,
+                seen,
             }));
         }
         match case {
             Case::AckOnly => {
                 self.delivered.offered(id, now);
             }
+            // The copy stays with its sender, which goes on.
+            Case::Seen => {}
             Case::New | Case::Search if owner => {
                 self.arrive(id, &d, now, emit);
             }
@@ -731,18 +764,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The case of spec "Receiving DATA" for a DATA packet of message `id`; `repeat`:
-    /// from the sender and with the count of the last one received.
-    fn classify(&self, id: MsgId, repeat: bool) -> Case {
+    /// from the sender and with the count of the last one received;
+    /// `returned`: from a neighbour that has the message from this relay;
+    /// `owner`: this relay owns the destination now.
+    fn classify(&self, id: MsgId, repeat: bool, returned: bool, owner: bool) -> Case {
         if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
             return Case::AckOnly;
         }
         let Some(r) = self.records.get(id) else {
             return Case::New;
         };
-        if r.arrived() || repeat || self.holds(id) {
+        if r.arrived() {
             return Case::AckOnly;
         }
-        Case::Search
+        if repeat {
+            // Answered as the first was (case 3).
+            return if r.last_seen() {
+                Case::Seen
+            } else {
+                Case::AckOnly
+            };
+        }
+        if self.holds(id) {
+            return Case::AckOnly;
+        }
+        if returned || owner {
+            return Case::Search;
+        }
+        Case::Seen
     }
 
     /// Whether this relay holds a copy of message `id` that is sure to live

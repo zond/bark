@@ -1050,7 +1050,15 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 4. Retune home immediately.
 5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
-   17.0 ms plus the receiver's retune and listen-before-talk).
+   17.0 ms plus the receiver's retune and listen-before-talk). An ACK
+   that takes the packet ends the hand-over: the neighbour has the
+   message and is tried ([message records](#message-records)). An ACK
+   that has seen it ([the ACK](#the-ack)) ends it the same way, except
+   that the neighbour did not take the packet: it is tried, and the
+   message chooses the next hop at once, as it would after that
+   neighbour returned it. Nothing is banned and no failure is counted. A
+   return answered seen is dropped: the parent has gone on without it
+   ([return to parent](#return-to-parent)).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
    neighbour (demoted after two in a row) and ban it
@@ -1113,9 +1121,39 @@ senders.
 The receiver retunes to the sender's channel, listens before talking,
 sends the ACK, and retunes home. The ACK is the first byte, the format,
 the message ID, and the IDs of the answering and the answered node:
-18 bytes, 17.0 ms ([packet formats](#packet-formats)). It answers taken or
-refused, and its first byte says which: 0 there takes the packet, and a
-refusal puts there the wait it asks for ([bans](#bans)).
+18 bytes, 17.0 ms ([packet formats](#packet-formats)). It answers taken,
+refused or seen, and its first byte says which: a wait of 0 takes the
+packet, a refusal puts there the wait it asks for ([bans](#bans)), and
+the seen flag, with a wait of 0, says the receiver has seen the message
+and takes nothing.
+
+**Seen** answers a copy of a message the receiver has a record of, holds
+no copy of, and did not hand to the sender ([receiving DATA](#receiving-data)
+case 6). The receiver changes nothing but its record: the sender has the
+message and searches on from its own record, so it counts as tried
+there. The sender treats the answer as if the receiver had returned the
+message the moment it got it: the receiver is tried, the count the
+receiver recorded is spent ([hop count](#hop-count)), and the message
+chooses its next hop at once ([hand-over](#hand-over) step 5). Nothing
+is banned and no failure is counted on either side. A return answered
+seen is dropped ([return to parent](#return-to-parent)).
+
+A seen ACK is sent from the reply reserve like any answer that takes no
+work; a receiver that cannot afford it stays silent, and the sender's
+attempts fail and move on as for any silence (step 6). The seen answer
+only shortens that. A seen ACK that is lost costs the sender a retry,
+which the receiver answers seen again (case 3).
+
+*Why seen, not taken.* A copy that reaches a relay that has handled the
+message and holds none of it is the search crossing itself: the relay's
+own search goes on when its child returns the message, or is over. Taken
+there and searched on from the relay's record, the copy would start that
+search again; the relays that split a message under load made thousands
+of such copies, and each copy taken that way searched on until the time
+to live or the hop cap ended it. Taken and dropped there instead, the
+copy would end, and with it a single search whose way round a gap
+crosses its own path. Seen, the copy stays with its sender, which has
+the one record that knows what it has still to try (roadmap D89, D90).
 
 The sender matches the ID and both names against its outstanding
 hand-over. An ACK resets the neighbour's failure count and refreshes its
@@ -1299,7 +1337,8 @@ A message ends only:
 - when it is delivered;
 - when its search runs out of neighbours
   ([return to parent](#return-to-parent));
-- when a return goes unanswered twice in a row (step 6);
+- when a return goes unanswered twice in a row (step 6), or is answered
+  seen (step 5);
 - when its time runs out on the way ([time to live](#time-to-live));
 - when a newer message needs its place in the delivery queue
   ([delivery queue](#delivery-queue));
@@ -1367,18 +1406,18 @@ originated:
 |---|---|
 | ID | the message ID ([packet formats](#packet-formats)) |
 | parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
-| handed | the neighbours that took the message from this relay, each by ACKing a hand-over of it, a forward or a return ([hand-over](#hand-over)), as one bit per neighbour-table slot |
-| last packet | `src_hop` and `hops` of the last DATA of the message it received: the same pair again is a retransmission ([receiving DATA](#receiving-data)) |
+| handed | the neighbours that have had the message from this relay or offered it one: those that took a hand-over of it, a forward or a return, by ACKing it ([hand-over](#hand-over)), those that answered seen, and those whose copy this relay answered seen ([the ACK](#the-ack)), as one bit per neighbour-table slot |
+| last packet | `src_hop` and `hops` of the last DATA of the message it received, and whether it was answered seen: the same pair again is a retransmission, answered as the first was ([receiving DATA](#receiving-data)) |
 | highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that succeeded |
 | arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
 The relay's **tried set** for a message is those known to have it: the
 parent, the neighbours in `handed`, and a sleepy node that handed over
-its own message. A neighbour that has not ACKed the message stays a
-candidate, whether it was passed over, being demoted, expired or not in
-the table at the time, or was offered the message and refused it or
-never answered ([hand-over](#hand-over)). When a neighbour-table slot
+its own message. A neighbour that has neither taken nor seen the message
+stays a candidate, whether it was passed over, being demoted, expired or
+not in the table at the time, or was offered the message and refused it
+or never answered ([hand-over](#hand-over)). When a neighbour-table slot
 changes hands, its bit is cleared in every record.
 
 The record is also how a relay recognises a repeat of a message it has
@@ -1469,12 +1508,11 @@ rule would turn every gap into a dead end. On a first send the nearest
 neighbour is chosen anyway.
 
 A candidate may already have the message by another path; the relay
-cannot know, since its neighbours listen on other channels. The
-candidate takes it all the same ([receiving DATA](#receiving-data)). If
-the message has arrived there, or the candidate holds another copy, it
-goes no further; otherwise the candidate goes on with its own search,
-and in time offers the message back or returns it, which the relay
-takes as its return.
+cannot know, since its neighbours listen on other channels. If the
+message has arrived there, or the candidate holds another copy, the
+candidate takes it and it goes no further; if the candidate has had the
+message and holds none, it answers seen, and the relay goes on to its
+next candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
 
 #### Receiving DATA
 
@@ -1515,9 +1553,9 @@ packet gives it to do:
 - **Something to deliver.** It takes the packet only if its bucket holds
   the reply reserve and an ACK and, for another node, its delivery
   queue has room ([delivery queue](#delivery-queue)).
-- **No work**, cases 1, 3 and 4 below. It takes the packet even when it
-  would refuse work: a refusal would send its sender on with a second
-  copy.
+- **No work**, cases 1, 3, 4 and 6 below. It answers the packet, taken
+  or seen, even when it would refuse work: a refusal would send its
+  sender on with a second copy.
 
 Otherwise it refuses: after listening before talking it sends an ACK
 that refuses on the channel in `aux`, changes nothing, and the sender
@@ -1549,36 +1587,56 @@ The packet is one of the following, tested in this order:
    next hop and sends.
 3. **A retransmission:** the sender and the count are those of the last
    packet of the message the relay received: the sender's ACK was lost
-   and it sent the same packet again. ACK only.
+   and it sent the same packet again. ACK only, the answer the first
+   packet got: taken, or seen (case 6).
 4. **A copy while the relay holds one:** the message waits in its send
    queue or is set aside (above). ACK only: the two copies merge, and
    the relay's goes on. A hand-over whose frame has gone out does not
    count as holding one: its receiver may have taken it with only the
    ACK lost, and this packet may be that copy come back.
-5. **A copy, and the relay holds none:** the relay takes it and goes on
-   with its own search from its record. It checks ownership again (a
-   closer neighbour may have been demoted since), then sends to its next
+5. **A return, and the relay holds none:** the packet comes from a
+   neighbour in the record's `handed` set, or from the neighbour the
+   relay is still handing the message to, which also ends that
+   hand-over: the neighbour has the message. The relay takes it and goes
+   on with its own search from its record: it sends to its next
    candidate, returns the message to its parent, or, at the origin,
-   drops it. From a neighbour it handed the message to, this is that
-   neighbour's return. From the neighbour it is still handing the
-   message to, it also ends that hand-over: the neighbour has the
-   message.
+   drops it. A copy from anywhere for a destination the relay owns now
+   (a closer neighbour may have been demoted since) is taken the same
+   way and delivered.
+6. **A copy from elsewhere, and the relay holds none:** seen. The relay
+   answers with the seen flag ([the ACK](#the-ack)), takes nothing and
+   changes nothing but its record: the sender has the message and
+   searches on from its own record, so it is tried here. The sender
+   counts this relay tried and goes on to its next candidate at once
+   ([hand-over](#hand-over) step 5).
 
 In every case the relay records the packet's sender and count as the
-last packet, raises its highest count if the packet's is higher, and
-updates its last-active time.
+last packet, with whether it was answered seen, raises its highest count
+if the packet's is higher, and updates its last-active time.
 
-Cases 1, 3 and 4 end a packet without acting on it, and in each the
-message lives on: it has arrived, the packet was acted on when it first
-came, or another copy goes on, so no case ends the last copy of a
-message ([overload waits](#overload-waits) lists what does).
+Cases 1, 3, 4 and 6 end a packet without acting on it, and in each the
+message lives on: it has arrived, the packet was answered when it first
+came, another copy goes on, or, seen, the copy stays with its sender, so
+no case ends the last copy of a message
+([overload waits](#overload-waits) lists what does).
 
-Nothing is sent straight back: a relay that has had the message goes on
-from where its own search stands, and its sender, if not tried, stays a
-candidate and gets the message back in turn. A return goes from a relay
-to its parent, and the parents, each set when its record was made, lead
-back to the origin without a loop, so a message cannot go back and forth
-between two relays that hold none of it (roadmap D35).
+Nothing is sent straight back, and no copy searches twice over the same
+ground: a relay that has had the message goes on from where its own
+search stands when the message returns to it, and a copy that reaches
+it from elsewhere searches on from its sender's record, past this
+relay. A return goes from a relay to its parent, and the parents, each
+set when its record was made, lead back to the origin without a loop,
+so a message cannot go back and forth between two relays that hold none
+of it (roadmap D35).
+
+*Why a return is told by the record, not the packet.* The packet names
+its sender, and the record says whether that sender has the message
+from here. A child whose every ACK was lost is not in `handed`, so its
+return is answered seen and ends there, and what it searched stays in
+the relays' records for the parent's other copy, if any, to meet as
+seen. That is the one case in which a copy ends at a relay that holds
+none, and it takes two hand-overs to that child failing with every ACK
+lost (roadmap D35, D90).
 
 #### Return to parent
 
@@ -1591,7 +1649,9 @@ So a return follows a parent that has moved home since
 ([channel moves](#channel-moves)). Only a parent no longer in the table
 is sent to on the channel in the record. The parent takes it as a
 return ([receiving DATA](#receiving-data), case 5) and continues with
-its next neighbour.
+its next neighbour. A parent that answers seen has gone on without this
+relay's copy, which it never knew the relay had: the relay drops it,
+having nothing left to try ([the ACK](#the-ack)).
 
 The origin has no parent. With no candidate left it drops the message:
 no relay that can be reached from it through neighbours that answer owns
@@ -1644,9 +1704,10 @@ place 1 at its first hop, which overload must not give to fresh work
 
 So along the path of a message the count only grows, and a relay sends
 a count for a message once, but in retries: to send another packet of
-it, it must have received one since its last hand-over that succeeded,
-or that hand-over failed and the packet goes elsewhere. After a wait for
-a ban it may also go again to the neighbour that did not answer; if that
+it, it must have received one since its last hand-over that succeeded or
+was answered seen, which spends the count the receiver recorded, or that
+hand-over failed and the packet goes elsewhere. After a wait for a ban
+it may also go again to the neighbour that did not answer; if that
 neighbour took the first, the second is in fact a retransmission to it.
 A receiver therefore tells a retransmission by the sender and the count
 ([receiving DATA](#receiving-data), case 3). The count also numbers the
@@ -1771,20 +1832,25 @@ attempts, and no record is replaced. Then:
 - A neighbour that does not answer costs a bounded number of failed
   hand-overs ([bounds](#bounds)), and the hop cap bounds the stays
   ([hop count](#hop-count)).
-- A send to a relay that already has the message hands it the search
-  (receiving DATA, case 5), and the search comes back to the sender as a
-  return, since the sender stays one of its candidates unless it has
-  tried it. A relay whose search is unfinished gets the message back
-  that way or through the parents, so none is left with neighbours
-  untried.
+- A send to a relay that already has the message and holds none of it
+  is answered seen (receiving DATA, case 6): the sender marks it tried
+  and goes on with its own candidates, and the relay's own search, if
+  unfinished, goes on when the message returns to it from its child. So
+  a relay met again is neither searched twice nor skipped: its
+  neighbours are its own to try, and the token stays one. A relay whose
+  search is unfinished gets the message back through the parents, so
+  none is left with neighbours untried.
 
 So the message makes a depth-first traversal of the relays reachable
 from the origin through neighbours that answer, nearest to the
-destination first; a relay met again is searched on from where it
-stood, not skipped. A depth-first traversal visits every relay it can
+destination first. A depth-first traversal visits every relay it can
 reach; it stops at the first owner, or returns to the origin when there
 is none. If a path to an owner exists, the message finds it, provided
 the traversal fits in the 255 hand-overs of [hop count](#hop-count).
+The search cannot stall on a seen answer, since the sender keeps the
+message and its next choice is its own; nor loop, since the message
+moves only when a hand-over is taken, and each relay hands it to each
+neighbour at most once.
 
 What breaks it:
 
@@ -1794,13 +1860,15 @@ What breaks it:
   or wanders until the hop cap ends it.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so the
   sender moves on while the receiver also carries the message: two
-  copies search at once. They share the relays' records, so each goes on
-  from where the other left a relay. The sender has not marked the
-  receiver tried, so a copy that comes back to it is offered there
-  again. A copy ends where it meets the other held at a relay (receiving
-  DATA, case 4), where the message has arrived (case 1), at the origin
-  with the search, or at the hop cap. A copy is never ended where it is
-  the last one.
+  copies search at once. They share the relays' records: a copy that
+  reaches a relay the other has crossed is answered seen and searches on
+  past it, into relays neither has reached, or back up its own parents.
+  A copy ends where it meets the other held at a relay (receiving DATA,
+  case 4), where the message has arrived (case 1), at the origin with
+  the search, at the hop cap, or as a return to a parent that gave the
+  child up and answers seen (case 6). Only the last can end a copy that
+  is the last one, and it takes every ACK of two hand-overs on one link
+  lost.
 - **Links that change** during the search, including a parent that moves
   to another home channel: parts of the graph go unsearched.
 
@@ -1811,7 +1879,7 @@ What breaks it:
 | hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
 | life | at most the delivery TTL in the network, whatever its search and waits ([time to live](#time-to-live)), so no longer than that in a send queue; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
-| cost of a search | each link between two relays at most two hand-overs that succeed from each end: a send and a return |
+| cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer |
 | message records | at most 1571 per relay ([message records](#message-records)) |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
