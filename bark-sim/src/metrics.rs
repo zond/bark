@@ -242,6 +242,12 @@ pub struct CoreCounts {
     pub turned_away: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
+    /// Listen-before-talk give-ups on a receiver's channel (spec
+    /// "Hand-over" step 2).
+    pub lbt_gave_up: u64,
+    /// The waits those give-ups caused before the hand-over listened
+    /// again, in microseconds.
+    pub busy_wait_us: u64,
     /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
     /// Rotations a sleepy node listened to check its anchor

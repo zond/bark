@@ -382,6 +382,17 @@ pub enum Trace {
         /// its sender (case 6).
         seen: bool,
     },
+    /// Listen-before-talk gave up on the receiver's channel (spec
+    /// "Hand-over" step 2): the hand-over waits until `until` and listens
+    /// again.
+    ChannelBusy {
+        /// The message.
+        msg_id: MsgId,
+        /// The receiver.
+        to: NodeId,
+        /// When the hand-over listens again.
+        until: Instant,
+    },
     /// Every attempt of a hand-over to a neighbour went unanswered, and a
     /// failure was counted against it (spec "Hand-over" step 6).
     HandOverFailed {

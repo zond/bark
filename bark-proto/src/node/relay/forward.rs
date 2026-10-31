@@ -1632,20 +1632,30 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Listen-before-talk gave up on the current hand-over's channel.
     fn handover_gave_up(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let (msg_id, to) = out
+            .expect(self.me())
+            .map_or((MsgId::default(), NodeId::NONE), |e| (e.msg_id, e.from));
         match out.kind {
             Kind::Forward => {
                 // Choose again, past this neighbour (spec "Hand-over" step 2).
-                let to = out.expect(self.me()).map_or(NodeId::NONE, |e| e.from);
                 if let Some(slot) = self.neighbours.slot_of(to) {
                     self.forwarding.skipped |= 1 << slot;
                 }
+                emit(Action::Trace(Trace::ChannelBusy {
+                    msg_id,
+                    to,
+                    until: now,
+                }));
             }
             Kind::Return | Kind::Deliver | Kind::Direct => {
                 let (max, retry) = (self.config.hop_attempts, self.retry_unit());
                 let Some((mut h, rng)) = self.handover() else {
                     return;
                 };
-                if h.lost_attempt(now, max, rng, retry) == Missed::Failed {
+                let missed = h.lost_attempt(now, max, rng, retry);
+                let until = self.forwarding.flight.until().max(now);
+                emit(Action::Trace(Trace::ChannelBusy { msg_id, to, until }));
+                if missed == Missed::Failed {
                     self.handover_failed(out, false, now, emit);
                 }
             }
