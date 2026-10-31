@@ -278,11 +278,12 @@ caught means S listens continuously and `Sniff` did not take.
 The long preamble is `sleep + wake + 2D` rounded up to whole 256 µs
 symbols, with `wake` = 1.5 ms (the probed TCXO delay, 0.5 ms on the
 bench's board, and about 1 ms to restore the chip's state) and `D` = 4
-symbols, the time to lock (spec "Duty-cycled receive and the long
-preamble"). Check `tcxo` on S first: at a delay above 0.5 ms S sleeps
-that much less (`bark_proto::sniff::periods`) and the sum below is the
-same. Repeat 5.1 with `preamble 880`, `preamble 900`, `preamble 915` and
-so on: the shortest preamble `L` that is caught 100 times in 100 gives
+symbols, the time to lock
+(spec "Duty-cycled receive and the long preamble"). Check `tcxo` on S
+first: at a delay above 0.5 ms S sleeps that much less
+(`bark_proto::sniff::periods`) and the sum below is the same. Repeat 5.1
+with `preamble 880`, `preamble 900`, `preamble 915` and so on: the
+shortest preamble `L` that is caught 100 times in 100 gives
 
 ```
 wake + 2D = L × 256 µs − 233 625 µs

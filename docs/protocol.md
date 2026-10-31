@@ -2172,7 +2172,7 @@ or not, since without a fix of its own it rebuilds no position it hears
 |---|---|
 | with an anchor | no search: standby, 20 µA (L76K hardware design, Table 2) |
 | search limit | 60 s: two of the 30 s frames that carry the satellites' orbits (IS-GPS-200), so that a cold start under the open sky, 30 s (Table 2), survives one lost frame |
-| after a search that found nothing | none for 8 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 8 h keeps a node that never sees the sky within a tenth of its 0.63 mA ([delivery](#delivery)) |
+| after a search that found nothing | none for 8 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 8 h keeps a node that never sees the sky at about a tenth of its 0.56 mA ([delivery](#delivery)) |
 | between searches | standby, 20 µA, which keeps what a hot start, 2 s, needs (Table 2) |
 
 *Why none with an anchor.* Hearing its anchor each rotation says the
@@ -2292,16 +2292,16 @@ What it listens besides, checking its anchor after the dark, depends on
 how often it is out of reach (roadmap D47, D48, D50, D58).
 
 What a sleepy node with an anchor draws, in S4 at the design rate
-(`scenarios/s4-capacity.toml`, roadmap D80, D91):
+(`scenarios/s4-capacity.toml`, roadmap D80, D91, D92):
 
 | | mean current |
 |---|---|
-| listening: its windows, its anchor's heartbeats, checks | 0.43 mA |
-| receiving duty-cycled | 0.18 mA |
-| transmitting: its beats and its own messages | 0.006 mA |
+| listening: its windows, its anchor's heartbeats, checks | 0.41 mA |
+| receiving duty-cycled | 0.12 mA |
+| transmitting: its beats and its own messages | 0.005 mA |
 | GPS standby ([beats](#beats)) | 0.020 mA |
 | GPS searches | none with an anchor (roadmap D91); without one at most 0.060 mA, one that finds nothing in 8 h |
-| **total** | **0.63 mA, 56 days on the 850 mAh battery; anchorless at most 0.69 mA, 51 days** |
+| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.62 mA, 57 days** |
 
 The microcontroller is not counted.
 
