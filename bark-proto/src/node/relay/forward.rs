@@ -1560,7 +1560,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(d.hops);
-            if let (Kind::Forward, Some(s)) = (out.kind, slot) {
+            // The parent that took a return has the message from this
+            // relay as much as a child has (spec "Message records").
+            if let Some(s) = slot {
                 r.handed_to(s);
             }
             if to == d.dst_id {

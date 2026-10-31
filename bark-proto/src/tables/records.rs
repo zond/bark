@@ -40,8 +40,9 @@
 //! neighbour before the last child in the order of spec "Next hop" (distance to the
 //! destination, then ID), which is fixed for a message. The record
 //! keeps instead the neighbours that took the message from this relay,
-//! each by ACKing a hand-over of it, as a mask over neighbour-table slots
-//! ([`Record::handed`]). With the table unchanged and every hand-over
+//! each by ACKing a hand-over of it, a forward or a return, as a mask
+//! over neighbour-table slots ([`Record::handed`]). With the table
+//! unchanged and every hand-over
 //! answered, the two agree; the last child itself is no longer kept
 //! (roadmap D35). They differ for a relay passed over because it was
 //! demoted, expired or not in the table, and for one that refused the
@@ -204,8 +205,9 @@ impl Record {
         self.highest_hops = self.highest_hops.max(hops);
     }
 
-    /// The neighbour in neighbour-table `slot` acknowledged the message:
-    /// it has it, and is tried.
+    /// The neighbour in neighbour-table `slot` acknowledged a hand-over of
+    /// the message, a forward or a return: it has it, is tried, and what it
+    /// sends back is a return (spec "Receiving DATA" case 5).
     pub fn handed_to(&mut self, slot: usize) {
         if slot < NEIGHBOURS {
             self.handed |= 1 << slot;

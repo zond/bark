@@ -1367,7 +1367,7 @@ originated:
 |---|---|
 | ID | the message ID ([packet formats](#packet-formats)) |
 | parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
-| handed | the neighbours that took the message from this relay, each by ACKing a hand-over of it ([hand-over](#hand-over)), as one bit per neighbour-table slot |
+| handed | the neighbours that took the message from this relay, each by ACKing a hand-over of it, a forward or a return ([hand-over](#hand-over)), as one bit per neighbour-table slot |
 | last packet | `src_hop` and `hops` of the last DATA of the message it received: the same pair again is a retransmission ([receiving DATA](#receiving-data)) |
 | highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that succeeded |
 | arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |

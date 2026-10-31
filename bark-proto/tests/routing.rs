@@ -742,8 +742,9 @@ fn a_copy_with_a_count_already_seen_is_not_a_retransmission() {
 /// bans C (roadmap D42); with no other candidate the message waits in
 /// P's queue for the ban. C, a dead end, returns it meanwhile, and the
 /// copies merge at P (spec "Receiving DATA" case 4). C never ACKed it, so it is untried
-/// (roadmap D36), and P hands it to C again when the ban ends. C,
-/// receiving it from its parent with nothing left to try, returns it; P
+/// (roadmap D36), and P hands it to C again when the ban ends. For C, P
+/// took its return, so P has the message from it and this is P's return
+/// (spec "Message records"): C, with nothing left to try, returns it; P
 /// has now tried C and drops it. Two returns, and nothing more on the
 /// air. Before D35, P sent it straight back and C only ACKed it.
 #[test]
@@ -798,6 +799,15 @@ fn a_return_does_not_go_back_and_forth() {
     assert_eq!(forwards(&h, p, id), vec![nc]);
     assert_eq!(returns(&h, c, id), 2);
     assert_eq!(datas(p, nc), 4, "three unanswered, then one taken");
+    let back = Trace::Copy {
+        msg_id: id,
+        returned: true,
+        merged: false,
+    };
+    assert!(
+        traces(&h, c).contains(&back),
+        "P's second offer is a return"
+    );
     let dropped = Trace::Dropped {
         msg_id: id,
         reason: DropReason::NoRoute,
