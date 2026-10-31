@@ -545,6 +545,8 @@ pub(crate) enum FrameKind {
     Taken,
     /// An ACK that refuses it.
     Refused,
+    /// An ACK that has seen it.
+    Seen,
 }
 
 /// A message an application waits to hand to its core.
@@ -763,7 +765,7 @@ pub struct Sim {
     /// the count a refusing ACK answers.
     pub(crate) data_hops: HashMap<(u32, u64), u8>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
-    msg_minutes: Option<HashMap<(u32, u32), [u64; 4]>>,
+    msg_minutes: Option<HashMap<(u32, u32), [u64; 5]>>,
     /// Messages queued, by holder and destination node's ID, for counting
     /// the beats the holder hears.
     queued_for: HashMap<(u32, u64), Vec<u32>>,
@@ -2594,15 +2596,20 @@ impl Sim {
                         c.failed_taken += u64::from(had);
                     }
                     Trace::Copy {
-                        returned, merged, ..
+                        returned,
+                        merged,
+                        seen,
+                        ..
                     } => {
                         if returned {
                             c.returns_in += 1;
                         } else {
                             c.copies += 1;
                             c.merged += u64::from(merged);
+                            c.seen += u64::from(seen);
                         }
                     }
+                    Trace::Seen { .. } => c.seen_acted += 1,
                     Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
                         c.returned += 1;
@@ -3374,6 +3381,7 @@ impl Sim {
             }
             FrameKind::Taken => 2,
             FrameKind::Refused => 3,
+            FrameKind::Seen => 4,
         };
         if let Some(mm) = &mut self.msg_minutes {
             let minute = (self.now.as_micros() / 60_000_000) as u32;
@@ -3387,16 +3395,19 @@ impl Sim {
         self.msg_minutes = Some(HashMap::new());
     }
 
-    /// `minute,tag,origin_data_us,data_us,ack_us,refused_us`, sorted:
-    /// DATA from the message's origin, DATA from any other node, ACKs that
-    /// take it and ACKs that refuse it.
+    /// `minute,tag,origin_data_us,data_us,ack_us,refused_us,seen_us`,
+    /// sorted: DATA from the message's origin, DATA from any other node,
+    /// ACKs that take it, ACKs that refuse it and ACKs that have seen it.
     pub fn message_minutes_csv(&self) -> Option<String> {
         let mm = self.msg_minutes.as_ref()?;
         let mut rows: Vec<_> = mm.iter().collect();
         rows.sort_unstable_by_key(|(k, _)| **k);
-        let mut s = String::from("minute,tag,origin_data_us,data_us,ack_us,refused_us\n");
+        let mut s = String::from("minute,tag,origin_data_us,data_us,ack_us,refused_us,seen_us\n");
         for ((m, t), a) in rows {
-            s.push_str(&format!("{m},{t},{},{},{},{}\n", a[0], a[1], a[2], a[3]));
+            s.push_str(&format!(
+                "{m},{t},{},{},{},{},{}\n",
+                a[0], a[1], a[2], a[3], a[4]
+            ));
         }
         Some(s)
     }

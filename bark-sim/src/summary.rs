@@ -348,6 +348,9 @@ pub struct Summary {
     /// Refusals sent, by the wait each told, in the units on the wire
     /// (spec "Bans").
     pub told_waits: Vec<u64>,
+    /// Seen ACKs (spec "The ACK"); left out of runs without one.
+    #[serde(skip_serializing_if = "SeenAcks::none")]
+    pub seen: SeenAcks,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -523,6 +526,10 @@ impl Sim {
             hop_places: m.hop_places,
             records_lost: m.records_lost.clone(),
             told_waits: m.told_waits.clone(),
+            seen: SeenAcks {
+                sent: m.seen_acks_sent,
+                acted: m.nodes.iter().map(|n| n.core.seen_acted).sum(),
+            },
             addressed: m.addressed,
             channels,
             observers,
@@ -1012,6 +1019,13 @@ impl Summary {
                 w.total, w.relays_per_day.0, w.relays_per_day.1, w.sleepy_per_day.0, w.sleepy_per_day.1
             );
         }
+        if !self.seen.none() {
+            let _ = writeln!(
+                s,
+                "seen ACKs: {} sent, {} acted on",
+                self.seen.sent, self.seen.acted
+            );
+        }
         let h = &self.hop_places;
         if h.refusals > 0 {
             let _ = writeln!(
@@ -1223,4 +1237,21 @@ impl Summary {
 
 fn hop_places_none(h: &HopPlaceRefusals) -> bool {
     h.refusals == 0
+}
+
+/// Seen ACKs over a run (spec "The ACK", roadmap D90): transmitted, and
+/// acted on by the sender they answered. Fewer acted on than sent means
+/// some were lost and answered again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SeenAcks {
+    /// Seen ACKs transmitted.
+    pub sent: u64,
+    /// Seen ACKs their sender acted on.
+    pub acted: u64,
+}
+
+impl SeenAcks {
+    fn none(&self) -> bool {
+        self.sent == 0 && self.acted == 0
+    }
 }

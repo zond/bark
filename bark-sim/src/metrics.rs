@@ -263,13 +263,19 @@ pub struct CoreCounts {
     /// Of those, whose receiver had the message by then, most likely
     /// because only its ACKs were lost.
     pub failed_taken: u64,
-    /// Copies of a message taken that were not retransmissions and came
-    /// from no neighbour this node had handed the message to (spec
-    /// "Receiving DATA" cases 4 and 5): a split's second copy, or the
+    /// Copies of a message answered that were not retransmissions and
+    /// came from no neighbour this node had handed the message to (spec
+    /// "Receiving DATA" cases 4 to 6): a split's second copy, or the
     /// search coming back by another way.
     pub copies: u64,
     /// Of those, merged with a copy held here (case 4).
     pub merged: u64,
+    /// Of those, answered seen: this node held none, and the copy stayed
+    /// with its sender (case 6).
+    pub seen: u64,
+    /// Seen ACKs this node acted on: the receiver of its hand-over had
+    /// the record and no copy, and this node went on (spec "The ACK").
+    pub seen_acted: u64,
     /// Returns taken from a neighbour this node handed the message to.
     pub returns_in: u64,
     /// Deliveries to a sleepy node whose every attempt went unanswered
@@ -1153,6 +1159,8 @@ pub struct Metrics {
     /// Refusals sent, by the wait each told, in the units on the wire
     /// (spec "Bans").
     pub told_waits: Vec<u64>,
+    /// Seen ACKs transmitted (spec "The ACK").
+    pub seen_acks_sent: u64,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.

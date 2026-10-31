@@ -164,6 +164,7 @@ impl Sim {
         let msg = match decoded {
             Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops, FrameKind::Data)),
             Some(WirePacket::Ack(a)) if a.refused => Some((a.msg_id, 0, FrameKind::Refused)),
+            Some(WirePacket::Ack(a)) if a.seen => Some((a.msg_id, 0, FrameKind::Seen)),
             Some(WirePacket::Ack(a)) => Some((a.msg_id, 0, FrameKind::Taken)),
             _ => None,
         };
@@ -240,6 +241,7 @@ impl Sim {
                 }
                 m.told_waits[w] += 1;
             }
+            m.seen_acks_sent += u64::from(a.seen);
         }
         m.nodes[src as usize].tx_frames += 1;
         m.nodes[src as usize].airtime_us += air;

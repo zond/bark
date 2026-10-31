@@ -204,6 +204,28 @@ impl Tracer {
                         self.msg(msg_id, tags),
                         n.node(to)
                     ),
+                    Trace::Seen { msg_id, by } => write!(
+                        what,
+                        "{} seen by {}, going on",
+                        self.msg(msg_id, tags),
+                        n.node(by)
+                    ),
+                    Trace::Copy {
+                        msg_id,
+                        returned,
+                        merged,
+                        seen,
+                    } => write!(
+                        what,
+                        "copy of {} {}",
+                        self.msg(msg_id, tags),
+                        match (returned, merged, seen) {
+                            (true, _, _) => "returned",
+                            (_, true, _) => "merged",
+                            (_, _, true) => "answered seen",
+                            _ => "taken on",
+                        }
+                    ),
                     Trace::Demoted { neighbour } => write!(what, "demoted {}", n.node(neighbour)),
                     Trace::Delivered { msg_id, node, .. } => write!(
                         what,
