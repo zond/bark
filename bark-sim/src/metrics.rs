@@ -396,6 +396,8 @@ impl LeafSums {
         a.long_data_us += b.long_data_us;
         a.to_dst_us += b.to_dst_us;
         a.ack_us += b.ack_us;
+        a.probe_us += b.probe_us;
+        a.probe_answer_us += b.probe_answer_us;
         a.data_us += b.data_us;
         a.other_us += b.other_us;
         self.relay_changes += m.relay_changes;
@@ -613,6 +615,12 @@ pub struct TypeAirtime {
     pub answer_us: u64,
     /// ACK.
     pub ack_us: u64,
+    /// PROBE asking (`Config::probe`); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub probe_us: u64,
+    /// PROBE answering; left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub probe_answer_us: u64,
     /// DATA.
     pub data_us: u64,
     /// Of `data_us`, DATA with the long preamble, to a sleepy node
@@ -637,6 +645,8 @@ impl TypeAirtime {
             Some(Packet::Heartbeat(_)) if long => &mut self.answer_us,
             Some(Packet::Heartbeat(_)) => &mut self.heartbeat_us,
             Some(Packet::Ack(_)) => &mut self.ack_us,
+            Some(Packet::Probe(p)) if p.answer => &mut self.probe_answer_us,
+            Some(Packet::Probe(_)) => &mut self.probe_us,
             Some(Packet::Data(d)) => {
                 if long {
                     self.long_data_us += us;

@@ -55,6 +55,7 @@ use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac::Excursion;
 use crate::node::transfer::Replies;
+use crate::node::transfer::ANSWER_TIMEOUT;
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS};
@@ -94,6 +95,10 @@ struct Radio {
     excursion: Excursion<Job>,
     /// The replies this node owes (`transfer.rs`).
     replies: Replies,
+    /// The channel the radio was last told to rest on away from home,
+    /// while a hand-over waits for the answer to its probe
+    /// (`relay/forward.rs` `away`).
+    away: Option<Channel>,
     /// The busy sweep (`relay/sweep.rs`).
     sweep: Sweep,
     /// The heartbeat (`relay/heartbeat.rs`).
@@ -109,6 +114,7 @@ impl Radio {
         Radio {
             excursion: Excursion::new(),
             replies: Replies::new(),
+            away: None,
             sweep: Sweep::new(sweep),
             beacon: Beacon::new(rotation),
             busy: BusyEstimator::from_config(config),
@@ -708,6 +714,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// Keep the radio where the hand-over needs it: on the receiver's
+    /// channel from its probe until the answer or the wait's end
+    /// (`Config::probe`), and home otherwise. Emits nothing while no
+    /// hand-over probes.
+    fn rest(&mut self, emit: &mut dyn FnMut(Action)) {
+        let away = self.away();
+        if away != self.radio.away {
+            emit(Action::Listen(away.unwrap_or(self.home)));
+            self.radio.away = away;
+        }
+    }
+
     /// Tell the driver to keep what changed.
     fn keep(&mut self, emit: &mut dyn FnMut(Action)) {
         // A node with no place has none to keep: it boots without one.
@@ -798,10 +816,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match job {
             Job::Reply => self.start_reply(now, emit),
             Job::Heartbeat => {
-                !self.awaiting_ack() && self.beacon_due(now) && self.start_heartbeat(now, emit)
+                !self.awaiting() && self.beacon_due(now) && self.start_heartbeat(now, emit)
             }
             Job::HandOver => self.start_handover(now, emit),
-            Job::Sweep => !self.awaiting_ack() && self.sweep_due(now) && self.start_sweep(emit),
+            Job::Sweep => !self.awaiting() && self.sweep_due(now) && self.start_sweep(emit),
         }
     }
 
@@ -814,7 +832,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match job {
             Job::Reply => self.radio.replies.wake_at().filter(|_| free),
             Job::Heartbeat => {
-                if !free || self.awaiting_ack() || !self.heartbeats() {
+                if !free || self.awaiting() || !self.heartbeats() {
                     return None;
                 }
                 let pending = self.radio.beacon.announce.is_some()
@@ -832,7 +850,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Some(due.max(self.radio.beacon.ready_at))
             }
             Job::HandOver => {
-                let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
+                let flight = self.flight_wake().filter(|_| self.awaiting() || free);
                 // A waiting entry, once nothing else is under way.
                 let queued = self
                     .queue
@@ -840,8 +858,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .filter(|_| self.handover_idle() && free);
                 earlier(flight, queued)
             }
-            Job::Sweep => (free && !self.awaiting_ack() && self.sweeping())
-                .then_some(self.radio.sweep.next_at),
+            Job::Sweep => {
+                (free && !self.awaiting() && self.sweeping()).then_some(self.radio.sweep.next_at)
+            }
         }
     }
 
@@ -871,6 +890,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Data(d)) if d.dst_hop == self.me() => self.data(d, now, emit),
+            Ok(Packet::Probe(p)) => self.probe_received(p, now, emit),
             _ => {}
         }
     }
@@ -957,8 +977,10 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 Some(Job::HandOver) => {
                     let timeout = self.config.ack_timeout;
                     if let Some((mut h, _)) = self.handover() {
-                        if h.state() == State::Radio {
-                            h.sent(now, timeout);
+                        match h.state() {
+                            State::Radio => h.sent(now, timeout),
+                            State::Probing => h.probe_sent(now, ANSWER_TIMEOUT),
+                            _ => {}
                         }
                     }
                 }
@@ -977,6 +999,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.fire(now, emit);
         self.schedule(now, emit);
+        self.rest(emit);
         self.timers.app_ready_at = self.send_ready_at(now);
         if woke.get() {
             self.timers.sniff_until = None;

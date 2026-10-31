@@ -142,6 +142,7 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub take_at_ack: Option<bool>,
     pub ack_listens_first: Option<bool>,
+    pub probe: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
 }
@@ -191,6 +192,7 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(take_at_ack);
         set!(ack_listens_first);
+        set!(probe);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
         c

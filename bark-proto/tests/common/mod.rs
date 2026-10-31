@@ -25,6 +25,13 @@ use std::collections::{HashMap, HashSet};
 /// Synthesiser retune and settle, of the order the SX1262 datasheet gives
 /// for a frequency change plus PLL lock.
 pub const RETUNE: Duration = Duration::from_micros(200);
+/// From the decision to transmit to the frame's first symbol: the
+/// transmission's preparation and start, 765 µs for a 64-byte frame as
+/// measured on the lean driver (spec "Heartbeat", roadmap D88), which
+/// the simulator pays too. A receiver that answers a frame the moment it
+/// ends is on the air this long after it, when the sender is listening
+/// again.
+pub const TX_START: Duration = Duration::from_micros(765);
 /// A listen-before-talk's channel activity detection over four symbols,
 /// the RSSI read inside it.
 pub const CAD: Duration = Duration::from_micros(4 * SYMBOL_TIME.as_micros());
@@ -531,15 +538,16 @@ impl<C: Core> Harness<C> {
                 self.check_budget(i, now, airtime);
                 self.nodes[i].airtime.push((now, airtime));
                 self.nodes[i].sent.push((now, f));
+                let start = now + TX_START;
                 self.txs.push(Tx {
                     from: i,
                     channel: f.channel,
-                    start: now,
-                    end: now + airtime,
+                    start,
+                    end: start + airtime,
                     bytes: f.payload().to_vec(),
                     preamble: f.preamble_symbols,
                 });
-                (Kind::Tx, f.channel, airtime + RETUNE, true)
+                (Kind::Tx, f.channel, TX_START + airtime + RETUNE, true)
             }
             _ => unreachable!(),
         };

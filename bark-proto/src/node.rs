@@ -54,6 +54,13 @@ pub struct Config {
     /// the sender's home channel, with the hand-over's backoff, until the
     /// sender's timeout (spec "The ACK"). Off, it goes at once.
     pub ack_listens_first: bool,
+    /// Research switch (roadmap D94): a hand-over's listen-before-talk is
+    /// put to the receiver. After its check finds the receiver's channel
+    /// clear the sender transmits a probe there and listens there for the
+    /// receiver's answer, which the receiver sends at once; the frame
+    /// goes on the answer, and no answer within `ANSWER_TIMEOUT` is one
+    /// unanswered attempt. Off in the design.
+    pub probe: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds: each node's fixed interval lies in between
@@ -299,6 +306,7 @@ impl Config {
         sleepy_listens: false,
         take_at_ack: false,
         ack_listens_first: true,
+        probe: false,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,

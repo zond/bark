@@ -171,20 +171,22 @@ use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
 use crate::node::mac;
-use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, IN_FLIGHT};
+use crate::node::transfer::{
+    self, Check, Flight, HandOver, Missed, Owed, Reply, ANSWER_TIMEOUT, IN_FLIGHT,
+};
 use crate::node::Rng;
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{
-    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
+    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, PROBE_AIRTIME, REPLY_RESERVE,
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
+use crate::wire::{Ack, Data, Packet, Probe, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
 pub use crate::node::OWNER_RADIUS_M;
 
@@ -261,6 +263,7 @@ enum Routed {
 fn reply_frame(o: Owed) -> Frame {
     match o.reply {
         Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
+        Reply::Answer(p) => mac::frame(&Packet::Probe(p), o.channel, MIN_PREAMBLE_SYMBOLS),
     }
 }
 
@@ -347,8 +350,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the hand-over under way listens at home for its ACK.
+    #[cfg(test)]
     pub(super) fn awaiting_ack(&self) -> bool {
         self.in_flight().is_some_and(|o| o.state == State::AwaitAck)
+    }
+
+    /// Whether the hand-over under way listens for an answer, at home
+    /// for its ACK or on the receiver's channel for the answer to its
+    /// probe: nothing else takes the radio off that channel meanwhile.
+    pub(super) fn awaiting(&self) -> bool {
+        self.in_flight()
+            .is_some_and(|o| matches!(o.state, State::AwaitAck | State::AwaitAnswer))
+    }
+
+    /// The channel the radio rests on away from home, if any: the
+    /// receiver's, from the probe until its answer or the wait's end
+    /// (`Config::probe`).
+    pub(super) fn away(&self) -> Option<Channel> {
+        self.in_flight()
+            .filter(|o| matches!(o.state, State::Probing | State::AwaitAnswer))
+            .map(|o| o.frame.channel)
+    }
+
+    /// Whether `out`'s hand-over puts its listen-before-talk to the
+    /// receiver (`Config::probe`): one with the short preamble, to a node
+    /// that listens all the time; a node receiving duty-cycled would need
+    /// the long preamble on the probe as well as the frame.
+    fn probes(&self, out: &Outgoing) -> bool {
+        self.config.probe && out.frame.preamble_symbols < LONG_PREAMBLE_SYMBOLS
     }
 
     /// The hand-over of the send queue's current entry, to advance, with
@@ -1522,21 +1551,127 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         match h.checked(busy, now, rng, backoff) {
+            Check::Clear if self.probes(&out) => self.transmit_probe(out, now, emit),
             Check::Clear => self.transmit_current(out, now, emit),
             Check::Busy => {}
             Check::GaveUp => self.handover_gave_up(out, now, emit),
         }
     }
 
-    /// Listen-before-talk is clear: transmit the current frame, with this
-    /// relay's home channel as it is now (spec "Packet formats" `aux`). An owed ACK goes
-    /// first, and the check is then repeated.
+    /// Listen-before-talk is clear, or the receiver has answered the probe:
+    /// transmit the current frame, with this relay's home channel as it
+    /// is now (spec "Packet formats" `aux`). An owed ACK goes first, and
+    /// the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(frame) = self.stamp(out, now, emit) else {
+            return;
+        };
+        let airtime = mac::airtime(&frame);
+        if !self.affordable(airtime, now) {
+            // An owed reply spent the budget since the check began.
+            self.defer_handover(&out, now, emit);
+            return;
+        }
+        if let Some(current) = self.queue.current_mut() {
+            current.frame = frame;
+        }
+        self.radio.budget.record(airtime, now);
+        self.radio.excursion.transmit(Job::HandOver, frame, emit);
+    }
+
+    /// Listen-before-talk is clear: put it to the receiver (`Config::probe`).
+    /// The frame is stamped now, as if it went, and goes when the answer
+    /// comes; the radio rests on the receiver's channel meanwhile
+    /// ([`Self::away`]).
+    fn transmit_probe(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(frame) = self.stamp(out, now, emit) else {
+            return;
+        };
+        let Ok(Packet::Data(d)) = Packet::decode(frame.payload()) else {
+            return;
+        };
+        if !self.affordable(mac::airtime(&frame) + PROBE_AIRTIME, now) {
+            self.defer_handover(&out, now, emit);
+            return;
+        }
+        let probe = Probe {
+            to: d.dst_hop,
+            from: self.me(),
+            answer: false,
+        };
+        let probe = mac::frame(&Packet::Probe(probe), frame.channel, MIN_PREAMBLE_SYMBOLS);
+        if let Some(current) = self.queue.current_mut() {
+            current.frame = frame;
+        }
+        if let Some((mut h, _)) = self.handover() {
+            h.probing();
+        }
+        self.radio.budget.record(PROBE_AIRTIME, now);
+        self.radio.excursion.transmit(Job::HandOver, probe, emit);
+    }
+
+    /// A probe addressed to this node, or the answer to its own
+    /// (`Config::probe`). A probe is answered at once, without listening
+    /// first, on this node's channel, where its sender listens: the
+    /// answer is a reply like an ACK, one at a time, from the heartbeat
+    /// reserve. The answer to this node's own probe sends the frame it
+    /// stamped, unless an owed reply or the budget holds it, in which
+    /// case the hand-over waits and probes again.
+    pub(super) fn probe_received(&mut self, p: Probe, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if p.to != self.me() {
+            return;
+        }
+        if !p.answer {
+            let answer = Probe {
+                to: p.from,
+                from: self.me(),
+                answer: true,
+            };
+            let sending = self.sending_reply();
+            if !self.radio.replies.can_owe(answer, self.home, sending, now)
+                || !self.can_reply(PROBE_AIRTIME, now)
+            {
+                return;
+            }
+            self.radio.replies.owe(
+                answer,
+                self.home,
+                now + ANSWER_TIMEOUT,
+                false,
+                None,
+                sending,
+                now,
+            );
+            self.note_untaken(emit);
+            return;
+        }
+        let Some(out) = self.queue.current().copied() else {
+            return;
+        };
+        let receiver = out.expect(self.me()).map(|e| e.from);
+        if out.state != State::AwaitAnswer || receiver != Some(p.from) {
+            return;
+        }
+        if let Some((mut h, _)) = self.handover() {
+            h.answered();
+        }
+        self.transmit_current(out, now, emit);
+    }
+
+    /// The current frame as it goes now: its count and the time it has
+    /// left stamped, or `None` where it is dropped at the cap or for its
+    /// time, or held for an owed reply.
+    fn stamp(
+        &mut self,
+        out: Outgoing,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) -> Option<Frame> {
         if self.radio.replies.wake_at().is_some_and(|t| t <= now) {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
-            return;
+            return None;
         }
         let mut frame = out.frame;
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
@@ -1556,7 +1691,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.forwarding.skipped = 0;
                 self.forwarding.feed_due = true;
                 self.drop_msg(id, reason, emit);
-                return;
+                return None;
             };
             // Each attempt carries the time as it is when it goes, so a
             // retry never claims more than is left.
@@ -1574,17 +1709,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 r.sent(now);
             }
         }
-        let airtime = mac::airtime(&frame);
-        if !self.affordable(airtime, now) {
-            // An owed reply spent the budget since the check began.
-            self.defer_handover(&out, now, emit);
-            return;
-        }
-        if let Some(current) = self.queue.current_mut() {
-            current.frame = frame;
-        }
-        self.radio.budget.record(airtime, now);
-        self.radio.excursion.transmit(Job::HandOver, frame, emit);
+        Some(frame)
     }
 
     /// The count the current hand-over of `d` carries (spec "Hop count"): stamped at
@@ -1937,10 +2062,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether `reply` listens before talking: an ACK does, unless
-    /// switched off (spec "The ACK", roadmap D93).
+    /// switched off (spec "The ACK", roadmap D93); the answer to a probe
+    /// never does, since its sender listens for it on this channel.
     fn listens_first(&self, reply: Reply) -> bool {
         match reply {
             Reply::Ack(_) => self.config.ack_listens_first,
+            Reply::Answer(_) => false,
         }
     }
 
@@ -1977,7 +2104,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn forward_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         // This runs on every event; only an ACK wait that ran out needs the
         // retry unit's two airtimes.
-        if self.awaiting_ack() {
+        if self.awaiting() {
             let (max, retry) = (self.config.hop_attempts, self.retry_unit());
             let missed = self
                 .handover()
@@ -2028,8 +2155,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The send queue's entry whose frame is on air or waiting for its ACK.
     fn under_way(&self) -> Option<usize> {
-        let on_air = self.awaiting_ack()
-            || self.radio.excursion.step_of(Job::HandOver) == Some(mac::Step::Tx);
+        let on_air =
+            self.awaiting() || self.radio.excursion.step_of(Job::HandOver) == Some(mac::Step::Tx);
         self.queue.current_index().filter(|_| on_air)
     }
 
@@ -2061,7 +2188,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the hand-over in flight next needs the core, if it waits.
     pub(super) fn flight_wake(&self) -> Option<Instant> {
         match self.in_flight()?.state {
-            State::Waiting(_) | State::AwaitAck => Some(self.forwarding.flight.until()),
+            State::Waiting(_) | State::AwaitAck | State::AwaitAnswer => {
+                Some(self.forwarding.flight.until())
+            }
             _ => None,
         }
     }

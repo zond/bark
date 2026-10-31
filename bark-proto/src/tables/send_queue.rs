@@ -106,6 +106,11 @@ pub enum State {
     Waiting(Wait),
     /// On the radio: its channel checked, then its frame on air.
     Radio,
+    /// Its probe on air (`Config::probe`).
+    Probing,
+    /// Listening on the receiver's channel for the answer to its probe
+    /// until the instant the hand-over in flight keeps.
+    AwaitAnswer,
     /// Listening at home for its ACK until the instant the hand-over in
     /// flight keeps.
     AwaitAck,

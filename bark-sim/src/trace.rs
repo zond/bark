@@ -88,6 +88,12 @@ impl Tracer {
                     if a.refused { ", refused" } else { "" }
                 )
             }
+            Ok(Packet::Probe(p)) => format!(
+                "PROBE{} to {} from {}",
+                if p.answer { " answer" } else { "" },
+                n.node(p.to),
+                n.node(p.from),
+            ),
             Ok(Packet::Data(d)) => {
                 let src = n.node(d.src_hop);
                 format!(

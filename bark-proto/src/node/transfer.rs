@@ -36,11 +36,21 @@ use crate::event::Frame;
 use crate::ids::{MsgId, NodeId};
 use crate::node::Rng;
 use crate::radio::Channel;
+use crate::tables::budget::PROBE_AIRTIME;
 use crate::tables::fixed::FixedVec;
 use crate::tables::send_queue::{Outgoing, State, Wait};
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Packet};
+use crate::wire::{Ack, Packet, Probe};
+
+/// How long a probe's sender listens on the receiver's channel for the
+/// answer (`Config::probe`): the answer's airtime and one turn of each
+/// radio, the receiver's from listening to transmitting and the sender's
+/// from transmitting to listening, neither longer than a transmission's
+/// preparation and start, 1.42 ms (spec "Heartbeat"); no retune and no
+/// listen-before-talk on either side. 18.5 ms.
+pub(crate) const ANSWER_TIMEOUT: Duration =
+    Duration::from_micros(PROBE_AIRTIME.as_micros() + 2 * (710 + 550 + 160));
 
 /// How many hand-overs the node has in flight at most: one, so that the
 /// radio listens at home for the ACK of the frame it sent, and the
@@ -142,6 +152,7 @@ impl<'a> HandOver<'a> {
         self.out.state
     }
 
+    #[cfg(test)]
     pub(crate) fn awaiting_ack(&self) -> bool {
         self.out.state == State::AwaitAck
     }
@@ -164,6 +175,35 @@ impl<'a> HandOver<'a> {
     /// Whether listen-before-talk is due to start.
     pub(crate) fn due(&self, now: Instant) -> bool {
         matches!(self.out.state, State::Waiting(_)) && self.flight.until <= now
+    }
+
+    /// The probe is on the radio (`Config::probe`).
+    pub(crate) fn probing(&mut self) {
+        self.out.state = State::Probing;
+    }
+
+    /// The probe left the antenna: listen on the receiver's channel for
+    /// its answer for `wait`.
+    pub(crate) fn probe_sent(&mut self, now: Instant, wait: Duration) {
+        self.flight.lbt_since = None;
+        self.flight.until = now + wait;
+        self.out.state = State::AwaitAnswer;
+    }
+
+    /// The receiver answered the probe: the frame goes now. Returns
+    /// whether an answer was awaited.
+    pub(crate) fn answered(&mut self) -> bool {
+        if self.out.state != State::AwaitAnswer {
+            return false;
+        }
+        self.out.state = State::Radio;
+        true
+    }
+
+    /// Whether the hand-over listens for an answer, to its probe or to
+    /// its frame.
+    pub(crate) fn awaiting(&self) -> bool {
+        matches!(self.out.state, State::AwaitAck | State::AwaitAnswer)
     }
 
     /// Hold the hand-over until `until`, without starting a new
@@ -262,7 +302,10 @@ impl<'a> HandOver<'a> {
         self.after_attempt(now, max, rng, retry_backoff)
     }
 
-    /// If the ACK wait has run out at `now`, retry or fail.
+    /// If the wait for the ACK, or for the answer to the probe, has run
+    /// out at `now`, retry or fail. An unanswered probe is an attempt
+    /// that could not be made, as a listen-before-talk give-up is for a
+    /// return (`lost_attempt`): the receiver did not answer.
     pub(crate) fn timeout(
         &mut self,
         now: Instant,
@@ -270,11 +313,13 @@ impl<'a> HandOver<'a> {
         rng: &mut Rng,
         retry_backoff: Duration,
     ) -> Option<Missed> {
-        if self.awaiting_ack() && now >= self.flight.until {
-            Some(self.after_attempt(now, max, rng, retry_backoff))
-        } else {
-            None
+        if !self.awaiting() || now < self.flight.until {
+            return None;
         }
+        if self.out.state == State::AwaitAnswer {
+            return Some(self.lost_attempt(now, max, rng, retry_backoff));
+        }
+        Some(self.after_attempt(now, max, rng, retry_backoff))
     }
 
     fn after_attempt(
@@ -301,6 +346,15 @@ impl<'a> HandOver<'a> {
 pub(crate) enum Reply {
     /// An ACK, taking, refusing or seen (spec "The ACK").
     Ack(Ack),
+    /// The answer to a probe, sent at once on this node's own channel,
+    /// where the sender listens for it (`Config::probe`).
+    Answer(Probe),
+}
+
+impl From<Probe> for Reply {
+    fn from(p: Probe) -> Reply {
+        Reply::Answer(p)
+    }
 }
 
 impl From<Ack> for Reply {
