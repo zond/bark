@@ -74,7 +74,12 @@
 //! back to it, is followed.
 //!
 //! A neighbour is tried, marked in the record, only once it has ACKed
-//! the message (roadmap D36). When listen-before-talk gives up on a
+//! the message, taking it or having seen it (roadmap D36, D90). A seen
+//! ACK says the neighbour has the message's record and no copy of it:
+//! the forward is routed again at once from the record, past that
+//! neighbour, by the same choice a return taken from a child gets; a
+//! return answered seen is dropped, its parent having gone on without
+//! it. When listen-before-talk gives up on a
 //! forward's neighbour (spec "Hand-over" step 2), the neighbour refuses it, or its
 //! three attempts go unanswered (step 6), it is set aside for this
 //! hand-over only (`skipped`): choosing again at once must not pick it
@@ -1467,12 +1472,68 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
-    /// took the packet, or refused it (spec "The ACK", "Bans"); see the module documentation.
+    /// took the packet, refused it, or has seen it (spec "The ACK",
+    /// "Bans"); see the module documentation.
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
+        } else if ack.seen {
+            self.seen(ack, now, emit);
         } else if self.handover().is_some_and(|(mut h, _)| h.acked(ack)) {
             self.handover_done(now, emit);
+        }
+    }
+
+    /// The receiver of the current hand-over has the message's record and
+    /// no copy of it (spec "The ACK", roadmap D90). It is tried, as one
+    /// that took the packet is; a forward is then routed again from the
+    /// record when its turn comes, the same choice a return taken from a
+    /// child gets, so the sender goes on to its next candidate as if the
+    /// receiver had returned the message at once. Nothing is banned and
+    /// no failure is counted. A return has nowhere else to go: the parent
+    /// has gone on without this copy, and it ends here.
+    fn seen(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if !self
+            .in_flight()
+            .is_some_and(|o| o.answered_by(ack, self.id))
+        {
+            return;
+        }
+        let Some(out) = self.queue.current().copied() else {
+            return;
+        };
+        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
+            return;
+        };
+        let (id, to) = (d.msg_id(), d.dst_hop);
+        emit(Action::Trace(Trace::Seen { msg_id: id, by: to }));
+        self.tried(id, to, d.hops, now);
+        if out.kind == Kind::Forward {
+            self.cancel_handover();
+            return;
+        }
+        self.queue.take_current();
+        self.forwarding.skipped = 0;
+        self.forwarding.feed_due = true;
+        self.drop_msg(id, DropReason::ReturnSeen, emit);
+    }
+
+    /// The receiver `to` of a hand-over of `id` sent at count `hops`
+    /// answered that it has the packet, taken or seen: it is alive and
+    /// tried, and the count is spent (spec "The ACK", "Message records",
+    /// "Hop count").
+    fn tried(&mut self, id: MsgId, to: NodeId, hops: u8, now: Instant) {
+        let slot = self.neighbours.slot_of(to);
+        if slot.is_some() {
+            self.neighbours.succeeded(to, now);
+        }
+        if let Some(r) = self.records.get_mut(id) {
+            r.handed_over(hops);
+            // The parent that took a return has the message from this
+            // relay as much as a child has (spec "Message records").
+            if let Some(s) = slot {
+                r.handed_to(s);
+            }
         }
     }
 
@@ -1554,19 +1615,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             };
             return self.delivered_to(id, to, by, now, emit);
         }
-        let slot = self.neighbours.slot_of(to);
-        if slot.is_some() {
-            self.neighbours.succeeded(to, now);
-        }
-        if let Some(r) = self.records.get_mut(id) {
-            r.handed_over(d.hops);
-            // The parent that took a return has the message from this
-            // relay as much as a child has (spec "Message records").
-            if let Some(s) = slot {
-                r.handed_to(s);
-            }
-            if to == d.dst_id {
-                // The node it is addressed to took it: it has arrived.
+        self.tried(id, to, d.hops, now);
+        if to == d.dst_id {
+            // The node it is addressed to took it: it has arrived.
+            if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
         }

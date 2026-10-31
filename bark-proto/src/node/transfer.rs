@@ -1,7 +1,7 @@
 //! Per-hop transfer (spec "Hand-over"): one frame handed to one receiver
 //! until it answers or the sender gives up ([`HandOver`]), and the replies
 //! this node owes the senders of what it received ([`Replies`]): an ACK
-//! each, taking or refusing.
+//! each, taking, refusing or seen.
 //!
 //! A hand-over lives in its send-queue place ([`Outgoing`]): where it is,
 //! its transmissions so far and, in its frame, its receiver, which the ACK
@@ -125,8 +125,8 @@ impl Outgoing {
         self.tries > 0
     }
 
-    /// Whether `ack` answers this place's hand-over, taking or refusing a
-    /// frame that has been sent.
+    /// Whether `ack` answers this place's hand-over, taking, refusing or
+    /// having seen a frame that has been sent.
     pub(crate) fn answered_by(&self, ack: Ack, me: NodeId) -> bool {
         self.in_flight() && self.transmitted() && self.expect(me).is_some_and(|e| ack.answers(&e))
     }
@@ -224,8 +224,8 @@ impl<'a> HandOver<'a> {
         self.out.state = State::AwaitAck;
     }
 
-    /// Whether `ack` answers this hand-over, taking or refusing a frame
-    /// that has been sent.
+    /// Whether `ack` answers this hand-over, taking, refusing or having
+    /// seen a frame that has been sent.
     pub(crate) fn answered_by(&self, ack: Ack) -> bool {
         self.out.answered_by(ack, self.me)
     }
@@ -240,7 +240,7 @@ impl<'a> HandOver<'a> {
     /// An ACK arrived. Returns whether it takes this hand-over's frame,
     /// which ends the hand-over.
     pub(crate) fn acked(&mut self, ack: Ack) -> bool {
-        let taken = self.answered_by(ack) && !ack.refused;
+        let taken = self.answered_by(ack) && !ack.refused && !ack.seen;
         if taken {
             self.out.state = State::Queued;
         }
@@ -298,7 +298,7 @@ impl<'a> HandOver<'a> {
 /// What a node replies with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reply {
-    /// An ACK, taking or refusing (spec "The ACK").
+    /// An ACK, taking, refusing or seen (spec "The ACK").
     Ack(Ack),
 }
 
@@ -636,6 +636,12 @@ mod tests {
         };
         assert!(t.answered_by(refused) && !t.acked(refused), "a refusal");
         assert!(t.out.in_flight(), "a refusal is the role's to act on");
+        let seen = Ack {
+            seen: true,
+            ..expect
+        };
+        assert!(t.answered_by(seen) && !t.acked(seen), "seen, not taken");
+        assert!(t.out.in_flight(), "seen is the role's to act on");
         // Late, during the retry backoff: still the receiver's ACK.
         assert_eq!(t.timeout(at(102), 3, &mut rng, ms(50)), Some(Missed::Retry));
         assert!(t.acked(expect));

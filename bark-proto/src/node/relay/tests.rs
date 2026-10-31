@@ -1630,3 +1630,214 @@ fn the_application_waits_while_every_neighbour_is_banned() {
     assert_eq!(r.next_wakeup(), Some(now + BAN));
     assert!(r.accepts_send(now + BAN));
 }
+
+/// A relay with two neighbours toward a far destination, D nearer to it
+/// than E, holding a forward of a message whose record has highest
+/// count 1, with its hand-over to D on the air (spec "Next hop"). The
+/// relay, the time, the message and the two neighbours' positions.
+fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Position) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let [d_pos, e_pos] = [10_000, 5_000].map(|k| Position {
+        lat: me.lat + k,
+        ..me
+    });
+    let far = Position {
+        lat: me.lat + 100_000,
+        ..me
+    };
+    for (p, home) in [(d_pos, 5), (e_pos, 7)] {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(p),
+            short: p.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let data = Data {
+        sender_home: r.home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: far,
+        dst_id: NOBODY,
+        hops: 2,
+        time_left: u8::MAX,
+        payload: text,
+    };
+    let id = data.msg_id();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    let at = r.record_place().unwrap();
+    r.records.put(at, Record::new(id, parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    assert_eq!(data_to(&sent), [(id_of(d_pos), 2)], "D first");
+    (r, now, id, d_pos, e_pos)
+}
+
+/// `r` hears `p` on its home channel at `now`, and runs until the
+/// actions that follow are done; the frames it sent.
+fn hear(r: &mut Relay, now: &mut Instant, p: &Packet<'_>) -> Vec<(Instant, Frame)> {
+    let f = mac::frame(p, r.home, MIN_PREAMBLE_SYMBOLS);
+    let event = Event::Received {
+        channel: r.home,
+        rssi_dbm: -80,
+        snr_db: 10,
+        bytes: &f.bytes[..f.len as usize],
+    };
+    let mut pending = Vec::new();
+    r.handle(event, *now, &mut |a| pending.push(a));
+    let until = *now;
+    drive_from(r, now, until, pending)
+}
+
+/// Run `r` from the actions `pending` it has asked for, then from its
+/// wakeups, until the next DATA frame has gone out, on a quiet channel;
+/// the frames it sent.
+fn until_sent(r: &mut Relay, now: &mut Instant, pending: Vec<Action>) -> Vec<(Instant, Frame)> {
+    let start = *now;
+    let mut sent = drive_from(r, now, start, pending);
+    while data_to(&sent).is_empty() {
+        let until = *now + Duration::from_millis(10);
+        sent.extend(drive(r, now, until));
+        *now = (*now).max(until);
+        assert!(*now < start + Duration::from_secs(10), "nothing sent");
+    }
+    sent
+}
+
+/// The receiver and count of each DATA frame in `sent`.
+fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u8)> {
+    sent.iter()
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some((d.dst_hop, d.hops)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A seen ACK tries its sender and sends the forward on at once (spec
+/// "The ACK", "Hand-over", roadmap D90). D answers that it has seen the
+/// message: the relay marks D tried, spends the count D recorded, bans
+/// nothing and counts no failure, and its next frame goes to E with the
+/// next count, as it would after D returned the message.
+#[test]
+fn a_seen_ack_tries_the_neighbour_and_sends_on() {
+    use crate::wire::Ack;
+    let (mut r, mut now, id, d_pos, e_pos) = handing_to_the_nearer(b"seen");
+    let seen = Ack {
+        msg_id: id,
+        from: id_of(d_pos),
+        to: r.me(),
+        refused: false,
+        wait: 0,
+        seen: true,
+    };
+    now += Duration::from_millis(5);
+    let f = mac::frame(&Packet::Ack(seen), r.home, MIN_PREAMBLE_SYMBOLS);
+    let event = Event::Received {
+        channel: r.home,
+        rssi_dbm: -80,
+        snr_db: 10,
+        bytes: &f.bytes[..f.len as usize],
+    };
+    let mut actions = Vec::new();
+    r.handle(event, now, &mut |a| actions.push(a));
+    assert!(actions.contains(&Action::Trace(Trace::Seen {
+        msg_id: id,
+        by: id_of(d_pos)
+    })));
+    assert!(!actions
+        .iter()
+        .any(|a| matches!(a, Action::Trace(Trace::Dropped { .. }))));
+    let record = r.records.get(id).unwrap();
+    let slot = r.neighbours.slot_of(id_of(d_pos)).unwrap();
+    assert!(record.handed(slot), "D is tried");
+    assert_eq!(record.highest_hops(), 2, "the count D recorded is spent");
+    let d = r.neighbours.by_id(id_of(d_pos)).unwrap().1;
+    assert!(!r.neighbours.is_banned(d, now) && d.fail_count == 0);
+    assert!(r.holding().any(|m| m == id), "the message stays here");
+    let sent = until_sent(&mut r, &mut now, actions);
+    assert_eq!(data_to(&sent), [(id_of(e_pos), 3)], "E next, one count up");
+    assert!(r.awaiting_ack());
+}
+
+/// A return answered seen ends the message: the parent has gone on
+/// without this copy, and a return has nowhere else to go
+/// (spec "Return to parent", roadmap D90).
+#[test]
+fn a_return_answered_seen_is_dropped() {
+    use crate::event::DropReason;
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::{Ack, Data};
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    now += BAN;
+    let parent = name(7);
+    let home = Channel::new(6).unwrap();
+    let data = Data {
+        sender_home: r.home,
+        dst_hop: parent,
+        src_hop: r.me(),
+        dst_pos: far,
+        dst_id: NOBODY,
+        hops: 2,
+        time_left: u8::MAX,
+        payload: b"back",
+    };
+    let id = data.msg_id();
+    let at = r.record_place().unwrap();
+    r.records
+        .put(at, Record::new(id, Some((parent, home)), 1, now));
+    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Return)).unwrap();
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    assert_eq!(data_to(&sent), [(parent, 2)]);
+    let seen = Ack {
+        msg_id: id,
+        from: parent,
+        to: r.me(),
+        refused: false,
+        wait: 0,
+        seen: true,
+    };
+    now += Duration::from_millis(5);
+    let f = mac::frame(&Packet::Ack(seen), r.home, MIN_PREAMBLE_SYMBOLS);
+    let event = Event::Received {
+        channel: r.home,
+        rssi_dbm: -80,
+        snr_db: 10,
+        bytes: &f.bytes[..f.len as usize],
+    };
+    let mut actions = Vec::new();
+    r.handle(event, now, &mut |a| actions.push(a));
+    assert!(actions.contains(&Action::Trace(Trace::Seen {
+        msg_id: id,
+        by: parent
+    })));
+    assert!(actions.contains(&Action::Trace(Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::ReturnSeen
+    })));
+    assert!(r.queue.is_empty() && r.handover_idle());
+    assert!(r.holding().next().is_none());
+}

@@ -164,6 +164,9 @@ pub enum DropReason {
     Banned,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
+    /// The parent answered the return seen: it has gone on without this
+    /// copy, and a return has nowhere else to go (spec "Return to parent").
+    ReturnSeen,
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
@@ -352,6 +355,15 @@ pub enum Trace {
         msg_id: MsgId,
         /// The parent.
         to: NodeId,
+    },
+    /// The receiver of a hand-over answered seen: it has the message's
+    /// record and no copy of it. This node counts it tried and goes on to
+    /// its next candidate, or drops a return (spec "The ACK").
+    Seen {
+        /// The message.
+        msg_id: MsgId,
+        /// The receiver.
+        by: NodeId,
     },
     /// A DATA of a message this node has a record of was taken, and was
     /// not a retransmission (spec "Receiving DATA" cases 4 and 5).

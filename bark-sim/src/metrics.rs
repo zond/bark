@@ -502,6 +502,10 @@ pub struct DropCounts {
     pub banned: u64,
     /// The return to the parent failed (spec "Return to parent").
     pub return_failed: u64,
+    /// The parent answered the return seen (spec "Return to parent");
+    /// left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub return_seen: u64,
     /// The delivery TTL ran out (spec "Delivery queue").
     pub queue_expired: u64,
     /// Its time left ran out on the way (spec "Time to live").
@@ -536,6 +540,7 @@ impl DropCounts {
             DropReason::Budget => &mut self.budget,
             DropReason::Banned => &mut self.banned,
             DropReason::ReturnFailed => &mut self.return_failed,
+            DropReason::ReturnSeen => &mut self.return_seen,
             DropReason::QueueExpired => &mut self.queue_expired,
             DropReason::Expired => &mut self.expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
@@ -555,6 +560,7 @@ impl DropCounts {
             + self.budget
             + self.banned
             + self.return_failed
+            + self.return_seen
             + self.queue_expired
             + self.expired
             + self.delivery_full
