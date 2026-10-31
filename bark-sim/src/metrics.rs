@@ -165,6 +165,9 @@ pub struct GpsCounts {
     pub searches: u64,
     /// Of those, searches that found a fix.
     pub fixes: u64,
+    /// Of those, searches the core ended before their end: at an anchor
+    /// taken (`bark_proto::gps`).
+    pub ended: u64,
     /// Time the receiver ran in those searches, µs.
     pub on_us: u64,
     /// Time the node was a relay, on USB and on battery, µs.
