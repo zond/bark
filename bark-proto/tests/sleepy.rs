@@ -699,6 +699,7 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
         to: h.nodes[s].core.id(),
         refused: true,
         wait: bans,
+        seen: false,
     };
     let mut frame = Frame {
         channel: h.resting(s).unwrap(),

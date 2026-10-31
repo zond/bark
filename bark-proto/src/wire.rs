@@ -1,12 +1,12 @@
 //! Encoding and decoding of every packet in spec "Packet formats".
 //!
 //! The first byte of every packet is its kind and that kind's one small
-//! field (roadmap D76, D77):
+//! field (roadmap D76, D77, D90):
 //!
 //! ```text
 //! 1 0 0 0 c c c c   HEARTBEAT: home channel cccc
 //! 0 0 a a a a a a   DATA: aux, the sender's home channel
-//! 0 1 a a a a a a   ACK: aux, the wait
+//! s 1 w w w w w w   ACK: s, the seen flag; w, the wait
 //! ```
 //!
 //! The second is the format version (roadmap D77): in a heartbeat the
@@ -33,12 +33,14 @@
 //!            time_left payload                                    = 29 + payload
 //! ```
 //!
-//! An ACK answers every offer, taken or refused: its `aux` says which. A
-//! refusal is for this hop only (spec "Receiving DATA"); the network still
-//! sends no failure notices (D10). An ACK names the message, the node
-//! answering and the node answered, so that a sender takes only the answer
-//! to its own offer, however many others offer the same message to the
-//! same node (D32).
+//! An ACK answers every offer, taken, refused or seen: its first byte says
+//! which. A refusal is for this hop only (spec "Receiving DATA"); the
+//! network still sends no failure notices (D10). A seen answer takes
+//! nothing: the answering relay has the message's record and no copy of
+//! it, and the sender goes on to its next candidate (spec "The ACK",
+//! D90). An ACK names the message, the node answering and the node
+//! answered, so that a sender takes only the answer to its own offer,
+//! however many others offer the same message to the same node (D32).
 //!
 //! Choices the design leaves open (O2), fixed here and listed in
 //! `docs/core-interface.md` §7:
@@ -51,7 +53,9 @@
 //! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
 //!   wait the refuser asks for in whole bans, 1 to 63 (`tables/budget.rs`).
 //!   The wait needs no byte of its own, so every ACK has one length and
-//!   one airtime.
+//!   one airtime. The seen flag is the top bit, where a heartbeat has its
+//!   kind, so the kind `11` that was free is the seen ACK; a seen ACK's
+//!   wait is 0, and one with a wait is rejected.
 //! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
 //!   are zero, and a DATA with either set is rejected.
 //! - The heartbeat's flags are bit 0 sleepy, bit 1 anchorless, bit 2
@@ -88,17 +92,20 @@ const TIME_LEFT_LEN: usize = 1;
 
 // First byte.
 const FIRST: usize = 0;
-const HEARTBEAT_BIT: u8 = 0x80;
+// Set in an ACK: the answer. Clear, the top bit tells a heartbeat from DATA.
 const ANSWER_BIT: u8 = 0x40;
+const HEARTBEAT_BIT: u8 = 0x80;
+// In an ACK, the top bit is the seen flag (spec "The ACK").
+const SEEN_BIT: u8 = HEARTBEAT_BIT;
 /// The bits of `aux`, below the kind bits (spec "Packet formats"): the
 /// longest wait an ACK asks for, in bans.
 pub const AUX_MASK: u8 = 0x3f;
-// A heartbeat's channel, below three bits that are zero.
+// A heartbeat's channel, below two bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
-const HEARTBEAT_ZERO: u8 = 0x70;
+const HEARTBEAT_ZERO: u8 = 0x30;
 const _: () = assert!(
-    HEARTBEAT_BIT | HEARTBEAT_ZERO | CHANNEL_MASK == 0xff
-        && ANSWER_BIT | AUX_MASK == !HEARTBEAT_BIT,
+    HEARTBEAT_BIT | ANSWER_BIT | HEARTBEAT_ZERO | CHANNEL_MASK == 0xff
+        && SEEN_BIT | ANSWER_BIT | AUX_MASK == 0xff,
     "spec \"Packet formats\": each bit of the first byte has one meaning"
 );
 // The channel field of a bench frame's first byte: no node's home.
@@ -201,7 +208,7 @@ impl Heartbeat {
     }
 }
 
-/// ACK (spec "The ACK"): the answer to an offer, taken or refused.
+/// ACK (spec "The ACK"): the answer to an offer, taken, refused or seen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ack {
     /// The answered message.
@@ -213,8 +220,12 @@ pub struct Ack {
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
     /// For a refusal, the wait the refuser asks for in whole bans, 1 to
-    /// [`AUX_MASK`] (spec "Bans"); 0 in an ACK that takes.
+    /// [`AUX_MASK`] (spec "Bans"); 0 in an ACK that takes or has seen.
     pub wait: u8,
+    /// Seen, not taken (spec "Receiving DATA" case 6): `from` has the
+    /// message's record and no copy of it, and `to` goes on to its next
+    /// candidate. Never with `refused`.
+    pub seen: bool,
 }
 
 impl Ack {
@@ -299,7 +310,7 @@ pub enum DecodeError {
     /// A payload longer than [`MAX_PAYLOAD`].
     PayloadTooLong,
     /// A first byte of no kind: a heartbeat's with a bit between its kind
-    /// and its channel set.
+    /// and its channel set, or an ACK's with the seen flag and a wait.
     Kind(u8),
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
@@ -390,13 +401,18 @@ impl Packet<'_> {
                 Ok(HEARTBEAT_LEN)
             }
             Packet::Ack(a) => {
+                debug_assert!(
+                    !(a.seen && a.refused),
+                    "seen takes nothing and refuses nothing"
+                );
                 // A refusal is never told as 0, which means taken.
                 let wait = if a.refused {
                     a.wait.clamp(1, AUX_MASK)
                 } else {
                     0
                 };
-                buf[FIRST] = ANSWER_BIT | wait;
+                let seen = if a.seen { SEEN_BIT } else { 0 };
+                buf[FIRST] = seen | ANSWER_BIT | wait;
                 buf[VERSION] = FORMAT;
                 put(buf, ACK_ID, &a.msg_id.0.to_be_bytes());
                 put(buf, ACK_FROM, &a.from.0);
@@ -429,6 +445,22 @@ impl<'a> Packet<'a> {
             return Err(DecodeError::BadLength);
         }
         let first = *b.first().ok_or(DecodeError::Short)?;
+        if first & ANSWER_BIT != 0 {
+            let (aux, seen) = (first & AUX_MASK, first & SEEN_BIT != 0);
+            if seen && aux != 0 {
+                return Err(DecodeError::Kind(first));
+            }
+            exact(b, ACK_LEN)?;
+            format(b)?;
+            return Ok(Packet::Ack(Ack {
+                msg_id: get_msg_id(b, ACK_ID),
+                from: get_id(b, ACK_FROM),
+                to: get_id(b, ACK_TO),
+                refused: aux != 0,
+                wait: aux,
+                seen,
+            }));
+        }
         if first & HEARTBEAT_BIT != 0 {
             if first & HEARTBEAT_ZERO != 0 {
                 return Err(DecodeError::Kind(first));
@@ -449,17 +481,6 @@ impl<'a> Packet<'a> {
             }));
         }
         let aux = first & AUX_MASK;
-        if first & ANSWER_BIT != 0 {
-            exact(b, ACK_LEN)?;
-            format(b)?;
-            return Ok(Packet::Ack(Ack {
-                msg_id: get_msg_id(b, ACK_ID),
-                from: get_id(b, ACK_FROM),
-                to: get_id(b, ACK_TO),
-                refused: aux != 0,
-                wait: aux,
-            }));
-        }
         let payload = payload(b, DATA_HEADER_LEN)?;
         format(b)?;
         Ok(Packet::Data(Data {
@@ -541,14 +562,20 @@ mod tests {
             msg_id in msg(),
             from in id(),
             to in id(),
-            refused: bool,
+            answer in 0..3u8,
             step in 1..=AUX_MASK,
         ) {
+            let (refused, seen) = (answer == 1, answer == 2);
             let wait = if refused { step } else { 0 };
-            let ack = Ack { msg_id, from, to, refused, wait };
+            let ack = Ack { msg_id, from, to, refused, wait, seen };
             round_trip(&Packet::Ack(ack));
-            let flipped = Ack { refused: !refused, ..ack };
+            let flipped = Ack { refused: !refused, seen: false, ..ack };
             prop_assert!(ack.answers(&flipped));
+            // A seen ACK with a wait is of no kind.
+            let mut buf = [0; MAX_FRAME];
+            let len = Packet::Ack(ack).encode(&mut buf).unwrap();
+            buf[0] = SEEN_BIT | ANSWER_BIT | step;
+            prop_assert_eq!(Packet::decode(&buf[..len]), Err(DecodeError::Kind(buf[0])));
             let mut flipped_to = to;
             flipped_to.0[0] = !flipped_to.0[0];
             let other = Ack { to: flipped_to, ..ack };
@@ -809,6 +836,7 @@ mod tests {
             to: NodeId([11, 12, 13, 14, 15, 16]),
             refused: false,
             wait: 0,
+            seen: false,
         };
         let len = Packet::Ack(ack).encode(&mut buf).unwrap();
         assert_eq!(
@@ -838,6 +866,20 @@ mod tests {
         };
         Packet::Ack(unsaid).encode(&mut buf).unwrap();
         assert_eq!(buf[0], 0x41, "a refusal is never told as taken");
+        let seen = Ack { seen: true, ..ack };
+        let len = Packet::Ack(seen).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 0xc0, "the seen flag over the ACK kind, wait 0");
+        assert_eq!(Packet::decode(&buf[..len]), Ok(Packet::Ack(seen)));
+        assert_eq!(
+            time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
+            Duration::from_micros(16_960),
+            "a seen ACK costs what any ACK costs"
+        );
+        assert_eq!(
+            Packet::decode(&[0xb0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            Err(DecodeError::Kind(0xb0)),
+            "a heartbeat with bits 4 or 5 set"
+        );
 
         let d = Data {
             sender_home: Channel::new(9).unwrap(),

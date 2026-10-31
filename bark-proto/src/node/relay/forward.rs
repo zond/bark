@@ -647,6 +647,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             to: d.src_hop,
             refused: refusal.is_some(),
             wait,
+            seen: false,
         };
         let sending = self.sending_reply();
         if !self

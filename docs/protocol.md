@@ -2608,7 +2608,7 @@ third byte holds its flags. Each field has one place.
 |---|---|---|
 | `1000 cccc` | heartbeat | `cccc` the home channel, 0 to 12 |
 | `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
-| `01aa aaaa` | ACK | `aux`, 0 if the offer is taken, else the wait the refuser asks for, 1 to 63 bans ([bans](#bans)) |
+| `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the wait the refuser asks for, 1 to 63 bans ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
 
 The second byte is the **format version**. This specification is
 format 1.
@@ -2661,9 +2661,10 @@ so a map point is a position a person vouched for, where a fixed relay's
 first GPS fix could have been spoofed. Which checks may lean on that is
 for later; until then the bit is carried, kept and shown.
 
-A node rejects a heartbeat whose first byte has any of bits 4 to 6 set
-or whose channel is 13 to 15, a DATA whose `aux` is above 12, and a DATA
-or ACK in a format it does not speak. A heartbeat byte with channel 15,
+A node rejects a heartbeat whose first byte has bit 4 or 5 set or whose
+channel is 13 to 15, an ACK with the seen flag and a wait, a DATA whose
+`aux` is above 12, and a DATA or ACK in a format it does not speak. A
+heartbeat byte with channel 15,
 which no node sends, starts the bench frames of the firmware's
 measurement console (`bark-fw/README.md`).
 
@@ -2675,8 +2676,8 @@ everything.
 ```
 HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
 ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
-          the answer to a DATA, taken or refused; sent on the channel in
-          the answered packet's aux
+          the answer to a DATA, taken, refused or seen; sent on the channel
+          in the answered packet's aux
           from, to = the IDs of the answering and the answered node
 DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           hops(1) time_left(1) payload                                      = 29 + payload

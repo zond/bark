@@ -313,10 +313,11 @@ action at a time, and the core never allocates.
   - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
     transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
     had when it reached the holder.
-  - The first byte's top bit marks a heartbeat, whose low four bits hold its channel, 0 to
-    12, and the three between are zero; the firmware's bench frames put 15 there, which
-    nodes reject (`wire::BENCH_FIRST`). Below a clear top bit, the next bit tells DATA from
-    the ACK, and the six bits under it are `aux` (roadmap D76).
+  - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit
+    the seen flag (roadmap D76, D90). With bit 6 clear, the top bit marks a heartbeat,
+    whose low four bits hold its channel, 0 to 12, and the two between are zero; the
+    firmware's bench frames put 15 there, which nodes reject (`wire::BENCH_FIRST`). Both
+    clear, the byte is DATA's, with `aux` in its six low bits.
   - The second byte is the format version (roadmap D77). The core writes it: 1, its only
     format, in DATA and the ACK, and in a heartbeat as the newest it speaks. It rejects a
     DATA or ACK of another format, reads every heartbeat whatever its format, and keeps
@@ -326,8 +327,9 @@ action at a time, and the core never allocates.
     the map point from its own position's source and keeps each neighbour's in
     `Neighbour::map_point`.
   - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
-    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); taken or refused, an
-    ACK is 18 bytes. A DATA's `aux` is the sender's home channel, and a DATA with either
-    of the two high bits of `aux` set is rejected. A heartbeat is read from its first 13
-    bytes, and what follows is ignored. An ACK with trailing
+    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); a seen ACK (spec "The ACK") has
+    the seen flag and `aux` 0, and one with the flag and a wait is rejected. Taken,
+    refused or seen, an ACK is 18 bytes. A DATA's `aux` is the sender's home channel,
+    and a DATA with either of the two high bits of `aux` set is rejected. A heartbeat is
+    read from its first 13 bytes, and what follows is ignored. An ACK with trailing
     bytes is rejected.

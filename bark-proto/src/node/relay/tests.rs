@@ -947,6 +947,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
                         to: r.me(),
                         refused: offers.len() <= refusals,
                         wait: 0,
+                        seen: false,
                     });
                     pending.extend(hear(&mut r, now, &reply));
                 }
@@ -1080,6 +1081,7 @@ fn an_answer_to_another_sender_is_not_ours() {
         to: r.me(),
         refused: false,
         wait: 0,
+        seen: false,
     };
     let to_c = Ack {
         to: name(0x0c0c_0c0c),
@@ -1203,6 +1205,7 @@ fn a_neighbour_that_answers_stays_live() {
             to: r.me(),
             refused,
             wait: 0,
+            seen: false,
         };
         let pending = hear(r, *now, &Packet::Ack(ack));
         r.queue.retain(|_, _| false);
@@ -1470,6 +1473,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         to: r.me(),
         refused: false,
         wait: 0,
+        seen: false,
     };
     let f = mac::frame(&Packet::Ack(ack), r.home, MIN_PREAMBLE_SYMBOLS);
     let event = Event::Received {
@@ -1591,6 +1595,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         to: r.me(),
         refused: false,
         wait: 0,
+        seen: false,
     };
     hear(&mut r, &mut now, &Packet::Ack(ack));
     assert!(r.records.get(id).unwrap().arrived());

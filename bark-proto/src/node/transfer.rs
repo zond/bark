@@ -106,6 +106,7 @@ pub(crate) fn expect(msg_id: crate::ids::MsgId, from: NodeId, me: NodeId) -> Ack
         to: me,
         refused: false,
         wait: 0,
+        seen: false,
     }
 }
 
@@ -354,6 +355,7 @@ impl Replies {
                 to: NodeId::NONE,
                 refused: false,
                 wait: 0,
+                seen: false,
             }),
             channel: match Channel::new(0) {
                 Some(c) => c,
@@ -516,6 +518,7 @@ mod tests {
             to: NodeId([7, 8, 9, 10, 11, 12]),
             refused: false,
             wait: 0,
+            seen: false,
         }
     }
 
