@@ -1,9 +1,12 @@
 # A copy from elsewhere is answered seen
 
-**Date:** 2026-10-31. **Status:** measured; roadmap D90, not adopted for now,
-2026-10-31: a correct search rule that does not address the storm,
-to be revisited once the splits themselves are measured (the storm
-candidate's parts 2 to 4). Spec references are to `protocol.md`. The form the D89 note
+**Date:** 2026-10-31. **Status:** measured; roadmap D90, adopted 2026-10-31 on the
+user's reading: main's fourth case dropped a branch of the graph (a
+relay that took a copy from a node it had not handed to kept its first
+parent and returned there, and the sender, done by the ACK, never tried
+its other candidates), so the sender must exhaust its candidates before
+anyone searches on, whatever it costs against that shortcut while the
+splits are unfixed; the splits are measured on this base from here on. Spec references are to `protocol.md`. The form the D89 note
 (`storm-absorb-2026-10-31.md`) said to build next: the same copies D89
 absorbed are answered "seen, not taken", and their sender searches on.
 Measured against main `ab38727`, whose outputs are those of `e75bd97`
