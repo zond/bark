@@ -35,7 +35,7 @@ on the ring and the four mesh runs, checked).
   seed-1 runs part at the first give-up, which draws a random wait
   main does not draw, and differ by minute 30; the branch tips at
   minute 50 to 55. Seeds 2 to 4, run to tell the edge from the rule:
-  still running when this was written (06:55 on 2026-11-02, started 06:52); their summaries land in the scratchpad's `storm3/main/` and `storm3/d96/` as `dp2`, `dp3`, `dp4`, and the row is to be read with them.
+  the edge, not the rule. Seed 2 storms on main and not on the branch (94.1 → 98.2 %, 465 201 → 309 490 s, 43 559 → 104 give-ups), seed 3 on neither (97.8 → 97.9 %); each build storms on one seed of three. Seed 4 was still running at the write-up.
 - **At twice the design rate, where both builds storm, the rule is
   worth a point:** seeds 1 and 7, 75.5 / 77.5 → 76.4 / 78.4 %
   delivered in the settled hour, 2.6 % less airtime, 8 % fewer copies
@@ -57,7 +57,7 @@ on the ring and the four mesh runs, checked).
   its own message for want of a route half a second after the
   application gave it, with no word to the application; under the
   rule it waits (`a_sleepy_node_waits_for_its_anchor_s_channel`).
-- **Recommendation:** not adopted on this measurement alone. The rule is the user's principle built as stated, costs nothing where give-ups are rare, is worth a point and 2.6 % of airtime where both builds storm, and removes a drop of a sleepy node's own message; but it does not lower the split rate, which is lost ACKs, and seed 1 storms on the branch where main does not, which seeds 2 to 4 must settle before adoption. If they storm on neither or on both alike, adopt it for the principle and the drop it removes, with part 4 next to free the queue a waiting hand-over holds; if the branch storms where main does not, the wait that holds the queue is a storm risk at the edge and the rule should wait for part 4.
+- **Recommendation:** adopt, on this base. The rule is the user's principle built as stated, costs nothing where give-ups are rare, is worth a point and 2.6 % of airtime where both builds storm, and removes a drop of a sleepy node's own message. It does not lower the split rate, which is lost ACKs, and it does not end a storm; nor does it start one: over three seeds at the design rate each build storms on one, main on seed 2 and the branch on seed 1, which is the edge. The queue a waiting hand-over holds is part 4's to free. The same measurement on the D93 base (main `8ff3a74`, the take final at the ACK) was queued at the write-up and decides the row; the branch is rebased onto it.
 
 ## The rule
 
@@ -252,9 +252,17 @@ unreachable), the interferer, and `dense-power.toml` at twice the rate:
 | largest settled airtime of a node % | 0.52 / 0.53 | 0.90 / 0.90 | 0.41 / 0.41 | 0.73 / 0.73 | 0.29 / 0.29 | 9.99 / 9.99 | 9.98 / 9.99 |
 | heartbeats received % | 99.6 / 99.5 | 99.0 / 99.0 | 99.6 / 99.6 | 99.3 / 99.3 | 97.0 / 97.0 | 60.6 / 60.9 | 62.8 / 63.3 |
 
-Seeds 2 to 4 of `dense-power.toml` on both builds were still running
-when this was written; their summaries are the files named above and
-are not in these tables.
+Seeds 2 and 3 of `dense-power.toml`, main / the branch (seed 4 was
+still running at the write-up; its summaries are `storm3/main/dp4.json`
+and `storm3/d96/dp4.json`):
+
+| | dp2 | dp3 |
+|---|---|---|
+| delivered, settled hour % | 94.1 / 98.2 | 97.8 / 97.9 |
+| airtime, whole run s | 465 201 / 309 490 | 283 426 / 279 774 |
+| listen-before-talk give-ups | 43 559 / 104 | 44 / 38 |
+| waits after give-ups, s | 5 / 18 | 0 / 5 |
+| split rate, % of failed | 27.8 / 24.3 | 23.3 / 23.9 |
 
 ## What it shows
 
@@ -276,7 +284,7 @@ are not in these tables.
   203. The give-ups' waits, 45 442 s in all over 20 000 nodes, are 0.17
   s each; what the storm costs is 1.1 M s of airtime. Whether the
   rule tipped it or the seed's edge did is what seeds 2 to 4 answer:
-  their runs were not finished when this was written. What is known: the branch's run is main's until the first give-up, so the two runs are two draws of one seed on the edge, as D77's branch and main were on 2026-10-30; one storming draw of two proves nothing about the rule, and three more seeds decide it.
+  the edge. On seed 2 it is main that storms, at half strength (94.1 %, 465 201 s, 43 559 give-ups) and the branch that does not (98.2 %, 309 490 s, 104 give-ups); on seed 3 neither does. The branch's run is main's until the first give-up draws a wait, so the two runs of a seed are two draws of one seed, and over seeds 1 to 3 each build storms once: at the design rate `dense-power.toml` sits on the edge, as D77's branch and main showed on 2026-10-30 and as D95 and D97 found on their branches, and which draw tips is the seed's, not the rule's.
 - **Where both storm, the rule helps a little.** At twice the rate
   the branch delivers 0.9 points more on both seeds with 2.6 % less
   airtime, a tenth fewer texts and copies ended by the time to live
