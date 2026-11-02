@@ -1,5 +1,5 @@
-//! The send queue (spec "Send queue"): packets waiting for their hand-over, those
-//! being handed over included, in the order they arrived.
+//! The send queue (spec "Send queue"): packets waiting for their hand-over, the
+//! one being handed over included, in the order they arrived.
 //!
 //! **Regular room.** A relay takes a packet into it only if the airtime of
 //! everything queued, that packet included, fits in its duty bucket as it
@@ -38,13 +38,6 @@
 //! equals the one that arrived first is offered first, however often they
 //! wait (roadmap D31 rule 4). One set aside for the delivery queue keeps
 //! its place and is never due.
-//!
-//! **Flights.** A hand-over that has begun keeps, beside its place, what
-//! the place has no room for ([`Flight`]): until when it waits, since
-//! when its checks have found the channel busy, and the neighbours it
-//! passed over. At most [`FLIGHTS`] hand-overs are under way at once; one
-//! of them is on the radio, the rest wait between their attempts (spec
-//! "Waiting hand-overs").
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
@@ -52,7 +45,6 @@ use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
 use crate::tables::records::MAX_HOPS;
-use crate::tables::{retry_window, ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
@@ -72,24 +64,6 @@ const _: () = assert!(SEND_QUEUE == 39);
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
 pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
-
-/// How many hand-overs may be under way at once: the one on the radio
-/// and those waiting between their attempts (spec "Waiting hand-overs").
-/// Enough that the radio has a hand-over to serve through the longest
-/// retry wait: that wait is at most `2^(attempts − 1)` retry units,
-/// 622 ms, and a hand-over that transmits holds the radio at least a
-/// full frame and the ACK timeout, 238.6 ms, so three can be served in
-/// one such wait; with the waiter, four.
-pub const FLIGHTS: usize = 1 + flights_in(retry_window(RETRY_BACKOFF, HOP_ATTEMPTS - 1));
-
-/// How many hand-overs of a full frame the radio can serve in `wait`.
-const fn flights_in(wait: Duration) -> usize {
-    let service =
-        time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_TIMEOUT.as_micros();
-    wait.as_micros().div_ceil(service) as usize
-}
-
-const _: () = assert!(FLIGHTS == 4);
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,13 +101,13 @@ pub enum State {
     /// until the delivery queue has a place (spec "Return to parent"); it
     /// keeps its place and its airtime in admission.
     Held,
-    /// Addressed, and waiting for this: until the instant its flight
-    /// keeps, or for its channel, until no hand-over under way waits on
-    /// it.
+    /// Addressed, and waiting for this until the instant the hand-over in
+    /// flight keeps.
     Waiting(Wait),
     /// On the radio: its channel checked, then its frame on air.
     Radio,
-    /// Listening at home for its ACK until the instant its flight keeps.
+    /// Listening at home for its ACK until the instant the hand-over in
+    /// flight keeps.
     AwaitAck,
 }
 
@@ -150,10 +124,6 @@ pub enum Wait {
     Budget,
     /// The retry wait after a missed ACK.
     Retry,
-    /// A channel another hand-over under way waits on, for its backoff
-    /// or its retry (spec "Waiting hand-overs"). It has no flight: once
-    /// the channel is free it is queued and addressed again.
-    Channel,
 }
 
 /// A queued frame.
@@ -199,20 +169,10 @@ impl Outgoing {
         self.state == State::Held
     }
 
-    /// Whether its hand-over has begun: addressed and waiting, on the
+    /// Whether its hand-over is under way: addressed and waiting, on the
     /// radio or waiting for its ACK.
     pub fn in_flight(&self) -> bool {
         !matches!(self.state, State::Queued | State::Held)
-    }
-
-    /// Whether it waits between the attempts of its hand-over: for a
-    /// backoff, a retry, the bucket or its channel. Its turn and an owed
-    /// reply are no wait.
-    pub fn waits(&self) -> bool {
-        matches!(
-            self.state,
-            State::Waiting(Wait::Backoff | Wait::Retry | Wait::Budget | Wait::Channel)
-        )
     }
 
     /// The hop count the frame carries.
@@ -237,39 +197,6 @@ impl Outgoing {
     }
 }
 
-/// What the queue keeps of a hand-over under way beside its place, which
-/// has no room for it: until when it waits or listens for its ACK, since
-/// when the checks of its attempt have found the channel busy, and the
-/// neighbours it passed over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Flight {
-    /// The entry whose hand-over this is.
-    place: usize,
-    /// Until when it waits, or its ACK is due.
-    pub until: Instant,
-    /// `None` until a check of this attempt.
-    pub lbt_since: Option<Instant>,
-    /// Neighbour slots a forward was routed past: listen-before-talk gave
-    /// up on them, they refused it, or its attempts went unanswered
-    /// (spec "Hand-over"); not tried.
-    pub skipped: u64,
-}
-
-impl Flight {
-    /// No flight: the queue's filler, and a test's start.
-    pub const NONE: Flight = Flight {
-        place: 0,
-        until: Instant::ZERO,
-        lbt_since: None,
-        skipped: 0,
-    };
-
-    /// The entry whose hand-over this is.
-    pub fn place(&self) -> usize {
-        self.place
-    }
-}
-
 /// The send queue is full.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full;
@@ -281,10 +208,8 @@ pub struct Full;
 #[derive(Clone)]
 #[repr(C)]
 pub struct SendQueue {
-    /// The entry last chosen to be addressed.
+    /// The entry being handed over, or last chosen to be.
     current: Option<usize>,
-    /// The hand-overs under way, in the order they began.
-    flights: FixedVec<Flight, FLIGHTS>,
     frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
 }
 
@@ -303,7 +228,6 @@ impl SendQueue {
         };
         SendQueue {
             frames: FixedVec::new(Outgoing::new(frame, Kind::Return)),
-            flights: FixedVec::new(Flight::NONE),
             current: None,
         }
     }
@@ -321,7 +245,6 @@ impl SendQueue {
     /// Empty again, in place.
     pub fn clear(&mut self) {
         self.frames.clear();
-        self.flights.clear();
         self.current = None;
     }
 
@@ -368,134 +291,49 @@ impl SendQueue {
         self.frames.push(out).map_err(|_| Full)
     }
 
-    /// Entry `i`.
-    pub fn get(&self, i: usize) -> Option<&Outgoing> {
-        self.frames.as_slice().get(i)
-    }
-
-    /// Entry `i`, to address or to let wait.
-    pub fn get_mut(&mut self, i: usize) -> Option<&mut Outgoing> {
-        self.frames.as_mut_slice().get_mut(i)
-    }
-
-    /// Make entry `i` the one being addressed. The queue keeps its order.
+    /// Make entry `i` the hand-over's. The queue keeps its order.
     pub fn select(&mut self, i: usize) {
         self.current = (i < self.len()).then_some(i);
     }
 
-    /// The entry being addressed, if one was chosen.
+    /// Where the hand-over's entry is.
     pub fn current_index(&self) -> Option<usize> {
         self.current
     }
 
-    /// No entry is being addressed.
+    /// The hand-over's entry.
+    pub fn current(&self) -> Option<&Outgoing> {
+        self.frames.as_slice().get(self.current?)
+    }
+
+    /// The hand-over's entry, to address or to let wait.
+    pub fn current_mut(&mut self) -> Option<&mut Outgoing> {
+        let i = self.current?;
+        self.frames.as_mut_slice().get_mut(i)
+    }
+
+    /// Take the hand-over's entry out: its hand-over is over.
+    pub fn take_current(&mut self) -> Option<Outgoing> {
+        let i = self.current.take()?;
+        Some(self.frames.remove(i))
+    }
+
+    /// No entry is the hand-over's.
     pub fn deselect(&mut self) {
         self.current = None;
     }
 
-    /// Take entry `i` out, as it stands: its hand-over, if under way, is
-    /// over.
+    /// Take entry `i` out, as it stands.
     pub fn remove(&mut self, i: usize) -> Option<Outgoing> {
         if i >= self.len() {
             return None;
         }
-        let out = self.frames.remove(i);
-        self.removed(i);
-        Some(out)
-    }
-
-    /// Entry `i` is gone: what pointed past it moves down.
-    fn removed(&mut self, i: usize) {
         self.current = match self.current {
             Some(c) if c == i => None,
             Some(c) if c > i => Some(c - 1),
             c => c,
         };
-        self.flights.retain(|f| f.place != i);
-        for f in self.flights.as_mut_slice() {
-            if f.place > i {
-                f.place -= 1;
-            }
-        }
-    }
-
-    // --- The flights ---
-
-    /// The hand-overs under way, in the order they began.
-    pub fn flights(&self) -> impl Iterator<Item = &Flight> {
-        self.flights.as_slice().iter()
-    }
-
-    /// Whether another hand-over may begin.
-    pub fn flight_free(&self) -> bool {
-        !self.flights.is_full()
-    }
-
-    /// The flight of entry `i`, if its hand-over is under way.
-    pub fn flight_of(&self, i: usize) -> Option<&Flight> {
-        self.flights().find(|f| f.place == i)
-    }
-
-    /// Begin the hand-over of entry `i` at `now`, routed past `skipped`:
-    /// false if the flights are full, or it has one.
-    pub fn start_flight(&mut self, i: usize, now: Instant, skipped: u64) -> bool {
-        if i >= self.len() || self.flight_of(i).is_some() {
-            return false;
-        }
-        self.flights
-            .push(Flight {
-                place: i,
-                until: now,
-                lbt_since: None,
-                skipped,
-            })
-            .is_ok()
-    }
-
-    /// The hand-over of entry `i` is over, whatever its state says.
-    pub fn end_flight(&mut self, i: usize) {
-        self.flights.retain(|f| f.place != i);
-    }
-
-    /// Entry `i` and its flight, to advance its hand-over.
-    pub fn handover(&mut self, i: usize) -> Option<(&mut Outgoing, &mut Flight)> {
-        let out = self.frames.as_mut_slice().get_mut(i)?;
-        let flight = self
-            .flights
-            .as_mut_slice()
-            .iter_mut()
-            .find(|f| f.place == i)?;
-        Some((out, flight))
-    }
-
-    /// The entry on the radio: its channel being checked, its frame on
-    /// air, or listening at home for its ACK.
-    pub fn on_radio(&self) -> Option<usize> {
-        self.flights().map(|f| f.place).find(|&i| {
-            matches!(
-                self.get(i).map(|o| o.state),
-                Some(State::Radio | State::AwaitAck)
-            )
-        })
-    }
-
-    /// Whether a hand-over under way waits on `channel`, for its backoff
-    /// or its retry: another to that channel waits for it (spec "Waiting hand-overs").
-    pub fn holds_channel(&self, channel: Channel) -> bool {
-        self.flights().any(|f| {
-            self.get(f.place).is_some_and(|o| {
-                o.frame.channel == channel
-                    && matches!(o.state, State::Waiting(Wait::Backoff | Wait::Retry))
-            })
-        })
-    }
-
-    /// The first entry that waited for its channel and may now be queued
-    /// again.
-    pub fn next_unblocked(&self) -> Option<usize> {
-        self.iter().position(|o| {
-            o.state == State::Waiting(Wait::Channel) && !self.holds_channel(o.frame.channel)
-        })
+        Some(self.frames.remove(i))
     }
 
     /// The entry the next hand-over goes to: a DATA to a sleepy node that
@@ -506,7 +344,7 @@ impl SendQueue {
         if self.is_empty() {
             return None;
         }
-        let due = |o: &Outgoing| o.state == State::Queued && o.not_before <= now;
+        let due = |o: &Outgoing| !o.held() && o.not_before <= now;
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
@@ -518,10 +356,10 @@ impl SendQueue {
             .or_else(|| self.iter().position(due))
     }
 
-    /// The first DATA from the delivery queue that is due to begin.
+    /// The first DATA from the delivery queue that is due.
     pub fn delivery_due(&self, now: Instant) -> Option<usize> {
         self.iter()
-            .position(|o| o.kind.delivers() && o.state == State::Queued && o.not_before <= now)
+            .position(|o| o.kind.delivers() && !o.held() && o.not_before <= now)
     }
 
     /// The entry of message `id`, if it waits beyond `now`, is due at
@@ -534,10 +372,10 @@ impl SendQueue {
         }
     }
 
-    /// When the earliest entry whose hand-over has not begun is due.
+    /// When the earliest waiting entry is due.
     pub fn earliest_due(&self) -> Option<Instant> {
         self.iter()
-            .filter(|o| o.state == State::Queued)
+            .filter(|o| !o.held())
             .map(|o| o.not_before)
             .min()
     }
@@ -548,18 +386,21 @@ impl SendQueue {
     }
 
     /// Keep only the entries for which `keep` holds, in order; `keep` is
-    /// told whether the entry's hand-over is under way, which ends with
-    /// it.
+    /// told whether the entry is the hand-over's, which follows its entry
+    /// or ends with it.
     pub fn retain(&mut self, mut keep: impl FnMut(bool, &Outgoing) -> bool) {
         let mut i = 0;
         while i < self.len() {
-            let under_way = self.flight_of(i).is_some();
-            if keep(under_way, &self.frames.as_slice()[i]) {
+            if keep(self.current == Some(i), &self.frames.as_slice()[i]) {
                 i += 1;
                 continue;
             }
             self.frames.remove(i);
-            self.removed(i);
+            self.current = match self.current {
+                Some(c) if c == i => None,
+                Some(c) if c > i => Some(c - 1),
+                c => c,
+            };
         }
     }
 }
@@ -601,19 +442,6 @@ mod tests {
         assert!((fit as usize) < SEND_QUEUE);
     }
 
-    /// The flights follow from the longest retry wait and the least a
-    /// hand-over that transmits holds the radio (spec "Waiting hand-overs").
-    #[test]
-    fn flights_follow_from_the_retry_wait() {
-        let wait = retry_window(RETRY_BACKOFF, 2);
-        assert_eq!(wait.as_millis(), 622);
-        let service = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + ACK_TIMEOUT;
-        assert_eq!(service.as_millis(), 238);
-        assert_eq!(FLIGHTS, 1 + 3);
-        assert_eq!(flights_in(Duration::ZERO), 0);
-        assert_eq!(flights_in(service), 1);
-    }
-
     #[test]
     fn airtime_counts_every_frame() {
         let mut q = SendQueue::new();
@@ -631,98 +459,25 @@ mod tests {
     #[test]
     fn arrival_order_and_bounded() {
         let mut q = SendQueue::new();
-        assert!(q.is_empty() && q.current_index().is_none() && q.remove(0).is_none());
+        assert!(q.is_empty() && q.current().is_none() && q.take_current().is_none());
         for i in 0..SEND_QUEUE as u8 {
             assert_eq!(q.push(frame(i)), Ok(()));
         }
         assert_eq!(q.regular(), SEND_QUEUE);
-        // The chosen entry is changed and taken where it stands.
+        // The hand-over's entry is changed and taken where it stands.
         q.select(5);
-        q.get_mut(5).unwrap().frame.bytes[0] = 50;
-        assert_eq!(q.remove(5).unwrap().frame.bytes[0], 50);
-        assert!(q.current_index().is_none());
+        q.current_mut().unwrap().frame.bytes[0] = 50;
+        assert_eq!(q.take_current().unwrap().frame.bytes[0], 50);
+        assert!(q.current().is_none());
         assert_eq!(&tags(&q)[4..6], &[4, 6]);
         assert_eq!(q.len(), SEND_QUEUE - 1);
-        // Removing entries before the chosen one leaves it on its entry.
+        // Removing entries before the hand-over's leaves it on its entry.
         q.select(10);
-        q.start_flight(10, Instant::ZERO, 0);
-        q.retain(|under_way, f| under_way || f.frame.bytes[0] % 2 == 0);
-        let c = q.current_index().unwrap();
-        assert_eq!(q.get(c).unwrap().frame.bytes[0], 11);
-        assert_eq!(q.flight_of(c).map(|f| f.place()), Some(c));
-        assert_eq!(q.len(), 21, "20 even tags and the one under way, 11");
-        q.retain(|under_way, _| !under_way);
-        assert!(q.current_index().is_none() && q.flights().next().is_none());
-    }
-
-    /// A flight names its entry through removals before and after it,
-    /// ends with its entry, and the flights are bounded.
-    #[test]
-    fn flights_follow_their_entries() {
-        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
-        let mut q = SendQueue::new();
-        for i in 0..8u8 {
-            q.push(frame(i)).unwrap();
-        }
-        assert!(q.start_flight(3, t(1), 0b100));
-        assert!(!q.start_flight(3, t(2), 0), "one flight per entry");
-        assert!(q.start_flight(5, t(2), 0));
-        assert!(!q.start_flight(9, t(2), 0), "no such entry");
-        assert_eq!(q.flight_of(3).unwrap().skipped, 0b100);
-        q.remove(0);
-        assert_eq!(q.flight_of(2).map(|f| f.until), Some(t(1)));
-        assert_eq!(q.flight_of(4).map(|f| f.until), Some(t(2)));
-        q.remove(7 - 1);
-        assert_eq!(q.flights().count(), 2, "an entry after them");
-        q.remove(2);
-        assert_eq!(q.flights().count(), 1, "its entry gone, the flight is");
-        assert_eq!(q.flight_of(3).map(|f| f.until), Some(t(2)));
-        q.end_flight(3);
-        assert!(q.flights().next().is_none());
-        for i in 0..FLIGHTS {
-            assert!(q.flight_free());
-            assert!(q.start_flight(i, t(3), 0));
-        }
-        assert!(!q.flight_free());
-        assert!(!q.start_flight(FLIGHTS, t(3), 0), "the flights are full");
-        q.clear();
-        assert!(q.flights().next().is_none() && q.is_empty());
-    }
-
-    /// The entry on the radio, and the channels the waiting ones hold
-    /// (spec "Waiting hand-overs").
-    #[test]
-    fn waiting_flights_hold_their_channels() {
-        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
-        let (c3, c4) = (Channel::new(3).unwrap(), Channel::new(4).unwrap());
-        let mut q = SendQueue::new();
-        for i in 0..4u8 {
-            q.push(frame(i)).unwrap();
-        }
-        q.get_mut(1).unwrap().frame.channel = c4;
-        q.get_mut(3).unwrap().frame.channel = c4;
-        assert!(q.on_radio().is_none() && !q.holds_channel(c3));
-        q.start_flight(0, t(0), 0);
-        q.get_mut(0).unwrap().state = State::Waiting(Wait::Retry);
-        assert!(q.holds_channel(c3) && !q.holds_channel(c4));
-        q.start_flight(1, t(0), 0);
-        q.get_mut(1).unwrap().state = State::AwaitAck;
-        assert_eq!(q.on_radio(), Some(1));
-        assert!(!q.holds_channel(c4), "listening for its ACK is no wait");
-        q.get_mut(1).unwrap().state = State::Waiting(Wait::Budget);
-        assert!(!q.holds_channel(c4), "the bucket is not the channel");
-        q.get_mut(1).unwrap().state = State::Waiting(Wait::Backoff);
-        assert!(q.holds_channel(c4));
-        // Entries that waited for their channel begin once it is free.
-        q.get_mut(2).unwrap().state = State::Waiting(Wait::Channel);
-        q.get_mut(3).unwrap().state = State::Waiting(Wait::Channel);
-        assert_eq!(q.next_unblocked(), None);
-        assert_eq!(q.next_due(t(0)), None, "none of them is queued");
-        q.end_flight(1);
-        q.get_mut(1).unwrap().state = State::Queued;
-        assert_eq!(q.next_unblocked(), Some(3));
-        assert_eq!(q.next_due(t(0)), Some(1));
-        assert_eq!(q.earliest_due(), Some(t(0)));
+        q.retain(|current, f| current || f.frame.bytes[0] % 2 == 0);
+        assert_eq!(q.current().unwrap().frame.bytes[0], 11);
+        assert_eq!(q.len(), 21, "20 even tags and the current 11");
+        q.retain(|current, _| !current);
+        assert!(q.current().is_none());
     }
 
     #[test]
@@ -756,7 +511,8 @@ mod tests {
         assert_eq!(q.free_place(1, None), None);
         assert_eq!(q.free_place(1, Some(1)), Some(1));
         // The place frees when its frame leaves.
-        q.remove(0);
+        q.select(0);
+        q.take_current();
         assert_eq!(q.free_place(5, None), Some(5));
         assert_eq!(q.free_place(3, None), Some(3));
     }
@@ -804,7 +560,8 @@ mod tests {
         assert_eq!(q.next_due(t(5)), Some(0), "none has waited its time");
         assert_eq!(q.next_due(t(10)), Some(2), "the earlier of equals");
         assert_eq!(q.next_due(t(20)), Some(4));
-        q.remove(4);
+        q.select(4);
+        q.take_current();
         assert_eq!(q.next_due(t(20)), Some(2));
         q.retain(|_, o| !o.waited());
         assert_eq!(q.next_due(t(20)), Some(0), "the one that never waited");

@@ -2501,7 +2501,6 @@ impl Sim {
                     }
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
-                    Trace::ServedWhileWaiting { .. } => c.served_while_waiting += 1,
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::MoveSign {
                         surprises,

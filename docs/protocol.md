@@ -992,9 +992,7 @@ ERC/REC 70-03 band g1, which is measured over an hour (proof in
 the hour, so that a burst cannot carry an hour over the limit.
 
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
-it is not dropped, and a smaller packet, or a delivery, that the bucket
-does fit goes meanwhile ([waiting hand-overs](#waiting-hand-overs)). Two
-reserves stay in the bucket:
+it is not dropped. Two reserves stay in the bucket:
 
 - Replies, ACKs that take or refuse, leave one heartbeat's airtime,
   14.4 ms. The bucket refills that in 146 ms, far less than the 5 s
@@ -1027,12 +1025,10 @@ ban it, longer each time, and route around it (roadmap D27, D29, D42).
 ### Hand-over
 
 A **hand-over** sends one DATA packet to one neighbour until that
-neighbour answers it or the relay gives up. A relay has one hand-over on
-the radio at a time; one that waits between its attempts keeps its place
-in the [send queue](#send-queue), and the radio serves the next packet
-meanwhile ([waiting hand-overs](#waiting-hand-overs)). The answer is an
-ACK, which takes or refuses the packet and names the message and both
-nodes ([the ACK](#the-ack)).
+neighbour answers it or the relay gives up. A relay runs one hand-over
+at a time; packets waiting their turn are held in its
+[send queue](#send-queue). The answer is an ACK, which takes or refuses
+the packet and names the message and both nodes ([the ACK](#the-ack)).
 
 1. Retune to the next hop's home channel. Addresses and channels are
    read at the moment of sending, before each attempt, from the latest
@@ -1120,52 +1116,6 @@ than one hand-over apart, which for full frames and a window of W units
 happens with probability (1 − 1/W)²: never with one unit, 1/4 with two,
 9/16 with four. Doubling per attempt also spreads more than two such
 senders.
-
-#### Waiting hand-overs
-
-A hand-over that waits between its attempts, for its backoff (step 2),
-its retry wait, the bucket ([duty cycle cap](#duty-cycle-cap)) or an
-owed reply ([the ACK](#the-ack)), keeps its place in the send queue and
-its own clock, and the radio serves the next packet meanwhile. One
-hand-over is on the radio at a time, checking its channel, transmitting,
-or listening at home for its ACK; while one listens for its ACK no other
-hand-over starts. When the radio is free and every hand-over under way
-waits, the relay addresses the next packet of its queue, in the queue's
-order ([send queue](#send-queue)), and starts it. A hand-over whose wait
-has ended goes before a new one starts: a delivery first
-([delivery](#delivery)), else the one that began first.
-
-**A channel is left to the hand-over waiting on it.** A packet whose
-next hop listens on a channel that a hand-over under way waits on, for
-its backoff or its retry, is not started: it waits, and is addressed
-again once that wait ends. A delivery goes whatever waits.
-
-*Why.* A backoff says the channel was busy; a second hand-over checking
-it before the backoff ends would only check sooner than the backoff
-said. A retry wait leaves room for the sender this one collided with at
-the receiver to go first; a frame from this relay on that channel
-meanwhile would be in its way.
-
-**At most 4 hand-overs are under way at once:** begun, and not yet
-answered, failed or given up, those waiting between their attempts
-included. With four under way the next packet waits for one of them to
-end.
-
-*Why four.* The longest retry wait is 2 × 2 × 155.5 = 622 ms
-([retry wait](#retry-wait)), and a hand-over that transmits holds the
-radio for a full frame and the ACK timeout at least, 138.6 + 100 =
-238.6 ms, so ⌈622 / 238.6⌉ = 3 of them can be served during one retry
-wait: with the one waiting, four, and the radio has a hand-over to serve
-through the longest wait. More would only stack waits, each with its
-bookkeeping.
-
-*What it costs.* An ACK that arrives after the 100 ms timeout still ends
-the hand-over while the sender waits to retry, but only while the
-sender's radio is at home: one that has turned to another channel
-meanwhile misses it, and its retry finds the receiver holding the
-message (case 3 of [receiving DATA](#receiving-data)). And a hand-over
-whose wait ends while another's attempt is on the radio resumes after
-it, up to a full frame and the ACK timeout later.
 
 #### The ACK
 
@@ -1369,8 +1319,7 @@ refills.
 #### Send queue
 
 The send queue has a regular room of 39 places and one hop place for
-each count from 1 to 254; the packets being handed over keep their
-places.
+each count from 1 to 254; the packet being handed over keeps its place.
 A packet to send on enters the regular room only if it fits in the
 bucket with everything queued ([receiving DATA](#receiving-data)), so it
 waits for the hand-overs ahead of it, not for the bucket to refill. A
@@ -2392,12 +2341,10 @@ It goes to the node as DATA addressed to the node's ID, in `dst_hop` and
 `dst_id` alike, on the node's home channel from the heard table, with
 the ordinary preamble, and the node answers with an ordinary ACK
 ([the ACK](#the-ack)). A delivery goes through the send queue as any
-hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue
-and whatever channel is held
-([waiting hand-overs](#waiting-hand-overs)). When no more hand-overs can
-be under way, one waiting between its attempts, for the channel, a retry
-or the bucket, steps aside for it and keeps its place; a return keeps
-the attempts it has made.
+hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue.
+A hand-over waiting between its attempts, for the channel, a retry or
+the bucket, steps aside for it and keeps its place; a return keeps the
+attempts it has made.
 
 **The window.** A delivery goes only while the node listens: for a
 window of 3.39 s from each beat the holder hears. A node whose beat

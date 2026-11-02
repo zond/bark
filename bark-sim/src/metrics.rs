@@ -242,9 +242,6 @@ pub struct CoreCounts {
     pub turned_away: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
-    /// Frames of a hand-over sent while another hand-over under way
-    /// waited between its attempts (spec "Waiting hand-overs").
-    pub served_while_waiting: u64,
     /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
     /// Rotations a sleepy node listened to check its anchor
