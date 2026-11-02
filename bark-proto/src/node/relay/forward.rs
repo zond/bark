@@ -380,13 +380,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The hand-over under way ends at `now`, taken, refused, seen or
-    /// failed: its span goes into the pace (`tables/pace.rs`).
-    fn handover_ended(&mut self, now: Instant) {
-        let span = now.since(self.forwarding.flight.started());
-        self.pace.ended(span, now);
-    }
-
     /// How long a message of `record` to `dst` would wait here for its
     /// way on (spec "Bans"): the rest of the ban on the neighbour it
     /// would go to were no neighbour banned, which is the pushback that
@@ -401,18 +394,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The wait a refusal for `reason` asks for (spec "Bans"): for want
     /// of room, until the bucket holds everything queued, a frame of
     /// `airtime` and its ACK with the reply reserve left, if nothing else
-    /// comes, or until the queue has been served at the pace this relay
-    /// achieves (`tables/pace.rs`), whichever is longer; anything else
-    /// frees in one ban; and never less than the pushback the message's
-    /// way on gave (`pushback`), so a wait told at the centre is passed
-    /// back hop by hop toward the origin.
-    ///
-    /// Why the pace: where the channel binds, the bucket's refill of what
-    /// is queued is a second or two while the queue takes minutes, so a
-    /// sender told the refill comes back to be refused again, and its own
-    /// fresh work is let in meanwhile; told the line's real length it
-    /// bans this relay for that long, and refuses its own fresh work for
-    /// the way through it (roadmap D34), so the pressure travels upstream.
+    /// comes; anything else frees in one ban; and never less than the
+    /// pushback the message's way on gave (`pushback`), so a wait told
+    /// at the centre is passed back hop by hop toward the origin.
     ///
     /// Every sender refused takes a place in line: the next is told one
     /// ban later than the last, the time the bucket takes to refill the
@@ -429,16 +413,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
                 let queued = self.queue.airtime();
-                let refill = self
-                    .radio
+                self.radio
                     .budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
-                    .map_or(self.config.delivery_ttl, |t| t.since(now));
-                let served = self
-                    .pace
-                    .time_for(self.queue.len(), now)
-                    .unwrap_or(Duration::ZERO);
-                refill.max(served)
+                    .map_or(self.config.delivery_ttl, |t| t.since(now))
             }
             _ => BAN,
         };
@@ -1636,7 +1614,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     true => DropReason::Expired,
                     false => DropReason::HopCap,
                 };
-                self.handover_ended(now);
                 self.queue.take_current();
                 self.forwarding.skipped = 0;
                 self.forwarding.feed_due = true;
@@ -1757,7 +1734,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return;
         };
-        self.handover_ended(now);
         let (id, to) = (d.msg_id(), d.dst_hop);
         emit(Action::Trace(Trace::Seen { msg_id: id, by: to }));
         self.tried(id, to, d.hops, now);
@@ -1800,7 +1776,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(out) = self.queue.current().copied() else {
             return;
         };
-        self.handover_ended(now);
         let msg_id = out.msg_id().unwrap_or_default();
         let by = ack.from;
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
@@ -1853,7 +1828,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(out) = self.queue.take_current() else {
             return;
         };
-        self.handover_ended(now);
         self.forwarding.feed_due = true;
         let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
             return;
@@ -1907,7 +1881,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        self.handover_ended(now);
         let id = out.msg_id().unwrap_or_default();
         let data = Packet::decode(out.frame.payload());
         if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
@@ -2089,9 +2062,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let id = self.queue.iter().nth(i).and_then(Outgoing::msg_id);
             if self.queue.current_index() == Some(i) {
                 // Not yet on air: waiting its turn, for the bucket or to retry.
-                if self.in_flight().is_some() {
-                    self.handover_ended(now);
-                }
                 self.cancel_handover();
                 self.forwarding.skipped = 0;
             }

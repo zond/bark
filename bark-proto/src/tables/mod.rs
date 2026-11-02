@@ -10,7 +10,6 @@ pub mod delivered;
 pub mod delivery;
 pub mod heard;
 pub mod neighbours;
-pub mod pace;
 pub mod records;
 pub mod send_queue;
 
@@ -174,7 +173,6 @@ pub(crate) mod sizes {
                 delivered::DELIVERED * 16,
             ),
             ("budget", size_of::<budget::Budget>(), 16),
-            ("pace", size_of::<pace::Pace>(), pace::BINS * 8),
             ("busy", size_of::<busy::BusyEstimator>(), 0),
         ];
         let mut sum = 0;
