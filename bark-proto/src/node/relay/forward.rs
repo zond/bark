@@ -1312,18 +1312,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if out.state == State::Holding {
             // Held on to the neighbour that failed it, demoted or not,
-            // while it is still a candidate but for its ban (spec
-            // "Hand-over" step 6, roadmap D102); its ban may have grown
-            // since, by another message's failure.
+            // for the ban it was given then (spec "Hand-over" step 6,
+            // roadmap D102). A ban grown since, by another message's
+            // failure or a refusal, is a ladder this message did not
+            // climb: banned still, the neighbour is no candidate, and the
+            // message chooses afresh like any other.
             let kept = self.neighbours.by_id(d.dst_hop).filter(|(slot, n)| {
                 !record.handed(*slot)
                     && n.fail_count < MOVE_ON_FAILURES
                     && out.failures < MOVE_ON_FAILURES
+                    && !self.neighbours.is_banned(n, now)
             });
             if let Some((_, n)) = kept {
-                if self.neighbours.is_banned(n, now) {
-                    return Routed::Wait(n.banned_until);
-                }
                 let frame = data_frame(&d, n.home, preamble(n));
                 return Routed::To(Outgoing {
                     frame,

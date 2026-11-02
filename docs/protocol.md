@@ -1067,9 +1067,13 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    neighbour (demoted after two in a row) and ban it
    ([bans](#bans)). The message waits in its place for the ban and is
    offered to the same neighbour again, with three fresh attempts,
-   whether or not it has been demoted meanwhile; one that has left the
-   table or been tried by then is not waited for, and the message
-   chooses afresh.
+   whether or not it has been demoted meanwhile. The wait is the ban
+   the failure gave; a neighbour whose ban has grown by then, by a later
+   failure of another message or a refusal, or that has left the table
+   or been tried, is not waited for: the message chooses afresh, the
+   neighbour no candidate while banned ([next hop](#next-hop)), and
+   waits for it only where no other candidate is left
+   ([overload waits](#overload-waits)).
    - Once three hand-overs in a row have failed, the neighbour's,
      whoever's messages they were, or this message's own to it, the
      message instead chooses the next hop at once: the neighbour is

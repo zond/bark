@@ -621,6 +621,68 @@ fn a_message_moves_on_by_its_own_count_when_the_neighbour_s_is_reset() {
     assert_eq!(forwards(&h, o, a), vec![name(p), name(f1)]);
 }
 
+/// A kept neighbour gives way when its ban has grown (roadmap D102).
+/// Every DATA from O to F1 is lost. A, O's own, fails at F1 and holds
+/// on for the ban; B, from X through F2, reaches O within it and, F1
+/// its only candidate, waits for the same ban. When it ends B goes
+/// first, the more travelled (spec "Overload waits"), and its failure
+/// demotes F1 and bans it for two bans. A's ban is over but F1's has
+/// grown by a failure that was not A's: A does not wait it out but
+/// chooses afresh, F2, at once, and arrives. B holds on and goes again
+/// when the grown ban ends.
+///
+/// ```text
+///          F1 - W
+///        /    \
+///   X - F2 - O  D
+///        \    /
+///         (F2)
+/// ```
+#[test]
+fn a_kept_neighbour_gives_way_when_its_ban_has_grown() {
+    let (o, f1, f2, d, w, x) = (0, 1, 2, 3, 4, 5);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 271),
+            relay(400.0, 50.0, 272),
+            relay(400.0, -100.0, 273),
+            relay(800.0, 0.0, 274),
+            relay(-400.0, 0.0, 275),
+            relay(800.0, -400.0, 276),
+        ],
+        &[(o, f1), (o, f2), (f1, d), (f2, d), (f1, w), (x, f2)],
+    );
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        (from, to) == (o, f1) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    let a = send(&mut h, o, d, b"ours");
+    let b = send(&mut h, x, w, b"theirs");
+    assert!(
+        h.run_until(h.now + secs(20), |h| delivered(h, d, a)),
+        "O {:?}",
+        traces(&h, o)
+    );
+    h.run_for(secs(10));
+    let name = |i| core(&h, i).id();
+    assert_eq!(forwards(&h, o, a), vec![name(f2)]);
+    let a_runs = handovers(&data_times(&h, o, f1, a));
+    let b_runs = handovers(&data_times(&h, o, f1, b));
+    assert_eq!(a_runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3]);
+    assert!(b_runs.len() >= 2 && b_runs[0].len() == 3, "{b_runs:?}");
+    let on = data_times(&h, o, f2, a)[0];
+    // B's first frame came when A's ban ended, and its failure grew the
+    // ban; A went to F2 right after, not two bans later.
+    assert!(b_runs[0][0].since(a_runs[0][2]) >= BAN, "{b_runs:?}");
+    assert!(
+        on > b_runs[0][2] && on.since(b_runs[0][2]) < secs(1),
+        "{on:?} {b_runs:?}"
+    );
+    assert!(traces(&h, o).contains(&Trace::Demoted {
+        neighbour: name(f1)
+    }));
+    assert_eq!(messages(&h, d, a), 1);
+}
+
 /// A relay whose full delivery queue frees well within a message's time:
 /// its own messages, which fill it, are kept 400 s, and a message waiting
 /// for a place there has 600 s on its way (spec "Receiving DATA", "Delivery queue").
