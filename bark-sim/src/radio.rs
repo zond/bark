@@ -337,6 +337,9 @@ impl Sim {
             };
             self.addressed.insert(tx_key, (d.0, d.1, state));
         }
+        if let Some(WirePacket::Data(d)) = &decoded {
+            self.margin_start(tx_key, src, d, ch, air);
+        }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
             return; // A dark leaf transmits into a tunnel.
@@ -344,6 +347,9 @@ impl Sim {
         for i in 0..self.links.row(src).len() {
             let l = self.links.row(src)[i];
             let dbm = self.links.rx_dbm(&l, ch);
+            if self.margin_on() {
+                self.margin_rx(tx_key, l.rx, dbm);
+            }
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
@@ -366,6 +372,9 @@ impl Sim {
         };
         let extra = walks.links_from(src, start, ch, &self.xy, &self.sites);
         for l in &extra {
+            if self.margin_on() {
+                self.margin_rx(tx_key, l.rx, l.dbm);
+            }
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
@@ -454,6 +463,9 @@ impl Sim {
 
     /// Note how `b` lost the frame `key`, if it was addressed to `b`.
     fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, how: u8) {
+        if self.margin.is_some() {
+            self.margin_lost(key, b, o, how);
+        }
         if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
             let how = match o {
                 Outcome::BelowSensitivity => 0,
@@ -681,6 +693,7 @@ impl Sim {
                 let how = how.unwrap_or(6) as usize;
                 self.metrics.addressed.lost_how[kind as usize][fate as usize][how] += 1;
             }
+
             let beats = &self.nodes[d as usize].beats;
             let (k, f, c) = (kind as usize, fate as usize, ch.index());
             if beats.during(tx.start, tx.end, c, true) {
@@ -691,6 +704,7 @@ impl Sim {
             }
         }
         self.air_kinds.remove(&tx.key);
+        self.margin_end(tx.key, &got);
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;
         bytes[..len].copy_from_slice(tx.frame.payload());

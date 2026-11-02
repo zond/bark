@@ -1,16 +1,18 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
 //! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables]`. Prints a short table; writes the JSON summary, the CSV
+//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
 //! time series, the per-message CSV, the per-node event trace, the links
 //! between relays and the per-minute series of every relay when asked;
-//! `--tables` adds what the neighbour tables hold to the JSON summary.
+//! `--tables` adds what the neighbour tables hold to the JSON summary;
+//! `--margin` writes, per DATA to a relay after the settle time, what its
+//! sender knew of the receiver and what the link was (`margin.rs`).
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables] [--margin FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -29,6 +31,7 @@ fn run() -> Result<(), String> {
     let (mut messages, mut links, mut series, mut minutes) = (None, None, None, None);
     let mut battery = None;
     let mut tables = false;
+    let mut margin = None;
     while let Some(a) = args.next() {
         let mut val = |name: &str| {
             args.next()
@@ -58,6 +61,7 @@ fn run() -> Result<(), String> {
             "--message-minutes" => minutes = Some(PathBuf::from(val("--message-minutes")?)),
             "--battery" => battery = Some(PathBuf::from(val("--battery")?)),
             "--tables" => tables = true,
+            "--margin" => margin = Some(PathBuf::from(val("--margin")?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -91,6 +95,10 @@ fn run() -> Result<(), String> {
     }
     if tables {
         sim.tables_on();
+    }
+    if let Some(p) = &margin {
+        let f = std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        sim.margin_to(Box::new(std::io::BufWriter::new(f)));
     }
     let built = t0.elapsed();
     sim.run();

@@ -371,6 +371,32 @@ impl Walks {
             .collect()
     }
 
+    /// The link from `src` to `rx` at `now` on `channel`, if a walker is
+    /// at either end and it reaches the cut-off: its base power and its
+    /// power with the fade, dBm. A pure reading of the same functions
+    /// [`Walks::links_from`] uses, for the margin log (`margin.rs`).
+    pub fn link_now(
+        &self,
+        src: u32,
+        rx: u32,
+        channel: Channel,
+        now: Instant,
+        xy: &[Xy],
+        site: &[Site],
+    ) -> Option<(f64, f64)> {
+        if !self.walks(src) && !self.walks(rx) {
+            return None;
+        }
+        let place = |n: u32| match self.walker(n) {
+            Some(w) => (w.at(now), w.site()),
+            None => (xy[n as usize], site[n as usize]),
+        };
+        let (from, from_site) = place(src);
+        let (at, rx_site) = place(rx);
+        let base = self.base_dbm(src, rx, from, at, from_site, rx_site);
+        (base != f64::NEG_INFINITY).then(|| (base, base + self.fade_db(src, rx, channel, now)))
+    }
+
     /// Grid the walkers again if they have moved on or changed what they do.
     fn regrid(&mut self, now: Instant) {
         if self.built.is_some_and(|b| now.since(b) < REGRID) {
