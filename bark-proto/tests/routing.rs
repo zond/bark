@@ -2702,7 +2702,6 @@ fn an_ack_goes_at_once_and_the_take_is_final_with_it() {
     h.jam(y, ch(1));
     let id = send(&mut h, x, d, &[b't'; MAX_PAYLOAD]);
     assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
-    let ny = core(&h, y).id();
     let acks = h.nodes[y]
         .sent
         .iter()
@@ -2711,7 +2710,9 @@ fn an_ack_goes_at_once_and_the_take_is_final_with_it() {
         )
         .count();
     assert_eq!(acks, 1);
-    assert!(!traces(&h, x).contains(&Trace::HandOverFailed { msg_id: id, to: ny }));
+    assert!(!traces(&h, x)
+        .iter()
+        .any(|t| matches!(t, Trace::HandOverFailed { msg_id, .. } if *msg_id == id)));
     assert_eq!(data_times(&h, x, y, id).len(), 1, "one frame, one holder");
 }
 

@@ -1879,18 +1879,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let data = Packet::decode(out.frame.payload());
         if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
             if counted {
+                self.count_failure(d.dst_hop, now, emit);
+                let own_at_anchor = self.sleepy() && d.hops == 0;
+                let wait = self.wait_for(d.dst_hop);
                 emit(Action::Trace(Trace::HandOverFailed {
                     msg_id: id,
                     to: d.dst_hop,
+                    moves_on: wait.is_none() && !own_at_anchor,
                 }));
-                self.count_failure(d.dst_hop, now, emit);
-                if self.sleepy() && d.hops == 0 {
+                if own_at_anchor {
                     // A sleepy node's own message tries its anchor again a
                     // fade later, doubled for each silence in a row
                     // (spec "A sleepy node's own message"): the ban's ladder would
                     // offer it every few seconds to a node whose channel is
                     // full, and a fixed fade every minute for its whole TTL.
-                    let ban = self.wait_for(d.dst_hop).unwrap_or(now);
+                    let ban = wait.unwrap_or(now);
                     let silences = self
                         .neighbours
                         .by_id(d.dst_hop)
@@ -1906,7 +1909,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }
                     return;
                 }
-                if let Some(t) = self.wait_for(d.dst_hop) {
+                if let Some(t) = wait {
                     // The same neighbour again once its ban ends, with
                     // fresh attempts (roadmap D42, D102). A forward holds
                     // on to it by state, since the choice of a next hop

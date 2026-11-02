@@ -269,6 +269,13 @@ pub struct CoreCounts {
     /// Of those, whose receiver had the message by then, most likely
     /// because only its ACKs were lost.
     pub failed_taken: u64,
+    /// Of the failed, those after which the message moved on to its next
+    /// candidate, or a return was dropped, instead of waiting for the
+    /// neighbour's ban (spec "Hand-over" step 6).
+    pub moved_on: u64,
+    /// Of those, whose receiver had the message: a copy left searching
+    /// on its own, the split the storm is made of.
+    pub moved_on_taken: u64,
     /// Copies of a message answered that were not retransmissions and
     /// came from no neighbour this node had handed the message to (spec
     /// "Receiving DATA" cases 4 to 6): a split's second copy, or the
@@ -1193,6 +1200,8 @@ pub struct Metrics {
     /// Hand-overs taken, by the transmission that was answered: index 1
     /// the first (spec "Hand-over").
     pub taken_at_attempt: Vec<u64>,
+    /// Messages held on a neighbour after a failed hand-over.
+    pub holds: Holds,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.
@@ -1203,6 +1212,54 @@ pub struct Metrics {
     /// The research models.
     pub research: Research,
     last_sample: SampleMark,
+}
+
+/// What holding a message on a neighbour after a failed hand-over does
+/// (spec "Hand-over" step 6, roadmap D102). A hold starts at a node's
+/// first failed hand-over of a message to a neighbour and ends when a
+/// hand-over to that neighbour is taken, the message moves on at the
+/// neighbour's last failure, the neighbour refuses it or answers seen, or
+/// the message is dropped.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Holds {
+    /// Hand-overs taken, by the failed hand-overs to the same neighbour
+    /// before them: index 0 taken at the first offer, index k at the k-th
+    /// offer again.
+    pub taken_after: Vec<u64>,
+    /// Hand-overs after which the message moved on, by the failed
+    /// hand-overs to the neighbour it had made, that one included.
+    pub moved_on_after: Vec<u64>,
+    /// Holds ended by the neighbour refusing the message.
+    pub ended_refused: u64,
+    /// Holds ended by the neighbour answering seen.
+    pub ended_seen: u64,
+    /// Holds ended by the message being dropped, its time gone.
+    pub ended_dropped: u64,
+    /// How long each hold lasted, from its first failure to its end,
+    /// microseconds.
+    #[serde(skip)]
+    pub held_us: Vec<u64>,
+}
+
+impl Holds {
+    fn bump(v: &mut Vec<u64>, i: usize) {
+        if v.len() <= i {
+            v.resize(i + 1, 0);
+        }
+        v[i] += 1;
+    }
+
+    /// A hand-over was taken after `failures` failed ones to the same
+    /// neighbour.
+    pub fn taken_after(&mut self, failures: u8) {
+        Self::bump(&mut self.taken_after, failures as usize);
+    }
+
+    /// The message moved on after `failures` failed hand-overs to the
+    /// neighbour.
+    pub fn moved_on_after(&mut self, failures: u8) {
+        Self::bump(&mut self.moved_on_after, failures as usize);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
