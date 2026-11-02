@@ -127,10 +127,15 @@
 //! D42): silence says the channel or the receiver is full, and offering
 //! it the next message at once only adds frames there. The failed
 //! forward waits for the ban and goes to the same neighbour again, and
-//! moves on only once a failure has demoted it; a return waits the same
-//! way, and is dropped only then. Going to the next candidate at once
+//! moves on only once [`MOVE_ON_FAILURES`] hand-overs in a row have
+//! failed, one more than demote the neighbour, counted for the neighbour
+//! whoever's messages they were and for the entry itself; a return
+//! waits the same way, and is dropped only then. Going to the next candidate at once
 //! would send the message the long way round just when the channel is
-//! full; measured, it undoes the ban's gain (roadmap D42).
+//! full; measured, it undoes the ban's gain (roadmap D42). Moving on at
+//! the demotion left a receiver that took the message and lost its ACKs
+//! twice holding a split copy; one offer more reaches it after the ban
+//! that covers a receiver's reply reserve (roadmap D102).
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
@@ -188,6 +193,7 @@ use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
+use crate::tables::MOVE_ON_FAILURES;
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
@@ -1304,14 +1310,39 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.arrive(id, &Data { time_left, ..d }, now, emit);
             return Routed::Done;
         }
+        if out.state == State::Holding {
+            // Held on to the neighbour that failed it, demoted or not,
+            // for the ban it was given then (spec "Hand-over" step 6,
+            // roadmap D102). A ban grown since, by another message's
+            // failure or a refusal, is a ladder this message did not
+            // climb: banned still, the neighbour is no candidate, and the
+            // message chooses afresh like any other.
+            let kept = self.neighbours.by_id(d.dst_hop).filter(|(slot, n)| {
+                !record.handed(*slot)
+                    && n.fail_count < MOVE_ON_FAILURES
+                    && out.failures < MOVE_ON_FAILURES
+                    && !self.neighbours.is_banned(n, now)
+            });
+            if let Some((_, n)) = kept {
+                let frame = data_frame(&d, n.home, preamble(n));
+                return Routed::To(Outgoing {
+                    frame,
+                    tries: 0,
+                    state: State::Queued,
+                    ..out
+                });
+            }
+        }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
-            // Addressed afresh, its attempts start afresh (module
-            // documentation).
+            // Addressed afresh, its attempts and failures start afresh
+            // (module documentation).
             return Routed::To(Outgoing {
                 frame,
                 tries: 0,
+                failures: 0,
+                state: State::Queued,
                 ..out
             });
         }
@@ -1350,6 +1381,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     frame,
                     kind: Kind::Return,
                     tries: 0,
+                    failures: 0,
                     ..out
                 })
             }
@@ -1853,18 +1885,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let data = Packet::decode(out.frame.payload());
         if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
             if counted {
+                self.count_failure(d.dst_hop, now, emit);
+                let own_at_anchor = self.sleepy() && d.hops == 0;
+                let failures = out.failures.saturating_add(1);
+                if let Some(current) = self.queue.current_mut() {
+                    current.failures = failures;
+                }
+                let wait = self.wait_for(d.dst_hop, failures);
                 emit(Action::Trace(Trace::HandOverFailed {
                     msg_id: id,
                     to: d.dst_hop,
+                    moves_on: wait.is_none() && !own_at_anchor,
                 }));
-                self.count_failure(d.dst_hop, now, emit);
-                if self.sleepy() && d.hops == 0 {
+                if own_at_anchor {
                     // A sleepy node's own message tries its anchor again a
                     // fade later, doubled for each silence in a row
                     // (spec "A sleepy node's own message"): the ban's ladder would
                     // offer it every few seconds to a node whose channel is
                     // full, and a fixed fade every minute for its whole TTL.
-                    let ban = self.wait_for(d.dst_hop, now).unwrap_or(now);
+                    let ban = wait.unwrap_or(now);
                     let silences = self
                         .neighbours
                         .by_id(d.dst_hop)
@@ -1880,13 +1919,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     }
                     return;
                 }
-                if let Some(t) = self.wait_for(d.dst_hop, now) {
+                if let Some(t) = wait {
                     // The same neighbour again once its ban ends, with
-                    // fresh attempts (roadmap D42, W).
+                    // fresh attempts (roadmap D42, D102). A forward holds
+                    // on to it by state, since the choice of a next hop
+                    // would pass over a demoted neighbour (`route`).
                     self.forwarding.skipped = 0;
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = t;
                         current.tries = 0;
+                        if out.kind == Kind::Forward {
+                            current.state = State::Holding;
+                        }
                     }
                     return;
                 }
@@ -1925,13 +1969,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// When to offer a failed hand-over to `name` again (roadmap D42):
-    /// when its ban ends, until a failure demotes it. A demoted neighbour
-    /// is likely gone or faded; a forward then takes its next candidate,
+    /// When to offer a failed hand-over to `id` again (roadmap D42, D102):
+    /// when its ban ends, until [`MOVE_ON_FAILURES`] hand-overs in a row
+    /// have failed, the neighbour's, whoever's messages they were, or
+    /// `failures` of this entry to it. The neighbour's count, just raised
+    /// and reset first if its demotion had lapsed, keeps a neighbour
+    /// silent to everyone from costing a message more than one hand-over;
+    /// the entry's own bounds the hold when ACKs to other messages keep
+    /// resetting the neighbour's. A forward then takes its next candidate,
     /// and a return is dropped.
-    fn wait_for(&self, id: NodeId, now: Instant) -> Option<Instant> {
+    fn wait_for(&self, id: NodeId, failures: u8) -> Option<Instant> {
         let (_, n) = self.neighbours.by_id(id)?;
-        (!self.neighbours.is_demoted(n, now)).then_some(n.banned_until)
+        (n.fail_count < MOVE_ON_FAILURES && failures < MOVE_ON_FAILURES).then_some(n.banned_until)
     }
 
     fn count_failure(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {

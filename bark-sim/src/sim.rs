@@ -551,6 +551,28 @@ pub(crate) enum FrameKind {
     Seen,
 }
 
+/// A message held on a neighbour after a failed hand-over
+/// (`metrics::Holds`).
+#[derive(Clone, Copy)]
+struct Hold {
+    /// The neighbour's ID key.
+    to: u64,
+    /// Failed hand-overs to it in a row.
+    failures: u8,
+    /// When the first failed.
+    since: Instant,
+}
+
+impl Hold {
+    fn new(to: u64, since: Instant) -> Hold {
+        Hold {
+            to,
+            failures: 0,
+            since,
+        }
+    }
+}
+
 /// A message an application waits to hand to its core.
 #[derive(Clone, Copy)]
 struct Offer {
@@ -773,6 +795,9 @@ pub struct Sim {
     queued_for: HashMap<(u32, u64), Vec<u32>>,
     /// The holders of messages queued for each node, by the node's ID.
     holders_of: HashMap<u64, Vec<u32>>,
+    /// Messages held on a neighbour after a failed hand-over, by node and
+    /// message ID (`metrics::Holds`).
+    holds: HashMap<(u32, u32), Hold>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
     pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
@@ -1275,6 +1300,7 @@ impl Sim {
             msg_minutes: None,
             queued_for: HashMap::new(),
             holders_of: HashMap::new(),
+            holds: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
@@ -2507,7 +2533,13 @@ impl Sim {
                         c.refused.add(reason);
                         self.note_refusal(node, msg_id, reason);
                     }
-                    Trace::TurnedAway { .. } => c.turned_away += 1,
+                    Trace::TurnedAway { msg_id, .. } => {
+                        c.turned_away += 1;
+                        if let Some(held) = self.hold_ended(node, msg_id) {
+                            self.metrics.holds.ended_refused += 1;
+                            self.metrics.holds.held_us.push(held);
+                        }
+                    }
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::ChannelBusy { .. } => {
                         c.lbt_gave_up += 1;
@@ -2609,18 +2641,48 @@ impl Sim {
                         }
                         self.delivery_waits(node, msg_id.0, key(to), tried)
                     }
-                    Trace::Forwarded { hops, attempts, .. } => {
+                    Trace::Forwarded {
+                        msg_id,
+                        to,
+                        hops,
+                        attempts,
+                    } => {
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
                         self.metrics.taken_at_attempt(attempts);
+                        self.hold_taken(node, msg_id, to);
                     }
-                    Trace::HandOverFailed { msg_id, to } => {
+                    Trace::HandOverFailed {
+                        msg_id,
+                        to,
+                        moves_on,
+                    } => {
                         c.failed += 1;
                         let had = self
                             .relay_index
                             .get(&key(to))
                             .is_some_and(|&r| self.relays[r as usize].knows(msg_id));
                         c.failed_taken += u64::from(had);
+                        c.moved_on += u64::from(moves_on);
+                        c.moved_on_taken += u64::from(moves_on && had);
+                        let now = self.now;
+                        let hold = self
+                            .holds
+                            .entry((node, msg_id.0))
+                            .and_modify(|h| {
+                                if h.to != key(to) {
+                                    *h = Hold::new(key(to), now);
+                                }
+                            })
+                            .or_insert_with(|| Hold::new(key(to), now));
+                        hold.failures = hold.failures.saturating_add(1);
+                        if moves_on {
+                            let failures = hold.failures;
+                            let held = now.since(hold.since);
+                            self.metrics.holds.moved_on_after(failures);
+                            self.metrics.holds.held_us.push(held.as_micros());
+                            self.holds.remove(&(node, msg_id.0));
+                        }
                     }
                     Trace::Copy {
                         returned,
@@ -2636,11 +2698,22 @@ impl Sim {
                             c.seen += u64::from(seen);
                         }
                     }
-                    Trace::Seen { .. } => c.seen_acted += 1,
-                    Trace::ReturnedToParent { attempts, .. } => {
+                    Trace::Seen { msg_id, .. } => {
+                        c.seen_acted += 1;
+                        if let Some(held) = self.hold_ended(node, msg_id) {
+                            self.metrics.holds.ended_seen += 1;
+                            self.metrics.holds.held_us.push(held);
+                        }
+                    }
+                    Trace::ReturnedToParent {
+                        msg_id,
+                        to,
+                        attempts,
+                    } => {
                         c.handed_over += 1;
                         c.returned += 1;
                         self.metrics.taken_at_attempt(attempts);
+                        self.hold_taken(node, msg_id, to);
                     }
                     _ => {}
                 }
@@ -2649,6 +2722,29 @@ impl Sim {
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
+    }
+
+    /// `node` handed `msg_id` to `to`: if it had held the message on `to`
+    /// after failures, the hand-over was taken at an offer again, and the
+    /// hold ends; held on another neighbour, that hold is over without an
+    /// outcome to count.
+    fn hold_taken(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
+        let hold = self.holds.remove(&(node, msg_id.0));
+        let failures = hold.filter(|h| h.to == key(to)).map_or(0, |h| h.failures);
+        self.metrics.holds.taken_after(failures);
+        if let Some(h) = hold.filter(|h| h.to == key(to)) {
+            self.metrics
+                .holds
+                .held_us
+                .push(self.now.since(h.since).as_micros());
+        }
+    }
+
+    /// `node`'s hold of `msg_id`, if any, ended by something other than a
+    /// hand-over: how long it lasted, microseconds.
+    fn hold_ended(&mut self, node: u32, msg_id: MsgId) -> Option<u64> {
+        let h = self.holds.remove(&(node, msg_id.0))?;
+        Some(self.now.since(h.since).as_micros())
     }
 
     /// What the nodes that move do (roadmap D70), from the first event
@@ -3297,6 +3393,10 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
+        if let Some(held) = self.hold_ended(node, msg_id) {
+            self.metrics.holds.ended_dropped += 1;
+            self.metrics.holds.held_us.push(held);
+        }
         if reason == DropReason::Pushback {
             // The message is its application's again, which decides its
             // fate on the `AppEvent::GivenBack` that follows.

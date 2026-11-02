@@ -354,6 +354,9 @@ pub struct Summary {
     /// Hand-overs taken, by the transmission that was answered: index 1
     /// the first (spec "Hand-over").
     pub taken_at_attempt: Vec<u64>,
+    /// Messages held on a neighbour after a failed hand-over
+    /// (`metrics::Holds`), and how long.
+    pub holds: HoldsSummary,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -534,6 +537,7 @@ impl Sim {
                 acted: m.nodes.iter().map(|n| n.core.seen_acted).sum(),
             },
             taken_at_attempt: m.taken_at_attempt.clone(),
+            holds: HoldsSummary::of(&m.holds),
             addressed: m.addressed,
             channels,
             observers,
@@ -1030,6 +1034,29 @@ impl Summary {
                 self.seen.sent, self.seen.acted
             );
         }
+        if let Some(held) = &self.holds.held {
+            let h = &self.holds;
+            let list = |v: &[u64]| {
+                v.iter()
+                    .skip(1)
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            };
+            let _ = writeln!(
+                s,
+                "held on a neighbour after a failure: {} holds, p50 {:.2} s, p90 {:.2} s, max {:.1} s; taken at the 1st / 2nd / ... offer again {}; moved on after 1 / 2 / ... failures {}; ended by a refusal {}, seen {}, a drop {}",
+                held.count,
+                held.p50_ms / 1e3,
+                held.p90_ms / 1e3,
+                held.max_ms / 1e3,
+                list(&h.taken_after),
+                list(&h.moved_on_after),
+                h.ended_refused,
+                h.ended_seen,
+                h.ended_dropped
+            );
+        }
         let h = &self.hop_places;
         if h.refusals > 0 {
             let _ = writeln!(
@@ -1257,5 +1284,65 @@ pub struct SeenAcks {
 impl SeenAcks {
     fn none(&self) -> bool {
         self.sent == 0 && self.acted == 0
+    }
+}
+
+/// Messages held on a neighbour after a failed hand-over (spec
+/// "Hand-over" step 6, roadmap D102; `metrics::Holds`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct HoldsSummary {
+    /// Hand-overs taken, by the failed hand-overs to the same neighbour
+    /// before them: index 0 at the first offer, index k at the k-th offer
+    /// again.
+    pub taken_after: Vec<u64>,
+    /// Hand-overs after which the message moved on, by the failed
+    /// hand-overs to the neighbour it had made.
+    pub moved_on_after: Vec<u64>,
+    /// Holds ended by the neighbour refusing the message.
+    pub ended_refused: u64,
+    /// Holds ended by the neighbour answering seen.
+    pub ended_seen: u64,
+    /// Holds ended by the message being dropped.
+    pub ended_dropped: u64,
+    /// How long the holds lasted, from the first failure to the end;
+    /// `None` when nothing was held.
+    pub held: Option<Held>,
+}
+
+/// How long messages were held on one neighbour.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Held {
+    /// Holds that ended.
+    pub count: u64,
+    /// Median, milliseconds.
+    pub p50_ms: f64,
+    /// 90th percentile.
+    pub p90_ms: f64,
+    /// Longest.
+    pub max_ms: f64,
+    /// All of them together, seconds.
+    pub total_s: f64,
+}
+
+impl HoldsSummary {
+    fn of(h: &crate::metrics::Holds) -> HoldsSummary {
+        let mut v = h.held_us.clone();
+        v.sort_unstable();
+        let ms = |p: f64| percentile(&v, p).expect("non-empty") as f64 / 1e3;
+        let held = (!v.is_empty()).then(|| Held {
+            count: v.len() as u64,
+            p50_ms: ms(50.0),
+            p90_ms: ms(90.0),
+            max_ms: ms(100.0),
+            total_s: v.iter().sum::<u64>() as f64 / 1e6,
+        });
+        HoldsSummary {
+            taken_after: h.taken_after.clone(),
+            moved_on_after: h.moved_on_after.clone(),
+            ended_refused: h.ended_refused,
+            ended_seen: h.ended_seen,
+            ended_dropped: h.ended_dropped,
+            held,
+        }
     }
 }

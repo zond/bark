@@ -406,6 +406,11 @@ pub enum Trace {
         msg_id: MsgId,
         /// The neighbour.
         to: NodeId,
+        /// The neighbour has failed enough in a row that the message
+        /// moves on: a forward chooses its next hop at once, a return is
+        /// dropped. Otherwise it waits for the ban and is offered to the
+        /// same neighbour again.
+        moves_on: bool,
     },
     /// A neighbour reached the demotion threshold and is no longer a next
     /// hop (spec "Neighbour table").

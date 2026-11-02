@@ -97,6 +97,12 @@ impl Kind {
 pub enum State {
     /// Waiting its turn, due at `not_before`.
     Queued,
+    /// A forward whose hand-over failed, waiting for the ban the
+    /// neighbour its frame is addressed to was given then, due at
+    /// `not_before`, when it is offered to that neighbour again, demoted
+    /// or not, unless the ban has grown meanwhile (spec "Hand-over" step
+    /// 6).
+    Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
     /// keeps its place and its airtime in admission.
@@ -146,6 +152,10 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
+    /// Failed hand-overs in a row of this entry to the neighbour its
+    /// frame is addressed to (spec "Hand-over" step 6); starts again when
+    /// it is addressed afresh.
+    pub failures: u8,
     /// When a DATA's time left reaches zero (spec "Time to live");
     /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
     /// queue's TTL ends.
@@ -162,6 +172,7 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
+            failures: 0,
             expires: Instant::MAX,
         }
     }
@@ -174,7 +185,7 @@ impl Outgoing {
     /// Whether its hand-over is under way: addressed and waiting, on the
     /// radio or waiting for its ACK.
     pub fn in_flight(&self) -> bool {
-        !matches!(self.state, State::Queued | State::Held)
+        !matches!(self.state, State::Queued | State::Holding | State::Held)
     }
 
     /// The hop count the frame carries.
