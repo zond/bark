@@ -4,11 +4,14 @@
 the write-up on 2026-11-02. **Status:** measured; roadmap D96, the
 user decides. Spec references are to `protocol.md`. Part 3 of the
 four-part candidate of `docs/storm-2026-10-30.md`, built alone on main
-`09b7d73` (D90 adopted, D91 and D92 merged) and measured against it;
-all release builds, the D90 note's scenario files and seeds plus
-three, main's binary carrying the simulator's new give-up counter and
-nothing else (its outputs are main's to the byte but for the counter
-on the ring and the four mesh runs, checked).
+`09b7d73` (D90 adopted, D91 and D92 merged) and measured against it,
+then rebased onto main `8ff3a74` (D93 merged, the take final at the
+ACK) and measured against that; all release builds, the D90 note's
+scenario files and seeds plus three. On the first base main's binary
+carries the simulator's new give-up counter and nothing else (its
+outputs are main's to the byte but for the counter on the ring and
+the four mesh runs, checked); on the second it is main unchanged, so
+its give-up column reads 0 for not counted.
 
 ## Summary
 
@@ -35,7 +38,7 @@ on the ring and the four mesh runs, checked).
   seed-1 runs part at the first give-up, which draws a random wait
   main does not draw, and differ by minute 30; the branch tips at
   minute 50 to 55. Seeds 2 to 4, run to tell the edge from the rule:
-  the edge, not the rule. Seed 2 storms on main and not on the branch (94.1 → 98.2 %, 465 201 → 309 490 s, 43 559 → 104 give-ups), seed 3 on neither (97.8 → 97.9 %); each build storms on one seed of three. Seed 4 was still running at the write-up.
+  the edge, not the rule. Seed 2 storms on main and not on the branch (94.1 → 98.2 %, 465 201 → 309 490 s, 43 559 → 104 give-ups), seeds 3 and 4 on neither (97.8 → 97.9 %; 98.2 → 98.0 %, 281 083 → 293 083 s, 59 → 87 give-ups); each build storms on one seed of four.
 - **At twice the design rate, where both builds storm, the rule is
   worth a point:** seeds 1 and 7, 75.5 / 77.5 → 76.4 / 78.4 %
   delivered in the settled hour, 2.6 % less airtime, 8 % fewer copies
@@ -52,12 +55,37 @@ on the ring and the four mesh runs, checked).
   walkers 96.4 → 96.4 % at 184 940 → 192 694 s. The interferer
   scenario has no give-up on either build: the relays move off the
   carrier's channel before a sender waits 500 ms for it.
+- **On the D93 base neither build storms, and the rule is level or
+  ahead everywhere.** Against main `8ff3a74`, the take final at the
+  ACK, `dense-power.toml` seeds 1 / 2 / 7: 97.8 / 98.1 / 98.1 → 97.9 /
+  98.2 / 98.1 %, with 35 to 39 give-ups a run. At twice the rate both
+  builds are overloaded and neither collapses; seeds 1 / 7: 88.8 /
+  89.1 → 89.4 / 89.3 %, airtime −1.7 / −0.8 %, copies ended by the
+  time to live −10 / −9 %, 87 479 and 72 349 give-ups waiting 14 820
+  and 12 216 s. S4 at three times the rate, seed 1: 63.6 → 65.7 %.
+  The ring is identical and the mesh burst delivers the same. The
+  split rate does not move: 22.6 / 24.0 / 22.4 → 23.5 / 23.5 / 22.7 %
+  at the design rate, 20.1 / 19.5 → 20.4 / 19.5 % at twice it.
 - **It fixes a drop.** On main a sleepy node whose anchor's channel is
   busy for 500 ms set its anchor aside, found no candidate and dropped
   its own message for want of a route half a second after the
   application gave it, with no word to the application; under the
   rule it waits (`a_sleepy_node_waits_for_its_anchor_s_channel`).
-- **Recommendation:** adopt, on this base. The rule is the user's principle built as stated, costs nothing where give-ups are rare, is worth a point and 2.6 % of airtime where both builds storm, and removes a drop of a sleepy node's own message. It does not lower the split rate, which is lost ACKs, and it does not end a storm; nor does it start one: over three seeds at the design rate each build storms on one, main on seed 2 and the branch on seed 1, which is the edge. The queue a waiting hand-over holds is part 4's to free. The same measurement on the D93 base (main `8ff3a74`, the take final at the ACK) was queued at the write-up and decides the row; the branch is rebased onto it.
+- **Recommendation:** the numbers do not argue against adopting, and
+  argue for it weakly. On the D93 base, where the branch would merge,
+  neither build storms on any run and the branch is level or ahead on
+  every one: by 0.1 points at the design rate, where the seed spread is
+  about 0.3; by 0.6 and 0.2 points and 1.7 and 0.8 % of airtime at
+  twice the rate; by 2.1 points in S4 at three times the rate, where
+  the spread is about 2. On the old base each build stormed on one
+  seed of four, main on seed 2 and the branch on seed 1, which is the
+  edge and not the rule, and the branch was worth a point and 2.6 % of
+  airtime where both stormed. The case for the rule is the principle,
+  built as stated, and the removed drop of a sleepy node's own
+  message; the measurements say they cost nothing. It does not lower
+  the split rate, which is lost ACKs, and it neither ends a storm nor
+  starts one. The queue a waiting hand-over holds is part 4's to free.
+  The user decides.
 
 ## The rule
 
@@ -165,7 +193,13 @@ lost by reason, the relays whose load sample ever found the bucket
 under its reserve, and the largest settled airtime of a node; the
 minutes and the frames per text from the per-message file. Main is
 `09b7d73` with the counter commit `be8d792` on top; the branch is
-`3130ee0`, the rule, with the tests of `cc57bc5`. The three-times-rate
+`3130ee0`, the rule, with the tests of `cc57bc5`. On the D93 base
+main is `8ff3a74` built from `git archive` (`storm3/bark-sim-main2`),
+without the counter; the branch is the rule's two commits, `d808cad`
+and `17386a3`, applied on `8ff3a74` (`storm3/bark-sim-d96b`). That
+base ran `dense-power.toml` seeds 1, 2 and 7 and twice its rate at
+seeds 1 and 7, S4 at three times the rate at seed 1, the ring and
+`mesh-burst.toml` seed 1. The three-times-rate
 S4 is `s4-capacity.toml` with `per_leaf_per_hour` 2.875. Three runs
 are beyond the D90 note's list: `s3-interferer.toml` seed 1, a
 handheld transmitter at the block's centre on 20 s in 60 on channel 6
@@ -174,7 +208,8 @@ from 1800 s, for the case the rule does not reach; and
 seeds 1 and 7, since main at this base no longer storms at the design
 rate and the rule acts only where channels are full. Seeds 2 to 4 of
 `dense-power.toml` were added when seed 1 stormed on the branch alone.
-The outputs are under the scratchpad's `storm3/`.
+The outputs are under the scratchpad's `storm3/`: `main/` and `d96/`
+for the first base, `main2/` and `d96b/` for the second.
 
 ## The tables
 
@@ -252,17 +287,55 @@ unreachable), the interferer, and `dense-power.toml` at twice the rate:
 | largest settled airtime of a node % | 0.52 / 0.53 | 0.90 / 0.90 | 0.41 / 0.41 | 0.73 / 0.73 | 0.29 / 0.29 | 9.99 / 9.99 | 9.98 / 9.99 |
 | heartbeats received % | 99.6 / 99.5 | 99.0 / 99.0 | 99.6 / 99.6 | 99.3 / 99.3 | 97.0 / 97.0 | 60.6 / 60.9 | 62.8 / 63.3 |
 
-Seeds 2 and 3 of `dense-power.toml`, main / the branch (seed 4 was
-still running at the write-up; its summaries are `storm3/main/dp4.json`
-and `storm3/d96/dp4.json`):
+Seeds 2 to 4 of `dense-power.toml`, main / the branch:
 
-| | dp2 | dp3 |
-|---|---|---|
-| delivered, settled hour % | 94.1 / 98.2 | 97.8 / 97.9 |
-| airtime, whole run s | 465 201 / 309 490 | 283 426 / 279 774 |
-| listen-before-talk give-ups | 43 559 / 104 | 44 / 38 |
-| waits after give-ups, s | 5 / 18 | 0 / 5 |
-| split rate, % of failed | 27.8 / 24.3 | 23.3 / 23.9 |
+| | dp2 | dp3 | dp4 |
+|---|---|---|---|
+| delivered, settled hour % | 94.1 / 98.2 | 97.8 / 97.9 | 98.2 / 98.0 |
+| airtime, whole run s | 465 201 / 309 490 | 283 426 / 279 774 | 281 083 / 293 083 |
+| listen-before-talk give-ups | 43 559 / 104 | 44 / 38 | 59 / 87 |
+| waits after give-ups, s | 5 / 18 | 0 / 5 | 0 / 13 |
+| split rate, % of failed | 27.8 / 24.3 | 23.3 / 23.9 | 23.2 / 23.5 |
+
+On the D93 base, main `8ff3a74` / the branch on it. Main's give-up
+column reads 0 for not counted:
+
+| | dp1 | dp2 | dp7 | dpx2-s1 | dpx2-s7 | s4x3-s1 | ring | burst-s1 |
+|---|---|---|---|---|---|---|---|---|
+| texts sent in the settled hour | 18234 / 18234 | 18199 / 18199 | 18189 / 18190 | 36559 / 36542 | 36595 / 36581 | 48831 / 49047 | 2964 / 2964 | 100 / 100 |
+| delivered, settled hour % | 97.8 / 97.9 | 98.1 / 98.2 | 98.1 / 98.1 | 88.8 / 89.4 | 89.1 / 89.3 | 63.6 / 65.7 | 92.6 / 92.6 | 99.0 / 99.0 |
+| delivered, whole run % | 96.5 / 96.5 | 96.7 / 96.7 | 96.9 / 96.9 | 90.5 / 90.9 | 90.4 / 90.5 | 69.9 / 70.7 | 93.3 / 93.3 | 99.0 / 99.0 |
+| latency p50 s | 10.2 / 10.0 | 10.0 / 10.1 | 10.0 / 9.7 | 46.5 / 46.3 | 49.1 / 48.9 | 83.0 / 86.2 | 41.5 / 41.5 | 3.5 / 3.9 |
+| latency p90 s | 47.4 / 44.6 | 43.2 / 42.9 | 45.8 / 43.6 | 349.6 / 346.1 | 349.5 / 343.0 | 582.0 / 584.3 | 159.2 / 159.2 | 8.9 / 10.2 |
+| airtime, whole run s | 283128 / 281452 | 283210 / 279551 | 271385 / 268776 | 1118451 / 1099444 | 1036475 / 1027860 | 150125 / 149057 | 1807 / 1807 | 232 / 253 |
+| hand-overs taken | 417166 / 411933 | 421560 / 418550 | 404816 / 402054 | 1935441 / 1888673 | 1832111 / 1801163 | 391122 / 391749 | - / - | 623 / 688 |
+| hand-overs failed | 480395 / 475022 | 477520 / 466899 | 453585 / 445409 | 2777351 / 2745283 | 2540036 / 2539614 | 139390 / 137746 | - / - | 82 / 92 |
+| failed, receiver had it | 108676 / 111672 | 114376 / 109841 | 101670 / 100963 | 559603 / 559962 | 496462 / 496196 | 28661 / 28397 | - / - | 45 / 51 |
+| returns taken from a child | 3193 / 3502 | 3510 / 3390 | 2880 / 2966 | 10038 / 10035 | 8775 / 8571 | 340 / 337 | - / - | 1 / 6 |
+| copies answered (not returns) | 246311 / 247724 | 253003 / 244375 | 214802 / 211608 | 1037572 / 1035073 | 933784 / 927456 | 43049 / 40748 | - / - | 158 / 245 |
+| of those merged (case 4) | 2108 / 2326 | 2216 / 2013 | 1823 / 1874 | 36174 / 34848 | 32295 / 30786 | 1139 / 974 | - / - | 1 / 1 |
+| of those seen (D90) | 244127 / 245313 | 250721 / 242291 | 212914 / 209665 | 1001196 / 1000020 | 901277 / 896462 | 41910 / 39774 | - / - | 157 / 244 |
+| seen ACKs sent:acted on | 275948:233731 / 277615:234741 | 284166:239851 / 273928:232114 | 241349:203739 / 237232:200743 | 1161943:947962 / 1159423:948266 | 1040011:856442 / 1034533:852239 | 47328:41057 / 45113:38916 | 0:0 / 0:0 | 162:157 / 248:243 |
+| listen-before-talk give-ups | 0 / 38 | 0 / 35 | 0 / 39 | 0 / 87479 | 0 / 72349 | 0 / 832 | - / - | 0 / 3 |
+| waits after give-ups, s | 0 / 6 | 0 / 5 | 0 / 7 | 0 / 14820 | 0 / 12216 | 0 / 116 | - / - | 0 / 0 |
+| split rate: failed with the receiver holding it, % of failed | 22.6 / 23.5 | 24.0 / 23.5 | 22.4 / 22.7 | 20.1 / 20.4 | 19.5 / 19.5 | 20.6 / 20.6 | - / - | 54.9 / 55.4 |
+| hand-overs held back by the bucket | 18179 / 17680 | 18324 / 18741 | 17495 / 15377 | 1902851 / 1772894 | 1804117 / 1738903 | 710046 / 704513 | - / - | 0 / 0 |
+| neighbours demoted | 201105 / 198076 | 198509 / 193762 | 190020 / 186739 | 1185913 / 1172432 | 1083714 / 1087883 | 40601 / 40129 | - / - | 13 / 16 |
+| copies dropped: hop cap | 1502 / 1435 | 1641 / 1586 | 1314 / 1312 | 2692 / 2754 | 2689 / 2537 | 49 / 40 | 0 / 0 | 0 / 0 |
+| copies dropped: TTL | 687 / 755 | 823 / 793 | 658 / 651 | 38725 / 34682 | 33357 / 30481 | 4772 / 4505 | 0 / 0 | 0 / 1 |
+| copies dropped: return seen | 1 / 0 | 0 / 0 | 2 / 1 | 1 / 2 | 1 / 2 | 0 / 0 | 0 / 0 | 0 / 0 |
+| copies dropped: no route | 23 / 19 | 33 / 18 | 16 / 22 | 62 / 67 | 63 / 48 | 168 / 164 | 12 / 12 | 0 / 0 |
+| copies dropped: return failed | 48 / 49 | 38 / 39 | 29 / 44 | 233 / 208 | 195 / 218 | 0 / 0 | 2 / 2 | 0 / 0 |
+| texts lost: hop cap | 261 / 258 | 267 / 255 | 222 / 230 | 386 / 374 | 426 / 428 | 29 / 26 | 0 / 0 | 0 / 0 |
+| texts lost: TTL | 78 / 78 | 90 / 98 | 80 / 78 | 1741 / 1576 | 1599 / 1557 | 4582 / 4349 | 0 / 0 | 0 / 1 |
+| texts lost: return seen | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 1 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| texts lost: no route | 4 / 3 | 4 / 4 | 5 / 6 | 14 / 17 | 19 / 18 | 15 / 11 | 12 / 12 | 0 / 0 |
+| texts lost: return failed | 3 / 6 | 3 / 2 | 2 / 5 | 48 / 40 | 35 / 54 | 0 / 0 | 2 / 2 | 0 / 0 |
+| texts that waited at their origin | 80 / 92 | 87 / 79 | 48 / 58 | 8430 / 7850 | 7970 / 8431 | 186140 / 185826 | 2269 / 2269 | 0 / 0 |
+| relays ever at their cap | 73 / 103 | 86 / 77 | 73 / 70 | 813 / 813 | 726 / 689 | 148 / 153 | - / - | 0 / 0 |
+| largest settled airtime of a node % | 4.87 / 4.45 | 4.10 / 3.97 | 4.24 / 4.10 | 9.99 / 9.98 | 9.99 / 9.99 | 9.93 / 9.98 | 9.89 / 9.89 | 0.53 / 0.66 |
+| heartbeats received % | 85.5 / 85.6 | 85.8 / 85.9 | 85.8 / 85.9 | 67.8 / 68.1 | 69.8 / 69.9 | 88.6 / 88.7 | 91.0 / 91.0 | 99.5 / 99.5 |
+
 
 ## What it shows
 
@@ -284,7 +357,7 @@ and `storm3/d96/dp4.json`):
   203. The give-ups' waits, 45 442 s in all over 20 000 nodes, are 0.17
   s each; what the storm costs is 1.1 M s of airtime. Whether the
   rule tipped it or the seed's edge did is what seeds 2 to 4 answer:
-  the edge. On seed 2 it is main that storms, at half strength (94.1 %, 465 201 s, 43 559 give-ups) and the branch that does not (98.2 %, 309 490 s, 104 give-ups); on seed 3 neither does. The branch's run is main's until the first give-up draws a wait, so the two runs of a seed are two draws of one seed, and over seeds 1 to 3 each build storms once: at the design rate `dense-power.toml` sits on the edge, as D77's branch and main showed on 2026-10-30 and as D95 and D97 found on their branches, and which draw tips is the seed's, not the rule's.
+  the edge. On seed 2 it is main that storms, at half strength (94.1 %, 465 201 s, 43 559 give-ups) and the branch that does not (98.2 %, 309 490 s, 104 give-ups); on seeds 3 and 4 neither does (seed 4: 98.2 → 98.0 %, 281 083 → 293 083 s, 59 → 87 give-ups). The branch's run is main's until the first give-up draws a wait, so the two runs of a seed are two draws of one seed, and over seeds 1 to 4 each build storms once: at the design rate `dense-power.toml` sits on the edge, as D77's branch and main showed on 2026-10-30 and as D95 and D97 found on their branches, and which draw tips is the seed's, not the rule's.
 - **Where both storm, the rule helps a little.** At twice the rate
   the branch delivers 0.9 points more on both seeds with 2.6 % less
   airtime, a tenth fewer texts and copies ended by the time to live
@@ -308,6 +381,23 @@ and `storm3/d96/dp4.json`):
   more airtime, 7 % more hand-overs failing and 10 % more copies
   answered seen, with 18 give-ups in the run: not the rule's waits,
   but the different run that follows them.
+- **On the D93 base nothing storms and the rule is level or ahead.**
+  With the take final at the ACK, `dense-power.toml` at the design
+  rate runs off the edge on both builds at seeds 1, 2 and 7, with 35
+  to 39 give-ups a run on the branch and the deliveries within 0.1
+  points. At twice the rate both builds are overloaded and neither
+  collapses: the median text's frames go from about 40 before minute
+  40 to about 160 and stay there, with 92 to 93 % of each ten minutes
+  delivered from minute 50 to 90, against about 300 frames and 80 %
+  on the old base. There the branch is 0.6 and 0.2 points ahead with
+  1.7 and 0.8 % less airtime, 10 and 9 % fewer copies and 9 and 3 %
+  fewer texts ended by the time to live, 7 and 4 % fewer hand-overs
+  held back by the bucket, and 87 479 and 72 349 give-ups waiting
+  14 820 and 12 216 s, 0.17 s each. S4 at three times the rate at
+  seed 1, 63.6 → 65.7 %, is within the ±2 points of its seeds. The
+  ring is identical; the mesh burst had 3 give-ups and delivers the
+  same by a different run. The split rate is main's everywhere, 20 to
+  24 %.
 - **The interferer does not reach the rule.** With a carrier on 20 s
   in 60 on one channel, the relays that hear it move off it and no
   sender ever found a channel busy for 500 ms: both builds are
@@ -330,6 +420,11 @@ and `storm3/d96/dp4.json`):
   the storm's own traffic. A rule on the give-up acts after the storm
   has begun, and the measurement at twice the rate says what it is
   worth then: a point of delivery and 2.6 % of airtime.
+- **The take final at the ACK moved the edge further.** Main at twice
+  the design rate on `8ff3a74` delivers 88.8 / 89.1 % with 1.1 M s of
+  airtime where `09b7d73` delivered 75.5 / 77.5 % with 2.2 M s, and at
+  the design rate seeds 1 and 2 storm on neither build. Part 3 is
+  measured here on a base that part 2 moved.
 - **A sleepy node's own message was dropped by a busy channel.** The
   anchor is its only candidate, so the give-up's set-aside left it no
   route and the drop said nothing to the application. The rule removes
@@ -337,9 +432,9 @@ and `storm3/d96/dp4.json`):
 
 ## What it does not show
 
-- **Parts 2 and 4 with this one.** The queue a waiting hand-over holds
-  is part 4's to free; a take that is final only when its ACK has gone
-  out is part 2's. Each was measured alone.
+- **Part 4 with this one.** The queue a waiting hand-over holds is
+  part 4's to free; it was measured alone. Part 2, the take final at
+  the ACK, is D93 and is in the second base.
 - **A carrier the neighbour cannot hear**, where a message waits at the
   sender for its whole time to live: no scenario has one.
 - **The board.** Nothing here was run on hardware.
