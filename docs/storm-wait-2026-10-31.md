@@ -103,7 +103,7 @@ hand-over's check or frame would take it away.
 
 ## The rule
 
-Spec "Waiting hand-overs", in full there; the mechanism:
+The branch's spec section "Waiting hand-overs", in full there; the mechanism:
 
 - **Flights.** The send queue keeps a flight for each hand-over under
   way (`tables/send_queue.rs` `Flight`): the place it belongs to, until
