@@ -336,9 +336,9 @@ impl Sim {
                 1
             };
             self.addressed.insert(tx_key, (d.0, d.1, state));
-            if let Some(WirePacket::Data(d)) = &decoded {
-                self.margin_start(tx_key, src, d, ch, state, air);
-            }
+        }
+        if let Some(WirePacket::Data(d)) = &decoded {
+            self.margin_start(tx_key, src, d, ch, air);
         }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
@@ -463,6 +463,9 @@ impl Sim {
 
     /// Note how `b` lost the frame `key`, if it was addressed to `b`.
     fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, how: u8) {
+        if self.margin.is_some() {
+            self.margin_lost(key, b, o, how);
+        }
         if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
             let how = match o {
                 Outcome::BelowSensitivity => 0,
@@ -690,7 +693,7 @@ impl Sim {
                 let how = how.unwrap_or(6) as usize;
                 self.metrics.addressed.lost_how[kind as usize][fate as usize][how] += 1;
             }
-            self.margin_end(tx.key, fate, how.or(Some(6)));
+
             let beats = &self.nodes[d as usize].beats;
             let (k, f, c) = (kind as usize, fate as usize, ch.index());
             if beats.during(tx.start, tx.end, c, true) {
@@ -701,6 +704,7 @@ impl Sim {
             }
         }
         self.air_kinds.remove(&tx.key);
+        self.margin_end(tx.key, &got);
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;
         bytes[..len].copy_from_slice(tx.frame.payload());

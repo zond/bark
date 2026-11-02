@@ -1,5 +1,5 @@
 //! What a sender knew of its next hop when it chose it, against what the
-//! link was: one CSV row per DATA to a relay after the settle time, with
+//! link was: one CSV row per DATA to a node, after the settle time, with
 //! `--margin FILE` (`docs/margin-2026-11-02.md`). Counting only: nothing
 //! here changes a draw or a decision, and off it costs nothing.
 //!
@@ -30,6 +30,7 @@ use bark_proto::tables::neighbours::Neighbours;
 use bark_proto::tables::neighbours::{Neighbour, NeighbourParams};
 use bark_proto::wire::Data;
 
+use crate::metrics::Outcome;
 use crate::sim::{key, Lock, Sim};
 
 /// Thresholds above the noise floor, dB of averaged packet RSSI, for the
@@ -68,8 +69,11 @@ impl Alt {
 /// are placed; the fate at the frame's end.
 pub(crate) struct Row {
     head: String,
+    dst: u32,
+    state: u8,
     rx_dbm: Option<f64>,
     symbols: u64,
+    how: Option<u8>,
 }
 
 /// The log.
@@ -79,7 +83,8 @@ pub(crate) struct MarginLog {
 }
 
 /// The CSV header.
-const HEADER: &str = "t_s,kind,src,dst,msg,hops,ch,src_home,state,\
+const HEADER: &str =
+    "t_s,kind,src,dst,msg,hops,ch,src_home,state,src_walks,dst_walks,src_present,dst_present,dst_sleepy,\
 known,est_dbm,floor_src,margin,age_s,demoted,fails,\
 base_dbm,base_back_dbm,fade_src_ch_db,floor_dst,d_src_m,d_dst_m,n_alt,n_alt_margin,\
 best_est,best_rx,best_dist,best_listen,\
@@ -97,28 +102,50 @@ impl Sim {
         });
     }
 
-    /// The DATA `d` from `src` reaches the air on `ch` as frame `tx_key`;
-    /// `state` is the receiver's state then (`metrics::Addressed`).
+    /// The DATA `d` from `src` reaches the air on `ch` as frame `tx_key`.
     pub(crate) fn margin_start(
         &mut self,
         tx_key: u64,
         src: u32,
         d: &Data<'_>,
         ch: Channel,
-        state: u8,
         air_us: u64,
     ) {
         if self.margin.is_none() || self.now < self.settle {
             return;
         }
-        let Some(&dst) = self.relay_index.get(&key(d.dst_hop)) else {
+        let k = key(d.dst_hop);
+        let Some(&dst) = self
+            .relay_index
+            .get(&k)
+            .or_else(|| self.sleepy_index.get(&k))
+        else {
             return;
         };
-        if dst >= self.relays() {
-            return;
-        }
-        let kind = if src < self.relays() { 0 } else { 2 };
+        // The receiver's state as the frame starts, as `metrics::Addressed`
+        // classes it: 1 listening and free, 2 receiving, 3 deaf, 4 on
+        // another channel.
+        let st = &self.nodes[dst as usize];
+        let state = if st.resting != Some(ch) {
+            4
+        } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
+            3
+        } else if matches!(st.lock, Lock::Rx(_)) {
+            2
+        } else {
+            1
+        };
         let sender = self.relay(src);
+        let kind = if sender.sleepy() { 2 } else { 0 };
+        let walks = |n: u32| self.walks.as_ref().is_some_and(|w| w.walks(n));
+        let flags = format!(
+            "{},{},{},{},{}",
+            u8::from(walks(src)),
+            u8::from(walks(dst)),
+            u8::from(self.nodes[src as usize].present),
+            u8::from(self.nodes[dst as usize].present),
+            u8::from(self.relay(dst).sleepy())
+        );
         let floor_src = sender.busy().noise_floor_dbm();
         let src_home = sender.home();
         let plane = LocalPlane::new(self.origin.position(self.xy[src as usize]));
@@ -146,18 +173,15 @@ impl Sim {
             ),
             None => format!("0,,{floor_src},,,,"),
         };
-        // The link's base both ways; NaN where none is stored.
-        let base = self
-            .links
-            .get(src, dst)
-            .map_or(f64::NAN, |l| l.base_dbm as f64);
-        let base_back = self
-            .links
-            .get(dst, src)
-            .map_or(f64::NAN, |l| l.base_dbm as f64);
-        let fade_src_ch = match self.links.get(src, dst).copied() {
-            Some(l) => self.links.rx_dbm(&l, src_home) - base,
-            None => f64::NAN,
+        // The link's base both ways and its fade on the sender's channel
+        // now; NaN where none is stored or, with a walker, none reaches.
+        let (base, base_back, fade_src_ch) = match self.link_now(src, dst, src_home) {
+            Some((base, dbm)) => (
+                base,
+                self.link_now(dst, src, src_home).map_or(f64::NAN, |l| l.0),
+                dbm - base,
+            ),
+            None => (f64::NAN, f64::NAN, f64::NAN),
         };
         let floor_dst = self.relay(dst).busy().noise_floor_dbm();
 
@@ -197,10 +221,7 @@ impl Sim {
         for p in picks {
             let alt = p.map(|(est, dist, node, home)| Alt {
                 est_dbm: est,
-                rx_dbm: match self.links.get(src, node).copied() {
-                    Some(l) => self.links.rx_dbm(&l, home),
-                    None => f64::NAN,
-                },
+                rx_dbm: self.link_now(src, node, home).map_or(f64::NAN, |l| l.1),
                 dist_m: dist,
                 listening: self.listening_free(node, home),
             });
@@ -209,7 +230,7 @@ impl Sim {
         }
 
         let head = format!(
-            "{:.3},{kind},{src},{dst},{},{},{},{},{state},{sender_side},{:.1},{:.1},{:.2},{floor_dst},{:.0},{:.0},{n_alt},{n_alt_margin}{cells}",
+            "{:.3},{kind},{src},{dst},{},{},{},{},{state},{flags},{sender_side},{:.1},{:.1},{:.2},{floor_dst},{:.0},{:.0},{n_alt},{n_alt_margin}{cells}",
             now.as_micros() as f64 / 1e6,
             d.msg_id().0,
             d.hops,
@@ -226,10 +247,26 @@ impl Sim {
             tx_key,
             Row {
                 head,
+                dst,
+                state,
                 rx_dbm: None,
                 symbols: air_us / SYMBOL_TIME.as_micros(),
+                how: None,
             },
         );
+    }
+
+    /// The link from `src` to `rx` now on `channel`: its base power and
+    /// its power with the fade, dBm; `None` where no link is stored, or
+    /// with a walker at either end none reaches.
+    fn link_now(&mut self, src: u32, rx: u32, channel: Channel) -> Option<(f64, f64)> {
+        if let Some(w) = &self.walks {
+            if w.walks(src) || w.walks(rx) {
+                return w.link_now(src, rx, channel, self.now, &self.xy, &self.sites);
+            }
+        }
+        let l = *self.links.get(src, rx)?;
+        Some((l.base_dbm as f64, self.links.rx_dbm(&l, channel)))
     }
 
     /// Whether `node` is listening on `home`, free, when asked.
@@ -249,20 +286,47 @@ impl Sim {
             return;
         };
         if let Some(r) = log.pending.get_mut(&tx_key) {
-            if self.addressed.get(&tx_key).is_some_and(|a| a.0 == rx) {
+            if r.dst == rx {
                 r.rx_dbm = Some(dbm);
             }
         }
     }
 
-    /// The frame `tx_key` has left the air with `fate` and, if lost, `how`
-    /// (`metrics::Addressed`).
-    pub(crate) fn margin_end(&mut self, tx_key: u64, fate: u8, how: Option<u8>) {
+    /// Node `b` lost the frame `tx_key` to `o`; `how` classes what it met
+    /// (`Sim::how_of`).
+    pub(crate) fn margin_lost(&mut self, tx_key: u64, b: u32, o: Outcome, how: u8) {
+        let Some(log) = self.margin.as_mut() else {
+            return;
+        };
+        if let Some(r) = log.pending.get_mut(&tx_key) {
+            if r.dst == b {
+                r.how = Some(match o {
+                    Outcome::BelowSensitivity => 0,
+                    Outcome::LostCapture | Outcome::SinrFail { .. } => how,
+                    _ => 6,
+                });
+            }
+        }
+    }
+
+    /// The frame `tx_key` has left the air; `got` are the nodes that
+    /// received it.
+    pub(crate) fn margin_end(&mut self, tx_key: u64, got: &[(u32, f64, f64)]) {
         let Some(log) = self.margin.as_mut() else {
             return;
         };
         let Some(r) = log.pending.remove(&tx_key) else {
             return;
+        };
+        let fate = if got.iter().any(|g| g.0 == r.dst) {
+            0
+        } else {
+            r.state
+        };
+        let how = if fate == 0 {
+            -1
+        } else {
+            r.how.unwrap_or(6) as i8
         };
         let (rx, p_loss) = match r.rx_dbm {
             Some(dbm) => {
@@ -270,10 +334,6 @@ impl Sim {
                 (dbm, 1.0 - (-rate * r.symbols as f64).exp())
             }
             None => (f64::NAN, 1.0),
-        };
-        let how = match how {
-            Some(h) if fate != 0 => h as i8,
-            _ => -1,
         };
         writeln!(log.out, "{},{rx:.1},{p_loss:.4},{fate},{how}", r.head).expect("margin log");
     }
