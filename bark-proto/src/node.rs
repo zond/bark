@@ -54,8 +54,8 @@ pub struct Config {
     pub ack_timeout: Duration,
     /// Per-hop transmit attempts before giving up on a neighbour (spec "Hand-over": 3).
     pub hop_attempts: u8,
-    /// Longest random wait of a hand-over or an ACK after a busy
-    /// listen-before-talk check (spec "Hand-over": 0–50 ms).
+    /// Longest random wait of a hand-over after a busy listen-before-talk
+    /// check (spec "Hand-over": 0–50 ms).
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
     /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,

@@ -174,9 +174,42 @@ fn drive_from<const H: usize, const Q: usize>(
     r: &mut Node<H, Q>,
     now: &mut Instant,
     until: Instant,
-    mut pending: Vec<Action>,
+    pending: Vec<Action>,
 ) -> Vec<(Instant, Frame)> {
     let mut sent = Vec::new();
+    drive_all(r, now, until, pending, &mut |t, a| {
+        if let Action::Transmit(f) = a {
+            sent.push((t, f));
+        }
+    });
+    sent
+}
+
+/// [`drive_from`], returning the traces instead of the frames.
+fn drive_traces<const H: usize, const Q: usize>(
+    r: &mut Node<H, Q>,
+    now: &mut Instant,
+    until: Instant,
+    pending: Vec<Action>,
+) -> Vec<Trace> {
+    let mut traces = Vec::new();
+    drive_all(r, now, until, pending, &mut |_, a| {
+        if let Action::Trace(t) = a {
+            traces.push(t);
+        }
+    });
+    traces
+}
+
+/// Drive `r` as [`drive_from`] does, handing every action with its time
+/// to `seen`.
+fn drive_all<const H: usize, const Q: usize>(
+    r: &mut Node<H, Q>,
+    now: &mut Instant,
+    until: Instant,
+    mut pending: Vec<Action>,
+    seen: &mut dyn FnMut(Instant, Action),
+) {
     loop {
         let event = match pending.pop() {
             Some(Action::Lbt(channel)) => Event::LbtDone {
@@ -186,7 +219,7 @@ fn drive_from<const H: usize, const Q: usize>(
             },
             Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
             Some(Action::Transmit(f)) => {
-                sent.push((*now, f));
+                seen(*now, Action::Transmit(f));
                 *now += mac::airtime(&f);
                 Event::TxDone
             }
@@ -196,12 +229,13 @@ fn drive_from<const H: usize, const Q: usize>(
                     *now = (*now).max(t);
                     Event::Wakeup
                 }
-                _ => return sent,
+                _ => return,
             },
         };
+        let t = *now;
         r.handle(event, *now, &mut |a| match a {
             Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
-            _ => {}
+            a => seen(t, a),
         });
     }
 }
@@ -502,11 +536,11 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     assert_eq!(checked, Some(r.home), "its hand-over starts at once");
 }
 
-/// Two packets arrive within one reply time. The second finds the one
-/// owed-reply place holding the first one's ACK, which waits out a
-/// busy channel: it is neither taken nor refused, and gets no answer.
-/// Its sender's retry, after the first ACK is gone, is taken (roadmap
-/// D29 rule 4).
+/// Two packets arrive within one reply time, while a reading of the
+/// sweep holds the radio (core-interface §3 rule 8). The second finds
+/// the one owed-reply place holding the first one's ACK: it is neither
+/// taken nor refused, and gets no answer. Its sender's retry, after the
+/// first ACK is gone, is taken (roadmap D29 rule 4).
 #[test]
 fn a_packet_that_cannot_be_answered_is_not_taken() {
     use crate::event::AppEvent;
@@ -515,7 +549,7 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     let config = Config {
         boot_listen: Duration::from_secs(1),
         home_override: Channel::new(3),
-        sweep_interval: hour,
+        sweep_interval: Duration::from_secs(1),
         heartbeat_min: hour,
         heartbeat_max: hour,
         ..Config::default()
@@ -561,21 +595,54 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
             .count()
     };
 
-    now = Instant::ZERO + Duration::from_secs(10);
+    let frames = |got: &[(Instant, Action)]| -> Vec<(Instant, Frame)> {
+        got.iter()
+            .filter_map(|(t, x)| match x {
+                Action::Transmit(f) => Some((*t, *f)),
+                _ => None,
+            })
+            .collect()
+    };
+    let delivered = |got: &[(Instant, Action)], d: &Data<'_>| {
+        got.iter().any(|(_, x)| {
+            matches!(x, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == d.msg_id())
+        })
+    };
+
+    // Run on until a reading of the sweep is outstanding, and hold it.
+    let mut held = None;
+    while held.is_none() {
+        let t = r.next_wakeup().expect("the sweep is due");
+        now = now.max(t);
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |x| pending.push(x));
+        for x in pending {
+            match x {
+                Action::Rssi(c) => held = Some(c),
+                Action::Transmit(f) => {
+                    now += mac::airtime(&f);
+                    r.handle(Event::TxDone, now, &mut |_| {});
+                }
+                Action::Lbt(channel) => r.handle(
+                    Event::LbtDone {
+                        channel,
+                        busy: false,
+                        dbm: -130,
+                    },
+                    now,
+                    &mut |_| {},
+                ),
+                _ => {}
+            }
+        }
+    }
+    now += Duration::from_millis(1);
     let mut actions = Vec::new();
     r.handle(received(&a_bytes), now, &mut |x| actions.push(x));
-    assert!(taken(&actions, &a));
-    assert!(actions.contains(&Action::Lbt(a_home)), "{actions:?}");
-    // A's channel is busy: its ACK waits a backoff.
-    now += Duration::from_millis(1);
-    r.handle(
-        Event::LbtDone {
-            channel: a_home,
-            busy: true,
-            dbm: -130,
-        },
-        now,
-        &mut |_| {},
+    assert!(!taken(&actions, &a), "not before its ACK");
+    assert!(
+        !actions.iter().any(|x| matches!(x, Action::Transmit(_))),
+        "the radio is held: {actions:?}"
     );
     assert!(r.radio.replies.pending());
 
@@ -585,19 +652,38 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     assert!(actions.is_empty(), "{actions:?}");
     assert!(r.records.get(b.msg_id()).is_none(), "B's packet was taken");
 
+    // The reading completes: A's ACK goes, and A is taken with it.
+    now += Duration::from_millis(1);
+    actions.clear();
+    r.handle(
+        Event::RssiSample {
+            channel: held.unwrap(),
+            dbm: -130,
+        },
+        now,
+        &mut |x| actions.push(x),
+    );
     let until = now + Duration::from_millis(100);
-    let sent = drive(&mut r, &mut now, until);
+    let mut got = Vec::new();
+    drive_all(&mut r, &mut now, until, actions, &mut |t, x| {
+        got.push((t, x))
+    });
+    let sent = frames(&got);
     assert_eq!(acks(&sent, &a, a_home), 1);
     assert_eq!(sent.len(), 1, "B's packet was answered");
+    assert!(delivered(&got, &a));
 
     // B's retry, after the retry wait (spec "Retry wait").
     now += Duration::from_millis(200);
-    actions.clear();
+    let mut actions = Vec::new();
     r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
-    assert!(taken(&actions, &b));
     let until = now + Duration::from_millis(100);
-    let sent = drive_from(&mut r, &mut now, until, actions);
-    assert_eq!(acks(&sent, &b, b_home), 1);
+    let mut got = Vec::new();
+    drive_all(&mut r, &mut now, until, actions, &mut |t, x| {
+        got.push((t, x))
+    });
+    assert_eq!(acks(&frames(&got), &b, b_home), 1);
+    assert!(delivered(&got, &b));
 }
 
 /// The application may send only while the relay can take a message
@@ -1319,8 +1405,13 @@ fn offer_timed(
         Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
         _ => {}
     });
+    // The take, and a drop at the take, come with the ACK (roadmap D93).
     let until = *now + Duration::from_millis(100);
-    drive_from(r, now, until, pending);
+    for t in drive_traces(r, now, until, pending) {
+        if let Trace::Dropped { reason, .. } = t {
+            dropped = Some(reason);
+        }
+    }
     let place = r
         .queue
         .iter()
@@ -1840,4 +1931,69 @@ fn a_return_answered_seen_is_dropped() {
     })));
     assert!(r.queue.is_empty() && r.handover_idle());
     assert!(r.holding().next().is_none());
+}
+
+/// A node, sleepy or not, that receives a DATA for itself answers it
+/// at once and hands it to its application when the ACK has gone out,
+/// not before (roadmap D93).
+#[test]
+fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
+    use crate::event::AppEvent;
+    use crate::wire::Data;
+    for external in [true, false] {
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        r.handle(Event::App(AppCommand::Power { external }), now, &mut |_| {});
+        let until = now + Duration::from_secs(2);
+        drive(&mut r, &mut now, until);
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: name(1),
+            dst_pos: r.config.position,
+            dst_id: r.me(),
+            hops: 1,
+            time_left: u8::MAX,
+            payload: b"for me",
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let mut pending = Vec::new();
+        let mut early = false;
+        r.handle(
+            Event::Received {
+                channel: Channel::new(3).unwrap(),
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            },
+            now,
+            &mut |a| match a {
+                Action::App(AppEvent::Message { .. }) => early = true,
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                _ => {}
+            },
+        );
+        assert!(!early, "external {external}: not before the ACK");
+        assert!(
+            matches!(pending.as_slice(), [Action::Transmit(f)] if f.channel == d.sender_home),
+            "external {external}: the ACK at once: {pending:?}"
+        );
+        let mut got = Vec::new();
+        let until = now + Duration::from_millis(200);
+        drive_all(&mut r, &mut now, until, pending, &mut |_, a| got.push(a));
+        assert!(
+            got.iter().any(|a| matches!(a, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == d.msg_id())),
+            "external {external}: {got:?}"
+        );
+    }
 }

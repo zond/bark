@@ -2596,3 +2596,46 @@ fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
         neighbour: core(&h, p).id()
     }));
 }
+
+/// X, Y and D in a line, each on its own home channel, and a carrier on
+/// X's home channel at Y from the moment X sends. Y's ACK goes at once,
+/// the carrier notwithstanding (spec "The ACK", roadmap D93): X hears
+/// it, and the message goes on to D with one holder. Before D93 the ACK
+/// listened first, never found the channel clear within X's 100 ms, and
+/// lapsed unsent, while Y, which had taken the packet on reception, sent
+/// the message on and X retried it: two searchers.
+#[test]
+fn an_ack_goes_at_once_and_the_take_is_final_with_it() {
+    use bark_proto::wire::MAX_PAYLOAD;
+    let (x, y, d) = (0, 1, 2);
+    let on = |east, seed, home| {
+        relay_with(
+            east,
+            0.0,
+            seed,
+            Config {
+                home_override: Some(ch(home)),
+                sweep_interval: secs(3600),
+                ..Config::default()
+            },
+        )
+    };
+    let mut h = build(
+        vec![on(0.0, 141, 1), on(400.0, 142, 2), on(800.0, 143, 3)],
+        &[(x, y), (y, d)],
+    );
+    h.jam(y, ch(1));
+    let id = send(&mut h, x, d, &[b't'; MAX_PAYLOAD]);
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    let ny = core(&h, y).id();
+    let acks = h.nodes[y]
+        .sent
+        .iter()
+        .filter(
+            |(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Ack(a)) if a.msg_id == id),
+        )
+        .count();
+    assert_eq!(acks, 1);
+    assert!(!traces(&h, x).contains(&Trace::HandOverFailed { msg_id: id, to: ny }));
+    assert_eq!(data_times(&h, x, y, id).len(), 1, "one frame, one holder");
+}

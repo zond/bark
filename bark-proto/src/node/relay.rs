@@ -943,8 +943,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 match self.radio.excursion.complete() {
                     Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                     Some(Job::HandOver) => self.handover_check(busy, now, emit),
-                    Some(Job::Reply) => self.reply_check(busy, now, emit),
-                    Some(Job::Sweep) | None => {}
+                    // A reply goes without a check (spec "The ACK").
+                    Some(Job::Sweep | Job::Reply) | None => {}
                 }
             }
             Event::RssiSample { channel, dbm } => match self.radio.excursion.complete() {
@@ -963,9 +963,12 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     }
                 }
                 Some(Job::Reply) => {
-                    let listens_on = self.radio.replies.sent();
+                    let (listens_on, taken) = self.radio.replies.sent();
                     if listens_on {
                         self.took(now);
+                    }
+                    if let Some(frame) = taken {
+                        self.taken(frame, now, emit);
                     }
                 }
                 _ => {}

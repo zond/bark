@@ -255,6 +255,9 @@ fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
                 Some(Delivery::Flush),
                 "lost: {lost}"
             );
+            // S hands the message to its application once its ACK, the
+            // one R turned sleepy on, has left S's antenna (roadmap D93).
+            h.run_for(secs(1));
             assert!(delivered_at(&h, s, id).is_some());
         }
         assert_eq!(h.nodes[r].core.anchor().map(|a| a.id), Some(oid));
