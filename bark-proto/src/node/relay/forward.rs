@@ -412,9 +412,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The wait a refusal for `reason` asks for (spec "Bans"): for want
     /// of room, until the bucket holds everything queued, a frame of
     /// `airtime` and its ACK with the reply reserve left, if nothing else
-    /// comes; anything else frees in one ban; and never less than the
-    /// pushback the message's way on gave (`pushback`), so a wait told
-    /// at the centre is passed back hop by hop toward the origin.
+    /// comes, or until the queue has been served at the pace this relay
+    /// achieves (`tables/pace.rs`), whichever is longer; anything else
+    /// frees in one ban; and never less than the pushback the message's
+    /// way on gave (`pushback`), so a wait told at the centre is passed
+    /// back hop by hop toward the origin.
+    ///
+    /// Why the pace: where the channel binds, the bucket's refill of what
+    /// is queued is a second or two while the queue takes minutes, so a
+    /// sender told the refill comes back to be refused again, and its own
+    /// fresh work is let in meanwhile; told the line's real length it
+    /// bans this relay for that long, and refuses its own fresh work for
+    /// the way through it (roadmap D34), so the pressure travels upstream.
     ///
     /// Every sender refused takes a place in line: the next is told one
     /// ban later than the last, the time the bucket takes to refill the
@@ -431,10 +440,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
                 let queued = self.queue.airtime();
-                self.radio
+                let refill = self
+                    .radio
                     .budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
-                    .map_or(self.config.delivery_ttl, |t| t.since(now))
+                    .map_or(self.config.delivery_ttl, |t| t.since(now));
+                let served = self
+                    .pace
+                    .time_for(self.queue.len(), now)
+                    .unwrap_or(Duration::ZERO);
+                refill.max(served)
             }
             _ => BAN,
         };

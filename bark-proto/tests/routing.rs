@@ -1370,8 +1370,11 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
 /// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
-/// against F1 (spec "Bans"). O bans F1: no message is offered to it until the
-/// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
+/// against F1 (spec "Bans"). O bans F1 for the wait the refusal asks,
+/// whole bans and more than one, since F1's line of unanswered hand-overs
+/// takes longer than the bucket refills it: no message is offered to it
+/// until the ban ends; after it, F1 is O's first choice again (roadmap
+/// D27, D29).
 ///
 /// ```text
 ///          F1
@@ -1434,7 +1437,9 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     let p1 = position(&h, f1);
     let entry = *core(&h, o).neighbours().find(|n| n.position == p1).unwrap();
     assert_eq!(entry.fail_count, 0, "a refusal is no failure");
-    assert_eq!(entry.banned_until, refused_at + BAN);
+    let ban = entry.banned_until.since(refused_at);
+    assert!(ban > BAN && ban <= BAN.mul(63), "{ban:?}");
+    assert_eq!(ban.as_micros() % BAN.as_micros(), 0, "whole bans");
 
     // Within the ban F1 is not offered the next message at all.
     let second = send(&mut h, o, d, b"second");
@@ -1445,7 +1450,7 @@ fn a_ban_excludes_the_neighbour_and_expires() {
 
     // After it, and with F1's queue gone, F1 is first again.
     lost.set(false);
-    h.run_for(secs(30));
+    h.run_for(ban + secs(30));
     let third = send(&mut h, o, d, b"third");
     assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
     assert_eq!(forwarded(&h, third).map(|(_, to)| to), Some(n1));
