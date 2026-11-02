@@ -552,6 +552,75 @@ fn a_split_heals_at_a_sender_that_holds_on_past_the_demotion() {
     no_drops(&h);
 }
 
+/// A message moves on by its own count when the neighbour's keeps being
+/// reset (roadmap D102). Every DATA of A from O to F1 is lost; between
+/// A's failures F1 takes Q's messages from O, which reset its failure
+/// count (spec "Bans"), so it is never demoted. A's third failure is
+/// its own third in a row and moves it on, to P, the only other
+/// candidate, though F1's count is one; P and Q are a dead end and the
+/// search comes back, and once A's frames get through F1 takes it.
+///
+/// ```text
+///   Q - P - O - F1 - D
+/// ```
+#[test]
+fn a_message_moves_on_by_its_own_count_when_the_neighbour_s_is_reset() {
+    let (o, f1, d, p, q) = (0, 1, 2, 3, 4);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 261),
+            relay(400.0, 0.0, 262),
+            relay(800.0, 0.0, 263),
+            relay(-400.0, 0.0, 264),
+            relay(-800.0, 0.0, 265),
+        ],
+        &[(o, f1), (f1, d), (p, o), (q, p)],
+    );
+    let a = send(&mut h, o, d, b"ours");
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let ours = (from, to) == (o, f1)
+            && matches!(Packet::decode(bytes), Ok(Packet::Data(x)) if x.msg_id() == a);
+        let lose = ours && lost < 9;
+        lost += usize::from(lose);
+        lose
+    }));
+    let (start, mut others) = (h.now, Vec::new());
+    for (at, text) in [(300, b"one"), (3_000, b"two"), (5_500, b"six")] {
+        h.run_until(start + Duration::from_millis(at), |_| false);
+        others.push(send(&mut h, q, d, text));
+    }
+    assert!(
+        h.run_until(h.now + secs(40), |h| delivered(h, d, a)),
+        "O {:?}",
+        traces(&h, o)
+    );
+    h.run_for(secs(5));
+    let name = |i| core(&h, i).id();
+    let failed: Vec<bool> = traces(&h, o)
+        .iter()
+        .filter_map(|t| match t {
+            Trace::HandOverFailed {
+                msg_id, moves_on, ..
+            } if *msg_id == a => Some(*moves_on),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed, vec![false, false, true]);
+    assert!(!traces(&h, o).contains(&Trace::Demoted {
+        neighbour: name(f1)
+    }));
+    let runs = handovers(&data_times(&h, o, f1, a));
+    assert_eq!(
+        &runs.iter().map(Vec::len).collect::<Vec<_>>()[..3],
+        &[3, 3, 3]
+    );
+    for b in &others[..2] {
+        assert_eq!(forwards(&h, o, *b), vec![name(f1)], "{b:?}");
+    }
+    assert_eq!(forwards(&h, o, a), vec![name(p), name(f1)]);
+}
+
 /// A relay whose full delivery queue frees well within a message's time:
 /// its own messages, which fill it, are kept 400 s, and a message waiting
 /// for a place there has 600 s on its way (spec "Receiving DATA", "Delivery queue").

@@ -151,6 +151,10 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
+    /// Failed hand-overs in a row of this entry to the neighbour its
+    /// frame is addressed to (spec "Hand-over" step 6); starts again when
+    /// it is addressed afresh.
+    pub failures: u8,
     /// When a DATA's time left reaches zero (spec "Time to live");
     /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
     /// queue's TTL ends.
@@ -167,6 +171,7 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
+            failures: 0,
             expires: Instant::MAX,
         }
     }
