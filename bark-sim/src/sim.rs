@@ -171,6 +171,8 @@ pub(crate) struct Rx {
     pub preamble_weight: f64,
     /// Worst instantaneous interference so far, mW.
     pub max_i_mw: f64,
+    /// What the strongest frame on the air was then (`Addressed::lost_how`).
+    pub max_i_how: u8,
     /// Error hazard accrued up to `since`, and the hazard at which the
     /// packet is lost, drawn at lock.
     pub spent: f64,
@@ -800,6 +802,15 @@ pub struct Sim {
     /// Frames on air addressed to a relay: key to (relay, kind, state at
     /// the start), for [`crate::metrics::Addressed`].
     pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
+    /// Frames on air: key to kind, 0 DATA, 1 ACK, 2 a relay's heartbeat,
+    /// 3 a sleepy node's beat, and the sender, for
+    /// [`crate::metrics::Addressed::lost_how`].
+    pub(crate) air_kinds: HashMap<u64, (u8, u32)>,
+    /// Frames on air addressed to a relay that lost them: key to how.
+    pub(crate) lost_how: HashMap<u64, u8>,
+    /// Per relay, its heartbeat grid's phase in its own clock and its
+    /// interval, for [`crate::metrics::Addressed::heartbeat_late`].
+    pub(crate) hb_grid: Vec<Option<(Instant, Duration)>>,
     /// DATA on air from a relay to a relay, with `tables_on`: key to the
     /// margin and distance bin of [`crate::metrics::Tables::data_by_reach`].
     pub(crate) reach_of: HashMap<u64, (usize, usize)>,
@@ -1285,6 +1296,9 @@ impl Sim {
             component: Vec::new(),
             series: None,
             addressed: HashMap::new(),
+            air_kinds: HashMap::new(),
+            lost_how: HashMap::new(),
+            hb_grid: Vec::new(),
             reach_of: HashMap::new(),
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
