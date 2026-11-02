@@ -240,6 +240,11 @@ pub struct CoreCounts {
     pub refused: DropCounts,
     /// Refusals this node received, each a ban on the refuser (spec "Bans").
     pub turned_away: u64,
+    /// Count-0 DATA, a sleepy node's own message, this relay answered
+    /// taken (spec "Receiving DATA").
+    pub fresh_taken: u64,
+    /// The same, answered refused.
+    pub fresh_refused: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
     /// Listen-before-talk give-ups on a receiver's channel (spec
@@ -1427,6 +1432,8 @@ mod tests {
                 hop_places: 0,
                 waiting: 0,
                 returns: 0,
+                candidates: 0,
+                banned: 0,
             };
             l.add(&load, ms(380), ms(242), 64);
         }

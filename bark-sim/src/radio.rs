@@ -296,6 +296,14 @@ impl Sim {
             }
             Some(WirePacket::Ack(a)) if src < self.relays() => {
                 let hops = self.data_hops.remove(&(a.msg_id.0, key(a.from)));
+                if hops == Some(0) {
+                    let c = &mut self.metrics.nodes[src as usize].core;
+                    if a.refused {
+                        c.fresh_refused += 1;
+                    } else {
+                        c.fresh_taken += 1;
+                    }
+                }
                 if a.refused {
                     let w = (u8::BITS - a.wait.leading_zeros()).min(7) as usize;
                     self.metrics.addressed.refusal_steps[w] += 1;

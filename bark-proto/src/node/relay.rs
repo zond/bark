@@ -305,6 +305,11 @@ pub struct Load {
     pub waiting: usize,
     /// Of `send_queue`, returns to the parent (spec "Return to parent").
     pub returns: usize,
+    /// Live neighbours that are not a last resort: the next hops a message
+    /// chooses among (spec "Next hop").
+    pub candidates: usize,
+    /// Of `candidates`, the banned ones (spec "Bans").
+    pub banned: usize,
 }
 
 /// A node that is not sleepy: its heard table and delivery queue at the
@@ -680,6 +685,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .queue
                 .iter()
                 .filter(|o| o.kind == crate::tables::send_queue::Kind::Return)
+                .count(),
+            candidates: self
+                .neighbours
+                .live(now)
+                .filter(|(_, n)| !n.last_resort())
+                .count(),
+            banned: self
+                .neighbours
+                .live(now)
+                .filter(|(_, n)| !n.last_resort() && self.neighbours.is_banned(n, now))
                 .count(),
         }
     }
