@@ -108,6 +108,19 @@ fn delivered(h: &Harness<Relay>, i: usize, id: MsgId) -> bool {
     messages(h, i, id) > 0
 }
 
+/// How many returns of `id` node `at` made to its parent `to`.
+fn returns_to(h: &Harness<Relay>, at: usize, id: MsgId, to: NodeId) -> usize {
+    traces(h, at)
+        .iter()
+        .filter(|t| matches!(t, Trace::ReturnedToParent { msg_id, to: p, .. } if *msg_id == id && *p == to))
+        .count()
+}
+
+/// Whether node `at` returned `id` to its parent `to`.
+fn returned_to(h: &Harness<Relay>, at: usize, id: MsgId, to: NodeId) -> bool {
+    returns_to(h, at, id, to) > 0
+}
+
 /// Relay `x`'s application sends `d` one short message after another,
 /// each as soon as `x` takes it, until relay `f`, `x`'s only neighbour,
 /// refuses one (spec "Receiving DATA"): `f`'s send queue is then full, as long as `f`'s
@@ -159,10 +172,7 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
         "not delivered"
     );
     let name = |i| core(&h, i).id();
-    assert!(traces(&h, x).contains(&Trace::ReturnedToParent {
-        msg_id: id,
-        to: name(o)
-    }));
+    assert!(returned_to(&h, x, id, name(o)));
     let forwards: Vec<_> = traces(&h, o)
         .into_iter()
         .filter_map(|t| match t {
@@ -217,12 +227,7 @@ fn a_relay_that_had_the_message_answers_seen_and_the_sender_goes_on() {
         "not delivered"
     );
     let name = |i| core(&h, i).id();
-    let returned = |at: usize, to: usize| {
-        traces(&h, at).contains(&Trace::ReturnedToParent {
-            msg_id: id,
-            to: name(to),
-        })
-    };
+    let returned = |at: usize, to: usize| returned_to(&h, at, id, name(to));
     assert_eq!(forwards(&h, o, id), vec![name(p), name(r)]);
     assert_eq!(forwards(&h, p, id), vec![name(q)]);
     assert_eq!(forwards(&h, q, id), vec![]);
@@ -470,15 +475,13 @@ fn a_split_heals_at_a_sender_that_waits() {
     let id = send(&mut h, x, d, &[b's'; MAX_PAYLOAD]);
     let name = |h: &Harness<Relay>, i| core(h, i).id();
     let nx = name(&h, x);
-    let back_at_y = Trace::ReturnedToParent { msg_id: id, to: nx };
     assert!(h.run_until(h.now + secs(20), |h| {
-        delivered(h, d, id) && traces(h, y).contains(&back_at_y)
+        delivered(h, d, id) && returned_to(h, y, id, nx)
     }));
     h.run_for(secs(10));
     assert_eq!(forwards(&h, x, id), vec![name(&h, y), name(&h, z)]);
     assert_eq!(forwards(&h, y, id), vec![name(&h, p)]);
-    let returns = traces(&h, y).iter().filter(|t| **t == back_at_y).count();
-    assert_eq!(returns, 2);
+    assert_eq!(returns_to(&h, y, id, nx), 2);
     assert_eq!(messages(&h, d, id), 1);
     no_drops(&h);
 }
@@ -1548,10 +1551,7 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     // P's ACK of the return, which R traces.
     h.run_for(secs(1));
     let name = |i| core(&h, i).id();
-    assert!(traces(&h, r).contains(&Trace::ReturnedToParent {
-        msg_id: id,
-        to: name(p)
-    }));
+    assert!(returned_to(&h, r, id, name(p)));
     assert!(traces(&h, p).contains(&Trace::Dropped {
         msg_id: id,
         reason: DropReason::NoRoute
@@ -1793,10 +1793,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
     for (_, channel) in &returns {
         assert_eq!(*channel, new, "returned to P's old home");
     }
-    assert!(traces(&h, c).contains(&Trace::ReturnedToParent {
-        msg_id: id,
-        to: core(&h, p).id()
-    }));
+    assert!(returned_to(&h, c, id, core(&h, p).id()));
     no_drops(&h);
 }
 

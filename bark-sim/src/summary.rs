@@ -351,6 +351,9 @@ pub struct Summary {
     /// Seen ACKs (spec "The ACK"); left out of runs without one.
     #[serde(skip_serializing_if = "SeenAcks::none")]
     pub seen: SeenAcks,
+    /// Hand-overs taken, by the transmission that was answered: index 1
+    /// the first (spec "Hand-over").
+    pub taken_at_attempt: Vec<u64>,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -530,6 +533,7 @@ impl Sim {
                 sent: m.seen_acks_sent,
                 acted: m.nodes.iter().map(|n| n.core.seen_acted).sum(),
             },
+            taken_at_attempt: m.taken_at_attempt.clone(),
             addressed: m.addressed,
             channels,
             observers,

@@ -22,6 +22,15 @@ use crate::wire::ACK_LEN;
 /// up and chooses the next hop again (spec "Hand-over" step 2).
 pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 
+/// How long a sender listens for the ACK of a frame it sent: the ACK's
+/// airtime, the receiver's retunes and turnarounds, and a reply it owes
+/// already, which goes first (spec "Hand-over" step 5).
+pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Transmissions of one hand-over before it has failed (spec "Hand-over"
+/// step 6).
+pub const HOP_ATTEMPTS: u8 = 3;
+
 /// The longest one hand-over attempt takes: listen-before-talk until it
 /// gives up, a full frame on air, and the ACK timeout (spec "Message records",
 /// "Hand-over"): 738.6 ms with the design's 100 ms timeout.
@@ -76,7 +85,7 @@ pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
 /// first attempt, when every attempt goes unanswered: the retries, each
 /// waiting the longest before it ([`retry_waits`]) and for the channel,
 /// carrying a full frame and waiting out the ACK timeout. 2.41 s with the
-/// design's 100 ms timeout and three attempts (spec "Hand-over").
+/// design's [`ACK_TIMEOUT`] and [`HOP_ATTEMPTS`] (spec "Hand-over").
 pub const fn retrying_span(
     ack_timeout: Duration,
     hop_attempts: u8,

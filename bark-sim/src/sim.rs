@@ -2609,9 +2609,10 @@ impl Sim {
                         }
                         self.delivery_waits(node, msg_id.0, key(to), tried)
                     }
-                    Trace::Forwarded { hops, .. } => {
+                    Trace::Forwarded { hops, attempts, .. } => {
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
+                        self.metrics.taken_at_attempt(attempts);
                     }
                     Trace::HandOverFailed { msg_id, to } => {
                         c.failed += 1;
@@ -2636,9 +2637,10 @@ impl Sim {
                         }
                     }
                     Trace::Seen { .. } => c.seen_acted += 1,
-                    Trace::ReturnedToParent { .. } => {
+                    Trace::ReturnedToParent { attempts, .. } => {
                         c.handed_over += 1;
                         c.returned += 1;
+                        self.metrics.taken_at_attempt(attempts);
                     }
                     _ => {}
                 }

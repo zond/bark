@@ -50,9 +50,10 @@ pub struct Config {
     pub heartbeat_min: Duration,
     /// See `heartbeat_min`.
     pub heartbeat_max: Duration,
-    /// Per-hop ACK timeout (spec "Hand-over": 100 ms).
+    /// Per-hop ACK timeout (spec "Hand-over": 100 ms; `tables::ACK_TIMEOUT`).
     pub ack_timeout: Duration,
-    /// Per-hop transmit attempts before giving up on a neighbour (spec "Hand-over": 3).
+    /// Per-hop transmit attempts before giving up on a neighbour (spec
+    /// "Hand-over": 3; `tables::HOP_ATTEMPTS`).
     pub hop_attempts: u8,
     /// Longest random wait of a hand-over after a busy listen-before-talk
     /// check (spec "Hand-over": 0–50 ms).
@@ -289,8 +290,8 @@ impl Config {
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,
-        ack_timeout: Duration::from_millis(100),
-        hop_attempts: 3,
+        ack_timeout: crate::tables::ACK_TIMEOUT,
+        hop_attempts: crate::tables::HOP_ATTEMPTS,
         hop_backoff_max: Duration::from_millis(50),
         retry_backoff: crate::tables::RETRY_BACKOFF,
         demote_after_failures: 2,
