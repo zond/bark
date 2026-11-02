@@ -125,7 +125,6 @@ pub struct ProtocolOverrides {
     pub ack_timeout_ms: Option<u64>,
     pub hop_attempts: Option<u8>,
     pub demote_after_failures: Option<u8>,
-    pub move_on_after_failures: Option<u8>,
     pub neighbour_expiry_rotations: Option<u8>,
     pub fade_retry_ms: Option<u64>,
     pub delivery_ttl_ms: Option<u64>,
@@ -173,7 +172,6 @@ impl ProtocolOverrides {
         set!(ack_timeout, ack_timeout_ms, ms);
         set!(hop_attempts);
         set!(demote_after_failures);
-        set!(move_on_after_failures);
         set!(neighbour_expiry_rotations);
         set!(fade_retry, fade_retry_ms, ms);
         set!(delivery_ttl, delivery_ttl_ms, ms);

@@ -127,7 +127,7 @@
 //! D42): silence says the channel or the receiver is full, and offering
 //! it the next message at once only adds frames there. The failed
 //! forward waits for the ban and goes to the same neighbour again, and
-//! moves on only once the neighbour has failed `move_on_after_failures`
+//! moves on only once the neighbour has failed [`MOVE_ON_FAILURES`]
 //! hand-overs in a row, one more than demote it; a return waits the same
 //! way, and is dropped only then. Going to the next candidate at once
 //! would send the message the long way round just when the channel is
@@ -192,6 +192,7 @@ use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
+use crate::tables::MOVE_ON_FAILURES;
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
 
@@ -1313,9 +1314,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // while it is still a candidate but for its ban (spec
             // "Hand-over" step 6, roadmap D102); its ban may have grown
             // since, by another message's failure.
-            let kept = self.neighbours.by_id(d.dst_hop).filter(|(slot, n)| {
-                !record.handed(*slot) && n.fail_count < self.config.move_on_after_failures
-            });
+            let kept = self
+                .neighbours
+                .by_id(d.dst_hop)
+                .filter(|(slot, n)| !record.handed(*slot) && n.fail_count < MOVE_ON_FAILURES);
             if let Some((_, n)) = kept {
                 if self.neighbours.is_banned(n, now) {
                     return Routed::Wait(n.banned_until);
@@ -1960,7 +1962,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// When to offer a failed hand-over to `id` again (roadmap D42, D102):
-    /// when its ban ends, until it has failed `move_on_after_failures`
+    /// when its ban ends, until it has failed [`MOVE_ON_FAILURES`]
     /// hand-overs in a row, this message's or any other's. The count is
     /// the neighbour's, not the message's, so that a neighbour silent to
     /// everyone costs a message one hand-over, and the hold is bounded by
@@ -1969,7 +1971,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A forward then takes its next candidate, and a return is dropped.
     fn wait_for(&self, id: NodeId) -> Option<Instant> {
         let (_, n) = self.neighbours.by_id(id)?;
-        (n.fail_count < self.config.move_on_after_failures).then_some(n.banned_until)
+        (n.fail_count < MOVE_ON_FAILURES).then_some(n.banned_until)
     }
 
     fn count_failure(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
