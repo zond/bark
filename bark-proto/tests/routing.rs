@@ -1366,6 +1366,95 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
     no_drops(&h);
 }
 
+/// W, O's nearest neighbour toward D, is carried: a next hop while its
+/// entry is younger than its heartbeat interval, and after that a last
+/// resort behind M, which stays put (spec "Next hop", "Nodes"). O
+/// learns W's flag from a heartbeat put into its ear; W's own, which
+/// would clear it, are kept from O meanwhile.
+///
+/// ```text
+///          W
+///        /   \
+///       O     D
+///        \   /
+///          M
+/// ```
+#[test]
+fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
+    use bark_proto::node::heartbeat_interval;
+    use bark_proto::radio::MIN_PREAMBLE_SYMBOLS;
+    use bark_proto::wire::Heartbeat;
+    use bark_proto::Frame;
+    let (o, w, m, d) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 101),
+            relay(500.0, 100.0, 102),
+            relay(400.0, -200.0, 103),
+            relay(1000.0, 0.0, 104),
+        ],
+        &[(o, w), (o, m), (w, d), (m, d)],
+    );
+    let (w_id, m_id) = (core(&h, w).id(), core(&h, m).id());
+    // W's own heartbeats, fixed, are kept from O; the carried one put
+    // in W's mouth below gets through.
+    let losing = std::rc::Rc::new(std::cell::Cell::new(true));
+    let lose = losing.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        lose.get()
+            && (from, to) == (w, o)
+            && matches!(Packet::decode(bytes), Ok(Packet::Heartbeat(hb)) if !hb.carried)
+    }));
+    let carried = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: true,
+        home: h.resting(w).unwrap(),
+        format: bark_proto::wire::FORMAT,
+        map_point: false,
+        id: w_id,
+        short: position(&h, w).short(),
+    };
+    let mut frame = Frame {
+        channel: h.resting(o).unwrap(),
+        preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+        len: 0,
+        bytes: [0; bark_proto::MAX_FRAME],
+    };
+    frame.len = Packet::Heartbeat(carried).encode(&mut frame.bytes).unwrap() as u8;
+    h.inject(w, frame);
+    h.run_for(secs(1));
+    assert!(core(&h, o).neighbours().any(|n| n.id == w_id && n.carried));
+
+    let fresh = send(&mut h, o, d, b"while fresh");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, fresh)));
+    assert_eq!(forwards(&h, o, fresh), vec![w_id], "W, nearest D, fresh");
+
+    // W's ACK refreshed its entry; its interval passes without a word.
+    let interval = heartbeat_interval(w_id, core(&h, o).config());
+    h.run_for(interval + secs(1));
+    let stale = send(&mut h, o, d, b"stale");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, stale)));
+    assert_eq!(
+        forwards(&h, o, stale),
+        vec![m_id],
+        "W stale: M, though farther"
+    );
+
+    // Heard again, W is a next hop again; and a last resort is still
+    // the way when it is the only one.
+    losing.set(false);
+    h.run_until(h.now + secs(200), |h| {
+        core(h, o).neighbours().any(|n| n.id == w_id && !n.carried)
+    });
+    h.inject(w, frame);
+    h.run_for(secs(1));
+    let again = send(&mut h, o, d, b"fresh again");
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, again)));
+    assert_eq!(forwards(&h, o, again), vec![w_id]);
+    no_drops(&h);
+}
+
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal

@@ -858,7 +858,7 @@ Per node, up to 64 entries, by node ID:
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
-| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)) |
+| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a next hop only while fresh ([next hop](#next-hop)) |
 | format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
 | map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
@@ -1587,6 +1587,25 @@ It is sent to with the long preamble. An anchorless neighbour is a
 candidate like any other, sent to with the long preamble. The first hop
 of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+
+A carried neighbour ([nodes](#nodes)) that is not sleepy is a last
+resort too once nothing has been heard from it for its own heartbeat
+interval ([heartbeat](#heartbeat)); within that it is a candidate like
+any other.
+
+*Why a carried neighbour goes stale.* Its entry says where it was when
+it was last heard, and it walks: in its interval, at most 15 s, 21 m at
+a walking pace of 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the
+50 m a position is good to ([position](#position), [owner](#owner));
+its next heartbeat then tells its place to another channel, and by the
+time one comes back to this channel, a rotation, it has walked 180 m on
+average and 270 m at most, a hop's length in the dense city, and may
+have gone indoors, 14 dB down ([physical layer](#physical-layer)). In
+that city a quarter of the DATA between relays reached nobody, the
+receiver or the sender having walked out of reach since the entry was
+made, and 85 % of them had a walker at one end (roadmap D103). A frame
+to it is an answer heard, and its ACK makes it fresh again
+([the ACK](#the-ack)).
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
 through a node that sleeps; the message waits for the ban
