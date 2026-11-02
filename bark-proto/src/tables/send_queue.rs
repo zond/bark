@@ -97,6 +97,11 @@ impl Kind {
 pub enum State {
     /// Waiting its turn, due at `not_before`.
     Queued,
+    /// A forward whose hand-over failed, waiting for the ban of the
+    /// neighbour its frame is addressed to, due at `not_before`, when it
+    /// is offered to that neighbour again, demoted or not (spec
+    /// "Hand-over" step 6).
+    Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
     /// keeps its place and its airtime in admission.
@@ -174,7 +179,7 @@ impl Outgoing {
     /// Whether its hand-over is under way: addressed and waiting, on the
     /// radio or waiting for its ACK.
     pub fn in_flight(&self) -> bool {
-        !matches!(self.state, State::Queued | State::Held)
+        !matches!(self.state, State::Queued | State::Holding | State::Held)
     }
 
     /// The hop count the frame carries.

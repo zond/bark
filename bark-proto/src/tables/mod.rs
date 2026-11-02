@@ -31,6 +31,19 @@ pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
 /// step 6).
 pub const HOP_ATTEMPTS: u8 = 3;
 
+/// Failed hand-overs in a row to one neighbour after which a message
+/// moves on to its next candidate, or a return is dropped (spec
+/// "Hand-over" step 6). Between them the message waits out the
+/// neighbour's ban, 1.58 s and then 3.16 s (`budget::hold`), so the third
+/// offer comes 4.74 s after the first failure, later than the 2.4 s the
+/// bucket takes to refill the whole reply reserve (`budget::REPLY_RESERVE`):
+/// a receiver that was silent for want of reply budget, and has stopped
+/// spending, can answer the second offer and certainly the third. A
+/// receiver that took the message and lost its ACKs answers any offer.
+/// Three in a row hold a message on one neighbour at most 14.2 s, two
+/// bans and three hand-overs of 3.15 s, 2.4 % of its time to live.
+pub const MOVE_ON_FAILURES: u8 = 3;
+
 /// The longest one hand-over attempt takes: listen-before-talk until it
 /// gives up, a full frame on air, and the ACK timeout (spec "Message records",
 /// "Hand-over"): 738.6 ms with the design's 100 ms timeout.

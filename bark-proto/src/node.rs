@@ -64,6 +64,10 @@ pub struct Config {
     pub retry_backoff: Duration,
     /// Failed transfers before a neighbour is demoted (spec "Neighbour table": 2).
     pub demote_after_failures: u8,
+    /// Failed hand-overs in a row to a neighbour after which a message
+    /// moves on to its next candidate, and a return is dropped (spec
+    /// "Hand-over" step 6: 3; `tables::MOVE_ON_FAILURES`).
+    pub move_on_after_failures: u8,
     /// Neighbour expiry in heartbeat rotations (spec "Neighbour table": 3, ≈400 s).
     pub neighbour_expiry_rotations: u8,
     /// Rotations a demotion lasts without an ACK (spec "Neighbour table": 3, 390 s).
@@ -295,6 +299,7 @@ impl Config {
         hop_backoff_max: Duration::from_millis(50),
         retry_backoff: crate::tables::RETRY_BACKOFF,
         demote_after_failures: 2,
+        move_on_after_failures: crate::tables::MOVE_ON_FAILURES,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
         fade_retry: Duration::from_secs(60),
