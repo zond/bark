@@ -536,12 +536,11 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     assert_eq!(checked, Some(r.home), "its hand-over starts at once");
 }
 
-/// Two packets arrive within one reply time. The second finds the one
-/// owed-reply place holding the first one's ACK, which waits out a
-/// busy channel: it is neither taken nor refused, and gets no answer.
-/// Its sender's retry, after the first ACK is gone, is taken (roadmap
-/// D29 rule 4). With the ACK listening first and the take on reception,
-/// the settings before D93, under which an ACK waits for its channel.
+/// Two packets arrive within one reply time, while a reading of the
+/// sweep holds the radio (core-interface §3 rule 8). The second finds
+/// the one owed-reply place holding the first one's ACK: it is neither
+/// taken nor refused, and gets no answer. Its sender's retry, after the
+/// first ACK is gone, is taken (roadmap D29 rule 4).
 #[test]
 fn a_packet_that_cannot_be_answered_is_not_taken() {
     use crate::event::AppEvent;
@@ -550,11 +549,9 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     let config = Config {
         boot_listen: Duration::from_secs(1),
         home_override: Channel::new(3),
-        sweep_interval: hour,
+        sweep_interval: Duration::from_secs(1),
         heartbeat_min: hour,
         heartbeat_max: hour,
-        take_at_ack: false,
-        ack_listens_first: true,
         ..Config::default()
     };
     let mut r = Relay::new(config, 1);
@@ -598,21 +595,54 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
             .count()
     };
 
-    now = Instant::ZERO + Duration::from_secs(10);
+    let frames = |got: &[(Instant, Action)]| -> Vec<(Instant, Frame)> {
+        got.iter()
+            .filter_map(|(t, x)| match x {
+                Action::Transmit(f) => Some((*t, *f)),
+                _ => None,
+            })
+            .collect()
+    };
+    let delivered = |got: &[(Instant, Action)], d: &Data<'_>| {
+        got.iter().any(|(_, x)| {
+            matches!(x, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == d.msg_id())
+        })
+    };
+
+    // Run on until a reading of the sweep is outstanding, and hold it.
+    let mut held = None;
+    while held.is_none() {
+        let t = r.next_wakeup().expect("the sweep is due");
+        now = now.max(t);
+        let mut pending = Vec::new();
+        r.handle(Event::Wakeup, now, &mut |x| pending.push(x));
+        for x in pending {
+            match x {
+                Action::Rssi(c) => held = Some(c),
+                Action::Transmit(f) => {
+                    now += mac::airtime(&f);
+                    r.handle(Event::TxDone, now, &mut |_| {});
+                }
+                Action::Lbt(channel) => r.handle(
+                    Event::LbtDone {
+                        channel,
+                        busy: false,
+                        dbm: -130,
+                    },
+                    now,
+                    &mut |_| {},
+                ),
+                _ => {}
+            }
+        }
+    }
+    now += Duration::from_millis(1);
     let mut actions = Vec::new();
     r.handle(received(&a_bytes), now, &mut |x| actions.push(x));
-    assert!(taken(&actions, &a));
-    assert!(actions.contains(&Action::Lbt(a_home)), "{actions:?}");
-    // A's channel is busy: its ACK waits a backoff.
-    now += Duration::from_millis(1);
-    r.handle(
-        Event::LbtDone {
-            channel: a_home,
-            busy: true,
-            dbm: -130,
-        },
-        now,
-        &mut |_| {},
+    assert!(!taken(&actions, &a), "not before its ACK");
+    assert!(
+        !actions.iter().any(|x| matches!(x, Action::Transmit(_))),
+        "the radio is held: {actions:?}"
     );
     assert!(r.radio.replies.pending());
 
@@ -622,19 +652,38 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     assert!(actions.is_empty(), "{actions:?}");
     assert!(r.records.get(b.msg_id()).is_none(), "B's packet was taken");
 
+    // The reading completes: A's ACK goes, and A is taken with it.
+    now += Duration::from_millis(1);
+    actions.clear();
+    r.handle(
+        Event::RssiSample {
+            channel: held.unwrap(),
+            dbm: -130,
+        },
+        now,
+        &mut |x| actions.push(x),
+    );
     let until = now + Duration::from_millis(100);
-    let sent = drive(&mut r, &mut now, until);
+    let mut got = Vec::new();
+    drive_all(&mut r, &mut now, until, actions, &mut |t, x| {
+        got.push((t, x))
+    });
+    let sent = frames(&got);
     assert_eq!(acks(&sent, &a, a_home), 1);
     assert_eq!(sent.len(), 1, "B's packet was answered");
+    assert!(delivered(&got, &a));
 
     // B's retry, after the retry wait (spec "Retry wait").
     now += Duration::from_millis(200);
-    actions.clear();
+    let mut actions = Vec::new();
     r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
-    assert!(taken(&actions, &b));
     let until = now + Duration::from_millis(100);
-    let sent = drive_from(&mut r, &mut now, until, actions);
-    assert_eq!(acks(&sent, &b, b_home), 1);
+    let mut got = Vec::new();
+    drive_all(&mut r, &mut now, until, actions, &mut |t, x| {
+        got.push((t, x))
+    });
+    assert_eq!(acks(&frames(&got), &b, b_home), 1);
+    assert!(delivered(&got, &b));
 }
 
 /// The application may send only while the relay can take a message

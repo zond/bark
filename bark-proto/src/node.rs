@@ -43,25 +43,6 @@ pub struct Config {
     /// all the time; this separates what sending on the beat costs from
     /// the rest. Off in the design.
     pub sleepy_listens: bool,
-    /// A DATA this node answers with an ACK that takes it is acted on,
-    /// taken into its send queue or delivered, only once that ACK has
-    /// left the antenna; an ACK that cannot go out leaves the packet
-    /// untaken, and the sender's retry brings it again (spec "The ACK",
-    /// roadmap D93). On in the design; off, the packet is taken on
-    /// reception, before the ACK, as before D93, kept for comparison.
-    pub take_at_ack: bool,
-    /// The ACK listens before talking on the sender's home channel, with
-    /// the hand-over's backoff, until the sender's timeout, as before
-    /// D93, kept for comparison. Off in the design: it goes at once
-    /// (spec "The ACK").
-    pub ack_listens_first: bool,
-    /// Research switch (roadmap D94): a hand-over's listen-before-talk is
-    /// put to the receiver. After its check finds the receiver's channel
-    /// clear the sender transmits a probe there and listens there for the
-    /// receiver's answer, which the receiver sends at once; the frame
-    /// goes on the answer, and no answer within `ANSWER_TIMEOUT` is one
-    /// unanswered attempt. Off in the design.
-    pub probe: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
     /// Heartbeat interval bounds: each node's fixed interval lies in between
@@ -73,8 +54,8 @@ pub struct Config {
     pub ack_timeout: Duration,
     /// Per-hop transmit attempts before giving up on a neighbour (spec "Hand-over": 3).
     pub hop_attempts: u8,
-    /// Longest random wait of a hand-over or an ACK after a busy
-    /// listen-before-talk check (spec "Hand-over": 0–50 ms).
+    /// Longest random wait of a hand-over after a busy listen-before-talk
+    /// check (spec "Hand-over": 0–50 ms).
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
     /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,
@@ -305,9 +286,6 @@ impl Config {
         placed: true,
         node_id: NodeId::NONE,
         sleepy_listens: false,
-        take_at_ack: true,
-        ack_listens_first: false,
-        probe: false,
         tx_power_dbm: 10,
         heartbeat_min: Duration::from_secs(5),
         heartbeat_max: HEARTBEAT_MAX,

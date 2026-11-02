@@ -7,7 +7,6 @@
 //! 1 0 0 0 c c c c   HEARTBEAT: home channel cccc
 //! 0 0 a a a a a a   DATA: aux, the sender's home channel
 //! s 1 w w w w w w   ACK: s, the seen flag; w, the wait
-//! 1 0 1 0 0 0 0 a   PROBE: a, 0 asks, 1 answers (roadmap D93, a research form)
 //! ```
 //!
 //! The second is the format version (roadmap D77): in a heartbeat the
@@ -104,17 +103,9 @@ pub const AUX_MASK: u8 = 0x3f;
 // A heartbeat's channel, below two bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
 const HEARTBEAT_ZERO: u8 = 0x30;
-// A probe: a heartbeat's top bit with the higher of its zero bits set,
-// which no heartbeat has; the low bit says whether it is the answer, and
-// the rest are zero (`Config::probe`).
-const PROBE_BIT: u8 = 0x20;
-const PROBE_ANSWER: u8 = 0x01;
-const PROBE_ZERO: u8 = 0x1e;
 const _: () = assert!(
     HEARTBEAT_BIT | ANSWER_BIT | HEARTBEAT_ZERO | CHANNEL_MASK == 0xff
-        && SEEN_BIT | ANSWER_BIT | AUX_MASK == 0xff
-        && HEARTBEAT_BIT | ANSWER_BIT | PROBE_BIT | PROBE_ZERO | PROBE_ANSWER == 0xff
-        && PROBE_BIT & HEARTBEAT_ZERO == PROBE_BIT,
+        && SEEN_BIT | ANSWER_BIT | AUX_MASK == 0xff,
     "spec \"Packet formats\": each bit of the first byte has one meaning"
 );
 // The channel field of a bench frame's first byte: no node's home.
@@ -148,12 +139,6 @@ const ACK_TO: usize = ACK_FROM + ID_LEN;
 /// ACK length (spec "Packet formats": 18).
 pub const ACK_LEN: usize = ACK_TO + ID_LEN;
 
-// PROBE: the node asked and the node asking (`Config::probe`).
-const PROBE_TO: usize = VERSION + FORMAT_LEN;
-const PROBE_FROM: usize = PROBE_TO + ID_LEN;
-/// PROBE length: 14.
-pub const PROBE_LEN: usize = PROBE_FROM + ID_LEN;
-
 // DATA.
 const DATA_DST_HOP: usize = VERSION + FORMAT_LEN;
 const DATA_SRC_HOP: usize = DATA_DST_HOP + ID_LEN;
@@ -168,7 +153,7 @@ pub const DATA_HEADER_LEN: usize = DATA_TIME_LEFT + TIME_LEFT_LEN;
 /// 255 − 29 = 226 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
-const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18 && PROBE_LEN == 14);
+const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
 const _: () = assert!(DATA_HEADER_LEN == 29);
 const _: () = assert!(MAX_PAYLOAD == 226);
 
@@ -251,20 +236,6 @@ impl Ack {
     }
 }
 
-/// PROBE (`Config::probe`, roadmap D93): a sender's listen-before-talk
-/// put to the receiver, on the receiver's home channel, and the
-/// receiver's answer there, which says it is listening; the DATA follows
-/// the answer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Probe {
-    /// The node asked, or answered.
-    pub to: NodeId,
-    /// The node asking, or answering.
-    pub from: NodeId,
-    /// The answer, from the node that was asked.
-    pub answer: bool,
-}
-
 /// DATA (spec "Forwarding", "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
@@ -325,8 +296,6 @@ pub enum Packet<'a> {
     Ack(Ack),
     /// DATA.
     Data(Data<'a>),
-    /// PROBE.
-    Probe(Probe),
 }
 
 /// Why a frame did not decode.
@@ -450,14 +419,6 @@ impl Packet<'_> {
                 put(buf, ACK_TO, &a.to.0);
                 Ok(ACK_LEN)
             }
-            Packet::Probe(p) => {
-                let answer = if p.answer { PROBE_ANSWER } else { 0 };
-                buf[FIRST] = HEARTBEAT_BIT | PROBE_BIT | answer;
-                buf[VERSION] = FORMAT;
-                put(buf, PROBE_TO, &p.to.0);
-                put(buf, PROBE_FROM, &p.from.0);
-                Ok(PROBE_LEN)
-            }
             Packet::Data(d) => {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
@@ -501,18 +462,6 @@ impl<'a> Packet<'a> {
             }));
         }
         if first & HEARTBEAT_BIT != 0 {
-            if first & PROBE_BIT != 0 {
-                if first & PROBE_ZERO != 0 {
-                    return Err(DecodeError::Kind(first));
-                }
-                exact(b, PROBE_LEN)?;
-                format(b)?;
-                return Ok(Packet::Probe(Probe {
-                    to: get_id(b, PROBE_TO),
-                    from: get_id(b, PROBE_FROM),
-                    answer: first & PROBE_ANSWER != 0,
-                }));
-            }
             if first & HEARTBEAT_ZERO != 0 {
                 return Err(DecodeError::Kind(first));
             }
@@ -577,31 +526,6 @@ mod tests {
 
     extern crate std;
 
-    /// A probe and its answer round-trip, and their first bytes are of
-    /// no other kind (`Config::probe`).
-    #[test]
-    fn probe_round_trips() {
-        for answer in [false, true] {
-            let p = Packet::Probe(Probe {
-                to: NodeId([1; 6]),
-                from: NodeId([2; 6]),
-                answer,
-            });
-            round_trip(&p);
-            let mut buf = [0; MAX_FRAME];
-            let len = p.encode(&mut buf).unwrap();
-            assert_eq!(buf[0], 0xa0 | u8::from(answer));
-            assert_eq!(Packet::decode(&buf[..len - 1]), Err(DecodeError::Short));
-            assert_eq!(Packet::decode(&buf[..len + 1]), Err(DecodeError::BadLength));
-        }
-        for first in [0xa2, 0xb0, 0xbf] {
-            let mut b = [0; PROBE_LEN];
-            b[0] = first;
-            b[1] = FORMAT;
-            assert_eq!(Packet::decode(&b), Err(DecodeError::Kind(first)));
-        }
-    }
-
     /// Encode, check the length against the table above, decode, compare.
     fn round_trip(p: &Packet<'_>) {
         let mut buf = [0; MAX_FRAME];
@@ -609,7 +533,6 @@ mod tests {
         let expected = match p {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
-            Packet::Probe(_) => 14,
             Packet::Data(d) => 29 + d.payload.len(),
         };
         assert_eq!(len, expected);

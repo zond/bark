@@ -140,9 +140,6 @@ pub struct ProtocolOverrides {
     pub retry_backoff_ms: Option<u64>,
     pub boot_listen_ms: Option<u64>,
     pub sleepy_listens: Option<bool>,
-    pub take_at_ack: Option<bool>,
-    pub ack_listens_first: Option<bool>,
-    pub probe: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
 }
@@ -190,9 +187,6 @@ impl ProtocolOverrides {
         set!(lbt_backoff_max, lbt_backoff_max_ms, ms);
         set!(boot_listen, boot_listen_ms, ms);
         set!(sleepy_listens);
-        set!(take_at_ack);
-        set!(ack_listens_first);
-        set!(probe);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
         c

@@ -2598,171 +2598,44 @@ fn waiting_for_a_silent_parent_drops_the_return_once_it_is_demoted() {
 }
 
 /// X, Y and D in a line, each on its own home channel, and a carrier on
-/// X's home channel at Y from the moment X sends, so that Y's ACK to X
-/// never finds the channel clear within X's 100 ms timeout. Three
-/// readings of spec "The ACK" (roadmap D93):
-///
-/// - The take final on reception and the ACK listening first, as before:
-///   Y takes the packet, its ACK lapses unsent, and Y sends the message
-///   on to D while X, which heard nothing, retries it: two searchers.
-/// - The take final when the ACK has gone out, the ACK still listening
-///   first: the ACK lapses, Y leaves the packet untaken, reported as
-///   refused for `Unanswered`, sends nothing on, and X's attempts fail
-///   as for a lost frame.
-/// - The take final when the ACK has gone out, the ACK sent at once:
-///   the carrier is no obstacle, X hears the ACK, and the message goes
-///   on to D with one holder.
+/// X's home channel at Y from the moment X sends. Y's ACK goes at once,
+/// the carrier notwithstanding (spec "The ACK", roadmap D93): X hears
+/// it, and the message goes on to D with one holder. Before D93 the ACK
+/// listened first, never found the channel clear within X's 100 ms, and
+/// lapsed unsent, while Y, which had taken the packet on reception, sent
+/// the message on and X retried it: two searchers.
 #[test]
-fn a_take_is_final_when_its_ack_has_gone_out() {
+fn an_ack_goes_at_once_and_the_take_is_final_with_it() {
     use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, d) = (0, 1, 2);
-    let line = |take_at_ack, ack_listens_first| {
-        let on = |east, seed, home| {
-            relay_with(
-                east,
-                0.0,
-                seed,
-                Config {
-                    home_override: Some(ch(home)),
-                    sweep_interval: secs(3600),
-                    take_at_ack,
-                    ack_listens_first,
-                    ..Config::default()
-                },
-            )
-        };
-        build(
-            vec![on(0.0, 141, 1), on(400.0, 142, 2), on(800.0, 143, 3)],
-            &[(x, y), (y, d)],
+    let on = |east, seed, home| {
+        relay_with(
+            east,
+            0.0,
+            seed,
+            Config {
+                home_override: Some(ch(home)),
+                sweep_interval: secs(3600),
+                ..Config::default()
+            },
         )
     };
-    let data_of = |h: &Harness<Relay>, i: usize, id: MsgId| {
-        h.nodes[i].sent.iter().any(
-            |(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(q)) if q.msg_id() == id),
-        )
-    };
-    let acks_of = |h: &Harness<Relay>, i: usize, id: MsgId| {
-        h.nodes[i]
-            .sent
-            .iter()
-            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Ack(a)) if a.msg_id == id))
-            .count()
-    };
-
-    // As before: taken on reception, the ACK never goes, two searchers.
-    let mut h = line(false, true);
-    h.jam(y, ch(1));
-    let id = send(&mut h, x, d, &[b't'; MAX_PAYLOAD]);
-    let ny = core(&h, y).id();
-    let failed = Trace::HandOverFailed { msg_id: id, to: ny };
-    assert!(h.run_until(h.now + secs(10), |h| {
-        delivered(h, d, id) && traces(h, x).contains(&failed)
-    }));
-    assert_eq!(acks_of(&h, y, id), 0, "Y never answered");
-    assert!(data_of(&h, y, id), "and sent the message on all the same");
-
-    // The take final at the ACK: the ACK lapses, and the packet with it.
-    let mut h = line(true, true);
-    h.jam(y, ch(1));
-    let id = send(&mut h, x, d, &[b't'; MAX_PAYLOAD]);
-    let ny = core(&h, y).id();
-    let failed = Trace::HandOverFailed { msg_id: id, to: ny };
-    let untaken = Trace::Refused {
-        msg_id: id,
-        reason: DropReason::Unanswered,
-    };
-    assert!(h.run_until(h.now + secs(10), |h| traces(h, x).contains(&failed)));
-    assert!(traces(&h, y).contains(&untaken));
-    assert_eq!(acks_of(&h, y, id), 0);
-    assert!(!data_of(&h, y, id), "Y holds nothing it did not answer for");
-    assert!(!delivered(&h, d, id));
-
-    // The ACK at once: the carrier at Y does not stop it.
-    let mut h = line(true, false);
+    let mut h = build(
+        vec![on(0.0, 141, 1), on(400.0, 142, 2), on(800.0, 143, 3)],
+        &[(x, y), (y, d)],
+    );
     h.jam(y, ch(1));
     let id = send(&mut h, x, d, &[b't'; MAX_PAYLOAD]);
     assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
     let ny = core(&h, y).id();
-    assert_eq!(acks_of(&h, y, id), 1);
+    let acks = h.nodes[y]
+        .sent
+        .iter()
+        .filter(
+            |(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Ack(a)) if a.msg_id == id),
+        )
+        .count();
+    assert_eq!(acks, 1);
     assert!(!traces(&h, x).contains(&Trace::HandOverFailed { msg_id: id, to: ny }));
     assert_eq!(data_times(&h, x, y, id).len(), 1, "one frame, one holder");
-}
-
-/// X, Y and D in a line with the probe on (`Config::probe`, roadmap
-/// D94): X's listen-before-talk is put to Y as a probe on Y's home
-/// channel, Y answers there at once, and the DATA follows the answer;
-/// X rests on Y's channel only between the two and is home again for
-/// the ACK. With Y gone, three probes go unanswered, no DATA is sent,
-/// and the hand-over fails as for a silent receiver.
-#[test]
-fn a_probe_is_answered_before_the_frame_goes() {
-    use bark_proto::wire::{Probe, MAX_PAYLOAD};
-    let (x, y, d) = (0, 1, 2);
-    let line = || {
-        let on = |east, seed, home| {
-            relay_with(
-                east,
-                0.0,
-                seed,
-                Config {
-                    home_override: Some(ch(home)),
-                    sweep_interval: secs(3600),
-                    probe: true,
-                    ..Config::default()
-                },
-            )
-        };
-        build(
-            vec![on(0.0, 151, 1), on(400.0, 152, 2), on(800.0, 153, 3)],
-            &[(x, y), (y, d)],
-        )
-    };
-    // Node `i`'s probes, asking or answering, by time.
-    let probes = |h: &Harness<Relay>, i: usize, answer: bool| -> Vec<(Instant, Probe)> {
-        h.nodes[i]
-            .sent
-            .iter()
-            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Probe(p)) if p.answer == answer => Some((*t, p)),
-                _ => None,
-            })
-            .collect()
-    };
-
-    let mut h = line();
-    let id = send(&mut h, x, d, &[b'p'; MAX_PAYLOAD]);
-    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
-    // X probed Y once, Y answered once, and the DATA went after the answer.
-    let (ny, nx) = (core(&h, y).id(), core(&h, x).id());
-    let asked = probes(&h, x, false);
-    let answered = probes(&h, y, true);
-    let data = data_times(&h, x, y, id);
-    assert_eq!((asked.len(), answered.len(), data.len()), (1, 1, 1));
-    assert!(asked[0].0 < answered[0].0 && answered[0].0 < data[0]);
-    assert!(
-        data[0].since(asked[0].0) < Duration::from_millis(60),
-        "the frame follows the answer at once"
-    );
-    assert_eq!((asked[0].1.to, asked[0].1.from), (ny, nx));
-    assert_eq!((answered[0].1.to, answered[0].1.from), (nx, ny));
-    assert_eq!(h.resting(x), Some(ch(1)), "home again for the ACK");
-    assert!(traces(&h, x).contains(&Trace::Forwarded {
-        msg_id: id,
-        to: ny,
-        hops: 1
-    }));
-
-    // Y gone: three probes unanswered are the three attempts.
-    let mut h = line();
-    h.kill(y);
-    let id = send(&mut h, x, d, &[b'p'; MAX_PAYLOAD]);
-    let ny = core(&h, y).id();
-    let failed = Trace::HandOverFailed { msg_id: id, to: ny };
-    assert!(h.run_until(h.now + secs(10), |h| traces(h, x).contains(&failed)));
-    assert_eq!(probes(&h, x, false).len(), 3);
-    assert!(
-        data_times(&h, x, y, id).is_empty(),
-        "no frame to a receiver that does not answer"
-    );
-    assert_eq!(h.resting(x), Some(ch(1)));
 }

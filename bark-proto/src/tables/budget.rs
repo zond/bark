@@ -69,7 +69,7 @@ use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::{retrying_span, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
-use crate::wire::{ACK_LEN, AUX_MASK, HEARTBEAT_LEN, PROBE_LEN};
+use crate::wire::{ACK_LEN, AUX_MASK, HEARTBEAT_LEN};
 
 /// Airtime allowed in any window: 10 % of an hour, 360 s.
 pub const BUDGET: Duration =
@@ -111,9 +111,6 @@ pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PRE
 
 /// Airtime of an ACK, taken or refused, 16.96 ms.
 pub const ACK_AIRTIME: Duration = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
-
-/// Airtime of a probe or its answer, 15.68 ms (`Config::probe`).
-pub const PROBE_AIRTIME: Duration = time_on_air(PROBE_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
 /// The airtime the bucket refills in `d`.
 const fn refilled(d: Duration) -> Duration {

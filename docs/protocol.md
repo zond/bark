@@ -1162,10 +1162,12 @@ failed and handed the message to someone else as well, and there were
 two searchers. The sender is listening for the ACK on its home channel
 and expects nothing else there in the 100 ms it waits, so the ACK
 collides with whatever is on that channel whether it listens first or
-not; listening only moved the collision to the ACK's own backoff. With
-the ACK sent at once a reply fails only for budget, which the receiver
-checks before it owes it; the take at the ACK makes a reply that fails
-all the same harmless. Measured in the simulator at three times the
+not; listening only moved the collision to the ACK's own backoff. The band's rules ask a duty cycle of each node
+and no listen-before-talk ([regulatory limits](#regulatory-limits)), and
+the ACK is paid from the bucket like every frame. With the ACK sent at
+once a reply fails only for budget, which the receiver checks before it
+owes it; the take at the ACK makes a reply that fails all the same
+harmless. Measured in the simulator at three times the
 design rate, the two together deliver 9 to 29 points more with 10 to
 23 % less airtime, and at the design rate the same with 2 to 11 %
 less (roadmap D93).

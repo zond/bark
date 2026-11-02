@@ -36,21 +36,11 @@ use crate::event::Frame;
 use crate::ids::{MsgId, NodeId};
 use crate::node::Rng;
 use crate::radio::Channel;
-use crate::tables::budget::PROBE_AIRTIME;
 use crate::tables::fixed::FixedVec;
 use crate::tables::send_queue::{Outgoing, State, Wait};
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Packet, Probe};
-
-/// How long a probe's sender listens on the receiver's channel for the
-/// answer (`Config::probe`): the answer's airtime and one turn of each
-/// radio, the receiver's from listening to transmitting and the sender's
-/// from transmitting to listening, neither longer than a transmission's
-/// preparation and start, 1.42 ms (spec "Heartbeat"); no retune and no
-/// listen-before-talk on either side. 18.5 ms.
-pub(crate) const ANSWER_TIMEOUT: Duration =
-    Duration::from_micros(PROBE_AIRTIME.as_micros() + 2 * (710 + 550 + 160));
+use crate::wire::{Ack, Packet};
 
 /// How many hand-overs the node has in flight at most: one, so that the
 /// radio listens at home for the ACK of the frame it sent, and the
@@ -152,7 +142,6 @@ impl<'a> HandOver<'a> {
         self.out.state
     }
 
-    #[cfg(test)]
     pub(crate) fn awaiting_ack(&self) -> bool {
         self.out.state == State::AwaitAck
     }
@@ -175,35 +164,6 @@ impl<'a> HandOver<'a> {
     /// Whether listen-before-talk is due to start.
     pub(crate) fn due(&self, now: Instant) -> bool {
         matches!(self.out.state, State::Waiting(_)) && self.flight.until <= now
-    }
-
-    /// The probe is on the radio (`Config::probe`).
-    pub(crate) fn probing(&mut self) {
-        self.out.state = State::Probing;
-    }
-
-    /// The probe left the antenna: listen on the receiver's channel for
-    /// its answer for `wait`.
-    pub(crate) fn probe_sent(&mut self, now: Instant, wait: Duration) {
-        self.flight.lbt_since = None;
-        self.flight.until = now + wait;
-        self.out.state = State::AwaitAnswer;
-    }
-
-    /// The receiver answered the probe: the frame goes now. Returns
-    /// whether an answer was awaited.
-    pub(crate) fn answered(&mut self) -> bool {
-        if self.out.state != State::AwaitAnswer {
-            return false;
-        }
-        self.out.state = State::Radio;
-        true
-    }
-
-    /// Whether the hand-over listens for an answer, to its probe or to
-    /// its frame.
-    pub(crate) fn awaiting(&self) -> bool {
-        matches!(self.out.state, State::AwaitAck | State::AwaitAnswer)
     }
 
     /// Hold the hand-over until `until`, without starting a new
@@ -302,10 +262,7 @@ impl<'a> HandOver<'a> {
         self.after_attempt(now, max, rng, retry_backoff)
     }
 
-    /// If the wait for the ACK, or for the answer to the probe, has run
-    /// out at `now`, retry or fail. An unanswered probe is an attempt
-    /// that could not be made, as a listen-before-talk give-up is for a
-    /// return (`lost_attempt`): the receiver did not answer.
+    /// If the ACK wait has run out at `now`, retry or fail.
     pub(crate) fn timeout(
         &mut self,
         now: Instant,
@@ -313,13 +270,11 @@ impl<'a> HandOver<'a> {
         rng: &mut Rng,
         retry_backoff: Duration,
     ) -> Option<Missed> {
-        if !self.awaiting() || now < self.flight.until {
-            return None;
+        if self.awaiting_ack() && now >= self.flight.until {
+            Some(self.after_attempt(now, max, rng, retry_backoff))
+        } else {
+            None
         }
-        if self.out.state == State::AwaitAnswer {
-            return Some(self.lost_attempt(now, max, rng, retry_backoff));
-        }
-        Some(self.after_attempt(now, max, rng, retry_backoff))
     }
 
     fn after_attempt(
@@ -346,15 +301,6 @@ impl<'a> HandOver<'a> {
 pub(crate) enum Reply {
     /// An ACK, taking, refusing or seen (spec "The ACK").
     Ack(Ack),
-    /// The answer to a probe, sent at once on this node's own channel,
-    /// where the sender listens for it (`Config::probe`).
-    Answer(Probe),
-}
-
-impl From<Probe> for Reply {
-    fn from(p: Probe) -> Reply {
-        Reply::Answer(p)
-    }
 }
 
 impl From<Ack> for Reply {
@@ -371,10 +317,10 @@ pub(crate) struct Owed {
     pub(crate) channel: Channel,
     /// When the sender stops waiting; an ACK after that is useless.
     deadline: Instant,
-    /// Not before this: a listen-before-talk backoff.
+    /// When it was owed; a reply is ready at once (spec "The ACK").
     ready: Instant,
     /// The DATA the reply takes, to be acted on once the reply has gone
-    /// out, where a take is final only then (`Config::take_at_ack`).
+    /// out, where the take is final (spec "The ACK").
     takes: Option<Frame>,
 }
 
@@ -397,12 +343,11 @@ impl Owed {
 /// brings the packet again.
 pub(crate) const REPLIES: usize = 1;
 
-/// The replies this node owes, in the order it took them on, sent with
-/// listen-before-talk, as the receiver of spec "The ACK" does, with the
-/// hand-over's backoff, or at once (`Config::ack_listens_first`). One is
-/// abandoned once its sender has stopped waiting: a rule of this queue,
-/// not of its length. A reply abandoned that took a DATA leaves the DATA
-/// untaken, and the node reports it ([`Replies::untaken`]).
+/// The replies this node owes, in the order it took them on, sent at
+/// once, as the receiver of spec "The ACK" does. One is abandoned once
+/// its sender has stopped waiting: a rule of this queue, not of its
+/// length. A reply abandoned that took a DATA leaves the DATA untaken,
+/// and the node reports it ([`Replies::untaken`]).
 ///
 /// `sending` says whether the first owed reply is on the radio now, which
 /// the node knows from its excursion: a packet can arrive meanwhile, as
@@ -561,28 +506,6 @@ impl Replies {
         if self.pending() {
             self.give_up(0);
         }
-    }
-
-    /// The check of the reply being sent completed. Returns the reply to
-    /// transmit, or `None` if it now waits or was abandoned.
-    pub(crate) fn checked(
-        &mut self,
-        busy: bool,
-        now: Instant,
-        rng: &mut Rng,
-        backoff_max: Duration,
-    ) -> Option<Owed> {
-        let o = self.owed.as_mut_slice().first_mut()?;
-        if busy {
-            let ready = now + rng.duration(Duration::ZERO, backoff_max);
-            if ready >= o.deadline {
-                self.give_up(0);
-            } else {
-                o.ready = ready;
-            }
-            return None;
-        }
-        Some(*o)
     }
 
     /// The reply being sent left the antenna. Returns whether the node
@@ -801,8 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn replies_wait_out_backoff_and_lapse_at_the_deadline() {
-        let mut rng = Rng::new(4);
+    fn replies_lapse_at_the_deadline() {
         let ch = Channel::new(3).unwrap();
         let mut a = Replies::new();
         a.owe(ack(1), ch, at(100), false, None, false, at(0));
@@ -814,30 +736,17 @@ mod tests {
         assert!(!a.can_owe(ack(2), ch, false, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), false, at(10)));
         assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
-        // Its check is on the radio: a packet that arrives meanwhile is
+        // It is on the radio: a packet that arrives meanwhile is
         // answered after it, or not at all.
         a.owe(ack(2), ch, at(111), false, None, true, at(11));
-        let sent = a.checked(false, at(11), &mut rng, ms(50)).unwrap();
         assert_eq!(
-            sent.reply,
+            a.due(at(11)).unwrap().reply,
             Reply::Ack(ack(1)),
             "the reply being sent keeps its place"
         );
         assert!(!a.sent().0);
         assert!(!a.pending());
         assert!(a.can_owe(ack(2), ch, false, at(13)));
-        // Busy until past the deadline: abandoned.
-        a.owe(ack(2), ch, at(100), false, None, false, at(60));
-        a.due(at(60)).unwrap();
-        let mut now = at(60);
-        while a.pending() {
-            assert_eq!(a.checked(true, now, &mut rng, ms(50)), None);
-            if let Some(w) = a.wake_at() {
-                assert!(w < at(100));
-                now = w;
-                a.due(now).unwrap();
-            }
-        }
         // Not started: a newer one takes the place.
         a.owe(ack(3), ch, at(300), false, None, false, at(200));
         a.owe(ack(4), ch, at(301), true, None, false, at(200));
@@ -867,7 +776,6 @@ mod tests {
     /// untaken, reported once, when it is given up (roadmap D93).
     #[test]
     fn a_take_waits_for_its_reply() {
-        let mut rng = Rng::new(6);
         let ch = Channel::new(3).unwrap();
         let (out, _) = place(9);
         let mut a = Replies::new();
@@ -876,14 +784,9 @@ mod tests {
         a.due(at(0)).unwrap();
         assert_eq!(a.sent(), (false, Some(out.frame)), "sent: act on it");
         assert_eq!(a.untaken(), None);
-        // Busy until the deadline: the DATA is not taken.
+        // Not sent by the deadline: the DATA is not taken.
         a.owe(ack(9), ch, at(200), false, Some(out.frame), false, at(100));
-        let mut now = at(100);
-        while a.pending() {
-            a.due(now).unwrap();
-            assert_eq!(a.checked(true, now, &mut rng, ms(50)), None);
-            now = a.wake_at().unwrap_or(at(200));
-        }
+        assert_eq!(a.due(at(200)), None);
         assert_eq!(a.untaken(), Some(MsgId(9)));
         assert_eq!(a.untaken(), None, "reported once");
         // Lapsed unsent, and abandoned for budget, alike.
