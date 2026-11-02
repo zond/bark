@@ -1,9 +1,12 @@
 # A wait is never idle
 
 **Date:** 2026-10-31; the runs finished the same day and the write-up
-was finished 2026-11-02. **Status:** measured; roadmap D97, **not to be
-adopted alone**: on the two dense-power seeds it starts the storm the
-base does not have. Spec references are to `protocol.md`. Part 4 of the
+was finished 2026-11-02, when the rule was also measured again on the
+base that has D93 (the last section). **Status:** measured twice;
+roadmap D97, **not adopted**: alone on main `09b7d73` it starts the
+storm the base does not have; on main `8ff3a74`, with D93 adopted, it
+starts nothing and gains nothing, and its code is removed. Spec
+references are to `protocol.md`. Part 4 of the
 storm candidate (`storm-2026-10-30.md`), built and measured alone on
 main `09b7d73`, on which D90 is adopted; parts 2 and 3 are measured by
 others on the same base at the same time, so what is measured here is
@@ -61,7 +64,9 @@ unless the branch is merged.
   and a busy channel never moves a message to another neighbour, so
   that a retry goes to the receiver that may hold it. With those in,
   the frames a never-idle radio adds are hand-overs that complete, not
-  copies, and this rule is to be measured again on top of them.
+  copies, and this rule is to be measured again on top of them. It
+  was, with part 2 in (the last section): the storm does not start,
+  nothing is gained, and the rule is not adopted.
 
 ## The question
 
@@ -441,4 +446,213 @@ byte with the bound at one, carries no cost, and is what parts 2 and 3
 were written to need (`main-loop-2026-10-30.md`); the two constants of
 the tables, `ACK_TIMEOUT` and `HOP_ATTEMPTS`, replace literals; and
 the count of frames sent while another hand-over waited is the figure
-that says how much a never-idle radio adds.
+that says how much a never-idle radio adds. The measurement on the D93
+base, next, decides otherwise about the structure.
+
+## Re-measured on the D93 base, 2026-11-02
+
+**Why again.** The recommendation above held that the rule could pay
+only once a split cannot be made by the rules, and asked for it to be
+measured again with parts 2 and 3 of the candidate in. Main took part 2
+as D93 (`storm-ack-2026-10-31.md`): a take is final when its ACK has
+gone out, and the ACK goes at once, without listening first; it cut the
+hand-overs that failed with the receiver holding the message 14 % on the
+dense city and 36 % under load. Part 3, an attempt is a transmission, is
+measured by another on its own branch and is not in this base. So this
+is the rule on top of part 2 alone.
+
+**The build.** The rule's commit `23790ec` brought onto main `8ff3a74`:
+the branch's commit `74c05fd`. Where the two meet, in the receiving of
+a DATA, the verdict and the reply that carries the DATA it takes are
+D93's, and the hand-over the DATA completes is named by its flight; the
+frame is stamped as D93 split it out, and the frame sent while another
+hand-over waited is counted after it. The reply keeps D93's form: no
+listen-before-talk and no switch. Every unit test of both passes; one
+of D93's builds its test frame through the branch's queue helper. With
+`FLIGHTS` set to one the build reproduces main `8ff3a74` to the byte,
+the messages CSV and the summary without its wall-time line, on the
+ring, the mesh burst at seed 1 and S4 at the design rate.
+
+**How it was measured.** As above, release builds, `--json` and
+`--messages`; every run of main is this measurement's own, at
+`8ff3a74`. The scenarios: `dense-power.toml` seeds 1, 2 and 7; the same
+city at twice the rate, `per_leaf_per_hour` 1.9166667, seeds 1 and 7,
+on which the base is already overloaded; `s4-capacity.toml` seed 1 at
+the design rate and at three times it, seeds 1 and 2; `ring.toml`;
+`dense-movers.toml`; `mesh-burst.toml` seeds 1 and 5. The spread runs,
+main's to the byte above, were not run again. Main's figures on the
+dense-power seeds 1 and 7, S4 at both rates, the ring and the walkers
+are the D93 note's to the figure, so the base is as that note measured
+it.
+
+**The tables.** Main `8ff3a74` / the rule on it; the rows as above.
+
+| | dp1 | dp2 | dp7 | dpx2-s1 | dpx2-s7 |
+|---|---|---|---|---|---|
+| texts sent in the settled hour | 18234 / 18234 | 18199 / 18199 | 18189 / 18189 | 36559 / 36495 | 36595 / 36546 |
+| delivered, settled hour % | 97.8 / 97.9 | 98.1 / 98.2 | 98.1 / 98.2 | 88.8 / 88.0 | 89.1 / 88.5 |
+| delivered, whole run % | 96.5 / 96.6 | 96.7 / 96.8 | 96.9 / 97.0 | 90.5 / 89.8 | 90.4 / 90.0 |
+| latency p50 s | 10.2 / 10.0 | 10.0 / 9.7 | 10.0 / 9.7 | 46.5 / 46.2 | 49.1 / 44.9 |
+| latency p90 s | 47.4 / 44.1 | 43.2 / 43.2 | 45.8 / 44.2 | 349.6 / 355.6 | 349.5 / 351.2 |
+| airtime, whole run s | 283128 / 285724 | 283210 / 282291 | 271385 / 268877 | 1118451 / 1189432 | 1036475 / 1088432 |
+| hand-overs taken | 417166 / 419637 | 421560 / 421705 | 404816 / 402996 | 1935441 / 2035799 | 1832111 / 1899346 |
+| hand-overs failed | 480395 / 487818 | 477520 / 476285 | 453585 / 447236 | 2777351 / 2989755 | 2540036 / 2698621 |
+| failed, receiver had it | 108676 / 116706 | 114376 / 113491 | 101670 / 97930 | 559603 / 593903 | 496462 / 533444 |
+| returns taken from a child | 3193 / 3458 | 3510 / 3425 | 2880 / 2570 | 10038 / 10883 | 8775 / 9964 |
+| copies answered (not returns) | 246311 / 249828 | 253003 / 246141 | 214802 / 207118 | 1037572 / 1112808 | 933784 / 989376 |
+| of those merged (case 4) | 2108 / 2075 | 2216 / 2076 | 1823 / 1650 | 36174 / 36115 | 32295 / 30555 |
+| of those seen (case 6) | 244127 / 247674 | 250721 / 243988 | 212914 / 205403 | 1001196 / 1076467 | 901277 / 958614 |
+| seen ACKs sent / acted on | 275948 / 233731 / 280424 / 236888 | 284166 / 239851 / 276159 / 233550 | 241349 / 203739 / 232198 / 196782 | 1161943 / 947962 / 1248072 / 1018371 | 1040011 / 856442 / 1105957 / 908967 |
+| hand-overs held back by the bucket | 18179 / 34719 | 18324 / 32419 | 17495 / 32127 | 1902851 / 9907586 | 1804117 / 8950316 |
+| frames sent while another hand-over waited | 0 / 85296 | 0 / 79588 | 0 / 74089 | 0 / 3038017 | 0 / 2705687 |
+| neighbours demoted | 201105 / 201670 | 198509 / 197521 | 190020 / 188207 | 1185913 / 1238716 | 1083714 / 1114622 |
+| copies dropped: hop cap | 1502 / 1541 | 1641 / 1615 | 1314 / 1298 | 2692 / 2819 | 2689 / 2712 |
+| copies dropped: TTL | 687 / 870 | 823 / 694 | 658 / 621 | 38725 / 51013 | 33357 / 42790 |
+| copies dropped: return seen | 1 / 0 | 0 / 2 | 2 / 2 | 1 / 1 | 1 / 2 |
+| copies dropped: no route | 23 / 22 | 33 / 23 | 16 / 20 | 62 / 76 | 63 / 71 |
+| copies dropped: return failed | 48 / 52 | 38 / 52 | 29 / 47 | 233 / 211 | 195 / 225 |
+| texts lost: hop cap | 261 / 252 | 267 / 268 | 222 / 218 | 386 / 396 | 426 / 388 |
+| texts lost: TTL | 78 / 76 | 90 / 82 | 80 / 83 | 1741 / 1945 | 1599 / 1819 |
+| texts lost: return seen | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| texts lost: no route | 4 / 3 | 4 / 5 | 5 / 5 | 14 / 17 | 19 / 21 |
+| texts lost: return failed | 3 / 2 | 3 / 8 | 2 / 4 | 48 / 28 | 35 / 50 |
+| texts that waited at their origin | 80 / 52 | 87 / 113 | 48 / 128 | 8430 / 11610 | 7970 / 9994 |
+| relays ever at their cap | 73 / 94 | 86 / 113 | 73 / 86 | 813 / 879 | 726 / 806 |
+| largest settled airtime of a node % | 4.87 / 4.65 | 4.10 / 3.88 | 4.24 / 4.17 | 9.99 / 9.97 | 9.99 / 9.98 |
+| heartbeats received % | 85.5 / 85.5 | 85.8 / 85.8 | 85.8 / 85.8 | 67.8 / 67.3 | 69.8 / 69.4 |
+
+| | s4x1 | s4x3-s1 | s4x3-s2 | ring | movers | burst-s1 | burst-s5 |
+|---|---|---|---|---|---|---|---|
+| texts sent in the settled hour | 17457 / 17460 | 48831 / 48739 | 48296 / 48460 | 2964 / 3048 | 17893 / 17893 | 100 / 100 | 100 / 100 |
+| delivered, settled hour % | 93.6 / 93.5 | 63.6 / 62.1 | 61.1 / 63.4 | 92.6 / 90.1 | 96.5 / 96.4 | 99.0 / 99.0 | 92.0 / 93.0 |
+| delivered, whole run % | 93.6 / 93.4 | 69.9 / 68.3 | 68.6 / 70.0 | 93.3 / 91.4 | 95.6 / 95.7 | 99.0 / 99.0 | 92.0 / 93.0 |
+| latency p50 s | 1.4 / 1.3 | 83.0 / 85.4 | 94.0 / 88.1 | 41.5 / 42.5 | 5.4 / 5.3 | 3.5 / 3.0 | 1.9 / 1.8 |
+| latency p90 s | 187.4 / 186.7 | 582.0 / 595.2 | 612.8 / 593.2 | 159.2 / 143.6 | 52.8 / 52.3 | 8.9 / 7.6 | 3.8 / 4.7 |
+| airtime, whole run s | 43498 / 42182 | 150125 / 152700 | 151739 / 148395 | 1807 / 1812 | 184045 / 185760 | 232 / 251 | 274 / 275 |
+| hand-overs taken | 116504 / 115432 | 391122 / 385058 | 388589 / 383842 | - / - | 321282 / 321743 | 623 / 649 | 585 / 588 |
+| hand-overs failed | 18614 / 18148 | 139390 / 148798 | 136777 / 135120 | - / - | 286420 / 290916 | 82 / 121 | 205 / 213 |
+| failed, receiver had it | 3406 / 3165 | 28661 / 30194 | 28859 / 28814 | - / - | 154020 / 158351 | 45 / 72 | 156 / 163 |
+| returns taken from a child | 41 / 35 | 340 / 376 | 406 / 477 | - / - | 3312 / 3288 | 1 / 3 | 29 / 38 |
+| copies answered (not returns) | 7792 / 4803 | 43049 / 40465 | 58529 / 52848 | - / - | 213649 / 218923 | 158 / 212 | 378 / 373 |
+| of those merged (case 4) | 26 / 5 | 1139 / 1119 | 1249 / 1283 | - / - | 1639 / 1499 | 1 / 0 | 2 / 0 |
+| of those seen (case 6) | 7766 / 4798 | 41910 / 39346 | 57280 / 51565 | - / - | 211976 / 217393 | 157 / 212 | 376 / 373 |
+| seen ACKs sent / acted on | 8405 / 7681 / 5150 / 4757 | 47328 / 41057 / 44782 / 38234 | 64166 / 56234 / 57767 / 50477 | 0 / 0 / 0 / 0 | 242252 / 201958 / 248233 / 207048 | 162 / 157 / 221 / 210 | 391 / 372 / 386 / 367 |
+| hand-overs held back by the bucket | 46 / 98 | 710046 / 2580171 | 760115 / 2407427 | - / - | 9898 / 20197 | 0 / 0 | 0 / 0 |
+| frames sent while another hand-over waited | 0 / 3590 | 0 / 430041 | 0 / 400131 | - / - | 0 / 43468 | 0 / 148 | 0 / 134 |
+| neighbours demoted | 7074 / 6912 | 40601 / 42922 | 39450 / 38304 | - / - | 110837 / 110973 | 13 / 15 | 33 / 37 |
+| copies dropped: hop cap | 34 / 24 | 49 / 40 | 66 / 67 | 0 / 0 | 1604 / 1630 | 0 / 0 | 0 / 0 |
+| copies dropped: TTL | 326 / 313 | 4772 / 5024 | 4569 / 4242 | 0 / 0 | 896 / 1020 | 0 / 2 | 4 / 4 |
+| copies dropped: return seen | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| copies dropped: no route | 89 / 96 | 168 / 192 | 177 / 177 | 12 / 13 | 15 / 21 | 0 / 0 | 0 / 0 |
+| copies dropped: return failed | 0 / 0 | 0 / 3 | 13 / 4 | 2 / 0 | 37 / 42 | 0 / 0 | 5 / 4 |
+| texts lost: hop cap | 32 / 19 | 29 / 27 | 50 / 42 | 0 / 0 | 168 / 147 | 0 / 0 | 0 / 0 |
+| texts lost: TTL | 304 / 302 | 4582 / 4798 | 4288 / 3963 | 0 / 0 | 117 / 124 | 0 / 1 | 3 / 4 |
+| texts lost: return seen | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| texts lost: no route | 3 / 2 | 15 / 21 | 16 / 15 | 12 / 11 | 3 / 4 | 0 / 0 | 0 / 0 |
+| texts lost: return failed | 0 / 0 | 0 / 3 | 11 / 4 | 2 / 0 | 2 / 0 | 0 / 0 | 4 / 1 |
+| texts that waited at their origin | 154 / 171 | 186140 / 191298 | 202361 / 185513 | 2269 / 2518 | 190 / 61 | 0 / 0 | 0 / 0 |
+| relays ever at their cap | 0 / 0 | 148 / 155 | 158 / 147 | - / - | 179 / 212 | 0 / 0 | 0 / 0 |
+| largest settled airtime of a node % | 5.42 / 5.23 | 9.93 / 9.96 | 9.99 / 9.97 | 9.89 / 10.00 | 4.58 / 4.85 | 0.53 / 0.66 | 0.87 / 0.78 |
+| heartbeats received % | 94.4 / 94.4 | 88.6 / 88.4 | 88.8 / 89.1 | 91.0 / 91.5 | 89.4 / 89.5 | 99.5 / 99.3 | 99.1 / 98.9 |
+
+**The fates of the frames addressed to nodes that are not sleepy**, as
+above, on dense-power seed 1 and on the same city at twice the rate.
+
+*Dense-power seed 1:*
+
+| | received | lost free | lost receiving | lost deaf | other channel | DATA answered: taken / refused / late / none |
+|---|---|---|---|---|---|---|
+| main DATA | 272786 (43.7 %) | 269750 (43.2 %) | 54916 (8.8 %) | 18508 (3.0 %) | 7899 (1.3 %) | 272770 / 0 / 0 / 0 |
+| main ACK | 229009 (84.0 %) | 43141 (15.8 %) | 618 (0.2 %) | 0 (0.0 %) | 2 (0.0 %) |  |
+| D97 DATA | 279425 (43.4 %) | 276415 (42.9 %) | 59496 (9.2 %) | 21230 (3.3 %) | 7734 (1.2 %) | 279414 / 1 / 0 / 0 |
+| D97 ACK | 233601 (83.6 %) | 45193 (16.2 %) | 616 (0.2 %) | 0 (0.0 %) | 5 (0.0 %) |  |
+
+*Dense-power at twice the rate, seed 1:*
+
+| | received | lost free | lost receiving | lost deaf | other channel | DATA answered: taken / refused / late / none |
+|---|---|---|---|---|---|---|
+| main DATA | 1151562 (36.9 %) | 1209873 (38.8 %) | 516258 (16.6 %) | 214836 (6.9 %) | 26627 (0.9 %) | 1127952 / 23523 / 0 / 0 |
+| main ACK | 886128 (77.0 %) | 257759 (22.4 %) | 7576 (0.7 %) | 0 (0.0 %) | 9 (0.0 %) |  |
+| D97 DATA | 1221611 (36.6 %) | 1293495 (38.7 %) | 557430 (16.7 %) | 237246 (7.1 %) | 30419 (0.9 %) | 1192141 / 29384 / 1 / 0 |
+| D97 ACK | 941603 (77.1 %) | 272311 (22.3 %) | 7599 (0.6 %) | 0 (0.0 %) | 9 (0.0 %) |  |
+
+**What it shows.**
+
+- **The storm is not started.** On seed 1, where the rule alone took
+  the base of 2026-10-31 from 97.8 to 87.4 % and its airtime from
+  299 754 to 1 424 595 s, it now moves 97.8 → 97.9 % and 283 128 →
+  285 724 s; the hand-overs that failed with the receiver holding the
+  message 108 676 → 116 706, the relays ever at their cap 73 → 94, the
+  copies expired at the time to live 687 → 870. Seeds 2 and 7 go the
+  other way by as much: 98.1 → 98.2 % both, airtime −0.3 and −0.9 %,
+  those failures −1 and −4 %. The frames sent while another hand-over
+  waited are 74 000 to 85 000 a run, against 4.37 M in the storm. D93
+  took away what the rule's frames fed: a receiver holding a message
+  its sender was not told of. The frame fates on seed 1 move the
+  storm's way by a tenth of its size, DATA lost while the receiver
+  received another frame 8.8 → 9.2 %, lost while it was deaf 3.0 →
+  3.3 %, ACKs received 84.0 → 83.6 %; no ACK started after the sender's
+  timeout on either, since the ACK goes at once.
+- **Nothing is gained.** Delivery in the settled hour changes by −2.5
+  to +2.3 points over the twelve runs with no sign to it: +0.1 on the
+  three dense-power seeds, −1.5 and +2.3 on the two seeds of S4 at
+  three times the rate, −0.1 on S4 at the design rate and on the
+  walkers, one text of a hundred either way in the mesh burst. Latency
+  moves as little: p90 3 s shorter on dense-power seed 1 and 16 s on
+  the ring, 13 s longer on one S4 seed and 20 s shorter on the other.
+  Airtime is within ±3 % wherever the base is not overloaded.
+- **Where the bucket binds, it costs.** At twice the rate the base is
+  already in the storm's regime, 88.8 and 89.1 % with 813 and 726
+  relays ever at their cap, and the rule takes 0.8 and 0.6 points
+  more: airtime +6 and +5 %, the hand-overs that failed with the
+  receiver holding the message +6 and +7 %, the copies expired at the
+  time to live +32 and +28 %, the texts that waited at their origin
+  +38 and +25 %, with 3.0 and 2.7 M frames sent while another
+  hand-over waited and the hand-overs held back by the bucket five
+  times main's, 1.9 → 9.9 M. The frame fates do not move: the shares
+  received, lost to another frame and lost deaf are main's to half a
+  point. The rule puts the frames on the air sooner; the bucket then
+  holds the relay for them.
+- **The ring swings by timing.** On the base of 2026-10-31 the ring
+  gained two points; here it loses 2.5, 92.6 → 90.1 %, with 84 more
+  texts offered in the hour, 249 more waiting at their origin and p90
+  16 s shorter. The ring has one relay at its cap, 9.89 → 10.00 % of
+  the settled hour, and 3 000 texts: two points are sixty texts, and
+  the sign has gone both ways on the same rule.
+- **The split rate does not move.** Of the hand-overs that fail, those
+  whose receiver held the message are 22.6 → 23.9 % on dense-power
+  seed 1, 24.0 → 23.8 % on seed 2, 22.4 → 21.9 % on seed 7, 20.6 →
+  20.3 and 21.1 → 21.3 % on S4 at three times the rate, 53.8 → 54.4 %
+  on the walkers. The counts move by −7 to +7 % everywhere but the
+  mesh burst at seed 1, 45 → 72 of 121 failures, where a hundred texts
+  at once over 25 relays make the frames a never-idle radio adds
+  collide, as the first measurement found.
+- **What the rule recovers, the bucket takes.** The hand-overs held
+  back by the bucket, each a hand-over whose wait ended and whose
+  frame the bucket could not fit, are 1.8 to 1.9 times main's on the
+  dense city, 3.2 to 3.6 under load, 5 at twice the rate, 2 on the
+  walkers. A hand-over served in another's retry wait spends the
+  bucket that the other would have spent after it; the relay then
+  waits for the bucket instead of for the retry, and its texts go out
+  at the bucket's pace either way. The storm note's 15 % of a capped
+  relay's hour between a hand-over's attempts was measured in the
+  storm, at relays failing four hand-overs in ten; on this base the
+  radio of a relay below its cap is not what its texts wait for.
+
+**Recommendation: not adopted; the code removed.** The rule is safe on
+this base and worth nothing measurable: no scenario gains
+consistently, and where the bucket binds it costs airtime, copies
+expired and splits. Its structure, four flights in the send queue, the
+channel hold and a scheduler over them, is some 400 lines and 160 bytes
+of RAM for a rule that does not pay, and D93 was built without it, so
+the first measurement's reason to keep the structure is gone. The code
+is removed by the commit after this note's, as measured and rejected
+code is (roadmap D94); this note and the branch's commit `74c05fd`
+describe it closely enough to rebuild. Two things from it would stand
+on their own if wanted: `ACK_TIMEOUT` and `HOP_ATTEMPTS` as constants of
+the tables in place of literals, and the count of frames sent while
+another hand-over waited, the figure that says how much a never-idle
+radio adds.
+
+**What it does not show.** Part 3 with this rule; other seeds of the
+dense city than 1, 2 and 7; the board.
