@@ -57,7 +57,7 @@ use crate::node::mac::Excursion;
 use crate::node::transfer::Replies;
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
-use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::store::Stored;
 use crate::tables::budget::Budget;
@@ -92,6 +92,13 @@ const JOBS: [Job; 4] = [Job::Reply, Job::Heartbeat, Job::HandOver, Job::Sweep];
 /// that gate them.
 struct Radio {
     excursion: Excursion<Job>,
+    /// Since when the radio has been away from listening on the home
+    /// channel, free: an excursion under way, or a frame being received
+    /// (`relay/heartbeat.rs`, `count_missed_heartbeats`).
+    away_since: Option<Instant>,
+    /// How long it has been away in all before that, µs, wrapping: only
+    /// differences are read.
+    away_total_us: u32,
     /// The replies this node owes (`transfer.rs`).
     replies: Replies,
     /// The busy sweep (`relay/sweep.rs`).
@@ -108,11 +115,36 @@ impl Radio {
     const fn new(config: &Config, sweep: Channel, rotation: Channel) -> Radio {
         Radio {
             excursion: Excursion::new(),
+            away_since: None,
+            away_total_us: 0,
             replies: Replies::new(),
             sweep: Sweep::new(sweep),
             beacon: Beacon::new(rotation),
             busy: BusyEstimator::from_config(config),
             budget: Budget::new(),
+        }
+    }
+}
+
+impl Radio {
+    /// How long the radio has been away in all up to `until`, at most
+    /// `now`, µs, wrapping; as far as the core knows: a frame it did not
+    /// decode is not known to it (`docs/core-interface.md` §3 rule 3).
+    fn away_us(&self, now: Instant, until: Instant) -> u32 {
+        let open = self
+            .away_since
+            .map_or(0, |a| until.min(now).since(a).as_micros());
+        self.away_total_us.wrapping_add(open as u32)
+    }
+
+    /// The radio is back listening at `now`, unless an excursion is
+    /// still out.
+    fn back(&mut self, now: Instant) {
+        if let (Some(a), true) = (self.away_since, self.excursion.idle()) {
+            self.away_total_us = self
+                .away_total_us
+                .wrapping_add(now.since(a).as_micros() as u32);
+            self.away_since = None;
         }
     }
 }
@@ -767,6 +799,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.gps_wakeup(),
             self.forward_deadline(),
             self.delivery_wakeup(),
+            self.next_slot_edge(),
         ]
         .into_iter()
         .flatten()
@@ -915,20 +948,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
 impl<const H: usize, const Q: usize> Core for Node<H, Q> {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        // Any use of the radio ends a sniff (core-interface §3 rule 10).
+        // Any use of the radio ends a sniff (core-interface §3 rule 10),
+        // and an excursion takes it away from listening.
         let woke = core::cell::Cell::new(false);
+        let away = core::cell::Cell::new(false);
         let mut wake = |a: Action| {
-            let radio = matches!(
-                a,
-                Action::Listen(_) | Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
-            );
-            woke.set(woke.get() || radio);
+            let excursion = matches!(a, Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_));
+            woke.set(woke.get() || excursion || matches!(a, Action::Listen(_)));
+            away.set(away.get() || excursion);
             emit(a)
         };
         let emit: &mut dyn FnMut(Action) = &mut wake;
         if self.stage == Stage::Off {
             self.start(now, emit);
         }
+        // A frame received now took the radio since it started; a
+        // heartbeat due meanwhile is counted first, against that.
+        if let Event::Received { bytes, .. } = event {
+            let started = now - time_on_air(bytes.len() as u8, MIN_PREAMBLE_SYMBOLS);
+            let since = self.radio.away_since.map_or(started, |a| a.min(started));
+            self.radio.away_since = Some(since);
+        }
+        self.count_missed_heartbeats(now);
         let threshold = self.radio.busy.threshold_dbm();
         match event {
             Event::Wakeup => {}
@@ -975,8 +1016,16 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             },
             Event::App(cmd) => self.app(cmd, now, emit),
         }
+        if !matches!(event, Event::Wakeup | Event::App(_)) {
+            // The excursion or the reception is over, unless a held
+            // excursion is still out (core-interface §3 rule 8).
+            self.radio.back(now);
+        }
         self.fire(now, emit);
         self.schedule(now, emit);
+        if away.get() {
+            self.radio.away_since.get_or_insert(now);
+        }
         self.timers.app_ready_at = self.send_ready_at(now);
         if woke.get() {
             self.timers.sniff_until = None;

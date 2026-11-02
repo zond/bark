@@ -1997,3 +1997,130 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
         );
     }
 }
+
+/// A neighbour's heartbeat due on this channel and not heard is a
+/// reading at the floor, with the weight of the share of its window the
+/// radio listened through: nearly a whole reading on a quiet channel,
+/// less by the share a frame received in the window took; and one heard
+/// in its window is a reading of itself and no miss (spec "Heartbeat",
+/// "Neighbour table").
+#[test]
+fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
+    use crate::node::heartbeat_interval;
+    use crate::radio::CHANNELS;
+    use crate::wire::Data;
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: Duration::from_secs(3600),
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let f_pos = Position {
+        lat: me.lat + 5_000,
+        ..me
+    };
+    let f = id_of(f_pos);
+    let home = r.home;
+    let hear = |r: &mut Relay, now: &mut Instant, p: &Packet<'_>, rssi: i16| {
+        let frame = mac::frame(p, home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: home,
+            rssi_dbm: rssi,
+            snr_db: 10,
+            bytes: &frame.bytes[..frame.len as usize],
+        };
+        let mut pending = Vec::new();
+        r.handle(event, *now, &mut |a| pending.push(a));
+        let until = *now;
+        drive_from(r, now, until, pending);
+    };
+    let heartbeat = Packet::Heartbeat(Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home: Channel::new(5).unwrap(),
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id: f,
+        short: f_pos.short(),
+    });
+    hear(&mut r, &mut now, &heartbeat, -100);
+    let entry = |r: &Relay| *r.neighbours.get(f).unwrap();
+    let n = entry(&r);
+    assert!(n.slotted && n.rssi == -100.0);
+    let interval = heartbeat_interval(f, &r.config);
+    let rotation = interval.mul(CHANNELS as u64);
+    let (from, to) = r.slot_window(&n).unwrap();
+    assert!(from < n.beat_at + rotation && n.beat_at + rotation < to);
+    assert!(
+        r.next_wakeup().unwrap() <= from,
+        "awake when the window opens"
+    );
+    let floor = r.radio.busy.noise_floor_dbm() as f32;
+    // The weight the last reading at the floor had, from what it moved.
+    let weight = |before: f32, after: f32| 2.0 * (after - before) / (floor - before);
+
+    // A quiet channel: the radio was away only for its own heartbeats.
+    drive(&mut r, &mut now, to + Duration::from_millis(1));
+    let n = entry(&r);
+    let w = weight(-100.0, n.rssi);
+    assert!(w > 0.95 && w <= 1.0, "{w}: {} -> {}", -100.0, n.rssi);
+    assert_eq!(
+        n.beat_at,
+        from + to.since(from).div(2) - heartbeat_airtime_half(),
+        "the slot passed"
+    );
+
+    // A full frame for someone else received in the window: the radio
+    // could not have heard a heartbeat under it.
+    let before = n.rssi;
+    let (from, to) = r.slot_window(&n).unwrap();
+    drive(&mut r, &mut now, from + Duration::from_millis(1));
+    let payload = [0u8; crate::wire::MAX_PAYLOAD];
+    let other = Packet::Data(Data {
+        sender_home: home,
+        dst_hop: NOBODY,
+        src_hop: name(4),
+        dst_pos: me,
+        dst_id: NOBODY,
+        hops: 3,
+        time_left: 200,
+        payload: &payload,
+    });
+    let airtime = mac::airtime(&mac::frame(&other, home, MIN_PREAMBLE_SYMBOLS));
+    now = from + airtime + Duration::from_millis(1);
+    hear(&mut r, &mut now, &other, -90);
+    drive(&mut r, &mut now, to + Duration::from_millis(1));
+    let n = entry(&r);
+    let w = weight(before, n.rssi);
+    let share = airtime.as_micros() as f32 / to.since(from).as_micros() as f32;
+    assert!(
+        (1.0 - share - w).abs() < 0.03,
+        "{w} against {} listened",
+        1.0 - share
+    );
+
+    // Heard in its window: a reading of itself, and no miss.
+    let before = n.rssi;
+    let (from, to) = r.slot_window(&n).unwrap();
+    let slot = from + to.since(from).div(2);
+    drive(&mut r, &mut now, slot);
+    now = slot + Duration::from_millis(5);
+    hear(&mut r, &mut now, &heartbeat, -100);
+    let heard = entry(&r).rssi;
+    assert_eq!(heard, (before - 100.0) / 2.0);
+    drive(&mut r, &mut now, to + Duration::from_secs(1));
+    assert_eq!(entry(&r).rssi, heard, "no reading for a heartbeat heard");
+}
+
+/// Half a heartbeat's airtime: the window is centred on the slot, so the
+/// slot that passed is the window's middle less the airtime's half.
+fn heartbeat_airtime_half() -> Duration {
+    use crate::radio::time_on_air;
+    use crate::wire::HEARTBEAT_LEN;
+    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).div(2)
+}

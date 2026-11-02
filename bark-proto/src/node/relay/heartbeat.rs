@@ -5,12 +5,14 @@
 //! flags. What a heartbeat heard does to the tables and to a sleepy
 //! node's anchor is here too.
 
+use super::anchor::drift;
 use super::{Job, Node, Stage};
 use crate::event::{Action, AppEvent, Frame, Trace};
 use crate::ids::NodeId;
-use crate::node::{burst_gap, heartbeat_interval, mac};
+use crate::node::{burst_gap, heartbeat_interval, heartbeat_lag, mac};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
+use crate::tables::neighbours::{Neighbour, Neighbours, NEIGHBOURS};
 use crate::time::{Duration, Instant};
 use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 
@@ -437,9 +439,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && self.timers.watch_at.is_some()
             && self.watch().is_some_and(|(from, _)| started < from);
         // A relay's burst goes a burst gap a heartbeat: none of it is in a
-        // slot (spec "Heartbeat").
+        // slot, and its slots start anew (spec "Heartbeat").
         let burst = hb.anchorless && !hb.sleepy;
-        if !off_slot && !burst {
+        if burst {
+            self.neighbours.burst_heard(hb.id);
+        } else if !off_slot {
             self.neighbours.beat_heard(hb.id, self.home, started);
         }
         if let Some(slot) = heard.new_occupant() {
@@ -491,6 +495,83 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.anchor_alive();
             } else {
                 self.anchor_heard(started);
+            }
+        }
+    }
+
+    /// Whether the node listens all the time: not sleepy. Only such a
+    /// node can tell a heartbeat that did not come from one it slept
+    /// through.
+    fn listens(&self) -> bool {
+        !self.sleepy() && self.stage != Stage::Off
+    }
+
+    /// The window in which the next heartbeat of `n` is due on this
+    /// node's channel, if its slots are known (spec "Heartbeat"): its
+    /// slot, less what the last one heard may have waited behind its own
+    /// slot ([`heartbeat_lag`]) and the clocks' drift since, to its slot
+    /// plus that wait, that drift and the heartbeat's airtime.
+    pub(super) fn slot_window(&self, n: &Neighbour) -> Option<(Instant, Instant)> {
+        if !n.slotted || !n.relay() || n.anchorless {
+            return None;
+        }
+        let interval = heartbeat_interval(n.id, &self.config);
+        let at = Neighbours::next_beat(n, interval, self.home);
+        let lag = heartbeat_lag(&self.config) + drift(at.since(n.beat_at));
+        let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        Some((at - lag, at + lag + airtime))
+    }
+
+    /// When the next such window opens or closes, if any: the core notes
+    /// then how long the radio has been away, before anything else moves
+    /// it.
+    pub(super) fn next_slot_edge(&self) -> Option<Instant> {
+        if !self.listens() {
+            return None;
+        }
+        self.neighbours
+            .iter()
+            .filter_map(|n| {
+                let (from, to) = self.slot_window(n)?;
+                Some(if n.away_base.is_none() { from } else { to })
+            })
+            .min()
+    }
+
+    /// Count the heartbeats due on this channel (spec "Heartbeat"): a
+    /// window that has opened by `now` notes how long the radio has been
+    /// away in all; one that has closed enters a reading at the floor,
+    /// weighted by the share of the window the radio listened through,
+    /// and passes to the next rotation. Asked before an event is applied,
+    /// so that a frame or an excursion ending now counts as away until
+    /// now.
+    pub(super) fn count_missed_heartbeats(&mut self, now: Instant) {
+        if !self.listens() {
+            return;
+        }
+        let floor = self.radio.busy.noise_floor_dbm();
+        let home = self.home;
+        for slot in 0..NEIGHBOURS {
+            while let Some(n) = self.neighbours.slot(slot).copied() {
+                let Some((from, to)) = self.slot_window(&n).filter(|&(from, _)| from <= now) else {
+                    break;
+                };
+                let Some(base) = n.away_base else {
+                    // Away since before the window opened counts from then.
+                    self.neighbours
+                        .window_opened(n.id, self.radio.away_us(now, from));
+                    continue;
+                };
+                if to > now {
+                    break;
+                }
+                let away = self.radio.away_us(now, to).wrapping_sub(base);
+                let window = to.since(from).as_micros() as f32;
+                self.neighbours
+                    .missed(n.id, floor, 1.0 - away as f32 / window);
+                let interval = heartbeat_interval(n.id, &self.config);
+                let next = Neighbours::next_beat(&n, interval, home);
+                self.neighbours.slot_passed(n.id, next, home);
             }
         }
     }

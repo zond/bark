@@ -669,7 +669,48 @@ A neighbour that has heard one heartbeat of a node knows the node's
 interval from its ID, and so when its next comes to any channel: on
 channel c at time t, on channel c + j at t + j × T, and on c again at
 t + 13 × T. A sleeping node uses this to wake for its anchor's
-([relay choice](#relay-choice)).
+([relay choice](#relay-choice)), and a relay to tell a heartbeat that
+did not come.
+
+**A heartbeat due and not heard.** A relay, which listens all the time,
+expects each neighbour's heartbeat on its own channel once a rotation,
+in a window around the slot: from the slot less what the last one
+heard may have waited behind its own (the lateness above) and the
+clocks' drift since, to the slot plus that lateness, that drift and the
+heartbeat's airtime, about 1.8 s. When the window closes without the
+heartbeat, the relay enters a reading at its noise floor
+([busy estimate](#busy-estimate)) into the neighbour's average
+([neighbour table](#neighbour-table)), weighted by the share of the
+window through which its radio was listening on the channel: a
+heartbeat it was away for, on an excursion or under another frame, it
+could not have heard. The slot passes to the next rotation either way.
+A heartbeat of a burst is in no slot and says the node's slots start
+anew; a heartbeat heard in a slot sets the slots afresh. A sleepy node,
+which hears only in its windows, counts nothing.
+
+*Why a reading at the floor.* The average was of the heartbeats that
+got through: a neighbour at or below sensitivity is heard on its good
+moments and averaged on those, and in the dense city the average stood
+5.4 dB above the link's mean for the frames lost to noise (roadmap
+D103). Counted as what was sent, heard or not, the average is of the
+link. A heartbeat sent and not heard had a packet RSSI under the level
+half of all heartbeats arrive at, 3.1 dB below a full frame's
+([neighbour table](#neighbour-table)): 5.2 dB of signal below the
+noise, which packet RSSI reads as 1.2 dB above the floor. The floor
+itself, what the radio reads of an empty channel, is the reading an
+absent frame gives, and the two differ by 0.6 dB in an average that
+counts a reading half. A heartbeat the neighbour skipped for a busy
+channel or deferred for its budget is counted the same, wrongly: a skip
+needs three checks busy, one time in a thousand on a channel busy a
+tenth of the time, and the next frame heard halves the error.
+
+*Why weighted by the window.* The radio reads another channel once a
+second ([busy estimate](#busy-estimate)) and sends its own heartbeats
+and ACKs, so few windows pass with it listening throughout. A heartbeat
+that came at some moment of the window was lost to the radio's absence
+with the probability of the absence's share of the window, and with the
+rest to the link; a frame the radio did not decode is not known to it,
+so a collision it lost counts as the link's.
 
 *Why a fixed cycle.* A fixed cycle reaches every neighbour once per
 rotation; a random channel per heartbeat would need ≈41 heartbeats on
@@ -822,10 +863,10 @@ Per node, up to 64 entries, by node ID:
 | map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
-| rssi_ema | averaged RSSI of every frame heard from it, each new frame counting half; says whether it has margin |
+| rssi_ema | averaged RSSI of every reading of its link, each new one counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)); says whether it has margin |
 | fail_count | consecutive ACK failures |
 | banned_until | when its ban ends ([bans](#bans)) |
-| last_beat | when its last heartbeat heard in a slot started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
+| last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an ACK
 from the neighbour ([the ACK](#the-ack)):

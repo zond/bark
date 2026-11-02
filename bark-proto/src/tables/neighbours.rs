@@ -30,10 +30,16 @@
 //!
 //! A neighbour has margin when its averaged RSSI, `rssi`, is high enough
 //! for a full-length frame to get through a fade of [`FADE_DEPTH_DB`]
-//! (spec "Next hop"). The average takes in every frame heard from the neighbour:
-//! heartbeats, its DATA, and its ACKs, which are the best evidence that
-//! its link carries frames. Each new frame counts half (spec "Relay choice"). A neighbour without margin stays in the
-//! table: it is alive.
+//! (spec "Next hop"). The average takes in every reading of the link,
+//! each new one counting half (spec "Relay choice"): every frame heard
+//! from the neighbour, heartbeats, its DATA and its ACKs, which are the
+//! best evidence that its link carries frames; and each heartbeat of the
+//! neighbour that was due on this node's channel and not heard, as a
+//! reading at the floor weighted by the chance the radio would have
+//! heard it, the share of the heartbeat's window it listened through
+//! ([`Neighbours::missed`]), since an average of the frames that got
+//! through alone stands above the link (spec "Heartbeat"). A neighbour
+//! without margin stays in the table: it is alive.
 //!
 //! [`FADE_DEPTH_DB`]: crate::radio::FADE_DEPTH_DB
 //!
@@ -174,12 +180,22 @@ pub struct Neighbour {
     /// the consecutive rotations of its beats in which one was heard here,
     /// up to [`BEATS`] ([`Neighbour::stays_anchorless`]).
     pub beats: u8,
-    /// When its last heartbeat heard started, and on which channel: with its
-    /// fixed interval, when its next comes to any channel
+    /// When its last heartbeat heard in a slot started, or a slot of its
+    /// that passed unheard ([`Neighbours::slot_passed`]), and on which
+    /// channel: with its fixed interval, when its next comes to any channel
     /// ([`Neighbours::next_beat`]).
     pub beat_at: Instant,
     /// See `beat_at`.
     pub beat_on: Channel,
+    /// Whether `beat_at` is from a heartbeat heard in a slot, so that its
+    /// slots can be timed; not from a burst, which is in no slot (spec
+    /// "Heartbeat").
+    pub slotted: bool,
+    /// How long the radio had been away from listening, in all, when the
+    /// window of its next heartbeat on this channel opened, once it has
+    /// (`relay/heartbeat.rs`, `count_missed_heartbeats`): what it has been
+    /// away since then is the share of the window it may have missed.
+    pub away_base: Option<u32>,
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
@@ -484,6 +500,8 @@ impl Neighbours {
             beats: 1,
             beat_at: now,
             beat_on: hb.home,
+            slotted: false,
+            away_base: None,
             answered: 0,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
@@ -502,11 +520,51 @@ impl Neighbours {
         }
     }
 
-    /// A heartbeat of `id` was heard on channel `on` at `now`.
+    /// A heartbeat of `id` in one of its slots was heard on channel `on`,
+    /// starting at `now`.
     pub fn beat_heard(&mut self, id: NodeId, on: Channel, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
             n.beat_at = now;
             n.beat_on = on;
+            n.slotted = true;
+            n.away_base = None;
+        }
+    }
+
+    /// A heartbeat of `id`'s burst was heard: it has just switched on, and
+    /// its slots are not known until one is heard (spec "Heartbeat").
+    pub fn burst_heard(&mut self, id: NodeId) {
+        if let Some(n) = self.entry_mut(id) {
+            n.slotted = false;
+        }
+    }
+
+    /// The slot of `id`'s heartbeat on this node's channel, due at `at`,
+    /// has passed: its next comes a rotation of its `interval` later.
+    pub fn slot_passed(&mut self, id: NodeId, at: Instant, on: Channel) {
+        if let Some(n) = self.entry_mut(id) {
+            n.beat_at = at;
+            n.beat_on = on;
+            n.away_base = None;
+        }
+    }
+
+    /// The window of `id`'s next heartbeat on this channel opened with the
+    /// radio away `away_us` in all so far.
+    pub fn window_opened(&mut self, id: NodeId, away_us: u32) {
+        if let Some(n) = self.entry_mut(id) {
+            n.away_base = Some(away_us);
+        }
+    }
+
+    /// A heartbeat of `id` was due on this node's channel and not heard:
+    /// a reading at the floor, `floor_dbm`, with the weight of a frame
+    /// heard times `heard_chance`, the chance the radio would have heard
+    /// it, the share of its window the radio listened through (spec
+    /// "Heartbeat").
+    pub fn missed(&mut self, id: NodeId, floor_dbm: i16, heard_chance: f32) {
+        if let Some(n) = self.entry_mut(id) {
+            n.rssi += (floor_dbm as f32 - n.rssi) * heard_chance.clamp(0.0, 1.0) / 2.0;
         }
     }
 

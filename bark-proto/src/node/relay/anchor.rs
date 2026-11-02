@@ -96,7 +96,7 @@ pub const CLOCK_DRIFT_PPM: u64 = 50;
 
 /// How far two clocks, each off by up to [`CLOCK_DRIFT_PPM`], drift apart
 /// over `d`.
-fn drift(d: Duration) -> Duration {
+pub(super) fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
 }
 
