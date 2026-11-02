@@ -66,6 +66,7 @@ use crate::tables::delivered::Delivered;
 use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE};
 use crate::tables::heard::{Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
+use crate::tables::pace::Pace;
 use crate::tables::records::Records;
 use crate::tables::send_queue::{Kind, SendQueue, State};
 use crate::time::{earlier, Duration, Instant};
@@ -310,6 +311,9 @@ pub struct Load {
     pub candidates: usize,
     /// Of `candidates`, the banned ones (spec "Bans").
     pub banned: usize,
+    /// The time one hand-over has taken lately, measured
+    /// (`tables/pace.rs`); `None` without a measurement.
+    pub pace: Option<Duration>,
 }
 
 /// A node that is not sleepy: its heard table and delivery queue at the
@@ -343,6 +347,8 @@ pub struct Node<const H: usize, const Q: usize> {
     radio: Radio,
     /// What forwarding keeps beside the send queue (`relay/forward.rs`).
     forwarding: Forwarding,
+    /// How long a hand-over has taken lately (`tables/pace.rs`).
+    pace: Pace,
     /// The application's message (`relay/forward.rs`).
     own: OwnMessage,
     /// Whether it is fixed or carried (`relay/motion.rs`).
@@ -401,6 +407,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             records: Records::new(),
             queue: SendQueue::new(),
             forwarding: Forwarding::IDLE,
+            pace: Pace::NONE,
             heard: Heard::from_config(&config),
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
@@ -458,6 +465,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             records,
             queue,
             forwarding,
+            pace,
             heard,
             motion,
             gps,
@@ -481,6 +489,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         records.clear();
         queue.clear();
         *forwarding = Forwarding::IDLE;
+        *pace = Pace::NONE;
         *heard = Heard::from_config(&config);
         *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
@@ -696,6 +705,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .live(now)
                 .filter(|(_, n)| !n.last_resort() && self.neighbours.is_banned(n, now))
                 .count(),
+            pace: self.pace.per_handover(now),
         }
     }
 

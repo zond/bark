@@ -62,17 +62,25 @@ pub(crate) struct Flight {
     until: Instant,
     /// `None` until a check of this attempt.
     lbt_since: Option<Instant>,
+    /// When the hand-over was started, for its span (`tables/pace.rs`).
+    started: Instant,
 }
 
 impl Flight {
     pub(crate) const NONE: Flight = Flight {
         until: Instant::ZERO,
         lbt_since: None,
+        started: Instant::ZERO,
     };
 
     /// Until when the hand-over in flight waits, or its ACK is due.
     pub(crate) fn until(&self) -> Instant {
         self.until
+    }
+
+    /// When the hand-over in flight was started.
+    pub(crate) fn started(&self) -> Instant {
+        self.started
     }
 }
 
@@ -158,6 +166,7 @@ impl<'a> HandOver<'a> {
         *self.flight = Flight {
             until: now,
             lbt_since: None,
+            started: now,
         };
         self.out.state = State::Waiting(Wait::Turn);
     }

@@ -42,10 +42,9 @@
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{DEPTH, LONGEST_WAIT};
+use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
 use crate::tables::records::MAX_HOPS;
-use crate::tables::{attempt_span, retrying_span, ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
@@ -61,23 +60,6 @@ pub const fn queue_for(depth: Duration) -> usize {
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 39);
-
-/// The longest one hand-over takes before it has failed: its first attempt
-/// and the retrying after it, 3.15 s (spec "Hand-over").
-const HANDOVER_SPAN: Duration = Duration::from_micros(
-    attempt_span(ACK_TIMEOUT).as_micros()
-        + retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF).as_micros(),
-);
-
-/// The most entries the queue may hold for the relay to take fresh work
-/// (spec "Receiving DATA"): one hand-over at a time, each taking up to
-/// [`HANDOVER_SPAN`] when its neighbour does not answer, so with this many
-/// ahead fresh work would start later than anything waits for a bucket.
-/// The bucket binds first while hand-overs are answered; this binds when
-/// they are not, which the bucket does not see.
-pub const LINE: usize = (LONGEST_WAIT.as_micros() / HANDOVER_SPAN.as_micros()) as usize;
-
-const _: () = assert!(LINE == 19);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.

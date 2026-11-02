@@ -1434,6 +1434,7 @@ mod tests {
                 returns: 0,
                 candidates: 0,
                 banned: 0,
+                pace: None,
             };
             l.add(&load, ms(380), ms(242), 64);
         }
