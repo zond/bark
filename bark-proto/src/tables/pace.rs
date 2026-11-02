@@ -1,7 +1,6 @@
-//! The hand-over pace (spec "Receiving DATA"): how long one hand-over has
-//! taken this relay lately, measured, so that it takes fresh work only
-//! while what it holds could be served within the longest wait at the
-//! pace it actually achieves.
+//! The hand-over pace (spec "Bans"): how long one hand-over has taken
+//! this relay lately, measured, so that a refusal for want of room can
+//! tell the time the line really takes.
 //!
 //! The bucket admits by airtime: a packet is taken to send on while the
 //! airtime of everything queued fits in the bucket. Where the bucket

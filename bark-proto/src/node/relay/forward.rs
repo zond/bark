@@ -187,7 +187,7 @@ use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{
-    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, LONGEST_WAIT, REPLY_RESERVE,
+    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
@@ -385,17 +385,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn handover_ended(&mut self, now: Instant) {
         let span = now.since(self.forwarding.flight.started());
         self.pace.ended(span, now);
-    }
-
-    /// Whether the send queue could not be served within the longest wait
-    /// at the pace this relay achieves (spec "Receiving DATA"): fresh work
-    /// is refused then, since taken it would wait here longer than
-    /// anything waits for a bucket. Without a measurement the bucket's
-    /// rule alone decides.
-    fn queue_too_long(&self, now: Instant) -> bool {
-        self.pace
-            .time_for(self.queue.len(), now)
-            .is_some_and(|t| t > LONGEST_WAIT)
     }
 
     /// How long a message of `record` to `dst` would wait here for its
@@ -811,7 +800,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else if sends {
             let air = self.data_airtime(d.payload.len());
             match self.admit(air, spend, d.hops, completes, now) {
-                Ok(_) if fresh && self.queue_too_long(now) => Some(DropReason::SendQueueFull),
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(_) if pushback > Duration::ZERO => Some(DropReason::Banned),
                 Ok(k) => {
@@ -1081,7 +1069,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
             && now >= self.timers.retry_at
-            && !self.queue_too_long(now)
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
@@ -1091,7 +1078,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the application may send again, if only the bucket and bans
     /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.own.id.is_some() || self.regular() >= SEND_QUEUE || self.queue_too_long(now) {
+        if self.own.id.is_some() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
