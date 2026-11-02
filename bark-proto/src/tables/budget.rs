@@ -149,6 +149,10 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
 
 const _: () = assert!(REPLIES == 13);
 
+/// The longest anything waits for a bucket: the refill of a whole one,
+/// 61 s (spec "Duty cycle cap").
+pub const LONGEST_WAIT: Duration = refill_time(DEPTH);
+
 /// How long a sender holds a message after the `refusals`-th refusal in a
 /// row before offering it again (spec "Bans"): one [`BAN`] after the
 /// first, doubling after each further one, up to the refill of the whole
@@ -156,7 +160,7 @@ const _: () = assert!(REPLIES == 13);
 /// ban, a full frame every 1.58 s would be a 9 % probe on the refuser's
 /// channel and spend the holder's bucket as fast as it refills.
 pub const fn hold(refusals: u8) -> Duration {
-    let cap = refill_time(DEPTH).as_micros();
+    let cap = LONGEST_WAIT.as_micros();
     let doublings = refusals.saturating_sub(1);
     let mut wait = BAN.as_micros();
     let mut k = 0;

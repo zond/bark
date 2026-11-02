@@ -192,7 +192,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Outgoing, State, LINE, SEND_QUEUE};
 use crate::tables::MOVE_ON_FAILURES;
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
@@ -778,6 +778,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else if sends {
             let air = self.data_airtime(d.payload.len());
             match self.admit(air, spend, d.hops, completes, now) {
+                Ok(_) if fresh && self.queue.len() >= LINE => Some(DropReason::SendQueueFull),
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
                 Ok(_) if pushback > Duration::ZERO => Some(DropReason::Banned),
                 Ok(k) => {
@@ -1047,6 +1048,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
             && now >= self.timers.retry_at
+            && self.queue.len() < LINE
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
@@ -1056,7 +1058,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the application may send again, if only the bucket and bans
     /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.own.id.is_some() || self.regular() >= SEND_QUEUE {
+        if self.own.id.is_some() || self.regular() >= SEND_QUEUE || self.queue.len() >= LINE {
             return None;
         }
         let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
