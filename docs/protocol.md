@@ -20,7 +20,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Band | 433.050–434.790 MHz, 10 mW effective radiated power (ERP), ≤10% duty cycle per node (legal in the EU and Ukraine) |
 | Modulation | LoRa, spreading factor (SF) 5, 125 kHz, coding rate 4/5, fixed network-wide |
 | Channels | 13 × 125 kHz; each node picks its **home channel**, the one it listens on, by measuring how busy each channel is; no fixed plan, no time sync |
-| Medium access | Listen on the home channel except to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel; listen-before-talk, then transmit at once; no time slots |
+| Medium access | Listen on the home channel except to transmit (a sleepy node receives duty-cycled between its windows); acknowledgements (ACKs) come back on the sender's home channel, sent at once; everything else listens before talking, then transmits at once; no time slots |
 | Heartbeat | A node's periodic 13-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.1 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
 | Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; a relay just switched on is heard by all within ~15 s, and those that hear it answer; no scanning, no schedules |
 | Boot | A node takes traffic from the second it is switched on, and keeps its home channel and a sleepy node's anchor across a reboot |
@@ -1049,8 +1049,9 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    then
    ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 4. Retune home immediately.
-5. Wait for the ACK **on the home channel**: timeout 100 ms (ACK airtime
-   17.0 ms plus the receiver's retune and listen-before-talk). An ACK
+5. Wait for the ACK **on the home channel**: timeout 100 ms (the ACK's
+   airtime, 17.0 ms, the receiver's retunes and turnarounds, and a reply
+   it owes already, which goes first, [the ACK](#the-ack)). An ACK
    that takes the packet ends the hand-over: the neighbour has the
    message and is tried ([message records](#message-records)). An ACK
    that has seen it ([the ACK](#the-ack)) ends it the same way, except
@@ -1118,8 +1119,8 @@ senders.
 
 #### The ACK
 
-The receiver retunes to the sender's channel, listens before talking,
-sends the ACK, and retunes home. The ACK is the first byte, the format,
+The receiver retunes to the sender's channel, sends the ACK at once,
+without listening first, and retunes home. The ACK is the first byte, the format,
 the message ID, and the IDs of the answering and the answered node:
 18 bytes, 17.0 ms ([packet formats](#packet-formats)). It answers taken,
 refused or seen, and its first byte says which: a wait of 0 takes the
@@ -1143,6 +1144,31 @@ work; a receiver that cannot afford it stays silent, and the sender's
 attempts fail and move on as for any silence (step 6). The seen answer
 only shortens that. A seen ACK that is lost costs the sender a retry,
 which the receiver answers seen again (case 3).
+
+**A take is final when the ACK has gone out.** The receiver decides on
+reception whether it takes or refuses the packet, but acts on a packet
+it takes, into its send queue, its delivery queue and its record, only
+once the ACK has left the antenna. An ACK that cannot go out, for want
+of budget or for a fault of the radio, leaves the packet untaken, and
+the sender's retry brings it again as a new packet. A packet that gives
+no work ([receiving DATA](#receiving-data) cases 1, 3, 4 and 6) is
+noted on reception: nothing is lost if its ACK never goes.
+
+*Why at once, and why final only then.* Being unable to send is not
+having answered. Sent with a listen-before-talk, the ACK waited for a
+busy channel and lapsed when its backoff passed the sender's timeout,
+while the packet stayed taken: the sender, hearing nothing, retried,
+failed and handed the message to someone else as well, and there were
+two searchers. The sender is listening for the ACK on its home channel
+and expects nothing else there in the 100 ms it waits, so the ACK
+collides with whatever is on that channel whether it listens first or
+not; listening only moved the collision to the ACK's own backoff. With
+the ACK sent at once a reply fails only for budget, which the receiver
+checks before it owes it; the take at the ACK makes a reply that fails
+all the same harmless. Measured in the simulator at three times the
+design rate, the two together deliver 9 to 29 points more with 10 to
+23 % less airtime, and at the design rate the same with 2 to 11 %
+less (roadmap D93).
 
 *Why seen, not taken.* A copy that reaches a relay that has handled the
 message and holds none of it is the search crossing itself: the relay's
@@ -1186,15 +1212,14 @@ retries as for a lost ACK. A copy of the packet the owed reply answers,
 sent again because that reply is late, is answered by it (roadmap D29).
 
 *Why one reply at a time.* A second reply would go out only after the
-first, which may wait for its channel until its own sender gives up,
-100 ms; taking a packet it may not answer in time would let its sender
-hand the message to someone else as well.
+first and its retunes; taking a packet it may not answer in time would
+let its sender hand the message to someone else as well.
 
 So ACKs too arrive on the home channel, which a node leaves only to
 transmit ([home channel selection](#home-channel-selection)). A sleepy
 node's home channel is its anchor's, so traffic between them never
-retunes. A node is deaf for 21 ms per ACK it sends, its
-listen-before-talk, the transmission's own costs and the airtime
+retunes. A node is deaf for 20 ms per ACK it sends, its two retunes,
+the transmission's own costs and the airtime
 ([heartbeat](#heartbeat)); a sender that gets no ACK retries. That is the cost of one radio.
 
 #### Bans
@@ -1517,10 +1542,10 @@ next candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
 #### Receiving DATA
 
 A relay answers a DATA packet addressed to it
-([packet sender](#packet-sender)) before acting on it, with an ACK that
-takes or refuses it, and only when it owes no other reply
-([the ACK](#the-ack)). Whether it takes the packet depends on what the
-packet gives it to do:
+([packet sender](#packet-sender)) with an ACK that takes or refuses it,
+only when it owes no other reply, and acts on a packet it takes once
+the ACK has gone out ([the ACK](#the-ack)). Whether it takes the packet
+depends on what the packet gives it to do:
 
 - **Something to send on.** It takes the packet into the regular room
   of its send queue only if the room has a place and the bucket holds,
@@ -1557,8 +1582,8 @@ packet gives it to do:
   or seen, even when it would refuse work: a refusal would send its
   sender on with a second copy.
 
-Otherwise it refuses: after listening before talking it sends an ACK
-that refuses on the channel in `aux`, changes nothing, and the sender
+Otherwise it refuses: it sends an ACK that refuses on the channel in
+`aux`, changes nothing, and the sender
 tries elsewhere at once or waits ([bans](#bans)). A relay that cannot
 afford even the reply stays silent, and its sender retries as for a
 lost ACK (roadmap D27, D29).

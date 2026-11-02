@@ -47,15 +47,15 @@
 //! and the sender's retry brings the packet again. A copy of the packet
 //! the owed reply answers is answered by it too.
 //!
-//! With `Config::take_at_ack` the take is final only when the ACK has
-//! gone out: the reply carries the DATA, and the relay acts on it at the
-//! ACK's `TxDone` ([`Relay::taken`]); an ACK that cannot go out, for want
-//! of budget or, with `Config::ack_listens_first`, of a clear channel
-//! before the sender's timeout, leaves the packet untaken, reported as
-//! refused for `DropReason::Unanswered`, and the sender's retry brings
-//! it again. Without the switch the relay acts on reception, before the
-//! ACK, and an ACK that never goes out leaves a copy the sender does not
-//! know of (spec "The ACK", roadmap D93).
+//! The take is final only when the ACK has gone out: the reply carries
+//! the DATA, and the relay acts on it at the ACK's `TxDone`
+//! ([`Relay::taken`]); an ACK that cannot go out, for want of budget or,
+//! with `Config::ack_listens_first`, of a clear channel before the
+//! sender's timeout, leaves the packet untaken, reported as refused for
+//! `DropReason::Unanswered`, and the sender's retry brings it again.
+//! With `Config::take_at_ack` off the relay acts on reception, before
+//! the ACK, as before D93, and an ACK that never goes out leaves a copy
+//! the sender does not know of (spec "The ACK", roadmap D93).
 //!
 //! A packet is ACKed without being acted on only where that cannot end the
 //! last copy (roadmap D35). A copy from a node this relay did not hand

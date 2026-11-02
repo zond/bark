@@ -174,9 +174,42 @@ fn drive_from<const H: usize, const Q: usize>(
     r: &mut Node<H, Q>,
     now: &mut Instant,
     until: Instant,
-    mut pending: Vec<Action>,
+    pending: Vec<Action>,
 ) -> Vec<(Instant, Frame)> {
     let mut sent = Vec::new();
+    drive_all(r, now, until, pending, &mut |t, a| {
+        if let Action::Transmit(f) = a {
+            sent.push((t, f));
+        }
+    });
+    sent
+}
+
+/// [`drive_from`], returning the traces instead of the frames.
+fn drive_traces<const H: usize, const Q: usize>(
+    r: &mut Node<H, Q>,
+    now: &mut Instant,
+    until: Instant,
+    pending: Vec<Action>,
+) -> Vec<Trace> {
+    let mut traces = Vec::new();
+    drive_all(r, now, until, pending, &mut |_, a| {
+        if let Action::Trace(t) = a {
+            traces.push(t);
+        }
+    });
+    traces
+}
+
+/// Drive `r` as [`drive_from`] does, handing every action with its time
+/// to `seen`.
+fn drive_all<const H: usize, const Q: usize>(
+    r: &mut Node<H, Q>,
+    now: &mut Instant,
+    until: Instant,
+    mut pending: Vec<Action>,
+    seen: &mut dyn FnMut(Instant, Action),
+) {
     loop {
         let event = match pending.pop() {
             Some(Action::Lbt(channel)) => Event::LbtDone {
@@ -186,7 +219,7 @@ fn drive_from<const H: usize, const Q: usize>(
             },
             Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
             Some(Action::Transmit(f)) => {
-                sent.push((*now, f));
+                seen(*now, Action::Transmit(f));
                 *now += mac::airtime(&f);
                 Event::TxDone
             }
@@ -196,12 +229,13 @@ fn drive_from<const H: usize, const Q: usize>(
                     *now = (*now).max(t);
                     Event::Wakeup
                 }
-                _ => return sent,
+                _ => return,
             },
         };
+        let t = *now;
         r.handle(event, *now, &mut |a| match a {
             Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
-            _ => {}
+            a => seen(t, a),
         });
     }
 }
@@ -506,7 +540,8 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
 /// owed-reply place holding the first one's ACK, which waits out a
 /// busy channel: it is neither taken nor refused, and gets no answer.
 /// Its sender's retry, after the first ACK is gone, is taken (roadmap
-/// D29 rule 4).
+/// D29 rule 4). With the ACK listening first and the take on reception,
+/// the settings before D93, under which an ACK waits for its channel.
 #[test]
 fn a_packet_that_cannot_be_answered_is_not_taken() {
     use crate::event::AppEvent;
@@ -518,6 +553,8 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
         sweep_interval: hour,
         heartbeat_min: hour,
         heartbeat_max: hour,
+        take_at_ack: false,
+        ack_listens_first: true,
         ..Config::default()
     };
     let mut r = Relay::new(config, 1);
@@ -1319,8 +1356,13 @@ fn offer_timed(
         Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
         _ => {}
     });
+    // The take, and a drop at the take, come with the ACK (roadmap D93).
     let until = *now + Duration::from_millis(100);
-    drive_from(r, now, until, pending);
+    for t in drive_traces(r, now, until, pending) {
+        if let Trace::Dropped { reason, .. } = t {
+            dropped = Some(reason);
+        }
+    }
     let place = r
         .queue
         .iter()
@@ -1840,4 +1882,69 @@ fn a_return_answered_seen_is_dropped() {
     })));
     assert!(r.queue.is_empty() && r.handover_idle());
     assert!(r.holding().next().is_none());
+}
+
+/// A node, sleepy or not, that receives a DATA for itself answers it
+/// at once and hands it to its application when the ACK has gone out,
+/// not before (roadmap D93).
+#[test]
+fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
+    use crate::event::AppEvent;
+    use crate::wire::Data;
+    for external in [true, false] {
+        let hour = Duration::from_secs(3600);
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            sweep_interval: hour,
+            heartbeat_min: hour,
+            heartbeat_max: hour,
+            ..Config::default()
+        };
+        let mut r = Relay::new(config, 1);
+        let mut now = Instant::ZERO;
+        drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+        r.handle(Event::App(AppCommand::Power { external }), now, &mut |_| {});
+        let until = now + Duration::from_secs(2);
+        drive(&mut r, &mut now, until);
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: name(1),
+            dst_pos: r.config.position,
+            dst_id: r.me(),
+            hops: 1,
+            time_left: u8::MAX,
+            payload: b"for me",
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let mut pending = Vec::new();
+        let mut early = false;
+        r.handle(
+            Event::Received {
+                channel: Channel::new(3).unwrap(),
+                rssi_dbm: -80,
+                snr_db: 10,
+                bytes: &f.bytes[..f.len as usize],
+            },
+            now,
+            &mut |a| match a {
+                Action::App(AppEvent::Message { .. }) => early = true,
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+                _ => {}
+            },
+        );
+        assert!(!early, "external {external}: not before the ACK");
+        assert!(
+            matches!(pending.as_slice(), [Action::Transmit(f)] if f.channel == d.sender_home),
+            "external {external}: the ACK at once: {pending:?}"
+        );
+        let mut got = Vec::new();
+        let until = now + Duration::from_millis(200);
+        drive_all(&mut r, &mut now, until, pending, &mut |_, a| got.push(a));
+        assert!(
+            got.iter().any(|a| matches!(a, Action::App(AppEvent::Message { msg_id, .. }) if *msg_id == d.msg_id())),
+            "external {external}: {got:?}"
+        );
+    }
 }
