@@ -1190,6 +1190,9 @@ pub struct Metrics {
     pub told_waits: Vec<u64>,
     /// Seen ACKs transmitted (spec "The ACK").
     pub seen_acks_sent: u64,
+    /// Hand-overs taken, by the transmission that was answered: index 1
+    /// the first (spec "Hand-over").
+    pub taken_at_attempt: Vec<u64>,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.
@@ -1216,6 +1219,15 @@ impl Metrics {
             nodes: vec![NodeMetrics::default(); n],
             ..Metrics::default()
         }
+    }
+
+    /// A hand-over was taken on its `attempt`-th transmission.
+    pub fn taken_at_attempt(&mut self, attempt: u8) {
+        let i = attempt as usize;
+        if self.taken_at_attempt.len() <= i {
+            self.taken_at_attempt.resize(i + 1, 0);
+        }
+        self.taken_at_attempt[i] += 1;
     }
 
     /// A candidate reception at `node` on `channel`.

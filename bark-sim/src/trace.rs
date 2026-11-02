@@ -199,15 +199,24 @@ impl Tracer {
                         n.node(to),
                         until.as_micros() as f64 / 1e6
                     ),
-                    Trace::Forwarded { msg_id, to, hops } => write!(
+                    Trace::Forwarded {
+                        msg_id,
+                        to,
+                        hops,
+                        attempts,
+                    } => write!(
                         what,
-                        "forwarded {} to {} at hops {hops}",
+                        "forwarded {} to {} at hops {hops}, attempt {attempts}",
                         self.msg(msg_id, tags),
                         n.node(to)
                     ),
-                    Trace::ReturnedToParent { msg_id, to } => write!(
+                    Trace::ReturnedToParent {
+                        msg_id,
+                        to,
+                        attempts,
+                    } => write!(
                         what,
-                        "returned {} to {}",
+                        "returned {} to {}, attempt {attempts}",
                         self.msg(msg_id, tags),
                         n.node(to)
                     ),

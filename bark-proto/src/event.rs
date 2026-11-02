@@ -351,6 +351,9 @@ pub enum Trace {
         to: NodeId,
         /// The count it carried (spec "Hop count").
         hops: u8,
+        /// The transmissions the hand-over took, the last one answered
+        /// (spec "Hand-over").
+        attempts: u8,
     },
     /// The parent acknowledged the message, returned to it because no
     /// neighbour was left to try (spec "Return to parent").
@@ -359,6 +362,9 @@ pub enum Trace {
         msg_id: MsgId,
         /// The parent.
         to: NodeId,
+        /// The transmissions the hand-over took, the last one answered
+        /// (spec "Hand-over").
+        attempts: u8,
     },
     /// The receiver of a hand-over answered seen: it has the message's
     /// record and no copy of it. This node counts it tried and goes on to

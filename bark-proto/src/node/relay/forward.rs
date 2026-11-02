@@ -1828,11 +1828,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     msg_id: id,
                     to,
                     hops: d.hops,
+                    attempts: out.tries,
                 }
             }
-            Kind::Return | Kind::Deliver | Kind::Direct => {
-                Trace::ReturnedToParent { msg_id: id, to }
-            }
+            Kind::Return | Kind::Deliver | Kind::Direct => Trace::ReturnedToParent {
+                msg_id: id,
+                to,
+                attempts: out.tries,
+            },
         };
         emit(Action::Trace(trace));
     }
