@@ -14,6 +14,7 @@ pub mod boots;
 pub mod geo;
 mod gps;
 pub mod links;
+pub mod margin;
 pub mod metrics;
 pub mod phy;
 mod power;

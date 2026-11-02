@@ -336,6 +336,9 @@ impl Sim {
                 1
             };
             self.addressed.insert(tx_key, (d.0, d.1, state));
+            if let Some(WirePacket::Data(d)) = &decoded {
+                self.margin_start(tx_key, src, d, ch, state, air);
+            }
         }
         self.push(end, crate::sim::Ev::AirEnd(slot, g));
         if !self.nodes[src as usize].present {
@@ -344,6 +347,9 @@ impl Sim {
         for i in 0..self.links.row(src).len() {
             let l = self.links.row(src)[i];
             let dbm = self.links.rx_dbm(&l, ch);
+            if self.margin_on() {
+                self.margin_rx(tx_key, l.rx, dbm);
+            }
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
@@ -366,6 +372,9 @@ impl Sim {
         };
         let extra = walks.links_from(src, start, ch, &self.xy, &self.sites);
         for l in &extra {
+            if self.margin_on() {
+                self.margin_rx(tx_key, l.rx, l.dbm);
+            }
             let a = Arrival {
                 key: tx_key,
                 channel: ch.index(),
@@ -681,6 +690,7 @@ impl Sim {
                 let how = how.unwrap_or(6) as usize;
                 self.metrics.addressed.lost_how[kind as usize][fate as usize][how] += 1;
             }
+            self.margin_end(tx.key, fate, how.or(Some(6)));
             let beats = &self.nodes[d as usize].beats;
             let (k, f, c) = (kind as usize, fate as usize, ch.index());
             if beats.during(tx.start, tx.end, c, true) {

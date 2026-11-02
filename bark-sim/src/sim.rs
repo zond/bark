@@ -633,7 +633,7 @@ pub struct Sim {
     /// The walking nodes, if any walk.
     pub(crate) walks: Option<Walks>,
     /// Where the local grid is on the Earth.
-    origin: Origin,
+    pub(crate) origin: Origin,
     /// Whether the core being handed a GPS fix (`Ev::Fix`) is.
     fixing: bool,
     /// Each node's ID, assigned here (spec "Addresses"): one per node but
@@ -814,6 +814,9 @@ pub struct Sim {
     /// DATA on air from a relay to a relay, with `tables_on`: key to the
     /// margin and distance bin of [`crate::metrics::Tables::data_by_reach`].
     pub(crate) reach_of: HashMap<u64, (usize, usize)>,
+    /// The log of what each DATA's sender knew of its next hop, when asked
+    /// for (`Sim::margin_to`).
+    pub(crate) margin: Option<crate::margin::MarginLog>,
     /// DATA on air addressed to a relay: key to the ACK that would answer
     /// it, message ID and `to`.
     pub(crate) answer_of: HashMap<u64, (u32, u64)>,
@@ -1300,6 +1303,7 @@ impl Sim {
             lost_how: HashMap::new(),
             hb_grid: Vec::new(),
             reach_of: HashMap::new(),
+            margin: None,
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
             rx_data: None,
