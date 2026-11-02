@@ -2639,3 +2639,158 @@ fn an_ack_goes_at_once_and_the_take_is_final_with_it() {
     assert!(!traces(&h, x).contains(&Trace::HandOverFailed { msg_id: id, to: ny }));
     assert_eq!(data_times(&h, x, y, id).len(), 1, "one frame, one holder");
 }
+
+/// O's neighbours B, nearest D, and C, both of which reach D, each on a
+/// home channel of its own, and with `with_x` a relay X linked to B
+/// alone; O hears a foreign carrier on B's channel once a test jams it.
+///
+/// ```text
+///        C (300, 300)
+///       / \
+///      O - B - D
+///          |
+///          X (400, -400)
+/// ```
+fn busy_channel(
+    seeds: u64,
+    o_config: Config,
+    with_x: bool,
+) -> (Harness<Relay>, bark_proto::Channel) {
+    let pinned = |c: u8, config: Config| Config {
+        home_override: bark_proto::Channel::new(c),
+        ..config
+    };
+    let (o, b, c, d, x) = (0, 1, 2, 3, 4);
+    let mut nodes = vec![
+        relay_with(0.0, 0.0, seeds, pinned(8, o_config)),
+        relay_with(400.0, 0.0, seeds + 1, pinned(2, Config::default())),
+        relay_with(300.0, 300.0, seeds + 2, pinned(5, Config::default())),
+        relay_with(800.0, 0.0, seeds + 3, pinned(11, Config::default())),
+    ];
+    let mut links = vec![(o, b), (o, c), (b, d), (c, d)];
+    if with_x {
+        nodes.push(relay_with(400.0, -400.0, seeds + 4, Config::default()));
+        links.push((x, b));
+    }
+    let h = build(nodes, &links);
+    let b_home = core(&h, b).home();
+    assert_eq!(b_home, ch(2));
+    (h, b_home)
+}
+
+/// Listen-before-talk give-ups at relay `i` for message `id`: the
+/// receiver of each.
+fn gave_up(h: &Harness<Relay>, i: usize, id: MsgId) -> Vec<NodeId> {
+    traces(h, i)
+        .into_iter()
+        .filter_map(|t| match t {
+            Trace::ChannelBusy { msg_id, to, .. } if msg_id == id => Some(to),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A busy channel keeps the hand-over on the same neighbour (spec
+/// "Hand-over" step 2, roadmap D96): O listens for B's channel, gives
+/// up every 500 ms, waits and listens again, and never offers the
+/// message to C. Nothing is counted against B. Once the carrier is
+/// gone, B takes it.
+#[test]
+fn a_busy_channel_keeps_the_hand_over_on_the_same_neighbour() {
+    use bark_proto::tables::RETRY_BACKOFF;
+    let (mut h, b_home) = busy_channel(181, Config::default(), false);
+    let (o, b, c, d) = (0, 1, 2, 3);
+    h.jam(o, b_home);
+    let id = send(&mut h, o, d, b"through the noise");
+    h.run_for(secs(10));
+    let nb = core(&h, b).id();
+    let to_b = gave_up(&h, o, id);
+    assert!(to_b.len() >= 10, "{} give-ups", to_b.len());
+    assert!(to_b.iter().all(|&to| to == nb), "{to_b:?}");
+    assert!(h.nodes[o]
+        .sent
+        .iter()
+        .all(|(_, f)| data_names(f.payload()).is_none()));
+    assert!(forwards(&h, o, id).is_empty());
+    assert!(!delivered(&h, d, id));
+    // Each give-up waits at most the window before any transmission,
+    // one unit, on top of its 500 ms of checks.
+    let waits: Vec<Duration> = h.nodes[o]
+        .traces
+        .iter()
+        .filter_map(|(t, tr)| match tr {
+            Trace::ChannelBusy { until, .. } => Some(until.since(*t)),
+            _ => None,
+        })
+        .collect();
+    assert!(waits.iter().all(|&w| w <= RETRY_BACKOFF), "{waits:?}");
+    let entry = *core(&h, o).neighbours().find(|n| n.id == nb).unwrap();
+    assert_eq!(entry.fail_count, 0, "a busy channel is no failure");
+    assert!(entry.banned_until <= h.now, "a busy channel is no ban");
+
+    h.unjam(o, b_home);
+    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, id)));
+    assert_eq!(forwards(&h, o, id), vec![nb]);
+    assert_eq!(data_sent(&h, o, c), 0, "offered to C");
+    no_drops(&h);
+}
+
+/// A refusal still moves the message: it is an answer, and the next
+/// hop is chosen at once (spec "Bans"). The test
+/// `a_ban_excludes_the_neighbour_and_expires` has it; here the busy
+/// channel comes first, and the refusal that follows ends the wait.
+#[test]
+fn a_refusal_after_a_busy_channel_moves_the_message() {
+    let (mut h, b_home) = busy_channel(191, Config::default(), true);
+    let (o, b, c, d, x) = (0, 1, 2, 3, 4);
+    // X fills B's queue while B's frames are lost.
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, _, bytes| {
+        losing.get() && from == b && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
+    fill(&mut h, x, b, d);
+    h.jam(o, b_home);
+    let id = send(&mut h, o, d, b"refused later");
+    h.run_for(secs(3));
+    assert!(forwards(&h, o, id).is_empty());
+    assert!(!gave_up(&h, o, id).is_empty());
+    h.unjam(o, b_home);
+    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, id)));
+    let nb = core(&h, b).id();
+    assert!(traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb)));
+    assert_eq!(forwards(&h, o, id), vec![core(&h, c).id()]);
+}
+
+/// The time to live still ends a message that waits for a channel
+/// (spec "Time to live"): O drops it where it waits, never having
+/// offered it to C.
+#[test]
+fn the_time_to_live_ends_a_message_waiting_for_a_channel() {
+    let short = Config {
+        delivery_ttl: secs(30),
+        ..Config::default()
+    };
+    let (mut h, b_home) = busy_channel(201, short, false);
+    let (o, _b, c, d) = (0, 1, 2, 3);
+    h.jam(o, b_home);
+    let sent_at = h.now;
+    let id = send(&mut h, o, d, b"runs out");
+    let expired = Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::Expired,
+    };
+    assert!(h.run_until(sent_at + secs(60), |h| traces(h, o).contains(&expired)));
+    assert!(
+        h.now.since(sent_at) < secs(30),
+        "{:?}",
+        h.now.since(sent_at)
+    );
+    assert!(gave_up(&h, o, id).len() >= 20);
+    assert!(forwards(&h, o, id).is_empty());
+    assert_eq!(data_sent(&h, o, c), 0);
+    assert!(!delivered(&h, d, id));
+    assert!(h.run_until(h.now + secs(5), |h| h.accepts(o)));
+}

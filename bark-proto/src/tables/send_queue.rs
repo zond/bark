@@ -118,6 +118,8 @@ pub enum Wait {
     Turn,
     /// A random backoff after a busy check.
     Backoff,
+    /// The receiver's channel, after listen-before-talk gave up on it.
+    Channel,
     /// An owed reply, which goes first.
     Reply,
     /// The duty-cycle budget.

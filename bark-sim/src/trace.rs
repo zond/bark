@@ -192,6 +192,13 @@ impl Tracer {
                         self.msg(msg_id, tags),
                         until.as_micros() as f64 / 1e6
                     ),
+                    Trace::ChannelBusy { msg_id, to, until } => write!(
+                        what,
+                        "hand-over of {} to {} waits for the channel until {:.3} s",
+                        self.msg(msg_id, tags),
+                        n.node(to),
+                        until.as_micros() as f64 / 1e6
+                    ),
                     Trace::Forwarded { msg_id, to, hops } => write!(
                         what,
                         "forwarded {} to {} at hops {hops}",

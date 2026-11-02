@@ -2474,6 +2474,14 @@ impl Sim {
                 if let Trace::Role { sleepy } = t {
                     self.battery_turn(sleepy);
                 }
+                // The core's instant is on its own clock.
+                let busy_wait = match t {
+                    Trace::ChannelBusy { until, .. } => self.clocks[node as usize]
+                        .true_time(until)
+                        .since(self.now)
+                        .as_micros(),
+                    _ => 0,
+                };
                 let c = &mut self.metrics.nodes[node as usize].core;
                 match t {
                     Trace::HomeChannelMoved { from, to } if !self.was_booting => {
@@ -2501,6 +2509,10 @@ impl Sim {
                     }
                     Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
+                    Trace::ChannelBusy { .. } => {
+                        c.lbt_gave_up += 1;
+                        c.busy_wait_us += busy_wait;
+                    }
                     Trace::Demoted { .. } => c.demoted += 1,
                     Trace::MoveSign {
                         surprises,

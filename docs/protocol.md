@@ -1001,11 +1001,12 @@ it is not dropped. Two reserves stay in the bucket:
   reserve**, 235 ms: the heartbeat, and the refusals the bucket refills
   while a sender retries an unanswered hand-over.
 
-*Why the reply reserve.* The retrying takes 2.41 s: the two retry
-waits, 311 + 622 ms, and two more attempts, each up to 500 ms of
+*Why the reply reserve.* The retrying takes at least 2.41 s: the two
+retry waits, 311 + 622 ms, and two more attempts, each up to 500 ms of
 listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
-([hand-over](#hand-over)). The bucket refills 9.83 % × 2.41 s =
-237.0 ms of it, ⌊237.0 / 17.0⌋ = 13 refusals of 17.0 ms
+([hand-over](#hand-over)); a channel that stays busy makes it longer,
+and the bucket refills more meanwhile. The bucket refills 9.83 % ×
+2.41 s = 237.0 ms of it, ⌊237.0 / 17.0⌋ = 13 refusals of 17.0 ms
 ([the ACK](#the-ack)).
 
 A relay takes new work into the regular room of its send queue only if
@@ -1037,12 +1038,13 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    attempt.
 2. Listen-before-talk: one check, the CAD with the channel's RSSI read
    during it ([heartbeat](#heartbeat)). Random backoff 0–50 ms if busy,
-   retry; give up after 500 ms and choose the next hop again
-   ([next hop](#next-hop)), without counting a failure against the
-   neighbour. The neighbour is set aside for this hand-over only, so the
-   next choice is a different one. For a return to the parent or a
-   delivery to a sleepy node ([delivery](#delivery)), which have no
-   other candidate, a give-up counts as one attempt.
+   retry. Once the checks of one attempt have found the channel busy
+   for 500 ms, the hand-over gives the radio up for a retry wait
+   ([retry wait](#retry-wait)), then listens again for the same
+   neighbour, with the transmissions it has made and a fresh 500 ms.
+   Nothing is counted against the neighbour. For a return to the
+   parent or a delivery to a sleepy node ([delivery](#delivery)), which
+   have no other candidate, a give-up counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
    and is in the format below ([packet formats](#packet-formats)). Its preamble is the shortest, or
    the long one to a sleepy neighbour, as the neighbour table has it
@@ -1066,12 +1068,30 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    ([bans](#bans)). The message waits in its place for the ban and is
    offered to the same neighbour again, with three fresh attempts.
    - Once a failure has demoted the neighbour, the message instead
-     chooses the next hop at once: the neighbour is set aside for this
-     hand-over, as in step 2, but not counted as tried.
+     chooses the next hop at once: the neighbour is **set aside** for
+     this hand-over, no candidate until the hand-over ends, but not
+     counted as tried.
    - A return waits for its parent the same way and is dropped when a
      failure demotes the parent ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
      hand-over ([delivery queue](#delivery-queue)).
+
+**An attempt is a transmission.** A busy channel never moves a message
+to another neighbour (step 2); what moves it is an answer, a refusal
+([bans](#bans)) or seen (step 5), or three transmissions unanswered
+(step 6). A channel that stays busy holds the message, as a ban does
+([overload waits](#overload-waits)), until its time runs out
+([time to live](#time-to-live)); the message spends no airtime
+meanwhile, so the duty cycle cap does not bound the wait (roadmap D96).
+
+*Why a busy channel moves nothing.* The channel is heard at the sender
+and says nothing about the neighbour: not that it lacks the message,
+which a transmission may have brought it, nor that it is full or gone.
+Passed over before any transmission, the message takes the longer way
+round on the same full channels, which is what a ban keeps it from
+([bans](#bans)); passed over after one, it is offered to a second
+neighbour while the first may hold it, and the two copies search on
+apart, which is how a storm starts (roadmap D89, D96).
 
 **Format.** A DATA goes to a neighbour in the newest format both speak:
 
@@ -1100,7 +1120,9 @@ The wait before the retry after the k-th unanswered transmission is
 uniform in [0, 2^k × 155.5 ms]: 0–311 ms, then 0–622 ms. For a hand-over
 whose frame has the long preamble the unit is 389.8 ms. The
 listen-before-talk backoff of step 2 stays short: it waits for a channel
-the sender can hear to clear, and checks again (roadmap D22).
+the sender can hear to clear, and checks again (roadmap D22). A
+hand-over whose listen-before-talk gave up (step 2) waits the window of
+the transmissions it has made, one unit before any, and listens again.
 
 *Why that unit.* 155.5 ms is how long one hand-over holds its receiver,
 a full frame (138.6 ms) and its ACK (17.0 ms). A hand-over whose frame
@@ -1116,6 +1138,11 @@ than one hand-over apart, which for full frames and a window of W units
 happens with probability (1 − 1/W)²: never with one unit, 1/4 with two,
 9/16 with four. Doubling per attempt also spreads more than two such
 senders.
+
+*Why a give-up waits the same window.* The backoff waits for a frame to
+end, and a channel busy for 500 ms, longer than any frame, is held by
+one hand-over after another: the wait is in their unit, and the senders
+waiting for the same channel come apart as retrying ones do.
 
 #### The ACK
 
@@ -1232,10 +1259,10 @@ Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
-([receiving DATA](#receiving-data)). The sender treats it as a
-listen-before-talk give-up (step 2): the neighbour is set aside for this
-hand-over, not counted as tried, no failure is counted, and the next hop
-is chosen at once. A return to the parent has no other candidate: it
+([receiving DATA](#receiving-data)). The sender sets the neighbour
+aside for this hand-over ([hand-over](#hand-over) step 6): not counted
+as tried, no failure counted, and the next hop chosen at once. A return
+to the parent has no other candidate: it
 waits in the send queue until the ban ends and goes again, the refused
 transmission not counting as one of its attempts.
 
@@ -1470,8 +1497,8 @@ those:
 
 - in the tried set ([message records](#message-records));
 - banned ([bans](#bans));
-- set aside for the current hand-over because they did not take it
-  (hand-over, steps 2 and 6).
+- set aside for the current hand-over: they refused it ([bans](#bans))
+  or a failure demoted them ([hand-over](#hand-over) step 6).
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a
@@ -1779,7 +1806,8 @@ sender stamps the time as the frame goes out.
 
 With one unit or less left, a message can no longer be sent with any,
 and its time is gone. The relay drops it wherever it waits in the send
-queue, for its turn, the bucket or a ban, in a hop place or as a return,
+queue, for its turn, the bucket, a busy channel or a ban, in a hop place
+or as a return,
 and drops one whose frame is on air at its next attempt. A packet that
 arrives with its time gone is no work: the relay takes it, as in cases
 1, 3 and 4 of [receiving DATA](#receiving-data), and the message ends
