@@ -161,6 +161,24 @@ impl Sim {
         let air = end.since(start).as_micros();
         let frame = tx.frame;
         let decoded = WirePacket::decode(frame.payload()).ok();
+        let kind = match decoded {
+            Some(WirePacket::Data(_)) => 0,
+            Some(WirePacket::Ack(_)) => 1,
+            Some(WirePacket::Heartbeat(h)) if !h.sleepy => 2,
+            Some(WirePacket::Heartbeat(_)) => 3,
+            None => 6,
+        };
+        self.air_kinds.insert(tx_key, (kind, src));
+        if let Some(WirePacket::Heartbeat(h)) = decoded {
+            let in_slot = !h.sleepy
+                && !h.anchorless
+                && preamble < sniff::LONG_PREAMBLE_SYMBOLS
+                && src < self.relays()
+                && start >= self.settle;
+            if in_slot {
+                self.note_heartbeat_phase(src, start, h.id);
+            }
+        }
         let msg = match decoded {
             Some(WirePacket::Data(d)) => Some((d.msg_id(), d.hops, FrameKind::Data)),
             Some(WirePacket::Ack(a)) if a.refused => Some((a.msg_id, 0, FrameKind::Refused)),
@@ -365,6 +383,84 @@ impl Sim {
         }
         if let Some(tx) = self.txs[slot as usize].as_mut() {
             tx.extra = extra;
+        }
+    }
+
+    /// A relay's heartbeat in a slot started at `start`: where it falls
+    /// against the relay's grid, in the relay's own clock. The grid is the
+    /// earliest phase seen, so a first heartbeat that was late shows the
+    /// ones before the earliest as later than they were, by its lateness.
+    fn note_heartbeat_phase(&mut self, src: u32, start: Instant, id: bark_proto::NodeId) {
+        let local = self.clocks[src as usize].local(start);
+        if self.hb_grid.len() <= src as usize {
+            self.hb_grid.resize(src as usize + 1, None);
+        }
+        let interval = bark_proto::node::heartbeat_interval(id, self.relay(src).config());
+        let Some((t0, t)) = self.hb_grid[src as usize] else {
+            self.hb_grid[src as usize] = Some((local, interval));
+            return;
+        };
+        let off = local.since(t0).as_micros() % t.as_micros().max(1);
+        let off = if off * 2 > t.as_micros() {
+            // Earlier than the grid: the grid moves to it.
+            self.hb_grid[src as usize] = Some((t0 - Duration::from_micros(t.as_micros() - off), t));
+            0
+        } else {
+            off
+        };
+        let bin = (off / 40_000).min(24) as usize;
+        self.metrics.addressed.heartbeat_late[bin] += 1;
+    }
+
+    /// How the frame `key` on the air at `b` is classed for
+    /// `Addressed::lost_how`, where it meets the frame `other`; `later`
+    /// says whether `key` started after `other`.
+    fn how_of(&self, b: u32, key: Option<u64>, other: u64, later: bool) -> u8 {
+        let Some(k) = key else {
+            return 6;
+        };
+        match self.air_kinds.get(&k) {
+            Some(&(0, src)) => {
+                if self.addressed.get(&k).is_some_and(|a| a.0 == b) {
+                    let Some(&(_, other_src)) = self.air_kinds.get(&other) else {
+                        return 1;
+                    };
+                    // Whether the later sender could hear the earlier
+                    // frame when it checked the channel.
+                    let (from, to) = if later {
+                        (other_src, src)
+                    } else {
+                        (src, other_src)
+                    };
+                    let audible = self
+                        .links
+                        .get(from, to)
+                        .is_some_and(|l| l.base_dbm as f64 >= self.sens_dbm);
+                    if audible {
+                        7
+                    } else {
+                        1
+                    }
+                } else {
+                    2
+                }
+            }
+            Some(&(1, _)) => 3,
+            Some(&(2, _)) => 4,
+            Some(&(3, _)) => 5,
+            _ => 6,
+        }
+    }
+
+    /// Note how `b` lost the frame `key`, if it was addressed to `b`.
+    fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, how: u8) {
+        if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
+            let how = match o {
+                Outcome::BelowSensitivity => 0,
+                Outcome::LostCapture | Outcome::SinrFail { .. } => how,
+                _ => 6,
+            };
+            self.lost_how.insert(key, how);
         }
     }
 
@@ -580,6 +676,11 @@ impl Sim {
                 }
             }
             self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
+            let how = self.lost_how.remove(&tx.key);
+            if fate != 0 {
+                let how = how.unwrap_or(6) as usize;
+                self.metrics.addressed.lost_how[kind as usize][fate as usize][how] += 1;
+            }
             let beats = &self.nodes[d as usize].beats;
             let (k, f, c) = (kind as usize, fate as usize, ch.index());
             if beats.during(tx.start, tx.end, c, true) {
@@ -589,6 +690,7 @@ impl Sim {
                 self.metrics.addressed.with_heartbeat[k][f] += 1;
             }
         }
+        self.air_kinds.remove(&tx.key);
         let mut bytes = [0u8; MAX_FRAME];
         let len = tx.frame.len as usize;
         bytes[..len].copy_from_slice(tx.frame.payload());
@@ -683,6 +785,7 @@ impl Sim {
             return;
         }
         let mut locked = false;
+        let mut lost_on = None;
         if let (Some(p), 0) = (packet, offset) {
             self.metrics.candidate(b, a.channel);
             // A duty-cycled receiver takes the packet only once a window
@@ -710,12 +813,17 @@ impl Sim {
                         locked = true;
                         None
                     }
-                    Lock::Rx(_) => Some(Outcome::LostCapture),
+                    Lock::Rx(r) => {
+                        lost_on = Some(r.key);
+                        Some(Outcome::LostCapture)
+                    }
                 }
             };
             if let Some(o) = outcome {
+                let how = self.how_of(b, lost_on, a.key, false);
                 self.metrics.outcome(b, a.channel, o);
                 self.note_to_sleepy(a.key, b, o);
+                self.note_addressed_loss(a.key, b, o, how);
             }
             if locked {
                 let st = &mut self.nodes[b as usize];
@@ -731,6 +839,7 @@ impl Sim {
                     caught: caught.flatten().map(Instant::from_micros),
                     preamble_weight: p.preamble_weight,
                     max_i_mw: 0.0,
+                    max_i_how: 6,
                     spent: 0.0,
                     budget,
                     since: now,
@@ -785,6 +894,7 @@ impl Sim {
         };
         self.metrics.outcome(b, r.channel, o);
         self.note_to_sleepy(r.key, b, o);
+        self.note_addressed_loss(r.key, b, o, r.max_i_how);
         if r.threshold_ok {
             self.metrics.disagreement(b, r.channel, false);
         }
@@ -838,10 +948,20 @@ impl Sim {
         if r.rated_for == Some((co, adj)) {
             return;
         }
+        let strongest = st
+            .arrivals
+            .iter()
+            .filter(|a| a.key != r.key && a.channel == rest.index())
+            .max_by(|x, y| x.mw.total_cmp(&y.mw))
+            .map(|a| a.key);
         r.rated_for = Some((co, adj));
         (r.rate, r.cause) = self.curve.hazard(r.dbm, co, adj);
-        r.max_i_mw = r.max_i_mw.max(co + adj);
+        if co + adj > r.max_i_mw {
+            r.max_i_mw = co + adj;
+            r.max_i_how = self.how_of(b, strongest, r.key, true);
+        }
         r.threshold_ok &= self.curve.passes_threshold(r.dbm, co + adj);
+        let st = &mut self.nodes[b as usize];
         st.lock = Lock::Rx(r);
         self.settle(b);
     }

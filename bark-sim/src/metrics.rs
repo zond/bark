@@ -309,6 +309,23 @@ pub struct Addressed {
     pub with_beat: [[u64; 5]; 4],
     /// The same for the heartbeat of a node that is not sleepy.
     pub with_heartbeat: [[u64; 5]; 4],
+    /// Of `counts`, the frames lost, `[kind][fate][how]`: 0 noise was the
+    /// larger part of what the frame faced; else the strongest frame on
+    /// the air at the receiver while it was lost was 1 a DATA addressed to
+    /// that receiver from a sender the later of the two senders could not
+    /// hear (its link from the earlier one, in the link table, below
+    /// sensitivity: a hidden pair), 7 one it could hear, 2 a DATA to
+    /// another node, 3 an ACK, 4 a relay's heartbeat, 5 a sleepy node's
+    /// beat; 6 none of these: the receiver deaf after a frame it lost
+    /// past its header, which the fates count as free, adjacent-channel
+    /// leakage, or an interferer. Links with a walker are not in the
+    /// table, so such a pair counts as hidden.
+    pub lost_how: [[[u64; 8]; 5]; 4],
+    /// A relay's heartbeats in their slots after the settle time, by how
+    /// far behind its slot grid each started, in its own clock: 40 ms
+    /// bins, the last holding 960 ms and more. The grid is the earliest
+    /// phase seen (`Sim::hb_grid`).
+    pub heartbeat_late: [u64; 25],
     /// Of the DATA frames received, `[relay's, leaf's][answer]`: an ACK that
     /// takes it, one that refuses it, either started later than the ACK
     /// timeout after the frame's end, or none.
