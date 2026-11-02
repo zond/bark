@@ -1,10 +1,12 @@
 # A neighbour silent past its demotion is tried: the search goes back
 
-**Date:** 2026-10-31, the dense-power runs 2026-11-02. **Status:**
-built and measured; roadmap D95, **not adopted as built**: it brings
-the dense-power storm back, since a neighbour that silently took the
-message is never offered it again and the split's copies no longer
-merge. Spec references are to `protocol.md`. Measured against main
+**Date:** 2026-10-31, the dense-power runs and variant (b)
+2026-11-02. **Status:** built and measured; roadmap D95, **not adopted
+as built**: it brings the dense-power storm back, since a neighbour
+that silently took the message is never offered it again and the
+split's copies no longer merge. Variant (b), the mark counting only
+while the neighbour is demoted, measured on a later base and **not
+adopted** either (the last section). Spec references are to `protocol.md`. Measured against main
 `09b7d73`, with D90 in, release builds of both, the same scenario files
 and seeds.
 
@@ -344,7 +346,8 @@ counts the texts of one relay as unreachable:
   each; the spread between seeds of the former was seven points in the
   D90 note. The storm's sign and size on dense-power need no more
   seeds; the S4 gain's size is not settled.
-- **The variants below.** Neither is built or measured.
+- **The variants below.** Variant (a) is not built; (b) is measured
+  in the last section.
 - **A line with a faint link that sometimes works.** The table above is
   arithmetic; no scenario here has such a link as the only way on.
 - **The board.** Nothing here was run on hardware.
@@ -362,10 +365,9 @@ for a trap that bit 3 682 searches. The two silences the rule reads as
 often "this link carries the message and loses the ACK", and nothing
 in the sender's record tells them apart.
 
-Two ways to keep the trap's cure without the split's cost, both
-unbuilt:
+Two ways to keep the trap's cure without the split's cost:
 
-- **Silence past the demotion as a reason not to wait, not a tried
+- **(a) Silence past the demotion as a reason not to wait, not a tried
   mark.** The silent bit keeps a message from waiting for that
   neighbour's ban, and from nothing else: when the message is routed
   again and the neighbour is live and not banned, it is offered again,
@@ -378,7 +380,7 @@ unbuilt:
   comes back, which in a storm, where the ladder climbs by other
   messages' failures, may be most of them. `ban_ends` alone reads the
   bit; `hop` and `others_open` go back to `handed`.
-- **A silent mark that lifts with the demotion.** The bit stays per
+- **(b) A silent mark that lifts with the demotion.** The bit stays per
   message but counts only while the neighbour is demoted: an ACK from
   the neighbour to any hand-over ends its demotion
   (spec "Neighbour table") and with it the mark, so a neighbour that is
@@ -391,3 +393,185 @@ unbuilt:
 
 The second keeps more of D42 and is the one to measure first, on
 `dense-power.toml` seeds 1 and 7 before anything else.
+
+## Variant (b), measured
+
+**Date:** 2026-11-02. Variant (b) above, built on main `8ff3a74`, which
+has D93 (`storm-ack-2026-10-31.md`) but not D96 or D102. The code is on
+the branch `worktree-agent-a7dcf1e57960c8617` at `e09b541`; it is not
+on main.
+
+### The rule as built
+
+The first form's rule, steps 1 to 6 of "The rule" above, with one
+change: the silent mark counts only while the neighbour table keeps
+the neighbour demoted. A neighbour is in the message's tried set if it
+has the message from this relay, or if it was silent for the message
+and is demoted now. Its demotion ends when it takes or answers any
+hand-over from this relay, of any message, or 390 s after the failure
+that demoted it (spec "Neighbour table"); a heartbeat or a refusal does
+not end it. From then on it is a candidate for the message again, in
+its usual place (spec "Next hop"), and if it is banned the message
+waits for the ban as for any candidate's (spec "Overload waits"). A
+copy of the message that this relay holds or takes back is offered to
+it again, and one that holds a copy answers with an ACK alone and the
+copies merge (spec "Receiving DATA" case 4). The mark itself stays
+until the slot changes hands, so a neighbour demoted again later is
+silent for the message at once. "Ended past a silent neighbour" counts
+the searches that returned or were dropped at the origin while the mark
+counted.
+
+### How it was measured
+
+As for the first form, on main `8ff3a74` and the branch at `e09b541`,
+release builds of both, the same scenario files and seeds. The city at
+twice the rate is `dense-power.toml` with twice the texts per node, as
+in `storm-busy-2026-10-31.md`; S4 at three times the rate is as above.
+"Merged" and "seen" split the copies a relay answered without taking
+them into those merged with a copy it held (case 4) and those it had
+finished with (case 6).
+
+### The tables
+
+Main / variant (b).
+
+| | dp1 | dp2 | dp7 | dp×2 s1 | dp×2 s7 | s4x1 | s4x3-s1 | movers |
+|---|---|---|---|---|---|---|---|---|
+| texts sent in the settled hour | 18234 / 18234 | 18199 / 18199 | 18189 / 18189 | 36559 / 36535 | 36595 / 36588 | 17457 / 17457 | 48831 / 48761 | 17893 / 17891 |
+| delivered, settled hour % | 97.8 / 97.8 | 98.1 / 98.2 | 98.1 / 98.1 | 88.8 / 88.5 | 89.1 / 88.9 | 93.6 / 93.5 | 63.6 / 63.7 | 96.5 / 96.6 |
+| latency p50 s | 10.2 / 9.9 | 10.0 / 9.9 | 10.0 / 9.8 | 46.5 / 46.4 | 49.1 / 46.1 | 1.4 / 1.4 | 83.0 / 95.2 | 5.4 / 5.4 |
+| latency p90 s | 47.4 / 43.6 | 43.2 / 41.0 | 45.8 / 44.1 | 349.6 / 349.2 | 349.5 / 345.2 | 187.4 / 186.7 | 582.0 / 595.4 | 52.8 / 51.5 |
+| airtime, whole run s | 283128 / 282972 | 283210 / 275716 | 271385 / 264486 | 1118451 / 1109701 | 1036475 / 1024802 | 43498 / 42880 | 150125 / 154267 | 184045 / 181642 |
+| hand-overs failed | 480395 / 462775 | 477520 / 440722 | 453585 / 421259 | 2777351 / 2723834 | 2540036 / 2485526 | 18614 / 18248 | 139390 / 143904 | 286420 / 259801 |
+| failed, receiver had it | 108676 / 102065 | 114376 / 97014 | 101670 / 85889 | 559603 / 536987 | 496462 / 481546 | 3406 / 3224 | 28661 / 29116 | 154020 / 128642 |
+| copies merged (case 4) | 2108 / 1985 | 2216 / 1828 | 1823 / 1565 | 36174 / 36178 | 32295 / 31670 | 26 / 16 | 1139 / 1150 | 1639 / 1389 |
+| copies answered seen (case 6) | 244127 / 247276 | 250721 / 233720 | 212914 / 199248 | 1001196 / 999905 | 901277 / 887368 | 7766 / 6977 | 41910 / 44816 | 211976 / 207935 |
+| returns taken from a child | 3193 / 4629 | 3510 / 4327 | 2880 / 3684 | 10038 / 11720 | 8775 / 11207 | 41 / 41 | 340 / 377 | 3312 / 3397 |
+| ended past a silent neighbour: returned | 0 / 2739 | 0 / 2508 | 0 / 2146 | 0 / 3852 | 0 / 4593 | 0 / 6 | 0 / 64 | 0 / 1903 |
+| ended past a silent neighbour: dropped at the origin | 0 / 5 | 0 / 5 | 0 / 8 | 0 / 16 | 0 / 15 | 0 / 1 | 0 / 1 | 0 / 5 |
+| hand-overs held back by the bucket | 18179 / 8326 | 18324 / 7948 | 17495 / 6882 | 1902851 / 1850628 | 1804117 / 1744647 | 46 / 87 | 710046 / 743311 | 9898 / 3275 |
+| texts lost: hop cap | 261 / 283 | 267 / 312 | 222 / 272 | 386 / 474 | 426 / 491 | 32 / 29 | 29 / 30 | 168 / 213 |
+| texts lost: TTL | 78 / 41 | 90 / 36 | 80 / 34 | 1741 / 1738 | 1599 / 1594 | 304 / 303 | 4582 / 4813 | 117 / 57 |
+| texts lost: no route | 4 / 7 | 4 / 9 | 5 / 12 | 14 / 26 | 19 / 35 | 3 / 7 | 15 / 26 | 3 / 6 |
+| texts lost: return failed | 3 / 22 | 3 / 31 | 2 / 27 | 48 / 81 | 35 / 103 | 0 / 1 | 0 / 6 | 2 / 25 |
+| texts lost: return seen | 0 / 0 | 0 / 1 | 0 / 0 | 0 / 1 | 0 / 3 | 0 / 0 | 0 / 0 | 0 / 1 |
+| texts that waited at their origin | 80 / 55 | 87 / 49 | 48 / 42 | 8430 / 8823 | 7970 / 8182 | 154 / 177 | 186140 / 194501 | 190 / 86 |
+| relays ever at their cap | 73 / 56 | 86 / 55 | 73 / 43 | 813 / 702 | 726 / 666 | 0 / 0 | 148 / 152 | 179 / 93 |
+
+The mesh and the ring:
+
+| | burst-s1 | burst-s5 | spread-s5 | ring |
+|---|---|---|---|---|
+| texts sent in the settled hour | 100 / 100 | 100 / 100 | 90 / 90 | 2964 / 2843 |
+| delivered, settled hour % | 99.0 / 100.0 | 92.0 / 93.0 | 92.2 / 96.7 | 92.6 / 94.3 |
+| latency p50 s | 3.5 / 3.5 | 1.9 / 1.9 | 0.6 / 0.6 | 41.5 / 59.4 |
+| latency p90 s | 8.9 / 8.9 | 3.8 / 4.0 | 1.0 / 4.1 | 159.2 / 156.7 |
+| airtime, whole run s | 232 / 256 | 274 / 282 | 242 / 260 | 1807 / 1829 |
+| hand-overs failed | 82 / 100 | 205 / 114 | 191 / 109 | - / - |
+| failed, receiver had it | 45 / 57 | 156 / 55 | 160 / 77 | - / - |
+| returns taken from a child | 1 / 37 | 29 / 47 | 49 / 102 | - / - |
+| texts lost: TTL | 0 / 0 | 3 / 0 | 3 / 0 | 0 / 0 |
+| texts lost: no route | 0 / 0 | 0 / 0 | 0 / 0 | 12 / 12 |
+| texts lost: return failed | 0 / 0 | 4 / 7 | 3 / 3 | 2 / 3 |
+
+### What it shows
+
+- **No storm, and no gain in delivery.** Every dense-city run is within
+  0.3 points of main in the settled hour: 97.8 / 98.1 / 98.1 → 97.8 /
+  98.2 / 98.1 % at the design rate, 88.8 / 89.1 → 88.5 / 88.9 % at twice
+  the rate, the two slightly under. S4 is level at both rates and the
+  walkers too. The spread between seeds is about ±0.3 points on the
+  city and ±2 on S4 (roadmap D96), so none of these is a result.
+- **It costs less, where the channel is not overloaded.** At the
+  design rate airtime 0 to 2.6 % less, hand-overs failed with the
+  receiver holding the message 6 to 16 % fewer, hand-overs held back by
+  the bucket less than half, and relays ever at their cap a fifth to
+  two fifths fewer; the walkers the same, 16 % fewer of those failures
+  and half the relays at their cap. These are the offers to a neighbour
+  that was silent for the message twice that a copy coming back
+  through the relay no longer makes, as in the first form's S4 run.
+  Fewer copies merge, 6 to 18 % on the city: there are fewer split
+  copies to merge, not fewer heals, since a split's receiver that
+  answers anyone is offered the copy again.
+- **The losses move; they do not shrink.** On the city the texts lost
+  at the time to live halve, 78 / 90 / 80 → 41 / 36 / 34, the ones the
+  trap held; the texts lost at the hop cap, as failed returns and as no
+  route rise by as many or more, 268 / 274 / 229 → 312 / 353 / 311. A
+  message that goes back rather than waiting spends hops on the way
+  round, and its parent is as often faint too. At twice the rate the
+  same, with no fall at the time to live, which is overload there, not
+  the trap.
+- **Under the bucket it is slower.** S4 at three times the rate,
+  latency p50 83 → 95 s, airtime 3 % more, 231 more texts at the time
+  to live and 8 361 more texts that waited at their origin: silence there is
+  the bucket, a neighbour that will answer once it has refilled, and a
+  message that goes back instead of waiting for it is carried the long
+  way.
+- **The mesh gains the trapped texts.** At seed 5 main held three
+  texts in each run until the time to live; the variant holds none. The
+  burst delivers one more and fails three more returns, the spread run
+  delivers four more, 83 → 87 of 90. The burst at seed 1 delivers its last text. The ring,
+  92.6 → 94.3 %, is within what its order of hand-overs moves between
+  builds (roadmap D102).
+- **What this does not show.** The first form was measured on
+  `09b7d73`, before D93; this variant on `8ff3a74`, after it. The base
+  with D93 no longer storms on any of these seeds, so whether the lift
+  is what keeps the storm away, or D93's fewer splits would have kept
+  the first form from storming too, is not measured.
+
+### After D102
+
+Main now has D96 and D102, and D102 changes the step this variant
+hangs on. A message whose hand-over fails holds on to the neighbour,
+demoted or not, waits for the ban its failure gave and is offered to it
+again, and moves on only after three failures in a row, the
+neighbour's or its own (spec "Hand-over" step 6). The variant set the
+mark at a failure that found the neighbour demoted, which is the
+second; on main that failure keeps the message with the neighbour, so
+the mark as built would contradict the hold. Ported, it would be set
+when the message moves on.
+
+What it would then change on main is one thing, and D102 does not
+touch it. A message that has moved on and has no other candidate left
+waits for the neighbour's ban and is offered to it again, one hand-over
+a time, the neighbour's count past three moving it on at once, then
+waits for the next, doubled ban, up to 61 s, until its time to live
+(spec "Overload waits": a banned candidate is waited for). This is the
+trap above. The D102 note names it as the tail of its holds, p90
+181.8 s and a longest of 597 s on S4 at three times the rate, the same
+at main's count of two, and leaves it as it was (`hold-2026-11-02.md`,
+"What it revealed"). A mark set at the move-on, counting while the
+neighbour stays demoted, would end that wait: the message would go
+back to its parent, or end at the origin, once its hold is over. That
+is what "a reason not to wait" still means after D102, and all it
+means.
+
+The other effect the variant had here, the offers a returning copy no
+longer made to a neighbour silent for it, is mostly D102's already: a
+message now spends its three offers on the neighbour in one hold, and
+the split it leaves behind fell by two thirds (roadmap D102). What
+remains is the offer after the hold, which the mark would stop while
+the neighbour is demoted and main makes as a last resort.
+
+### Recommendation
+
+Not adopted. On its own base it is level with main on every run that
+carries texts, a little cheaper on the city at the design rate and on
+the walkers, a little slower under the bucket, and it moves losses from
+the time to live to the hop cap and to failed returns rather than
+removing them. It does not bring the storm back, but the base no longer
+storms anyway. The code stays on its branch.
+
+A re-measurement on main `f94a7cd` would add one thing D102 left open:
+whether ending the trap's tail, the message that waits for a demoted
+last candidate's ban ladder after its hold, gains anything. It would
+need the port above, a different rule from the one measured here, and
+should be judged on S4 at three times the rate, seeds 1 and 2, where
+D102 measured the tail, and on `mesh-burst.toml` and `mesh-spread.toml`
+at seed 5, where the trapped texts are. The measurement here says what
+to expect: the trapped texts in the mesh delivered, and on the loaded
+runs the losses moved, not removed. It is not worth a run unless the
+tail is wanted gone for its own sake: a relay freed sooner, and a text
+that ends in seconds rather than minutes. How a text ends is not told
+to the sender's application (roadmap D10: no failure notices), so a
+user sees only the texts delivered, a few in the mesh.
