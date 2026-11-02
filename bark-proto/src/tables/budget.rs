@@ -67,7 +67,7 @@
 
 use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::{retrying_span, RETRY_BACKOFF};
+use crate::tables::{retrying_span, ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF};
 use crate::time::{Duration, Instant};
 use crate::wire::{ACK_LEN, AUX_MASK, HEARTBEAT_LEN};
 
@@ -130,9 +130,9 @@ const fn refill_time(d: Duration) -> Duration {
 }
 
 /// Refusals the reply reserve holds: those the bucket refills while a
-/// sender with the design's 100 ms ACK timeout and 3 attempts retries
-/// (spec "Hand-over"); see the module documentation.
-pub const REPLIES: u64 = refilled(retrying_span(Duration::from_millis(100), 3, RETRY_BACKOFF))
+/// sender with the design's ACK timeout and attempts retries (spec
+/// "Hand-over"); see the module documentation.
+pub const REPLIES: u64 = refilled(retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF))
     .as_micros()
     / ACK_AIRTIME.as_micros();
 
