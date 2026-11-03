@@ -2149,6 +2149,13 @@ What breaks it:
   link lost.
 - **Links that change** during the search, including a parent that moves
   to another home channel: parts of the graph go unsearched.
+- **A link that works one way.** A neighbour whose heartbeats this
+  relay hears but which never hears it stays live, demoted, and is a
+  candidate as a last resort ([next hop](#next-hop)). Where it is the
+  only candidate left, the message waits for it, one hand-over per ban
+  of the silence ladder, and is neither sent on nor returned, while its
+  heartbeats keep its entry: that relay's part of the search does not
+  end.
 
 ### Bounds
 
