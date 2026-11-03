@@ -51,10 +51,11 @@ pub const SENSITIVITY_PREAMBLE_SYMBOLS: u16 = 8;
 /// (docs/bench-capture-2026-11-03.md), so this stays a stand-in.
 pub const CAPTURE_DB: f64 = 5.0;
 
-/// A later frame at least this much weaker leaves the frame being received
-/// alone; one less weaker breaks it. Measured on the bench at SF5 between
-/// −4 dB (kept) and −2 dB (mostly lost), resolved to 1 dB
-/// (docs/bench-capture-2026-11-03.md, "Result").
+/// A frame at least this much weaker than the frame being received costs
+/// it nothing; a later one less weaker breaks it. Measured on the bench at
+/// SF5 between −4 dB (kept) and −2 dB (mostly lost), resolved to 1 dB, and
+/// with no loss at −3 dB over 111 ms overlaps
+/// (docs/bench-capture-2026-11-03.md, "Result", "Two long frames").
 pub const HARMLESS_BELOW_DB: f64 = 3.0;
 
 /// Probability that a receiver picks the wrong one of the 2^SF symbols at
@@ -289,7 +290,8 @@ pub struct RadioParams {
     /// [`CAPTURE_DB`].
     pub capture_db: f64,
     /// A same-channel packet that arrives after a locked packet's preamble
-    /// breaks it unless weaker by this many dB. Default
+    /// breaks it unless weaker by this many dB, and one that much weaker is
+    /// no interference to it on the error curve. Default
     /// [`HARMLESS_BELOW_DB`].
     pub harmless_below_db: f64,
     /// Adjacent-channel rejection at ±1 channel (125 kHz = 1.0 × BW) in dB.

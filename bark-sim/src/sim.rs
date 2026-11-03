@@ -141,6 +141,9 @@ pub(crate) struct Arrival {
     pub end: Instant,
     /// CAD can see it.
     pub lora: bool,
+    /// One of ours: a packet a receiver can lock to, at our spreading
+    /// factor, as opposed to an interferer burst.
+    pub frame: bool,
 }
 
 /// What a receiver's demodulator is doing.
@@ -169,9 +172,12 @@ pub(crate) struct Rx {
     pub caught: Option<Instant>,
     /// Weight of a preamble symbol in the hazard (`radio::Packet`).
     pub preamble_weight: f64,
-    /// Worst instantaneous interference so far, mW.
+    /// Worst instantaneous interference so far, harmless frames included,
+    /// mW: the reported SNR.
     pub max_i_mw: f64,
-    /// What the strongest frame on the air was then (`Addressed::lost_how`).
+    /// Worst interference so far that the hazard counted, mW, and what
+    /// the strongest frame it counted was then (`Addressed::lost_how`).
+    pub max_hurt_mw: f64,
     pub max_i_how: u8,
     /// Error hazard accrued up to `since`, and the hazard at which the
     /// packet is lost, drawn at lock.
@@ -4320,6 +4326,7 @@ impl Sim {
                         mw: phy::mw(dbm),
                         end,
                         lora,
+                        frame: false,
                     },
                     None,
                 );
@@ -4365,6 +4372,7 @@ impl Sim {
                     mw: phy::mw(dbm),
                     end,
                     lora,
+                    frame: false,
                 },
                 None,
             );

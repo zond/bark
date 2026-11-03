@@ -90,10 +90,11 @@ fn single_packet_airtime_matches_datasheet_formula() {
 }
 
 #[test]
-fn capture_holds_at_exactly_the_threshold_and_fails_just_below() {
+fn a_weaker_frame_in_the_preamble_is_harmless_at_exactly_the_level() {
     // T1 locks first; T2 arrives 0.5 ms later, inside T1's preamble but
-    // weaker. Capture threshold 5 dB.
-    for (t2, t1_survives) in [(-105.0, true), (-104.9, false), (-110.0, true)] {
+    // weaker. Harmless from 3 dB down; above that the threshold rule
+    // counts it against the 5 dB capture threshold.
+    for (t2, t1_survives) in [(-103.0, true), (-102.9, false), (-110.0, true)] {
         let sc = trio(-100.0, t2)
             .script_tx(1.0, "T1", 3, 40, 12)
             .script_tx(1.0005, "T2", 3, 40, 12);
@@ -172,14 +173,35 @@ fn a_later_packet_breaks_the_held_one_unless_weaker_by_the_harmless_level() {
         assert_eq!((r.delivered, r.lost_to_later), expect, "T2 at {t2}");
         assert_eq!(r.sinr_fail, 0, "T2 at {t2}");
     }
-    // At the defaults a packet between the two thresholds is spared by
-    // the harmless level and lost to interference under the threshold rule.
+    // At the defaults a packet between the two thresholds is harmless, so
+    // the threshold rule does not count it either.
     let p = RadioParams::default();
     assert_eq!((p.capture_db, p.harmless_below_db), (5.0, 3.0));
     let r = payload_overlap(trio(-100.0, -104.0));
-    assert_eq!((r.delivered, r.lost_to_later, r.sinr_fail), (0, 0, 1));
-    let r = payload_overlap(trio(-100.0, -105.0));
     assert_eq!((r.delivered, r.lost_to_later, r.sinr_fail), (1, 0, 0));
+}
+
+#[test]
+fn a_harmless_frame_costs_the_held_one_nothing_over_a_long_overlap() {
+    // The bench's two long frames: a 255-byte frame held, a 200-byte one
+    // arriving 10 ms in and overlapping it for 130 ms, twenty times. On
+    // the error curve, interference 3 dB down would lose nearly all of
+    // them; harmless, it costs nothing, and 0.1 dB stronger breaks each.
+    for (t2, spared) in [(-93.0, true), (-92.9, false)] {
+        let mut sc = curve_trio(-90.0, t2);
+        sc.duration_s = 12.0;
+        for i in 0..20 {
+            let t = 1.0 + i as f64 * 0.5;
+            sc = sc
+                .script_tx(t, "T1", 3, 255, MIN_PREAMBLE_SYMBOLS)
+                .script_tx(t + 0.01, "T2", 3, 200, MIN_PREAMBLE_SYMBOLS);
+        }
+        let r = rx(&run(&sc), 2);
+        assert_eq!(r.lost_capture, 20, "T2 at {t2}: {r:?}");
+        let expect = if spared { (20, 0) } else { (0, 20) };
+        assert_eq!((r.delivered, r.lost_to_later), expect, "T2 at {t2}");
+        assert_eq!((r.sinr_fail, r.below_sensitivity), (0, 0), "T2 at {t2}");
+    }
 }
 
 #[test]
@@ -317,9 +339,9 @@ fn below_sensitivity_is_counted_and_still_interferes() {
         2,
     );
     assert_eq!(r.delivered, 1);
-    // A packet 2 dB above sensitivity is killed by one 1 dB below it,
-    // which finds the receiver locked.
-    let sc = trio(s + 2.0, s - 1.0)
+    // A packet 1.5 dB above sensitivity is killed by one 1 dB below it,
+    // which arrives in its preamble and is not weaker by the harmless level.
+    let sc = trio(s + 1.5, s - 1.0)
         .script_tx(1.0, "T1", 3, 40, 12)
         .script_tx(1.002, "T2", 3, 40, 12);
     let r = rx(&run(&sc), 2);

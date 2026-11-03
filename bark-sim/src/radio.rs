@@ -17,7 +17,12 @@
 //! 2. **Survival.** While locked, every symbol may be lost, at a hazard
 //!    the error curve gives from the signal against noise and the
 //!    interference on the air (co-channel, plus ±1 and ±2 channels after
-//!    rejection). Interference changes only when a signal starts or ends,
+//!    rejection). A frame of ours on the channel weaker by the harmless
+//!    level is no interference at all: on the bench it cost the held one
+//!    nothing over a whole overlap. On the channel the curve still charges
+//!    interferer bursts, and frames less weaker that were on the air at
+//!    lock or arrived during the preamble, a case the bench has not
+//!    measured. Interference changes only when a signal starts or ends,
 //!    so the hazard is constant between those moments and is summed over
 //!    them. The packet is lost when the summed hazard reaches a budget
 //!    drawn at lock from the exponential distribution, which loses it with
@@ -46,15 +51,23 @@ use bark_proto::{Duration, Event, Instant, MAX_FRAME};
 /// margin computed through milliwatts counts as 5.0 dB.
 const DB_EPS: f64 = 1e-9;
 
-/// Interference at a receiver resting on `rest`, excluding `exclude`, as
-/// (co-channel, adjacent) milliwatts after rejection.
-fn interference(arrivals: &[Arrival], rest: u8, exclude: u64, rej: &[f64; 3]) -> (f64, f64) {
+/// Interference at a receiver resting on `rest`, excluding `exclude` and
+/// the frames on `rest` at or below `harmless_dbm`, as (co-channel,
+/// adjacent) milliwatts after rejection.
+fn interference(
+    arrivals: &[Arrival],
+    rest: u8,
+    exclude: u64,
+    harmless_dbm: f64,
+    rej: &[f64; 3],
+) -> (f64, f64) {
     let (mut co, mut adj) = (0.0, 0.0);
     for a in arrivals {
         if a.key == exclude {
             continue;
         }
         match a.channel.abs_diff(rest) {
+            0 if a.frame && a.dbm <= harmless_dbm => {}
             0 => co += a.mw,
             d @ (1 | 2) => adj += a.mw * rej[d as usize],
             _ => {}
@@ -368,6 +381,7 @@ impl Sim {
                 mw: phy::mw(dbm),
                 end,
                 lora: true,
+                frame: true,
             };
             if let Some(sleepy) = beat {
                 self.nodes[l.rx as usize]
@@ -393,6 +407,7 @@ impl Sim {
                 mw: phy::mw(l.dbm),
                 end,
                 lora: true,
+                frame: true,
             };
             if let Some(sleepy) = beat {
                 self.nodes[l.rx as usize]
@@ -892,6 +907,7 @@ impl Sim {
                     caught: caught.flatten().map(Instant::from_micros),
                     preamble_weight: p.preamble_weight,
                     max_i_mw: 0.0,
+                    max_hurt_mw: 0.0,
                     max_i_how: 6,
                     spent: 0.0,
                     budget,
@@ -998,20 +1014,34 @@ impl Sim {
         if st.ex.as_ref().is_some_and(|e| e.deaf) {
             return;
         }
-        let (co, adj) = interference(&st.arrivals, rest.index(), r.key, &self.rej);
+        let harmless_dbm = r.dbm - self.radio.harmless_below_db + DB_EPS;
+        let (co, adj) = interference(&st.arrivals, rest.index(), r.key, harmless_dbm, &self.rej);
+        // What the radio's SNR reading makes of a harmless frame is
+        // unmeasured, so the reported SNR still counts it.
+        let (all_co, all_adj) = interference(
+            &st.arrivals,
+            rest.index(),
+            r.key,
+            f64::NEG_INFINITY,
+            &self.rej,
+        );
+        r.max_i_mw = r.max_i_mw.max(all_co + all_adj);
         if r.rated_for == Some((co, adj)) {
+            st.lock = Lock::Rx(r);
             return;
         }
         let strongest = st
             .arrivals
             .iter()
-            .filter(|a| a.key != r.key && a.channel == rest.index())
+            .filter(|a| {
+                a.key != r.key && a.channel == rest.index() && !(a.frame && a.dbm <= harmless_dbm)
+            })
             .max_by(|x, y| x.mw.total_cmp(&y.mw))
             .map(|a| a.key);
         r.rated_for = Some((co, adj));
         (r.rate, r.cause) = self.curve.hazard(r.dbm, co, adj);
-        if co + adj > r.max_i_mw {
-            r.max_i_mw = co + adj;
+        if co + adj > r.max_hurt_mw {
+            r.max_hurt_mw = co + adj;
             r.max_i_how = self.how_of(b, strongest, r.key, true);
         }
         r.threshold_ok &= self.curve.passes_threshold(r.dbm, co + adj);
@@ -1038,6 +1068,7 @@ impl Sim {
             &self.nodes[b as usize].arrivals,
             c,
             exclude.unwrap_or(u64::MAX),
+            f64::NEG_INFINITY,
             &self.rej,
         );
         co + adj
