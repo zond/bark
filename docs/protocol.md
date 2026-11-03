@@ -1518,11 +1518,27 @@ neighbour's, at the relay before, although the neighbour might have
 taken both. At the design's rate that is rare; under load it is the
 price of the wait reaching the origin.
 
-Packets are handed over in the order they arrived, except that:
+**Choosing what to send.** Whenever no hand-over is under way and the
+radio is free, the relay routes every queued message from the state as
+it is then ([next hop](#next-hop)); a message whose next hop, or parent,
+is banned is not sendable until the ban ends. Of the sendable, packets
+are handed over in the order they arrived, except that:
 
 - a delivery goes first ([delivery](#delivery));
-- when bans end, the packets that waited for them go first
-  ([overload waits](#overload-waits)).
+- when bans end, the packets that waited for them go first, the most
+  travelled first ([overload waits](#overload-waits)).
+
+The chosen hand-over then waits for the bucket if it must
+([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
+go first, since with the bucket at the cap it would always fit sooner
+and the longer frame would never go. Routing every message costs at
+most the queue's entries times the neighbour table's, and nothing is
+kept of it but when the earliest ban that held a message back ends.
+
+*Why route at each chance.* The table changes between one chance to
+send and the next: a ban ends, a neighbour arrives, recovers or is
+demoted. Routed only when its turn came, a message waiting for one ban
+would miss a better way that opened meanwhile.
 
 #### Overload waits
 
@@ -1574,7 +1590,10 @@ most travelled message always finds room.
 
 *Why the most travelled first.* For this the message that has come
 farthest must be offered when a ban ends: a less travelled one offered
-first would be refused and ban the neighbour again, each time.
+first would be refused and ban the neighbour again, each time. The gate
+keeps this right: the messages a relay holds for one next hop are
+there only in order of count, so the one it offers first is the one
+the next relay's gate lets in.
 
 ### Routing
 

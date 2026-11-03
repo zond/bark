@@ -1778,8 +1778,13 @@ fn hear(r: &mut Relay, now: &mut Instant, p: &Packet<'_>) -> Vec<(Instant, Frame
 
 /// Run `r` from the actions `pending` it has asked for, then from its
 /// wakeups, until the next DATA frame has gone out, on a quiet channel;
-/// the frames it sent.
-fn until_sent(r: &mut Relay, now: &mut Instant, pending: Vec<Action>) -> Vec<(Instant, Frame)> {
+/// the frames it sent. It is woken first: a test that queued a frame
+/// itself did so outside any event, which the core looks at the queue
+/// after.
+fn until_sent(r: &mut Relay, now: &mut Instant, mut pending: Vec<Action>) -> Vec<(Instant, Frame)> {
+    let mut woken = Vec::new();
+    r.handle(Event::Wakeup, *now, &mut |a| woken.push(a));
+    pending.splice(0..0, woken);
     let start = *now;
     let mut sent = drive_from(r, now, start, pending);
     while data_to(&sent).is_empty() {
@@ -2211,6 +2216,46 @@ fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
             assert!(first >= refused_at + BAN, "{first:?}");
         }
     }
+}
+
+/// Routing is a view (spec "Next hop", "Send queue"): a message waiting
+/// for its banned next hop keeps nothing of that choice, so a neighbour
+/// heard meanwhile that ranks before it takes the message at once, before
+/// the ban ends (roadmap D106).
+#[test]
+fn a_message_waiting_for_a_ban_goes_to_a_better_newcomer_at_once() {
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    let ends = now + Duration::from_secs(30);
+    let ids: Vec<NodeId> = r.neighbours.iter().map(|n| n.id).collect();
+    for &id in &ids {
+        r.neighbours.refused(id, ends);
+    }
+    assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
+    let until = now + Duration::from_secs(5);
+    let sent = drive(&mut r, &mut now, until);
+    assert!(data_to(&sent).is_empty(), "it waits for the ban");
+    let at = Position {
+        lat: far.lat - 20_000,
+        ..far
+    };
+    let hb = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home: Channel::new(6).unwrap(),
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id: id_of(at),
+        short: at.short(),
+    };
+    let sent = hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    let sent = if data_to(&sent).is_empty() {
+        until_sent(&mut r, &mut now, Vec::new())
+    } else {
+        sent
+    };
+    assert_eq!(data_to(&sent)[0].0, id_of(at));
+    assert!(now < ends, "before the ban ended");
 }
 
 /// The application's message passes the same gate as a sleepy node's own

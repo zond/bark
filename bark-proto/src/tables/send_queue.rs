@@ -26,9 +26,11 @@
 //!
 //! Each entry is a frame, what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"), and where
-//! its hand-over is ([`State`], `node/transfer.rs`). An entry whose
+//! its hand-over is ([`State`], `node/transfer.rs`). Where a forward
+//! goes is not kept: the relay routes every entry each time it may send,
+//! and tells [`SendQueue::next_due`] which may go now; an entry whose
 //! next hop is banned waits in its place until the ban ends (spec
-//! "Overload waits"). The next hand-over goes to a DATA to a sleepy node
+//! "Overload waits", "Send queue"). The next hand-over goes to a DATA to a sleepy node
 //! if one is due, since its node listens only briefly (spec "Delivery");
 //! else to the first entry that is due, except that one that has waited
 //! goes first, the most travelled first: the place one higher is free
@@ -149,6 +151,12 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
+    /// It has waited for a ban: it goes first when the ban ends (spec
+    /// "Overload waits").
+    pub waited: bool,
+    /// Where its message's record was last found in the record table: a
+    /// hint, checked against the ID before it is used.
+    pub record: u16,
 }
 
 impl Outgoing {
@@ -161,6 +169,8 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
+            waited: false,
+            record: 0,
         }
     }
 
@@ -183,9 +193,9 @@ impl Outgoing {
         }
     }
 
-    /// Whether it has waited for a ban.
+    /// Whether it has waited for a ban, or a wait of its own.
     fn waited(&self) -> bool {
-        self.not_before > Instant::ZERO
+        self.waited || self.not_before > Instant::ZERO
     }
 
     /// The message the frame carries: a DATA's computed ID (roadmap D15).
@@ -336,24 +346,39 @@ impl SendQueue {
         Some(self.frames.remove(i))
     }
 
-    /// The entry the next hand-over goes to: a DATA to a sleepy node that
-    /// is due, the first; else of those that have waited and are due, the
-    /// most travelled, the earliest of equals; else the first that is due.
-    pub fn next_due(&self, now: Instant) -> Option<usize> {
+    /// The entry the next hand-over goes to, of those `sendable` says may
+    /// go now: a DATA to a sleepy node that is due, the first; else of
+    /// those that have waited and are due, the most travelled, the
+    /// earliest of equals; else the first that is due.
+    pub fn next_due(
+        &self,
+        now: Instant,
+        sendable: impl Fn(usize, &Outgoing) -> bool,
+    ) -> Option<usize> {
         // Asked on every event; mostly there is nothing queued.
         if self.is_empty() {
             return None;
         }
-        let due = |o: &Outgoing| !o.held() && o.not_before <= now;
+        let due = |i: usize, o: &Outgoing| !o.held() && o.not_before <= now && sendable(i, o);
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
         self.iter()
             .enumerate()
-            .filter(|(_, o)| due(o) && o.waited())
+            .filter(|&(i, o)| due(i, o) && o.waited())
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
-            .or_else(|| self.iter().position(due))
+            .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
+    }
+
+    /// Entry `i`, to mark.
+    pub fn get_mut(&mut self, i: usize) -> Option<&mut Outgoing> {
+        self.frames.as_mut_slice().get_mut(i)
+    }
+
+    /// Entry `i`.
+    pub fn get(&self, i: usize) -> Option<&Outgoing> {
+        self.frames.as_slice().get(i)
     }
 
     /// The first DATA from the delivery queue that is due.
@@ -517,6 +542,12 @@ mod tests {
         assert_eq!(q.free_place(3, None), Some(3));
     }
 
+    impl SendQueue {
+        fn next_due_all(&self, now: Instant) -> Option<usize> {
+            self.next_due(now, |_, _| true)
+        }
+    }
+
     /// A DATA frame with `hops` that has waited until `due` ms, if given.
     fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
         use crate::ids::NodeId;
@@ -557,14 +588,14 @@ mod tests {
         q.push(data(2, 5, Some(10))).unwrap();
         q.push(data(3, 5, Some(10))).unwrap();
         q.push(data(4, 9, Some(20))).unwrap();
-        assert_eq!(q.next_due(t(5)), Some(0), "none has waited its time");
-        assert_eq!(q.next_due(t(10)), Some(2), "the earlier of equals");
-        assert_eq!(q.next_due(t(20)), Some(4));
+        assert_eq!(q.next_due_all(t(5)), Some(0), "none has waited its time");
+        assert_eq!(q.next_due_all(t(10)), Some(2), "the earlier of equals");
+        assert_eq!(q.next_due_all(t(20)), Some(4));
         q.select(4);
         q.take_current();
-        assert_eq!(q.next_due(t(20)), Some(2));
+        assert_eq!(q.next_due_all(t(20)), Some(2));
         q.retain(|_, o| !o.waited());
-        assert_eq!(q.next_due(t(20)), Some(0), "the one that never waited");
+        assert_eq!(q.next_due_all(t(20)), Some(0), "the one that never waited");
     }
 
     #[test]
@@ -577,11 +608,11 @@ mod tests {
             q.push(o).unwrap();
         }
         assert_eq!(q.earliest_due(), Some(t(0)));
-        assert_eq!(q.next_due(t(5)), Some(2));
-        assert_eq!(q.next_due(t(10)), Some(1));
+        assert_eq!(q.next_due_all(t(5)), Some(2));
+        assert_eq!(q.next_due_all(t(10)), Some(1));
         q.select(1);
         assert_eq!(tags(&q), [1, 2, 3], "chosen, not moved");
         q.retain(|_, _| false);
-        assert_eq!(q.next_due(t(100)), None);
+        assert_eq!(q.next_due_all(t(100)), None);
     }
 }

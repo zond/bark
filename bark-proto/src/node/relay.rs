@@ -882,8 +882,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
                 // A waiting entry, once nothing else is under way.
                 let queued = self
-                    .queue
-                    .earliest_due()
+                    .forwarding
+                    .wake
                     .filter(|_| self.handover_idle() && free);
                 earlier(flight, queued)
             }

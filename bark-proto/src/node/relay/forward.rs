@@ -193,8 +193,8 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
-use crate::time::{Duration, Instant};
+use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, SEND_QUEUE};
+use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
 pub use crate::node::OWNER_RADIUS_M;
@@ -260,8 +260,12 @@ enum Routed {
     /// The application's message, for a node this one holds for, waits
     /// set aside for a place in the delivery queue.
     Hold,
-    /// Every candidate left is banned: it waits in its place until then.
+    /// It waits in its place until then, for the end of the first
+    /// rotation or for a neighbour to be heard.
     Wait(Instant),
+    /// Its next hop, or its parent, is banned until then: routed again
+    /// once the ban ends.
+    Banned(Instant),
 }
 
 /// The frame of the owed reply. Its receiver is listening for it.
@@ -297,12 +301,16 @@ pub(super) struct Forwarding {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     pub(super) feed_due: bool,
+    /// When the send queue was last looked at with nothing to send: the
+    /// earliest end of a wait or a ban that held an entry back.
+    pub(super) wake: Option<Instant>,
 }
 
 impl Forwarding {
     pub(super) const IDLE: Forwarding = Forwarding {
         flight: Flight::NONE,
         feed_due: false,
+        wake: None,
     };
 }
 
@@ -441,11 +449,64 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if o.in_flight() {
             return Some(d.dst_hop);
         }
+        self.heading(o, &d, now).map(|(to, _, _)| to)
+    }
+
+    /// Where queued forward `o`, carrying `d`, goes if routed now, when
+    /// that one's ban ends, and where its record is: `None` if this relay
+    /// owns its destination now, or it has no record.
+    fn heading(&self, o: &Outgoing, d: &Data<'_>, now: Instant) -> Option<(NodeId, Instant, u16)> {
         if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
             return None;
         }
-        let record = self.records.get(d.msg_id())?;
-        self.heads_to(record, d.dst_pos, now).map(|(to, _)| to)
+        let (at, record) = self.records.find(d.msg_id(), o.record)?;
+        self.heads_to(record, d.dst_pos, now)
+            .map(|(to, ban)| (to, ban, at))
+    }
+
+    /// The entry the next hand-over goes to (spec "Send queue"): every
+    /// queued forward is routed from the state as it is now, and one
+    /// whose next hop is banned is not sendable until the ban ends; of
+    /// the rest the queue's order chooses. With none to send, the
+    /// earliest end of what holds them back is kept for the wakeup.
+    /// At most the queue's entries times the neighbour table's entries
+    /// per call, and no allocation.
+    fn pick(&mut self, now: Instant) -> Option<usize> {
+        const N: usize = SEND_QUEUE + HOP_PLACES;
+        let mut banned = [false; N];
+        let mut hints = [None::<u16>; N];
+        let mut wake: Option<Instant> = None;
+        for (i, o) in self.queue.iter().enumerate() {
+            if o.held() {
+                continue;
+            }
+            if o.not_before > now {
+                wake = earlier(wake, Some(o.not_before));
+                continue;
+            }
+            if o.kind != Kind::Forward {
+                continue;
+            }
+            let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
+                continue;
+            };
+            if let Some((_, ban, at)) = self.heading(o, &d, now) {
+                hints[i] = Some(at);
+                if ban > now {
+                    banned[i] = true;
+                    wake = earlier(wake, Some(ban));
+                }
+            }
+        }
+        for i in 0..self.queue.len() {
+            if let Some(o) = self.queue.get_mut(i) {
+                o.record = hints[i].unwrap_or(o.record);
+                o.waited |= banned[i];
+            }
+        }
+        let pick = self.queue.next_due(now, |i, _| !banned[i]);
+        self.forwarding.wake = if pick.is_some() { None } else { wake };
+        pick
     }
 
     /// The gate of the send queue (spec "Receiving DATA"): a message
@@ -1238,7 +1299,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn prepare(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.make_way(now);
         while self.flights() < IN_FLIGHT {
-            let Some(i) = self.queue.next_due(now) else {
+            let Some(i) = self.pick(now) else {
                 return;
             };
             if self.queue.current_index() != Some(i) {
@@ -1299,6 +1360,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = t;
                     }
+                }
+                // Only if the state changed since the pick; the next
+                // look at the queue sees it.
+                Routed::Banned(t) => {
+                    self.forwarding.wake = earlier(self.forwarding.wake, Some(t));
+                    return;
                 }
             }
         }
@@ -1374,7 +1441,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
             if self.neighbours.is_banned(&n, now) {
                 // A ban is a wait, not an exclusion (spec "Next hop").
-                return Routed::Wait(n.banned_until);
+                return Routed::Banned(n.banned_until);
             }
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
@@ -1406,7 +1473,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .get(parent)
                     .filter(|p| self.neighbours.is_banned(p, now))
                 {
-                    return Routed::Wait(p.banned_until);
+                    return Routed::Banned(p.banned_until);
                 }
                 let home = self.home_of(parent).unwrap_or(stored);
                 let frame = data_frame(
