@@ -100,8 +100,9 @@ pub enum State {
     /// A forward whose hand-over was refused or failed, waiting for the
     /// ban of the neighbour its frame is addressed to, due at
     /// `not_before`, when it is offered to that neighbour again, or waits
-    /// on if the ban has grown meanwhile; it chooses afresh only once it
-    /// no longer keeps the neighbour (spec "Hand-over" step 6, "Bans").
+    /// on if the ban has grown meanwhile; it chooses afresh only once the
+    /// neighbour is demoted, gone or has had it (spec "Hand-over" step 6,
+    /// "Bans").
     Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
@@ -152,10 +153,6 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
-    /// Failed hand-overs in a row of this entry to the neighbour its
-    /// frame is addressed to (spec "Hand-over" step 6); starts again when
-    /// it is addressed afresh.
-    pub failures: u8,
 }
 
 impl Outgoing {
@@ -168,7 +165,6 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
-            failures: 0,
         }
     }
 

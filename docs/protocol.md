@@ -24,7 +24,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Heartbeat | A node's periodic 13-byte broadcast of its ID, position and home channel: a relay's every 5–15 s, fixed by its ID, on each of the 13 channels in turn, its first 13 after boot 1.1 s apart; a sleepy node's every 150–300 s on its home channel; an anchorless node's every 23–46 s, with a long preamble, on each channel in turn |
 | Neighbour discovery | Passive: a node hears every relay in range once per 13 heartbeats (~130 s) on its home channel; a relay just switched on is heard by all within ~15 s, and those that hear it answer; no scanning, no schedules |
 | Boot | A node takes traffic from the second it is switched on, and keeps its home channel and a sleepy node's anchor across a reboot |
-| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after two failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
+| Routing | Forward to the neighbour closest to the destination **position**; route around gaps by depth-first search; ACK every hop; a neighbour that refuses or fails to answer is banned for a while, and after three failures in a row is a last resort; sleepy nodes forward only where no relay is in reach |
 | Addressing | A position plus a 6-byte node ID: a relay's own position, a sleepy node's anchor's; no registration, no network-wide tables |
 | Nodes | One kind, with two properties it measures of itself, each a heartbeat flag: sleepy on battery (a fixed relay only once its battery is low), carried when it moves; a relay is a node that is not sleepy ([nodes](#nodes)) |
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
@@ -920,16 +920,31 @@ measures it. The average must cover it because a frame goes out on the
 neighbour's channel while this relay hears the neighbour on its own,
 where the fading differs.
 
-**Demotion.** A neighbour with two failed hand-overs in a row
-(`fail_count ≥ 2`) is demoted until it answers this relay or three
+**Demotion.** A neighbour with three failed hand-overs in a row
+(`fail_count ≥ 3`) is demoted until it answers this relay or three
 rotations (390 s) pass, and is then a next hop only when no other with
 margin is left. An **answer** is an ACK addressed to this relay, whether
 it takes, refuses or has seen the packet ([the ACK](#the-ack)), or a
 DATA the neighbour addresses to this relay. An answer resets
-`fail_count`, so two failures count as in a row only with no answer
+`fail_count`, so failures count as in a row only with no answer
 between them. Its heartbeats, and frames it sends to other nodes, do not
 clear the demotion. Expiry takes minutes; a failed forward must demote
-at once.
+within seconds. The demotion is the test that the neighbour no longer
+hears this relay: a message waiting for it lets it go only then
+([hand-over](#hand-over) step 6).
+
+*Why three.* A failed hand-over leaves the receiver in one of two
+states the sender cannot tell apart: it never got the frame, or it took
+the message and its ACKs were lost, or it could not afford them
+([duty cycle cap](#duty-cycle-cap)). A receiver silent for want of reply
+budget has its whole reply reserve back 2.4 s after it stops spending.
+The failed message waits for the neighbour's ban between offers
+([bans](#bans)), 1.58 s after the first failure and 3.16 s after the
+second, so the third offer comes 4.74 s after the first failure, when
+such a receiver can answer; the second, 1.58 s after, may still find it
+short. Two would demote it, and let the message go, before it could
+answer. Later offers would mostly meet a receiver that answers nobody
+(roadmap D98), and each costs its wait (roadmap D102, D106).
 
 *Why any answer clears it.* A refusal or a seen ACK reaches this relay
 as surely as one that takes: the neighbour heard the DATA and this relay
@@ -1117,58 +1132,39 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    ([return to parent](#return-to-parent)).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
-   neighbour (demoted after two in a row) and ban it
-   ([bans](#bans)). The message waits in its place for the ban and is
-   offered to the same neighbour again, with three fresh attempts,
-   whether or not it has been demoted meanwhile. The wait is the ban
-   the failure gave; a neighbour whose ban has grown by then, by a later
-   failure of another message or a refusal, or that has left the table
-   or been tried, is not waited for: the message chooses afresh, the
-   neighbour no candidate while banned ([next hop](#next-hop)), and
-   waits for it only where no other candidate is left
-   ([overload waits](#overload-waits)). A refused message waits for its
-   neighbour by the rule of [bans](#bans) instead.
-   - Once three hand-overs in a row have failed, the neighbour's,
-     whoever's messages they were, or this message's own to it, the
-     message instead chooses the next hop at once: the neighbour is
-     **set aside** for this hand-over, no candidate until the hand-over
-     ends, but not counted as tried.
-   - A return waits for its parent the same way and is dropped when the
-     parent has failed three in a row
+   neighbour and ban it ([bans](#bans)). The message waits in its place
+   for the ban and is offered to the same neighbour again, with three
+   fresh attempts, for as long as the neighbour is live, has not had
+   the message and is not demoted ([neighbour table](#neighbour-table)),
+   as after a refusal ([bans](#bans)). A ban grown meanwhile, by another
+   message's failure or a refusal, is waited for too.
+   - Once the neighbour is demoted, has left the table or has had the
+     message, the message instead chooses the next hop at once. A
+     neighbour whose failure demoted it is **set aside** for this
+     hand-over, no candidate until the hand-over ends, but not counted
+     as tried.
+   - A return waits for its parent the same way and is dropped once the
+     parent is demoted or has left the table
      ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
      hand-over ([delivery queue](#delivery-queue)).
 
-*Why three failures, not the demotion.* A failed hand-over leaves the
-receiver in one of two states the sender cannot tell apart: it never got
-the frame, or it took the message and its ACKs were lost, or it could
-not afford them ([duty cycle cap](#duty-cycle-cap)). Moving on in the
-second case leaves two copies searching, which is how a storm starts
-(roadmap D89). A receiver that holds the message answers any later offer
-([receiving DATA](#receiving-data) case 4); one silent for want of
-reply budget has its whole reply reserve back 2.4 s after it stops
-spending, and the third offer comes 1.58 + 3.16 = 4.74 s after the first
-failure ([bans](#bans)). Later offers would mostly meet a receiver that
-answers nobody (roadmap D98), and each costs its wait. Two counts, and
-the first to reach three moves the message on. The neighbour's, so that
-one that has failed three others costs a message one hand-over. The
-message's own, because any answer from the neighbour resets its count
-([bans](#bans)), so a neighbour that answers this relay's other messages
-and never this one would
-otherwise hold the message for as long as that goes on; with its own
-count the message is offered three times at most, each wait a ban at
-the second step at most, 3.16 s, since a third step would have moved it
-on: three in a row hold a message on one neighbour at most 15.8 s, two
-such waits and three hand-overs of 3.15 s each, and 14.2 s at a
-neighbour that nobody else fails
-([bounds](#bounds)). The demotion at two stays what it is, an ordering:
-other messages try the neighbour last ([next hop](#next-hop)) while
-this one waits for it (roadmap D102).
+*Why the same neighbour until it is demoted.* Moving on from a receiver
+that took the message and lost its ACKs leaves two copies searching,
+which is how a storm starts (roadmap D89). A receiver that holds the
+message answers any later offer ([receiving DATA](#receiving-data) case
+4), and one silent for want of reply budget answers once its reserve has
+refilled, which the demotion waits for ([neighbour table](#neighbour-table)).
+While the neighbour answers this relay at all, it hears this relay, and
+going round it takes the message the long way on the same channels
+([bans](#bans)). How long other messages have made its ban says nothing
+about whether it hears this relay, so a grown ban is waited out, not
+gone round (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is seen (step 5), three
-transmissions unanswered (step 6), or the neighbour demoted while the
-message waits for its refusal ([bans](#bans)). A channel that stays
+to another neighbour (step 2); what moves it is seen (step 5), or the
+neighbour demoted, gone or having had it while the message waits for it
+(step 6). A channel that stays
 busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until it clears; the message
 spends no airtime
@@ -1354,12 +1350,12 @@ the outstanding hand-over, means the receiver does not take the packet
 tried and no failure is counted. The message waits in its place in the
 send queue until the ban ends and is offered to the same neighbour
 again, the refused transmission not counting as one of its attempts; a
-ban that has grown by then, by another refusal, is waited for too. A
-return to the parent waits the same way. A forward chooses its next hop
-afresh only once the neighbour is demoted, two hand-overs to it in a row
-unanswered ([neighbour table](#neighbour-table)), has left the table, or
-has had the message ([message records](#message-records)) (roadmap
-D106).
+ban that has grown by then, by another message's refusal or failure, is
+waited for too. A return to the parent waits the same way. A forward
+chooses its next hop afresh only once the neighbour is demoted
+([neighbour table](#neighbour-table)), has left the table, or has had
+the message ([message records](#message-records)), the rule for a
+failed message too ([hand-over](#hand-over) step 6, roadmap D106).
 
 *Why a refused message waits for the same neighbour.* A refusal is an answer: the neighbour is
 there, hears this relay, and has said when it will have room. Sent
@@ -1441,12 +1437,12 @@ other message at once, each offer up to three more frames where frames
 are already being lost; past the cap that loop is what breaks first.
 
 The message whose hand-over failed waits for the same neighbour
-(step 6), and the neighbour is not counted as tried. Two silences in a
-row demote the neighbour and three move the message on, so a link that
-is really gone costs the first message two bans and two more hand-overs,
-and later messages one hand-over, trying it last. A neighbour that is
-gone is tried again after each ban until its entry expires;
-[bounds](#bounds) adds up what that costs.
+([hand-over](#hand-over) step 6), and the neighbour is not counted as
+tried. Three silences in a row demote the neighbour and move the message
+on, so a link that is really gone costs the first message two bans and
+two more hand-overs, and later messages one hand-over, trying it last. A
+neighbour that is gone is tried again after each ban until its entry
+expires; [bounds](#bounds) adds up what that costs.
 
 *Why the same neighbour.* The next is usually a longer way round on the
 same full channels: going there at once undoes what the ban gains
@@ -1520,8 +1516,8 @@ A message ends only:
 - when it is delivered;
 - when its search runs out of neighbours
   ([return to parent](#return-to-parent));
-- when a return goes unanswered three times in a row (step 6), or is
-  answered seen (step 5);
+- when a return's parent is demoted or gone
+  ([hand-over](#hand-over) step 6), or answers it seen (step 5);
 - when a newer message needs its place in the delivery queue
   ([delivery queue](#delivery-queue));
 - at the hop cap ([hop count](#hop-count));
@@ -1627,8 +1623,8 @@ those:
 
 - in the tried set ([message records](#message-records));
 - banned ([bans](#bans));
-- set aside for the current hand-over: they failed it three times in a
-  row ([hand-over](#hand-over) step 6).
+- set aside for the current hand-over: its failure demoted them
+  ([hand-over](#hand-over) step 6).
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a
@@ -1697,7 +1693,7 @@ counted as usual. Demotion keeps a failing link from costing every
 message its attempts while another route exists; it should not drop a
 message whose only route is that link.
 
-Two hand-overs lost to collisions demote a neighbour that works, and on
+Three hand-overs lost to collisions demote a neighbour that works, and on
 a line it is the only route, so without the last resort every message
 would be dropped until the demotion lapsed, six and a half minutes. What
 a neighbour that is really gone costs is in [bounds](#bounds) (roadmap
@@ -1838,8 +1834,9 @@ from here. A child whose every ACK was lost is not in `handed`, so its
 return is answered seen and ends there, and what it searched stays in
 the relays' records for the parent's other copy, if any, to meet as
 seen. That is the one case in which a copy ends at a relay that holds
-none, and it takes two hand-overs to that child failing with every ACK
-lost (roadmap D35, D90).
+none, and it takes three hand-overs to that child failing with every
+ACK lost, which demote it ([hand-over](#hand-over) step 6; roadmap D35,
+D90).
 
 #### Return to parent
 
@@ -1876,9 +1873,9 @@ A message whose neighbours left are only banned is neither returned nor
 dropped: it waits ([overload waits](#overload-waits)), a node's own
 application's message as in [bans](#bans).
 
-Once the parent has failed three hand-overs in a row, the message having
-waited for the parent's bans and gone again ([hand-over](#hand-over)
-step 6), the relay drops the message and the search ends early. A parent
+Once the parent is demoted, the message having waited for the parent's
+bans and gone again ([hand-over](#hand-over) step 6), or has left the
+table, the relay drops the message and the search ends early. A parent
 that refuses the return has not failed.
 
 #### Hop count
@@ -2053,8 +2050,8 @@ What breaks it:
   case 4), where the message has arrived (case 1), at the origin with
   the search, at the hop cap, or as a return to a parent that gave the
   child up and answers seen (case 6). Only the last can end a copy that
-  is the last one, and it takes every ACK of two hand-overs on one link
-  lost.
+  is the last one, and it takes every ACK of three hand-overs on one
+  link lost.
 - **Links that change** during the search, including a parent that moves
   to another home channel: parts of the graph go unsearched.
 
@@ -2064,7 +2061,7 @@ What breaks it:
 |---|---|
 | hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
-| a message held on one neighbour that does not answer | at most 15.8 s: two waits of at most 3.16 s, the ban's second step, since a third failure of the neighbour's or the message's own moves it on, and three hand-overs of at most 3.15 s ([hand-over](#hand-over) step 6); 14.2 s where nobody else fails the neighbour |
+| a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
 | life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists ([time to live](#time-to-live)); then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
 | cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer |
 | message records | at most 1571 per relay ([message records](#message-records)) |
@@ -2079,13 +2076,15 @@ up to 61 s ([bans](#bans)).
 So a dead neighbour costs a relay that many failed hand-overs before it
 leaves the table 390 s after its last heartbeat or ACK: the bans 1.58,
 3.16, 6.3, 12.7, 25.3 and 50.6 s add up to 100 s, and 61 s bans fill the
-rest. After two failures it is a last resort
-([neighbour table](#neighbour-table)), and after three the message that
-waited for it moves on, so the first message pays the two bans and three
-hand-overs, 14.2 s, and every later one a hand-over, 3.15 s, until the
-demotion lapses and the count starts again. A neighbour that answers
-others and not us is bounded by the message's own count instead: 15.8 s
-a message, each wait a ban at the second step at most. A hand-over is at most three
+rest. After three failures it is a last resort
+([neighbour table](#neighbour-table)) and the message that waited for it
+moves on, so the first message pays the two bans and three hand-overs,
+14.2 s, and every later one a hand-over, 3.15 s, until the demotion
+lapses and the count starts again. A neighbour that answers this relay
+between failures is not demoted and holds a message for as long as its
+bans, which its answers set ([bans](#bans)), with no bound by count: it
+hears this relay, and each offer is another chance for the frame to get
+through. A hand-over is at most three
 attempts of 738.6 ms, listen-before-talk until it gives up, a full frame
 and the ACK timeout ([message records](#message-records)), and the retry
 waits, 0.93 s.

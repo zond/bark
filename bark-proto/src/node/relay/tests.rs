@@ -2107,8 +2107,9 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
     let (mut r, mut now, id, d_pos, _) = handing_to_the_nearer(b"answer");
     let d = id_of(d_pos);
     let demote = |r: &mut Relay, now: Instant| {
-        r.neighbours.failed(d, now);
-        r.neighbours.failed(d, now);
+        for _ in 0..crate::tables::DEMOTE_AFTER_FAILURES {
+            r.neighbours.failed(d, now);
+        }
         let (_, n) = r.neighbours.by_id(d).unwrap();
         assert!(r.neighbours.is_demoted(n, now));
     };
@@ -2189,9 +2190,10 @@ fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
         let sent = hear(&mut r, &mut now, &Packet::Ack(refusal));
         assert!(data_to(&sent).is_empty(), "nothing sent at once");
         if demoted {
-            // Two hand-overs of other messages to D fail meanwhile.
-            r.neighbours.failed(d, now);
-            r.neighbours.failed(d, now);
+            // Enough hand-overs of other messages to D fail meanwhile.
+            for _ in 0..crate::tables::DEMOTE_AFTER_FAILURES {
+                r.neighbours.failed(d, now);
+            }
         }
         let sent = until_sent(&mut r, &mut now, Vec::new());
         let first = sent

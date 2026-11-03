@@ -31,23 +31,17 @@ pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
 /// step 6).
 pub const HOP_ATTEMPTS: u8 = 3;
 
-/// Failed hand-overs in a row after which a message moves on to its next
-/// candidate, or a return is dropped: the neighbour's, whoever's messages
-/// failed, or this message's own to it, whichever reaches it first (spec
+/// Failed hand-overs in a row, with no answer to this relay between,
+/// that demote a neighbour (spec "Neighbour table", Demotion): a message
+/// held on it then chooses afresh, or a return is dropped (spec
 /// "Hand-over" step 6). Between them the message waits out the
 /// neighbour's ban, 1.58 s and then 3.16 s (`budget::hold`), so the third
 /// offer comes 4.74 s after the first failure, later than the 2.4 s the
 /// bucket takes to refill the whole reply reserve (`budget::REPLY_RESERVE`):
-/// a receiver that was silent for want of reply budget, and has stopped
-/// spending, can answer the second offer and certainly the third. A
-/// receiver that took the message and lost its ACKs answers any offer.
-/// The neighbour's count keeps a neighbour silent to everyone from
-/// costing a message more than one hand-over; the message's own bounds
-/// the hold when ACKs to other messages keep resetting the neighbour's:
-/// each wait is then a ban at the second step at most, 3.16 s, so a
-/// message is held on one neighbour at most 15.8 s, two such waits and
-/// three hand-overs of 3.15 s.
-pub const MOVE_ON_FAILURES: u8 = 3;
+/// a receiver silent for want of reply budget has it back for the third
+/// offer, while two would demote it, and let the message go, before it
+/// could answer.
+pub const DEMOTE_AFTER_FAILURES: u8 = 3;
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
 /// gives up, a full frame on air, and the ACK timeout (spec "Message records",
@@ -130,7 +124,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 264);
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 280);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 272);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full heard table over one TTL (spec "Delivery queue").
@@ -165,7 +159,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 272,
             ),
             (
                 "delivered",

@@ -17,7 +17,7 @@
 //! 3, 390 s).
 //!
 //! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
-//! (spec "Neighbour table": 2) the neighbour is demoted: a next hop only when no other with
+//! (spec "Neighbour table": 3) the neighbour is demoted: a next hop only when no other with
 //! margin is left (spec "Next hop", roadmap D25). Demotion ends
 //! when the neighbour answers this relay, an ACK to it that takes,
 //! refuses or has seen a packet, or a DATA it addresses to it, which
@@ -745,6 +745,7 @@ pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::DEMOTE_AFTER_FAILURES;
 
     fn params() -> NeighbourParams {
         NeighbourParams::from_config(&Config::default())
@@ -845,7 +846,7 @@ mod tests {
     #[test]
     fn params_follow_the_design() {
         let p = params();
-        assert_eq!(p.demote_after, 2);
+        assert_eq!(p.demote_after, 3);
         assert_eq!(
             p.demotion,
             Duration::from_secs(390),
@@ -1038,12 +1039,14 @@ mod tests {
         let p = id(1);
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
+        assert_eq!(t.failed(p, at(1)), Some(false));
         t.answered(p, at(1));
         assert_eq!(
             t.failed(p, at(1)),
             Some(false),
             "an ACK resets: failures are consecutive"
         );
+        assert_eq!(t.failed(p, at(2)), Some(false));
         assert_eq!(t.failed(p, at(2)), Some(true));
         assert_eq!(t.candidates(at(2)).count(), 0);
         assert_eq!(t.failed(id(2), at(2)), None);
@@ -1059,6 +1062,7 @@ mod tests {
         assert_eq!(t.candidates(at(391)).count(), 0);
         assert_eq!(t.candidates(at(392)).count(), 1);
         // And starts counting again from zero.
+        assert_eq!(t.failed(p, at(393)), Some(false));
         assert_eq!(t.failed(p, at(393)), Some(false));
         assert_eq!(t.failed(p, at(394)), Some(true));
         // An ACK lifts it at once.
@@ -1102,8 +1106,9 @@ mod tests {
         // All live and recently heard: the newcomer is turned away.
         assert_eq!(hear(&mut t, 100, 0, -80, at(100)), Heard::Rejected);
         // A demoted entry goes first, even though others are older.
-        t.failed(id(40), at(100));
-        t.failed(id(40), at(100));
+        for _ in 0..DEMOTE_AFTER_FAILURES {
+            t.failed(id(40), at(100));
+        }
         match hear(&mut t, 101, 0, -80, at(101)) {
             Heard::Replaced(40, old) => assert_eq!(old.position, pos(40)),
             other => panic!("{other:?}"),
