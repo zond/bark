@@ -188,3 +188,30 @@ seed's spread:
 
 The walkers' larger moves are the one seed's runs parting: they send 5 %
 more DATA between relays with the same delivery.
+
+Since roadmap D108 a frame of ours at least 3 dB weaker than the held
+one is no interference on its error curve, whenever it arrived, as the
+two-long-frames run shows; the curve still charges interferer bursts,
+other channels' leakage, noise, and frames less weaker that were on the
+air at lock or arrived during the preamble. Against the D107 model, with
+main `411398d`'s protocol, seed 1, the losses on the curve after locking
+fall by a seventh to a quarter, while the 3 dB rule's own count and the
+losses to noise do not move. That takes 2 to 4 % of the DATA between
+relays and 3 to 6 % of the failed hand-overs off in every scenario, with
+delivery flat; each figure alone is within one seed's spread, but all
+four runs move the same way.
+
+| | city | city, twice the rate | S4 | walkers |
+|---|---|---|---|---|
+| delivered of the settled texts % | 97.5 → 97.7 | 97.6 → 97.7 | 93.5 → 93.6 | 96.2 → 96.0 |
+| latency p50 / p90 s | 7.5 / 61.5 → 6.9 / 61.9 | 8.3 / 64.0 → 7.9 / 65.2 | 1.4 / 183.7 → 1.4 / 184.5 | 2.3 / 40.0 → 2.1 / 35.5 |
+| airtime per delivered text s | 2.05 → 2.04 | 2.33 → 2.23 | 1.08 → 1.07 | 1.84 → 1.78 |
+| hand-overs failed | 161 144 → 152 355 | 322 730 → 306 372 | 20 065 → 19 391 | 134 639 → 127 262 |
+| DATA between relays sent, thousands | 430 → 414 | 887 → 866 | 162 → 158 | 864 → 831 |
+| DATA between relays received % | 56.3 → 57.3 | 54.8 → 55.6 | 65.6 → 65.8 | 53.3 → 54.5 |
+| lost to noise alone % | 27.1 → 27.1 | 22.1 → 22.2 | 21.2 → 21.3 | 33.0 → 33.0 |
+| lost to a DATA to the same receiver / to another % | 1.3 / 4.0 → 1.2 / 3.6 | 2.3 / 7.0 → 2.3 / 6.6 | 1.2 / 4.1 → 1.2 / 3.9 | 1.1 / 3.1 → 1.0 / 2.7 |
+| lost to an ACK, a heartbeat or a beat % | 5.5 → 5.2 | 6.3 → 6.0 | 4.5 → 4.4 | 3.4 → 3.1 |
+| of the lost, by a later frame within 3 dB % | 4.2 → 4.2 | 5.5 → 5.6 | 3.7 → 3.7 | 2.7 → 2.6 |
+| receptions lost to a frame after locking, thousands | 1 757 → 1 575 | 4 197 → 3 591 | 225 → 205 | 678 → 587 |
+| of them on the error curve | 929 → 738 | 2 443 → 1 837 | 136 → 117 | 366 → 284 |
