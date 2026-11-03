@@ -119,12 +119,12 @@ pub(crate) mod sizes {
     #[test]
     fn table_sizes() {
         // Per-entry sizes the capacities multiply.
-        assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 80);
+        assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 96);
         assert_eq!(size_of::<heard::HeardNode>(), 32);
         assert_eq!(size_of::<delivery::Queued>(), 264);
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 280);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 288);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full heard table over one TTL (spec "Delivery queue").
@@ -143,7 +143,7 @@ pub(crate) mod sizes {
             (
                 "neighbours",
                 size_of::<neighbours::Neighbours>(),
-                neighbours::NEIGHBOURS * 80,
+                neighbours::NEIGHBOURS * 96,
             ),
             ("heard", size_of::<heard::Heard>(), heard::HEARD * 32),
             (
@@ -159,7 +159,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 288,
             ),
             (
                 "delivered",

@@ -201,6 +201,10 @@ pub fn told(bans: u8) -> Duration {
     BAN.mul(bans.max(1) as u64)
 }
 
+/// The longest wait a refusal tells: 63 bans, 99.6 s, what `aux`
+/// holds (spec "Bans").
+pub const LONGEST_TOLD: Duration = BAN.mul(AUX_MASK as u64);
+
 /// `wait` in whole [`BAN`]s for a refusal, rounded down, so that a wait
 /// passed on from relay to relay only shrinks; at least 1, since 0 in an
 /// ACK means taken, and at most what `aux` holds, 63 bans, 99.6 s. A

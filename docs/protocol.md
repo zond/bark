@@ -865,6 +865,7 @@ Per node, up to 64 entries, by node ID:
 | rssi_ema | averaged RSSI of every reading of its link, each new one counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)); says whether it has margin |
 | fail_count | failed hand-overs to it in a row, with no answer from it between ([demotion](#neighbour-table)) |
 | banned_until | when its ban ends ([bans](#bans)) |
+| service, last take, told | how long this relay takes to get one message through to it, when it last took one, and the waits its refusals have told since ([service time](#neighbour-table)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an ACK
@@ -962,6 +963,33 @@ relay's channel now.
 node, proves the neighbour is alive, not that it hears us, and a link
 that works one way only would otherwise cost every message the failed
 attempts again.
+
+**Service time.** Each entry keeps how long this relay takes to get one
+message through to the neighbour: a running average of the time from
+when a message began to wait for it here, or from the neighbour's last
+take if that is later, to the ACK that takes the message. A message
+begins to wait for a neighbour when it is queued, or when routing first
+sends it there instead of elsewhere ([next hop](#next-hop)). The time
+folds in what held the message: attempts that went unanswered and the
+bans after them, this relay's bucket, and its turn behind hand-overs to
+other neighbours. It leaves out two things: time with no message
+waiting for the neighbour, which says nothing of how fast it takes; and
+the waits the neighbour's refusals told, which are the neighbour's own
+measure, passed on ([bans](#bans)). Each take counts one part in 39.
+Before the first take the service time is one ban, the least wait a
+refusal tells, and it is never more than the longest, 63 bans.
+
+*Why 39.* The average follows the neighbour's state, which its bucket
+sets: at its cap a neighbour takes one full frame a ban, and its bucket
+refills from empty in 61 s, the longest anything waits for a bucket
+([duty cycle cap](#duty-cycle-cap)), so 39 takes span one whole refill,
+after which nothing of the bucket's earlier state remains. Remembering
+fewer, the average would follow the luck of single takes, a lost frame
+or a retry; more, it would remember a bucket that has since refilled.
+
+*Why so stored.* It is kept in 16 bits, in 1/1024 of a ban, the finest
+step in which the 63 bans fit; a step of 1.5 ms is far below the ban in
+which waits are told.
 
 **Eviction.** When the table is full and a relay not in it is heard, the
 newcomer replaces, in this order:

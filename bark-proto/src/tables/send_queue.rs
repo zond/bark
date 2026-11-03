@@ -157,6 +157,14 @@ pub struct Outgoing {
     /// Where its message's record was last found in the record table: a
     /// hint, checked against the ID before it is used.
     pub record: u16,
+    /// The neighbour-table slot, plus one, of where it was last routed;
+    /// 0 before it was. With `since`, how long it has waited for that
+    /// neighbour, a sample of the neighbour's service time when it takes
+    /// it (spec "Neighbour table").
+    pub toward: u8,
+    /// When it began to wait for that neighbour here: when it was queued,
+    /// or routed to another than before.
+    pub since: Instant,
 }
 
 impl Outgoing {
@@ -171,6 +179,8 @@ impl Outgoing {
             place: 0,
             waited: false,
             record: 0,
+            toward: 0,
+            since: Instant::ZERO,
         }
     }
 

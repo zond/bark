@@ -475,6 +475,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         const N: usize = SEND_QUEUE + HOP_PLACES;
         let mut banned = [false; N];
         let mut hints = [None::<u16>; N];
+        let mut toward = [0u8; N];
         let mut wake: Option<Instant> = None;
         for (i, o) in self.queue.iter().enumerate() {
             if o.held() {
@@ -490,8 +491,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
                 continue;
             };
-            if let Some((_, ban, at)) = self.heading(o, &d, now) {
+            if let Some((to, ban, at)) = self.heading(o, &d, now) {
                 hints[i] = Some(at);
+                toward[i] = self.neighbours.slot_of(to).map_or(0, |s| s as u8 + 1);
                 if ban > now {
                     banned[i] = true;
                     wake = earlier(wake, Some(ban));
@@ -502,6 +504,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(o) = self.queue.get_mut(i) {
                 o.record = hints[i].unwrap_or(o.record);
                 o.waited |= banned[i];
+                // Routed elsewhere than before, it begins to wait for
+                // the new way now, for that way's service time.
+                if toward[i] != 0 && o.toward != toward[i] {
+                    if o.toward != 0 {
+                        o.since = now;
+                    }
+                    o.toward = toward[i];
+                }
             }
         }
         let pick = self.queue.next_due(now, |i, _| !banned[i]);
@@ -981,7 +991,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Case::New | Case::Search if v.owner => {
                 self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search => self.send_on(d, v.place, emit),
+            Case::New | Case::Search => self.send_on(d, v.place, now, emit),
         }
     }
 
@@ -1092,7 +1102,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// hand-over starts. Carries the
     /// received count plus one, which places it among waiting entries,
     /// until its hand-over stamps the count it is sent with (spec "Hop count").
-    fn send_on(&mut self, d: &Data<'_>, place: u8, emit: &mut dyn FnMut(Action)) {
+    fn send_on(&mut self, d: &Data<'_>, place: u8, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
@@ -1107,6 +1117,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let out = Outgoing {
             place,
+            since: now,
             ..Outgoing::new(
                 data_frame(&out, self.home, self.forward_preamble()),
                 Kind::Forward,
@@ -1270,6 +1281,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // application's.
                 let out = Outgoing {
                     state: State::Held,
+                    since: now,
                     ..Outgoing::new(
                         data_frame(&d, self.home, self.forward_preamble()),
                         Kind::Forward,
@@ -1301,7 +1313,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         self.records.put(at, record);
-        self.send_on(&d, 0, emit);
+        self.send_on(&d, 0, now, emit);
     }
 
     // --- The hand-over (spec "Hand-over") ---
@@ -1899,6 +1911,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if slot.is_some() {
             self.answer_from(by, now, emit);
             self.neighbours.refused(by, now + wait);
+            self.neighbours.told(by, wait);
         }
         if self.sleepy() && self.own.id == Some(msg_id) && out.kind == Kind::Forward {
             // A sleepy node's own message goes back to its application,
@@ -1968,6 +1981,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             };
             return self.delivered_to(id, to, by, now, emit);
         }
+        self.neighbours.took(to, out.since, now);
         self.tried(id, to, d.hops, now, emit);
         if to == d.dst_id {
             // The node it is addressed to took it: it has arrived.

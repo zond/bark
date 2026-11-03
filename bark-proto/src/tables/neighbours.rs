@@ -62,6 +62,12 @@
 //! [`BAN`]: crate::tables::budget::BAN
 //! [`hold`]: crate::tables::budget::hold
 //!
+//! # Service time
+//!
+//! Each entry keeps how long this relay takes to get one message through
+//! to the neighbour ([`Neighbours::took`], spec "Neighbour table"): what
+//! a sender refused for want of that way can be told it will wait.
+//!
 //! # Eviction (roadmap D12)
 //!
 //! When the table is full and an unknown relay is heard, the newcomer
@@ -128,7 +134,7 @@ use crate::node::{heartbeat_lag, Config, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::sniff::anchorless_beat_period;
-use crate::tables::budget::hold;
+use crate::tables::budget::{hold, BAN, LONGEST_BAN, LONGEST_TOLD};
 use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
@@ -201,6 +207,13 @@ pub struct Neighbour {
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
+    /// Its service time ([`Neighbours::took`]), in [`SERVICE_UNIT`]s.
+    pub service: u16,
+    /// The waits its refusals told this relay since its last take, in
+    /// [`SERVICE_UNIT`]s ([`Neighbours::told`]).
+    pub told: u16,
+    /// When it last took a hand-over from this relay.
+    pub taken_at: Instant,
 }
 
 impl Neighbour {
@@ -214,6 +227,12 @@ impl Neighbour {
     /// anchor for a sleepy node, and a next hop like any other.
     pub fn alone(&self) -> bool {
         self.sleepy && self.anchorless
+    }
+
+    /// Its service time: the average time this relay takes to get one
+    /// message through to it ([`Neighbours::took`]).
+    pub fn service(&self) -> Duration {
+        SERVICE_UNIT.mul(self.service as u64)
     }
 
     /// Whether it is not sleepy: it listens all the time.
@@ -235,6 +254,25 @@ impl Neighbour {
         self.alone() && self.beats >= BEATS
     }
 }
+
+/// The unit of a service time: 1/1024 of a ban, so that the longest
+/// wait an ACK tells, 63 bans, fits in 16 bits (spec "Neighbour table").
+pub const SERVICE_UNIT: Duration = BAN.div(1024);
+
+/// A service time before any take: one ban, the least wait a refusal
+/// tells (spec "Bans").
+const FIRST_SERVICE: u16 = 1024;
+
+/// How many takes the service time remembers: as many as a neighbour at
+/// its cap takes while its bucket refills from empty, one a ban for
+/// [`LONGEST_BAN`], 39 (spec "Neighbour table").
+pub const SERVICE_TAKES: u64 = LONGEST_BAN.as_micros().div_ceil(BAN.as_micros());
+
+const _: () = assert!(SERVICE_TAKES == 39);
+const _: () = assert!(
+    LONGEST_TOLD.as_micros() / SERVICE_UNIT.as_micros() <= u16::MAX as u64,
+    "the longest told wait fits a service time"
+);
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
 /// stronger node only once it has heard two of its heartbeats
@@ -505,6 +543,9 @@ impl Neighbours {
             slotted: false,
             away_base: None,
             answered: 0,
+            service: FIRST_SERVICE,
+            told: 0,
+            taken_at: Instant::ZERO,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -629,6 +670,36 @@ impl Neighbours {
     pub fn home_heard(&mut self, id: NodeId, home: Channel) {
         if let Some(n) = self.entry_mut(id) {
             n.home = home;
+        }
+    }
+
+    /// `id` took a hand-over from this relay at `now` of a message that
+    /// began to wait for it here at `since`. The time since the later of
+    /// that and its last take is one sample of its service time, which
+    /// folds in whatever held the message: refusals and their bans,
+    /// failed attempts, this relay's bucket and its other hand-overs. The
+    /// average takes each sample at a weight of one in
+    /// [`SERVICE_TAKES`], and stays within [`LONGEST_TOLD`] (spec
+    /// "Neighbour table").
+    pub fn took(&mut self, id: NodeId, since: Instant, now: Instant) {
+        if let Some(n) = self.entry_mut(id) {
+            let told = SERVICE_UNIT.mul(n.told as u64);
+            let sample = (now.since(since.max(n.taken_at)) - told).min(LONGEST_TOLD);
+            let sample = (sample.as_micros() / SERVICE_UNIT.as_micros()) as i64;
+            n.told = 0;
+            let old = n.service as i64;
+            let step = (sample - old) / SERVICE_TAKES as i64;
+            n.service = (old + step).clamp(0, u16::MAX as i64) as u16;
+            n.taken_at = now;
+        }
+    }
+
+    /// `id` refused a hand-over, telling this relay to wait `wait`: not
+    /// part of its service time ([`Neighbours::took`]).
+    pub fn told(&mut self, id: NodeId, wait: Duration) {
+        if let Some(n) = self.entry_mut(id) {
+            let units = wait.as_micros() / SERVICE_UNIT.as_micros();
+            n.told = (n.told as u64 + units).min(u16::MAX as u64) as u16;
         }
     }
 
@@ -966,6 +1037,43 @@ mod tests {
         hear_anchorless(&mut t, 0, -80, at(780));
         t.beat_heard(id(0), Channel::new(0).unwrap(), at(780));
         assert_eq!(due(&t), Some(at(780)));
+    }
+
+    /// The service time starts at a ban and takes each take's interval
+    /// at a weight of one in 39, counted from the later of the last take
+    /// and when the message began to wait, less what the neighbour's
+    /// refusals told (spec "Neighbour table").
+    #[test]
+    fn the_service_time_averages_the_takes() {
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 0, -80, at(0));
+        let service = |t: &Neighbours| t.get(id(1)).unwrap().service();
+        assert!(BAN - service(&t) < SERVICE_UNIT.mul(1024 / 1000 + 1));
+        // Waited 40 bans from its queueing, nothing told.
+        let start = at(10);
+        let took = start + BAN.mul(40);
+        t.took(id(1), start, took);
+        let after = service(&t);
+        let want = BAN + (BAN.mul(40) - BAN).div(SERVICE_TAKES);
+        assert!(after.as_micros().abs_diff(want.as_micros()) < 2 * SERVICE_UNIT.as_micros());
+        // Idle since that take: the next counts from its queueing, and a
+        // refusal's wait is not this relay's time.
+        t.told(id(1), BAN.mul(10));
+        let queued = took + Duration::from_secs(600);
+        t.took(id(1), queued, queued + BAN.mul(10));
+        let unchanged = after - (after - Duration::ZERO).div(SERVICE_TAKES);
+        assert!(
+            service(&t).as_micros().abs_diff(unchanged.as_micros()) < 2 * SERVICE_UNIT.as_micros()
+        );
+        // Never past the longest told wait.
+        for k in 0..400 {
+            t.took(
+                id(1),
+                at(1000 + k),
+                at(1000 + k) + Duration::from_secs(3600),
+            );
+        }
+        assert!(service(&t) <= LONGEST_TOLD);
     }
 
     #[test]

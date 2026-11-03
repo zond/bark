@@ -643,15 +643,19 @@ fn a_message_holds_on_while_the_neighbour_answers_this_relay() {
 #[test]
 fn a_kept_neighbour_is_waited_for_when_its_ban_has_grown() {
     let (o, f1, f2, d, w, x) = (0, 1, 2, 3, 4, 5);
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 271),
+        (400.0, 50.0, 272),
+        (400.0, -100.0, 273),
+        (800.0, 0.0, 274),
+        (-400.0, 0.0, 275),
+        (800.0, -400.0, 276),
+    ]
+    .into_iter()
+    .map(|(e, n, seed)| relay(e, n, seed));
     let mut h = build(
-        vec![
-            relay(0.0, 0.0, 271),
-            relay(400.0, 50.0, 272),
-            relay(400.0, -100.0, 273),
-            relay(800.0, 0.0, 274),
-            relay(-400.0, 0.0, 275),
-            relay(800.0, -400.0, 276),
-        ],
+        nodes.collect(),
         &[(o, f1), (o, f2), (f1, d), (f2, d), (f1, w), (x, f2)],
     );
     h.lose = Some(Box::new(move |_, from, to, bytes| {
