@@ -1864,99 +1864,64 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     }));
 }
 
-/// The same line, C gone. Every DATA of the message, the forward to R
-/// and R's return to P alike, carries the time its origin gave it less
-/// the time it has spent since, rounded down (spec "Time to live"). With a
-/// shorter TTL at P, R's copy ends at that time while it waits for C's
-/// bans, before C's entry expires, and is never returned.
+/// The same line, C gone, and a short delivery TTL at P. No message ends
+/// by age on its way (spec "Time to live", roadmap D106): R's copy waits
+/// for C's bans past that time, until C's entry expires, and is returned
+/// then; P, with nothing left to try, drops it. Every DATA carries the
+/// `time_left` its origin gave it, unchanged.
 #[test]
-fn the_time_left_travels_with_the_message_and_its_return() {
-    use bark_proto::wire::TTL_UNIT;
+fn a_message_outlives_the_delivery_ttl_on_its_way() {
     let (p, r, c, d) = (0, 1, 2, 3);
-    let line = |ttl| {
-        let mut h = build(
-            vec![
-                relay_with(
-                    0.0,
-                    0.0,
-                    131,
-                    Config {
-                        delivery_ttl: ttl,
-                        ..Config::default()
-                    },
-                ),
-                relay(400.0, 0.0, 132),
-                relay(800.0, 0.0, 133),
-                relay(1200.0, 0.0, 134),
-            ],
-            &[(p, r), (r, c), (c, d)],
-        );
-        h.kill(c);
-        h
-    };
-    let datas = |h: &Harness<Relay>, i: usize, id: MsgId| {
-        h.nodes[i]
-            .sent
-            .iter()
-            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Data(q)) if q.msg_id() == id => Some((*t, q.time_left)),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    };
-    let ttl = secs(600);
-    let mut h = line(ttl);
+    let short = secs(120);
+    let mut h = build(
+        vec![
+            relay_with(
+                0.0,
+                0.0,
+                131,
+                Config {
+                    delivery_ttl: short,
+                    ..Config::default()
+                },
+            ),
+            relay(400.0, 0.0, 132),
+            relay(800.0, 0.0, 133),
+            relay(1200.0, 0.0, 134),
+        ],
+        &[(p, r), (r, c), (c, d)],
+    );
+    h.kill(c);
     let start = h.now;
-    // When R last heard C: its entry expires 390 s after (spec "Neighbour table").
-    let heard_c = |h: &Harness<Relay>| {
-        let c_id = core(h, c).id();
-        core(h, r)
-            .neighbours()
-            .find(|n| n.id == c_id)
-            .map(|n| n.last_heard)
-            .unwrap()
-    };
-    let c_heard = heard_c(&h);
     let id = send(&mut h, p, d, b"timed");
     let returned = |h: &Harness<Relay>| {
         traces(h, r)
             .iter()
             .any(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
     };
-    assert!(h.run_until(start + ttl, returned), "R did not return it");
-    let (sent_p, sent_r) = (datas(&h, p, id), datas(&h, r, id));
-    let (last, left) = *sent_r.last().unwrap();
+    h.run_until(start + short + secs(60), returned);
+    assert!(!returned(&h), "returned within the TTL");
+    assert!(core(&h, r).holding().any(|m| m == id), "R kept it");
     assert!(
-        last.since(c_heard) > secs(390),
-        "returned once C's entry expired"
+        h.run_until(start + secs(600), returned),
+        "R did not return it"
     );
-    for (t, left) in sent_p.iter().chain(&sent_r) {
-        let most = (ttl - t.since(start)).as_micros() / TTL_UNIT.as_micros();
-        assert!(
-            (*left as u64) <= most && *left >= 1,
-            "{left} units at {t:?}"
-        );
-    }
-    // Rounded down twice, at P and at R, so at most two units short.
-    let exact = (ttl - last.since(start)).as_micros() / TTL_UNIT.as_micros();
-    assert!(u64::from(left) + 2 >= exact, "{left} units, {exact} left");
-
-    let short = secs(120);
-    let mut h = line(short);
-    let start = h.now;
-    let id = send(&mut h, p, d, b"timed");
-    let ended = |h: &Harness<Relay>| {
-        traces(h, r).contains(&Trace::Dropped {
-            msg_id: id,
-            reason: DropReason::Expired,
-        })
-    };
-    assert!(h.run_until(start + short, ended), "R kept it past its time");
-    h.run_for(secs(400));
-    assert!(!returned(&h));
-    assert!(!traces(&h, p)
+    let lefts: Vec<u8> = [p, r]
         .iter()
-        .any(|t| matches!(t, Trace::Dropped { .. })));
+        .flat_map(|&i| h.nodes[i].sent.iter())
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(q)) if q.msg_id() == id => Some(q.time_left),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        lefts.len() >= 2 && lefts.iter().all(|&l| l == lefts[0]),
+        "{lefts:?}"
+    );
+    h.run_for(secs(1));
+    assert!(traces(&h, p).contains(&Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute
+    }));
 }
 
 /// P hands a message to C and moves its home channel (spec "Channel moves") while C is
@@ -3086,11 +3051,12 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
     assert_eq!(forwards(&h, o, id), vec![nb]);
 }
 
-/// The time to live still ends a message that waits for a channel
-/// (spec "Time to live"): O drops it where it waits, never having
-/// offered it to C.
+/// A message that waits for a channel waits past the delivery TTL: no
+/// message ends by age on its way (spec "Time to live", roadmap D106).
+/// O holds it, never having offered it to C, and once the channel clears
+/// it goes to B and arrives.
 #[test]
-fn the_time_to_live_ends_a_message_waiting_for_a_channel() {
+fn a_message_waits_for_a_channel_past_the_delivery_ttl() {
     let short = Config {
         delivery_ttl: secs(30),
         ..Config::default()
@@ -3098,21 +3064,15 @@ fn the_time_to_live_ends_a_message_waiting_for_a_channel() {
     let (mut h, b_home) = busy_channel(201, short, false);
     let (o, _b, c, d) = (0, 1, 2, 3);
     h.jam(o, b_home);
-    let sent_at = h.now;
-    let id = send(&mut h, o, d, b"runs out");
-    let expired = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::Expired,
-    };
-    assert!(h.run_until(sent_at + secs(60), |h| traces(h, o).contains(&expired)));
-    assert!(
-        h.now.since(sent_at) < secs(30),
-        "{:?}",
-        h.now.since(sent_at)
-    );
+    let id = send(&mut h, o, d, b"waits");
+    h.run_for(secs(60));
+    assert!(core(&h, o).holding().any(|m| m == id), "O kept it");
     assert!(gave_up(&h, o, id).len() >= 20);
     assert!(forwards(&h, o, id).is_empty());
     assert_eq!(data_sent(&h, o, c), 0);
-    assert!(!delivered(&h, d, id));
-    assert!(h.run_until(h.now + secs(5), |h| h.accepts(o)));
+    h.unjam(o, b_home);
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert!(!traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::Dropped { .. })));
 }

@@ -290,10 +290,7 @@ impl Sim {
         chm.airtime_us += air;
         chm.airtime_by_type.add(decoded.as_ref(), preamble, air);
         if let Some((id, hops, kind)) = msg {
-            let to_dst = match decoded {
-                Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id => Some(d.time_left()),
-                _ => None,
-            };
+            let to_dst = matches!(decoded, Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id);
             self.message_frame(id, hops, air, src, kind, to_dst);
         }
         match decoded {

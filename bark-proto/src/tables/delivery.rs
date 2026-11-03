@@ -58,9 +58,8 @@ pub struct Queued {
     pub dst_pos: Position,
     /// The node it is for.
     pub node: NodeId,
-    /// The time it had left when it arrived, in DATA's units, which the
-    /// DATA to the node carries: here the queue's own TTL ends it, so its
-    /// time left stands still (spec "Delivery queue").
+    /// The `time_left` it arrived with, which the DATA to the node
+    /// carries as it came (spec "Time to live").
     pub time_left: u8,
     /// When it was queued.
     pub enqueued: Instant,

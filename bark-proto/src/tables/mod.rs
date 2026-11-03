@@ -46,7 +46,7 @@ pub const HOP_ATTEMPTS: u8 = 3;
 /// the hold when ACKs to other messages keep resetting the neighbour's:
 /// each wait is then a ban at the second step at most, 3.16 s, so a
 /// message is held on one neighbour at most 15.8 s, two such waits and
-/// three hand-overs of 3.15 s, 2.6 % of its time to live.
+/// three hand-overs of 3.15 s.
 pub const MOVE_ON_FAILURES: u8 = 3;
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
@@ -130,7 +130,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 264);
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 288);
+        assert_eq!(size_of::<send_queue::Outgoing>(), 280);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full heard table over one TTL (spec "Delivery queue").
@@ -165,7 +165,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 288,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 280,
             ),
             (
                 "delivered",

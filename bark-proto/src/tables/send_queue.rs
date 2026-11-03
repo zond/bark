@@ -156,10 +156,6 @@ pub struct Outgoing {
     /// frame is addressed to (spec "Hand-over" step 6); starts again when
     /// it is addressed afresh.
     pub failures: u8,
-    /// When a DATA's time left reaches zero (spec "Time to live");
-    /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
-    /// queue's TTL ends.
-    pub expires: Instant,
 }
 
 impl Outgoing {
@@ -173,7 +169,6 @@ impl Outgoing {
             tries: 0,
             place: 0,
             failures: 0,
-            expires: Instant::MAX,
         }
     }
 

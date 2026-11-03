@@ -143,8 +143,8 @@
 //!
 //! A forward whose every remaining candidate is banned waits in its place
 //! until the earliest ban ends, and is routed again then (roadmap D31). It
-//! is not returned or dropped: overload makes a message wait, never end;
-//! only its time does (below).
+//! is not returned or dropped: overload makes a message wait, never end
+//! (spec "Overload waits", roadmap D106).
 //! Only a search exhausted by neighbours tried or set aside returns or
 //! drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
@@ -162,21 +162,12 @@
 //! banned. Overload then stops a new message where it enters (roadmap D31,
 //! D34), and the search never returns to a node that sleeps. A sleepy
 //! node's own message that finds no live neighbour at all waits for one,
-//! routed again every `fade_retry`, until its time runs out (below): a
-//! node in a pocket loses its neighbours by going dark and finds them again.
+//! routed again every `fade_retry`: a node in a pocket loses its
+//! neighbours by going dark and finds them again.
 //!
-//! # Time left (spec "Time to live")
-//!
-//! A queued DATA keeps when its time runs out, from the packet it came in:
-//! the time it carried less its time on air, which passed after the
-//! sender stamped it. Each attempt carries what is left then, rounded
-//! down to whole [`TTL_UNIT`]s. With no more than one unit left it cannot
-//! be sent with any, and it is dropped wherever it waits, as soon as that
-//! happens, so its place frees at once. Without an end by time a message
-//! the network has taken lives as long as hand-overs to someone succeed,
-//! which past the capacity domain's collapse was up to an hour (roadmap
-//! D44). A packet that comes with its time gone is taken as no work, and
-//! ends here. At its owner the delivery queue takes over.
+//! No message ends by age on its way (spec "Time to live", roadmap D106):
+//! the refusals that hold it carry the load back to its origin instead.
+//! The DATA's `time_left` byte is passed on as it came.
 //!
 //! [`HandOver`]: crate::node::transfer::HandOver
 //! [`IN_FLIGHT`]: crate::node::transfer::IN_FLIGHT
@@ -199,7 +190,7 @@ use crate::tables::records::{Record, HELD, MAX_HOPS};
 use crate::tables::send_queue::{Kind, Outgoing, State, SEND_QUEUE};
 use crate::tables::MOVE_ON_FAILURES;
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD, TTL_UNIT};
+use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
 pub use crate::node::OWNER_RADIUS_M;
 
@@ -234,10 +225,6 @@ struct Verdict {
     copy: Option<(bool, bool, bool)>,
     /// This relay owns the destination, and acts on the packet.
     owner: bool,
-    /// Its time is gone: no work, and the message ends here.
-    expired: bool,
-    /// When its time is gone.
-    expires: Instant,
     /// A sleepy node's own message, count 0, whose search starts here.
     fresh: bool,
     /// Where a new record goes.
@@ -779,10 +766,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let acts = matches!(case, Case::New | Case::Search);
         let owner = acts && owner_here;
         let sends = acts && !owner;
-        // The time left was stamped as the frame went on air. Gone, the
-        // packet is no work, and the message ends here.
-        let expires = now + d.time_left() - self.data_airtime(d.payload.len());
-        let expired = sends && now >= expires - TTL_UNIT;
         let for_leaf = owner && d.dst_id != self.me();
         let record_at = match case {
             Case::New => self.record_place(),
@@ -800,7 +783,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             Duration::ZERO
         };
-        let refusal = if !acts || expired {
+        let refusal = if !acts {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
@@ -827,8 +810,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             slot,
             copy,
             owner,
-            expired,
-            expires,
             fresh,
             record_at,
             place,
@@ -886,10 +867,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Case::New | Case::Search if v.owner => {
                 self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search if v.expired => {
-                self.drop_msg(id, DropReason::Expired, emit);
-            }
-            Case::New | Case::Search => self.send_on(d, v.place, v.expires, emit),
+            Case::New | Case::Search => self.send_on(d, v.place, emit),
         }
     }
 
@@ -997,10 +975,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Queue `d` onward into `place`, a forward addressed when its
-    /// hand-over starts, whose time is gone at `expires`. Carries the
+    /// hand-over starts. Carries the
     /// received count plus one, which places it among waiting entries,
     /// until its hand-over stamps the count it is sent with (spec "Hop count").
-    fn send_on(&mut self, d: &Data<'_>, place: u8, expires: Instant, emit: &mut dyn FnMut(Action)) {
+    fn send_on(&mut self, d: &Data<'_>, place: u8, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
@@ -1015,7 +993,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let out = Outgoing {
             place,
-            expires,
             ..Outgoing::new(
                 data_frame(&out, self.home, self.forward_preamble()),
                 Kind::Forward,
@@ -1028,7 +1005,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The message has reached its owner, this relay (spec "Owner"): deliver it
     /// to the application if it is for this node, or queue it for the
-    /// node it is for, with the time it has left now.
+    /// node it is for.
     fn arrive(&mut self, id: MsgId, d: &Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (node, payload) = (d.dst_id, d.payload);
         if self.own.id == Some(id) {
@@ -1159,9 +1136,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         self.set_own(Some(id));
-        // This node is the message's first holder: its time starts now.
-        let ttl = self.config.delivery_ttl;
-        let expires = now + ttl;
         let d = Data {
             sender_home: self.home,
             dst_hop: NodeId::NONE,
@@ -1169,7 +1143,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dst_pos,
             dst_id,
             hops: 0,
-            time_left: Data::units(ttl),
+            time_left: Data::units(self.config.delivery_ttl),
             payload,
         };
         if dst_id == self.me() || self.owns(dst_pos, now) {
@@ -1177,9 +1151,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             record.set_arrived();
             self.records.put(at, record);
             if dst_id != self.me() && !self.delivery.has_room(now) {
-                // At its owner: the delivery queue, not its time left,
-                // ends it from here (spec "Delivery queue").
-                // Admission left it a place, as for any message of the
+                // At its owner the delivery queue's rule ends it
+                // (spec "Delivery queue"). Admission left it a place, as for any message of the
                 // application's.
                 let out = Outgoing {
                     state: State::Held,
@@ -1195,7 +1168,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         self.records.put(at, Record::new(id, None, 0, now));
-        self.send_on(&d, 0, expires, emit);
+        self.send_on(&d, 0, emit);
     }
 
     // --- The hand-over (spec "Hand-over") ---
@@ -1335,8 +1308,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if self.own.id == Some(id) && d.dst_id != self.me() && !self.delivery.has_room(now) {
                 return Routed::Hold;
             }
-            let time_left = Data::units(out.expires.since(now));
-            self.arrive(id, &Data { time_left, ..d }, now, emit);
+            self.arrive(id, &d, now, emit);
             return Routed::Done;
         }
         if out.state == State::Holding {
@@ -1644,9 +1616,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.excursion.transmit(Job::HandOver, frame, emit);
     }
 
-    /// The current frame as it goes now: its count and the time it has
-    /// left stamped, or `None` where it is dropped at the cap or for its
-    /// time, or held for an owed reply.
+    /// The current frame as it goes now, its count stamped, or `None`
+    /// where it is dropped at the cap, or held for an owed reply.
     fn stamp(
         &mut self,
         out: Outgoing,
@@ -1662,30 +1633,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut frame = out.frame;
         if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
             let id = d.msg_id();
-            // A DATA to a sleepy node keeps the time it arrived with: the
-            // delivery queue, not its time left, ends it there.
-            let time_left = match out.expires {
-                Instant::MAX => d.time_left,
-                ends => Data::units(ends.since(now)),
-            };
-            let (Some(hops), false) = (self.count(&d, id, &out), gone(&out, now)) else {
-                let reason = match gone(&out, now) {
-                    true => DropReason::Expired,
-                    false => DropReason::HopCap,
-                };
+            let Some(hops) = self.count(&d, id, &out) else {
                 self.queue.take_current();
                 self.forwarding.skipped = 0;
                 self.forwarding.feed_due = true;
-                self.drop_msg(id, reason, emit);
+                self.drop_msg(id, DropReason::HopCap, emit);
                 return None;
             };
-            // Each attempt carries the time as it is when it goes, so a
-            // retry never claims more than is left.
             frame = data_frame(
                 &Data {
                     sender_home: self.home,
                     hops,
-                    time_left,
                     ..d
                 },
                 out.frame.channel,
@@ -2110,74 +2068,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
             }
         }
-        self.expire(now, emit);
-    }
-
-    /// Drop every message in the send queue whose time is gone (spec "Time to live"):
-    /// it could no longer be sent with a whole unit left. Waiting for a
-    /// ban, in a hop place or a return alike; it frees its place at once
-    /// rather than when its turn comes. One whose frame is on air or waits
-    /// for its ACK ends at its next attempt instead (`transmit_current`).
-    /// A message set aside for the delivery queue is at its owner, where
-    /// that queue ends it.
-    fn expire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.time_gone_at().is_none_or(|t| t > now) {
-            return;
-        }
-        loop {
-            let under_way = self.under_way();
-            let found = self
-                .queue
-                .iter()
-                .enumerate()
-                .position(|(i, o)| Some(i) != under_way && !o.held() && gone(o, now));
-            let Some(i) = found else { break };
-            let id = self.queue.iter().nth(i).and_then(Outgoing::msg_id);
-            if self.queue.current_index() == Some(i) {
-                // Not yet on air: waiting its turn, for the bucket or to retry.
-                self.cancel_handover();
-                self.forwarding.skipped = 0;
-            }
-            let mut k = 0;
-            self.queue.retain(|_, _| {
-                k += 1;
-                k != i + 1
-            });
-            self.forwarding.feed_due = true;
-            self.drop_msg(id.unwrap_or_default(), DropReason::Expired, emit);
-        }
-    }
-
-    /// The send queue's entry whose frame is on air or waiting for its ACK.
-    fn under_way(&self) -> Option<usize> {
-        let on_air = self.awaiting_ack()
-            || self.radio.excursion.step_of(Job::HandOver) == Some(mac::Step::Tx);
-        self.queue.current_index().filter(|_| on_air)
-    }
-
-    /// When the earliest message in the send queue, but for one on air or
-    /// waiting for its ACK, can no longer be sent with a whole unit of time
-    /// left.
-    fn time_gone_at(&self) -> Option<Instant> {
-        // Asked on every event; mostly there is nothing queued.
-        if self.queue.is_empty() {
-            return None;
-        }
-        let under_way = self.under_way();
-        self.queue
-            .iter()
-            .enumerate()
-            .filter(|(i, o)| Some(*i) != under_way && !o.held())
-            .map(|(_, o)| o.expires)
-            .min()
-            .filter(|&t| t != Instant::MAX)
-            .map(|t| t - TTL_UNIT)
-    }
-
-    /// When forwarding next needs the core of its own accord, the radio
-    /// aside: a message's time running out.
-    pub(super) fn forward_deadline(&self) -> Option<Instant> {
-        self.time_gone_at()
     }
 
     /// When the hand-over in flight next needs the core, if it waits.
@@ -2187,10 +2077,4 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => None,
         }
     }
-}
-
-/// Whether `out`'s time is gone: no more than one unit is left, and a
-/// DATA carries only whole ones, rounded down (spec "Time to live").
-fn gone(out: &Outgoing, now: Instant) -> bool {
-    out.expires != Instant::MAX && now >= out.expires - TTL_UNIT
 }

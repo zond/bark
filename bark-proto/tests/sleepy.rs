@@ -6,7 +6,7 @@ mod common;
 
 use bark_proto::sniff::{anchorless_beat_period, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::tables::heard::{beat_period, HeardParams};
-use bark_proto::wire::{Data, Packet, TTL_UNIT};
+use bark_proto::wire::{Data, Packet};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, NodeId, Position, Relay,
     Trace,
@@ -470,10 +470,11 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
     assert_eq!(after, 0);
 }
 
-/// A sleepy node's own message with no live neighbour waits for one
-/// until its time runs out (spec "Time to live").
+/// A sleepy node's own message with no live neighbour waits for one,
+/// past the delivery TTL: no message ends by age
+/// (spec "A sleepy node's own message", roadmap D106).
 #[test]
-fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
+fn a_sleepy_node_alone_keeps_its_message() {
     let mut h = Harness::powered(vec![node(0.0, true, 41)]);
     h.run_until(at(400), |_| false);
     let text = b"nobody there";
@@ -488,20 +489,12 @@ fn a_sleepy_node_alone_keeps_its_message_for_a_ttl() {
     );
     let id = MsgId::of(dst_pos, dst_id, text);
     let start = h.now;
-    let dropped = |h: &Harness<Relay>| {
-        h.nodes[0].traces.iter().find_map(|(t, tr)| match tr {
-            Trace::Dropped { msg_id, reason } if *msg_id == id => Some((*t, *reason)),
-            _ => None,
-        })
-    };
-    let last = start + Config::default().delivery_ttl - TTL_UNIT;
-    h.run_until(last - secs(1), |_| false);
-    assert_eq!(dropped(&h), None);
+    h.run_until(start + Config::default().delivery_ttl.mul(2), |_| false);
+    assert!(!h.nodes[0]
+        .traces
+        .iter()
+        .any(|(_, tr)| matches!(tr, Trace::Dropped { msg_id, .. } if *msg_id == id)));
     assert!(h.nodes[0].core.holding().any(|m| m == id));
-    h.run_until(start + secs(700), |_| false);
-    let (t, reason) = dropped(&h).expect("dropped");
-    assert_eq!(reason, DropReason::Expired);
-    assert!(t >= last);
 }
 
 /// A sleepy node keeps its anchor against a node a little stronger and

@@ -63,8 +63,8 @@
 //! - A heartbeat byte whose channel is 15, which no node sends, starts the
 //!   firmware's bench frames ([`BENCH_FIRST`]); nodes reject it as a
 //!   channel outside the plan.
-//! - DATA `time_left` is the time the message has left, in whole
-//!   [`TTL_UNIT`]s, rounded down.
+//! - DATA `time_left` is written once by the origin, the delivery TTL in
+//!   [`TTL_UNIT`]s, and passed on unread (spec "Time to live").
 //! - An ACK with trailing bytes is malformed, not padded. A heartbeat is
 //!   read from its first [`HEARTBEAT_LEN`] bytes, and what follows is
 //!   ignored, so that a later format may append fields.
@@ -252,16 +252,15 @@ pub struct Data<'a> {
     pub dst_id: NodeId,
     /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
-    /// The time the message has left, in [`TTL_UNIT`]s (spec "Time to live").
+    /// The delivery TTL in [`TTL_UNIT`]s as its origin wrote it, passed on
+    /// unread (spec "Time to live").
     pub time_left: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
 }
 
-/// Unit of DATA's time left (spec "Packet formats"). Each node rounds the time
-/// down when it sends, so each hand-over loses up to one unit; 2.5 s is
-/// the finest unit at which one byte holds the delivery TTL, 600 s, as 240
-/// (spec "Receiving DATA").
+/// Unit of DATA's `time_left` (spec "Packet formats"): the finest at which
+/// one byte holds the delivery TTL, 600 s, as 240.
 pub const TTL_UNIT: Duration = Duration::from_millis(2500);
 
 impl Data<'_> {
@@ -270,13 +269,13 @@ impl Data<'_> {
         MsgId::of(self.dst_pos, self.dst_id, self.payload)
     }
 
-    /// The time the message has left.
+    /// `time_left` as a duration.
     pub const fn time_left(&self) -> Duration {
         TTL_UNIT.mul(self.time_left as u64)
     }
 
-    /// `left` in whole [`TTL_UNIT`]s, rounded down, so that no node keeps
-    /// a message longer than it had, and capped at what the field holds.
+    /// `left` in whole [`TTL_UNIT`]s, rounded down, and capped at what the
+    /// field holds.
     pub const fn units(left: Duration) -> u8 {
         let u = left.as_micros() / TTL_UNIT.as_micros();
         if u > u8::MAX as u64 {

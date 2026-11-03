@@ -377,10 +377,6 @@ struct OriginRecord {
     /// When a node other than its origin first sent a DATA of it: when it
     /// entered the network past its first hop's admission.
     entered_at: Option<Instant>,
-    /// The time left the last DATA to its destination node carried: what
-    /// that node's application learns of the message's way (spec
-    /// "Time to live").
-    time_left: Option<Duration>,
     /// The node that queued it for its destination node
     /// (spec "Delivery queue"), the beats of that node it heard while the
     /// message was queued, and the DATA it sent it.
@@ -466,8 +462,6 @@ pub struct MessageRow {
     /// Origination to the first DATA of it from a node other than its
     /// origin, seconds.
     pub entered_s: Option<f64>,
-    /// The time left in the last DATA to its destination node, seconds.
-    pub time_left_s: Option<f64>,
     /// Beats of its destination node its holder heard while it was
     /// queued, and the DATA the holder sent it.
     pub holder_beats: u32,
@@ -3497,7 +3491,7 @@ impl Sim {
         air_us: u64,
         src: u32,
         kind: FrameKind,
-        time_left: Option<Duration>,
+        to_dst: bool,
     ) {
         let Some(&tag) = self.msg_tags.get(&id.0) else {
             return;
@@ -3508,11 +3502,8 @@ impl Sim {
         o.frames += 1;
         o.airtime_us += air_us;
         o.hops = o.hops.max(hops);
-        if time_left.is_some() {
-            o.time_left = time_left;
-            if o.holder == Some(src) {
-                o.holder_tries += 1;
-            }
+        if to_dst && o.holder == Some(src) {
+            o.holder_tries += 1;
         }
         let kind = match kind {
             FrameKind::Data if src == o.src => 0,
@@ -3613,7 +3604,6 @@ impl Sim {
                 dst_sleepy: o.dst_sleepy,
                 dst_carried: o.dst_carried,
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
-                time_left_s: o.time_left.map(|d| d.as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
                 holder_tries: o.holder_tries,
                 watch: o.watch,
@@ -3638,7 +3628,7 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
         );
         for n in beat_fate::NAMES {
             s.push_str(",b_");
@@ -3658,10 +3648,9 @@ impl Sim {
             let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let entered = r.entered_s.map(|l| format!("{l:.6}")).unwrap_or_default();
-            let left = r.time_left_s.map(|l| format!("{l:.1}")).unwrap_or_default();
             let relay = |r: Option<u32>| r.map(|r| r.to_string()).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0},{entered},{left},{},{}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0},{entered},{},{}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -3916,7 +3905,6 @@ impl Sim {
             taken_at: None,
             dropped_at: None,
             entered_at: None,
-            time_left: None,
             holder: None,
             holder_beats: 0,
             holder_tries: 0,
@@ -4886,7 +4874,6 @@ mod tests {
                 taken_at: None,
                 dropped_at: None,
                 entered_at: None,
-                time_left: None,
                 holder: None,
                 holder_beats: 0,
                 holder_tries: 0,

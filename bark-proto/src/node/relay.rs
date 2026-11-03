@@ -812,7 +812,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.grace_ends(),
             self.flush_ends(),
             self.gps_wakeup(),
-            self.forward_deadline(),
             self.delivery_wakeup(),
             self.next_slot_edge(),
         ]
