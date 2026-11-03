@@ -105,7 +105,10 @@ now takes the other frame with it unless 3 dB apart.
   a few symbols of each other.
 - Levels near the floor: both frames here were 60 to 90 dB above it;
   the 3 dB may not hold at the sensitivity limit.
-- Other spreading factors and frames of equal length.
+- The error curve's weight below the harmless level: the two-long-frames
+  run shows no loss at −3 dB and below over 111 ms, so the curve should
+  charge nothing there; its weight above the level is unmeasured.
+- Other spreading factors.
 - The same for the receiver's own transmissions: a frame arriving while
   the board transmits is lost in any model.
 
@@ -124,12 +127,48 @@ now takes the other frame with it unless 3 dB apart.
 - The two senders differed by 4 to 13 dB at the receiver at the same
   power setting, with their orientation and cables on the desk.
 
+## Two long frames
+
+The same afternoon, the two senders both sent long frames: one 255-byte
+frames every 1 390 ms, the other 200-byte frames every 1 250 ms, the
+lengths telling the streams apart even when the CRC fails. Each overlap
+lasts most of the shorter frame, 111 ms, and is of either order, so
+one run gives both the held frame surviving a weaker arrival over a
+long overlap and a strong long frame arriving late. Six minutes a step,
+about 50 overlaps, half of each order. The 255-byte sender was at
+−32 dBm at the receiver in the first six steps and −28.5 dBm in the
+last two.
+
+| 200-byte minus 255-byte, dB | 255-byte first: n, decoded | 200-byte first: n, decoded, 255-byte decoded |
+|---|---|---|
+| −16 | 29, 29 | 22, 1, 1 |
+| −10 | 28, 28 | 22, 0, 1 |
+| −6 | 28, 28 | 22, 0, 1 |
+| −4 (2 steps) | 28, 28 and 28, 28 | 23, 0, 1 and 23, 0, 0 |
+| −3 (2 steps) | 28, 28 and 29, 25 | 22, 0, 1 and 22, 0, 0 |
+| −2 | 28, 16 | 23, 2, 2 |
+
+Frames that met no other were decoded every time in every step.
+
+- **A frame 3 dB or more weaker does no harm over a whole overlap.**
+  The held 255-byte frame was decoded 28 of 28 at −3 to −16 dB, 25 of
+  29 at the second −3 dB step, and 16 of 28 at −2 dB: the same edge as
+  the short frames found, now over 111 ms instead of 12.6 ms. The
+  simulator's error curve, which also charges a weaker arrival as
+  interference, predicted about a third lost at −4 dB over an overlap
+  this long; nothing was.
+- **A later frame never takes the lock, whatever its length.** With the
+  weaker 200-byte frame held, the stronger 255-byte one arriving 3 to
+  16 dB above it was decoded 0 to 2 of 22, the preamble cases, and the
+  held one was lost every time.
+
 ## In the simulator
 
 Since roadmap D107 the simulator follows the result: a packet arriving
 after the held one's preamble is lost, and the held one with it unless
 the arrival is at least 3 dB weaker (`harmless_below_db`); a weaker one
-still counts as interference on the error curve. The error curve already
+still counts as interference on the error curve, which the two-long-frames
+run above shows it should not below 3 dB. The error curve already
 lost most such packets, so the change mostly moves losses from symbol
 errors to the new count, and adds 3 to 9 % to the receptions lost to a
 frame after locking. On main `e4b20eb`, seed 1, main → this model, it
