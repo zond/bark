@@ -1900,7 +1900,7 @@ impl Sim {
             let rec = r.records(self.clocks[i].local(self.now));
             let m = serde_json::to_string(&self.metrics.nodes[i]).expect("serialisable");
             s.push_str(&format!(
-                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"home\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"rec\":{},\"rec_idle_s\":{},\"m\":{m}}}\n",
+                "{{\"t\":{t},\"n\":{i},\"alive\":{},\"booting\":{},\"home\":{},\"busy\":{:.5},\"busy_min\":{:.5},\"bucket_us\":{},\"sq\":{},\"dq\":{},\"lv\":{},\"nb\":{},\"hp\":{},\"wt\":{},\"rt\":{},\"rc\":{},\"rb\":{},\"rec\":{},\"rec_idle_s\":{},\"m\":{m}}}\n",
                 self.nodes[i].alive,
                 r.booting(),
                 r.home().index(),
@@ -1918,6 +1918,8 @@ impl Sim {
                 l.hop_places,
                 l.waiting,
                 l.returns,
+                l.candidates,
+                l.banned,
                 rec.0,
                 rec.1.map_or(-1, |d| (d.as_micros() / 1_000_000) as i64)
             ));
