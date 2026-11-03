@@ -770,6 +770,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         {
             // The packet could not be answered; its sender's retry
             // brings it again (spec "The ACK", roadmap D29).
+            emit(Action::Trace(Trace::Silent {
+                msg_id: id,
+                owed: true,
+            }));
             self.note_untaken(emit);
             return;
         }
@@ -780,6 +784,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .replies
                     .owe(reply, d.sender_home, deadline, false, None, sending, now);
                 self.note_untaken(emit);
+            } else {
+                emit(Action::Trace(Trace::Silent {
+                    msg_id: id,
+                    owed: false,
+                }));
             }
             return;
         }
@@ -787,6 +796,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Trace(Trace::Refused {
                 msg_id: id,
                 reason: DropReason::Budget,
+            }));
+            emit(Action::Trace(Trace::Silent {
+                msg_id: id,
+                owed: false,
             }));
             return;
         }
@@ -1815,7 +1828,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
         emit(Action::Trace(Trace::Seen { msg_id: id, by: to }));
-        self.tried(id, to, d.hops, now);
+        self.tried(id, to, d.hops, now, emit);
         if out.kind == Kind::Forward {
             self.cancel_handover();
             return;
@@ -1825,14 +1838,36 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.drop_msg(id, DropReason::ReturnSeen, emit);
     }
 
+    /// `id` answered this relay (spec "Neighbour table"): traced if it was
+    /// demoted since its last answer, for counting how long a demoted
+    /// neighbour stays silent.
+    pub(super) fn answer_from(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let after = self.neighbours.params().demote_after;
+        if self
+            .neighbours
+            .get(id)
+            .is_some_and(|n| n.fail_count >= after)
+        {
+            emit(Action::Trace(Trace::Answered { neighbour: id }));
+        }
+        self.neighbours.answered(id, now);
+    }
+
     /// The receiver `to` of a hand-over of `id` sent at count `hops`
     /// answered that it has the packet, taken or seen: it is alive and
     /// tried, and the count is spent (spec "The ACK", "Message records",
     /// "Hop count").
-    fn tried(&mut self, id: MsgId, to: NodeId, hops: u8, now: Instant) {
+    fn tried(
+        &mut self,
+        id: MsgId,
+        to: NodeId,
+        hops: u8,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
         let slot = self.neighbours.slot_of(to);
         if slot.is_some() {
-            self.neighbours.answered(to, now);
+            self.answer_from(to, now, emit);
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(hops);
@@ -1862,7 +1897,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let wait = told(ack.wait);
         let slot = self.neighbours.slot_of(by);
         if slot.is_some() {
-            self.neighbours.answered(by, now);
+            self.answer_from(by, now, emit);
             self.neighbours.refused(by, now + wait);
         }
         if self.sleepy() && self.own.id == Some(msg_id) && out.kind == Kind::Forward {
@@ -1923,7 +1958,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let (id, to) = (d.msg_id(), d.dst_hop);
         if out.kind.delivers() {
-            self.neighbours.answered(to, now);
+            self.answer_from(to, now, emit);
             let long = out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS;
             let by = match (out.kind, long) {
                 (Kind::Direct, true) => Delivery::Flush,
@@ -1933,7 +1968,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             };
             return self.delivered_to(id, to, by, now, emit);
         }
-        self.tried(id, to, d.hops, now);
+        self.tried(id, to, d.hops, now, emit);
         if to == d.dst_id {
             // The node it is addressed to took it: it has arrived.
             if let Some(r) = self.records.get_mut(id) {
@@ -2092,6 +2127,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let frame = reply_frame(o);
         let airtime = mac::airtime(&frame);
         if !self.can_reply(airtime, now) {
+            let Reply::Ack(a) = o.reply;
+            emit(Action::Trace(Trace::Silent {
+                msg_id: a.msg_id,
+                owed: false,
+            }));
             self.radio.replies.abandon();
             self.note_untaken(emit);
             return true;

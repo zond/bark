@@ -421,6 +421,21 @@ pub enum Trace {
         /// The neighbour.
         neighbour: NodeId,
     },
+    /// A neighbour demoted since it last answered this relay answered it
+    /// (spec "Neighbour table"); for counting only.
+    Answered {
+        /// The neighbour.
+        neighbour: NodeId,
+    },
+    /// A DATA addressed to this node went unanswered: its reply could
+    /// not be afforded, or, with `owed`, another reply was owed (spec
+    /// "The ACK"); for counting only.
+    Silent {
+        /// Its message.
+        msg_id: MsgId,
+        /// Another reply was owed.
+        owed: bool,
+    },
     /// The node a message was held for took it (spec "Delivery").
     Delivered {
         /// The message.

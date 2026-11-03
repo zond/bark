@@ -357,6 +357,9 @@ pub struct Summary {
     /// Messages held on a neighbour after a failed hand-over
     /// (`metrics::Holds`), and how long.
     pub holds: HoldsSummary,
+    /// Silences, flaps and demoted neighbours answering again
+    /// (`metrics::Pressure`).
+    pub pressure: crate::metrics::Pressure,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -538,6 +541,7 @@ impl Sim {
             },
             taken_at_attempt: m.taken_at_attempt.clone(),
             holds: HoldsSummary::of(&m.holds),
+            pressure: m.pressure.clone(),
             addressed: m.addressed,
             channels,
             observers,
@@ -1032,6 +1036,25 @@ impl Summary {
                 s,
                 "seen ACKs: {} sent, {} acted on",
                 self.seen.sent, self.seen.acted
+            );
+        }
+        let p = &self.pressure;
+        if p.silent_budget + p.silent_owed + p.flaps + p.demotions > 0 {
+            let a = p.answered_within;
+            let _ = writeln!(
+                s,
+                "DATA unanswered for want of reply budget {}, for a reply owed {}; offers to A, another, A again {}; demotions {}, answered within 1.58 / 5 / 15 / 60 / 390 s / later {} / {} / {} / {} / {} / {}, not answered {}",
+                p.silent_budget,
+                p.silent_owed,
+                p.flaps,
+                p.demotions,
+                a[0],
+                a[1],
+                a[2],
+                a[3],
+                a[4],
+                a[5],
+                p.demotions - a.iter().sum::<u64>()
             );
         }
         if let Some(held) = &self.holds.held {

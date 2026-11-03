@@ -1221,6 +1221,9 @@ pub struct Metrics {
     pub taken_at_attempt: Vec<u64>,
     /// Messages held on a neighbour after a failed hand-over.
     pub holds: Holds,
+    /// What pushback costs: silences, flaps, demoted neighbours that
+    /// answer again.
+    pub pressure: Pressure,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.
@@ -1231,6 +1234,36 @@ pub struct Metrics {
     /// The research models.
     pub research: Research,
     last_sample: SampleMark,
+}
+
+/// Counters of what pushback costs, for counting only (roadmap D106).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Pressure {
+    /// DATA addressed to a node that it did not answer for want of reply
+    /// budget (spec "Duty cycle cap").
+    pub silent_budget: u64,
+    /// The same, because another reply was owed (spec "The ACK").
+    pub silent_owed: u64,
+    /// Offers of a message to a neighbour, then another, then the first
+    /// again, at one relay.
+    pub flaps: u64,
+    /// Demotions of a neighbour not already demoted and unanswered.
+    pub demotions: u64,
+    /// Of them, answered by the neighbour, by the time from the demotion
+    /// to the answer: under 1.58 s (a ban), 5 s, 15 s, 60 s, 390 s (a
+    /// demotion's length), and later.
+    pub answered_within: [u64; 6],
+}
+
+impl Pressure {
+    /// Edges of `answered_within`, seconds.
+    pub const EDGES: [f64; 5] = [1.58, 5.0, 15.0, 60.0, 390.0];
+
+    /// A demoted neighbour answered `s` seconds after its demotion.
+    pub fn answered_after(&mut self, s: f64) {
+        let i = Self::EDGES.iter().take_while(|&&e| s >= e).count();
+        self.answered_within[i] += 1;
+    }
 }
 
 /// What holding a message on a neighbour after a failed hand-over does
@@ -1406,6 +1439,15 @@ pub fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_answer_after_a_demotion_falls_in_its_bin() {
+        let mut p = Pressure::default();
+        for s in [0.5, 1.58, 4.9, 14.0, 59.0, 389.0, 400.0] {
+            p.answered_after(s);
+        }
+        assert_eq!(p.answered_within, [1, 2, 1, 1, 1, 1]);
+    }
 
     #[test]
     fn outcomes_balance_candidates() {

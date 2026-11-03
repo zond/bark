@@ -921,7 +921,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // It chose this node as its next hop, from heartbeats it
                 // heard, and sends on this channel now: it hears us
                 // (spec "Neighbour table").
-                self.neighbours.answered(d.src_hop, now);
+                self.answer_from(d.src_hop, now, emit);
                 self.data(d, now, emit)
             }
             _ => {}

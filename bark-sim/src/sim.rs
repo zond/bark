@@ -798,6 +798,12 @@ pub struct Sim {
     /// Messages held on a neighbour after a failed hand-over, by node and
     /// message ID (`metrics::Holds`).
     holds: HashMap<(u32, u32), Hold>,
+    /// Every hand-over that ended, by message tag: the relay and the
+    /// neighbour offered, in order (`metrics::Pressure`).
+    offer_log: HashMap<u32, OfferLog>,
+    /// Demotions not yet followed by an answer from the neighbour, by
+    /// relay and the neighbour's key: when.
+    demoted_at: HashMap<(u32, u64), Instant>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
     pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
@@ -893,6 +899,27 @@ pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
 }
 
 /// A node ID as a map key.
+/// The hand-overs of one message that ended, at any relay
+/// (`Sim::note_offer`).
+#[derive(Default)]
+struct OfferLog {
+    /// Relay and neighbour of each, in order.
+    to: Vec<(u32, u64)>,
+    /// Offers to a neighbour, then another, then the first again, at one
+    /// relay.
+    flaps: u32,
+}
+
+impl OfferLog {
+    /// Distinct relay and neighbour pairs offered.
+    fn next_hops(&self) -> usize {
+        let mut v = self.to.clone();
+        v.sort_unstable();
+        v.dedup();
+        v.len()
+    }
+}
+
 pub(crate) fn key(id: NodeId) -> u64 {
     id.to_u64()
 }
@@ -1305,6 +1332,8 @@ impl Sim {
             queued_for: HashMap::new(),
             holders_of: HashMap::new(),
             holds: HashMap::new(),
+            offer_log: HashMap::new(),
+            demoted_at: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
@@ -2540,7 +2569,9 @@ impl Sim {
                         c.refused.add(reason);
                         self.note_refusal(node, msg_id, reason);
                     }
-                    Trace::TurnedAway { msg_id, .. } => {
+                    Trace::TurnedAway { msg_id, by } => {
+                        self.note_offer(node, msg_id, by);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.turned_away += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
                             self.metrics.holds.ended_refused += 1;
@@ -2552,7 +2583,30 @@ impl Sim {
                         c.lbt_gave_up += 1;
                         c.busy_wait_us += busy_wait;
                     }
-                    Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::Demoted { neighbour } => {
+                        c.demoted += 1;
+                        let now = self.now;
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            self.demoted_at.entry((node, key(neighbour)))
+                        {
+                            e.insert(now);
+                            self.metrics.pressure.demotions += 1;
+                        }
+                    }
+                    Trace::Answered { neighbour } => {
+                        if let Some(t) = self.demoted_at.remove(&(node, key(neighbour))) {
+                            let s = self.now.since(t).as_micros() as f64 / 1e6;
+                            self.metrics.pressure.answered_after(s);
+                        }
+                    }
+                    Trace::Silent { owed, .. } => {
+                        let p = &mut self.metrics.pressure;
+                        if owed {
+                            p.silent_owed += 1;
+                        } else {
+                            p.silent_budget += 1;
+                        }
+                    }
                     Trace::MoveSign {
                         surprises,
                         sum_milli,
@@ -2654,6 +2708,8 @@ impl Sim {
                         hops,
                         attempts,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
                         self.metrics.taken_at_attempt(attempts);
@@ -2664,6 +2720,8 @@ impl Sim {
                         to,
                         moves_on,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.failed += 1;
                         let had = self
                             .relay_index
@@ -2705,7 +2763,9 @@ impl Sim {
                             c.seen += u64::from(seen);
                         }
                     }
-                    Trace::Seen { msg_id, .. } => {
+                    Trace::Seen { msg_id, by } => {
+                        self.note_offer(node, msg_id, by);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.seen_acted += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
                             self.metrics.holds.ended_seen += 1;
@@ -2717,6 +2777,8 @@ impl Sim {
                         to,
                         attempts,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.handed_over += 1;
                         c.returned += 1;
                         self.metrics.taken_at_attempt(attempts);
@@ -2729,6 +2791,25 @@ impl Sim {
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
+    }
+
+    /// A hand-over of `msg_id` from `node` to `to` ended, taken, refused,
+    /// failed or seen: counted per message, and a flap noted when `node`
+    /// offers it to a neighbour, then another, then the first again.
+    fn note_offer(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
+        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
+            return;
+        };
+        let to = key(to);
+        let log = self.offer_log.entry(tag).or_default();
+        let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
+        if let Some(&(_, last)) = here.next() {
+            if last != to && here.any(|&(_, k)| k == to) {
+                log.flaps += 1;
+                self.metrics.pressure.flaps += 1;
+            }
+        }
+        log.to.push((node, to));
     }
 
     /// `node` handed `msg_id` to `to`: if it had held the message on `to`
@@ -3634,7 +3715,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -3687,7 +3768,11 @@ impl Sim {
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
-            s.push_str(&format!(",{}\n", w.elsewhere));
+            let (offers, hops, flaps) = self
+                .offer_log
+                .get(&r.tag)
+                .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            s.push_str(&format!(",{},{offers},{hops},{flaps}\n", w.elsewhere));
         }
         s
     }
@@ -4437,6 +4522,15 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinct_next_hops_count_each_relay_and_neighbour_once() {
+        let log = OfferLog {
+            to: vec![(1, 10), (1, 10), (2, 20), (1, 11)],
+            flaps: 0,
+        };
+        assert_eq!(log.next_hops(), 3);
+    }
 
     /// A clock off by 50 ppm reads 50 µs more or less a second, and a
     /// timer set on it fires at the first true microsecond it reads the

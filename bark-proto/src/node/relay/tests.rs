@@ -648,7 +648,12 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     now += Duration::from_millis(1);
     actions.clear();
     r.handle(received(&b_bytes), now, &mut |x| actions.push(x));
-    assert!(actions.is_empty(), "{actions:?}");
+    assert!(
+        actions
+            .iter()
+            .all(|x| matches!(x, Action::Trace(Trace::Silent { owed: true, .. }))),
+        "{actions:?}"
+    );
     assert!(r.records.get(b.msg_id()).is_none(), "B's packet was taken");
 
     // The reading completes: A's ACK goes, and A is taken with it.
