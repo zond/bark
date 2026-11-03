@@ -7,7 +7,7 @@
 //! 6 s, over the time of one full frame and its ACK, `138.56 + 16.96 =
 //! 155.52 ms`: ⌈38.6⌉ = 39. Each packet taken also costs the ACK that
 //! takes it, so from a full bucket with the reply reserve left in at most
-//! 37 full frames fit, and for full frames the bucket binds first. Short
+//! 33 full frames fit, and for full frames the bucket binds first. Short
 //! frames fill the 39 places first: 39 hand-overs of them still go out
 //! in a few seconds.
 //!
@@ -463,7 +463,7 @@ mod tests {
         let per = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS)
             + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         let fit = (DEPTH - REPLY_RESERVE).as_micros() / per.as_micros();
-        assert_eq!(fit, 37);
+        assert_eq!(fit, 33);
         assert!((fit as usize) < SEND_QUEUE);
     }
 

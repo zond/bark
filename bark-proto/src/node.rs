@@ -289,7 +289,7 @@ impl Config {
         node_id: NodeId::NONE,
         sleepy_listens: false,
         tx_power_dbm: 10,
-        heartbeat_min: Duration::from_secs(5),
+        heartbeat_min: crate::tables::budget::HEARTBEAT_EVERY,
         heartbeat_max: HEARTBEAT_MAX,
         ack_timeout: crate::tables::ACK_TIMEOUT,
         hop_attempts: crate::tables::HOP_ATTEMPTS,

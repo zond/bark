@@ -937,7 +937,12 @@ hears this relay: a message waiting for it lets it go only then
 states the sender cannot tell apart: it never got the frame, or it took
 the message and its ACKs were lost, or it could not afford them
 ([duty cycle cap](#duty-cycle-cap)). A receiver silent for want of reply
-budget has its whole reply reserve back 2.4 s after it stops spending.
+budget, a siege having spent its reserve ([duty cycle cap](#duty-cycle-cap)),
+answers again once its bucket has refilled what a sender's retries cost
+it. The retrying takes at least 2.41 s: the two retry waits, 311 +
+622 ms, and two more attempts, each up to 500 ms of listen-before-talk,
+a 138.6 ms full frame and the 100 ms ACK timeout ([hand-over](#hand-over));
+the bucket refills 9.83 % × 2.41 s = 237 ms meanwhile, 13 refusals.
 The failed message waits for the neighbour's ban between offers
 ([bans](#bans)), 1.58 s after the first failure and 3.16 s after the
 second, so the third offer comes 4.74 s after the first failure, when
@@ -1067,16 +1072,22 @@ it is not dropped. Two reserves stay in the bucket:
   14.4 ms. The bucket refills that in 146 ms, far less than the 5 s
   between heartbeats ([heartbeat](#heartbeat)), so heartbeats always go.
 - Forwarding, and the ACK that takes on a packet, leave the **reply
-  reserve**, 235 ms: the heartbeat, and the refusals the bucket refills
-  while a sender retries an unanswered hand-over.
+  reserve**, 845 ms: the heartbeat, and 49 refusals, enough for a relay
+  at its cap to answer every DATA it receives for the longest ban.
 
-*Why the reply reserve.* The retrying takes at least 2.41 s: the two
-retry waits, 311 + 622 ms, and two more attempts, each up to 500 ms of
-listen-before-talk, a 138.6 ms full frame and the 100 ms ACK timeout
-([hand-over](#hand-over)); a channel that stays busy makes it longer,
-and the bucket refills more meanwhile. The bucket refills 9.83 % ×
-2.41 s = 237.0 ms of it, ⌊237.0 / 17.0⌋ = 13 refusals of 17.0 ms
-([the ACK](#the-ack)).
+*Why the reply reserve.* A relay at its cap that falls silent is
+banned by its senders on the silence ladder and goes round, so its
+refusals no longer tell the wait back ([bans](#bans)); it must answer
+for as long as anything waits for it. A relay receives at most one DATA
+per full frame and the ACK that answers it, 138.6 + 17.0 = 155.5 ms,
+and sends a heartbeat at most every 5 s ([heartbeat](#heartbeat)). Over
+the longest ban, 61.0 s, the bucket refills exactly its depth, 6 s,
+while 13 heartbeats take 187 ms and the 391 refusals that fit in the
+rest take 391 × 17.0 = 6631 ms: 819 ms more, ⌈819 / 17.0⌉ = 49 refusals
+([the ACK](#the-ack)). With the heartbeat's 14.4 ms that is 845 ms.
+After the longest ban every sender refused has met the top of its ladder
+or been answered, and a relay at the reserve answers nine DATA in ten
+from its refill alone, 15.3 of every 17.0 ms.
 
 A relay takes new work into the regular room of its send queue only if
 its bucket holds the reply reserve on top of the work's ACK and of
@@ -1478,7 +1489,7 @@ its own frame ([delivery queue](#delivery-queue)).
 *What sets the 39.* The bucket holds at most 6 s
 ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
 took it on cost 138.6 + 17.0 = 155.5 ms, so ⌈6 s / 155.5 ms⌉ = 39. With
-the reply reserve left in, a full bucket takes at most 37 full frames,
+the reply reserve left in, a full bucket takes at most 33 full frames,
 so for full frames the bucket is the limit; shorter frames fill the 39
 places first, and 39 hand-overs of them go out within a few seconds.
 

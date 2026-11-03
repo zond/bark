@@ -49,12 +49,16 @@
 //! the reply reserve in the bucket, and replies leave the heartbeat
 //! reserve.
 //!
-//! The reserve holds the refusals the bucket refills while a sender
-//! retries a hand-over that goes unanswered, 2.41 s (spec "Hand-over"):
-//! `r × 2.41 s = 237.0 ms`, ⌊237.0 / 16.96⌋ = [`REPLIES`] = 13 ACKs of
-//! 16.96 ms, and the heartbeat reserve on top, 234.9 ms in all: a relay at
-//! the reserve can refuse, from the refill alone, as many senders as would
-//! otherwise have spent that time retrying it.
+//! The reserve lets a relay at its cap answer every DATA it receives for
+//! as long as the longest ban, [`LONGEST_BAN`], the bucket's whole
+//! refill, 61.0 s, rather than fall silent (spec "Duty cycle cap"). A
+//! relay receives at most one DATA per full frame and its ACK, 155.52 ms,
+//! and sends a heartbeat at most every [`HEARTBEAT_EVERY`], 5 s (spec
+//! "Heartbeat"). In 61.0 s that is ⌈61.0 / 5⌉ = 13 heartbeats, 187.2 ms,
+//! and in the rest ⌊(61.0 s − 187.2 ms) / 155.52 ms⌋ = 391 refusals,
+//! 6631.4 ms, against a refill of exactly the bucket's depth, 6 s: short
+//! by 818.6 ms, ⌈818.6 / 16.96⌉ = [`REPLIES`] = 49 ACKs. With the
+//! heartbeat reserve on top the reserve is 845.4 ms.
 //!
 //! # Ban
 //!
@@ -129,10 +133,34 @@ const fn refill_time(d: Duration) -> Duration {
     Duration::from_micros((d.as_micros() * RATE_DEN).div_ceil(RATE_NUM))
 }
 
-/// Refusals the reply reserve holds: those the bucket refills while a
-/// sender with the design's ACK timeout and attempts retries (spec
-/// "Hand-over"); see the module documentation.
-pub const REPLIES: u64 = refilled(retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF))
+/// The longest ban, and the longest anything waits for a bucket: its
+/// whole refill, 61.0 s (spec "Duty cycle cap", "Bans").
+pub const LONGEST_BAN: Duration = refill_time(DEPTH);
+
+/// The shortest time between a relay's heartbeats (spec "Heartbeat").
+pub const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
+
+/// Refusals the reply reserve holds: what a relay at its cap spends on
+/// answering a DATA every frame-and-ACK time, and on its heartbeats,
+/// beyond its refill, over [`LONGEST_BAN`]; see the module
+/// documentation.
+pub const REPLIES: u64 = {
+    let span = LONGEST_BAN.as_micros();
+    let beats = span.div_ceil(HEARTBEAT_EVERY.as_micros());
+    let beat_air = beats * HEARTBEAT_RESERVE.as_micros();
+    let per_data =
+        time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros();
+    let data = (span - beat_air) / per_data;
+    let spent = data * ACK_AIRTIME.as_micros() + beat_air;
+    let short = spent - refilled(LONGEST_BAN).as_micros();
+    short.div_ceil(ACK_AIRTIME.as_micros())
+};
+
+/// Replies the bucket refills while a sender retries a hand-over that
+/// goes unanswered, 2.41 s (spec "Hand-over"): 13 of 16.96 ms. A receiver
+/// silent for want of reply budget answers again once it has refilled
+/// what the retries cost it (`tables::DEMOTE_AFTER_FAILURES`).
+pub const RETRY_REPLIES: u64 = refilled(retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF))
     .as_micros()
     / ACK_AIRTIME.as_micros();
 
@@ -147,7 +175,7 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
 ));
 
-const _: () = assert!(REPLIES == 13);
+const _: () = assert!(REPLIES == 49 && RETRY_REPLIES == 13);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
 /// row before offering it again (spec "Bans"): one [`BAN`] after the
@@ -156,7 +184,7 @@ const _: () = assert!(REPLIES == 13);
 /// ban, a full frame every 1.58 s would be a 9 % probe on the refuser's
 /// channel and spend the holder's bucket as fast as it refills.
 pub const fn hold(refusals: u8) -> Duration {
-    let cap = refill_time(DEPTH).as_micros();
+    let cap = LONGEST_BAN.as_micros();
     let doublings = refusals.saturating_sub(1);
     let mut wait = BAN.as_micros();
     let mut k = 0;
@@ -334,7 +362,7 @@ mod tests {
     #[test]
     fn reply_reserve_and_ban() {
         assert_eq!(ACK_AIRTIME, Duration::from_micros(16_960));
-        assert_eq!(REPLY_RESERVE, Duration::from_micros(234_880));
+        assert_eq!(REPLY_RESERVE, Duration::from_micros(845_440));
         let ban = BAN.as_micros();
         assert!((1_581_000..1_582_000).contains(&ban), "{ban} µs");
         // The ban refills exactly a full frame and its ACK.
@@ -344,6 +372,39 @@ mod tests {
         assert_eq!(
             b.allowed_at(crate::tables::RETRY_BACKOFF, Duration::ZERO, t),
             Some(t + BAN)
+        );
+    }
+
+    /// A relay at its cap, the bucket at the reply reserve, receives a DATA
+    /// every full frame and ACK and sends a heartbeat every 5 s: it
+    /// answers every one for the longest ban, and not much longer.
+    #[test]
+    fn the_reply_reserve_lasts_a_longest_ban_under_siege() {
+        let per_data = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS) + ACK_AIRTIME;
+        let start = Instant::ZERO + Duration::from_secs(1000);
+        let mut b = Budget::new();
+        b.record(b.available(start) - REPLY_RESERVE, start);
+        let siege = |b: &mut Budget, span: Duration| {
+            let mut t = start;
+            let mut next_beat = start + HEARTBEAT_EVERY;
+            while t < start + span {
+                t += per_data;
+                if t >= next_beat {
+                    assert!(b.would_allow(HEARTBEAT_RESERVE, t), "heartbeat");
+                    b.record(HEARTBEAT_RESERVE, t);
+                    next_beat += HEARTBEAT_EVERY;
+                }
+                if !b.would_allow_keeping(ACK_AIRTIME, HEARTBEAT_RESERVE, t) {
+                    return false;
+                }
+                b.record(ACK_AIRTIME, t);
+            }
+            true
+        };
+        assert!(siege(&mut b.clone(), LONGEST_BAN), "silent within the ban");
+        assert!(
+            !siege(&mut b, LONGEST_BAN.mul(2)),
+            "a reserve that never ends"
         );
     }
 

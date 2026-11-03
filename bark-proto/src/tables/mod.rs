@@ -32,15 +32,15 @@ pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
 pub const HOP_ATTEMPTS: u8 = 3;
 
 /// Failed hand-overs in a row, with no answer to this relay between,
-/// that demote a neighbour (spec "Neighbour table", Demotion): a message
-/// held on it then chooses afresh, or a return is dropped (spec
-/// "Hand-over" step 6). Between them the message waits out the
-/// neighbour's ban, 1.58 s and then 3.16 s (`budget::hold`), so the third
-/// offer comes 4.74 s after the first failure, later than the 2.4 s the
-/// bucket takes to refill the whole reply reserve (`budget::REPLY_RESERVE`):
-/// a receiver silent for want of reply budget has it back for the third
-/// offer, while two would demote it, and let the message go, before it
-/// could answer.
+/// that demote a neighbour (spec "Neighbour table", Demotion): it then
+/// ranks behind the others and a message waiting for it goes elsewhere,
+/// or a return is dropped (spec "Hand-over" step 6). Between them the
+/// message waits out the neighbour's ban, 1.58 s and then 3.16 s
+/// (`budget::hold`), so the third offer comes 4.74 s after the first
+/// failure, later than the 2.41 s in which the bucket refills the replies
+/// a sender's retries cost (`budget::RETRY_REPLIES`): a receiver silent
+/// for want of reply budget has them back for the third offer, while two
+/// would demote it, and let the message go, before it could answer.
 pub const DEMOTE_AFTER_FAILURES: u8 = 3;
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
