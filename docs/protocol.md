@@ -1126,7 +1126,8 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    or been tried, is not waited for: the message chooses afresh, the
    neighbour no candidate while banned ([next hop](#next-hop)), and
    waits for it only where no other candidate is left
-   ([overload waits](#overload-waits)).
+   ([overload waits](#overload-waits)). A refused message waits for its
+   neighbour by the rule of [bans](#bans) instead.
    - Once three hand-overs in a row have failed, the neighbour's,
      whoever's messages they were, or this message's own to it, the
      message instead chooses the next hop at once: the neighbour is
@@ -1165,9 +1166,9 @@ other messages try the neighbour last ([next hop](#next-hop)) while
 this one waits for it (roadmap D102).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is an answer, a refusal
-([bans](#bans)) or seen (step 5), or three transmissions unanswered
-(step 6). A channel that stays busy holds the message, as a ban does
+to another neighbour (step 2); what moves it is seen (step 5), three
+transmissions unanswered (step 6), or the neighbour demoted while the
+message waits for its refusal ([bans](#bans)). A channel that stays busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until its time runs out
 ([time to live](#time-to-live)); the message spends no airtime
 meanwhile, so the duty cycle cap does not bound the wait (roadmap D96).
@@ -1348,12 +1349,25 @@ Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
-([receiving DATA](#receiving-data)). The sender sets the neighbour
-aside for this hand-over ([hand-over](#hand-over) step 6): not counted
-as tried, no failure counted, and the next hop chosen at once. A return
-to the parent has no other candidate: it
-waits in the send queue until the ban ends and goes again, the refused
-transmission not counting as one of its attempts.
+([receiving DATA](#receiving-data)). The neighbour is not counted as
+tried and no failure is counted. The message waits in its place in the
+send queue until the ban ends and is offered to the same neighbour
+again, the refused transmission not counting as one of its attempts; a
+ban that has grown by then, by another refusal, is waited for too. A
+return to the parent waits the same way. A forward chooses its next hop
+afresh only once the neighbour is demoted, two hand-overs to it in a row
+unanswered ([neighbour table](#neighbour-table)), has left the table, or
+has had the message ([message records](#message-records)) (roadmap
+D106).
+
+*Why a refused message waits for the same neighbour.* A refusal is an answer: the neighbour is
+there, hears this relay, and has said when it will have room. Sent
+round it at once, the message goes the longer way on the same channels,
+and at a relay with dozens of neighbours each refusal only diverts the
+traffic to the next one, so the refusals never reach the origin. Kept,
+the message fills this relay's queue, which refuses in its turn, and the
+wait travels back hop by hop to the origin, where the application is
+told it.
 
 The ban is never shorter than 1.58 s, the time the refuser's bucket
 takes to refill what the refused packet would have cost; trying sooner
@@ -1425,7 +1439,8 @@ finished with it and returns it (roadmap D36).
 
 **A node's own message waits on the same ladder.** After its k-th
 refusal in a row a node's own application's message waits the k-th step
-of the silence ladder, and starts again from one ban once it is taken or
+of the silence ladder, or the wait the refusal asks if that is longer,
+and starts again from one ban once it is taken or
 dropped. A sleepy node's own message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
@@ -1469,8 +1484,9 @@ Packets are handed over in the order they arrived, except that:
 
 #### Overload waits
 
-Overload makes a message wait and never ends it. A message whose every
-remaining candidate is banned, by refusals or by silence, waits in its
+Overload makes a message wait and never ends it. A refused message
+waits for the neighbour that refused it ([bans](#bans)). A message whose
+every remaining candidate is banned, by refusals or by silence, waits in its
 place in the send queue, its airtime still counted, until the earliest
 ban ends, and is routed again then, at the origin or anywhere else. When
 bans end, the messages that waited for them go first, the most travelled
@@ -1588,8 +1604,8 @@ those:
 
 - in the tried set ([message records](#message-records));
 - banned ([bans](#bans));
-- set aside for the current hand-over: they refused it ([bans](#bans))
-  or failed it three times in a row ([hand-over](#hand-over) step 6).
+- set aside for the current hand-over: they failed it three times in a
+  row ([hand-over](#hand-over) step 6).
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a
@@ -1722,7 +1738,7 @@ depends on what the packet gives it to do:
 
 Otherwise it refuses: it sends an ACK that refuses on the channel in
 `aux`, changes nothing, and the sender
-tries elsewhere at once or waits ([bans](#bans)). A relay that cannot
+waits and offers it again ([bans](#bans)). A relay that cannot
 afford even the reply stays silent, and its sender retries as for a
 lost ACK (roadmap D27, D29).
 
@@ -1736,8 +1752,9 @@ application no more than it can start sending now (roadmap D34).
 message would only wait and age here. Each neighbour's pushback is its
 own ban, so it does not hold up the other ways, and it ends with the
 ban. A message already in the network is spared because its sender
-would send it round the pushback, and around a ring of relays such
-refusals would keep each other up (roadmap D54).
+would wait for this relay while this relay waits for the way on, and
+around a ring of relays such refusals would keep each other up (roadmap
+D54).
 
 The packet is one of the following, tested in this order:
 
@@ -2082,7 +2099,11 @@ then. On its way it may wait at each relay as long as a full send queue
 takes to drain, each of the 293 places waiting out one ban of 1.58 s:
 463.4 s. A ban after silence lasts up to 61 s, so where every way on is
 silent a message can wait longer; its own record is kept while it is
-held, and this bound covers the wait behind refusals only (roadmap D42).
+held, and this bound covers a wait of one ban per place behind
+refusals only (roadmap D42); a refusal may ask for more
+([bans](#bans)), and a message held longer than the records last can
+come back to a relay that has replaced its record, where the hop cap
+ends a search that loses its way ([hop count](#hop-count)).
 
 Every message a relay handles costs at least an ACK (18 bytes, 17.0 ms)
 and one DATA packet with no payload (29 bytes, 23.4 ms,

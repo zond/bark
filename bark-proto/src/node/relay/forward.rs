@@ -99,9 +99,9 @@
 //! the forward is routed again at once from the record, past that
 //! neighbour, by the same choice a return taken from a child gets; a
 //! return answered seen is dropped, its parent having gone on without
-//! it. When a forward's neighbour refuses it, or its three attempts go
-//! unanswered and the failure demotes it (spec "Hand-over" step 6), it is
-//! set aside for this hand-over only (`skipped`): choosing again at once
+//! it. When a forward moves on from a neighbour after three failed
+//! hand-overs in a row (spec "Hand-over" step 6), the neighbour is set
+//! aside for this hand-over only (`skipped`): choosing again at once
 //! must not pick it again, but it stays a candidate for later choices. An
 //! unanswered frame is more often lost than its ACK, so the neighbour
 //! most likely lacks the message; marked tried, it would end its own
@@ -116,11 +116,15 @@
 //! sleepy node have nowhere else to go; for them a give-up counts as one
 //! of the three attempts, and never as a failure against the neighbour.
 //!
-//! An ACK that refuses the current hand-over bans its receiver for
-//! [`BAN`], so no message takes it until then (spec "Bans", roadmap D27, D29,
-//! D32). A forward treats it as that give-up. A return has nowhere else
-//! to go: it waits in its place for the ban to end, and the refused
-//! transmission does not count as one of its attempts.
+//! An ACK that refuses the current hand-over bans its receiver for the
+//! wait it asks, at least [`BAN`], so no message takes it until then
+//! (spec "Bans", roadmap D27, D29, D32). The refused message waits in its
+//! place for the ban and is offered to the same neighbour again, a return
+//! as a forward, the refused transmission not counting as an attempt: the
+//! neighbour answers, and going round it would take the message the long
+//! way past a relay that has said when it will have room. A forward
+//! chooses afresh only once the neighbour is demoted, has left the table
+//! or has had the message (roadmap D106).
 //!
 //! A hand-over whose attempts all go unanswered bans its receiver too,
 //! longer after each failure in a row (`tables/neighbours.rs`, roadmap
@@ -298,9 +302,8 @@ pub(super) struct Forwarding {
     /// What the radio side keeps of the hand-over in flight, that of the
     /// send queue's current entry.
     pub(super) flight: Flight,
-    /// Neighbour slots the current forward passed over because they
-    /// refused it or a failure demoted them (spec "Hand-over" step 6,
-    /// "Bans"); not tried.
+    /// Neighbour slots the current forward moved on from after three
+    /// failed hand-overs in a row (spec "Hand-over" step 6); not tried.
     pub(super) skipped: u64,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
@@ -1322,26 +1325,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Routed::Done;
         }
         if out.state == State::Holding {
-            // Held on to the neighbour that failed it, demoted or not,
-            // for the ban it was given then (spec "Hand-over" step 6,
-            // roadmap D102). A ban grown since, by another message's
-            // failure or a refusal, is a ladder this message did not
-            // climb: banned still, the neighbour is no candidate, and the
-            // message chooses afresh like any other.
-            let kept = self.neighbours.by_id(d.dst_hop).filter(|(slot, n)| {
-                !record.handed(*slot)
-                    && n.fail_count < MOVE_ON_FAILURES
-                    && out.failures < MOVE_ON_FAILURES
-                    && !self.neighbours.is_banned(n, now)
-            });
+            // Held on to the neighbour that refused or failed it (spec
+            // "Hand-over" step 6, "Bans", roadmap D102, D106).
+            let kept = self
+                .neighbours
+                .by_id(d.dst_hop)
+                .filter(|(slot, n)| self.keeps(&record, *slot, n, out.failures, now));
             if let Some((_, n)) = kept {
-                let frame = data_frame(&d, n.home, preamble(n));
-                return Routed::To(Outgoing {
-                    frame,
-                    tries: 0,
-                    state: State::Queued,
-                    ..out
-                });
+                if !self.neighbours.is_banned(n, now) {
+                    let frame = data_frame(&d, n.home, preamble(n));
+                    return Routed::To(Outgoing {
+                        frame,
+                        tries: 0,
+                        state: State::Queued,
+                        ..out
+                    });
+                }
+                // Refused, it waits for as long as the neighbour asks
+                // now. Failed, a ban grown since, by another message's
+                // failure or a refusal, is a ladder this message did not
+                // climb, and it chooses afresh.
+                if out.failures == 0 {
+                    return Routed::Wait(n.banned_until);
+                }
             }
         }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
@@ -1403,6 +1409,30 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// Whether a forward held on to neighbour `n` in `slot`, after
+    /// `failures` failed hand-overs of its own to it in a row, keeps it
+    /// (spec "Hand-over" step 6, "Bans"). It does while the neighbour is
+    /// live and has not had the message: after a refusal, with no failure
+    /// of its own, until the neighbour is demoted, two hand-overs to it in
+    /// a row unanswered (roadmap D106); after a failure, demoted or not,
+    /// until three hand-overs in a row have failed, the neighbour's,
+    /// whoever's messages they were, or its own to it (roadmap D102).
+    fn keeps(
+        &self,
+        record: &Record,
+        slot: usize,
+        n: &Neighbour,
+        failures: u8,
+        now: Instant,
+    ) -> bool {
+        let live = !record.handed(slot) && !self.neighbours.is_expired(n, now);
+        let answering = match failures {
+            0 => !self.neighbours.is_demoted(n, now),
+            _ => n.fail_count < MOVE_ON_FAILURES && failures < MOVE_ON_FAILURES,
+        };
+        live && answering
+    }
+
     /// When fresh work could next start moving, if every live neighbour is
     /// banned now: the earliest end of those bans. A message entering here
     /// has no tried set, so these are all the candidates spec "Next hop" would have
@@ -1436,8 +1466,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the earliest ban ends among the neighbours that would be
     /// candidates for the message of `record` but for their ban; `None`
     /// if the search was exhausted by tried and failed ones alone.
-    /// A refusal also sets its sender aside for this hand-over, so being set
-    /// aside does not count against a banned neighbour.
     fn ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
         let others = self.others_open(record, true, now);
         self.neighbours
@@ -1820,11 +1848,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         match out.kind {
+            // The same neighbour again once the wait it asked for is over:
+            // it answers, so going round it would only take the message
+            // the long way past a relay that has said when it will have
+            // room (spec "Bans", roadmap D106).
             Kind::Forward => {
-                if let Some(slot) = slot {
-                    self.forwarding.skipped |= 1 << slot;
+                let mut until = now + wait;
+                if self.own.id == Some(msg_id) {
+                    // Each offer costs the refuser a reply and hides its ACKs.
+                    self.own.refusals = self.own.refusals.saturating_add(1);
+                    until = until.max(now + hold(self.own.refusals));
                 }
                 self.cancel_handover();
+                self.forwarding.skipped = 0;
+                if let Some(current) = self.queue.current_mut() {
+                    current.state = State::Holding;
+                    current.not_before = until;
+                    current.tries = 0;
+                    current.failures = 0;
+                }
             }
             // No other receiver: wait for the ban, and let the queue move.
             Kind::Return | Kind::Deliver | Kind::Direct => {

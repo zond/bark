@@ -805,17 +805,19 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// A parent offers the message again to a child it forgot, and the child
 /// answers seen (spec "Receiving DATA" case 6; roadmap D35 B, D90). P's
 /// message is for L, a leaf of Q's that is not there, and Q's delivery
-/// queue is full of its own messages for L, so Q refuses it
-/// (spec "Delivery queue") and P waits for each ban to end
-/// (spec "Overload waits"). Meanwhile P has tried C, a dead end, which
-/// returned it. C is then out of P's hearing long enough for its entry to
-/// expire at P, and P's at C, and each comes back into a new slot, which
-/// clears the mark that the one handed the other the message
-/// (spec "Message records"). When Q next refuses, P offers it to C
-/// again. For C, P is now a node it did not hand the message to: C
-/// answers seen, and P, marking C tried, waits for Q, which takes it once
-/// its queue has room. Before this rule C took it and returned it at
-/// once: one hand-over more.
+/// queue is full of its own messages for L. P's DATA to Q are lost at
+/// first, so after three failed hand-overs P moves on to C, a dead end,
+/// which returns it, and P waits for Q's bans (spec "Overload waits"),
+/// moving on from Q after every three failures. C is then out of P's
+/// hearing long enough for its entry to expire at P, and P's at C, and
+/// each comes back into a new slot, which clears the mark that the one
+/// handed the other the message (spec "Message records"). When P next
+/// moves on from Q, it offers the message to C again. For C, P is now a
+/// node it did not hand the message to: C answers seen, and P, marking C
+/// tried, waits for Q. Q, heard again, refuses it
+/// (spec "Delivery queue"), and P holds it there until Q's queue has
+/// room (roadmap D106). Before this rule C took it and returned it at once: one
+/// hand-over more.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
 /// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in minutes, not
@@ -838,6 +840,11 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        losing.get() && (from, to) == (p, q) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
     let (pq, l) = (position(&h, q), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
@@ -873,6 +880,7 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
         "P did not offer C again, or C did not answer seen"
     );
     assert!(h.now > returned_at + expiry);
+    lost.set(false);
     let queued = |h: &Harness<Relay>| {
         h.nodes[q]
             .traces
@@ -888,6 +896,10 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     // Q's ACK.
     h.run_for(secs(1));
     assert_eq!(forwards(&h, p, id), vec![nc, name(&h, q)]);
+    let nq = name(&h, q);
+    assert!(traces(&h, p)
+        .iter()
+        .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nq)));
     assert_eq!(returns(&h, c, id), 1);
     assert!(seen_at(&h, c, id));
     // Q's own messages expire in its queue; nothing else ends.
@@ -1457,10 +1469,13 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
 
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose
 /// only neighbour it is, has handed it short messages for D until it
-/// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
-/// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
-/// against F1 (spec "Bans"). O bans F1: no message is offered to it until the
-/// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
+/// refused one, and F1's own frames are lost. F1 answers O's DATA with a
+/// refusal (spec "Receiving DATA"), counting no failure against F1, and O
+/// bans F1 for the wait it asks (spec "Bans"). The refused message waits
+/// for the ban and is offered to F1 again, not sent round it by F2, and
+/// O's application is told to wait meanwhile; once F1's queue moves F1
+/// takes it (roadmap D27, D29, D106). After the ban F1 is O's first
+/// choice again.
 ///
 /// ```text
 ///          F1
@@ -1490,50 +1505,53 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     }));
     fill(&mut h, x, f1, d);
     let name = |h: &Harness<Relay>, i| core(h, i).id();
-    let (n1, n2) = (name(&h, f1), name(&h, f2));
-    let to_f1 = |h: &Harness<Relay>, id: MsgId| {
-        h.nodes[o].sent.iter().any(|(_, fr)| {
-            matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == id)
-        })
-    };
+    let n1 = name(&h, f1);
     let forwarded = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
             Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some((*t, *to)),
             _ => None,
         })
     };
-
-    let first = send(&mut h, o, d, b"first");
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, first)));
-    let refused_at = h.nodes[o]
-        .traces
-        .iter()
-        .find_map(|(t, tr)| match tr {
-            Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == n1 => Some(*t),
+    let refusal = |h: &Harness<Relay>, id: MsgId| {
+        h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
+            Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == n1 => Some(*t),
             _ => None,
         })
-        .expect("F1 refused");
-    let (at, to) = forwarded(&h, first).unwrap();
-    assert_eq!(to, n2);
-    assert!(
-        at.since(refused_at) < secs(1),
-        "moved on at once: {:?}",
-        at.since(refused_at)
-    );
+    };
+
+    let first = send(&mut h, o, d, b"first");
+    assert!(h.run_until(h.now + secs(5), |h| refusal(h, first).is_some()));
+    let refused_at = refusal(&h, first).unwrap();
     let p1 = position(&h, f1);
     let entry = *core(&h, o).neighbours().find(|n| n.position == p1).unwrap();
     assert_eq!(entry.fail_count, 0, "a refusal is no failure");
-    assert_eq!(entry.banned_until, refused_at + BAN);
+    assert!(entry.banned_until >= refused_at + BAN);
+    let ban_ends = entry.banned_until;
 
-    // Within the ban F1 is not offered the next message at all.
-    let second = send(&mut h, o, d, b"second");
-    assert!(h.now < refused_at + BAN);
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, second)));
-    assert!(!to_f1(&h, second), "offered to F1 within the ban");
-    assert_eq!(forwarded(&h, second).map(|(_, to)| to), Some(n2));
+    // Meanwhile the application at O is told to wait: its message is
+    // still O's.
+    assert!(!h.accepts(o));
+
+    // The first waits for F1, and is offered to it again when the ban
+    // ends, not before.
+    let after = |h: &Harness<Relay>| {
+        h.nodes[o]
+            .sent
+            .iter()
+            .find(|(t, fr)| *t > refused_at && matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == first))
+            .map(|(t, _)| *t)
+    };
+    assert!(h.run_until(ban_ends + secs(5), |h| after(h).is_some()));
+    let again = after(&h).unwrap();
+    assert!(again >= ban_ends, "{again:?} {ban_ends:?}");
+    assert!(forwarded(&h, first).is_none(), "sent round F1");
+
+    // With F1's queue moving, F1 takes it.
+    lost.set(false);
+    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, first)));
+    assert_eq!(forwarded(&h, first).map(|(_, to)| to), Some(n1));
 
     // After it, and with F1's queue gone, F1 is first again.
-    lost.set(false);
     h.run_for(secs(30));
     let third = send(&mut h, o, d, b"third");
     assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
@@ -3031,14 +3049,16 @@ fn a_busy_channel_keeps_the_hand_over_on_the_same_neighbour() {
     no_drops(&h);
 }
 
-/// A refusal still moves the message: it is an answer, and the next
-/// hop is chosen at once (spec "Bans"). The test
+/// A refusal after a busy channel holds the message too: the neighbour
+/// answers, so the message waits the ban it asks for and is offered to
+/// it again, not sent round it (spec "Bans", roadmap D106). The test
 /// `a_ban_excludes_the_neighbour_and_expires` has it; here the busy
-/// channel comes first, and the refusal that follows ends the wait.
+/// channel comes first, and the refusal that follows ends the wait for
+/// the channel but not the hold on B.
 #[test]
-fn a_refusal_after_a_busy_channel_moves_the_message() {
+fn a_refusal_after_a_busy_channel_holds_the_message() {
     let (mut h, b_home) = busy_channel(191, Config::default(), true);
-    let (o, b, c, d, x) = (0, 1, 2, 3, 4);
+    let (o, b, _c, d, x) = (0, 1, 2, 3, 4);
     // X fills B's queue while B's frames are lost.
     let lost = std::rc::Rc::new(std::cell::Cell::new(true));
     let losing = lost.clone();
@@ -3052,12 +3072,18 @@ fn a_refusal_after_a_busy_channel_moves_the_message() {
     assert!(forwards(&h, o, id).is_empty());
     assert!(!gave_up(&h, o, id).is_empty());
     h.unjam(o, b_home);
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, id)));
     let nb = core(&h, b).id();
-    assert!(traces(&h, o)
-        .iter()
-        .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb)));
-    assert_eq!(forwards(&h, o, id), vec![core(&h, c).id()]);
+    let refused = |h: &Harness<Relay>| {
+        traces(h, o)
+            .iter()
+            .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb))
+    };
+    assert!(h.run_until(h.now + secs(5), refused));
+    h.run_for(secs(5));
+    assert!(forwards(&h, o, id).is_empty(), "sent round B");
+    lost.set(false);
+    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, id)));
+    assert_eq!(forwards(&h, o, id), vec![nb]);
 }
 
 /// The time to live still ends a message that waits for a channel

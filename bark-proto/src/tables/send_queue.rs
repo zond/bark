@@ -97,11 +97,11 @@ impl Kind {
 pub enum State {
     /// Waiting its turn, due at `not_before`.
     Queued,
-    /// A forward whose hand-over failed, waiting for the ban the
-    /// neighbour its frame is addressed to was given then, due at
-    /// `not_before`, when it is offered to that neighbour again, demoted
-    /// or not, unless the ban has grown meanwhile (spec "Hand-over" step
-    /// 6).
+    /// A forward whose hand-over was refused or failed, waiting for the
+    /// ban of the neighbour its frame is addressed to, due at
+    /// `not_before`, when it is offered to that neighbour again, or waits
+    /// on if the ban has grown meanwhile; it chooses afresh only once it
+    /// no longer keeps the neighbour (spec "Hand-over" step 6, "Bans").
     Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
