@@ -138,8 +138,9 @@ bucket and bans keep it from accepting, its `next_wakeup()` includes the moment 
 it. A node whose message's next hop is banned once it holds the message keeps it and
 tries again when the ban ends, or later after refusals in a row
 (spec "Bans"); one for a sleepy node it holds for that finds the delivery
-queue full waits for a place (spec "Return to parent"). A sleepy node's own message that
-its first hop refuses goes back to the application (spec "A sleepy node's own message"):
+queue full waits for a place (spec "Return to parent"). A message the node's own gate refuses
+when it is offered (spec "Receiving DATA"), or a sleepy node's own message that
+its first hop refuses, goes back to the application (spec "A sleepy node's own message"):
 the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
 wait the refusal asked for, and `Trace::Dropped` with `DropReason::Pushback` for the log;
 `accepts_send` stays false until `retry_at`, which `next_wakeup()` includes. The driver

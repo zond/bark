@@ -1024,9 +1024,10 @@ payload.
 The app hands a node a message only when the node says it will take
 one ([receiving DATA](#receiving-data)), and hears nothing about it
 afterwards: not the first hop's ACK, and not a drop. The one thing the
-app hears is a sleepy node's refused message, given back with the wait
-the refusal asks for
-([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+app hears is a refused message, given back with the wait the refusal
+asks for: a sleepy node's, refused by its anchor
+([a sleepy node's own message](#a-sleepy-nodes-own-message)), or a
+relay's, refused by its own gate ([receiving DATA](#receiving-data)).
 
 *Why the app hears so little.* A user could take the first hop's ACK
 for delivery. From then on the node is sending the message or waiting
@@ -1379,23 +1380,26 @@ least one, since 0 means taken ([packet formats](#packet-formats)):
 - The senders refused stand in line, each told one ban later than the
   one before, the time the bucket takes to refill the frame and ACK it
   will bring back, so they come back one after another as room frees.
-- A refusal for want of room asks for no less than the queue waits
-  before anything in it moves: when every message queued waits, for a
-  ban or for a refusal it was told, the rest of the wait of the one due
-  first, without a place in line.
+- A refusal for want of room asks for no less than the rest of the ban
+  on the packet's next hop, without a place in line: the packet could
+  not move sooner here.
+- A refusal at the gate ([send queue](#send-queue)) asks for the rest
+  of the ban on the packet's next hop, and no less than the bucket
+  needs to send what is queued for it, without a place in line.
 - A refusal of fresh work for the way on asks for the rest of the ban on
   that way, as learned, without a place in line.
 - The ACK's six bits hold 63 bans, 99.6 s; a longer wait is told as 63,
   the sender coming back early to be refused again (roadmap D54, D76).
 
-*Why the queue's wait.* A refused message waits for its neighbour
-(above), so a relay's queue can be full of messages waiting out the
-bans their next hops asked for while its bucket is full. Told only the
-bucket's refill, a sender would come back in a second or two to be
-refused again, and meanwhile take fresh work, since its own queue
-moves; told the queue's wait, it bans this relay for as long, its own
-message for this way waits as long, and its own queue fills and refuses
-in turn. So the wait travels back relay by relay toward the origin.
+*Why the next hop's ban.* A refused message waits for its neighbour
+(above), so the message a relay refuses would wait here for its next
+hop's ban whatever room it found. Told only the bucket's refill, a
+sender would come back in a second or two to be refused again, and
+meanwhile take fresh work, since its own queue moves; told the ban, it
+bans this relay for as long, its own message for this way waits as
+long, and its gate refuses the next message for this way in turn. So
+the wait travels back relay by relay toward the origin, per way, not
+per relay.
 
 *Why a wait passed on stands outside the line.* A wait for the way on
 or for the queue's head is the rest of a wait told by a relay further
@@ -1488,6 +1492,32 @@ A message entering the network, a sleepy node's own with count 0 or a
 node's own app's, takes no hop place, so overload stops new messages
 where they enter, at the app ([addresses](#addresses)).
 
+**The gate.** Before either, a relay takes a message to send on only if
+no message queued here, a delivery aside, goes to the same next hop
+now, or the new one's count is higher than every one of theirs
+([receiving DATA](#receiving-data)). The count of a queued message is
+the one it holds here, one less than the count it is sent with. So a
+relay holds about one message per next hop, more only in order of
+count. It refuses the rest, telling the rest of that neighbour's ban,
+and no less than the time its bucket needs to send what is queued for
+that neighbour with the reply reserve left, rounded as [bans](#bans)
+says and without a place in line, since it is a wait further on.
+
+*Why one per next hop.* A neighbour at its cap takes one frame per ban
+and refuses the rest, so a second message waiting here for it gains
+nothing: it would only fill this queue while the sender behind still
+had room to send. Refused, it waits at the relay before, which fills
+in its turn, and the wait travels back to the origin one queue place at
+a time instead of 39 ([bans](#bans)). The next hop is the one routing
+gives now, so the gate needs no state beyond the queue.
+
+*What it costs.* Two messages for one next hop that arrive within a
+frame time of each other, the second no further travelled, are not
+held together: the second waits a whole ban, or the rest of the
+neighbour's, at the relay before, although the neighbour might have
+taken both. At the design's rate that is rare; under load it is the
+price of the wait reaching the origin.
+
 Packets are handed over in the order they arrived, except that:
 
 - a delivery goes first ([delivery](#delivery));
@@ -1521,13 +1551,26 @@ Never by age on its way ([time to live](#time-to-live)).
 *Why hop places.* Waiting alone can lock relays up: two neighbours whose
 queues are full of messages for each other would refuse each other
 forever, since what a relay holds drains only as it sends (roadmap
-D29). The hop places of the send queue prevent it.
+D29). The hop places of the send queue prevent it, and the gate keeps
+them able to.
 
-Take the highest-numbered hop place held at any relay, k. Its message
-has made at least k hand-overs and is sent with a higher count, and
-place k + 1 is free at every relay, so the neighbour it is offered to
-can take it, unless its count is at the cap, where it ends. That message
-moves, then the next highest, and so on down to the regular room.
+Take the highest count held at any relay, k. Its message is sent with
+k + 1 or more. At the neighbour it is offered to, every queued message
+holds k or less, so the gate lets it in, and place k + 1 is free there
+as at every relay, since a place is never numbered above its message's
+count, so the queue takes it, unless its count is at the cap, where it
+ends. That message moves, then the next highest, and so on down to the
+regular room.
+
+*Why the gate does not lock up.* A send queue of one place per relay,
+which held whatever arrived first, locked up under crossing traffic
+once relays held messages for each other: two flows met head on in a
+line of relays delivered 39 to 44 of 91 to 93 texts against 85 to 89,
+and a mesh where everyone sent at once 68 to 89 of 98 to 100 against
+98 to 99 (roadmap D29). The gate differs in the two ways that argument
+needs: it bars one next hop, not the relay, so a message for any other
+way still enters; and a message with a higher count passes it, so the
+most travelled message always finds room.
 
 *Why the most travelled first.* For this the message that has come
 farthest must be offered when a ban ends: a less travelled one offered
@@ -1730,14 +1773,19 @@ only when it owes no other reply, and acts on a packet it takes once
 the ACK has gone out ([the ACK](#the-ack)). Whether it takes the packet
 depends on what the packet gives it to do:
 
-- **Something to send on.** It takes the packet into the regular room
+- **Something to send on.** It first routes the packet, as the record
+  it would have routes it ([next hop](#next-hop)), and routes every
+  message queued here that is not a delivery: it takes the packet only
+  if none of them goes to the same next hop now, or the packet's count
+  is higher than every one of theirs (the **gate**,
+  [send queue](#send-queue)). Past the gate, it takes the packet into the regular room
   of its send queue only if the room has a place and the bucket holds,
   as it stands, the ACK, the airtime of every frame in the send queue
   and of the new one, and the reply reserve
   ([duty cycle cap](#duty-cycle-cap)); failing that, into a hop place
   ([send queue](#send-queue)), whatever the bucket holds. So it refuses
-  a message already in the network only when the hop places it may use
-  are taken too, whatever its bans:
+  a message already in the network only at the gate, or when the hop
+  places it may use are taken too, whatever its bans:
   [overload waits](#overload-waits) needs every such message to move on
   (roadmap D34).
 - **A message entering the network here**, a sleepy node's own (count
@@ -1754,7 +1802,10 @@ depends on what the packet gives it to do:
     room in its send queue and bucket for a full frame on top of what
     they hold, and not every neighbour is banned, or, for a sleepy node
     with a live anchor, not the anchor
-    ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+    ([a sleepy node's own message](#a-sleepy-nodes-own-message)). The
+    message offered then passes the same gate, at count 0, and its next
+    hop must not be banned; failing either it goes back to the
+    application with the wait a refusal would tell, at least a ban.
   - A message from its own application for a sleepy node it holds for,
     when the delivery queue is full, is kept aside until the queue has a
     place.

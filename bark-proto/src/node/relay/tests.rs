@@ -767,7 +767,8 @@ fn the_application_waits_for_room() {
 /// With the regular room closed by the bucket, a packet that has come
 /// two hops takes hop place 2, then 1, whatever the bucket holds; a
 /// sleepy node's own, or a third from two hops out, is refused. A place frees
-/// when its frame leaves (roadmap D31).
+/// when its frame leaves (roadmap D31). The relay has no neighbours, so
+/// each packet, from a sender of its own, would go back its own way.
 #[test]
 fn a_packet_that_has_travelled_takes_a_hop_place() {
     use crate::event::DropReason;
@@ -798,7 +799,7 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         let d = Data {
             sender_home: home,
             dst_hop: r.me(),
-            src_hop: name(1),
+            src_hop: name(tag.into()),
             dst_pos: far,
             dst_id: NOBODY,
             hops,
@@ -1434,9 +1435,10 @@ fn a_message_waits_whatever_its_time_left() {
     );
     let spend = r.radio.budget.available(now) - Duration::from_millis(300);
     r.radio.budget.record(spend, now);
+    // A count higher than the first's passes the gate (spec "Receiving DATA").
     assert_eq!(
-        offer_timed(&mut r, &mut now, far, 2, 2, 1),
-        (Some(2), None, None)
+        offer_timed(&mut r, &mut now, far, 2, 3, 1),
+        (Some(3), None, None)
     );
     // The neighbours do not answer: the messages wait for their bans.
     let until = start + TTL_UNIT.mul(40);
@@ -1463,7 +1465,8 @@ fn a_packet_in_the_network_is_taken_whatever_the_bans() {
     assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
     let spend = r.radio.budget.available(now) - Duration::from_millis(300);
     r.radio.budget.record(spend, now);
-    assert_eq!(offer_data(&mut r, &mut now, far, 2, 2), (Some(2), None));
+    // A count higher than the first's passes the gate (spec "Receiving DATA").
+    assert_eq!(offer_data(&mut r, &mut now, far, 2, 3), (Some(3), None));
 }
 
 /// A hand-over carries the record's highest count plus one, stamped at
@@ -2210,32 +2213,70 @@ fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
     }
 }
 
-/// A refusal for want of room asks for no less than the queue waits
-/// before anything in it moves (spec "Bans", roadmap D106): with every
-/// queued message waiting a minute for its neighbours' bans, the bucket's
-/// refill of a few seconds would bring the sender back to be refused
-/// again.
+/// The application's message passes the same gate as a sleepy node's own
+/// (spec "Receiving DATA"): with a message queued for the neighbour it
+/// would go to, the relay gives it back with a wait of at least a ban,
+/// and takes none meanwhile (roadmap D106).
 #[test]
-fn a_refusal_asks_for_the_wait_that_blocks_the_queue() {
+fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
+    use crate::event::AppEvent;
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    let ids: Vec<NodeId> = r.neighbours.iter().map(|n| n.id).collect();
+    for &id in &ids {
+        r.neighbours.refused(id, now);
+    }
+    assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
+    // Hold the queued one at its neighbour: its hand-over is not driven.
+    let payload = [7u8; 20];
+    let send = AppCommand::Send {
+        dst_pos: far,
+        dst_id: NOBODY,
+        payload: &payload,
+    };
+    assert!(r.accepts_send(now));
+    let mut back = None;
+    r.handle(Event::App(send), now, &mut |a| {
+        if let Action::App(AppEvent::GivenBack { retry_at, .. }) = a {
+            back = Some(retry_at);
+        }
+    });
+    let retry_at = back.expect("given back");
+    assert!(retry_at >= now + BAN, "{retry_at:?}");
+    assert!(!r.accepts_send(now));
+    assert_eq!(r.queue.len(), 1, "not taken");
+}
+
+/// The gate of the send queue (spec "Receiving DATA"): a message that
+/// would go to the same next hop as one queued here, with no higher
+/// count, is refused, told the rest of that neighbour's ban; one with a
+/// higher count, or for another next hop, is taken (roadmap D106).
+#[test]
+fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
     use crate::event::DropReason;
     use crate::tables::budget::told;
     use crate::wire::{Ack, Data, MAX_PAYLOAD};
     let (mut r, mut now, far) = with_every_neighbour_banned();
     let ends = now + Duration::from_secs(60);
     let ids: Vec<NodeId> = r.neighbours.iter().map(|n| n.id).collect();
-    for id in ids {
+    for &id in &ids {
         r.neighbours.refused(id, ends);
     }
-    let mut told_wait = None;
-    for tag in 0..=u8::MAX {
+    // The nearer neighbour's own place: the other next hop.
+    let near = r
+        .neighbours
+        .iter()
+        .map(|n| n.position)
+        .min_by_key(|p| p.lat);
+    let near = near.unwrap();
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8, dst: Position| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(1),
-            dst_pos: far,
+            dst_pos: dst,
             dst_id: NOBODY,
-            hops: 1,
+            hops,
             time_left: u8::MAX,
             payload: &payload,
         };
@@ -2248,32 +2289,39 @@ fn a_refusal_asks_for_the_wait_that_blocks_the_queue() {
         };
         let mut refused = None;
         let mut pending = Vec::new();
-        r.handle(event, now, &mut |a| match a {
+        r.handle(event, *now, &mut |a| match a {
             Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
             Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
             _ => {}
         });
-        let until = now + Duration::from_millis(100);
-        let sent = drive_from(&mut r, &mut now, until, pending);
-        if let Some(why) = refused {
-            assert!(matches!(
-                why,
-                DropReason::Budget | DropReason::SendQueueFull
-            ));
-            told_wait = sent
-                .iter()
-                .find_map(|(_, f)| match Packet::decode(f.payload()) {
-                    Ok(Packet::Ack(Ack {
-                        refused: true,
-                        wait,
-                        ..
-                    })) => Some(told(wait)),
-                    _ => None,
-                });
-            break;
-        }
-    }
-    let wait = told_wait.expect("refused, with a wait");
+        let until = *now + Duration::from_millis(100);
+        let sent = drive_from(r, now, until, pending);
+        let wait = sent
+            .iter()
+            .find_map(|(_, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Ack(Ack {
+                    refused: true,
+                    wait,
+                    ..
+                })) => Some(told(wait)),
+                _ => None,
+            });
+        (refused, wait)
+    };
+    assert_eq!(offer(&mut r, &mut now, 1, 2, far), (None, None));
+    let (why, wait) = offer(&mut r, &mut now, 2, 2, far);
+    assert_eq!(why, Some(DropReason::SameHop));
     // Told in whole bans, rounded down.
-    assert!(wait + BAN > ends.since(now), "{wait:?}");
+    let wait = wait.expect("refused, with a wait");
+    assert!(
+        wait <= ends.since(now) && wait + BAN > ends.since(now),
+        "{wait:?}"
+    );
+    assert_eq!(offer(&mut r, &mut now, 3, 3, far), (None, None), "higher");
+    assert_eq!(
+        offer(&mut r, &mut now, 4, 2, near),
+        (None, None),
+        "elsewhere"
+    );
+    assert_eq!(r.queue.len(), 3);
 }

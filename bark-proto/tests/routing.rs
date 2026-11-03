@@ -2309,8 +2309,9 @@ fn home_and_away_are_measured_alike() {
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
 /// bucket lets through (spec "Duty cycle cap"). F works at the edge of its bucket: it
-/// refuses a message when the message's frame and everything it
-/// has queued would not fit in the bucket (spec "Receiving DATA"), and a hand-over whose
+/// refuses a message while it holds another for D, or when the message's
+/// frame and everything it has queued would not fit in the bucket
+/// (spec "Receiving DATA"), and a hand-over whose
 /// retries the bucket cannot fit yet waits for it, never longer than the
 /// refill of a frame and the reply reserve, instead of being dropped. Its
 /// heartbeats are never held back. The harness panics if any hour holds
@@ -2447,9 +2448,10 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             .filter(|t| matches!(t, Trace::Refused { reason, .. } if *reason == why))
             .count()
     };
-    let (full, broke) = (
+    let (full, broke, ahead) = (
         refused(DropReason::SendQueueFull),
         refused(DropReason::Budget),
+        refused(DropReason::SameHop),
     );
     let busy_sent = h.nodes[f]
         .sent
@@ -2467,7 +2469,8 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     };
     println!(
         "F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
-         its queue full and {broke} for its bucket, {busy_sent} refusals sent; \
+         its queue full, {broke} for its bucket and {ahead} for one ahead to D, \
+         {busy_sent} refusals sent; \
          O turned away {turned_away} times",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))
@@ -2553,7 +2556,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         since_taken.get(since_taken.len() / 2),
         since_taken.last(),
     );
-    assert!(full + broke > 0, "F never refused a message");
+    assert!(full + broke + ahead > 0, "F never refused a message");
     assert!(busy_sent > 0 && turned_away > 0, "no refusal reached O");
     assert!(
         !deferred.is_empty(),
@@ -3066,7 +3069,8 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
     };
     assert!(h.run_until(h.now + secs(5), refused));
     h.run_for(secs(5));
-    assert!(forwards(&h, o, id).is_empty(), "sent round B");
+    // B may take it once what it holds for D is gone; C never does.
+    assert!(forwards(&h, o, id).iter().all(|&n| n == nb), "sent round B");
     lost.set(false);
     assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, id)));
     assert_eq!(forwards(&h, o, id), vec![nb]);

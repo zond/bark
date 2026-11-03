@@ -553,6 +553,10 @@ pub struct DropCounts {
     pub budget: u64,
     /// Fresh work refused while every way on was banned (spec "Receiving DATA").
     pub banned: u64,
+    /// Refused while another message here went to the same next hop
+    /// (spec "Receiving DATA"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub same_hop: u64,
     /// The return to the parent failed (spec "Return to parent").
     pub return_failed: u64,
     /// The parent answered the return seen (spec "Return to parent");
@@ -594,6 +598,7 @@ impl DropCounts {
             DropReason::SendQueueFull => &mut self.send_queue_full,
             DropReason::Budget => &mut self.budget,
             DropReason::Banned => &mut self.banned,
+            DropReason::SameHop => &mut self.same_hop,
             DropReason::ReturnFailed => &mut self.return_failed,
             DropReason::ReturnSeen => &mut self.return_seen,
             DropReason::QueueExpired => &mut self.queue_expired,
@@ -614,6 +619,7 @@ impl DropCounts {
             + self.send_queue_full
             + self.budget
             + self.banned
+            + self.same_hop
             + self.return_failed
             + self.return_seen
             + self.queue_expired

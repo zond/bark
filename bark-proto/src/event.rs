@@ -162,6 +162,10 @@ pub enum DropReason {
     /// Fresh work, and every neighbour that could take it is banned
     /// (spec "Receiving DATA"). Refused.
     Banned,
+    /// Another message queued here goes to the same next hop now and has
+    /// come as far or farther (spec "Receiving DATA", "Send queue").
+    /// Refused.
+    SameHop,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
     /// The parent answered the return seen: it has gone on without this
@@ -174,9 +178,9 @@ pub enum DropReason {
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
-    /// A sleepy node's own message, refused with a wait: given back to its
+    /// The application's message, refused with a wait: given back to its
     /// application, which may offer it again after that wait
-    /// (spec "A sleepy node's own message").
+    /// (spec "A sleepy node's own message", "Receiving DATA").
     Pushback,
     /// Held for a sleepy node by a node that turned sleepy itself, which
     /// holds nothing (spec "Delivery queue").
@@ -203,10 +207,11 @@ pub enum AppEvent {
         /// Opaque payload; only `..len` is meaningful.
         payload: [u8; MAX_FRAME],
     },
-    /// A sleepy node's own message, refused by its first hop, is the
-    /// application's again: the node takes none before `retry_at`, and the
-    /// application may offer it again then or give it up
-    /// (spec "A sleepy node's own message").
+    /// The application's message, refused by the node's own gate or, a
+    /// sleepy node's, by its first hop, is the application's again: the
+    /// node takes none before `retry_at`, and the application may offer
+    /// it again then or give it up (spec "Receiving DATA",
+    /// "A sleepy node's own message").
     GivenBack {
         /// Its id.
         msg_id: MsgId,

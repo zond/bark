@@ -20,7 +20,11 @@
 //!
 //! [`Relay::data`] classifies the packet by the six cases of spec "Receiving DATA" in
 //! order and decides whether acting on it is work: sending it on, which
-//! may be a forward or a return, or a delivery. Work to send on goes into the
+//! may be a forward or a return, or a delivery. Work to send on first
+//! passes the gate ([`Relay::gate`]): it is routed as it would be from
+//! here now, and so is every message queued, and it is refused if one of
+//! them goes to the same next hop with a count as high or higher, told
+//! the rest of that neighbour's ban (spec "Send queue"). It then goes into the
 //! send queue's regular room if it has a place and the bucket holds the
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
@@ -367,31 +371,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// How long a message of `record` to `dst` would wait here for its
-    /// way on (spec "Bans"): the rest of the ban on its next hop, which is
-    /// the pushback that neighbour gave. Kept per neighbour, so a
-    /// direction that pushes back does not hold up the others, and it
-    /// ends with the ban.
-    fn pushback(&self, record: &Record, dst: Position, now: Instant) -> Duration {
-        self.next_hop(record, dst, now)
-            .filter(|(_, n)| self.neighbours.is_banned(n, now))
-            .map_or(Duration::ZERO, |(_, n)| n.banned_until.since(now))
-    }
-
     /// The wait a refusal for `reason` asks for (spec "Bans"): for want
     /// of room, until the bucket holds everything queued, a frame of
     /// `airtime` and its ACK with the reply reserve left, if nothing else
-    /// comes, and no less than the queue waits before anything in it
-    /// moves (`blocked`); anything else frees in one ban; and never less
-    /// than the pushback the message's way on gave (`pushback`), so a
-    /// wait told at the centre is passed back hop by hop toward the
-    /// origin.
+    /// comes; for another message going the same way, `pushback` as
+    /// the gate found it ([`Self::gate`]), outside the line; anything
+    /// else frees in one ban; and never less than the pushback the
+    /// message's way on gave (`pushback`), the rest of its next hop's
+    /// ban, so a wait told at the centre is passed back hop by hop
+    /// toward the origin.
     ///
-    /// Every sender refused takes a place in line: the next is told one
-    /// ban later than the last, the time the bucket takes to refill the
-    /// frame and ACK a sender will bring back. So the senders refused in
-    /// one moment come back one after the other, as the room frees, and
-    /// not all at once.
+    /// Every sender refused for room takes a place in line: the next is
+    /// told one ban later than the last, the time the bucket takes to
+    /// refill the frame and ACK a sender will bring back. So the senders
+    /// refused in one moment come back one after the other, as the room
+    /// frees, and not all at once.
     fn refusal_wait(
         &mut self,
         reason: DropReason,
@@ -399,34 +393,94 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         pushback: Duration,
         now: Instant,
     ) -> Duration {
-        let (room, blocked) = match reason {
+        let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
                 let queued = self.queue.airtime();
-                let room = self
-                    .radio
+                self.radio
                     .budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
-                    .map_or(self.config.delivery_ttl, |t| t.since(now));
-                (room, self.blocked(now))
+                    .map_or(self.config.delivery_ttl, |t| t.since(now))
             }
-            _ => (BAN, Duration::ZERO),
+            // The rest of a wait further on, which only shrinks as it is
+            // passed back (spec "Bans").
+            DropReason::SameHop => return pushback,
+            _ => BAN,
         };
         // Only the room is a line; a wait for the way on passes on as it
         // is, so it cannot grow around a loop of relays.
         let slot = self.timers.promised.max(now + room);
         self.timers.promised = slot + BAN;
-        slot.since(now).max(pushback).max(blocked)
+        slot.since(now).max(pushback)
     }
 
-    /// How long the send queue waits before anything in it moves: the
-    /// rest of the wait of the entry due first, for a ban, a refusal it
-    /// was told or a hold, when every entry waits; nothing while one is
-    /// due. Room frees no sooner (spec "Bans", roadmap D106).
-    fn blocked(&self, now: Instant) -> Duration {
-        self.queue
-            .earliest_due()
-            .filter(|&t| t > now)
-            .map_or(Duration::ZERO, |t| t.since(now))
+    /// Where the message of `record` to `dst` goes if routed now, and
+    /// when that one's ban ends: its next hop, or its parent once none is
+    /// left (spec "Next hop", "Return to parent").
+    fn heads_to(&self, record: &Record, dst: Position, now: Instant) -> Option<(NodeId, Instant)> {
+        if let Some((_, n)) = self.next_hop(record, dst, now) {
+            return Some((n.id, n.banned_until));
+        }
+        let (parent, _) = record.parent()?;
+        let ban = self
+            .neighbours
+            .get(parent)
+            .map_or(Instant::ZERO, |n| n.banned_until);
+        Some((parent, ban))
+    }
+
+    /// Where queued entry `o` goes now: the neighbour of the hand-over
+    /// under way, or where it would be routed; `None` for a delivery,
+    /// one set aside, or one this relay owns now.
+    fn bound_for(&self, o: &Outgoing, now: Instant) -> Option<NodeId> {
+        if o.kind.delivers() || o.held() {
+            return None;
+        }
+        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
+            return None;
+        };
+        if o.in_flight() {
+            return Some(d.dst_hop);
+        }
+        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
+            return None;
+        }
+        let record = self.records.get(d.msg_id())?;
+        self.heads_to(record, d.dst_pos, now).map(|(to, _)| to)
+    }
+
+    /// The gate of the send queue (spec "Receiving DATA"): a message
+    /// received with `hops`, other than `id`, going to `to`, whose ban
+    /// ends at `ban`, enters only if no queued message goes to `to` now,
+    /// or its count is higher than every one of theirs. If not, the wait
+    /// to tell: the rest of `to`'s ban, and no less than the bucket needs
+    /// to send what is queued for `to` ahead of it.
+    ///
+    /// The count of a queued message is one less than the count it is
+    /// sent with: the count it holds here. Only those with a count of at
+    /// least `hops` can bar it, so the others are not routed. At most the
+    /// queue's entries times the neighbour table's entries per call, and
+    /// no allocation.
+    fn gate(
+        &self,
+        id: MsgId,
+        to: NodeId,
+        ban: Instant,
+        hops: u8,
+        now: Instant,
+    ) -> Option<Duration> {
+        let ahead = self
+            .queue
+            .iter()
+            .filter(|o| o.hops().saturating_sub(1) >= hops && o.msg_id() != Some(id))
+            .filter(|o| self.bound_for(o, now) == Some(to))
+            .map(|o| mac::airtime(&o.frame))
+            .reduce(|a, b| a + b)?;
+        let bucket = self
+            .radio
+            .budget
+            .allowed_at(Duration::ZERO, ahead + REPLY_RESERVE, now)
+            .map_or(self.config.delivery_ttl, |t| t.since(now));
+        Some(bucket.max(ban.since(now)))
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
@@ -697,7 +751,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether `d` is taken or refused, and what it gives this relay to do
     /// (spec "Receiving DATA"). `spend`: what the ACK that takes it will
-    /// cost the bucket, nothing once it has gone; `completes`: it comes
+    /// cost the bucket, nothing once it has gone, when the gate is not
+    /// asked again; `completes`: it comes
     /// from the neighbour being handed the message, whose hand-over ends
     /// first, giving up its place.
     fn verdict(&self, d: &Data<'_>, spend: Duration, completes: bool, now: Instant) -> Verdict {
@@ -735,26 +790,48 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => None,
         };
         let mut place = 0;
-        // Fresh work is refused while the way it would go on from here
-        // pushes back, and told how long (spec "Receiving DATA"). A message
-        // already in the network is not: refused for that, its sender
-        // would send it round the pushback, and around a ring of relays
-        // the refusals kept each other up.
-        let pushback = if case == Case::New && sends && fresh {
-            let probe = Record::new(id, None, d.hops, now);
-            self.pushback(&probe, d.dst_pos, now)
+        // Where it would go from here now, as the record it would have
+        // routes it: its sender, a sleepy node handing over its own or a
+        // child returning it, has it.
+        let heads = if sends {
+            let mut probe = match self.records.get(id) {
+                Some(r) if case == Case::Search => *r,
+                _ => Record::new(
+                    id,
+                    (!fresh).then_some((d.src_hop, d.sender_home)),
+                    d.hops,
+                    now,
+                ),
+            };
+            if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
+                probe.handed_to(s);
+            }
+            self.heads_to(&probe, d.dst_pos, now)
         } else {
-            Duration::ZERO
+            None
         };
+        // The rest of the ban on its way on (spec "Bans"). Fresh work is
+        // refused while it lasts, and told how long, as spec "Receiving DATA"
+        // says. A message already in the network is not: refused for
+        // that, its sender would send it round the pushback, and around
+        // a ring of relays the refusals kept each other up.
+        let mut pushback = heads.map_or(Duration::ZERO, |(_, ban)| ban.since(now));
+        // Not again once the take is final: the sender is done with it.
+        let gate = heads
+            .filter(|_| spend > Duration::ZERO)
+            .and_then(|(to, ban)| self.gate(id, to, ban, d.hops, now));
         let refusal = if !acts {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
+        } else if let Some(wait) = gate {
+            pushback = wait;
+            Some(DropReason::SameHop)
         } else if sends {
             let air = self.data_airtime(d.payload.len());
             match self.admit(air, spend, d.hops, completes, now) {
                 Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
-                Ok(_) if pushback > Duration::ZERO => Some(DropReason::Banned),
+                Ok(_) if fresh && pushback > Duration::ZERO => Some(DropReason::Banned),
                 Ok(k) => {
                     place = k;
                     None
@@ -1130,7 +1207,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        self.records.put(at, Record::new(id, None, 0, now));
+        let record = Record::new(id, None, 0, now);
+        if let Some((to, ban)) = self.heads_to(&record, dst_pos, now) {
+            // Fresh work, gated as a sleepy node's own is at its anchor
+            // (spec "Receiving DATA"): refused, it goes back to the
+            // application with the wait, at least a ban as an ACK tells.
+            let wait = match self.gate(id, to, ban, 0, now) {
+                Some(wait) => Some(wait.max(BAN)),
+                None => Some(ban.since(now)).filter(|&w| w > Duration::ZERO),
+            };
+            if let Some(wait) = wait {
+                self.timers.retry_at = now + wait;
+                self.drop_msg(id, DropReason::Pushback, emit);
+                emit(Action::App(AppEvent::GivenBack {
+                    msg_id: id,
+                    retry_at: self.timers.retry_at,
+                }));
+                return;
+            }
+        }
+        self.records.put(at, record);
         self.send_on(&d, 0, emit);
     }
 
