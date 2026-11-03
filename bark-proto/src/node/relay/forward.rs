@@ -80,9 +80,11 @@
 //! Every packet this relay sends for a message goes through the send
 //! queue, one hand-over in flight at a time ([`IN_FLIGHT`]); each place
 //! carries its own hand-over ([`HandOver`]). A forward is addressed
-//! when its hand-over starts, by the one next-hop function of spec "Next hop", and
-//! readdressed by it after a failure; with no candidate left it becomes a
-//! return to the parent, or at the origin a drop. The hop count a packet
+//! when its hand-over starts, by the one next-hop function of spec "Next hop",
+//! from the state as it is then; with no candidate left it becomes a
+//! return to the parent, or at the origin a drop. Nothing of the choice
+//! is kept once the hand-over ends: the next routing makes it afresh.
+//! The hop count a packet
 //! carries is stamped at each hand-over's first transmission, the record's
 //! highest count plus one, and repeated by its retries (spec "Hop count").
 //!
@@ -99,13 +101,10 @@
 //! the forward is routed again at once from the record, past that
 //! neighbour, by the same choice a return taken from a child gets; a
 //! return answered seen is dropped, its parent having gone on without
-//! it. When a forward moves on from a neighbour whose failed hand-over
-//! demoted it (spec "Hand-over" step 6), the neighbour is set
-//! aside for this hand-over only (`skipped`): choosing again at once
-//! must not pick it again, but it stays a candidate for later choices. An
-//! unanswered frame is more often lost than its ACK, so the neighbour
-//! most likely lacks the message; marked tried, it would end its own
-//! search if it later got the message elsewhere and offered it here.
+//! it. A neighbour that failed a hand-over stays untried: an unanswered
+//! frame is more often lost than its ACK, so the neighbour most likely
+//! lacks the message; marked tried, it would end its own search if it
+//! later got the message elsewhere and offered it here.
 //!
 //! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96).
 //! When listen-before-talk gives up on a forward's neighbour, the forward
@@ -118,11 +117,13 @@
 //!
 //! An ACK that refuses the current hand-over bans its receiver for the
 //! wait it asks, at least [`BAN`], so no message takes it until then
-//! (spec "Bans", roadmap D27, D29, D32). The refused message waits in its
-//! place for the ban and is offered to the same neighbour again, a return
-//! as a forward, the refused transmission not counting as an attempt: the
-//! neighbour answers, and going round it would take the message the long
-//! way past a relay that has said when it will have room.
+//! (spec "Bans", roadmap D27, D29, D32). The refused message stays in its
+//! place, and since a ban is a wait and not an exclusion (spec "Next hop")
+//! the refuser is still its next hop: it waits for the ban and is
+//! offered to the same neighbour again, a return as a forward, the
+//! refused transmission not counting as an attempt. The neighbour
+//! answers, and going round it would take the message the long way past
+//! a relay that has said when it will have room.
 //!
 //! A hand-over whose attempts all go unanswered bans its receiver too,
 //! longer after each failure in a row (`tables/neighbours.rs`, roadmap
@@ -133,20 +134,20 @@
 //! send the message the long way round just when the channel is full;
 //! measured, it undoes the ban's gain (roadmap D42).
 //!
-//! Refused or failed, a forward keeps its neighbour while the neighbour
-//! is live, has not had the message and is not demoted, waiting out its
-//! ban however it has grown meanwhile, and chooses afresh only then; a
-//! return is dropped once its parent is demoted or gone (roadmap D102,
-//! D106). The demotion, failed hand-overs in a row with no answer to
-//! this relay between ([`DEMOTE_AFTER_FAILURES`]), is the one test that
-//! the neighbour no longer hears this relay.
+//! Refused or failed, a forward waits for its neighbour while the
+//! neighbour ranks first, however its ban has grown meanwhile; once it is
+//! demoted it ranks behind the others and the message goes elsewhere,
+//! and a return is dropped once its parent is demoted or gone (roadmap
+//! D102, D106). The demotion, failed hand-overs in a row with no answer
+//! to this relay between ([`DEMOTE_AFTER_FAILURES`]), is the one test
+//! that the neighbour no longer hears this relay, and the neighbour table
+//! holds it for every message alike: the message keeps nothing of it.
 //!
-//! A forward whose every remaining candidate is banned waits in its place
-//! until the earliest ban ends, and is routed again then (roadmap D31). It
-//! is not returned or dropped: overload makes a message wait, never end
-//! (spec "Overload waits", roadmap D106).
-//! Only a search exhausted by neighbours tried or set aside returns or
-//! drops.
+//! A forward whose next hop is banned waits in its place until the ban
+//! ends, and is routed again then (roadmap D31). It is not returned or
+//! dropped: overload makes a message wait, never end (roadmap D106,
+//! spec "Overload waits"). Only a search exhausted by neighbours tried
+//! returns or drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
 //! over the first entry that is due. The application's own message waits
 //! the same way, longer after refusals in a row ([`hold`]); one for a node
@@ -282,16 +283,13 @@ fn preamble(n: &Neighbour) -> u16 {
 }
 
 /// What forwarding keeps beside the send queue: the one hand-over in
-/// flight, the neighbours the current forward has passed over, and
-/// whether the send queue may have room for the delivery queue.
+/// flight, and whether the send queue may have room for the delivery
+/// queue.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Forwarding {
     /// What the radio side keeps of the hand-over in flight, that of the
     /// send queue's current entry.
     pub(super) flight: Flight,
-    /// Neighbour slots the current forward moved on from when a failed
-    /// hand-over demoted them (spec "Hand-over" step 6); not tried.
-    pub(super) skipped: u64,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     pub(super) feed_due: bool,
@@ -300,7 +298,6 @@ pub(super) struct Forwarding {
 impl Forwarding {
     pub(super) const IDLE: Forwarding = Forwarding {
         flight: Flight::NONE,
-        skipped: 0,
         feed_due: false,
     };
 }
@@ -371,12 +368,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// How long a message of `record` to `dst` would wait here for its
-    /// way on (spec "Bans"): the rest of the ban on the neighbour it
-    /// would go to were no neighbour banned, which is the pushback that
-    /// neighbour gave. Kept per neighbour, so a direction that pushes back
-    /// does not hold up the others, and it ends with the ban.
+    /// way on (spec "Bans"): the rest of the ban on its next hop, which is
+    /// the pushback that neighbour gave. Kept per neighbour, so a
+    /// direction that pushes back does not hold up the others, and it
+    /// ends with the ban.
     fn pushback(&self, record: &Record, dst: Position, now: Instant) -> Duration {
-        self.preferred_hop(record, dst, now)
+        self.next_hop(record, dst, now)
             .filter(|(_, n)| self.neighbours.is_banned(n, now))
             .map_or(Duration::ZERO, |(_, n)| n.banned_until.since(now))
     }
@@ -566,72 +563,38 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.last_resort(n, now) != others_open
     }
 
-    /// Whether any neighbour that is no last resort is open for the
-    /// message of `record` at `now` ([`Self::tier`]): live, neither handed
-    /// it nor its parent, and a candidate or one but for a ban. One set
-    /// aside for this hand-over and not banned, which a failure demoted,
-    /// is not; with `blocks` false neither counts.
-    fn others_open(&self, record: &Record, blocks: bool, now: Instant) -> bool {
+    /// Whether any neighbour that is no last resort is a candidate for the
+    /// message of `record` at `now` ([`Self::tier`]): live, and neither
+    /// handed it nor its parent.
+    fn others_open(&self, record: &Record, now: Instant) -> bool {
         let parent = record.parent().map(|(name, _)| name);
         self.neighbours.live(now).any(|(slot, n)| {
-            !self.last_resort(n, now)
-                && !record.handed(slot)
-                && Some(n.id) != parent
-                && (!blocks
-                    || self.forwarding.skipped & (1 << slot) == 0
-                    || self.neighbours.is_banned(n, now))
+            !self.last_resort(n, now) && !record.handed(slot) && Some(n.id) != parent
         })
     }
 
-    /// The next hop for the message of `record` to `dst` (spec "Next hop"): the
-    /// live neighbour nearest `dst` that is not in the tried set, not set
-    /// aside and not banned, ties broken by ID; a demoted one only
+    /// The next hop for the message of `record` to `dst` (spec "Next hop"),
+    /// from the state as it is at `now`: the live neighbour nearest `dst`
+    /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
-    /// no other at all (roadmap D25, D29, D38).
+    /// no other at all (roadmap D25, D29, D38). Bans do not enter: a banned
+    /// next hop is waited for, not gone round (roadmap D106).
     fn next_hop(&self, record: &Record, dst: Position, now: Instant) -> Option<(usize, Neighbour)> {
-        self.hop(record, dst, true, now)
-    }
-
-    /// The neighbour [`Self::next_hop`] would choose for the message of
-    /// `record` were none banned and none set aside: the way the message
-    /// would go.
-    fn preferred_hop(
-        &self,
-        record: &Record,
-        dst: Position,
-        now: Instant,
-    ) -> Option<(usize, Neighbour)> {
-        self.hop(record, dst, false, now)
-    }
-
-    /// [`Self::next_hop`], and with `blocks` false [`Self::preferred_hop`]:
-    /// one choice, so that the way a message would go and the way it goes
-    /// cannot part.
-    fn hop(
-        &self,
-        record: &Record,
-        dst: Position,
-        blocks: bool,
-        now: Instant,
-    ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
         let parent = record.parent().map(|(name, _)| name);
-        let skipped = if blocks { self.forwarding.skipped } else { 0 };
         // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.radio.busy.noise_floor_dbm());
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
-        let others = self.others_open(record, blocks, now);
+        let others = self.others_open(record, now);
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
                     && (first.is_some() || self.tier(n, others, now))
                     && !record.handed(*slot)
-                    && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
-                    && (!blocks || !self.neighbours.is_banned(n, now))
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
@@ -1183,9 +1146,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return;
             };
             if self.queue.current_index() != Some(i) {
-                // What was set aside belongs to the entry chosen before.
                 self.queue.select(i);
-                self.forwarding.skipped = 0;
             }
             let Some(out) = self.queue.current().copied() else {
                 return;
@@ -1229,7 +1190,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 }
                 Routed::Done => {
                     self.queue.take_current();
-                    self.forwarding.skipped = 0;
                     self.forwarding.feed_due = true;
                 }
                 Routed::Hold => {
@@ -1237,14 +1197,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                         current.state = State::Held;
                     }
                     self.queue.deselect();
-                    self.forwarding.skipped = 0;
                     self.forwarding.feed_due = true;
                 }
                 Routed::Wait(t) => {
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = t;
                     }
-                    self.forwarding.skipped = 0;
                 }
             }
         }
@@ -1252,9 +1210,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A DATA to a sleepy node goes first (spec "Delivery"): a hand-over
     /// that waits between its attempts, for the channel, a retry or the
-    /// bucket, steps aside for it and keeps its place. A return keeps its
-    /// unanswered attempts; a forward is addressed again when its turn
-    /// comes, so it starts afresh.
+    /// bucket, steps aside for it and keeps its place. A forward or a
+    /// return is routed again when its turn comes, so it starts afresh.
     fn make_way(&mut self, now: Instant) {
         let Some(current) = self.queue.current().copied() else {
             return;
@@ -1264,12 +1221,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         if let Some(c) = self.queue.current_mut() {
+            if c.kind == Kind::Return {
+                c.kind = Kind::Forward;
+            }
             if c.kind == Kind::Forward {
                 c.tries = 0;
             }
             c.state = State::Queued;
         }
-        self.forwarding.skipped = 0;
     }
 
     /// Whether the delivery `out` goes outside its node's window, with the
@@ -1284,8 +1243,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && self.heard.get(to).is_some_and(|n| !n.missed)
     }
 
-    /// Address the forward `out` (spec "Next hop"), or let it wait for a ban to
-    /// end, or return it to the parent (spec "Return to parent"), or drop it at the origin.
+    /// Address the forward `out` from the state as it is now: to its next
+    /// hop (spec "Next hop"), or back to its parent once none is left
+    /// (spec "Return to parent"), or let it wait while that one is
+    /// banned, or drop it at the origin. Nothing of an earlier choice is
+    /// kept: a neighbour that refused or failed it is chosen again while
+    /// it ranks first, and the message goes elsewhere once it does not,
+    /// demoted or gone.
     /// Ownership is checked again first: a closer neighbour may have been
     /// demoted since (spec "Receiving DATA" case 5).
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
@@ -1311,45 +1275,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.arrive(id, &d, now, emit);
             return Routed::Done;
         }
-        if out.state == State::Holding {
-            // Held on to the neighbour that refused or failed it, for as
-            // long as its ban now lasts (spec "Hand-over" step 6, "Bans",
-            // roadmap D102, D106).
-            let kept = self
-                .neighbours
-                .by_id(d.dst_hop)
-                .filter(|(slot, n)| self.keeps(&record, *slot, n, now));
-            if let Some((_, n)) = kept {
-                if self.neighbours.is_banned(n, now) {
-                    return Routed::Wait(n.banned_until);
-                }
-                let frame = data_frame(&d, n.home, preamble(n));
-                return Routed::To(Outgoing {
-                    frame,
-                    tries: 0,
-                    state: State::Queued,
-                    ..out
-                });
-            }
-        }
         if let Some((_, n)) = self.next_hop(&record, d.dst_pos, now) {
+            if self.neighbours.is_banned(&n, now) {
+                // A ban is a wait, not an exclusion (spec "Next hop").
+                return Routed::Wait(n.banned_until);
+            }
             let to = n.id;
             let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
             // Addressed afresh, its attempts start afresh.
             return Routed::To(Outgoing {
                 frame,
+                kind: Kind::Forward,
                 tries: 0,
                 state: State::Queued,
                 ..out
             });
-        }
-        if let Some(t) = self.ban_ends(&record, now) {
-            if self.own.id == Some(id) {
-                // Each offer costs the refuser a reply and hides its ACKs.
-                self.own.refusals = self.own.refusals.saturating_add(1);
-                return Routed::Wait(t.max(now + hold(self.own.refusals)));
-            }
-            return Routed::Wait(t);
         }
         if let Some(ends) = self.timers.boot_ends {
             if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
@@ -1365,6 +1305,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match record.parent() {
             Some((parent, stored)) => {
+                if let Some(p) = self
+                    .neighbours
+                    .get(parent)
+                    .filter(|p| self.neighbours.is_banned(p, now))
+                {
+                    return Routed::Wait(p.banned_until);
+                }
                 let home = self.home_of(parent).unwrap_or(stored);
                 let frame = data_frame(
                     &Data {
@@ -1378,6 +1325,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     frame,
                     kind: Kind::Return,
                     tries: 0,
+                    state: State::Queued,
                     ..out
                 })
             }
@@ -1386,25 +1334,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Routed::Done
             }
         }
-    }
-
-    /// Whether a forward held on to neighbour `n` in `slot`, after a
-    /// refusal or a failure alike, keeps it (spec "Hand-over" step 6,
-    /// "Bans", roadmap D106): while the neighbour has not had the message
-    /// and is [held to](Self::held_to).
-    fn keeps(&self, record: &Record, slot: usize, n: &Neighbour, now: Instant) -> bool {
-        !record.handed(slot) && self.held_to(n, now)
-    }
-
-    /// Whether a message waits for neighbour `n`: while it is live and not
-    /// demoted, so not [`DEMOTE_AFTER_FAILURES`] hand-overs to it failed in
-    /// a row with no answer to this relay between. That it hears this
-    /// relay is what matters; how long other messages have made its ban
-    /// is not.
-    ///
-    /// [`DEMOTE_AFTER_FAILURES`]: crate::tables::DEMOTE_AFTER_FAILURES
-    fn held_to(&self, n: &Neighbour, now: Instant) -> bool {
-        !self.neighbours.is_expired(n, now) && !self.neighbours.is_demoted(n, now)
     }
 
     /// When fresh work could next start moving, if every live neighbour is
@@ -1435,22 +1364,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             until = Some(until.map_or(n.banned_until, |t| t.min(n.banned_until)));
         }
         until
-    }
-
-    /// When the earliest ban ends among the neighbours that would be
-    /// candidates for the message of `record` but for their ban; `None`
-    /// if the search was exhausted by tried and failed ones alone.
-    fn ban_ends(&self, record: &Record, now: Instant) -> Option<Instant> {
-        let others = self.others_open(record, true, now);
-        self.neighbours
-            .live(now)
-            .filter(|(slot, n)| {
-                self.tier(n, others, now)
-                    && !record.handed(*slot)
-                    && self.neighbours.is_banned(n, now)
-            })
-            .map(|(_, n)| n.banned_until)
-            .min()
     }
 
     /// The home channel of neighbour `id`, as its latest heartbeat or
@@ -1622,7 +1535,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let id = d.msg_id();
             let Some(hops) = self.count(&d, id, &out) else {
                 self.queue.take_current();
-                self.forwarding.skipped = 0;
                 self.forwarding.feed_due = true;
                 self.drop_msg(id, DropReason::HopCap, emit);
                 return None;
@@ -1746,7 +1658,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         self.queue.take_current();
-        self.forwarding.skipped = 0;
         self.forwarding.feed_due = true;
         self.drop_msg(id, DropReason::ReturnSeen, emit);
     }
@@ -1796,7 +1707,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // which may offer it again once the wait is over: refused at
             // the origin, it does not age here (spec "A sleepy node's own message").
             self.queue.take_current();
-            self.forwarding.skipped = 0;
             self.forwarding.feed_due = true;
             self.timers.retry_at = now + wait;
             self.records.forget(msg_id);
@@ -1808,29 +1718,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         match out.kind {
-            // The same neighbour again once the wait it asked for is over:
-            // it answers, so going round it would only take the message
-            // the long way past a relay that has said when it will have
-            // room (spec "Bans", roadmap D106).
-            Kind::Forward => {
-                let mut until = now + wait;
+            // Routed again when its turn comes: the refuser, banned now,
+            // stays its next hop while it ranks first, so the message waits
+            // for it, and going round it would only take the message the
+            // long way past a relay that has said when it will have room
+            // (spec "Bans", "Next hop", roadmap D106).
+            Kind::Forward | Kind::Return => {
                 if self.own.id == Some(msg_id) {
                     // Each offer costs the refuser a reply and hides its ACKs.
                     self.own.refusals = self.own.refusals.saturating_add(1);
-                    until = until.max(now + hold(self.own.refusals));
+                    let until = now + wait.max(hold(self.own.refusals));
+                    if let Some(current) = self.queue.current_mut() {
+                        current.not_before = until;
+                    }
                 }
                 self.cancel_handover();
-                self.forwarding.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
-                    current.state = State::Holding;
-                    current.not_before = until;
+                    current.kind = Kind::Forward;
                     current.tries = 0;
                 }
             }
             // No other receiver: wait for the ban, and let the queue move.
-            Kind::Return | Kind::Deliver | Kind::Direct => {
+            Kind::Deliver | Kind::Direct => {
                 let tries = self.handover().map_or(0, |(mut h, _)| h.refused());
-                self.forwarding.skipped = 0;
                 if let Some(current) = self.queue.current_mut() {
                     current.not_before = now + wait;
                     current.tries = tries;
@@ -1841,7 +1751,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The current hand-over succeeded: its receiver has the packet.
     pub(super) fn handover_done(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.forwarding.skipped = 0;
         let Some(out) = self.queue.take_current() else {
             return;
         };
@@ -1904,11 +1813,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
                 let own_at_anchor = self.sleepy() && d.hops == 0;
-                let wait = self.wait_for(d.dst_hop, now);
+                let ban = self
+                    .neighbours
+                    .get(d.dst_hop)
+                    .map(|n| n.banned_until)
+                    .filter(|&t| t > now);
+                // The neighbour now demoted or gone: a return ends, and a
+                // forward goes where its next routing takes it.
+                let gone = self
+                    .neighbours
+                    .get(d.dst_hop)
+                    .is_none_or(|n| self.neighbours.is_demoted(n, now));
+                let moves_on = match out.kind {
+                    Kind::Forward => {
+                        !own_at_anchor && self.goes_to(&d, now).is_some_and(|to| to != d.dst_hop)
+                    }
+                    _ => gone,
+                };
                 emit(Action::Trace(Trace::HandOverFailed {
                     msg_id: id,
                     to: d.dst_hop,
-                    moves_on: wait.is_none() && !own_at_anchor,
+                    moves_on,
                 }));
                 if own_at_anchor {
                     // A sleepy node's own message tries its anchor again a
@@ -1916,7 +1841,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     // (spec "A sleepy node's own message"): the ban's ladder would
                     // offer it every few seconds to a node whose channel is
                     // full, and a fixed fade every minute for its whole TTL.
-                    let ban = wait.unwrap_or(now);
+                    let ban = ban.unwrap_or(now);
                     let silences = self
                         .neighbours
                         .by_id(d.dst_hop)
@@ -1925,34 +1850,24 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     for _ in 1..silences {
                         fade = fade.mul(2).min(self.config.delivery_ttl);
                     }
-                    self.forwarding.skipped = 0;
                     if let Some(current) = self.queue.current_mut() {
                         current.not_before = ban.max(now + fade);
                         current.tries = 0;
                     }
                     return;
                 }
-                if let Some(t) = wait {
-                    // The same neighbour again once its ban ends, with
-                    // fresh attempts (roadmap D42, D106). A forward holds
-                    // on to it by state, since the choice of a next hop
-                    // would not keep it (`route`).
-                    self.forwarding.skipped = 0;
+                if out.kind == Kind::Forward || !gone {
+                    // Routed again when its turn comes, with fresh
+                    // attempts: banned now, the neighbour is waited for
+                    // while it ranks first, and the message goes elsewhere
+                    // once its demotion makes it a last resort (roadmap
+                    // D42, D106). Most likely the frame, not the ACK, was
+                    // lost, so the neighbour stays untried.
                     if let Some(current) = self.queue.current_mut() {
-                        current.not_before = t;
+                        current.kind = Kind::Forward;
                         current.tries = 0;
-                        if out.kind == Kind::Forward {
-                            current.state = State::Holding;
-                        }
                     }
                     return;
-                }
-            }
-            if out.kind == Kind::Forward {
-                // Most likely the frame, not the ACK, was lost: the
-                // neighbour stays untried, set aside for this choice only.
-                if let Some(slot) = self.neighbours.slot_of(d.dst_hop) {
-                    self.forwarding.skipped |= 1 << slot;
                 }
             }
         }
@@ -1975,20 +1890,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
         }
         self.queue.take_current();
-        self.forwarding.skipped = 0;
         self.forwarding.feed_due = true;
         if let Some(reason) = reason {
             self.drop_msg(id, reason, emit);
         }
     }
 
-    /// When to offer a failed hand-over to `id` again (roadmap D42, D106):
-    /// when its ban ends, while it is [held to](Self::held_to), its
-    /// failure just counted. Otherwise a forward takes its next candidate, and a
-    /// return is dropped.
-    fn wait_for(&self, id: NodeId, now: Instant) -> Option<Instant> {
-        let (_, n) = self.neighbours.by_id(id)?;
-        self.held_to(n, now).then_some(n.banned_until)
+    /// Where the forward of `d` would go if routed now: its next hop, or
+    /// its parent once none is left (spec "Next hop", "Return to parent").
+    fn goes_to(&self, d: &Data<'_>, now: Instant) -> Option<NodeId> {
+        let record = self.records.get(d.msg_id())?;
+        self.next_hop(record, d.dst_pos, now)
+            .map(|(_, n)| n.id)
+            .or_else(|| record.parent().map(|(p, _)| p))
     }
 
     fn count_failure(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {

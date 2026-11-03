@@ -135,8 +135,8 @@ It accepts a message from its boot on while it holds none, its send queue takes 
 frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
 for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
 bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
-it. A node whose remaining neighbours are all banned once it holds the message keeps it and
-tries again when the first ban ends, or later after refusals in a row
+it. A node whose message's next hop is banned once it holds the message keeps it and
+tries again when the ban ends, or later after refusals in a row
 (spec "Bans"); one for a sleepy node it holds for that finds the delivery
 queue full waits for a place (spec "Return to parent"). A sleepy node's own message that
 its first hop refuses goes back to the application (spec "A sleepy node's own message"):

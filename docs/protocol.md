@@ -1132,20 +1132,16 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    ([return to parent](#return-to-parent)).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts. Then the hand-over has failed: count a failure against the
-   neighbour and ban it ([bans](#bans)). The message waits in its place
-   for the ban and is offered to the same neighbour again, with three
-   fresh attempts, for as long as the neighbour is live, has not had
-   the message and is not demoted ([neighbour table](#neighbour-table)),
-   as after a refusal ([bans](#bans)). A ban grown meanwhile, by another
-   message's failure or a refusal, is waited for too.
-   - Once the neighbour is demoted, has left the table or has had the
-     message, the message instead chooses the next hop at once. A
-     neighbour whose failure demoted it is **set aside** for this
-     hand-over, no candidate until the hand-over ends, but not counted
-     as tried.
-   - A return waits for its parent the same way and is dropped once the
-     parent is demoted or has left the table
-     ([return to parent](#return-to-parent)).
+   neighbour and ban it ([bans](#bans)). The message stays in its place,
+   untried at that neighbour, and is routed again from the state as it
+   then is ([next hop](#next-hop)), with three fresh attempts. The
+   neighbour, banned now, is still its next hop while it ranks first, so
+   the message waits for its ban, however other messages have grown it,
+   and is offered to it again; it goes elsewhere once the neighbour is
+   demoted ([neighbour table](#neighbour-table)), which makes it a last
+   resort, or has left the table.
+   - A return is dropped once its parent is demoted or has left the
+     table ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
      hand-over ([delivery queue](#delivery-queue)).
 
@@ -1162,9 +1158,9 @@ about whether it hears this relay, so a grown ban is waited out, not
 gone round (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is seen (step 5), or the
-neighbour demoted, gone or having had it while the message waits for it
-(step 6). A channel that stays
+to another neighbour (step 2); what moves it is seen (step 5), or a
+change in the state it is routed from: the neighbour demoted or gone, or
+a better one come (step 6, [next hop](#next-hop)). A channel that stays
 busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until it clears; the message
 spends no airtime
@@ -1340,22 +1336,20 @@ the transmission's own costs and the airtime
 
 #### Bans
 
-A neighbour that refuses a packet or fails a hand-over is **banned**: no
-candidate for any message ([next hop](#next-hop)) until the ban ends.
-Three rules set how long.
+A neighbour that refuses a packet or fails a hand-over is **banned**:
+nothing is sent to it until the ban ends, and a message whose next hop
+it is waits for it ([next hop](#next-hop)). Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
 ([receiving DATA](#receiving-data)). The neighbour is not counted as
-tried and no failure is counted. The message waits in its place in the
-send queue until the ban ends and is offered to the same neighbour
-again, the refused transmission not counting as one of its attempts; a
-ban that has grown by then, by another message's refusal or failure, is
-waited for too. A return to the parent waits the same way. A forward
-chooses its next hop afresh only once the neighbour is demoted
-([neighbour table](#neighbour-table)), has left the table, or has had
-the message ([message records](#message-records)), the rule for a
-failed message too ([hand-over](#hand-over) step 6, roadmap D106).
+tried and no failure is counted. The message stays in its place in the
+send queue and is routed again from the state as it then is, the
+refused transmission not counting as one of its attempts: the
+neighbour, banned, is still its next hop, so the message waits until
+the ban ends, however it has grown by then, and is offered to it again,
+as after a failure ([hand-over](#hand-over) step 6, roadmap D106). A
+return to the parent waits the same way.
 
 *Why a refused message waits for the same neighbour.* A refusal is an answer: the neighbour is
 there, hears this relay, and has said when it will have room. Sent
@@ -1438,8 +1432,8 @@ are already being lost; past the cap that loop is what breaks first.
 
 The message whose hand-over failed waits for the same neighbour
 ([hand-over](#hand-over) step 6), and the neighbour is not counted as
-tried. Three silences in a row demote the neighbour and move the message
-on, so a link that is really gone costs the first message two bans and
+tried. Three silences in a row demote the neighbour, which then ranks
+behind the others, and the message moves on; so a link that is really gone costs the first message two bans and
 two more hand-overs, and later messages one hand-over, trying it last. A
 neighbour that is gone is tried again after each ban until its entry
 expires; [bounds](#bounds) adds up what that costs.
@@ -1502,14 +1496,13 @@ Packets are handed over in the order they arrived, except that:
 
 #### Overload waits
 
-Overload makes a message wait and never ends it. A refused message
-waits for the neighbour that refused it ([bans](#bans)). A message whose
-every remaining candidate is banned, by refusals or by silence, waits in its
-place in the send queue, its airtime still counted, until the earliest
-ban ends, and is routed again then, at the origin or anywhere else. When
-bans end, the messages that waited for them go first, the most travelled
-first. The rest of the queue keeps its order, since ordering it all by
-count would starve messages that have just entered.
+Overload makes a message wait and never ends it. A message whose next
+hop is banned, by a refusal or by silence, waits in its place in the
+send queue, its airtime still counted, until the ban ends, and is
+routed again then, at the origin or anywhere else ([next hop](#next-hop)).
+When bans end, the messages that waited for them go first, the most
+travelled first. The rest of the queue keeps its order, since ordering
+it all by count would starve messages that have just entered.
 
 A message ends only:
 
@@ -1615,23 +1608,24 @@ when its turn comes, so a message is never lost for want of room
 
 #### Next hop
 
-One function chooses the next hop for a first send, for the next try
-after the message comes back, and after a failed hand-over
-([hand-over](#hand-over)). The **candidates** are the live
+One function chooses where a queued message goes, from the state as it
+is when it is asked: the neighbour table, the bans and the message's
+record. It is asked each time the message is routed: for a first send,
+after the message comes back, and after a hand-over of it is refused
+or fails ([hand-over](#hand-over)). Nothing of an earlier answer is
+kept with the message. The **candidates** are the live
 neighbour-table entries ([neighbour table](#neighbour-table)) except
-those:
+those in the tried set ([message records](#message-records)).
 
-- in the tried set ([message records](#message-records));
-- banned ([bans](#bans));
-- set aside for the current hand-over: its failure demoted them
-  ([hand-over](#hand-over) step 6).
+A ban does not take a neighbour out: a banned next hop is waited for.
+The message is not sent until the ban ends, and is routed again then
+([overload waits](#overload-waits)).
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a
 candidate only when the search would otherwise end here, with no other
-candidate left and none that is only banned, so that the message would
-go back to its parent or be dropped
-([return to parent](#return-to-parent)).
+candidate left, so that the message would go back to its parent or be
+dropped ([return to parent](#return-to-parent)).
 
 It is sent to with the long preamble. An anchorless neighbour is a
 candidate like any other, sent to with the long preamble. The first hop
@@ -1671,10 +1665,26 @@ The **order** is:
   ([positions on the wire](#positions-on-the-wire)), nearest first;
 - equal distances by ID.
 
-The relay sends to the first candidate. If there is none but neighbours
-that are only banned, the message waits until the earliest ban ends and
-is routed again then. If there is none at all, the relay returns the
-message to its parent.
+The relay sends to the first candidate, once its ban has ended. If
+there is none, the relay returns the message to its parent.
+
+*Why a ban is a wait.* A neighbour that refuses or does not answer
+stays the first candidate, so the message waits for it, until something
+the table records changes: the neighbour is demoted by three hand-overs
+in a row with no answer to this relay between
+([neighbour table](#neighbour-table)), and ranks behind the others, or
+it expires and is gone. Any answer to this relay keeps it from that, so
+a message is never sent round a neighbour that hears this relay, which
+is what pushes a refusal's wait back toward the origin
+([bans](#bans)), and the message keeps no state of its own to say so:
+the neighbour table already holds the failures in a row and the ban,
+for every message alike (roadmap D106).
+
+*What a change does.* A neighbour that arrives, recovers its margin or
+its demotion, or expires changes the answer the next time a message is
+routed, and nothing else: a message waiting for a banned neighbour goes
+to a newcomer that ranks before it, and one whose next hop is demoted
+or gone goes to the next.
 
 *Why margin comes first.* Neighbours without margin come after every
 neighbour with margin, demoted ones included, because fading lets a
@@ -1841,9 +1851,12 @@ D90).
 #### Return to parent
 
 When [next hop](#next-hop) finds no candidate, every neighbour having
-been tried or set aside, the relay sends the message back to its parent:
-DATA with `dst_hop` the parent's ID from the record, on the parent's
-home channel as the neighbour table has it at the moment of sending.
+been tried, the relay sends the message back to its parent: DATA with
+`dst_hop` the parent's ID from the record, on the parent's home channel
+as the neighbour table has it at the moment of sending. The return is
+routed like any message, the parent its only candidate: it waits while
+the parent is banned, and a neighbour that arrives meanwhile, untried,
+takes it forward instead.
 
 So a return follows a parent that has moved home since
 ([channel moves](#channel-moves)). Only a parent no longer in the table
@@ -1869,14 +1882,15 @@ yet, though its burst brings it the relays in range within about 15 s
 ([heartbeat](#heartbeat)): dropped then, the person's first text would
 be lost to the boot alone.
 
-A message whose neighbours left are only banned is neither returned nor
-dropped: it waits ([overload waits](#overload-waits)), a node's own
-application's message as in [bans](#bans).
+A message whose next hop is banned is neither returned nor dropped: it
+waits ([overload waits](#overload-waits)), a node's own application's
+message as in [bans](#bans).
 
-Once the parent is demoted, the message having waited for the parent's
-bans and gone again ([hand-over](#hand-over) step 6), or has left the
-table, the relay drops the message and the search ends early. A parent
-that refuses the return has not failed.
+Once a return to the parent fails and the parent is demoted, the
+message having waited for the parent's bans and gone again
+([hand-over](#hand-over) step 6), or has left the table, the relay
+drops the message and the search ends early. A parent that refuses the
+return has not failed.
 
 #### Hop count
 

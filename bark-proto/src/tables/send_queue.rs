@@ -27,7 +27,7 @@
 //! Each entry is a frame, what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"), and where
 //! its hand-over is ([`State`], `node/transfer.rs`). An entry whose
-//! receivers are all banned waits in its place until a ban ends (spec
+//! next hop is banned waits in its place until the ban ends (spec
 //! "Overload waits"). The next hand-over goes to a DATA to a sleepy node
 //! if one is due, since its node listens only briefly (spec "Delivery");
 //! else to the first entry that is due, except that one that has waited
@@ -68,10 +68,13 @@ pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A DATA to the next hop toward the destination (spec "Next hop"). Its next
-    /// hop is chosen when its hand-over starts, and again after a failure.
+    /// A message to send on. Where it goes, a neighbour or its parent, is
+    /// chosen from the state as it is when its hand-over starts (spec
+    /// "Next hop"); nothing of an earlier choice is kept.
     Forward,
-    /// A DATA back to the parent (spec "Return to parent"); dropped if it fails.
+    /// A forward whose hand-over goes back to the parent, from its start
+    /// to its end (spec "Return to parent"): dropped if it fails once the
+    /// parent is demoted or gone, else a forward again.
     Return,
     /// A DATA to a sleepy node this node holds a message for (spec "Delivery"); left in the delivery queue
     /// if it fails.
@@ -97,13 +100,6 @@ impl Kind {
 pub enum State {
     /// Waiting its turn, due at `not_before`.
     Queued,
-    /// A forward whose hand-over was refused or failed, waiting for the
-    /// ban of the neighbour its frame is addressed to, due at
-    /// `not_before`, when it is offered to that neighbour again, or waits
-    /// on if the ban has grown meanwhile; it chooses afresh only once the
-    /// neighbour is demoted, gone or has had it (spec "Hand-over" step 6,
-    /// "Bans").
-    Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
     /// keeps its place and its airtime in admission.
@@ -176,7 +172,7 @@ impl Outgoing {
     /// Whether its hand-over is under way: addressed and waiting, on the
     /// radio or waiting for its ACK.
     pub fn in_flight(&self) -> bool {
-        !matches!(self.state, State::Queued | State::Holding | State::Held)
+        !matches!(self.state, State::Queued | State::Held)
     }
 
     /// The hop count the frame carries.

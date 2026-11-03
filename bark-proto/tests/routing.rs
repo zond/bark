@@ -2618,13 +2618,12 @@ fn entry(h: &Harness<Relay>, at: usize, of: usize) -> Neighbour {
 
 /// O, with F1 and F2 both reaching D, F1 the nearer; P behind O. Every
 /// DATA from O to F1 is lost. O's message fails at F1, which bans F1 for
-/// one ban (spec "Bans", roadmap D42), and waits for the ban. P's message, which
-/// reaches O within it, goes to F2 at once and is never offered to F1:
-/// the ban holds for every message. When the ban ends O's message goes
-/// to F1 again with three fresh attempts; that second failure bans F1
-/// for two bans, which the message waits out too; the third demotes F1
-/// (spec "Neighbour table") and moves the message to F2, at once
-/// (roadmap D102, D106).
+/// one ban (spec "Bans", roadmap D42), and waits for the ban. P's message,
+/// which reaches O within it, has F1 for its next hop too: a ban is a
+/// wait, not an exclusion (spec "Next hop"), so it is offered to nobody
+/// until the ban ends, and never to F2 while F1 ranks first. Each failure
+/// doubles the ban; the third in a row demotes F1, as spec "Neighbour table"
+/// says, and both messages then go to F2 at once (roadmap D106).
 ///
 /// ```text
 ///               F1
@@ -2665,30 +2664,44 @@ fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     );
 
     let second = send(&mut h, p, d, b"second");
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, second)));
-    assert!(
-        data_times(&h, o, f1, second).is_empty(),
-        "offered within the ban"
-    );
-    assert_eq!(forwards(&h, o, second), vec![name(&h, f2)]);
-    let taken = h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
-        Trace::Forwarded { msg_id, .. } if *msg_id == second => Some(*t),
-        _ => None,
-    });
-    assert!(taken.unwrap() < e.banned_until, "waited for the ban");
-
-    assert!(h.run_until(h.now + secs(20), |h| delivered(h, d, first)));
-    let runs = handovers(&data_times(&h, o, f1, first));
+    assert!(h.run_until(h.now + secs(30), |h| {
+        delivered(h, d, first) && delivered(h, d, second)
+    }));
+    let gone = Trace::Demoted {
+        neighbour: name(&h, f1),
+    };
+    let demoted = h.nodes[o]
+        .traces
+        .iter()
+        .find_map(|(t, tr)| (*tr == gone).then_some(*t))
+        .expect("F1 demoted");
+    for id in [first, second] {
+        let to_f1 = data_times(&h, o, f1, id);
+        let to_f2 = data_times(&h, o, f2, id);
+        assert!(
+            to_f1
+                .iter()
+                .chain(&to_f2)
+                .all(|&t| t <= failed_at || t >= e.banned_until),
+            "offered within the ban"
+        );
+        assert!(
+            to_f2.iter().all(|&t| t >= demoted),
+            "F2 only once F1 is demoted"
+        );
+        assert_eq!(forwards(&h, o, id), vec![name(&h, f2)]);
+    }
+    // Three hand-overs failed in a row, whichever message each carried,
+    // and the bans between them doubled.
+    let mut all: Vec<Instant> = data_times(&h, o, f1, first);
+    all.extend(data_times(&h, o, f1, second));
+    all.sort();
+    let runs = handovers(&all);
     assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 3, 3]);
     let gap = runs[1][0].since(runs[0][2]);
     assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
     let gap = runs[2][0].since(runs[1][2]);
     assert!(gap >= hold(2) && gap < hold(2) + secs(1), "{gap:?}");
-    let on = data_times(&h, o, f2, first)[0];
-    assert!(on > runs[2][2] && on.since(runs[2][2]) < secs(1));
-    assert!(traces(&h, o).contains(&Trace::Demoted {
-        neighbour: name(&h, f1)
-    }));
     no_drops(&h);
 }
 
