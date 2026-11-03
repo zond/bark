@@ -688,12 +688,11 @@ A heartbeat of a burst is in no slot and says the node's slots start
 anew; a heartbeat heard in a slot sets the slots afresh. A sleepy node,
 which hears only in its windows, counts nothing.
 
-*Why a reading at the floor.* The average was of the heartbeats that
-got through: a neighbour at or below sensitivity is heard on its good
-moments and averaged on those, and in the dense city the average stood
-5.4 dB above the link's mean for the frames lost to noise (roadmap
-D103). Counted as what was sent, heard or not, the average is of the
-link. A heartbeat sent and not heard had a packet RSSI under the level
+*Why a reading at the floor.* An average of the heartbeats that got
+through stands above the link: a neighbour at or below sensitivity is
+heard on its good moments and averaged on those (roadmap D103).
+Counted as what was sent, heard or not, the average is of the link
+(roadmap D105). A heartbeat sent and not heard had a packet RSSI under the level
 half of all heartbeats arrive at, 3.1 dB below a full frame's
 ([neighbour table](#neighbour-table)): 5.2 dB of signal below the
 noise, which packet RSSI reads as 1.2 dB above the floor. The floor
@@ -1600,12 +1599,11 @@ a walking pace of 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the
 its next heartbeat then tells its place to another channel, and by the
 time one comes back to this channel, a rotation, it has walked 180 m on
 average and 270 m at most, a hop's length in the dense city, and may
-have gone indoors, 14 dB down ([physical layer](#physical-layer)). In
-that city a quarter of the DATA between relays reached nobody, the
-receiver or the sender having walked out of reach since the entry was
-made, and 85 % of them had a walker at one end (roadmap D103). A frame
-to it is an answer heard, and its ACK makes it fresh again
-([the ACK](#the-ack)).
+have gone indoors, 14 dB down ([physical layer](#physical-layer)). A
+DATA sent to a stale walker mostly reaches nobody, and under load such
+frames were most of the channel's overload (roadmap D103, D105). Its
+ACK to a frame sent to it makes it fresh again ([the ACK](#the-ack)),
+so a walker in conversation stays a next hop.
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
 through a node that sleeps; the message waits for the ban
