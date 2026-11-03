@@ -41,7 +41,7 @@ Discrete-event, microsecond resolution, single-threaded, deterministic for a giv
 For a transmission from a on channel c, each node b that is listening on c (or on c±1, c±2 for adjacent-channel leakage) evaluates:
 
 1. **Signal.** `rx_dbm[a][b][c](t)`, taken at the start of the packet and held for its duration: a packet is short compared with the correlation time.
-2. **Lock.** LoRa receivers lock onto the first preamble they detect. The simulator tracks, per listening node, the packet it is locked to. A second same-channel arrival during the locked packet's preamble steals the lock if it is stronger by the capture threshold (datasheet co-channel rejection: 5 dB at SF7, SF5 unlisted; parameter, default 5 dB); otherwise it is lost to capture.
+2. **Lock.** LoRa receivers lock onto the first preamble they detect. The simulator tracks, per listening node, the packet it is locked to. A second same-channel arrival during the locked packet's preamble steals the lock if it is stronger by the capture threshold (datasheet co-channel rejection: 5 dB at SF7, SF5 unlisted; the bench saw the stronger win but not by how much; parameter `capture_db`, default 5 dB); otherwise it is lost to capture. One that arrives after the preamble is lost to capture however strong, and the locked packet is lost with it unless the arrival is weaker by the harmless level, 3 dB measured at SF5 (`docs/bench-capture-2026-11-03.md`; parameter `harmless_below_db`). A packet weaker than that still faces step 3.
 3. **Symbol errors.** While locked, each symbol is lost with a probability that falls with its signal against noise plus interference; the packet survives if every symbol does (CR 4/5 detects errors but cannot correct them). Interference is every overlapping signal, each attenuated by the rejection for its channel offset (co-channel 0 dB, ±1 channel ACR_1, ±2 channels ACR_2; both parameters, since the datasheet only gives 60 dB at 1.5 × BW offset), and counts as noise weighted so that the capture threshold against interference alone costs what sensitivity costs against noise alone. Interference is followed as signals start and end, so only the symbols that overlap it face it. The curve is the error rate of noncoherent detection of 32 orthogonal symbols, placed so that the datasheet's reference packet (64 bytes) loses 1% at sensitivity. SF5 at 125 kHz is not in the datasheet table; default sensitivity −119 dBm, extrapolated 2.5 dB per SF step from SF7's −124 dBm. Parameter. `docs/reception-research-2026-10-15.md` gives the sources and the curve. The parameter `reception = "threshold"` replaces the curve by a line: a packet survives if it is at or above sensitivity and above its interference by the capture threshold.
 4. **Loss.** A packet lost before its header ends frees the receiver. One lost later keeps it deaf, locked to garbage, until the packet's end.
 5. **CRC.** Hardware CRC is assumed perfect: a packet is either delivered intact or not at all.
@@ -97,7 +97,7 @@ Logged per run as CSV/JSON, with the scenario and seed embedded:
 - Heartbeat: time for a new node to learn all neighbours in range; neighbour table size, evictions, false expiries.
 - Home-channel moves per relay per hour, and the distribution of relays per channel in a collision domain (does measurement spread load like the spec "Capacity and sizing" argument says?). Moves attributed to real interferers versus to fading alone, since the latter are a cost without a benefit.
 - DFS: invocations, returns to a parent, straight-back sends, hop counts; messages dropped at the hop cap and at the origin.
-- Collision accounting: packets lost to capture, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the spec "Busy estimate" and "Hand-over" cost arguments can be checked against numbers.
+- Collision accounting: packets lost to capture, to a later packet past their preamble, to adjacent-channel leakage, to receiver deafness (retune, sweep, own transmission), each separately, so the spec "Busy estimate" and "Hand-over" cost arguments can be checked against numbers.
 
 ## 5. Architecture
 
@@ -264,5 +264,5 @@ S4 for one simulated hour in a few minutes on the dev machine. Sleepy nodes are 
 
 ## 8. Validation of the simulator itself
 
-- `bark-sim/tests/radio.rs` checks that a single packet has the datasheet airtime, that capture holds at the 5 dB threshold and fails below it, and the loss curve of §3.3.
+- `bark-sim/tests/radio.rs` checks that a single packet has the datasheet airtime, that capture holds at the 5 dB threshold and fails below it, that a later packet breaks the locked one unless 3 dB weaker, and the loss curve of §3.3.
 - In Phase 3, S1 runs on four boards with the same scenario file, and the simulator's parameters are adjusted until the measured latency and loss match.

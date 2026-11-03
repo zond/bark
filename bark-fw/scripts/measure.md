@@ -329,9 +329,10 @@ From the trace of duty-cycled receive:
   with the wake, which 5.3 measures; a direct measurement needs a
   receiver that leaves the channel for a controlled gap at random times
   and counts the frames lost.
-- Same-channel capture (`capture_db`): needs two transmitters on one
-  channel at controlled levels and a third board receiving; the C1
-  three-board setup with C on channel 5 instead of 6 does it.
+- Same-channel capture when both frames start within one preamble
+  (`capture_db`): needs the two senders started within a few symbols of
+  each other. A later frame past the preamble is measured
+  (`harmless_below_db`, docs/bench-capture-2026-11-03.md).
 
 ## Table: simulator radio parameters
 
@@ -341,7 +342,8 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 |---|---|---|---|---|
 | `noise_figure_db` | 6.5 (DS) | 1.3 `noise` | median floor − (−123.0 dBm, kTB at 125 kHz) | |
 | `sensitivity_dbm` | none: −119.0 derived | 1.7 | RSSI at 90 % reception | |
-| `capture_db` | 5 (DS, CW, SF7) | not here | three boards, see above | |
+| `capture_db` | 5 (DS, CW, SF7) | not here | two senders started within a preamble, see above | |
+| `harmless_below_db` | 3 (bench) | docs/bench-capture-2026-11-03.md | three boards, a short frame stepped against a long one; levels near the floor and other frame lengths not measured | 3 |
 | `acr1_db` | 60 (DS, at 1.5 × BW) | C1 | three-board result, else measurement 1 at ±1 | |
 | `acr2_db` | 60 | C1 | measurement 1 at ±2 | |
 | `cad_symbols` | 8 | fixed | the driver hard-codes 8 | 8 |

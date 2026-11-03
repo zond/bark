@@ -1203,13 +1203,14 @@ impl Summary {
         }
         let _ = writeln!(
             s,
-            "\n{:>3} {:>8} {:>9} {:>9} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
+            "\n{:>3} {:>8} {:>9} {:>9} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
             "ch",
             "frames",
             "candid.",
             "delivrd",
             "noise",
             "capture",
+            "later",
             "sinr",
             "deaf",
             "halfdpx",
@@ -1219,13 +1220,14 @@ impl Summary {
         let row = |s: &mut String, label: &str, frames: u64, r: &RxCounts, busy: Option<f64>| {
             let _ = writeln!(
                 s,
-                "{:>3} {:>8} {:>9} {:>9} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
+                "{:>3} {:>8} {:>9} {:>9} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
                 label,
                 frames,
                 r.candidates,
                 r.delivered,
                 r.below_sensitivity,
                 r.lost_capture,
+                r.lost_to_later,
                 r.sinr_fail,
                 r.deaf.total(),
                 r.half_duplex,

@@ -25,6 +25,9 @@ pub enum Outcome {
     /// Another packet held the receiver's lock (or a stronger one stole it
     /// during the preamble).
     LostCapture,
+    /// A later packet, not weaker by the harmless level, arrived past
+    /// this one's preamble and broke it.
+    LostToLater,
     /// Lost with interference the larger part of what it faced; `adjacent`
     /// if adjacent-channel leakage was the larger part of that.
     SinrFail {
@@ -97,6 +100,8 @@ pub struct RxCounts {
     pub below_sensitivity: u64,
     /// Lost capture.
     pub lost_capture: u64,
+    /// Lost to a later packet arriving past the preamble.
+    pub lost_to_later: u64,
     /// SINR failures, all.
     pub sinr_fail: u64,
     /// Of `sinr_fail`, those where adjacent-channel leakage dominated.
@@ -121,6 +126,7 @@ impl RxCounts {
             Outcome::Delivered => self.delivered += 1,
             Outcome::BelowSensitivity => self.below_sensitivity += 1,
             Outcome::LostCapture => self.lost_capture += 1,
+            Outcome::LostToLater => self.lost_to_later += 1,
             Outcome::SinrFail { adjacent } => {
                 self.sinr_fail += 1;
                 self.sinr_fail_adjacent += adjacent as u64;
@@ -136,6 +142,7 @@ impl RxCounts {
         self.delivered
             + self.below_sensitivity
             + self.lost_capture
+            + self.lost_to_later
             + self.sinr_fail
             + self.truncated
             + self.deaf.total()
@@ -148,6 +155,7 @@ impl RxCounts {
         self.delivered += o.delivered;
         self.below_sensitivity += o.below_sensitivity;
         self.lost_capture += o.lost_capture;
+        self.lost_to_later += o.lost_to_later;
         self.sinr_fail += o.sinr_fail;
         self.sinr_fail_adjacent += o.sinr_fail_adjacent;
         self.truncated += o.truncated;
@@ -339,6 +347,10 @@ pub struct Addressed {
     /// leakage, or an interferer. Links with a walker are not in the
     /// table, so such a pair counts as hidden.
     pub lost_how: [[[u64; 8]; 5]; 4],
+    /// Of `lost_how`, `[kind][fate]`, the frames a later frame broke by
+    /// arriving past their preamble no weaker than the harmless level
+    /// (`Outcome::LostToLater`); counted under that frame's class.
+    pub lost_to_later: [[u64; 5]; 4],
     /// A relay's heartbeats in their slots after the settle time, by how
     /// far behind its slot grid each started, in its own clock: 40 ms
     /// bins, the last holding 960 ms and more. The grid is the earliest
@@ -771,8 +783,8 @@ pub struct HeartbeatFates {
     pub received: u64,
     /// Of the others, ones with another heartbeat on the air there.
     pub lost_with_heartbeat: u64,
-    /// Of the others, by why: to another frame, by capture or by symbol
-    /// errors; to a receiver that was deaf, retuning, checking, sending or
+    /// Of the others, by why: to another frame, by capture, by a later
+    /// frame or by symbol errors; to a receiver that was deaf, retuning, checking, sending or
     /// locked to another frame's garbage; and below sensitivity.
     pub lost_collided: u64,
     /// See `lost_collided`.
@@ -1400,6 +1412,7 @@ mod tests {
             Outcome::Delivered,
             Outcome::BelowSensitivity,
             Outcome::LostCapture,
+            Outcome::LostToLater,
             Outcome::SinrFail { adjacent: true },
             Outcome::Truncated,
             Outcome::Deaf(Deaf::Cad),
@@ -1410,8 +1423,8 @@ mod tests {
             m.outcome(1, 4, o);
         }
         let t = m.rx_total();
-        assert_eq!(t.candidates, 7);
-        assert_eq!(t.decided(), 7);
+        assert_eq!(t.candidates, 8);
+        assert_eq!(t.decided(), 8);
         assert_eq!(t.half_duplex, 1);
         assert_eq!(t.deaf.cad, 1);
         assert_eq!(t.sinr_fail_adjacent, 1);

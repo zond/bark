@@ -81,7 +81,9 @@ Three things follow.
 
 `bark-sim/src/radio.rs` lets a later packet's preamble steal the lock
 when it is stronger by `capture_db`, 5 dB, and loses the later packet
-otherwise, the earlier one surviving either way. Measured here:
+otherwise; the earlier one then faces the later as interference on the
+error curve, which loses it mostly when the later is within about 2 dB.
+Measured here:
 
 - A packet arriving while the receiver is in another's payload is lost;
   the one being received is lost too unless the arrival is 3 dB or more
@@ -121,3 +123,30 @@ now takes the other frame with it unless 3 dB apart.
   receiver saw the short frames.
 - The two senders differed by 4 to 13 dB at the receiver at the same
   power setting, with their orientation and cables on the desk.
+
+## In the simulator
+
+Since roadmap D107 the simulator follows the result: a packet arriving
+after the held one's preamble is lost, and the held one with it unless
+the arrival is at least 3 dB weaker (`harmless_below_db`); a weaker one
+still counts as interference on the error curve. The error curve already
+lost most such packets, so the change mostly moves losses from symbol
+errors to the new count, and adds 3 to 9 % to the receptions lost to a
+frame after locking. On main `e4b20eb`, seed 1, main → this model, it
+changes delivery, airtime and the loss breakdown by no more than one
+seed's spread:
+
+| | city | city, twice the rate | S4 | walkers |
+|---|---|---|---|---|
+| delivered of the settled texts % | 97.5 → 97.5 | 97.7 → 97.6 | 93.4 → 93.5 | 96.1 → 96.2 |
+| latency p50 / p90 s | 7.5 / 60.8 → 7.5 / 61.5 | 8.2 / 64.2 → 8.3 / 64.0 | 1.4 / 185.0 → 1.4 / 183.7 | 2.1 / 37.6 → 2.3 / 40.0 |
+| airtime per delivered text s | 2.04 → 2.05 | 2.31 → 2.33 | 1.08 → 1.08 | 1.79 → 1.84 |
+| hand-overs failed | 161 010 → 161 144 | 324 962 → 322 730 | 20 638 → 20 065 | 125 904 → 134 639 |
+| DATA between relays received % | 56.2 → 56.3 | 54.2 → 54.8 | 65.4 → 65.6 | 54.0 → 53.3 |
+| lost to a DATA to the same receiver / to another % | 1.3 / 4.0 → 1.3 / 4.0 | 2.4 / 7.1 → 2.3 / 7.0 | 1.3 / 4.2 → 1.2 / 4.1 | 1.0 / 2.8 → 1.1 / 3.1 |
+| lost to an ACK, a heartbeat or a beat % | 5.4 → 5.5 | 6.2 → 6.3 | 4.3 → 4.5 | 3.2 → 3.4 |
+| of the lost, by a later frame within 3 dB % | – → 4.2 | – → 5.5 | – → 3.7 | – → 2.7 |
+| receptions lost to a frame after locking, thousands | 1 691 → 1 757 | 4 043 → 4 197 | 219 → 225 | 621 → 678 |
+
+The walkers' larger moves are the one seed's runs parting: they send 5 %
+more DATA between relays with the same delivery.

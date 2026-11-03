@@ -142,7 +142,54 @@ fn stronger_preamble_steals_the_lock_at_exactly_the_threshold() {
         .script_tx(1.0, "T1", 3, 40, 12)
         .script_tx(1.004, "T2", 3, 40, 12);
     let r = rx(&run(&sc), 2);
-    assert_eq!((r.delivered, r.lost_capture, r.sinr_fail), (0, 1, 1));
+    assert_eq!(
+        (r.delivered, r.lost_capture, r.lost_to_later, r.sinr_fail),
+        (0, 1, 1, 0)
+    );
+}
+
+/// T1 at −100 dBm is locked and past its preamble when T2 arrives 4 ms
+/// later at `t2`: the receiver's counts.
+fn payload_overlap(sc: Scenario) -> RxCounts {
+    let sc = sc
+        .script_tx(1.0, "T1", 3, 40, 12)
+        .script_tx(1.004, "T2", 3, 40, 12);
+    rx(&run(&sc), 2)
+}
+
+#[test]
+fn a_later_packet_breaks_the_held_one_unless_weaker_by_the_harmless_level() {
+    // With the capture threshold at the harmless level, the threshold
+    // rule passes what the harmless level spares, so only the harmless
+    // level decides: exactly 3 dB weaker spares T1, 2.9 dB breaks it.
+    for (t2, spared) in [(-103.0, true), (-102.9, false), (-100.0, false)] {
+        let mut sc = trio(-100.0, t2);
+        sc.radio.capture_db = sc.radio.harmless_below_db;
+        let r = payload_overlap(sc);
+        // T2 is never received, however it compares.
+        assert_eq!(r.lost_capture, 1, "T2 at {t2}");
+        let expect = if spared { (1, 0) } else { (0, 1) };
+        assert_eq!((r.delivered, r.lost_to_later), expect, "T2 at {t2}");
+        assert_eq!(r.sinr_fail, 0, "T2 at {t2}");
+    }
+    // At the defaults a packet between the two thresholds is spared by
+    // the harmless level and lost to interference under the threshold rule.
+    let p = RadioParams::default();
+    assert_eq!((p.capture_db, p.harmless_below_db), (5.0, 3.0));
+    let r = payload_overlap(trio(-100.0, -104.0));
+    assert_eq!((r.delivered, r.lost_to_later, r.sinr_fail), (0, 0, 1));
+    let r = payload_overlap(trio(-100.0, -105.0));
+    assert_eq!((r.delivered, r.lost_to_later, r.sinr_fail), (1, 0, 0));
+}
+
+#[test]
+fn the_harmless_level_reads_from_the_scenario() {
+    // At 6 dB, a T2 5.5 dB weaker passes the 5 dB threshold rule but
+    // breaks T1 all the same.
+    let mut sc = trio(-100.0, -105.5);
+    sc.radio.harmless_below_db = 6.0;
+    let r = payload_overlap(sc);
+    assert_eq!((r.delivered, r.lost_to_later, r.sinr_fail), (0, 1, 0));
 }
 
 #[test]
@@ -477,7 +524,7 @@ fn a_weak_packet_frees_the_receiver_and_a_late_loss_deafens_it() {
     assert!(1.0102 + air8 < 1.0 + air40);
     let r = rx(&run(&sc), 2);
     assert_eq!(
-        (r.delivered, r.sinr_fail, r.lost_capture, r.deaf.corrupt),
+        (r.delivered, r.lost_to_later, r.lost_capture, r.deaf.corrupt),
         (0, 1, 1, 1)
     );
 }
