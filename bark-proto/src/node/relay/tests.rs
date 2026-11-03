@@ -1445,8 +1445,10 @@ fn a_message_waits_whatever_its_time_left() {
         offer_timed(&mut r, &mut now, far, 2, 3, 1),
         (Some(3), None, None)
     );
-    // The neighbours do not answer: the messages wait for their bans.
-    let until = start + TTL_UNIT.mul(40);
+    // The neighbours do not answer: the messages wait for their bans,
+    // four times their time left, until three silences in a row make
+    // each neighbour tried for them (spec "Next hop").
+    let until = start + TTL_UNIT.mul(4);
     let sent = drive(&mut r, &mut now, until);
     let offers: Vec<u8> = sent
         .iter()

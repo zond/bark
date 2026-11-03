@@ -1181,8 +1181,9 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    neighbour, banned now, is still its next hop while it ranks first, so
    the message waits for its ban, however other messages have grown it,
    and is offered to it again; it goes elsewhere once the neighbour is
-   demoted ([neighbour table](#neighbour-table)), which makes it a last
-   resort, or has left the table.
+   demoted ([neighbour table](#neighbour-table)), or has left the table.
+   A message that held for a neighbour through its demotion counts it
+   tried while it is queued here ([next hop](#next-hop)).
    - A return is dropped once its parent is demoted or has left the
      table ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
@@ -1717,8 +1718,11 @@ parent, the neighbours in `handed`, and a sleepy node that handed over
 its own message. A neighbour that has neither taken nor seen the message
 stays a candidate, whether it was passed over, being demoted, expired or
 not in the table at the time, or was offered the message and refused it
-or never answered ([hand-over](#hand-over)). When a neighbour-table slot
-changes hands, its bit is cleared in every record.
+or never answered ([hand-over](#hand-over)). One exception is kept with
+the queued message, not the record: a neighbour whose demotion the
+message held through is tried for it while it is queued here, though it
+does not have it ([next hop](#next-hop)). When a neighbour-table slot
+changes hands, its bit is cleared in every record and queued message.
 
 The record is also how a relay recognises a repeat of a message it has
 handled ([receiving DATA](#receiving-data)); there is no separate window
@@ -1835,6 +1839,27 @@ a line it is the only route, so without the last resort every message
 would be dropped until the demotion lapsed, six and a half minutes. What
 a neighbour that is really gone costs is in [bounds](#bounds) (roadmap
 D25, D36, D42).
+
+A message that held for a neighbour through its demotion, three of its
+own hand-overs to it unanswered in a row with no answer to this relay
+between, or whose hand-over to a neighbour already demoted failed,
+counts that neighbour as tried while it is queued here, and its search
+goes on: to the next candidate, back to its parent, or, at the origin,
+it ends. The neighbour stays a last resort for every message that has
+not tried it. The mark is kept with the queued message, not in the
+record: the neighbour does not have the message, and a copy it offers
+later is no return ([receiving DATA](#receiving-data)).
+
+*Why a demotion ends the wait.* A link that works one way, a neighbour
+whose heartbeats this relay hears but which never hears it, stays live,
+its heartbeats renewing it. Waited for as the only candidate left, it
+would hold the message for as long as it beats, and that relay's part
+of the search would never end. Three hand-overs in a row unanswered are
+the test that the neighbour does not hear this relay
+([neighbour table](#neighbour-table)), so that is where the message
+lets it go. The cost falls on the one message: where three collisions
+demote a working link that is the only way on, that message is returned
+or, at its origin, dropped; the next tries the link as its last resort.
 
 *Why the next hop need not be closer.* Nothing requires the next hop to
 be closer to the destination than the relay itself. After the message
@@ -2203,13 +2228,6 @@ What breaks it:
   link lost.
 - **Links that change** during the search, including a parent that moves
   to another home channel: parts of the graph go unsearched.
-- **A link that works one way.** A neighbour whose heartbeats this
-  relay hears but which never hears it stays live, demoted, and is a
-  candidate as a last resort ([next hop](#next-hop)). Where it is the
-  only candidate left, the message waits for it, one hand-over per ban
-  of the silence ladder, and is neither sent on nor returned, while its
-  heartbeats keep its entry: that relay's part of the search does not
-  end.
 
 ### Bounds
 

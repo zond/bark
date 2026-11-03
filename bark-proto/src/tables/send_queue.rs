@@ -165,6 +165,10 @@ pub struct Outgoing {
     /// When it began to wait for that neighbour here: when it was queued,
     /// or routed to another than before.
     pub since: Instant,
+    /// The neighbours it held for through their demotion, one bit per
+    /// neighbour-table slot: tried for it while it is queued here, though
+    /// none has it (spec "Next hop").
+    pub passed: u64,
 }
 
 impl Outgoing {
@@ -181,6 +185,7 @@ impl Outgoing {
             record: 0,
             toward: 0,
             since: Instant::ZERO,
+            passed: 0,
         }
     }
 
@@ -379,6 +384,14 @@ impl SendQueue {
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
             .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
+    }
+
+    /// Neighbour-table `slot` has a new occupant, which no entry has held
+    /// for.
+    pub fn slot_reoccupied(&mut self, slot: usize) {
+        for o in self.frames.as_mut_slice() {
+            o.passed &= !(1u64 << slot);
+        }
     }
 
     /// Entry `i`, to mark.
