@@ -612,23 +612,64 @@ impl DropCounts {
         *c += 1;
     }
 
+    /// Every counter with its name, as in the JSON output.
+    pub fn fields(&self) -> [(&'static str, u64); 15] {
+        [
+            ("no_route", self.no_route),
+            ("hop_cap", self.hop_cap),
+            ("no_record", self.no_record),
+            ("send_queue_full", self.send_queue_full),
+            ("budget", self.budget),
+            ("banned", self.banned),
+            ("same_hop", self.same_hop),
+            ("return_failed", self.return_failed),
+            ("return_seen", self.return_seen),
+            ("queue_expired", self.queue_expired),
+            ("delivery_full", self.delivery_full),
+            ("payload_too_long", self.payload_too_long),
+            ("pushback", self.pushback),
+            ("unplugged", self.unplugged),
+            ("unanswered", self.unanswered),
+        ]
+    }
+
+    /// The counters that are not zero, with their names.
+    pub fn nonzero(&self) -> Vec<(&'static str, u64)> {
+        self.fields().into_iter().filter(|&(_, n)| n > 0).collect()
+    }
+
+    /// These counts less `other`'s, counter by counter.
+    pub fn minus(&self, other: &DropCounts) -> DropCounts {
+        let mut out = *self;
+        let o = other.fields();
+        for (c, (_, n)) in [
+            &mut out.no_route,
+            &mut out.hop_cap,
+            &mut out.no_record,
+            &mut out.send_queue_full,
+            &mut out.budget,
+            &mut out.banned,
+            &mut out.same_hop,
+            &mut out.return_failed,
+            &mut out.return_seen,
+            &mut out.queue_expired,
+            &mut out.delivery_full,
+            &mut out.payload_too_long,
+            &mut out.pushback,
+            &mut out.unplugged,
+            &mut out.unanswered,
+        ]
+        .into_iter()
+        .zip(o)
+        {
+            *c = c.saturating_sub(n);
+        }
+        out
+    }
+
     /// Total.
     pub fn total(&self) -> u64 {
-        self.no_route
-            + self.hop_cap
-            + self.no_record
-            + self.send_queue_full
-            + self.budget
-            + self.banned
-            + self.same_hop
-            + self.return_failed
-            + self.return_seen
-            + self.queue_expired
-            + self.delivery_full
-            + self.payload_too_long
-            + self.pushback
-            + self.unplugged
-            + self.unanswered
+        self.fields().iter().map(|&(_, n)| n).sum::<u64>()
     }
 }
 

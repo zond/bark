@@ -51,6 +51,9 @@ pub struct AppSummary {
     pub drops: DropCounts,
     /// Messages whose last reported fate is a drop, by reason.
     pub lost_dropped: DropCounts,
+    /// Of those, the ones dropped by a node other than their origin: lost
+    /// in the network rather than refused or given up where they began.
+    pub lost_in_network: DropCounts,
     /// Every message lost, by where and why: `"<node>: <reason>"`.
     pub lost_at: BTreeMap<String, u64>,
     /// Messages not sent because their destination had no address yet.
@@ -403,6 +406,14 @@ impl Sim {
                 *lost_at.entry(at).or_insert(0) += 1;
             }
         }
+        let mut lost_in_network = DropCounts::default();
+        for r in self.message_rows() {
+            if let Fate::Dropped { node, reason } = r.fate {
+                if node != r.src {
+                    lost_in_network.add(reason);
+                }
+            }
+        }
         let mut offers = Offers {
             waited: m.app.waited,
             still_waiting: 0,
@@ -490,6 +501,7 @@ impl Sim {
                 shared_ids: m.app.shared_ids,
                 drops: m.app.drops,
                 lost_dropped,
+                lost_in_network,
                 lost_at,
                 unaddressed: m.app.unaddressed,
                 in_flight,
@@ -854,6 +866,16 @@ impl Summary {
                 "not sent: {} to a leaf that had not attached yet",
                 a.unaddressed
             );
+        }
+        for (what, counts) in [
+            ("at the origin", a.lost_dropped.minus(&a.lost_in_network)),
+            ("in the network", a.lost_in_network),
+        ] {
+            let causes = counts.nonzero();
+            if !causes.is_empty() {
+                let list: Vec<String> = causes.iter().map(|(k, n)| format!("{k} {n}")).collect();
+                let _ = writeln!(s, "lost {what}, by cause: {}", list.join(", "));
+            }
         }
         for (at, n) in &a.lost_at {
             let _ = writeln!(s, "  lost {n:>5} at {at}");
