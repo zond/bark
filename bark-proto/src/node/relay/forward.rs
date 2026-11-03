@@ -180,9 +180,9 @@
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
-use crate::node::mac;
 use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, IN_FLIGHT};
 use crate::node::Rng;
+use crate::node::{heartbeat_interval, mac};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
@@ -541,13 +541,24 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .any(|(_, n)| n.holds_mail() && n.local.distance2(target) < mine)
     }
 
+    /// Whether `n` is a last resort at `now` (spec "Next hop"): a sleepy
+    /// neighbour with an anchor, or a carried one not heard for its own
+    /// heartbeat interval, by when it has walked as far as a position is
+    /// good to and its slot has told its place to another channel.
+    fn last_resort(&self, n: &Neighbour, now: Instant) -> bool {
+        n.last_resort()
+            || (n.carried
+                && n.relay()
+                && now.since(n.last_heard) >= heartbeat_interval(n.id, &self.config))
+    }
+
     /// Whether `n` is among the neighbours to choose from, `others_open`
-    /// telling whether any that is no last resort is open: a sleepy
-    /// neighbour with an anchor only where none is, banned or not (spec
-    /// "Next hop"). A message whose other neighbours are banned waits for
-    /// them (spec "Overload waits").
-    fn tier(n: &Neighbour, others_open: bool) -> bool {
-        n.last_resort() != others_open
+    /// telling whether any that is no last resort is open: a last resort
+    /// only where none is, banned or not (spec "Next hop"). A message
+    /// whose other neighbours are banned waits for them
+    /// (spec "Overload waits").
+    fn tier(&self, n: &Neighbour, others_open: bool, now: Instant) -> bool {
+        self.last_resort(n, now) != others_open
     }
 
     /// Whether any neighbour that is no last resort is open for the
@@ -558,7 +569,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn others_open(&self, record: &Record, blocks: bool, now: Instant) -> bool {
         let parent = record.parent().map(|(name, _)| name);
         self.neighbours.live(now).any(|(slot, n)| {
-            !n.last_resort()
+            !self.last_resort(n, now)
                 && !record.handed(slot)
                 && Some(n.id) != parent
                 && (!blocks
@@ -611,7 +622,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
-                    && (first.is_some() || Self::tier(n, others))
+                    && (first.is_some() || self.tier(n, others, now))
                     && !record.handed(*slot)
                     && skipped & (1 << slot) == 0
                     && Some(n.id) != parent
@@ -1404,12 +1415,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((_, a)) = self.first_hop(now).and_then(|a| self.neighbours.by_id(a)) {
             return self.neighbours.is_banned(a, now).then_some(a.banned_until);
         }
-        let others = self.neighbours.live(now).any(|(_, n)| !n.last_resort());
+        let others = self
+            .neighbours
+            .live(now)
+            .any(|(_, n)| !self.last_resort(n, now));
         let mut until: Option<Instant> = None;
         for (_, n) in self
             .neighbours
             .live(now)
-            .filter(|(_, n)| Self::tier(n, others))
+            .filter(|(_, n)| self.tier(n, others, now))
         {
             if !self.neighbours.is_banned(n, now) {
                 return None;
@@ -1429,7 +1443,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours
             .live(now)
             .filter(|(slot, n)| {
-                Self::tier(n, others) && !record.handed(*slot) && self.neighbours.is_banned(n, now)
+                self.tier(n, others, now)
+                    && !record.handed(*slot)
+                    && self.neighbours.is_banned(n, now)
             })
             .map(|(_, n)| n.banned_until)
             .min()

@@ -669,7 +669,47 @@ A neighbour that has heard one heartbeat of a node knows the node's
 interval from its ID, and so when its next comes to any channel: on
 channel c at time t, on channel c + j at t + j × T, and on c again at
 t + 13 × T. A sleeping node uses this to wake for its anchor's
-([relay choice](#relay-choice)).
+([relay choice](#relay-choice)), and a relay to tell a heartbeat that
+did not come.
+
+**A heartbeat due and not heard.** A relay, which listens all the time,
+expects each neighbour's heartbeat on its own channel once a rotation,
+in a window around the slot: from the slot less what the last one
+heard may have waited behind its own (the lateness above) and the
+clocks' drift since, to the slot plus that lateness, that drift and the
+heartbeat's airtime, about 1.8 s. When the window closes without the
+heartbeat, the relay enters a reading at its noise floor
+([busy estimate](#busy-estimate)) into the neighbour's average
+([neighbour table](#neighbour-table)), weighted by the share of the
+window through which its radio was listening on the channel: a
+heartbeat it was away for, on an excursion or under another frame, it
+could not have heard. The slot passes to the next rotation either way.
+A heartbeat of a burst is in no slot and says the node's slots start
+anew; a heartbeat heard in a slot sets the slots afresh. A sleepy node,
+which hears only in its windows, counts nothing.
+
+*Why a reading at the floor.* An average of the heartbeats that got
+through stands above the link: a neighbour at or below sensitivity is
+heard on its good moments and averaged on those (roadmap D103).
+Counted as what was sent, heard or not, the average is of the link
+(roadmap D105). A heartbeat sent and not heard had a packet RSSI under the level
+half of all heartbeats arrive at, 3.1 dB below a full frame's
+([neighbour table](#neighbour-table)): 5.2 dB of signal below the
+noise, which packet RSSI reads as 1.2 dB above the floor. The floor
+itself, what the radio reads of an empty channel, is the reading an
+absent frame gives, and the two differ by 0.6 dB in an average that
+counts a reading half. A heartbeat the neighbour skipped for a busy
+channel or deferred for its budget is counted the same, wrongly: a skip
+needs three checks busy, one time in a thousand on a channel busy a
+tenth of the time, and the next frame heard halves the error.
+
+*Why weighted by the window.* The radio reads another channel once a
+second ([busy estimate](#busy-estimate)) and sends its own heartbeats
+and ACKs, so few windows pass with it listening throughout. A heartbeat
+that came at some moment of the window was lost to the radio's absence
+with the probability of the absence's share of the window, and with the
+rest to the link; a frame the radio did not decode is not known to it,
+so a collision it lost counts as the link's.
 
 *Why a fixed cycle.* A fixed cycle reaches every neighbour once per
 rotation; a random channel per heartbeat would need ≈41 heartbeats on
@@ -817,15 +857,15 @@ Per node, up to 64 entries, by node ID:
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
-| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)) |
+| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a next hop only while fresh ([next hop](#next-hop)) |
 | format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
 | map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
-| rssi_ema | averaged RSSI of every frame heard from it, each new frame counting half; says whether it has margin |
+| rssi_ema | averaged RSSI of every reading of its link, each new one counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)); says whether it has margin |
 | fail_count | consecutive ACK failures |
 | banned_until | when its ban ends ([bans](#bans)) |
-| last_beat | when its last heartbeat heard in a slot started, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
+| last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an ACK
 from the neighbour ([the ACK](#the-ack)):
@@ -1546,6 +1586,24 @@ It is sent to with the long preamble. An anchorless neighbour is a
 candidate like any other, sent to with the long preamble. The first hop
 of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+
+A carried neighbour ([nodes](#nodes)) that is not sleepy is a last
+resort too once nothing has been heard from it for its own heartbeat
+interval ([heartbeat](#heartbeat)); within that it is a candidate like
+any other.
+
+*Why a carried neighbour goes stale.* Its entry says where it was when
+it was last heard, and it walks: in its interval, at most 15 s, 21 m at
+a walking pace of 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the
+50 m a position is good to ([position](#position), [owner](#owner));
+its next heartbeat then tells its place to another channel, and by the
+time one comes back to this channel, a rotation, it has walked 180 m on
+average and 270 m at most, a hop's length in the dense city, and may
+have gone indoors, 14 dB down ([physical layer](#physical-layer)). A
+DATA sent to a stale walker mostly reaches nobody, and under load such
+frames were most of the channel's overload (roadmap D103, D105). Its
+ACK to a frame sent to it makes it fresh again ([the ACK](#the-ack)),
+so a walker in conversation stays a next hop.
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
 through a node that sleeps; the message waits for the ban
