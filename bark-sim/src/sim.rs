@@ -2599,6 +2599,12 @@ impl Sim {
                             self.metrics.pressure.answered_after(s);
                         }
                     }
+                    Trace::InLine {
+                        wait,
+                        service,
+                        at_cap,
+                        ..
+                    } => self.metrics.pressure.in_line(wait, service, at_cap),
                     Trace::Silent { owed, .. } => {
                         let p = &mut self.metrics.pressure;
                         if owed {

@@ -1057,6 +1057,16 @@ impl Summary {
                 p.demotions - a.iter().sum::<u64>()
             );
         }
+        if p.line_waits.iter().sum::<u64>() > 0 {
+            let list = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(" / ");
+            let _ = writeln!(
+                s,
+                "places in a way's line: told 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32-63 / 64+ bans {}; spaced by under 1 / 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32+ bans {}, at the cap {}",
+                list(&p.line_waits),
+                list(&p.line_service),
+                list(&p.line_service_at_cap)
+            );
+        }
         if let Some(held) = &self.holds.held {
             let h = &self.holds;
             let list = |v: &[u64]| {

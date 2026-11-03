@@ -10,6 +10,7 @@
 
 use crate::phy::Deaf;
 use bark_proto::radio::CHANNELS;
+use bark_proto::time::Duration;
 use serde::Serialize;
 
 const NCH: usize = CHANNELS as usize;
@@ -1253,11 +1254,33 @@ pub struct Pressure {
     /// to the answer: under 1.58 s (a ban), 5 s, 15 s, 60 s, 390 s (a
     /// demotion's length), and later.
     pub answered_within: [u64; 6],
+    /// Refusals for want of the way on that gave a place in its line
+    /// (spec "Bans"), by the wait told, in bans: 1, 2–3, 4–7 and so on
+    /// doubling, 64 and more.
+    pub line_waits: [u64; 7],
+    /// The same, by the service time the place was spaced by, in bans:
+    /// under 1, 1, 2–3, 4–7 and so on doubling, 32 and more.
+    pub line_service: [u64; 7],
+    /// Of `line_service`, at a relay at its cap.
+    pub line_service_at_cap: [u64; 7],
 }
 
 impl Pressure {
     /// Edges of `answered_within`, seconds.
     pub const EDGES: [f64; 5] = [1.58, 5.0, 15.0, 60.0, 390.0];
+
+    /// A refusal for want of the way on told `wait`, its place spaced by
+    /// `service`, at a relay `at_cap` or not.
+    pub fn in_line(&mut self, wait: Duration, service: Duration, at_cap: bool) {
+        let bans = |d: Duration| d.as_micros() / bark_proto::tables::budget::BAN.as_micros();
+        let bin = |b: u64| ((u64::BITS - b.leading_zeros()) as usize).min(6);
+        self.line_waits[bin(bans(wait)).saturating_sub(1)] += 1;
+        let s = bin(bans(service));
+        self.line_service[s] += 1;
+        if at_cap {
+            self.line_service_at_cap[s] += 1;
+        }
+    }
 
     /// A demoted neighbour answered `s` seconds after its demotion.
     pub fn answered_after(&mut self, s: f64) {
@@ -1439,6 +1462,18 @@ pub fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_place_in_line_falls_in_its_bins() {
+        use bark_proto::tables::budget::BAN;
+        let mut p = Pressure::default();
+        p.in_line(BAN, BAN.div(2), false);
+        p.in_line(BAN.mul(3), BAN.mul(2), true);
+        p.in_line(BAN.mul(63), BAN.mul(63), true);
+        assert_eq!(p.line_waits, [1, 1, 0, 0, 0, 1, 0]);
+        assert_eq!(p.line_service, [1, 0, 1, 0, 0, 0, 1]);
+        assert_eq!(p.line_service_at_cap, [0, 0, 1, 0, 0, 0, 1]);
+    }
 
     #[test]
     fn an_answer_after_a_demotion_falls_in_its_bin() {

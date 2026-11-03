@@ -2375,3 +2375,82 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
     );
     assert_eq!(r.queue.len(), 3);
 }
+
+/// Senders refused at the gate stand in the way's line (spec "Bans"):
+/// with a message queued for the next hop, each next message for it is
+/// told one service time more than the one before, here a ban, the
+/// least, since the neighbour has taken nothing yet; the waits are never
+/// shorter than the rest of the neighbour's ban (roadmap D106).
+#[test]
+fn refusals_at_the_gate_are_told_a_line() {
+    use crate::event::DropReason;
+    use crate::tables::budget::told;
+    use crate::wire::{Ack, Data, MAX_PAYLOAD};
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    let ids: Vec<NodeId> = r.neighbours.iter().map(|n| n.id).collect();
+    for &id in &ids {
+        r.neighbours.refused(id, now);
+    }
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8| {
+        let payload = [tag; MAX_PAYLOAD];
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: name(u32::from(tag)),
+            dst_pos: far,
+            dst_id: NOBODY,
+            hops: 2,
+            time_left: u8::MAX,
+            payload: &payload,
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let mut refused = None;
+        let mut pending = Vec::new();
+        r.handle(event, *now, &mut |a| match a {
+            Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            _ => {}
+        });
+        let until = *now + Duration::from_millis(100);
+        let sent = drive_from(r, now, until, pending);
+        let wait = sent
+            .iter()
+            .find_map(|(_, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Ack(Ack {
+                    refused: true,
+                    wait,
+                    ..
+                })) => Some(told(wait)),
+                _ => None,
+            });
+        (refused, wait)
+    };
+    assert_eq!(offer(&mut r, &mut now, 1), (None, None));
+    let mut waits = Vec::new();
+    for tag in 2..6 {
+        let (why, wait) = offer(&mut r, &mut now, tag);
+        assert_eq!(why, Some(DropReason::SameHop));
+        waits.push(wait.expect("told a wait"));
+    }
+    // A hundred milliseconds pass between offers; the places stay whole
+    // bans apart, rounded up.
+    assert_eq!(waits, [BAN, BAN.mul(2), BAN.mul(3), BAN.mul(4)]);
+    // A ban on the way on longer than the line is told instead.
+    let to = r.in_flight().map(|o| {
+        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
+            unreachable!()
+        };
+        d.dst_hop
+    });
+    let to = to.expect("the first is being handed over");
+    r.neighbours.refused(to, now + BAN.mul(20));
+    let (_, wait) = offer(&mut r, &mut now, 7);
+    let wait = wait.expect("told a wait");
+    assert!(wait + BAN > BAN.mul(20) && wait <= BAN.mul(20), "{wait:?}");
+}

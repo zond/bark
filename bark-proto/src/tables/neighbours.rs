@@ -214,6 +214,9 @@ pub struct Neighbour {
     pub told: u16,
     /// When it last took a hand-over from this relay.
     pub taken_at: Instant,
+    /// When the line of senders this relay refused for it ends
+    /// ([`Neighbours::place_in_line`]).
+    pub line_end: Instant,
 }
 
 impl Neighbour {
@@ -546,6 +549,7 @@ impl Neighbours {
             service: FIRST_SERVICE,
             told: 0,
             taken_at: Instant::ZERO,
+            line_end: Instant::ZERO,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -692,6 +696,32 @@ impl Neighbours {
             n.service = (old + step).clamp(0, u16::MAX as i64) as u16;
             n.taken_at = now;
         }
+    }
+
+    /// A refusal for want of `id` as the way on, told at `now`: the
+    /// place it gives its sender in `id`'s line, from now, and the
+    /// service time that spaced it. The line ends one service time later,
+    /// or the time the message waiting for `id` here since `oldest` has
+    /// waited, its refusals' waits aside, if that is longer; and at least
+    /// a ban later, the unit a refusal tells, since places closer than
+    /// that would be told the same wait and come back together (spec
+    /// "Bans"). Time passing shortens the line; neither it nor a place
+    /// passes [`LONGEST_TOLD`]. `None` if `id` is not in the table.
+    pub fn place_in_line(
+        &mut self,
+        id: NodeId,
+        oldest: Option<Instant>,
+        now: Instant,
+    ) -> Option<(Duration, Duration)> {
+        let n = self.entry_mut(id)?;
+        // What its refusals made the message wait is its own line, told
+        // here: not this relay's service time.
+        let told = SERVICE_UNIT.mul(n.told as u64).min(LONGEST_TOLD) - n.banned_until.since(now);
+        let waited = oldest.map_or(Duration::ZERO, |t| now.since(t.max(n.taken_at)) - told);
+        let service = n.service().max(waited).min(LONGEST_TOLD);
+        let place = n.line_end.max(now) + service.max(BAN);
+        n.line_end = place.min(now + LONGEST_TOLD);
+        Some((n.line_end.since(now), service))
     }
 
     /// `id` refused a hand-over, telling this relay to wait `wait`: not
@@ -1074,6 +1104,36 @@ mod tests {
             );
         }
         assert!(service(&t) <= LONGEST_TOLD);
+    }
+
+    /// Senders refused for one way stand in its line, each a service time
+    /// after the one before, a ban at least, the message that bars them
+    /// raising it when it has waited longer; time shortens the line, and
+    /// no place passes 63 bans (spec "Bans").
+    #[test]
+    fn places_in_a_line_are_a_service_time_apart() {
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 0, -80, at(0));
+        let now = at(10);
+        let place =
+            |t: &mut Neighbours, oldest, now| t.place_in_line(id(1), oldest, now).unwrap().0;
+        let first = place(&mut t, None, now);
+        assert_eq!(first, BAN.max(t.get(id(1)).unwrap().service()));
+        let second = place(&mut t, None, now);
+        assert_eq!(second, first + BAN);
+        // Two bans later the line has moved up by two: it is empty.
+        let later = now + BAN.mul(2);
+        assert_eq!(place(&mut t, None, later), first);
+        // The message barring the way has waited 5 bans: that spaces it.
+        let (third, spaced) = t
+            .place_in_line(id(1), Some(later - BAN.mul(5)), later)
+            .unwrap();
+        assert_eq!(spaced, BAN.mul(5));
+        assert_eq!(third, first + BAN.mul(5));
+        for _ in 0..100 {
+            place(&mut t, None, later);
+        }
+        assert_eq!(place(&mut t, None, later), LONGEST_TOLD);
     }
 
     #[test]

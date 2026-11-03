@@ -421,6 +421,19 @@ pub enum Trace {
         /// The neighbour.
         neighbour: NodeId,
     },
+    /// A refusal for want of a way on gave its sender a place in that
+    /// neighbour's line (spec "Bans"); for counting only.
+    InLine {
+        /// The neighbour, the way on.
+        neighbour: NodeId,
+        /// The wait told.
+        wait: Duration,
+        /// The service time the place was spaced by.
+        service: Duration,
+        /// This relay could not send a full frame with the reply reserve
+        /// left: it is at its cap (spec "Duty cycle cap").
+        at_cap: bool,
+    },
     /// A neighbour demoted since it last answered this relay answered it
     /// (spec "Neighbour table"); for counting only.
     Answered {

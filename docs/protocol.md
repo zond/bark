@@ -866,6 +866,7 @@ Per node, up to 64 entries, by node ID:
 | fail_count | failed hand-overs to it in a row, with no answer from it between ([demotion](#neighbour-table)) |
 | banned_until | when its ban ends ([bans](#bans)) |
 | service, last take, told | how long this relay takes to get one message through to it, when it last took one, and the waits its refusals have told since ([service time](#neighbour-table)) |
+| line end | when the line of senders refused for want of it as the way on ends ([bans](#bans)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an ACK
@@ -976,6 +977,8 @@ other neighbours. It leaves out two things: time with no message
 waiting for the neighbour, which says nothing of how fast it takes; and
 the waits the neighbour's refusals told, which are the neighbour's own
 measure, passed on ([bans](#bans)). Each take counts one part in 39.
+A refusal for want of the neighbour as the way on spaces the senders it
+refuses by the service time ([bans](#bans)).
 Before the first take the service time is one ban, the least wait a
 refusal tells, and it is never more than the longest, 63 bans.
 
@@ -1410,8 +1413,9 @@ when its frame and the ACK that would take it, at most
 it, and the bucket refills that in 155.5 ms / 9.83 % = 1.58 s
 ([duty cycle cap](#duty-cycle-cap)).
 
-A refusal tells the wait in whole bans of 1.58 s, rounded down, and at
-least one, since 0 means taken ([packet formats](#packet-formats)):
+A refusal tells the wait in whole bans of 1.58 s, rounded down but for
+a place in a way's line, and at least one, since 0 means taken
+([packet formats](#packet-formats)):
 
 - For want of room it is the time until the bucket holds everything
   queued and the frame and its ACK, with the reply reserve left, if
@@ -1422,13 +1426,34 @@ least one, since 0 means taken ([packet formats](#packet-formats)):
 - A refusal for want of room asks for no less than the rest of the ban
   on the packet's next hop, without a place in line: the packet could
   not move sooner here.
-- A refusal at the gate ([send queue](#send-queue)) asks for the rest
-  of the ban on the packet's next hop, and no less than the bucket
-  needs to send what is queued for it, without a place in line.
-- A refusal of fresh work for the way on asks for the rest of the ban on
-  that way, as learned, without a place in line.
+- A refusal for want of the way on, at the gate
+  ([send queue](#send-queue)) or of fresh work while that way is banned
+  ([receiving DATA](#receiving-data)), gives a place in that way's own
+  line instead. The sender is told the rest of the line plus one service
+  time, rounded up to whole bans, and the line then ends one service
+  time later. The line's end is kept in the way's neighbour entry, and
+  one in the past is now, so time shortens the line by itself. The
+  service time is the neighbour's ([neighbour table](#neighbour-table)),
+  or how long the message that bars the way has waited for it here, its
+  refusals' waits aside, if that is longer, so that a rising load is
+  seen before the next take; and at least a ban.
+- Such a refusal asks for no less than the rest of the ban on that way,
+  without a place in line.
 - The ACK's six bits hold 63 bans, 99.6 s; a longer wait is told as 63,
   the sender coming back early to be refused again (roadmap D54, D76).
+
+*Why a line per way.* A relay holds one message per next hop
+([send queue](#send-queue)), so the senders it refuses for one way wait
+for the same thing, that way to free. Told the same wait, they would come
+back together and all but one be refused again, each time at the cost of
+a full DATA frame and an ACK; spaced by the time this relay takes to get
+one message through, they come back as the way frees, one after another.
+
+*Why rounded up.* A sender that comes back before its place only costs a
+frame and a refusal, so a place is rounded up and the sender may come
+back up to a ban late; a wait passed on is rounded down instead, so that
+it only shrinks (below). Places are at least a ban apart because closer
+ones would be told the same wait and come back together.
 
 *Why the next hop's ban.* A refused message waits for its neighbour
 (above), so the message a relay refuses would wait here for its next
@@ -1440,24 +1465,28 @@ long, and its gate refuses the next message for this way in turn. So
 the wait travels back relay by relay toward the origin, per way, not
 per relay.
 
-*Why a wait passed on stands outside the line.* A wait for the way on
-or for the queue's head is the rest of a wait told by a relay further
-on, which only shrinks as it is passed back, since it counts from when
-it was told and is rounded down at each refusal. Given a place in line
-it would grow by a ban at every relay, and around a ring of relays that
-refuse each other it would grow without end; passed on as it is, it
-cannot exceed the wait first told.
+*Why a wait passed on stands outside the line.* The rest of a ban on
+the way on is the rest of a wait told by a relay further on, which only
+shrinks as it is passed back, since it counts from when it was told and
+is rounded down at each refusal. Given a place in line it would grow at
+every relay, and around a ring of relays that refuse each other it would
+grow without end; passed on as it is, it cannot exceed the wait first
+told. A way's line is no wait passed on: it is spaced by this relay's
+own measure, which leaves out the waits the next hop's refusals told
+([neighbour table](#neighbour-table)), so it does not compound from
+relay to relay around a ring.
 
-*Why the ban is the unit.* The places in line are one ban apart and
-nothing in the protocol acts sooner; a coarser unit would merge
+*Why the ban is the unit.* The places in a line are a ban or more apart
+and nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
 
-*Why 63 bans are enough.* A told wait is a place in the refuser's
-line, one ban a sender ahead, or the rest of a wait further on, a ban
-of the silence ladder, at most 61 s, 39 bans, or a wait told there,
-itself at most 63 bans. The longest wait, 63 bans, covers the ladder and
-a line of 63 senders at one relay; a sender told too short a wait only
-comes back early to be refused again.
+*Why 63 bans are enough.* A told wait is a place in one of the
+refuser's lines, a ban or a service time a sender ahead, or the rest of
+a wait further on, a ban of the silence ladder, at most 61 s, 39 bans,
+or a wait told there, itself at most 63 bans. The longest wait, 63
+bans, covers the ladder and a line of 63 senders a ban apart at one
+relay; a line no longer than that is kept, and a sender told too short
+a wait only comes back early to be refused again.
 
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,
@@ -1537,10 +1566,8 @@ now, or the new one's count is higher than every one of theirs
 ([receiving DATA](#receiving-data)). The count of a queued message is
 the one it holds here, one less than the count it is sent with. So a
 relay holds about one message per next hop, more only in order of
-count. It refuses the rest, telling the rest of that neighbour's ban,
-and no less than the time its bucket needs to send what is queued for
-that neighbour with the reply reserve left, rounded as [bans](#bans)
-says and without a place in line, since it is a wait further on.
+count. It refuses the rest, each with a place in that neighbour's line
+([bans](#bans)).
 
 *Why one per next hop.* A neighbour at its cap takes one frame per ban
 and refuses the rest, so a second message waiting here for it gains
@@ -1552,9 +1579,8 @@ gives now, so the gate needs no state beyond the queue.
 
 *What it costs.* Two messages for one next hop that arrive within a
 frame time of each other, the second no further travelled, are not
-held together: the second waits a whole ban, or the rest of the
-neighbour's, at the relay before, although the neighbour might have
-taken both. At the design's rate that is rare; under load it is the
+held together: the second waits its place in line, a ban at least, at
+the relay before, although the neighbour might have taken both. At the design's rate that is rare; under load it is the
 price of the wait reaching the origin.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
