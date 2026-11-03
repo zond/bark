@@ -330,7 +330,9 @@ From the trace of duty-cycled receive:
   receiver that leaves the channel for a controlled gap at random times
   and counts the frames lost.
 - Same-channel capture when both frames start within one preamble
-  (`capture_db`): needs the two senders started within a few symbols of
+  (`capture_db`, which also weighs on the error curve a frame less than
+  `harmless_below_db` weaker that is on the air at lock or arrives in
+  the preamble): needs the two senders started within a few symbols of
   each other. A later frame past the preamble is measured
   (`harmless_below_db`, docs/bench-capture-2026-11-03.md).
 
@@ -343,7 +345,7 @@ Defaults from `RadioParams::default()`; DS is the SX1261/2 datasheet.
 | `noise_figure_db` | 6.5 (DS) | 1.3 `noise` | median floor − (−123.0 dBm, kTB at 125 kHz) | |
 | `sensitivity_dbm` | none: −119.0 derived | 1.7 | RSSI at 90 % reception | |
 | `capture_db` | 5 (DS, CW, SF7) | not here | two senders started within a preamble, see above | |
-| `harmless_below_db` | 3 (bench) | docs/bench-capture-2026-11-03.md | three boards, a short frame stepped against a long one; levels near the floor and other frame lengths not measured | 3 |
+| `harmless_below_db` | 3 (bench) | docs/bench-capture-2026-11-03.md | three boards, a short frame and then a 200-byte one stepped against a 255-byte one; a frame at least this much weaker costs nothing over a whole overlap; levels near the floor not measured | 3 |
 | `acr1_db` | 60 (DS, at 1.5 × BW) | C1 | three-board result, else measurement 1 at ±1 | |
 | `acr2_db` | 60 | C1 | measurement 1 at ±2 | |
 | `cad_symbols` | 8 | fixed | the driver hard-codes 8 | 8 |

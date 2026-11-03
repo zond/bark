@@ -105,9 +105,8 @@ now takes the other frame with it unless 3 dB apart.
   a few symbols of each other.
 - Levels near the floor: both frames here were 60 to 90 dB above it;
   the 3 dB may not hold at the sensitivity limit.
-- The error curve's weight below the harmless level: the two-long-frames
-  run shows no loss at −3 dB and below over 111 ms, so the curve should
-  charge nothing there; its weight above the level is unmeasured.
+- What a frame less than 3 dB weaker does to one held when it was
+  already on the air at lock or arrived during the preamble.
 - Other spreading factors.
 - The same for the receiver's own transmissions: a frame arriving while
   the board transmits is lost in any model.
