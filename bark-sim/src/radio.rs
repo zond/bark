@@ -10,7 +10,10 @@
 //! 1. **Lock.** With no lock, the receiver locks to a packet on `c` that
 //!    arrives. A second packet on `c` that arrives during the locked
 //!    packet's preamble steals the lock if it is stronger by the capture
-//!    threshold; otherwise it is lost to capture.
+//!    threshold; otherwise it is lost to capture. One that arrives after
+//!    the preamble is lost to capture however strong, and takes the
+//!    locked packet with it unless weaker by the harmless level
+//!    (docs/bench-capture-2026-11-03.md).
 //! 2. **Survival.** While locked, every symbol may be lost, at a hazard
 //!    the error curve gives from the signal against noise and the
 //!    interference on the air (co-channel, plus ±1 and ±2 channels after
@@ -477,10 +480,10 @@ impl Sim {
         if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
             let how = match o {
                 Outcome::BelowSensitivity => 0,
-                Outcome::LostCapture | Outcome::SinrFail { .. } => how,
+                Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. } => how,
                 _ => 6,
             };
-            self.lost_how.insert(key, how);
+            self.lost_how.insert(key, (how, o == Outcome::LostToLater));
         }
     }
 
@@ -667,7 +670,9 @@ impl Sim {
                     h.lost_with_heartbeat += 1;
                 }
                 match losses.iter().find(|l| l.0 == b).map(|l| l.1) {
-                    Some(Outcome::LostCapture | Outcome::SinrFail { .. }) => h.lost_collided += 1,
+                    Some(
+                        Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. },
+                    ) => h.lost_collided += 1,
                     Some(Outcome::BelowSensitivity) => h.lost_weak += 1,
                     Some(Outcome::Deaf(_)) => h.lost_deaf += 1,
                     _ => {}
@@ -698,8 +703,10 @@ impl Sim {
             self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
             let how = self.lost_how.remove(&tx.key);
             if fate != 0 {
-                let how = how.unwrap_or(6) as usize;
-                self.metrics.addressed.lost_how[kind as usize][fate as usize][how] += 1;
+                let (how, later) = how.unwrap_or((6, false));
+                let a = &mut self.metrics.addressed;
+                a.lost_how[kind as usize][fate as usize][how as usize] += 1;
+                a.lost_to_later[kind as usize][fate as usize] += u64::from(later);
             }
 
             let beats = &self.nodes[d as usize].beats;
@@ -770,6 +777,7 @@ impl Sim {
         let now = self.now;
         let sens = self.sens_dbm;
         let cap = self.radio.capture_db;
+        let harmless = self.radio.harmless_below_db;
         if !self.nodes[b as usize].alive || !self.nodes[b as usize].present {
             return;
         }
@@ -810,6 +818,15 @@ impl Sim {
         let mut lost_on = None;
         if let (Some(p), 0) = (packet, offset) {
             self.metrics.candidate(b, a.channel);
+            // Past the preamble the receiver keeps the packet it holds
+            // (bench: a later one is never decoded), but one this strong
+            // still breaks it, whether or not its own preamble was seen.
+            let overrun = match st.lock {
+                Lock::Rx(r) if now >= r.preamble_end && a.dbm > r.dbm - harmless + DB_EPS => {
+                    Some(r)
+                }
+                _ => None,
+            };
             // A duty-cycled receiver takes the packet only once a window
             // has detected its preamble.
             let caught = st.sniffing_at(now).map(|t0| {
@@ -846,6 +863,20 @@ impl Sim {
                 self.metrics.outcome(b, a.channel, o);
                 self.note_to_sleepy(a.key, b, o);
                 self.note_addressed_loss(a.key, b, o, how);
+            }
+            if let Some(r) = overrun {
+                // As a loss found by `settle`: before the header's end the
+                // receiver searches again, after it demodulates garbage.
+                self.nodes[b as usize].lock = if now < r.header_end {
+                    Lock::Idle
+                } else {
+                    Lock::Corrupt(r.end)
+                };
+                let o = Outcome::LostToLater;
+                let how = self.how_of(b, Some(a.key), r.key, true);
+                self.metrics.outcome(b, r.channel, o);
+                self.note_to_sleepy(r.key, b, o);
+                self.note_addressed_loss(r.key, b, o, how);
             }
             if locked {
                 let st = &mut self.nodes[b as usize];
@@ -943,6 +974,7 @@ impl Sim {
                 *fate = Some(match o {
                     Outcome::BelowSensitivity => f::WEAK,
                     Outcome::LostCapture
+                    | Outcome::LostToLater
                     | Outcome::SinrFail { .. }
                     | Outcome::Deaf(Deaf::Corrupt) => f::COLLIDED,
                     Outcome::Deaf(Deaf::Tx | Deaf::HalfDuplex) => f::TRANSMITTING,

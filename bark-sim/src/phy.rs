@@ -45,6 +45,18 @@ pub const SENSITIVITY_PACKET_BYTES: u8 = 64;
 /// Preamble of the datasheet's sensitivity packet, symbols (DS §3.5).
 pub const SENSITIVITY_PREAMBLE_SYMBOLS: u16 = 8;
 
+/// Same-SF capture threshold, dB: DS Table 3-8 `CCR_L` at SF7, measured
+/// with a tone, no SF5 figure. The bench saw the stronger of two frames
+/// started within one preamble decoded but not by how much
+/// (docs/bench-capture-2026-11-03.md), so this stays a stand-in.
+pub const CAPTURE_DB: f64 = 5.0;
+
+/// A later frame at least this much weaker leaves the frame being received
+/// alone; one less weaker breaks it. Measured on the bench at SF5 between
+/// −4 dB (kept) and −2 dB (mostly lost), resolved to 1 dB
+/// (docs/bench-capture-2026-11-03.md, "Result").
+pub const HARMLESS_BELOW_DB: f64 = 3.0;
+
 /// Probability that a receiver picks the wrong one of the 2^SF symbols at
 /// symbol energy to noise density `es_n0` (linear), in white noise. LoRa
 /// symbols are orthogonal and the receiver detects them without phase,
@@ -273,10 +285,13 @@ pub struct RadioParams {
     pub sensitivity_dbm: Option<f64>,
     /// Same-SF capture threshold in dB: interference this far below a
     /// packet costs it what noise at sensitivity does, and a second
-    /// preamble steals the lock if stronger by this much. Default 5 dB from DS Table 3-8
-    /// `CCR_L` at SF7. Caveat: the datasheet measures `CCR_L` with a CW
-    /// tone, not a LoRa interferer, and gives no SF5 figure; bench-measure.
+    /// preamble steals the lock if stronger by this much. Default
+    /// [`CAPTURE_DB`].
     pub capture_db: f64,
+    /// A same-channel packet that arrives after a locked packet's preamble
+    /// breaks it unless weaker by this many dB. Default
+    /// [`HARMLESS_BELOW_DB`].
+    pub harmless_below_db: f64,
     /// Adjacent-channel rejection at ±1 channel (125 kHz = 1.0 × BW) in dB.
     /// Default 60 dB is DS Table 3-8 `ACR_L` at ±1.5 × BW (SF7); 1.0 × BW
     /// is not characterised (bench item C1), so this default is optimistic.
@@ -348,7 +363,8 @@ impl Default for RadioParams {
         RadioParams {
             noise_figure_db: datasheet_noise_figure_db(),
             sensitivity_dbm: None,
-            capture_db: 5.0,
+            capture_db: CAPTURE_DB,
+            harmless_below_db: HARMLESS_BELOW_DB,
             acr1_db: 60.0,
             acr2_db: 60.0,
             cad_symbols: 8,

@@ -1151,6 +1151,7 @@ mod tests {
     fn toml_rejects_unknown_fields() {
         assert!(Scenario::from_toml("name = \"x\"\nbogus = 1\n").is_err());
         assert!(Scenario::from_toml("[radio]\ncapture_db = 6.0\n").is_ok());
+        assert!(Scenario::from_toml("[radio]\nharmless_below_db = 2.0\n").is_ok());
         let e = Scenario::from_toml(
             "[[nodes]]\nplace = \"point\"\nrole = \"relay\"\nx = 0\ny = 0\nz = 1\n",
         );

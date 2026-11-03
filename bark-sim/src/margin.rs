@@ -302,7 +302,7 @@ impl Sim {
             if r.dst == b {
                 r.how = Some(match o {
                     Outcome::BelowSensitivity => 0,
-                    Outcome::LostCapture | Outcome::SinrFail { .. } => how,
+                    Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. } => how,
                     _ => 6,
                 });
             }

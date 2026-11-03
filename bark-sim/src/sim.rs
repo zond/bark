@@ -831,8 +831,9 @@ pub struct Sim {
     /// 3 a sleepy node's beat, and the sender, for
     /// [`crate::metrics::Addressed::lost_how`].
     pub(crate) air_kinds: HashMap<u64, (u8, u32)>,
-    /// Frames on air addressed to a relay that lost them: key to how.
-    pub(crate) lost_how: HashMap<u64, u8>,
+    /// Frames on air addressed to a relay that lost them: key to how, and
+    /// whether to a later frame within the harmless level.
+    pub(crate) lost_how: HashMap<u64, (u8, bool)>,
     /// Per relay, its heartbeat grid's phase in its own clock and its
     /// interval, for [`crate::metrics::Addressed::heartbeat_late`].
     pub(crate) hb_grid: Vec<Option<(Instant, Duration)>>,
