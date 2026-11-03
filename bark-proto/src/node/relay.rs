@@ -918,7 +918,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
-            Ok(Packet::Data(d)) if d.dst_hop == self.me() => self.data(d, now, emit),
+            Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
+                // It chose this node as its next hop, from heartbeats it
+                // heard, and sends on this channel now: it hears us
+                // (spec "Neighbour table").
+                self.neighbours.answered(d.src_hop, now);
+                self.data(d, now, emit)
+            }
             _ => {}
         }
     }

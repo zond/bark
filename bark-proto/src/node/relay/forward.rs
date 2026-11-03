@@ -1770,7 +1770,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn tried(&mut self, id: MsgId, to: NodeId, hops: u8, now: Instant) {
         let slot = self.neighbours.slot_of(to);
         if slot.is_some() {
-            self.neighbours.succeeded(to, now);
+            self.neighbours.answered(to, now);
         }
         if let Some(r) = self.records.get_mut(id) {
             r.handed_over(hops);

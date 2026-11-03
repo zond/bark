@@ -19,12 +19,14 @@
 //! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
 //! (spec "Neighbour table": 2) the neighbour is demoted: a next hop only when no other with
 //! margin is left (spec "Next hop", roadmap D25). Demotion ends
-//! when the neighbour ACKs a packet from this relay, which resets
-//! `fail_count` because spec "Neighbour table" counts consecutive failures, or
-//! `demotion_rotations` rotations (3, 390 s) after the failure that
-//! demoted it; then `fail_count` starts again from zero. A heartbeat
-//! refreshes the entry but leaves `fail_count` alone (roadmap D18): it
-//! proves the neighbour is alive, not that it hears us.
+//! when the neighbour answers this relay, an ACK to it that takes,
+//! refuses or has seen a packet, or a DATA it addresses to it, which
+//! resets `fail_count`, since failures count only in a row with no answer
+//! between (roadmap D106); or `demotion_rotations` rotations (3, 390 s)
+//! after the failure that demoted it; then `fail_count` starts again from
+//! zero. A heartbeat, or a frame it sends to another node, refreshes the
+//! entry but leaves `fail_count` alone (roadmap D18): it proves the
+//! neighbour is alive, not that it hears us.
 //!
 //! # Margin (roadmap D38)
 //!
@@ -54,7 +56,7 @@
 //! to the bucket's refill (roadmap D42). A refusal measures what the
 //! receiver's bucket lacks; silence says only that the channel or the
 //! receiver is full, and not how full, so the sender backs off further
-//! each time. An ACK that takes a packet resets `fail_count`, and so the
+//! each time. Any answer to this relay resets `fail_count`, and so the
 //! ladder.
 //!
 //! [`BAN`]: crate::tables::budget::BAN
@@ -601,20 +603,14 @@ impl Neighbours {
         }
     }
 
-    /// `id` took a packet from this relay at `now`: its failures are
-    /// over, and it is alive.
-    pub fn succeeded(&mut self, id: NodeId, now: Instant) {
-        if let Some(n) = self.entry_mut(id) {
-            n.fail_count = 0;
-        }
-        self.answered(id, now);
-    }
-
-    /// `id` answered a packet from this relay at `now`, taking or refusing
-    /// it: it is alive, whether or not its heartbeats are heard
-    /// (spec "The ACK").
+    /// `id` answered this relay at `now`: an ACK to it that takes,
+    /// refuses or has seen a packet, or a DATA addressed to it. It hears
+    /// this relay and is alive, whether or not its heartbeats are heard,
+    /// so its failures in a row are over and any demotion lifts
+    /// (spec "Neighbour table", "The ACK").
     pub fn answered(&mut self, id: NodeId, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
+            n.fail_count = 0;
             n.last_heard = n.last_heard.max(now);
         }
     }
@@ -1042,7 +1038,7 @@ mod tests {
         let p = id(1);
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
-        t.succeeded(p, at(1));
+        t.answered(p, at(1));
         assert_eq!(
             t.failed(p, at(1)),
             Some(false),
@@ -1066,7 +1062,7 @@ mod tests {
         assert_eq!(t.failed(p, at(393)), Some(false));
         assert_eq!(t.failed(p, at(394)), Some(true));
         // An ACK lifts it at once.
-        t.succeeded(p, at(394));
+        t.answered(p, at(394));
         assert_eq!(t.candidates(at(395)).count(), 1);
     }
 

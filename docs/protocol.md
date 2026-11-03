@@ -863,7 +863,7 @@ Per node, up to 64 entries, by node ID:
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
 | rssi_ema | averaged RSSI of every reading of its link, each new one counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)); says whether it has margin |
-| fail_count | consecutive ACK failures |
+| fail_count | failed hand-overs to it in a row, with no answer from it between ([demotion](#neighbour-table)) |
 | banned_until | when its ban ends ([bans](#bans)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
@@ -920,15 +920,28 @@ measures it. The average must cover it because a frame goes out on the
 neighbour's channel while this relay hears the neighbour on its own,
 where the fading differs.
 
-**Demotion.** A neighbour with two ACK failures in a row
-(`fail_count ≥ 2`) is demoted until it ACKs a packet from this relay or
-three rotations (390 s) pass, and is then a next hop only when no other
-with margin is left. Its heartbeats do not clear the demotion. Expiry
-takes minutes; a failed forward must demote at once.
+**Demotion.** A neighbour with two failed hand-overs in a row
+(`fail_count ≥ 2`) is demoted until it answers this relay or three
+rotations (390 s) pass, and is then a next hop only when no other with
+margin is left. An **answer** is an ACK addressed to this relay, whether
+it takes, refuses or has seen the packet ([the ACK](#the-ack)), or a
+DATA the neighbour addresses to this relay. An answer resets
+`fail_count`, so two failures count as in a row only with no answer
+between them. Its heartbeats, and frames it sends to other nodes, do not
+clear the demotion. Expiry takes minutes; a failed forward must demote
+at once.
 
-*Why heartbeats do not clear it.* A heartbeat proves the neighbour is
-alive, not that it hears us, and a link that works one way only would
-otherwise cost every message the failed attempts again.
+*Why any answer clears it.* A refusal or a seen ACK reaches this relay
+as surely as one that takes: the neighbour heard the DATA and this relay
+heard its reply. A DATA addressed to this relay shows nearly as much:
+the neighbour chose this relay as its next hop from its own table, so
+this relay's heartbeats reach it, and it is awake and sending on this
+relay's channel now.
+
+*Why heartbeats do not clear it.* A heartbeat, or a frame to another
+node, proves the neighbour is alive, not that it hears us, and a link
+that works one way only would otherwise cost every message the failed
+attempts again.
 
 **Eviction.** When the table is full and a relay not in it is heard, the
 newcomer replaces, in this order:
@@ -1138,8 +1151,9 @@ failure ([bans](#bans)). Later offers would mostly meet a receiver that
 answers nobody (roadmap D98), and each costs its wait. Two counts, and
 the first to reach three moves the message on. The neighbour's, so that
 one that has failed three others costs a message one hand-over. The
-message's own, because any ACK the neighbour sends resets its count
-([bans](#bans)), so a neighbour that answers others and never us would
+message's own, because any answer from the neighbour resets its count
+([bans](#bans)), so a neighbour that answers this relay's other messages
+and never this one would
 otherwise hold the message for as long as that goes on; with its own
 count the message is offered three times at most, each wait a ban at
 the second step at most, 3.16 s, since a third step would have moved it
@@ -1285,9 +1299,10 @@ crosses its own path. Seen, the copy stays with its sender, which has
 the one record that knows what it has still to try (roadmap D89, D90).
 
 The sender matches the ID and both names against its outstanding
-hand-over. An ACK resets the neighbour's failure count and refreshes its
-last-heard time ([neighbour table](#neighbour-table)): a neighbour that
-answers is alive whether or not its heartbeats are heard.
+hand-over. An ACK addressed to it, taking, refusing or seen, resets the
+neighbour's failure count and refreshes its last-heard time
+([neighbour table](#neighbour-table)): a neighbour that answers is alive
+whether or not its heartbeats are heard.
 
 *Why both IDs.* Nodes share home channels, so without the answering
 node's ID an ACK for the same message from another relay on the same
@@ -1378,8 +1393,9 @@ too short a wait only comes back early to be refused again.
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,
 6.3 s and so on, up to 61 s, the longest anything waits for a bucket. An
-ACK from the neighbour resets its failure count and so the ladder
-(roadmap D42).
+answer from the neighbour ([neighbour table](#neighbour-table),
+demotion) resets its failure count and so the ladder (roadmap D42,
+D106).
 
 *Why silence doubles.* A refusal measures one thing, what one hand-over
 takes from the receiver's bucket. Silence says only that the channel or

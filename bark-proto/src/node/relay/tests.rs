@@ -2124,3 +2124,72 @@ fn heartbeat_airtime_half() -> Duration {
     use crate::wire::HEARTBEAT_LEN;
     time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).div(2)
 }
+
+/// Any answer to this relay lifts a demotion (spec "Neighbour table",
+/// roadmap D106): a refusal from the neighbour, or a DATA it addresses to
+/// this relay. A DATA it addresses to another node, or a heartbeat, does
+/// not: neither says it hears us.
+#[test]
+fn an_answer_to_this_relay_lifts_a_demotion() {
+    use crate::wire::{Ack, Data};
+    let (mut r, mut now, id, d_pos, _) = handing_to_the_nearer(b"answer");
+    let d = id_of(d_pos);
+    let demote = |r: &mut Relay, now: Instant| {
+        r.neighbours.failed(d, now);
+        r.neighbours.failed(d, now);
+        let (_, n) = r.neighbours.by_id(d).unwrap();
+        assert!(r.neighbours.is_demoted(n, now));
+    };
+    let demoted = |r: &Relay, now: Instant| {
+        let (_, n) = r.neighbours.by_id(d).unwrap();
+        r.neighbours.is_demoted(n, now)
+    };
+
+    demote(&mut r, now);
+    let refusal = Ack {
+        msg_id: id,
+        from: d,
+        to: r.me(),
+        refused: true,
+        wait: 1,
+        seen: false,
+    };
+    hear(&mut r, &mut now, &Packet::Ack(refusal));
+    assert!(!demoted(&r, now), "a refusal is an answer");
+
+    let offer = |to: NodeId, payload: &'static [u8]| Data {
+        sender_home: Channel::new(5).unwrap(),
+        dst_hop: to,
+        src_hop: d,
+        dst_pos: d_pos,
+        dst_id: NOBODY,
+        hops: 3,
+        time_left: u8::MAX,
+        payload,
+    };
+    demote(&mut r, now);
+    hear(
+        &mut r,
+        &mut now,
+        &Packet::Data(offer(name(9), b"to another")),
+    );
+    assert!(
+        demoted(&r, now),
+        "a DATA to another node says nothing of us"
+    );
+    let hb = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home: Channel::new(5).unwrap(),
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id: d,
+        short: d_pos.short(),
+    };
+    hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    assert!(demoted(&r, now), "nor does a heartbeat");
+    let me = r.me();
+    hear(&mut r, &mut now, &Packet::Data(offer(me, b"to us")));
+    assert!(!demoted(&r, now), "a DATA to this relay is an answer");
+}
