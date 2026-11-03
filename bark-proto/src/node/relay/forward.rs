@@ -397,9 +397,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The wait a refusal for `reason` asks for (spec "Bans"): for want
     /// of room, until the bucket holds everything queued, a frame of
     /// `airtime` and its ACK with the reply reserve left, if nothing else
-    /// comes; anything else frees in one ban; and never less than the
-    /// pushback the message's way on gave (`pushback`), so a wait told
-    /// at the centre is passed back hop by hop toward the origin.
+    /// comes, and no less than the queue waits before anything in it
+    /// moves (`blocked`); anything else frees in one ban; and never less
+    /// than the pushback the message's way on gave (`pushback`), so a
+    /// wait told at the centre is passed back hop by hop toward the
+    /// origin.
     ///
     /// Every sender refused takes a place in line: the next is told one
     /// ban later than the last, the time the bucket takes to refill the
@@ -413,21 +415,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         pushback: Duration,
         now: Instant,
     ) -> Duration {
-        let room = match reason {
+        let (room, blocked) = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
                 let queued = self.queue.airtime();
-                self.radio
+                let room = self
+                    .radio
                     .budget
                     .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
-                    .map_or(self.config.delivery_ttl, |t| t.since(now))
+                    .map_or(self.config.delivery_ttl, |t| t.since(now));
+                (room, self.blocked(now))
             }
-            _ => BAN,
+            _ => (BAN, Duration::ZERO),
         };
-        // Only the room is a line; a pushback passes on as it is, so it
-        // cannot grow around a loop of relays.
+        // Only the room is a line; a wait for the way on passes on as it
+        // is, so it cannot grow around a loop of relays.
         let slot = self.timers.promised.max(now + room);
         self.timers.promised = slot + BAN;
-        slot.since(now).max(pushback)
+        slot.since(now).max(pushback).max(blocked)
+    }
+
+    /// How long the send queue waits before anything in it moves: the
+    /// rest of the wait of the entry due first, for a ban, a refusal it
+    /// was told or a hold, when every entry waits; nothing while one is
+    /// due. Room frees no sooner (spec "Bans", roadmap D106).
+    fn blocked(&self, now: Instant) -> Duration {
+        self.queue
+            .earliest_due()
+            .filter(|&t| t > now)
+            .map_or(Duration::ZERO, |t| t.since(now))
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend

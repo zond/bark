@@ -1388,21 +1388,42 @@ least one, since 0 means taken ([packet formats](#packet-formats)):
 - The senders refused stand in line, each told one ban later than the
   one before, the time the bucket takes to refill the frame and ACK it
   will bring back, so they come back one after another as room frees.
+- A refusal for want of room asks for no less than the queue waits
+  before anything in it moves: when every message queued waits, for a
+  ban or for a refusal it was told, the rest of the wait of the one due
+  first, without a place in line.
 - A refusal of fresh work for the way on asks for the rest of the ban on
-  that way, as learned, without a place in line: passed on so, a wait
-  cannot grow from relay to relay around a ring.
+  that way, as learned, without a place in line.
 - The ACK's six bits hold 63 bans, 99.6 s; a longer wait is told as 63,
   the sender coming back early to be refused again (roadmap D54, D76).
+
+*Why the queue's wait.* A refused message waits for its neighbour
+(above), so a relay's queue can be full of messages waiting out the
+bans their next hops asked for while its bucket is full. Told only the
+bucket's refill, a sender would come back in a second or two to be
+refused again, and meanwhile take fresh work, since its own queue
+moves; told the queue's wait, it bans this relay for as long, its own
+message for this way waits as long, and its own queue fills and refuses
+in turn. So the wait travels back relay by relay toward the origin.
+
+*Why a wait passed on stands outside the line.* A wait for the way on
+or for the queue's head is the rest of a wait told by a relay further
+on, which only shrinks as it is passed back, since it counts from when
+it was told and is rounded down at each refusal. Given a place in line
+it would grow by a ban at every relay, and around a ring of relays that
+refuse each other it would grow without end; passed on as it is, it
+cannot exceed the wait first told.
 
 *Why the ban is the unit.* The places in line are one ban apart and
 nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
 
 *Why 63 bans are enough.* A told wait is a place in the refuser's
-line, one ban a sender ahead, or the rest of a ban on the way on, at
-most the silence ladder's 61 s, 39 bans. The longest wait, 63 bans,
-covers the ladder and a line of 63 senders at one relay; a sender told
-too short a wait only comes back early to be refused again.
+line, one ban a sender ahead, or the rest of a wait further on, a ban
+of the silence ladder, at most 61 s, 39 bans, or a wait told there,
+itself at most 63 bans. The longest wait, 63 bans, covers the ladder and
+a line of 63 senders at one relay; a sender told too short a wait only
+comes back early to be refused again.
 
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,

@@ -2235,3 +2235,71 @@ fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
         }
     }
 }
+
+/// A refusal for want of room asks for no less than the queue waits
+/// before anything in it moves (spec "Bans", roadmap D106): with every
+/// queued message waiting a minute for its neighbours' bans, the bucket's
+/// refill of a few seconds would bring the sender back to be refused
+/// again.
+#[test]
+fn a_refusal_asks_for_the_wait_that_blocks_the_queue() {
+    use crate::event::DropReason;
+    use crate::tables::budget::told;
+    use crate::wire::{Ack, Data, MAX_PAYLOAD};
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    let ends = now + Duration::from_secs(60);
+    let ids: Vec<NodeId> = r.neighbours.iter().map(|n| n.id).collect();
+    for id in ids {
+        r.neighbours.refused(id, ends);
+    }
+    let mut told_wait = None;
+    for tag in 0..=u8::MAX {
+        let payload = [tag; MAX_PAYLOAD];
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: r.me(),
+            src_hop: name(1),
+            dst_pos: far,
+            dst_id: NOBODY,
+            hops: 1,
+            time_left: u8::MAX,
+            payload: &payload,
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let mut refused = None;
+        let mut pending = Vec::new();
+        r.handle(event, now, &mut |a| match a {
+            Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            _ => {}
+        });
+        let until = now + Duration::from_millis(100);
+        let sent = drive_from(&mut r, &mut now, until, pending);
+        if let Some(why) = refused {
+            assert!(matches!(
+                why,
+                DropReason::Budget | DropReason::SendQueueFull
+            ));
+            told_wait = sent
+                .iter()
+                .find_map(|(_, f)| match Packet::decode(f.payload()) {
+                    Ok(Packet::Ack(Ack {
+                        refused: true,
+                        wait,
+                        ..
+                    })) => Some(told(wait)),
+                    _ => None,
+                });
+            break;
+        }
+    }
+    let wait = told_wait.expect("refused, with a wait");
+    // Told in whole bans, rounded down.
+    assert!(wait + BAN > ends.since(now), "{wait:?}");
+}
