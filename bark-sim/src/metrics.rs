@@ -1253,8 +1253,8 @@ pub struct Metrics {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: RecordsLost,
-    /// Refusals sent, by the wait each told, in the units on the wire
-    /// (spec "Bans").
+    /// Refusals sent, by the wait each told, by its code on the wire
+    /// (spec "Bans", `budget::told`).
     pub told_waits: Vec<u64>,
     /// Seen ACKs transmitted (spec "The ACK").
     pub seen_acks_sent: u64,
@@ -1297,8 +1297,8 @@ pub struct Pressure {
     pub answered_within: [u64; 6],
     /// Refusals for want of the way on that gave a place in its line
     /// (spec "Bans"), by the wait told, in bans: 1, 2–3, 4–7 and so on
-    /// doubling, 64 and more.
-    pub line_waits: [u64; 7],
+    /// doubling, 2048 and more.
+    pub line_waits: [u64; 12],
     /// The same, by the service time the place was spaced by, in bans:
     /// under 1, 1, 2–3, 4–7 and so on doubling, 32 and more.
     pub line_service: [u64; 7],
@@ -1315,7 +1315,8 @@ impl Pressure {
     pub fn in_line(&mut self, wait: Duration, service: Duration, at_cap: bool) {
         let bans = |d: Duration| d.as_micros() / bark_proto::tables::budget::BAN.as_micros();
         let bin = |b: u64| ((u64::BITS - b.leading_zeros()) as usize).min(6);
-        self.line_waits[bin(bans(wait)).saturating_sub(1)] += 1;
+        let wide = ((u64::BITS - bans(wait).leading_zeros()) as usize).min(12);
+        self.line_waits[wide.saturating_sub(1)] += 1;
         let s = bin(bans(service));
         self.line_service[s] += 1;
         if at_cap {
@@ -1511,9 +1512,10 @@ mod tests {
         p.in_line(BAN, BAN.div(2), false);
         p.in_line(BAN.mul(3), BAN.mul(2), true);
         p.in_line(BAN.mul(63), BAN.mul(63), true);
-        assert_eq!(p.line_waits, [1, 1, 0, 0, 0, 1, 0]);
-        assert_eq!(p.line_service, [1, 0, 1, 0, 0, 0, 1]);
-        assert_eq!(p.line_service_at_cap, [0, 0, 1, 0, 0, 0, 1]);
+        p.in_line(BAN.mul(3000), BAN.mul(63), true);
+        assert_eq!(p.line_waits, [1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(p.line_service, [1, 0, 1, 0, 0, 0, 2]);
+        assert_eq!(p.line_service_at_cap, [0, 0, 1, 0, 0, 0, 2]);
     }
 
     #[test]

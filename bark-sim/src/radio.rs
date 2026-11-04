@@ -318,7 +318,9 @@ impl Sim {
                     }
                 }
                 if a.refused {
-                    let w = (u8::BITS - a.wait.leading_zeros()).min(7) as usize;
+                    use bark_proto::tables::budget::{told, BAN};
+                    let bans = told(a.wait).as_micros() / BAN.as_micros();
+                    let w = (u64::BITS - bans.leading_zeros()).min(7) as usize;
                     self.metrics.addressed.refusal_steps[w] += 1;
                     if let Some(h) = hops {
                         let k = match h {

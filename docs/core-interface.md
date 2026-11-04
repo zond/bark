@@ -327,8 +327,9 @@ action at a time, and the core never allocates.
     bit 3 map point; the core sends the other bits zero and ignores them. The core sets
     the map point from its own position's source and keeps each neighbour's in
     `Neighbour::map_point`.
-  - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
-    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); a seen ACK (spec "The ACK") has
+  - An ACK's `aux` is 0 when it takes the offer and the code of the wait the refuser
+    asks for when it refuses, 1 to 63, 1.58 s to 89 min (spec "Bans", `budget::told`);
+    a seen ACK (spec "The ACK") has
     the seen flag and `aux` 0, and one with the flag and a wait is rejected. Taken,
     refused or seen, an ACK is 18 bytes. A DATA's `aux` is the sender's home channel,
     and a DATA with either of the two high bits of `aux` set is rejected. A heartbeat is

@@ -189,7 +189,7 @@ use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{
-    hold, told, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
+    hold, told, told_up, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
@@ -444,7 +444,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The wait told a sender refused for want of the way on, `to`: its
-    /// place in `to`'s line, rounded up to whole bans so that it never
+    /// place in `to`'s line, rounded up to a wait an ACK tells so that it never
     /// comes back before its place, when it would only cost a frame and
     /// a refusal; and no less than `pushback`, the rest of `to`'s ban,
     /// which stands outside the line (spec "Bans"). `None` if `to` is not
@@ -458,8 +458,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) -> Option<Duration> {
         let (place, service) = self.neighbours.place_in_line(to, oldest, now)?;
-        let bans = place.as_micros().div_ceil(BAN.as_micros()).max(1);
-        let wait = BAN.mul(bans).max(pushback);
+        let wait = told_up(place).max(pushback);
         emit(Action::Trace(Trace::InLine {
             neighbour: to,
             wait,

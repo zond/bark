@@ -980,7 +980,8 @@ measure, passed on ([bans](#bans)). Each take counts one part in 39.
 A refusal for want of the neighbour as the way on spaces the senders it
 refuses by the service time ([bans](#bans)).
 Before the first take the service time is one ban, the least wait a
-refusal tells, and it is never more than the longest, 63 bans.
+refusal tells, and it is never more than the longest, 89 min
+([bans](#bans)).
 
 *Why 39.* The average follows the neighbour's state, which its bucket
 sets: at its cap a neighbour takes one full frame a ban, and its bucket
@@ -990,9 +991,9 @@ after which nothing of the bucket's earlier state remains. Remembering
 fewer, the average would follow the luck of single takes, a lost frame
 or a retry; more, it would remember a bucket that has since refilled.
 
-*Why so stored.* It is kept in 16 bits, in 1/1024 of a ban, the finest
-step in which the 63 bans fit; a step of 1.5 ms is far below the ban in
-which waits are told.
+*Why so stored.* It is kept in 32 bits, in 1/1024 of a ban; a step of
+1.5 ms is far below the ban in which waits are told, and 16 bits would
+hold only 64 bans, 101 s.
 
 **Eviction.** When the table is full and a relay not in it is heard, the
 newcomer replaces, in this order:
@@ -1414,9 +1415,13 @@ when its frame and the ACK that would take it, at most
 it, and the bucket refills that in 155.5 ms / 9.83 % = 1.58 s
 ([duty cycle cap](#duty-cycle-cap)).
 
-A refusal tells the wait in whole bans of 1.58 s, rounded down but for
-a place in a way's line, and at least one, since 0 means taken
-([packet formats](#packet-formats)):
+A refusal tells the wait as one of 63 codes, at least a ban, since 0
+means taken ([packet formats](#packet-formats)): codes 1 to 8 are 1 to 8
+bans of 1.58 s, and each code above is an eighth longer than the one
+below, rounded down to whole bans and at least a ban longer, so codes 1
+to 16 are one ban apart and code 63 is 3384 bans, 89 min. A wait is told
+rounded down to a code, but for a place in a way's line, which is
+rounded up:
 
 - For want of room it is the time until the bucket holds everything
   queued and the frame and its ACK, with the reply reserve left, if
@@ -1431,7 +1436,7 @@ a place in a way's line, and at least one, since 0 means taken
   ([send queue](#send-queue)) or of fresh work while that way is banned
   ([receiving DATA](#receiving-data)), gives a place in that way's own
   line instead. The sender is told the rest of the line plus one service
-  time, rounded up to whole bans, and the line then ends one service
+  time, rounded up to a code, and the line then ends one service
   time later. The line's end is kept in the way's neighbour entry, and
   one in the past is now, so time shortens the line by itself. The
   service time is the neighbour's ([neighbour table](#neighbour-table)),
@@ -1441,8 +1446,8 @@ a place in a way's line, and at least one, since 0 means taken
   and at least a ban.
 - Such a refusal asks for no less than the rest of the ban on that way,
   without a place in line.
-- The ACK's six bits hold 63 bans, 99.6 s; a longer wait is told as 63,
-  the sender coming back early to be refused again (roadmap D54, D76).
+- A wait longer than 89 min is told as 89 min, the sender coming back
+  early to be refused again (roadmap D54, D76).
 
 *Why a line per way.* A relay holds a few messages per next hop, the
 way's places ([send queue](#send-queue)), so the senders it refuses for
@@ -1458,7 +1463,7 @@ after another.
 
 *Why rounded up.* A sender that comes back before its place only costs a
 frame and a refusal, so a place is rounded up and the sender may come
-back up to a ban late; a wait passed on is rounded down instead, so that
+back up to a ban late, or an eighth of a long wait; a wait passed on is rounded down instead, so that
 it only shrinks (below). Places are at least a ban apart because closer
 ones would be told the same wait and come back together.
 
@@ -1487,13 +1492,17 @@ relay to relay around a ring.
 and nothing in the protocol acts sooner; a coarser unit would merge
 neighbouring places.
 
-*Why 63 bans are enough.* A told wait is a place in one of the
-refuser's lines, a ban or a service time a sender ahead, or the rest of
-a wait further on, a ban of the silence ladder, at most 61 s, 39 bans,
-or a wait told there, itself at most 63 bans. The longest wait, 63
-bans, covers the ladder and a line of 63 senders a ban apart at one
-relay; a line no longer than that is kept, and a sender told too short
-a wait only comes back early to be refused again.
+*Why these codes.* At the short end a wait is a few bans, the room's
+line or a ban of the silence ladder, and places a ban apart must get
+codes of their own, or they would come back together. At the long end a
+wait is a line under overload, which grows a service time with each
+sender refused and reaches minutes. Told too short a wait, a sender
+comes back early and pays a full DATA frame and an ACK to be refused
+again; the codes before these held 63 bans, 99.6 s, so a sender with
+ten minutes to wait came back six times. Told a wait rounded up to
+within an eighth, it comes back at most an eighth late. Steps of an
+eighth reach 89 min, more than an hour; steps of a ninth would reach
+only 44 min, and a code exact to the ban only 63 bans.
 
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,
@@ -3071,7 +3080,7 @@ third byte holds its flags. Each field has one place.
 |---|---|---|
 | `1000 cccc` | heartbeat | `cccc` the home channel, 0 to 12 |
 | `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
-| `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the wait the refuser asks for, 1 to 63 bans ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
+| `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the code of the wait the refuser asks for, 1 to 63: 1 to 16 bans, then each an eighth longer, up to 89 min ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
 
 The second byte is the **format version**. This specification is
 format 1.

@@ -348,8 +348,8 @@ pub struct Summary {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: crate::metrics::RecordsLost,
-    /// Refusals sent, by the wait each told, in the units on the wire
-    /// (spec "Bans").
+    /// Refusals sent, by the wait each told, by its code on the wire
+    /// (spec "Bans", `budget::told`).
     pub told_waits: Vec<u64>,
     /// Seen ACKs (spec "The ACK"); left out of runs without one.
     #[serde(skip_serializing_if = "SeenAcks::none")]
@@ -1083,7 +1083,7 @@ impl Summary {
             let list = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(" / ");
             let _ = writeln!(
                 s,
-                "places in a way's line: told 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32-63 / 64+ bans {}; spaced by under 1 / 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32+ bans {}, at the cap {}",
+                "places in a way's line: told 1 / 2-3 / 4-7 / ... / 1024-2047 / 2048+ bans {}; spaced by under 1 / 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32+ bans {}, at the cap {}",
                 list(&p.line_waits),
                 list(&p.line_service),
                 list(&p.line_service_at_cap)

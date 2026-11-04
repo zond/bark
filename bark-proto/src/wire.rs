@@ -51,7 +51,9 @@
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
-//!   wait the refuser asks for in whole bans, 1 to 63 (`tables/budget.rs`).
+//!   code of the wait the refuser asks for, 1 to 63: 1 to 16 bans one ban
+//!   apart, then each an eighth longer, up to 89 min (`tables/budget.rs`
+//!   `told`).
 //!   The wait needs no byte of its own, so every ACK has one length and
 //!   one airtime. The seen flag is the top bit, where a heartbeat has its
 //!   kind, so the kind `11` that was free is the seen ACK; a seen ACK's
@@ -98,7 +100,7 @@ const HEARTBEAT_BIT: u8 = 0x80;
 // In an ACK, the top bit is the seen flag (spec "The ACK").
 const SEEN_BIT: u8 = HEARTBEAT_BIT;
 /// The bits of `aux`, below the kind bits (spec "Packet formats"): the
-/// longest wait an ACK asks for, in bans.
+/// code of the longest wait an ACK asks for.
 pub const AUX_MASK: u8 = 0x3f;
 // A heartbeat's channel, below two bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
@@ -219,8 +221,9 @@ pub struct Ack {
     pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
-    /// For a refusal, the wait the refuser asks for in whole bans, 1 to
-    /// [`AUX_MASK`] (spec "Bans"); 0 in an ACK that takes or has seen.
+    /// For a refusal, the code of the wait the refuser asks for, 1 to
+    /// [`AUX_MASK`] (spec "Bans", `tables/budget.rs` `told`); 0 in an ACK
+    /// that takes or has seen.
     pub wait: u8,
     /// Seen, not taken (spec "Receiving DATA" case 6): `from` has the
     /// message's record and no copy of it, and `to` goes on to its next

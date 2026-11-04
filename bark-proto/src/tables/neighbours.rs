@@ -208,10 +208,10 @@ pub struct Neighbour {
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
     /// Its service time ([`Neighbours::took`]), in [`SERVICE_UNIT`]s.
-    pub service: u16,
+    pub service: u32,
     /// The waits its refusals told this relay since its last take, in
     /// [`SERVICE_UNIT`]s ([`Neighbours::told`]).
-    pub told: u16,
+    pub told: u32,
     /// When it last took a hand-over from this relay.
     pub taken_at: Instant,
     /// When the line of senders this relay refused for it ends
@@ -258,13 +258,13 @@ impl Neighbour {
     }
 }
 
-/// The unit of a service time: 1/1024 of a ban, so that the longest
-/// wait an ACK tells, 63 bans, fits in 16 bits (spec "Neighbour table").
+/// The unit of a service time: 1/1024 of a ban, 1.5 ms, far below the
+/// ban in which waits are told (spec "Neighbour table").
 pub const SERVICE_UNIT: Duration = BAN.div(1024);
 
 /// A service time before any take: one ban, the least wait a refusal
 /// tells (spec "Bans").
-const FIRST_SERVICE: u16 = 1024;
+const FIRST_SERVICE: u32 = 1024;
 
 /// How many takes the service time remembers: as many as a neighbour at
 /// its cap takes while its bucket refills from empty, one a ban for
@@ -273,7 +273,7 @@ pub const SERVICE_TAKES: u64 = LONGEST_BAN.as_micros().div_ceil(BAN.as_micros())
 
 const _: () = assert!(SERVICE_TAKES == 39);
 const _: () = assert!(
-    LONGEST_TOLD.as_micros() / SERVICE_UNIT.as_micros() <= u16::MAX as u64,
+    LONGEST_TOLD.as_micros() / SERVICE_UNIT.as_micros() <= u32::MAX as u64,
     "the longest told wait fits a service time"
 );
 
@@ -693,7 +693,7 @@ impl Neighbours {
             n.told = 0;
             let old = n.service as i64;
             let step = (sample - old) / SERVICE_TAKES as i64;
-            n.service = (old + step).clamp(0, u16::MAX as i64) as u16;
+            n.service = (old + step).clamp(0, u32::MAX as i64) as u32;
             n.taken_at = now;
         }
     }
@@ -729,7 +729,7 @@ impl Neighbours {
     pub fn told(&mut self, id: NodeId, wait: Duration) {
         if let Some(n) = self.entry_mut(id) {
             let units = wait.as_micros() / SERVICE_UNIT.as_micros();
-            n.told = (n.told as u64 + units).min(u16::MAX as u64) as u16;
+            n.told = (n.told as u64 + units).min(u32::MAX as u64) as u32;
         }
     }
 
@@ -1109,7 +1109,7 @@ mod tests {
     /// Senders refused for one way stand in its line, each a service time
     /// after the one before, a ban at least, the message that bars them
     /// raising it when it has waited longer; time shortens the line, and
-    /// no place passes 63 bans (spec "Bans").
+    /// no place passes the longest told wait (spec "Bans").
     #[test]
     fn places_in_a_line_are_a_service_time_apart() {
         let mut t = Neighbours::new(params());
@@ -1130,7 +1130,7 @@ mod tests {
             .unwrap();
         assert_eq!(spaced, BAN.mul(5));
         assert_eq!(third, first + BAN.mul(5));
-        for _ in 0..100 {
+        for _ in 0..LONGEST_TOLD.as_micros() / BAN.as_micros() {
             place(&mut t, None, later);
         }
         assert_eq!(place(&mut t, None, later), LONGEST_TOLD);

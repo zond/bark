@@ -195,23 +195,66 @@ pub const fn hold(refusals: u8) -> Duration {
     Duration::from_micros(if wait < cap { wait } else { cap })
 }
 
-/// The wait a refusal asking for `bans` means (spec "Bans"): never
+/// The step of a told wait above the first codes, a part of the wait
+/// below it (spec "Bans").
+const STEP_PARTS: u64 = 8;
+
+/// How many bans the ACK's wait code `v` means, 1 to [`AUX_MASK`] (spec
+/// "Bans"): `v` itself up to 8, and above, each code an eighth more than
+/// the one below, rounded down, and at least one ban more, so codes 1 to
+/// 16 are 1 to 16 bans. A wait is told to within an eighth: a sender
+/// told a wait rounded up comes back at most an eighth late, and the 63
+/// codes reach 3384 bans, 89 min, more than an hour, which steps of a
+/// ninth, 44 min, would not.
+const TOLD_BANS: [u64; AUX_MASK as usize + 1] = {
+    let mut t = [0; AUX_MASK as usize + 1];
+    let mut v = 1;
+    while v <= AUX_MASK as usize {
+        let last = t[v - 1];
+        let step = last / STEP_PARTS;
+        t[v] = if (v as u64) <= STEP_PARTS || step == 0 {
+            last + 1
+        } else {
+            last + step
+        };
+        v += 1;
+    }
+    t
+};
+
+const _: () = assert!(TOLD_BANS[16] == 16 && TOLD_BANS[AUX_MASK as usize] == 3384);
+
+/// The wait a refusal telling code `code` means (spec "Bans"): never
 /// less than one [`BAN`].
-pub fn told(bans: u8) -> Duration {
-    BAN.mul(bans.max(1) as u64)
+pub fn told(code: u8) -> Duration {
+    BAN.mul(TOLD_BANS[code.clamp(1, AUX_MASK) as usize])
 }
 
-/// The longest wait a refusal tells: 63 bans, 99.6 s, what `aux`
-/// holds (spec "Bans").
-pub const LONGEST_TOLD: Duration = BAN.mul(AUX_MASK as u64);
+/// The longest wait a refusal tells: code 63, 3384 bans, 89 min, what
+/// `aux` holds (spec "Bans").
+pub const LONGEST_TOLD: Duration = BAN.mul(TOLD_BANS[AUX_MASK as usize]);
 
-/// `wait` in whole [`BAN`]s for a refusal, rounded down, so that a wait
-/// passed on from relay to relay only shrinks; at least 1, since 0 in an
-/// ACK means taken, and at most what `aux` holds, 63 bans, 99.6 s. A
-/// longer wait is told as the longest, and its sender may come back
-/// early and be refused again.
+/// The code of the longest told wait no longer than `wait`, so that a
+/// wait passed on from relay to relay only shrinks; at least 1, since 0
+/// in an ACK means taken, and at most [`AUX_MASK`]. A longer wait is told
+/// as the longest, and its sender may come back early and be refused
+/// again.
 pub fn wait_units(wait: Duration) -> u8 {
-    (wait.as_micros() / BAN.as_micros()).clamp(1, AUX_MASK as u64) as u8
+    let bans = wait.as_micros() / BAN.as_micros();
+    let below = TOLD_BANS.iter().rposition(|&b| b <= bans).unwrap_or(1);
+    below.clamp(1, AUX_MASK as usize) as u8
+}
+
+/// The shortest told wait no shorter than `wait`, so that a sender given a
+/// place never comes back before it; at least a ban, and at most
+/// [`LONGEST_TOLD`].
+pub fn told_up(wait: Duration) -> Duration {
+    let bans = wait.as_micros().div_ceil(BAN.as_micros());
+    let code = TOLD_BANS
+        .iter()
+        .position(|&b| b >= bans)
+        .unwrap_or(AUX_MASK as usize);
+    told(code as u8)
 }
 
 /// The duty-cycle token bucket.
@@ -356,11 +399,26 @@ mod tests {
         assert_eq!(wait_units(Duration::ZERO), 1, "a refusal is never 0");
         assert_eq!(wait_units(BAN.mul(2) - Duration::from_micros(1)), 1);
         assert_eq!(wait_units(BAN.mul(2)), 2, "rounded down");
-        assert_eq!(wait_units(BAN.mul(63)), AUX_MASK);
-        assert_eq!(wait_units(Duration::from_secs(1000)), AUX_MASK);
-        let longest = told(AUX_MASK).as_micros();
-        assert!((99_600_000..99_700_000).contains(&longest), "{longest}");
+        assert_eq!(wait_units(BAN.mul(16)), 16, "one ban apart to 16");
+        assert_eq!(wait_units(BAN.mul(17)), 16, "then an eighth apart");
+        assert_eq!(wait_units(BAN.mul(18)), 17);
+        assert_eq!(wait_units(LONGEST_TOLD), AUX_MASK);
+        assert_eq!(wait_units(Duration::from_secs(100_000)), AUX_MASK);
+        let longest = told(AUX_MASK).as_micros() / 1_000_000;
+        assert!((5340..5360).contains(&longest), "{longest}");
         assert_eq!(told(0), BAN, "never less than a ban");
+        assert_eq!(told_up(Duration::ZERO), BAN);
+        assert_eq!(told_up(BAN.mul(17)), BAN.mul(18), "rounded up");
+        assert_eq!(told_up(Duration::from_secs(100_000)), LONGEST_TOLD);
+        // A told wait is told as itself, and each code says more.
+        for v in 1..=AUX_MASK {
+            assert_eq!(wait_units(told(v)), v);
+            assert_eq!(told_up(told(v)), told(v));
+            if v > 1 {
+                let (a, b) = (told(v - 1).as_micros(), told(v).as_micros());
+                assert!(b > a && b - a <= (a / 8).max(BAN.as_micros()));
+            }
+        }
     }
 
     #[test]
