@@ -179,6 +179,11 @@ pub struct Outgoing {
     /// neighbour-table slot: tried for it while it is queued here, though
     /// none has it (spec "Next hop").
     pub passed: u64,
+    /// The neighbours it is routed past while their ban lasts, one bit
+    /// per neighbour-table slot (spec "Next hop", research build
+    /// `detour-silence`).
+    #[cfg(feature = "detour-silence")]
+    pub avoid: u64,
 }
 
 impl Outgoing {
@@ -196,7 +201,39 @@ impl Outgoing {
             toward: 0,
             since: Instant::ZERO,
             passed: 0,
+            #[cfg(feature = "detour-silence")]
+            avoid: 0,
         }
+    }
+
+    /// The neighbours it goes round while they are banned: none but in
+    /// the research build `detour-silence`.
+    pub fn avoided(&self) -> u64 {
+        #[cfg(feature = "detour-silence")]
+        return self.avoid;
+        #[cfg(not(feature = "detour-silence"))]
+        0
+    }
+
+    /// Go round neighbour-table `slot` while it is banned.
+    pub fn avoid(&mut self, slot: usize) {
+        #[cfg(feature = "detour-silence")]
+        {
+            self.avoid |= 1u64 << slot;
+        }
+        #[cfg(not(feature = "detour-silence"))]
+        let _ = slot;
+    }
+
+    /// Keep going round only the slots of `banned`: a ban that ended
+    /// ends the detour.
+    pub fn keep_avoiding(&mut self, banned: u64) {
+        #[cfg(feature = "detour-silence")]
+        {
+            self.avoid &= banned;
+        }
+        #[cfg(not(feature = "detour-silence"))]
+        let _ = banned;
     }
 
     /// Whether it is set aside for the delivery queue.
@@ -401,6 +438,7 @@ impl SendQueue {
     pub fn slot_reoccupied(&mut self, slot: usize) {
         for o in self.frames.as_mut_slice() {
             o.passed &= !(1u64 << slot);
+            o.keep_avoiding(!(1u64 << slot));
         }
     }
 

@@ -1185,6 +1185,10 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    demoted ([neighbour table](#neighbour-table)), or has left the table.
    A message that held for a neighbour through its demotion counts it
    tried while it is queued here ([next hop](#next-hop)).
+   - *Research build `detour-silence`, not for the field:* a forward
+     whose hand-over failed goes round that neighbour while the
+     neighbour's ban lasts, routed afresh to the next candidate at once
+     ([next hop](#next-hop)); the failure and the ban count as above.
    - A return is dropped once its parent is demoted or has left the
      table ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
@@ -1790,6 +1794,14 @@ those in the tried set ([message records](#message-records)).
 A ban does not take a neighbour out: a banned next hop is waited for.
 The message is not sent until the ban ends, and is routed again then
 ([overload waits](#overload-waits)).
+
+*Research build `detour-silence`, not for the field:* a queued forward
+keeps the neighbours whose hand-over of it failed, one bit per
+neighbour-table slot, and while such a neighbour is banned it is no
+candidate for that message, so the message goes to the next. Where that
+leaves no candidate, or only a last resort the neighbour was not, the
+message waits for the ban as above. A refusal does not set the bit: a
+refusing neighbour is there and hears this relay.
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a

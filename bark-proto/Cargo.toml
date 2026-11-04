@@ -16,3 +16,6 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 default = []
 # Enables std-only conveniences (Debug printing helpers, Vec sinks) for the simulator and tests.
 std = []
+# Research build, not for the field: a forward whose hand-over goes unanswered goes round
+# that neighbour while its ban lasts (spec "Next hop").
+detour-silence = []

@@ -124,7 +124,7 @@ pub(crate) mod sizes {
         assert_eq!(size_of::<delivery::Queued>(), 264);
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
-        assert_eq!(size_of::<send_queue::Outgoing>(), 296);
+        assert_eq!(size_of::<send_queue::Outgoing>(), OUTGOING);
         // The send queue's regular room follows from the duty bucket, its
         // hop places from the hop count (spec "Send queue"), and the delivery queue's
         // places from a full heard table over one TTL (spec "Delivery queue").
@@ -135,6 +135,14 @@ pub(crate) mod sizes {
         std::println!("{:>10}: {sum:>6} B", "tables");
         assert!(size_of::<busy::BusyEstimator>() <= 512);
     }
+
+    /// A send-queue entry; the research build `detour-silence` adds the
+    /// neighbours it goes round.
+    const OUTGOING: usize = if cfg!(feature = "detour-silence") {
+        304
+    } else {
+        296
+    };
 
     /// The bytes of every table, each checked to be what its entries take
     /// and a few words of bookkeeping.
@@ -159,7 +167,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * 296,
+                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * OUTGOING,
             ),
             (
                 "delivered",
