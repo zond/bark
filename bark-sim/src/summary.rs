@@ -1089,6 +1089,15 @@ impl Summary {
                 list(&p.line_service_at_cap)
             );
         }
+        if p.way_waits.iter().flatten().sum::<u64>() > 0 {
+            let list = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(" / ");
+            let _ = writeln!(
+                s,
+                "wait for the way on at the gate, settled: under 0.5 / 1 / 2 / 5 / 10 / 20 / 30 / 60 / 120 / 300 / 600 s / more: taken {}; refused {}",
+                list(&p.way_waits[0]),
+                list(&p.way_waits[1])
+            );
+        }
         if let Some(held) = &self.holds.held {
             let h = &self.holds;
             let list = |v: &[u64]| {

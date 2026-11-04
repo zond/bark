@@ -698,30 +698,57 @@ impl Neighbours {
         }
     }
 
-    /// A refusal for want of `id` as the way on, told at `now`: the
-    /// place it gives its sender in `id`'s line, from now, and the
-    /// service time that spaced it. The line ends one service time later,
-    /// or the time the message waiting for `id` here since `oldest` has
-    /// waited, its refusals' waits aside, if that is longer; and at least
-    /// a ban later, the unit a refusal tells, since places closer than
-    /// that would be told the same wait and come back together (spec
-    /// "Bans"). Time passing shortens the line; neither it nor a place
-    /// passes [`LONGEST_TOLD`]. `None` if `id` is not in the table.
-    pub fn place_in_line(
-        &mut self,
+    /// How long this relay takes to get one message through to `id` now:
+    /// its service time, or the time the message waiting
+    /// for `id` here since `oldest` has waited, its refusals' waits aside,
+    /// if that is longer, so that a rising load is seen before the next
+    /// take (spec "Bans"). At most [`LONGEST_TOLD`]. `None` if `id` is not
+    /// in the table.
+    pub fn service_now(
+        &self,
         id: NodeId,
         oldest: Option<Instant>,
         now: Instant,
-    ) -> Option<(Duration, Duration)> {
-        let n = self.entry_mut(id)?;
+    ) -> Option<Duration> {
+        let n = self.get(id)?;
         // What its refusals made the message wait is its own line, told
         // here: not this relay's service time.
         let told = SERVICE_UNIT.mul(n.told as u64).min(LONGEST_TOLD) - n.banned_until.since(now);
         let waited = oldest.map_or(Duration::ZERO, |t| now.since(t.max(n.taken_at)) - told);
-        let service = n.service().max(waited).min(LONGEST_TOLD);
-        let place = n.line_end.max(now) + service.max(BAN);
-        n.line_end = place.min(now + LONGEST_TOLD);
+        Some(n.service().max(waited).min(LONGEST_TOLD))
+    }
+
+    /// A refusal for want of `id` as the way on, told at `now`, the
+    /// messages queued for it here taking `queue` to go: the place it
+    /// gives its sender in `id`'s line, from now, when its hand-over would
+    /// begin, and the service time that spaced it. The place is one
+    /// service time ([`Neighbours::service_now`]) after the last place
+    /// given, and at least a ban, the unit a refusal tells, since places
+    /// closer than that would be told the same wait and come back
+    /// together; or the end of `queue` if that is later (spec "Bans"). Time
+    /// passing shortens the line; a place is at most `limit` from now.
+    /// `None` if `id` is not in the table.
+    pub fn place_in_line(
+        &mut self,
+        id: NodeId,
+        queue: Duration,
+        oldest: Option<Instant>,
+        limit: Duration,
+        now: Instant,
+    ) -> Option<(Duration, Duration)> {
+        let service = self.service_now(id, oldest, now)?;
+        let n = self.entry_mut(id)?;
+        let place = (n.line_end.max(now) + service.max(BAN)).max(now + queue);
+        n.line_end = place.min(now + limit);
         Some((n.line_end.since(now), service))
+    }
+
+    /// Set `id`'s service time, for tests of what it decides.
+    #[cfg(test)]
+    pub(crate) fn set_service(&mut self, id: NodeId, service: Duration) {
+        if let Some(n) = self.entry_mut(id) {
+            n.service = (service.as_micros() / SERVICE_UNIT.as_micros()) as u32;
+        }
     }
 
     /// `id` refused a hand-over, telling this relay to wait `wait`: not
@@ -1107,33 +1134,45 @@ mod tests {
     }
 
     /// Senders refused for one way stand in its line, each a service time
-    /// after the one before, a ban at least, the message that bars them
-    /// raising it when it has waited longer; time shortens the line, and
-    /// no place passes the longest told wait (spec "Bans").
+    /// after the one before, a ban at least, or after the queue ahead of
+    /// them if that ends later, the message that bars them raising it when
+    /// it has waited longer; time shortens the line, and no place passes
+    /// its limit (spec "Bans").
     #[test]
     fn places_in_a_line_are_a_service_time_apart() {
         let mut t = Neighbours::new(params());
         hear(&mut t, 1, 0, -80, at(0));
         let now = at(10);
-        let place =
-            |t: &mut Neighbours, oldest, now| t.place_in_line(id(1), oldest, now).unwrap().0;
-        let first = place(&mut t, None, now);
+        let limit = BAN.mul(100);
+        let place = |t: &mut Neighbours, queue, oldest, now| {
+            t.place_in_line(id(1), queue, oldest, limit, now).unwrap().0
+        };
+        let first = place(&mut t, Duration::ZERO, None, now);
         assert_eq!(first, BAN.max(t.get(id(1)).unwrap().service()));
-        let second = place(&mut t, None, now);
+        let second = place(&mut t, Duration::ZERO, None, now);
         assert_eq!(second, first + BAN);
         // Two bans later the line has moved up by two: it is empty.
         let later = now + BAN.mul(2);
-        assert_eq!(place(&mut t, None, later), first);
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), first);
         // The message barring the way has waited 5 bans: that spaces it.
         let (third, spaced) = t
-            .place_in_line(id(1), Some(later - BAN.mul(5)), later)
+            .place_in_line(
+                id(1),
+                Duration::ZERO,
+                Some(later - BAN.mul(5)),
+                limit,
+                later,
+            )
             .unwrap();
         assert_eq!(spaced, BAN.mul(5));
         assert_eq!(third, first + BAN.mul(5));
-        for _ in 0..LONGEST_TOLD.as_micros() / BAN.as_micros() {
-            place(&mut t, None, later);
+        // A queue that ends later than the line places the sender after it.
+        assert_eq!(place(&mut t, BAN.mul(40), None, later), BAN.mul(40));
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), BAN.mul(41));
+        for _ in 0..100 {
+            place(&mut t, Duration::ZERO, None, later);
         }
-        assert_eq!(place(&mut t, None, later), LONGEST_TOLD);
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), limit);
     }
 
     #[test]

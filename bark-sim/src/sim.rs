@@ -2605,6 +2605,9 @@ impl Sim {
                         at_cap,
                         ..
                     } => self.metrics.pressure.in_line(wait, service, at_cap),
+                    Trace::WayWait { wait, refused } if self.now >= self.settle => {
+                        self.metrics.pressure.way_wait(wait, refused)
+                    }
                     Trace::Silent { owed, .. } => {
                         let p = &mut self.metrics.pressure;
                         if owed {

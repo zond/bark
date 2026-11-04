@@ -162,9 +162,9 @@ pub enum DropReason {
     /// Fresh work, and every neighbour that could take it is banned
     /// (spec "Receiving DATA"). Refused.
     Banned,
-    /// The places for its next hop are taken by messages queued here, one
-    /// of which has come as far or farther (spec "Receiving DATA", "Send queue").
-    /// Refused.
+    /// The messages queued here for its next hop would make it wait
+    /// longer than a hop's budget, and one of them has come as far or
+    /// farther (spec "Receiving DATA", "Send queue"). Refused.
     SameHop,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
@@ -420,6 +420,14 @@ pub enum Trace {
     Demoted {
         /// The neighbour.
         neighbour: NodeId,
+    },
+    /// The gate found a message's wait here for its way on, by the queue
+    /// ahead of it (spec "Send queue"); for counting only.
+    WayWait {
+        /// The wait.
+        wait: Duration,
+        /// It passed the budget and the message was refused.
+        refused: bool,
     },
     /// A refusal for want of a way on gave its sender a place in that
     /// neighbour's line (spec "Bans"); for counting only.

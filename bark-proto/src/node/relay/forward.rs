@@ -22,9 +22,10 @@
 //! order and decides whether acting on it is work: sending it on, which
 //! may be a forward or a return, or a delivery. Work to send on first
 //! passes the gate ([`Relay::gate`]): it is routed as it would be from
-//! here now, and so is every message queued, and it is refused if
-//! `NEIGHBOUR_PLACES` of them go to the same next hop and one has a count
-//! as high or higher, told a place in that neighbour's line
+//! here now, and so is every message queued, and it is refused if those
+//! that go to the same next hop take longer than [`HOP_WAIT`] to go, by
+//! that neighbour's service time, and one has a count as high or higher,
+//! told when its place in that neighbour's line will be within the budget
 //! (spec "Send queue", "Bans"). It then goes into the
 //! send queue's regular room if it has a place and the bucket holds the
 //! ACK, the airtime of everything queued with the new frame, and the reply
@@ -189,12 +190,13 @@ use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::{
-    hold, told, told_up, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, REPLY_RESERVE,
+    hold, told, told_up, wait_units, ACK_AIRTIME, BAN, HEARTBEAT_RESERVE, LONGEST_TOLD,
+    REPLY_RESERVE,
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, NEIGHBOUR_PLACES, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -243,8 +245,21 @@ struct Verdict {
     pushback: Duration,
     /// Its way on, for a refusal's place in that way's line.
     way: Option<NodeId>,
-    /// When the message that bars it at the gate began to wait here.
+    /// What the gate found on that way.
+    gate: Option<Gate>,
+}
+
+/// What the gate finds on a message's way on (spec "Send queue").
+#[derive(Clone, Copy, Debug)]
+struct Gate {
+    /// How long the messages queued here for the way take to go, by its
+    /// service time: the message's wait here before its hand-over.
+    queue: Duration,
+    /// When the longest waiting of them began to wait for the way.
     oldest: Option<Instant>,
+    /// The wait passes [`HOP_WAIT`] and one of them has come as far or
+    /// farther: the message is refused.
+    over: bool,
 }
 
 impl Verdict {
@@ -408,8 +423,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// frees, and not all at once. A sender refused for the way on takes
     /// a place in that way's line instead, spaced by the time this relay
     /// takes to get one message through to it, so that the senders come
-    /// back as that way frees; `oldest` is when the message that bars the
-    /// way began to wait for it here.
+    /// back as that way frees; `gate` is what the gate found on the way.
     #[allow(clippy::too_many_arguments)]
     fn refusal_wait(
         &mut self,
@@ -417,12 +431,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         airtime: Duration,
         pushback: Duration,
         way: Option<NodeId>,
-        oldest: Option<Instant>,
+        gate: Option<Gate>,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) -> Duration {
         if matches!(reason, DropReason::SameHop | DropReason::Banned) {
-            if let Some(wait) = way.and_then(|to| self.line_wait(to, oldest, pushback, now, emit)) {
+            if let Some(wait) = way.and_then(|to| self.line_wait(to, gate, pushback, now, emit)) {
                 return wait;
             }
         }
@@ -443,22 +457,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         slot.since(now).max(pushback)
     }
 
-    /// The wait told a sender refused for want of the way on, `to`: its
-    /// place in `to`'s line, rounded up to a wait an ACK tells so that it never
-    /// comes back before its place, when it would only cost a frame and
-    /// a refusal; and no less than `pushback`, the rest of `to`'s ban,
-    /// which stands outside the line (spec "Bans"). `None` if `to` is not
-    /// in the table.
+    /// The wait told a sender refused for want of the way on, `to`: until
+    /// its place in `to`'s line is [`HOP_WAIT`] away, rounded up to a wait
+    /// an ACK tells so that it never comes back before it, when it would
+    /// only cost a frame and a refusal; and no less than `pushback`, the
+    /// rest of `to`'s ban, which stands outside the line (spec "Bans").
+    /// `gate`: the queue for `to` here. `None` if `to` is not in the table.
     fn line_wait(
         &mut self,
         to: NodeId,
-        oldest: Option<Instant>,
+        gate: Option<Gate>,
         pushback: Duration,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) -> Option<Duration> {
-        let (place, service) = self.neighbours.place_in_line(to, oldest, now)?;
-        let wait = told_up(place).max(pushback);
+        let (queue, oldest) = gate.map_or((Duration::ZERO, None), |g| (g.queue, g.oldest));
+        let limit = HOP_WAIT + LONGEST_TOLD;
+        let (place, service) = self
+            .neighbours
+            .place_in_line(to, queue, oldest, limit, now)?;
+        let wait = told_up(place - HOP_WAIT).max(pushback);
         emit(Action::Trace(Trace::InLine {
             neighbour: to,
             wait,
@@ -572,17 +590,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         pick
     }
 
-    /// The gate of the send queue (spec "Send queue"): a message
-    /// received with `hops`, other than `id`, going to `to`, enters if
-    /// fewer than [`NEIGHBOUR_PLACES`] queued messages go to `to` now, or
-    /// its count is higher than every one of theirs. If not, when the
-    /// longest waiting of them began to wait for `to` here, for the wait
-    /// to tell ([`Self::line_wait`]).
+    /// The gate of the send queue (spec "Send queue"): what a message
+    /// received with `hops`, other than `id`, going to `to`, finds there.
+    /// Its wait here is the service time to `to` for each queued message
+    /// that goes to `to` now; it is refused if that passes [`HOP_WAIT`]
+    /// and its count is not higher than every one of theirs.
     ///
     /// The count of a queued message is one less than the count it is
     /// sent with: the count it holds here. At most the queue's entries
     /// times the neighbour table's entries per call, and no allocation.
-    fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Option<Instant> {
+    fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
         for o in self.queue.iter().filter(|o| o.msg_id() != Some(id)) {
             if self.bound_for(o, now) == Some(to) {
@@ -591,10 +608,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 oldest = Some(oldest.map_or(o.since, |t| t.min(o.since)));
             }
         }
-        if ahead < NEIGHBOUR_PLACES || !barred {
-            return None;
+        let service = self
+            .neighbours
+            .service_now(to, oldest, now)
+            .unwrap_or(Duration::ZERO);
+        let queue = service.mul(ahead);
+        Gate {
+            queue,
+            oldest,
+            over: barred && queue > HOP_WAIT,
         }
-        oldest
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
@@ -810,8 +833,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let v = self.verdict(&d, ACK_AIRTIME, completes, now);
         let deadline = now + self.config.ack_timeout;
         let air = self.data_airtime(d.payload.len());
+        if let Some(g) = v.gate {
+            emit(Action::Trace(Trace::WayWait {
+                wait: g.queue,
+                refused: g.over,
+            }));
+        }
         let wait = v.refusal.map_or(0, |why| {
-            let told = self.refusal_wait(why, air, v.pushback, v.way, v.oldest, now, emit);
+            let told = self.refusal_wait(why, air, v.pushback, v.way, v.gate, now, emit);
             wait_units(told)
         });
         let reply = Ack {
@@ -953,12 +982,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Not again once the take is final: the sender is done with it.
         let gate = heads
             .filter(|_| spend > Duration::ZERO)
-            .and_then(|(to, _)| self.gate(id, to, d.hops, now));
+            .map(|(to, _)| self.gate(id, to, d.hops, now));
         let refusal = if !acts {
             None
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
-        } else if gate.is_some() {
+        } else if gate.is_some_and(|g| g.over) {
             Some(DropReason::SameHop)
         } else if sends {
             let air = self.data_airtime(d.payload.len());
@@ -989,7 +1018,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             refusal,
             pushback,
             way: heads.map(|(to, _)| to),
-            oldest: gate,
+            gate,
         }
     }
 
@@ -1350,11 +1379,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // (spec "Receiving DATA"): refused, it goes back to the
             // application with a place in its way's line, as an ACK
             // tells.
-            let barred = self.gate(id, to, 0, now);
-            if barred.is_some() || ban > now {
+            let gate = self.gate(id, to, 0, now);
+            emit(Action::Trace(Trace::WayWait {
+                wait: gate.queue,
+                refused: gate.over,
+            }));
+            if gate.over || ban > now {
                 let pushback = ban.since(now);
                 let wait = self
-                    .line_wait(to, barred, pushback, now, emit)
+                    .line_wait(to, Some(gate), pushback, now, emit)
                     .unwrap_or(pushback)
                     .max(BAN);
                 self.timers.retry_at = now + wait;

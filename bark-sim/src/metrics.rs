@@ -1304,11 +1304,28 @@ pub struct Pressure {
     pub line_service: [u64; 7],
     /// Of `line_service`, at a relay at its cap.
     pub line_service_at_cap: [u64; 7],
+    /// Messages to send on that the gate weighed after the settle time,
+    /// by their wait here for their way on, at the edges of
+    /// [`Pressure::WAIT_EDGES`]: `[taken by the gate, refused]`.
+    pub way_waits: [[u64; 12]; 2],
 }
 
 impl Pressure {
     /// Edges of `answered_within`, seconds.
     pub const EDGES: [f64; 5] = [1.58, 5.0, 15.0, 60.0, 390.0];
+
+    /// Edges of `way_waits`, seconds.
+    pub const WAIT_EDGES: [f64; 11] = [
+        0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+    ];
+
+    /// The gate found a message's wait for its way `wait`, and refused
+    /// it or not.
+    pub fn way_wait(&mut self, wait: Duration, refused: bool) {
+        let s = wait.as_micros() as f64 / 1e6;
+        let i = Self::WAIT_EDGES.iter().take_while(|&&e| s >= e).count();
+        self.way_waits[usize::from(refused)][i] += 1;
+    }
 
     /// A refusal for want of the way on told `wait`, its place spaced by
     /// `service`, at a relay `at_cap` or not.

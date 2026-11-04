@@ -44,7 +44,7 @@
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::{BAN, DEPTH};
+use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
 use crate::tables::records::MAX_HOPS;
 use crate::time::{Duration, Instant};
@@ -65,15 +65,13 @@ pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 39);
 
-/// Messages a relay holds for one next hop, more only in order of count
-/// (spec "Send queue"): the one being handed over, and as many as the
-/// way could take back to back, a full frame and its ACK each, in the
-/// longest a freed place stays empty: the ban a refused sender was told,
-/// rounded up, and its own hand-over. ⌈(1.58 + 0.156) / 0.156⌉ + 1 = 13.
-pub const NEIGHBOUR_PLACES: usize =
-    (BAN.as_micros() + HAND_OVER_US).div_ceil(HAND_OVER_US) as usize + 1;
-
-const _: () = assert!(NEIGHBOUR_PLACES == 13);
+/// The longest a relay lets a message wait here for its next hop, by the
+/// queue ahead of it for that hop, before it refuses it, unless its count
+/// is higher than every one of theirs (spec "Send queue"). Above the
+/// longest wait the city has at the design's rate, 20 to 30 s, and six
+/// times its 99.9th percentile, 5 s, so that it refuses only a hop slower
+/// than normal (roadmap D106).
+pub const HOP_WAIT: Duration = Duration::from_secs(30);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
