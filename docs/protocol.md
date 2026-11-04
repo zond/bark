@@ -1603,11 +1603,9 @@ before, whose queue for the way grows in its turn, and the wait travels
 back toward the origin, where the application is told it
 ([bans](#bans)). A room per relay could not do this: a banned
 neighbour's messages would fill it and keep out the messages for every
-other way. The gate weighs time, not a count of messages: a way at its
+other way. It weighs time, not a number of messages: a way at its
 neighbour's cap takes one message a ban, one with free air ten in that
-time, so a count right for one is wrong for the other, and at capacity
-relays hold only a few messages each, the air being what is full, so a
-count of places never fills (roadmap D106).
+time, so no one number suits both (roadmap D106).
 
 *Why 30 s.* The budget should refuse as soon as a hop is slower than
 it is at the design's rate, and never at that rate. In the city at
@@ -3113,6 +3111,11 @@ is rejected. Which format a DATA and its ACK take is in
 a heartbeat says, and an old node still sees the neighbour. 13 bytes
 fill 6 blocks of symbols exactly at SF5, so the first byte appended
 costs a block, 1.28 ms.
+
+From the first node planted, any change to what a field of DATA or the
+ACK means, not only to where it is, takes a new format: an old node
+would read the new meaning as the old. Before that, format 1 was
+changed in place once, for the ACK's wait (roadmap D109).
 
 A heartbeat's third byte is its **flags**. Each says one thing about the
 sender and is set on its own:
