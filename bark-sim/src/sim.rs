@@ -467,6 +467,21 @@ pub struct MessageRow {
     pub holder_beats: u32,
     /// See `holder_beats`.
     pub holder_tries: u32,
+    /// The node that queued it for its destination, if one did.
+    pub holder: Option<u32>,
+    /// At the end of the run: whether its destination's anchor was that
+    /// holder, and whether its destination was sleepy.
+    pub holder_anchor_end: bool,
+    /// See `holder_anchor_end`.
+    pub dst_sleepy_end: bool,
+    /// When its destination last changed anchor, seconds into the run,
+    /// and how often it did.
+    pub dst_switch_s: Option<f64>,
+    /// See `dst_switch_s`.
+    pub dst_switches: u32,
+    /// Whether the holder and its destination's anchor at the end hear
+    /// each other.
+    pub holder_links_anchor_end: bool,
     /// Its destination node's beats at the holder while it was queued.
     pub watch: HolderWatch,
 }
@@ -743,6 +758,8 @@ pub struct Sim {
     pub(crate) clocks: Vec<Clock>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
+    /// Per node, when it last changed anchor, and how often.
+    anchor_switch: Vec<(Option<Instant>, u32)>,
     /// Since when each sleepy node has been without an anchor, past its
     /// first rotation; and every such spell that ended with an anchor, from
     /// when to when.
@@ -1315,6 +1332,7 @@ impl Sim {
                 .collect(),
             pending_boot: vec![true; n],
             first_anchor: vec![None; n],
+            anchor_switch: vec![(None, 0); n],
             anchorless_since: vec![None; n],
             spells: Vec::new(),
             skipped_at: Vec::new(),
@@ -3696,6 +3714,24 @@ impl Sim {
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
                 holder_tries: o.holder_tries,
+                holder: o.holder,
+                holder_anchor_end: o.holder.is_some_and(|h| {
+                    let id = self.relays[h as usize].id();
+                    self.relays[o.dst as usize]
+                        .anchor()
+                        .is_some_and(|a| a.id == id)
+                }),
+                dst_sleepy_end: self.relays[o.dst as usize].sleepy(),
+                dst_switch_s: self.anchor_switch[o.dst as usize]
+                    .0
+                    .map(|t| t.as_micros() as f64 / 1e6),
+                dst_switches: self.anchor_switch[o.dst as usize].1,
+                holder_links_anchor_end: o.holder.is_some_and(|h| {
+                    let anchor = self.relays[o.dst as usize]
+                        .anchor()
+                        .and_then(|a| self.relay_index.get(&key(a.id)).copied());
+                    anchor.is_some_and(|a| self.links.row(h).iter().any(|l| l.rx == a))
+                }),
                 watch: o.watch,
             })
             .collect()
@@ -3724,7 +3760,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere,offers,next_hops,flaps\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -3781,7 +3817,18 @@ impl Sim {
                 .offer_log
                 .get(&r.tag)
                 .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
-            s.push_str(&format!(",{},{offers},{hops},{flaps}\n", w.elsewhere));
+            s.push_str(&format!(
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{}\n",
+                w.elsewhere,
+                relay(r.holder),
+                r.holder_anchor_end,
+                r.dst_sleepy_end,
+                r.dst_switch_s
+                    .map(|t| format!("{t:.1}"))
+                    .unwrap_or_default(),
+                r.dst_switches,
+                r.holder_links_anchor_end
+            ));
         }
         s
     }
@@ -3893,6 +3940,8 @@ impl Sim {
         if *last != Some(p) {
             if last.is_some() {
                 self.metrics.nodes[node as usize].relay_changes += 1;
+                let w = &mut self.anchor_switch[node as usize];
+                *w = (Some(self.now), w.1 + 1);
                 if self.now >= self.settle {
                     self.metrics.sleep.anchor_changes += 1;
                 }
