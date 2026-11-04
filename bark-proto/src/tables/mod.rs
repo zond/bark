@@ -136,13 +136,9 @@ pub(crate) mod sizes {
         assert!(size_of::<busy::BusyEstimator>() <= 512);
     }
 
-    /// A send-queue entry; the research build `detour-silence` adds the
-    /// neighbours it goes round.
-    const OUTGOING: usize = if cfg!(feature = "detour-silence") {
-        304
-    } else {
-        296
-    };
+    /// A send-queue entry; the research builds `detour-silence` and
+    /// `detour-refusal` add the neighbours it goes round.
+    const OUTGOING: usize = if cfg!(feature = "detour") { 304 } else { 296 };
 
     /// The bytes of every table, each checked to be what its entries take
     /// and a few words of bookkeeping.

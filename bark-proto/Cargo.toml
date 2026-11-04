@@ -18,7 +18,9 @@ default = []
 std = []
 # Research build, not for the field: a forward whose hand-over goes unanswered goes round
 # that neighbour while its ban lasts (spec "Next hop").
-detour-silence = []
-# Research build, not for the field: as detour-silence, and a refused forward goes round the
-# refuser for the wait it told.
-detour-refusal = ["detour-silence"]
+detour-silence = ["detour"]
+# Research build, not for the field: a refused forward goes round the refuser for the wait it
+# told (spec "Next hop"). With detour-silence, both.
+detour-refusal = ["detour"]
+# What both research builds share: the neighbours a queued forward goes round.
+detour = []

@@ -853,8 +853,8 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// hours.
 #[test]
 #[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
+    any(feature = "detour-silence", feature = "detour-refusal"),
+    ignore = "the holds on silence and refusal; the research builds go round"
 )]
 fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     use bark_proto::tables::delivery::DELIVERY_QUEUE;

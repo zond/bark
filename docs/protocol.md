@@ -1805,10 +1805,11 @@ leaves no candidate, or only a last resort the neighbour was not, the
 message waits for the ban as above. A refusal does not set the bit: a
 refusing neighbour is there and hears this relay.
 
-*Research build `detour-refusal`, not for the field:* as `detour-silence`,
-and a refusal sets the bit too, so a refused forward or return goes
-round the refuser for the wait it told, choosing afresh among the
-others, and waits for it only where no other is left.
+*Research build `detour-refusal`, not for the field:* a refusal sets
+the same bit, so a refused forward or return goes round the refuser for
+the wait it told, choosing afresh among the others, and waits for it
+only where no other is left; a failure holds the message as above. Built
+with both features, a forward goes round on silence and on refusal.
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a

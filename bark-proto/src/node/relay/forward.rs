@@ -549,7 +549,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut hints = [None::<u16>; N];
         let mut toward = [0u8; N];
         let mut wake: Option<Instant> = None;
-        let still_banned = if cfg!(feature = "detour-silence") {
+        let still_banned = if cfg!(feature = "detour") {
             self.banned_slots(now)
         } else {
             0
@@ -778,7 +778,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// no other at all (roadmap D25, D29, D38). Bans do not enter: a banned
     /// next hop is waited for, not gone round (roadmap D106), but for the
     /// slots of `avoid`, gone round while banned where any other is left
-    /// (research build `detour-silence`).
+    /// (research builds `detour-silence` and `detour-refusal`).
     fn next_hop(
         &self,
         record: &Record,
@@ -2158,7 +2158,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let own_at_anchor = self.sleepy() && d.hops == 0;
                 if out.kind == Kind::Forward && !own_at_anchor {
                     self.passed_if_demoted(d.dst_hop, now);
-                    self.go_round(d.dst_hop);
+                    if cfg!(feature = "detour-silence") {
+                        // Research build: gone round while its ban lasts.
+                        self.go_round(d.dst_hop);
+                    }
                 }
                 let (passed, avoid) = self
                     .queue
