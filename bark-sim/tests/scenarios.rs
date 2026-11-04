@@ -698,6 +698,34 @@ fn strip_places_three_domains_and_a_centre() {
     assert_eq!(sc.settled_s(), 2700.0);
 }
 
+/// The district (`scenarios/district.toml`) is the city of
+/// `dense-power.toml` cut to a tenth of its area and switched on at once:
+/// everything else, the densities among it, stays the city's.
+#[test]
+fn district_is_a_tenth_of_the_city() {
+    let district = scenario("district.toml");
+    let mut city = scenario("dense-power.toml");
+    // A tenth of the city's 28 km² square.
+    let side = 5291.5 / 10f64.sqrt();
+    for p in &mut city.nodes {
+        if let Placement::Density {
+            width_m, height_m, ..
+        } = p
+        {
+            *width_m = (side * 10.0).round() / 10.0;
+            *height_m = *width_m;
+        }
+    }
+    city.name = district.name.clone();
+    city.duration_s = district.duration_s;
+    city.boot = district.boot;
+    assert_eq!(district, city);
+    assert_eq!(district.settled_s(), 900.0);
+    let n = district.placed().expect("places");
+    let people = n.iter().filter(|p| p.person).count();
+    assert_eq!((n.len() - people, people), (27, 2000));
+}
+
 /// S2 with a third of the sleepy nodes walking, on battery while they
 /// walk and on USB at their stops, and a third of the others switching
 /// at random (`[power]`, roadmap D71): nodes turn sleepy after their grace
