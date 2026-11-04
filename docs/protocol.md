@@ -1425,7 +1425,8 @@ rounded up:
 
 - For want of room it is the time until the bucket holds everything
   queued and the frame and its ACK, with the reply reserve left, if
-  nothing else comes.
+  nothing else comes; past the bucket's depth, until it has refilled all
+  of it, by when what is queued has gone.
 - The senders refused stand in line, each told one ban later than the
   one before, the time the bucket takes to refill the frame and ACK it
   will bring back, so they come back one after another as room frees.

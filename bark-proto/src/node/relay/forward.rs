@@ -442,11 +442,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let room = match reason {
             DropReason::Budget | DropReason::SendQueueFull => {
+                // Past the bucket's depth, what is queued goes as the
+                // bucket refills, so the time is the refill of all of it.
                 let queued = self.queue.airtime();
-                self.radio
-                    .budget
-                    .allowed_at(airtime, queued + ACK_AIRTIME + REPLY_RESERVE, now)
-                    .map_or(self.config.delivery_ttl, |t| t.since(now))
+                let need = airtime + queued + ACK_AIRTIME + REPLY_RESERVE;
+                self.radio.budget.refilled_at(need, now).since(now)
             }
             _ => BAN,
         };

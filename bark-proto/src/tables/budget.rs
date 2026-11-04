@@ -322,6 +322,17 @@ impl Budget {
         Some(now + Duration::from_micros((short as u64).div_ceil(RATE_NUM)))
     }
 
+    /// When the bucket will have refilled `need` beyond what it holds at
+    /// `now`, its depth aside: by then a node that sends as the bucket
+    /// allows has sent that much, if nothing else comes.
+    pub fn refilled_at(&self, need: Duration, now: Instant) -> Instant {
+        let short = units(need) - self.content(now);
+        if short <= 0 {
+            return now;
+        }
+        now + Duration::from_micros((short as u64).div_ceil(RATE_NUM))
+    }
+
     /// Record a transmission of `airtime` that started at `now`. Records it
     /// whether or not it was allowed: what went on air counts.
     pub fn record(&mut self, airtime: Duration, now: Instant) {
@@ -392,6 +403,21 @@ mod tests {
     #[test]
     fn heartbeat_reserve_is_one_heartbeat() {
         assert_eq!(HEARTBEAT_RESERVE, Duration::from_micros(14_400));
+    }
+
+    /// Past the bucket's depth, what a node needs is refilled at the
+    /// bucket's rate all the same: twice the depth takes two refills from
+    /// empty, less what the bucket holds.
+    #[test]
+    fn a_need_past_the_depth_is_a_longer_refill() {
+        let mut b = Budget::new();
+        let t = Instant::ZERO;
+        assert_eq!(b.refilled_at(DEPTH, t), t, "a full bucket holds its depth");
+        b.record(DEPTH, t);
+        let one = b.refilled_at(DEPTH, t).since(t).as_micros();
+        let two = b.refilled_at(DEPTH.mul(2), t).since(t).as_micros();
+        assert!(one.abs_diff(LONGEST_BAN.as_micros()) <= 1 && two.abs_diff(2 * one) <= 1);
+        assert_eq!(b.allowed_at(ms(0), DEPTH, t), Some(b.refilled_at(DEPTH, t)));
     }
 
     #[test]
