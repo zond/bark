@@ -158,6 +158,7 @@ S3 are the twins of bring-up steps 4, 5 and 3 (roadmap, Phase 2).
 | `dense.toml` | S4 with a quarter of the people's nodes as relays, 5317 in all | relays among the people, as on USB power; `dense-relays-2026-10-20.md` |
 | `dense-movers.toml` | `dense.toml` with a fifth of the people's relays walking and the GPS checks on | relays that move; `dense-relays-2026-10-20.md`, `carried-2026-10-21.md` |
 | `dense-power.toml` | `dense-movers.toml` with every walker on battery while it walks and on USB at its stops, and a fifth of the other people's nodes switching at random | a role that follows the power; `power-role-2026-10-21.md` |
+| `district.toml` | a tenth of `dense-power.toml`'s city, 2.8 km² at the same densities, every node switched on at once, half an hour | the city's behaviour near and above its capacity in minutes; `district-2026-11-04.md` |
 | `s4-boot.toml` | S4 with a dozen relays and a dozen sleepy nodes planted in its settled hour, and two dozen relays restarted, half with their stored state and half wiped | how soon a node switched on takes part; `fast-boot-2026-10-23.md` |
 | `s4-mass-boot.toml` | S4 with every node switched on in the same second | the boot after a power cut; `fast-boot-2026-10-23.md` |
 | `grid-down.toml` | S4 with every node's battery, and the grid down for four hours after an hour of the settled network | relays on battery in an outage; `battery-role-2026-10-25.md` |
