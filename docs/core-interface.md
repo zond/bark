@@ -135,11 +135,12 @@ It accepts a message from its boot on while it holds none, its send queue takes 
 frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
 for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
 bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
-it. A node whose remaining neighbours are all banned once it holds the message keeps it and
-tries again when the first ban ends, or later after refusals in a row
+it. A node whose message's next hop is banned once it holds the message keeps it and
+tries again when the ban ends, or later after refusals in a row
 (spec "Bans"); one for a sleepy node it holds for that finds the delivery
-queue full waits for a place (spec "Return to parent"). A sleepy node's own message that
-its first hop refuses goes back to the application (spec "A sleepy node's own message"):
+queue full waits for a place (spec "Return to parent"). A message the node's own gate refuses
+when it is offered (spec "Receiving DATA"), or a sleepy node's own message that
+its first hop refuses, goes back to the application (spec "A sleepy node's own message"):
 the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
 wait the refusal asked for, and `Trace::Dropped` with `DropReason::Pushback` for the log;
 `accepts_send` stays false until `retry_at`, which `next_wakeup()` includes. The driver
@@ -237,19 +238,19 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), the send-queue entry 288 B since 2026-11-02 (roadmap D102) and the neighbour's slot fields, 80 B, since 2026-11-02 (roadmap D105), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), the send-queue entry 296 B, with what it waited for and the neighbours it has passed, and the neighbour entry 104 B, with its service time and line, since 2026-11-03 (roadmap D106), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 80 B | 5.0 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 104 B | 6.5 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1571 × 40 B | 61.4 KiB |
-| Send queue (spec "Send queue") | (39 + 254) × 288 B | 82.4 KiB |
+| Send queue (spec "Send queue") | (39 + 254) × 296 B | 84.7 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **168.5 KiB** |
+| **All** | | **172.2 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -257,16 +258,16 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-173 608 B (169.5 KiB, measured 2026-11-02): the tables and, in under 1 KiB around them, the
+177 496 B (173.3 KiB, measured 2026-11-03): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 154 592 B (151.0 KiB), without the heard table and the delivery
+`SleepyNode` is 158 480 B (154.8 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 65 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 61 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -326,8 +327,9 @@ action at a time, and the core never allocates.
     bit 3 map point; the core sends the other bits zero and ignores them. The core sets
     the map point from its own position's source and keeps each neighbour's in
     `Neighbour::map_point`.
-  - An ACK's `aux` is 0 when it takes the offer and the wait the refuser asks for when
-    it refuses, 1 to 63 bans of 1.58 s (spec "Bans"); a seen ACK (spec "The ACK") has
+  - An ACK's `aux` is 0 when it takes the offer and the code of the wait the refuser
+    asks for when it refuses, 1 to 63, 1.58 s to 89 min (spec "Bans", `budget::told`);
+    a seen ACK (spec "The ACK") has
     the seen flag and `aux` 0, and one with the flag and a wait is rejected. Taken,
     refused or seen, an ACK is 18 bytes. A DATA's `aux` is the sender's home channel,
     and a DATA with either of the two high bits of `aux` set is rejected. A heartbeat is

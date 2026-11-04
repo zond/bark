@@ -128,7 +128,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// next beat, or the next offer of a message it waits to send.
     pub(super) fn radio_due(&self) -> Instant {
         let beat = self.radio.beacon.next_at.max(self.radio.beacon.ready_at);
-        let due = self.queue.earliest_due().map_or(beat, |t| t.min(beat));
+        let due = self.forwarding.wake.map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
 

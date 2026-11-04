@@ -7,7 +7,7 @@
 //! 6 s, over the time of one full frame and its ACK, `138.56 + 16.96 =
 //! 155.52 ms`: ⌈38.6⌉ = 39. Each packet taken also costs the ACK that
 //! takes it, so from a full bucket with the reply reserve left in at most
-//! 37 full frames fit, and for full frames the bucket binds first. Short
+//! 33 full frames fit, and for full frames the bucket binds first. Short
 //! frames fill the 39 places first: 39 hand-overs of them still go out
 //! in a few seconds.
 //!
@@ -26,9 +26,11 @@
 //!
 //! Each entry is a frame, what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"), and where
-//! its hand-over is ([`State`], `node/transfer.rs`). An entry whose
-//! receivers are all banned waits in its place until a ban ends (spec
-//! "Overload waits"). The next hand-over goes to a DATA to a sleepy node
+//! its hand-over is ([`State`], `node/transfer.rs`). Where a forward
+//! goes is not kept: the relay routes every entry each time it may send,
+//! and tells [`SendQueue::next_due`] which may go now; an entry whose
+//! next hop is banned waits in its place until the ban ends (spec
+//! "Overload waits", "Send queue"). The next hand-over goes to a DATA to a sleepy node
 //! if one is due, since its node listens only briefly (spec "Delivery");
 //! else to the first entry that is due, except that one that has waited
 //! goes first, the most travelled first: the place one higher is free
@@ -49,17 +51,27 @@ use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
+/// A full frame and the ACK that takes it, µs.
+const HAND_OVER_US: u64 = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+    + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
+
 /// Queue length for a bucket of `depth`; see the module documentation.
 pub const fn queue_for(depth: Duration) -> usize {
-    let per_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
-    depth.as_micros().div_ceil(per_frame) as usize
+    depth.as_micros().div_ceil(HAND_OVER_US) as usize
 }
 
 /// Queue length for the design's bucket (spec "Duty cycle cap").
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 39);
+
+/// The longest a relay lets a message wait here for its next hop, by the
+/// queue ahead of it for that hop, before it refuses it, unless its count
+/// is higher than every one of theirs (spec "Send queue"). Above the
+/// longest wait the city has at the design's rate, 20 to 30 s, and six
+/// times its 99.9th percentile, 5 s, so that it refuses only a hop slower
+/// than normal (roadmap D106).
+pub const HOP_WAIT: Duration = Duration::from_secs(30);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
@@ -68,10 +80,13 @@ pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A DATA to the next hop toward the destination (spec "Next hop"). Its next
-    /// hop is chosen when its hand-over starts, and again after a failure.
+    /// A message to send on. Where it goes, a neighbour or its parent, is
+    /// chosen from the state as it is when its hand-over starts (spec
+    /// "Next hop"); nothing of an earlier choice is kept.
     Forward,
-    /// A DATA back to the parent (spec "Return to parent"); dropped if it fails.
+    /// A forward whose hand-over goes back to the parent, from its start
+    /// to its end (spec "Return to parent"): dropped if it fails once the
+    /// parent is demoted or gone, else a forward again.
     Return,
     /// A DATA to a sleepy node this node holds a message for (spec "Delivery"); left in the delivery queue
     /// if it fails.
@@ -97,12 +112,6 @@ impl Kind {
 pub enum State {
     /// Waiting its turn, due at `not_before`.
     Queued,
-    /// A forward whose hand-over failed, waiting for the ban the
-    /// neighbour its frame is addressed to was given then, due at
-    /// `not_before`, when it is offered to that neighbour again, demoted
-    /// or not, unless the ban has grown meanwhile (spec "Hand-over" step
-    /// 6).
-    Holding,
     /// The application's message for a node this one holds for, set aside
     /// until the delivery queue has a place (spec "Return to parent"); it
     /// keeps its place and its airtime in admission.
@@ -152,14 +161,24 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
-    /// Failed hand-overs in a row of this entry to the neighbour its
-    /// frame is addressed to (spec "Hand-over" step 6); starts again when
-    /// it is addressed afresh.
-    pub failures: u8,
-    /// When a DATA's time left reaches zero (spec "Time to live");
-    /// [`Instant::MAX`] for a DATA to a sleepy node, which the delivery
-    /// queue's TTL ends.
-    pub expires: Instant,
+    /// It has waited for a ban: it goes first when the ban ends (spec
+    /// "Overload waits").
+    pub waited: bool,
+    /// Where its message's record was last found in the record table: a
+    /// hint, checked against the ID before it is used.
+    pub record: u16,
+    /// The neighbour-table slot, plus one, of where it was last routed;
+    /// 0 before it was. With `since`, how long it has waited for that
+    /// neighbour, a sample of the neighbour's service time when it takes
+    /// it (spec "Neighbour table").
+    pub toward: u8,
+    /// When it began to wait for that neighbour here: when it was queued,
+    /// or routed to another than before.
+    pub since: Instant,
+    /// The neighbours it held for through their demotion, one bit per
+    /// neighbour-table slot: tried for it while it is queued here, though
+    /// none has it (spec "Next hop").
+    pub passed: u64,
 }
 
 impl Outgoing {
@@ -172,8 +191,11 @@ impl Outgoing {
             not_before: Instant::ZERO,
             tries: 0,
             place: 0,
-            failures: 0,
-            expires: Instant::MAX,
+            waited: false,
+            record: 0,
+            toward: 0,
+            since: Instant::ZERO,
+            passed: 0,
         }
     }
 
@@ -185,7 +207,7 @@ impl Outgoing {
     /// Whether its hand-over is under way: addressed and waiting, on the
     /// radio or waiting for its ACK.
     pub fn in_flight(&self) -> bool {
-        !matches!(self.state, State::Queued | State::Holding | State::Held)
+        !matches!(self.state, State::Queued | State::Held)
     }
 
     /// The hop count the frame carries.
@@ -196,9 +218,9 @@ impl Outgoing {
         }
     }
 
-    /// Whether it has waited for a ban.
+    /// Whether it has waited for a ban, or a wait of its own.
     fn waited(&self) -> bool {
-        self.not_before > Instant::ZERO
+        self.waited || self.not_before > Instant::ZERO
     }
 
     /// The message the frame carries: a DATA's computed ID (roadmap D15).
@@ -349,24 +371,47 @@ impl SendQueue {
         Some(self.frames.remove(i))
     }
 
-    /// The entry the next hand-over goes to: a DATA to a sleepy node that
-    /// is due, the first; else of those that have waited and are due, the
-    /// most travelled, the earliest of equals; else the first that is due.
-    pub fn next_due(&self, now: Instant) -> Option<usize> {
+    /// The entry the next hand-over goes to, of those `sendable` says may
+    /// go now: a DATA to a sleepy node that is due, the first; else of
+    /// those that have waited and are due, the most travelled, the
+    /// earliest of equals; else the first that is due.
+    pub fn next_due(
+        &self,
+        now: Instant,
+        sendable: impl Fn(usize, &Outgoing) -> bool,
+    ) -> Option<usize> {
         // Asked on every event; mostly there is nothing queued.
         if self.is_empty() {
             return None;
         }
-        let due = |o: &Outgoing| !o.held() && o.not_before <= now;
+        let due = |i: usize, o: &Outgoing| !o.held() && o.not_before <= now && sendable(i, o);
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
         self.iter()
             .enumerate()
-            .filter(|(_, o)| due(o) && o.waited())
+            .filter(|&(i, o)| due(i, o) && o.waited())
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
-            .or_else(|| self.iter().position(due))
+            .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
+    }
+
+    /// Neighbour-table `slot` has a new occupant, which no entry has held
+    /// for.
+    pub fn slot_reoccupied(&mut self, slot: usize) {
+        for o in self.frames.as_mut_slice() {
+            o.passed &= !(1u64 << slot);
+        }
+    }
+
+    /// Entry `i`, to mark.
+    pub fn get_mut(&mut self, i: usize) -> Option<&mut Outgoing> {
+        self.frames.as_mut_slice().get_mut(i)
+    }
+
+    /// Entry `i`.
+    pub fn get(&self, i: usize) -> Option<&Outgoing> {
+        self.frames.as_slice().get(i)
     }
 
     /// The first DATA from the delivery queue that is due.
@@ -451,7 +496,7 @@ mod tests {
         let per = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS)
             + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         let fit = (DEPTH - REPLY_RESERVE).as_micros() / per.as_micros();
-        assert_eq!(fit, 37);
+        assert_eq!(fit, 33);
         assert!((fit as usize) < SEND_QUEUE);
     }
 
@@ -530,6 +575,12 @@ mod tests {
         assert_eq!(q.free_place(3, None), Some(3));
     }
 
+    impl SendQueue {
+        fn next_due_all(&self, now: Instant) -> Option<usize> {
+            self.next_due(now, |_, _| true)
+        }
+    }
+
     /// A DATA frame with `hops` that has waited until `due` ms, if given.
     fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
         use crate::ids::NodeId;
@@ -570,14 +621,14 @@ mod tests {
         q.push(data(2, 5, Some(10))).unwrap();
         q.push(data(3, 5, Some(10))).unwrap();
         q.push(data(4, 9, Some(20))).unwrap();
-        assert_eq!(q.next_due(t(5)), Some(0), "none has waited its time");
-        assert_eq!(q.next_due(t(10)), Some(2), "the earlier of equals");
-        assert_eq!(q.next_due(t(20)), Some(4));
+        assert_eq!(q.next_due_all(t(5)), Some(0), "none has waited its time");
+        assert_eq!(q.next_due_all(t(10)), Some(2), "the earlier of equals");
+        assert_eq!(q.next_due_all(t(20)), Some(4));
         q.select(4);
         q.take_current();
-        assert_eq!(q.next_due(t(20)), Some(2));
+        assert_eq!(q.next_due_all(t(20)), Some(2));
         q.retain(|_, o| !o.waited());
-        assert_eq!(q.next_due(t(20)), Some(0), "the one that never waited");
+        assert_eq!(q.next_due_all(t(20)), Some(0), "the one that never waited");
     }
 
     #[test]
@@ -590,11 +641,11 @@ mod tests {
             q.push(o).unwrap();
         }
         assert_eq!(q.earliest_due(), Some(t(0)));
-        assert_eq!(q.next_due(t(5)), Some(2));
-        assert_eq!(q.next_due(t(10)), Some(1));
+        assert_eq!(q.next_due_all(t(5)), Some(2));
+        assert_eq!(q.next_due_all(t(10)), Some(1));
         q.select(1);
         assert_eq!(tags(&q), [1, 2, 3], "chosen, not moved");
         q.retain(|_, _| false);
-        assert_eq!(q.next_due(t(100)), None);
+        assert_eq!(q.next_due_all(t(100)), None);
     }
 }

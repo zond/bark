@@ -51,7 +51,9 @@
 //!   after the DATA header.
 //! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
 //! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
-//!   wait the refuser asks for in whole bans, 1 to 63 (`tables/budget.rs`).
+//!   code of the wait the refuser asks for, 1 to 63: 1 to 16 bans one ban
+//!   apart, then each an eighth longer, up to 89 min (`tables/budget.rs`
+//!   `told`).
 //!   The wait needs no byte of its own, so every ACK has one length and
 //!   one airtime. The seen flag is the top bit, where a heartbeat has its
 //!   kind, so the kind `11` that was free is the seen ACK; a seen ACK's
@@ -63,8 +65,8 @@
 //! - A heartbeat byte whose channel is 15, which no node sends, starts the
 //!   firmware's bench frames ([`BENCH_FIRST`]); nodes reject it as a
 //!   channel outside the plan.
-//! - DATA `time_left` is the time the message has left, in whole
-//!   [`TTL_UNIT`]s, rounded down.
+//! - DATA `time_left` is written once by the origin, the delivery TTL in
+//!   [`TTL_UNIT`]s, and passed on unread (spec "Time to live").
 //! - An ACK with trailing bytes is malformed, not padded. A heartbeat is
 //!   read from its first [`HEARTBEAT_LEN`] bytes, and what follows is
 //!   ignored, so that a later format may append fields.
@@ -98,7 +100,7 @@ const HEARTBEAT_BIT: u8 = 0x80;
 // In an ACK, the top bit is the seen flag (spec "The ACK").
 const SEEN_BIT: u8 = HEARTBEAT_BIT;
 /// The bits of `aux`, below the kind bits (spec "Packet formats"): the
-/// longest wait an ACK asks for, in bans.
+/// code of the longest wait an ACK asks for.
 pub const AUX_MASK: u8 = 0x3f;
 // A heartbeat's channel, below two bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
@@ -219,8 +221,9 @@ pub struct Ack {
     pub to: NodeId,
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
-    /// For a refusal, the wait the refuser asks for in whole bans, 1 to
-    /// [`AUX_MASK`] (spec "Bans"); 0 in an ACK that takes or has seen.
+    /// For a refusal, the code of the wait the refuser asks for, 1 to
+    /// [`AUX_MASK`] (spec "Bans", `tables/budget.rs` `told`); 0 in an ACK
+    /// that takes or has seen.
     pub wait: u8,
     /// Seen, not taken (spec "Receiving DATA" case 6): `from` has the
     /// message's record and no copy of it, and `to` goes on to its next
@@ -252,16 +255,15 @@ pub struct Data<'a> {
     pub dst_id: NodeId,
     /// Hand-overs so far (spec "Hop count").
     pub hops: u8,
-    /// The time the message has left, in [`TTL_UNIT`]s (spec "Time to live").
+    /// The delivery TTL in [`TTL_UNIT`]s as its origin wrote it, passed on
+    /// unread (spec "Time to live").
     pub time_left: u8,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
 }
 
-/// Unit of DATA's time left (spec "Packet formats"). Each node rounds the time
-/// down when it sends, so each hand-over loses up to one unit; 2.5 s is
-/// the finest unit at which one byte holds the delivery TTL, 600 s, as 240
-/// (spec "Receiving DATA").
+/// Unit of DATA's `time_left` (spec "Packet formats"): the finest at which
+/// one byte holds the delivery TTL, 600 s, as 240.
 pub const TTL_UNIT: Duration = Duration::from_millis(2500);
 
 impl Data<'_> {
@@ -270,13 +272,13 @@ impl Data<'_> {
         MsgId::of(self.dst_pos, self.dst_id, self.payload)
     }
 
-    /// The time the message has left.
+    /// `time_left` as a duration.
     pub const fn time_left(&self) -> Duration {
         TTL_UNIT.mul(self.time_left as u64)
     }
 
-    /// `left` in whole [`TTL_UNIT`]s, rounded down, so that no node keeps
-    /// a message longer than it had, and capped at what the field holds.
+    /// `left` in whole [`TTL_UNIT`]s, rounded down, and capped at what the
+    /// field holds.
     pub const fn units(left: Duration) -> u8 {
         let u = left.as_micros() / TTL_UNIT.as_micros();
         if u > u8::MAX as u64 {

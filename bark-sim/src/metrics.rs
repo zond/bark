@@ -10,6 +10,7 @@
 
 use crate::phy::Deaf;
 use bark_proto::radio::CHANNELS;
+use bark_proto::time::Duration;
 use serde::Serialize;
 
 const NCH: usize = CHANNELS as usize;
@@ -553,6 +554,10 @@ pub struct DropCounts {
     pub budget: u64,
     /// Fresh work refused while every way on was banned (spec "Receiving DATA").
     pub banned: u64,
+    /// Refused while another message here went to the same next hop
+    /// (spec "Receiving DATA"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub same_hop: u64,
     /// The return to the parent failed (spec "Return to parent").
     pub return_failed: u64,
     /// The parent answered the return seen (spec "Return to parent");
@@ -561,8 +566,6 @@ pub struct DropCounts {
     pub return_seen: u64,
     /// The delivery TTL ran out (spec "Delivery queue").
     pub queue_expired: u64,
-    /// Its time left ran out on the way (spec "Time to live").
-    pub expired: u64,
     /// The delivery queue was full (spec "Delivery queue").
     pub delivery_full: u64,
     /// The payload was too long (spec "Packet formats").
@@ -596,10 +599,10 @@ impl DropCounts {
             DropReason::SendQueueFull => &mut self.send_queue_full,
             DropReason::Budget => &mut self.budget,
             DropReason::Banned => &mut self.banned,
+            DropReason::SameHop => &mut self.same_hop,
             DropReason::ReturnFailed => &mut self.return_failed,
             DropReason::ReturnSeen => &mut self.return_seen,
             DropReason::QueueExpired => &mut self.queue_expired,
-            DropReason::Expired => &mut self.expired,
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::Pushback => &mut self.pushback,
@@ -609,23 +612,64 @@ impl DropCounts {
         *c += 1;
     }
 
+    /// Every counter with its name, as in the JSON output.
+    pub fn fields(&self) -> [(&'static str, u64); 15] {
+        [
+            ("no_route", self.no_route),
+            ("hop_cap", self.hop_cap),
+            ("no_record", self.no_record),
+            ("send_queue_full", self.send_queue_full),
+            ("budget", self.budget),
+            ("banned", self.banned),
+            ("same_hop", self.same_hop),
+            ("return_failed", self.return_failed),
+            ("return_seen", self.return_seen),
+            ("queue_expired", self.queue_expired),
+            ("delivery_full", self.delivery_full),
+            ("payload_too_long", self.payload_too_long),
+            ("pushback", self.pushback),
+            ("unplugged", self.unplugged),
+            ("unanswered", self.unanswered),
+        ]
+    }
+
+    /// The counters that are not zero, with their names.
+    pub fn nonzero(&self) -> Vec<(&'static str, u64)> {
+        self.fields().into_iter().filter(|&(_, n)| n > 0).collect()
+    }
+
+    /// These counts less `other`'s, counter by counter.
+    pub fn minus(&self, other: &DropCounts) -> DropCounts {
+        let mut out = *self;
+        let o = other.fields();
+        for (c, (_, n)) in [
+            &mut out.no_route,
+            &mut out.hop_cap,
+            &mut out.no_record,
+            &mut out.send_queue_full,
+            &mut out.budget,
+            &mut out.banned,
+            &mut out.same_hop,
+            &mut out.return_failed,
+            &mut out.return_seen,
+            &mut out.queue_expired,
+            &mut out.delivery_full,
+            &mut out.payload_too_long,
+            &mut out.pushback,
+            &mut out.unplugged,
+            &mut out.unanswered,
+        ]
+        .into_iter()
+        .zip(o)
+        {
+            *c = c.saturating_sub(n);
+        }
+        out
+    }
+
     /// Total.
     pub fn total(&self) -> u64 {
-        self.no_route
-            + self.hop_cap
-            + self.no_record
-            + self.send_queue_full
-            + self.budget
-            + self.banned
-            + self.return_failed
-            + self.return_seen
-            + self.queue_expired
-            + self.expired
-            + self.delivery_full
-            + self.payload_too_long
-            + self.pushback
-            + self.unplugged
-            + self.unanswered
+        self.fields().iter().map(|&(_, n)| n).sum::<u64>()
     }
 }
 
@@ -1209,8 +1253,8 @@ pub struct Metrics {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: RecordsLost,
-    /// Refusals sent, by the wait each told, in the units on the wire
-    /// (spec "Bans").
+    /// Refusals sent, by the wait each told, by its code on the wire
+    /// (spec "Bans", `budget::told`).
     pub told_waits: Vec<u64>,
     /// Seen ACKs transmitted (spec "The ACK").
     pub seen_acks_sent: u64,
@@ -1219,6 +1263,9 @@ pub struct Metrics {
     pub taken_at_attempt: Vec<u64>,
     /// Messages held on a neighbour after a failed hand-over.
     pub holds: Holds,
+    /// What pushback costs: silences, flaps, demoted neighbours that
+    /// answer again.
+    pub pressure: Pressure,
     /// Busy-time observers.
     pub observers: Vec<Observer>,
     /// Time series.
@@ -1229,6 +1276,76 @@ pub struct Metrics {
     /// The research models.
     pub research: Research,
     last_sample: SampleMark,
+}
+
+/// Counters of what pushback costs, for counting only (roadmap D106).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Pressure {
+    /// DATA addressed to a node that it did not answer for want of reply
+    /// budget (spec "Duty cycle cap").
+    pub silent_budget: u64,
+    /// The same, because another reply was owed (spec "The ACK").
+    pub silent_owed: u64,
+    /// Offers of a message to a neighbour, then another, then the first
+    /// again, at one relay.
+    pub flaps: u64,
+    /// Demotions of a neighbour not already demoted and unanswered.
+    pub demotions: u64,
+    /// Of them, answered by the neighbour, by the time from the demotion
+    /// to the answer: under 1.58 s (a ban), 5 s, 15 s, 60 s, 390 s (a
+    /// demotion's length), and later.
+    pub answered_within: [u64; 6],
+    /// Refusals for want of the way on that gave a place in its line
+    /// (spec "Bans"), by the wait told, in bans: 1, 2–3, 4–7 and so on
+    /// doubling, 2048 and more.
+    pub line_waits: [u64; 12],
+    /// The same, by the service time the place was spaced by, in bans:
+    /// under 1, 1, 2–3, 4–7 and so on doubling, 32 and more.
+    pub line_service: [u64; 7],
+    /// Of `line_service`, at a relay at its cap.
+    pub line_service_at_cap: [u64; 7],
+    /// Messages to send on that the gate weighed after the settle time,
+    /// by their wait here for their way on, at the edges of
+    /// [`Pressure::WAIT_EDGES`]: `[taken by the gate, refused]`.
+    pub way_waits: [[u64; 12]; 2],
+}
+
+impl Pressure {
+    /// Edges of `answered_within`, seconds.
+    pub const EDGES: [f64; 5] = [1.58, 5.0, 15.0, 60.0, 390.0];
+
+    /// Edges of `way_waits`, seconds.
+    pub const WAIT_EDGES: [f64; 11] = [
+        0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+    ];
+
+    /// The gate found a message's wait for its way `wait`, and refused
+    /// it or not.
+    pub fn way_wait(&mut self, wait: Duration, refused: bool) {
+        let s = wait.as_micros() as f64 / 1e6;
+        let i = Self::WAIT_EDGES.iter().take_while(|&&e| s >= e).count();
+        self.way_waits[usize::from(refused)][i] += 1;
+    }
+
+    /// A refusal for want of the way on told `wait`, its place spaced by
+    /// `service`, at a relay `at_cap` or not.
+    pub fn in_line(&mut self, wait: Duration, service: Duration, at_cap: bool) {
+        let bans = |d: Duration| d.as_micros() / bark_proto::tables::budget::BAN.as_micros();
+        let bin = |b: u64| ((u64::BITS - b.leading_zeros()) as usize).min(6);
+        let wide = ((u64::BITS - bans(wait).leading_zeros()) as usize).min(12);
+        self.line_waits[wide.saturating_sub(1)] += 1;
+        let s = bin(bans(service));
+        self.line_service[s] += 1;
+        if at_cap {
+            self.line_service_at_cap[s] += 1;
+        }
+    }
+
+    /// A demoted neighbour answered `s` seconds after its demotion.
+    pub fn answered_after(&mut self, s: f64) {
+        let i = Self::EDGES.iter().take_while(|&&e| s >= e).count();
+        self.answered_within[i] += 1;
+    }
 }
 
 /// What holding a message on a neighbour after a failed hand-over does
@@ -1404,6 +1521,28 @@ pub fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_place_in_line_falls_in_its_bins() {
+        use bark_proto::tables::budget::BAN;
+        let mut p = Pressure::default();
+        p.in_line(BAN, BAN.div(2), false);
+        p.in_line(BAN.mul(3), BAN.mul(2), true);
+        p.in_line(BAN.mul(63), BAN.mul(63), true);
+        p.in_line(BAN.mul(3000), BAN.mul(63), true);
+        assert_eq!(p.line_waits, [1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(p.line_service, [1, 0, 1, 0, 0, 0, 2]);
+        assert_eq!(p.line_service_at_cap, [0, 0, 1, 0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn an_answer_after_a_demotion_falls_in_its_bin() {
+        let mut p = Pressure::default();
+        for s in [0.5, 1.58, 4.9, 14.0, 59.0, 389.0, 400.0] {
+            p.answered_after(s);
+        }
+        assert_eq!(p.answered_within, [1, 2, 1, 1, 1, 1]);
+    }
 
     #[test]
     fn outcomes_balance_candidates() {

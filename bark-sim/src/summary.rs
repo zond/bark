@@ -51,6 +51,9 @@ pub struct AppSummary {
     pub drops: DropCounts,
     /// Messages whose last reported fate is a drop, by reason.
     pub lost_dropped: DropCounts,
+    /// Of those, the ones dropped by a node other than their origin: lost
+    /// in the network rather than refused or given up where they began.
+    pub lost_in_network: DropCounts,
     /// Every message lost, by where and why: `"<node>: <reason>"`.
     pub lost_at: BTreeMap<String, u64>,
     /// Messages not sent because their destination had no address yet.
@@ -345,8 +348,8 @@ pub struct Summary {
     pub hop_places: HopPlaceRefusals,
     /// DATA for messages whose record their receiver had lost.
     pub records_lost: crate::metrics::RecordsLost,
-    /// Refusals sent, by the wait each told, in the units on the wire
-    /// (spec "Bans").
+    /// Refusals sent, by the wait each told, by its code on the wire
+    /// (spec "Bans", `budget::told`).
     pub told_waits: Vec<u64>,
     /// Seen ACKs (spec "The ACK"); left out of runs without one.
     #[serde(skip_serializing_if = "SeenAcks::none")]
@@ -357,6 +360,9 @@ pub struct Summary {
     /// Messages held on a neighbour after a failed hand-over
     /// (`metrics::Holds`), and how long.
     pub holds: HoldsSummary,
+    /// Silences, flaps and demoted neighbours answering again
+    /// (`metrics::Pressure`).
+    pub pressure: crate::metrics::Pressure,
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
@@ -398,6 +404,14 @@ impl Sim {
             }
             if let Some(at) = self.lost_label(f) {
                 *lost_at.entry(at).or_insert(0) += 1;
+            }
+        }
+        let mut lost_in_network = DropCounts::default();
+        for r in self.message_rows() {
+            if let Fate::Dropped { node, reason } = r.fate {
+                if node != r.src {
+                    lost_in_network.add(reason);
+                }
             }
         }
         let mut offers = Offers {
@@ -487,6 +501,7 @@ impl Sim {
                 shared_ids: m.app.shared_ids,
                 drops: m.app.drops,
                 lost_dropped,
+                lost_in_network,
                 lost_at,
                 unaddressed: m.app.unaddressed,
                 in_flight,
@@ -538,6 +553,7 @@ impl Sim {
             },
             taken_at_attempt: m.taken_at_attempt.clone(),
             holds: HoldsSummary::of(&m.holds),
+            pressure: m.pressure.clone(),
             addressed: m.addressed,
             channels,
             observers,
@@ -851,6 +867,16 @@ impl Summary {
                 a.unaddressed
             );
         }
+        for (what, counts) in [
+            ("at the origin", a.lost_dropped.minus(&a.lost_in_network)),
+            ("in the network", a.lost_in_network),
+        ] {
+            let causes = counts.nonzero();
+            if !causes.is_empty() {
+                let list: Vec<String> = causes.iter().map(|(k, n)| format!("{k} {n}")).collect();
+                let _ = writeln!(s, "lost {what}, by cause: {}", list.join(", "));
+            }
+        }
         for (at, n) in &a.lost_at {
             let _ = writeln!(s, "  lost {n:>5} at {at}");
         }
@@ -1032,6 +1058,44 @@ impl Summary {
                 s,
                 "seen ACKs: {} sent, {} acted on",
                 self.seen.sent, self.seen.acted
+            );
+        }
+        let p = &self.pressure;
+        if p.silent_budget + p.silent_owed + p.flaps + p.demotions > 0 {
+            let a = p.answered_within;
+            let _ = writeln!(
+                s,
+                "DATA unanswered for want of reply budget {}, for a reply owed {}; offers to A, another, A again {}; demotions {}, answered within 1.58 / 5 / 15 / 60 / 390 s / later {} / {} / {} / {} / {} / {}, not answered {}",
+                p.silent_budget,
+                p.silent_owed,
+                p.flaps,
+                p.demotions,
+                a[0],
+                a[1],
+                a[2],
+                a[3],
+                a[4],
+                a[5],
+                p.demotions - a.iter().sum::<u64>()
+            );
+        }
+        if p.line_waits.iter().sum::<u64>() > 0 {
+            let list = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(" / ");
+            let _ = writeln!(
+                s,
+                "places in a way's line: told 1 / 2-3 / 4-7 / ... / 1024-2047 / 2048+ bans {}; spaced by under 1 / 1 / 2-3 / 4-7 / 8-15 / 16-31 / 32+ bans {}, at the cap {}",
+                list(&p.line_waits),
+                list(&p.line_service),
+                list(&p.line_service_at_cap)
+            );
+        }
+        if p.way_waits.iter().flatten().sum::<u64>() > 0 {
+            let list = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(" / ");
+            let _ = writeln!(
+                s,
+                "wait for the way on at the gate, settled: under 0.5 / 1 / 2 / 5 / 10 / 20 / 30 / 60 / 120 / 300 / 600 s / more: taken {}; refused {}",
+                list(&p.way_waits[0]),
+                list(&p.way_waits[1])
             );
         }
         if let Some(held) = &self.holds.held {

@@ -62,7 +62,8 @@ pub struct Config {
     /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,
     /// 155.52 ms; `tables::RETRY_BACKOFF`).
     pub retry_backoff: Duration,
-    /// Failed transfers before a neighbour is demoted (spec "Neighbour table": 2).
+    /// Failed hand-overs in a row before a neighbour is demoted (spec
+    /// "Neighbour table": 3; `tables::DEMOTE_AFTER_FAILURES`).
     pub demote_after_failures: u8,
     /// Neighbour expiry in heartbeat rotations (spec "Neighbour table": 3, ≈400 s).
     pub neighbour_expiry_rotations: u8,
@@ -288,13 +289,13 @@ impl Config {
         node_id: NodeId::NONE,
         sleepy_listens: false,
         tx_power_dbm: 10,
-        heartbeat_min: Duration::from_secs(5),
+        heartbeat_min: crate::tables::budget::HEARTBEAT_EVERY,
         heartbeat_max: HEARTBEAT_MAX,
         ack_timeout: crate::tables::ACK_TIMEOUT,
         hop_attempts: crate::tables::HOP_ATTEMPTS,
         hop_backoff_max: Duration::from_millis(50),
         retry_backoff: crate::tables::RETRY_BACKOFF,
-        demote_after_failures: 2,
+        demote_after_failures: crate::tables::DEMOTE_AFTER_FAILURES,
         neighbour_expiry_rotations: 3,
         demotion_rotations: 3,
         fade_retry: Duration::from_secs(60),

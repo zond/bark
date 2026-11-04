@@ -162,6 +162,10 @@ pub enum DropReason {
     /// Fresh work, and every neighbour that could take it is banned
     /// (spec "Receiving DATA"). Refused.
     Banned,
+    /// The messages queued here for its next hop would make it wait
+    /// longer than a hop's budget, and one of them has come as far or
+    /// farther (spec "Receiving DATA", "Send queue"). Refused.
+    SameHop,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").
     ReturnFailed,
     /// The parent answered the return seen: it has gone on without this
@@ -170,15 +174,13 @@ pub enum DropReason {
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
-    /// Its time left ran out before it reached its owner (spec "Time to live").
-    Expired,
     /// The delivery queue had no room for it (spec "Delivery queue").
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
-    /// A sleepy node's own message, refused with a wait: given back to its
+    /// The application's message, refused with a wait: given back to its
     /// application, which may offer it again after that wait
-    /// (spec "A sleepy node's own message").
+    /// (spec "A sleepy node's own message", "Receiving DATA").
     Pushback,
     /// Held for a sleepy node by a node that turned sleepy itself, which
     /// holds nothing (spec "Delivery queue").
@@ -205,10 +207,11 @@ pub enum AppEvent {
         /// Opaque payload; only `..len` is meaningful.
         payload: [u8; MAX_FRAME],
     },
-    /// A sleepy node's own message, refused by its first hop, is the
-    /// application's again: the node takes none before `retry_at`, and the
-    /// application may offer it again then or give it up
-    /// (spec "A sleepy node's own message").
+    /// The application's message, refused by the node's own gate or, a
+    /// sleepy node's, by its first hop, is the application's again: the
+    /// node takes none before `retry_at`, and the application may offer
+    /// it again then or give it up (spec "Receiving DATA",
+    /// "A sleepy node's own message").
     GivenBack {
         /// Its id.
         msg_id: MsgId,
@@ -406,10 +409,10 @@ pub enum Trace {
         msg_id: MsgId,
         /// The neighbour.
         to: NodeId,
-        /// The neighbour has failed enough in a row that the message
-        /// moves on: a forward chooses its next hop at once, a return is
-        /// dropped. Otherwise it waits for the ban and is offered to the
-        /// same neighbour again.
+        /// The neighbour is demoted or gone, so the message moves on: a
+        /// forward chooses its next hop at once, a return is dropped.
+        /// Otherwise it waits for the ban and is offered to the same
+        /// neighbour again.
         moves_on: bool,
     },
     /// A neighbour reached the demotion threshold and is no longer a next
@@ -417,6 +420,42 @@ pub enum Trace {
     Demoted {
         /// The neighbour.
         neighbour: NodeId,
+    },
+    /// The gate found a message's wait here for its way on, by the queue
+    /// ahead of it (spec "Send queue"); for counting only.
+    WayWait {
+        /// The wait.
+        wait: Duration,
+        /// It passed the budget and the message was refused.
+        refused: bool,
+    },
+    /// A refusal for want of a way on gave its sender a place in that
+    /// neighbour's line (spec "Bans"); for counting only.
+    InLine {
+        /// The neighbour, the way on.
+        neighbour: NodeId,
+        /// The wait told.
+        wait: Duration,
+        /// The service time the place was spaced by.
+        service: Duration,
+        /// This relay could not send a full frame with the reply reserve
+        /// left: it is at its cap (spec "Duty cycle cap").
+        at_cap: bool,
+    },
+    /// A neighbour demoted since it last answered this relay answered it
+    /// (spec "Neighbour table"); for counting only.
+    Answered {
+        /// The neighbour.
+        neighbour: NodeId,
+    },
+    /// A DATA addressed to this node went unanswered: its reply could
+    /// not be afforded, or, with `owed`, another reply was owed (spec
+    /// "The ACK"); for counting only.
+    Silent {
+        /// Its message.
+        msg_id: MsgId,
+        /// Another reply was owed.
+        owed: bool,
     },
     /// The node a message was held for took it (spec "Delivery").
     Delivered {

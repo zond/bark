@@ -290,10 +290,7 @@ impl Sim {
         chm.airtime_us += air;
         chm.airtime_by_type.add(decoded.as_ref(), preamble, air);
         if let Some((id, hops, kind)) = msg {
-            let to_dst = match decoded {
-                Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id => Some(d.time_left()),
-                _ => None,
-            };
+            let to_dst = matches!(decoded, Some(WirePacket::Data(d)) if d.dst_hop == d.dst_id);
             self.message_frame(id, hops, air, src, kind, to_dst);
         }
         match decoded {
@@ -321,7 +318,9 @@ impl Sim {
                     }
                 }
                 if a.refused {
-                    let w = (u8::BITS - a.wait.leading_zeros()).min(7) as usize;
+                    use bark_proto::tables::budget::{told, BAN};
+                    let bans = told(a.wait).as_micros() / BAN.as_micros();
+                    let w = (u64::BITS - bans.leading_zeros()).min(7) as usize;
                     self.metrics.addressed.refusal_steps[w] += 1;
                     if let Some(h) = hops {
                         let k = match h {

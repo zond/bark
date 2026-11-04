@@ -812,7 +812,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.grace_ends(),
             self.flush_ends(),
             self.gps_wakeup(),
-            self.forward_deadline(),
             self.delivery_wakeup(),
             self.next_slot_edge(),
         ]
@@ -883,8 +882,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
                 // A waiting entry, once nothing else is under way.
                 let queued = self
-                    .queue
-                    .earliest_due()
+                    .forwarding
+                    .wake
                     .filter(|_| self.handover_idle() && free);
                 earlier(flight, queued)
             }
@@ -918,7 +917,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
-            Ok(Packet::Data(d)) if d.dst_hop == self.me() => self.data(d, now, emit),
+            Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
+                // It chose this node as its next hop, from heartbeats it
+                // heard, and sends on this channel now: it hears us
+                // (spec "Neighbour table").
+                self.answer_from(d.src_hop, now, emit);
+                self.data(d, now, emit)
+            }
             _ => {}
         }
     }

@@ -17,14 +17,16 @@
 //! 3, 390 s).
 //!
 //! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
-//! (spec "Neighbour table": 2) the neighbour is demoted: a next hop only when no other with
+//! (spec "Neighbour table": 3) the neighbour is demoted: a next hop only when no other with
 //! margin is left (spec "Next hop", roadmap D25). Demotion ends
-//! when the neighbour ACKs a packet from this relay, which resets
-//! `fail_count` because spec "Neighbour table" counts consecutive failures, or
-//! `demotion_rotations` rotations (3, 390 s) after the failure that
-//! demoted it; then `fail_count` starts again from zero. A heartbeat
-//! refreshes the entry but leaves `fail_count` alone (roadmap D18): it
-//! proves the neighbour is alive, not that it hears us.
+//! when the neighbour answers this relay, an ACK to it that takes,
+//! refuses or has seen a packet, or a DATA it addresses to it, which
+//! resets `fail_count`, since failures count only in a row with no answer
+//! between (roadmap D106); or `demotion_rotations` rotations (3, 390 s)
+//! after the failure that demoted it; then `fail_count` starts again from
+//! zero. A heartbeat, or a frame it sends to another node, refreshes the
+//! entry but leaves `fail_count` alone (roadmap D18): it proves the
+//! neighbour is alive, not that it hears us.
 //!
 //! # Margin (roadmap D38)
 //!
@@ -54,11 +56,17 @@
 //! to the bucket's refill (roadmap D42). A refusal measures what the
 //! receiver's bucket lacks; silence says only that the channel or the
 //! receiver is full, and not how full, so the sender backs off further
-//! each time. An ACK that takes a packet resets `fail_count`, and so the
+//! each time. Any answer to this relay resets `fail_count`, and so the
 //! ladder.
 //!
 //! [`BAN`]: crate::tables::budget::BAN
 //! [`hold`]: crate::tables::budget::hold
+//!
+//! # Service time
+//!
+//! Each entry keeps how long this relay takes to get one message through
+//! to the neighbour ([`Neighbours::took`], spec "Neighbour table"): what
+//! a sender refused for want of that way can be told it will wait.
 //!
 //! # Eviction (roadmap D12)
 //!
@@ -126,7 +134,7 @@ use crate::node::{heartbeat_lag, Config, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::radio::{full_frame_rssi_above_noise_db, Channel, CHANNELS};
 use crate::sniff::anchorless_beat_period;
-use crate::tables::budget::hold;
+use crate::tables::budget::{hold, BAN, LONGEST_BAN, LONGEST_TOLD};
 use crate::tables::heard::beat_period;
 use crate::time::{Duration, Instant};
 use crate::wire::Heartbeat;
@@ -199,6 +207,16 @@ pub struct Neighbour {
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
     pub answered: u8,
+    /// Its service time ([`Neighbours::took`]), in [`SERVICE_UNIT`]s.
+    pub service: u32,
+    /// The waits its refusals told this relay since its last take, in
+    /// [`SERVICE_UNIT`]s ([`Neighbours::told`]).
+    pub told: u32,
+    /// When it last took a hand-over from this relay.
+    pub taken_at: Instant,
+    /// When the line of senders this relay refused for it ends
+    /// ([`Neighbours::place_in_line`]).
+    pub line_end: Instant,
 }
 
 impl Neighbour {
@@ -212,6 +230,12 @@ impl Neighbour {
     /// anchor for a sleepy node, and a next hop like any other.
     pub fn alone(&self) -> bool {
         self.sleepy && self.anchorless
+    }
+
+    /// Its service time: the average time this relay takes to get one
+    /// message through to it ([`Neighbours::took`]).
+    pub fn service(&self) -> Duration {
+        SERVICE_UNIT.mul(self.service as u64)
     }
 
     /// Whether it is not sleepy: it listens all the time.
@@ -233,6 +257,25 @@ impl Neighbour {
         self.alone() && self.beats >= BEATS
     }
 }
+
+/// The unit of a service time: 1/1024 of a ban, 1.5 ms, far below the
+/// ban in which waits are told (spec "Neighbour table").
+pub const SERVICE_UNIT: Duration = BAN.div(1024);
+
+/// A service time before any take: one ban, the least wait a refusal
+/// tells (spec "Bans").
+const FIRST_SERVICE: u32 = 1024;
+
+/// How many takes the service time remembers: as many as a neighbour at
+/// its cap takes while its bucket refills from empty, one a ban for
+/// [`LONGEST_BAN`], 39 (spec "Neighbour table").
+pub const SERVICE_TAKES: u64 = LONGEST_BAN.as_micros().div_ceil(BAN.as_micros());
+
+const _: () = assert!(SERVICE_TAKES == 39);
+const _: () = assert!(
+    LONGEST_TOLD.as_micros() / SERVICE_UNIT.as_micros() <= u32::MAX as u64,
+    "the longest told wait fits a service time"
+);
 
 /// The heartbeats counted per neighbour: a sleepy node switches to a
 /// stronger node only once it has heard two of its heartbeats
@@ -503,6 +546,10 @@ impl Neighbours {
             slotted: false,
             away_base: None,
             answered: 0,
+            service: FIRST_SERVICE,
+            told: 0,
+            taken_at: Instant::ZERO,
+            line_end: Instant::ZERO,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -601,20 +648,14 @@ impl Neighbours {
         }
     }
 
-    /// `id` took a packet from this relay at `now`: its failures are
-    /// over, and it is alive.
-    pub fn succeeded(&mut self, id: NodeId, now: Instant) {
-        if let Some(n) = self.entry_mut(id) {
-            n.fail_count = 0;
-        }
-        self.answered(id, now);
-    }
-
-    /// `id` answered a packet from this relay at `now`, taking or refusing
-    /// it: it is alive, whether or not its heartbeats are heard
-    /// (spec "The ACK").
+    /// `id` answered this relay at `now`: an ACK to it that takes,
+    /// refuses or has seen a packet, or a DATA addressed to it. It hears
+    /// this relay and is alive, whether or not its heartbeats are heard,
+    /// so its failures in a row are over and any demotion lifts
+    /// (spec "Neighbour table", "The ACK").
     pub fn answered(&mut self, id: NodeId, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
+            n.fail_count = 0;
             n.last_heard = n.last_heard.max(now);
         }
     }
@@ -633,6 +674,89 @@ impl Neighbours {
     pub fn home_heard(&mut self, id: NodeId, home: Channel) {
         if let Some(n) = self.entry_mut(id) {
             n.home = home;
+        }
+    }
+
+    /// `id` took a hand-over from this relay at `now` of a message that
+    /// began to wait for it here at `since`. The time since the later of
+    /// that and its last take is one sample of its service time, which
+    /// folds in whatever held the message: refusals and their bans,
+    /// failed attempts, this relay's bucket and its other hand-overs. The
+    /// average takes each sample at a weight of one in
+    /// [`SERVICE_TAKES`], and stays within [`LONGEST_TOLD`] (spec
+    /// "Neighbour table").
+    pub fn took(&mut self, id: NodeId, since: Instant, now: Instant) {
+        if let Some(n) = self.entry_mut(id) {
+            let told = SERVICE_UNIT.mul(n.told as u64);
+            let sample = (now.since(since.max(n.taken_at)) - told).min(LONGEST_TOLD);
+            let sample = (sample.as_micros() / SERVICE_UNIT.as_micros()) as i64;
+            n.told = 0;
+            let old = n.service as i64;
+            let step = (sample - old) / SERVICE_TAKES as i64;
+            n.service = (old + step).clamp(0, u32::MAX as i64) as u32;
+            n.taken_at = now;
+        }
+    }
+
+    /// How long this relay takes to get one message through to `id` now:
+    /// its service time, or the time the message waiting
+    /// for `id` here since `oldest` has waited, its refusals' waits aside,
+    /// if that is longer, so that a rising load is seen before the next
+    /// take (spec "Bans"). At most [`LONGEST_TOLD`]. `None` if `id` is not
+    /// in the table.
+    pub fn service_now(
+        &self,
+        id: NodeId,
+        oldest: Option<Instant>,
+        now: Instant,
+    ) -> Option<Duration> {
+        let n = self.get(id)?;
+        // What its refusals made the message wait is its own line, told
+        // here: not this relay's service time.
+        let told = SERVICE_UNIT.mul(n.told as u64).min(LONGEST_TOLD) - n.banned_until.since(now);
+        let waited = oldest.map_or(Duration::ZERO, |t| now.since(t.max(n.taken_at)) - told);
+        Some(n.service().max(waited).min(LONGEST_TOLD))
+    }
+
+    /// A refusal for want of `id` as the way on, told at `now`, the
+    /// messages queued for it here taking `queue` to go: the place it
+    /// gives its sender in `id`'s line, from now, when its hand-over would
+    /// begin, and the service time that spaced it. The place is one
+    /// service time ([`Neighbours::service_now`]) after the last place
+    /// given, and at least a ban, the unit a refusal tells, since places
+    /// closer than that would be told the same wait and come back
+    /// together; or the end of `queue` if that is later (spec "Bans"). Time
+    /// passing shortens the line; a place is at most `limit` from now.
+    /// `None` if `id` is not in the table.
+    pub fn place_in_line(
+        &mut self,
+        id: NodeId,
+        queue: Duration,
+        oldest: Option<Instant>,
+        limit: Duration,
+        now: Instant,
+    ) -> Option<(Duration, Duration)> {
+        let service = self.service_now(id, oldest, now)?;
+        let n = self.entry_mut(id)?;
+        let place = (n.line_end.max(now) + service.max(BAN)).max(now + queue);
+        n.line_end = place.min(now + limit);
+        Some((n.line_end.since(now), service))
+    }
+
+    /// Set `id`'s service time, for tests of what it decides.
+    #[cfg(test)]
+    pub(crate) fn set_service(&mut self, id: NodeId, service: Duration) {
+        if let Some(n) = self.entry_mut(id) {
+            n.service = (service.as_micros() / SERVICE_UNIT.as_micros()) as u32;
+        }
+    }
+
+    /// `id` refused a hand-over, telling this relay to wait `wait`: not
+    /// part of its service time ([`Neighbours::took`]).
+    pub fn told(&mut self, id: NodeId, wait: Duration) {
+        if let Some(n) = self.entry_mut(id) {
+            let units = wait.as_micros() / SERVICE_UNIT.as_micros();
+            n.told = (n.told as u64 + units).min(u32::MAX as u64) as u32;
         }
     }
 
@@ -749,6 +873,7 @@ pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tables::DEMOTE_AFTER_FAILURES;
 
     fn params() -> NeighbourParams {
         NeighbourParams::from_config(&Config::default())
@@ -849,7 +974,7 @@ mod tests {
     #[test]
     fn params_follow_the_design() {
         let p = params();
-        assert_eq!(p.demote_after, 2);
+        assert_eq!(p.demote_after, 3);
         assert_eq!(
             p.demotion,
             Duration::from_secs(390),
@@ -971,6 +1096,85 @@ mod tests {
         assert_eq!(due(&t), Some(at(780)));
     }
 
+    /// The service time starts at a ban and takes each take's interval
+    /// at a weight of one in 39, counted from the later of the last take
+    /// and when the message began to wait, less what the neighbour's
+    /// refusals told (spec "Neighbour table").
+    #[test]
+    fn the_service_time_averages_the_takes() {
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 0, -80, at(0));
+        let service = |t: &Neighbours| t.get(id(1)).unwrap().service();
+        assert!(BAN - service(&t) < SERVICE_UNIT.mul(1024 / 1000 + 1));
+        // Waited 40 bans from its queueing, nothing told.
+        let start = at(10);
+        let took = start + BAN.mul(40);
+        t.took(id(1), start, took);
+        let after = service(&t);
+        let want = BAN + (BAN.mul(40) - BAN).div(SERVICE_TAKES);
+        assert!(after.as_micros().abs_diff(want.as_micros()) < 2 * SERVICE_UNIT.as_micros());
+        // Idle since that take: the next counts from its queueing, and a
+        // refusal's wait is not this relay's time.
+        t.told(id(1), BAN.mul(10));
+        let queued = took + Duration::from_secs(600);
+        t.took(id(1), queued, queued + BAN.mul(10));
+        let unchanged = after - (after - Duration::ZERO).div(SERVICE_TAKES);
+        assert!(
+            service(&t).as_micros().abs_diff(unchanged.as_micros()) < 2 * SERVICE_UNIT.as_micros()
+        );
+        // Never past the longest told wait.
+        for k in 0..400 {
+            t.took(
+                id(1),
+                at(1000 + k),
+                at(1000 + k) + Duration::from_secs(3600),
+            );
+        }
+        assert!(service(&t) <= LONGEST_TOLD);
+    }
+
+    /// Senders refused for one way stand in its line, each a service time
+    /// after the one before, a ban at least, or after the queue ahead of
+    /// them if that ends later, the message that bars them raising it when
+    /// it has waited longer; time shortens the line, and no place passes
+    /// its limit (spec "Bans").
+    #[test]
+    fn places_in_a_line_are_a_service_time_apart() {
+        let mut t = Neighbours::new(params());
+        hear(&mut t, 1, 0, -80, at(0));
+        let now = at(10);
+        let limit = BAN.mul(100);
+        let place = |t: &mut Neighbours, queue, oldest, now| {
+            t.place_in_line(id(1), queue, oldest, limit, now).unwrap().0
+        };
+        let first = place(&mut t, Duration::ZERO, None, now);
+        assert_eq!(first, BAN.max(t.get(id(1)).unwrap().service()));
+        let second = place(&mut t, Duration::ZERO, None, now);
+        assert_eq!(second, first + BAN);
+        // Two bans later the line has moved up by two: it is empty.
+        let later = now + BAN.mul(2);
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), first);
+        // The message barring the way has waited 5 bans: that spaces it.
+        let (third, spaced) = t
+            .place_in_line(
+                id(1),
+                Duration::ZERO,
+                Some(later - BAN.mul(5)),
+                limit,
+                later,
+            )
+            .unwrap();
+        assert_eq!(spaced, BAN.mul(5));
+        assert_eq!(third, first + BAN.mul(5));
+        // A queue that ends later than the line places the sender after it.
+        assert_eq!(place(&mut t, BAN.mul(40), None, later), BAN.mul(40));
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), BAN.mul(41));
+        for _ in 0..100 {
+            place(&mut t, Duration::ZERO, None, later);
+        }
+        assert_eq!(place(&mut t, Duration::ZERO, None, later), limit);
+    }
+
     #[test]
     fn heartbeats_are_counted_up_to_two() {
         let mut t = Neighbours::new(params());
@@ -1042,12 +1246,14 @@ mod tests {
         let p = id(1);
         assert_eq!(t.candidates(at(1)).count(), 1);
         assert_eq!(t.failed(p, at(1)), Some(false));
-        t.succeeded(p, at(1));
+        assert_eq!(t.failed(p, at(1)), Some(false));
+        t.answered(p, at(1));
         assert_eq!(
             t.failed(p, at(1)),
             Some(false),
             "an ACK resets: failures are consecutive"
         );
+        assert_eq!(t.failed(p, at(2)), Some(false));
         assert_eq!(t.failed(p, at(2)), Some(true));
         assert_eq!(t.candidates(at(2)).count(), 0);
         assert_eq!(t.failed(id(2), at(2)), None);
@@ -1064,9 +1270,10 @@ mod tests {
         assert_eq!(t.candidates(at(392)).count(), 1);
         // And starts counting again from zero.
         assert_eq!(t.failed(p, at(393)), Some(false));
+        assert_eq!(t.failed(p, at(393)), Some(false));
         assert_eq!(t.failed(p, at(394)), Some(true));
         // An ACK lifts it at once.
-        t.succeeded(p, at(394));
+        t.answered(p, at(394));
         assert_eq!(t.candidates(at(395)).count(), 1);
     }
 
@@ -1106,8 +1313,9 @@ mod tests {
         // All live and recently heard: the newcomer is turned away.
         assert_eq!(hear(&mut t, 100, 0, -80, at(100)), Heard::Rejected);
         // A demoted entry goes first, even though others are older.
-        t.failed(id(40), at(100));
-        t.failed(id(40), at(100));
+        for _ in 0..DEMOTE_AFTER_FAILURES {
+            t.failed(id(40), at(100));
+        }
         match hear(&mut t, 101, 0, -80, at(101)) {
             Heard::Replaced(40, old) => assert_eq!(old.position, pos(40)),
             other => panic!("{other:?}"),

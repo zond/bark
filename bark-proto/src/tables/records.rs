@@ -86,6 +86,7 @@ pub const fn records_for(span: Duration) -> usize {
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
 const _: () = assert!(RECORDS == 1571);
+const _: () = assert!(RECORDS <= u16::MAX as usize, "a hint holds a place");
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
     NEIGHBOURS <= u64::BITS as usize,
@@ -302,6 +303,18 @@ impl Records {
     /// The record for `id`.
     pub fn get(&self, id: MsgId) -> Option<&Record> {
         self.entries[..self.len].iter().find(|r| r.id == id)
+    }
+
+    /// The record for `id` and where it is, looked for at `hint` first:
+    /// where it was last found, which saves the search while it has not
+    /// moved.
+    pub fn find(&self, id: MsgId, hint: u16) -> Option<(u16, &Record)> {
+        let at = hint as usize;
+        if at < self.len && self.entries[at].id == id {
+            return Some((hint, &self.entries[at]));
+        }
+        let i = self.entries[..self.len].iter().position(|r| r.id == id)?;
+        Some((i as u16, &self.entries[i]))
     }
 
     /// Forget the record for `id`, if there is one: its message was given

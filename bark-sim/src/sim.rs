@@ -377,10 +377,6 @@ struct OriginRecord {
     /// When a node other than its origin first sent a DATA of it: when it
     /// entered the network past its first hop's admission.
     entered_at: Option<Instant>,
-    /// The time left the last DATA to its destination node carried: what
-    /// that node's application learns of the message's way (spec
-    /// "Time to live").
-    time_left: Option<Duration>,
     /// The node that queued it for its destination node
     /// (spec "Delivery queue"), the beats of that node it heard while the
     /// message was queued, and the DATA it sent it.
@@ -466,13 +462,26 @@ pub struct MessageRow {
     /// Origination to the first DATA of it from a node other than its
     /// origin, seconds.
     pub entered_s: Option<f64>,
-    /// The time left in the last DATA to its destination node, seconds.
-    pub time_left_s: Option<f64>,
     /// Beats of its destination node its holder heard while it was
     /// queued, and the DATA the holder sent it.
     pub holder_beats: u32,
     /// See `holder_beats`.
     pub holder_tries: u32,
+    /// The node that queued it for its destination, if one did.
+    pub holder: Option<u32>,
+    /// At the end of the run: whether its destination's anchor was that
+    /// holder, and whether its destination was sleepy.
+    pub holder_anchor_end: bool,
+    /// See `holder_anchor_end`.
+    pub dst_sleepy_end: bool,
+    /// When its destination last changed anchor, seconds into the run,
+    /// and how often it did.
+    pub dst_switch_s: Option<f64>,
+    /// See `dst_switch_s`.
+    pub dst_switches: u32,
+    /// Whether the holder and its destination's anchor at the end hear
+    /// each other.
+    pub holder_links_anchor_end: bool,
     /// Its destination node's beats at the holder while it was queued.
     pub watch: HolderWatch,
 }
@@ -749,6 +758,8 @@ pub struct Sim {
     pub(crate) clocks: Vec<Clock>,
     /// When each sleepy node first took an anchor.
     first_anchor: Vec<Option<Instant>>,
+    /// Per node, when it last changed anchor, and how often.
+    anchor_switch: Vec<(Option<Instant>, u32)>,
     /// Since when each sleepy node has been without an anchor, past its
     /// first rotation; and every such spell that ended with an anchor, from
     /// when to when.
@@ -804,6 +815,12 @@ pub struct Sim {
     /// Messages held on a neighbour after a failed hand-over, by node and
     /// message ID (`metrics::Holds`).
     holds: HashMap<(u32, u32), Hold>,
+    /// Every hand-over that ended, by message tag: the relay and the
+    /// neighbour offered, in order (`metrics::Pressure`).
+    offer_log: HashMap<u32, OfferLog>,
+    /// Demotions not yet followed by an answer from the neighbour, by
+    /// relay and the neighbour's key: when.
+    demoted_at: HashMap<(u32, u64), Instant>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
     pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
@@ -899,6 +916,27 @@ pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
 }
 
 /// A node ID as a map key.
+/// The hand-overs of one message that ended, at any relay
+/// (`Sim::note_offer`).
+#[derive(Default)]
+struct OfferLog {
+    /// Relay and neighbour of each, in order.
+    to: Vec<(u32, u64)>,
+    /// Offers to a neighbour, then another, then the first again, at one
+    /// relay.
+    flaps: u32,
+}
+
+impl OfferLog {
+    /// Distinct relay and neighbour pairs offered.
+    fn next_hops(&self) -> usize {
+        let mut v = self.to.clone();
+        v.sort_unstable();
+        v.dedup();
+        v.len()
+    }
+}
+
 pub(crate) fn key(id: NodeId) -> u64 {
     id.to_u64()
 }
@@ -1294,6 +1332,7 @@ impl Sim {
                 .collect(),
             pending_boot: vec![true; n],
             first_anchor: vec![None; n],
+            anchor_switch: vec![(None, 0); n],
             anchorless_since: vec![None; n],
             spells: Vec::new(),
             skipped_at: Vec::new(),
@@ -1311,6 +1350,8 @@ impl Sim {
             queued_for: HashMap::new(),
             holders_of: HashMap::new(),
             holds: HashMap::new(),
+            offer_log: HashMap::new(),
+            demoted_at: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
@@ -2546,7 +2587,9 @@ impl Sim {
                         c.refused.add(reason);
                         self.note_refusal(node, msg_id, reason);
                     }
-                    Trace::TurnedAway { msg_id, .. } => {
+                    Trace::TurnedAway { msg_id, by } => {
+                        self.note_offer(node, msg_id, by);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.turned_away += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
                             self.metrics.holds.ended_refused += 1;
@@ -2558,7 +2601,39 @@ impl Sim {
                         c.lbt_gave_up += 1;
                         c.busy_wait_us += busy_wait;
                     }
-                    Trace::Demoted { .. } => c.demoted += 1,
+                    Trace::Demoted { neighbour } => {
+                        c.demoted += 1;
+                        let now = self.now;
+                        if let std::collections::hash_map::Entry::Vacant(e) =
+                            self.demoted_at.entry((node, key(neighbour)))
+                        {
+                            e.insert(now);
+                            self.metrics.pressure.demotions += 1;
+                        }
+                    }
+                    Trace::Answered { neighbour } => {
+                        if let Some(t) = self.demoted_at.remove(&(node, key(neighbour))) {
+                            let s = self.now.since(t).as_micros() as f64 / 1e6;
+                            self.metrics.pressure.answered_after(s);
+                        }
+                    }
+                    Trace::InLine {
+                        wait,
+                        service,
+                        at_cap,
+                        ..
+                    } => self.metrics.pressure.in_line(wait, service, at_cap),
+                    Trace::WayWait { wait, refused } if self.now >= self.settle => {
+                        self.metrics.pressure.way_wait(wait, refused)
+                    }
+                    Trace::Silent { owed, .. } => {
+                        let p = &mut self.metrics.pressure;
+                        if owed {
+                            p.silent_owed += 1;
+                        } else {
+                            p.silent_budget += 1;
+                        }
+                    }
                     Trace::MoveSign {
                         surprises,
                         sum_milli,
@@ -2660,6 +2735,8 @@ impl Sim {
                         hops,
                         attempts,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
                         self.metrics.taken_at_attempt(attempts);
@@ -2670,6 +2747,8 @@ impl Sim {
                         to,
                         moves_on,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.failed += 1;
                         let had = self
                             .relay_index
@@ -2711,7 +2790,9 @@ impl Sim {
                             c.seen += u64::from(seen);
                         }
                     }
-                    Trace::Seen { msg_id, .. } => {
+                    Trace::Seen { msg_id, by } => {
+                        self.note_offer(node, msg_id, by);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.seen_acted += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
                             self.metrics.holds.ended_seen += 1;
@@ -2723,6 +2804,8 @@ impl Sim {
                         to,
                         attempts,
                     } => {
+                        self.note_offer(node, msg_id, to);
+                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.handed_over += 1;
                         c.returned += 1;
                         self.metrics.taken_at_attempt(attempts);
@@ -2735,6 +2818,25 @@ impl Sim {
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
+    }
+
+    /// A hand-over of `msg_id` from `node` to `to` ended, taken, refused,
+    /// failed or seen: counted per message, and a flap noted when `node`
+    /// offers it to a neighbour, then another, then the first again.
+    fn note_offer(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
+        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
+            return;
+        };
+        let to = key(to);
+        let log = self.offer_log.entry(tag).or_default();
+        let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
+        if let Some(&(_, last)) = here.next() {
+            if last != to && here.any(|&(_, k)| k == to) {
+                log.flaps += 1;
+                self.metrics.pressure.flaps += 1;
+            }
+        }
+        log.to.push((node, to));
     }
 
     /// `node` handed `msg_id` to `to`: if it had held the message on `to`
@@ -3497,7 +3599,7 @@ impl Sim {
         air_us: u64,
         src: u32,
         kind: FrameKind,
-        time_left: Option<Duration>,
+        to_dst: bool,
     ) {
         let Some(&tag) = self.msg_tags.get(&id.0) else {
             return;
@@ -3508,11 +3610,8 @@ impl Sim {
         o.frames += 1;
         o.airtime_us += air_us;
         o.hops = o.hops.max(hops);
-        if time_left.is_some() {
-            o.time_left = time_left;
-            if o.holder == Some(src) {
-                o.holder_tries += 1;
-            }
+        if to_dst && o.holder == Some(src) {
+            o.holder_tries += 1;
         }
         let kind = match kind {
             FrameKind::Data if src == o.src => 0,
@@ -3613,9 +3712,26 @@ impl Sim {
                 dst_sleepy: o.dst_sleepy,
                 dst_carried: o.dst_carried,
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
-                time_left_s: o.time_left.map(|d| d.as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
                 holder_tries: o.holder_tries,
+                holder: o.holder,
+                holder_anchor_end: o.holder.is_some_and(|h| {
+                    let id = self.relays[h as usize].id();
+                    self.relays[o.dst as usize]
+                        .anchor()
+                        .is_some_and(|a| a.id == id)
+                }),
+                dst_sleepy_end: self.relays[o.dst as usize].sleepy(),
+                dst_switch_s: self.anchor_switch[o.dst as usize]
+                    .0
+                    .map(|t| t.as_micros() as f64 / 1e6),
+                dst_switches: self.anchor_switch[o.dst as usize].1,
+                holder_links_anchor_end: o.holder.is_some_and(|h| {
+                    let anchor = self.relays[o.dst as usize]
+                        .anchor()
+                        .and_then(|a| self.relay_index.get(&key(a.id)).copied());
+                    anchor.is_some_and(|a| self.links.row(h).iter().any(|l| l.rx == a))
+                }),
                 watch: o.watch,
             })
             .collect()
@@ -3638,13 +3754,13 @@ impl Sim {
     /// The per-message table as CSV.
     pub fn messages_csv(&self) -> String {
         let mut s = String::from(
-            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,time_left_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
+            "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
         );
         for n in beat_fate::NAMES {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -3658,10 +3774,9 @@ impl Sim {
             let taken = r.taken_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let dropped = r.dropped_s.map(|l| format!("{l:.6}")).unwrap_or_default();
             let entered = r.entered_s.map(|l| format!("{l:.6}")).unwrap_or_default();
-            let left = r.time_left_s.map(|l| format!("{l:.1}")).unwrap_or_default();
             let relay = |r: Option<u32>| r.map(|r| r.to_string()).unwrap_or_default();
             s.push_str(&format!(
-                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0},{entered},{left},{},{}\n",
+                "{},{},{},{:.6},{fate},{node},{reason},{},{latency},{},{:.6},{},{:.1},{taken},{dropped},{},{},{},{},{},{},{:.0},{:.0},{entered},{},{}\n",
                 r.tag,
                 r.src,
                 r.dst,
@@ -3698,7 +3813,22 @@ impl Sim {
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
-            s.push_str(&format!(",{}\n", w.elsewhere));
+            let (offers, hops, flaps) = self
+                .offer_log
+                .get(&r.tag)
+                .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            s.push_str(&format!(
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{}\n",
+                w.elsewhere,
+                relay(r.holder),
+                r.holder_anchor_end,
+                r.dst_sleepy_end,
+                r.dst_switch_s
+                    .map(|t| format!("{t:.1}"))
+                    .unwrap_or_default(),
+                r.dst_switches,
+                r.holder_links_anchor_end
+            ));
         }
         s
     }
@@ -3810,6 +3940,8 @@ impl Sim {
         if *last != Some(p) {
             if last.is_some() {
                 self.metrics.nodes[node as usize].relay_changes += 1;
+                let w = &mut self.anchor_switch[node as usize];
+                *w = (Some(self.now), w.1 + 1);
                 if self.now >= self.settle {
                     self.metrics.sleep.anchor_changes += 1;
                 }
@@ -3916,7 +4048,6 @@ impl Sim {
             taken_at: None,
             dropped_at: None,
             entered_at: None,
-            time_left: None,
             holder: None,
             holder_beats: 0,
             holder_tries: 0,
@@ -4450,6 +4581,15 @@ impl Sim {
 mod tests {
     use super::*;
 
+    #[test]
+    fn distinct_next_hops_count_each_relay_and_neighbour_once() {
+        let log = OfferLog {
+            to: vec![(1, 10), (1, 10), (2, 20), (1, 11)],
+            flaps: 0,
+        };
+        assert_eq!(log.next_hops(), 3);
+    }
+
     /// A clock off by 50 ppm reads 50 µs more or less a second, and a
     /// timer set on it fires at the first true microsecond it reads the
     /// time set, never before.
@@ -4886,7 +5026,6 @@ mod tests {
                 taken_at: None,
                 dropped_at: None,
                 entered_at: None,
-                time_left: None,
                 holder: None,
                 holder_beats: 0,
                 holder_tries: 0,

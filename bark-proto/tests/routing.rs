@@ -5,7 +5,7 @@
 mod common;
 
 use bark_proto::tables::budget::{hold, BAN};
-use bark_proto::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
+use bark_proto::tables::neighbours::{Neighbour, Neighbours};
 use bark_proto::wire::{Packet, ACK_LEN};
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Duration, Instant, MsgId, NodeId, Position, Relay,
@@ -347,8 +347,8 @@ fn an_earlier_relay_answers_seen_and_the_search_comes_back_by_returns() {
 /// A neighbour whose hand-over failed, and which never had the message,
 /// later offers it here and is answered seen (spec "Receiving DATA" case 6):
 /// X's first nine frames to Y are lost, three hand-overs with Y's bans
-/// waited out between them (roadmap D42), the second demotes Y
-/// (spec "Neighbour table") and the third moves X on (roadmap D102). Y
+/// waited out between them (roadmap D42), and the third demotes Y
+/// (spec "Neighbour table") and moves X on (roadmap D102, D106). Y
 /// stays untried (roadmap D36), so X moves
 /// on to Z, and Z hands it to Y, which offers it to X. X holds none of
 /// it and never handed it to Y: X answers seen, and Y, marking X tried,
@@ -487,16 +487,16 @@ fn a_split_heals_at_a_sender_that_waits() {
     no_drops(&h);
 }
 
-/// A split heals at a sender that holds on past the demotion (roadmap
-/// D102). X's hand-over to Y is taken, but Y's ACKs are lost for two
-/// hand-overs, six ACKs: X counts two failures, which demote Y, and
-/// waits for each ban. Y holds the message meanwhile, its own frames to
-/// E lost. X's third offer carries the count of the first, nothing
-/// having succeeded since, so Y answers it as it answered the first, a
-/// retransmission of the packet it took (spec "Receiving DATA" case 3),
-/// and X's hand-over ends with Y tried. One copy, which Y hands to E
-/// once its link is back, and Z is never tried. Before this rule X moved
-/// on to Z at the second failure, while Y carried the message too.
+/// A split heals at a sender that holds on until the demotion (roadmap
+/// D102, D106). X's hand-over to Y is taken, but Y's ACKs are lost for
+/// two hand-overs, six ACKs: X counts two failures, which do not yet
+/// demote Y, and waits for each ban. Y holds the message meanwhile, its
+/// own frames to E lost. X's third offer carries the count of the first,
+/// nothing having succeeded since, so Y answers it as it answered the
+/// first, a retransmission of the packet it took (spec "Receiving DATA"
+/// case 3), and X's hand-over ends with Y tried. One copy, which Y hands
+/// to E once its link is back, and Z is never tried. Demoted at two, Y
+/// would have let the message go to Z while Y carried it too.
 ///
 /// ```text
 ///   X - Y - E          D (far east)
@@ -504,7 +504,7 @@ fn a_split_heals_at_a_sender_that_waits() {
 ///     Z ---------------+
 /// ```
 #[test]
-fn a_split_heals_at_a_sender_that_holds_on_past_the_demotion() {
+fn a_split_heals_at_a_sender_that_holds_on_until_the_demotion() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -544,7 +544,7 @@ fn a_split_heals_at_a_sender_that_holds_on_past_the_demotion() {
     assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
     let gap = runs[2][0].since(runs[1][2]);
     assert!(gap >= hold(2) && gap < hold(2) + secs(1), "{gap:?}");
-    assert!(traces(&h, x).contains(&Trace::Demoted { neighbour: name(y) }));
+    assert!(!traces(&h, x).contains(&Trace::Demoted { neighbour: name(y) }));
     assert!(!traces(&h, y)
         .iter()
         .any(|t| matches!(t, Trace::Copy { msg_id, .. } if *msg_id == id)));
@@ -552,19 +552,20 @@ fn a_split_heals_at_a_sender_that_holds_on_past_the_demotion() {
     no_drops(&h);
 }
 
-/// A message moves on by its own count when the neighbour's keeps being
-/// reset (roadmap D102). Every DATA of A from O to F1 is lost; between
-/// A's failures F1 takes Q's messages from O, which reset its failure
-/// count (spec "Bans"), so it is never demoted. A's third failure is
-/// its own third in a row and moves it on, to P, the only other
-/// candidate, though F1's count is one; P and Q are a dead end and the
-/// search comes back, and once A's frames get through F1 takes it.
+/// A message holds on to a neighbour that answers this relay (roadmap
+/// D106). Every DATA of A from O to F1 is lost three hand-overs long;
+/// between A's failures F1 takes Q's messages from O, which reset its
+/// failure count (spec "Neighbour table"), so it is never demoted. A
+/// waits out each ban and is offered to F1 again, never to P, the only
+/// other candidate, and F1 takes it once its frames get through: F1
+/// hears O, so going round it would only take the message the long way.
+/// Before, A moved on to P at its own third failure.
 ///
 /// ```text
 ///   Q - P - O - F1 - D
 /// ```
 #[test]
-fn a_message_moves_on_by_its_own_count_when_the_neighbour_s_is_reset() {
+fn a_message_holds_on_while_the_neighbour_answers_this_relay() {
     let (o, f1, d, p, q) = (0, 1, 2, 3, 4);
     let mut h = build(
         vec![
@@ -606,30 +607,31 @@ fn a_message_moves_on_by_its_own_count_when_the_neighbour_s_is_reset() {
             _ => None,
         })
         .collect();
-    assert_eq!(failed, vec![false, false, true]);
+    assert!(failed.len() >= 3 && !failed.contains(&true), "{failed:?}");
     assert!(!traces(&h, o).contains(&Trace::Demoted {
         neighbour: name(f1)
     }));
     let runs = handovers(&data_times(&h, o, f1, a));
-    assert_eq!(
-        &runs.iter().map(Vec::len).collect::<Vec<_>>()[..3],
-        &[3, 3, 3]
-    );
+    let lens: Vec<usize> = runs.iter().map(Vec::len).collect();
+    assert_eq!(lens.len(), failed.len() + 1, "{lens:?}");
+    assert!(lens.ends_with(&[1]) && lens[..failed.len()].iter().all(|&n| n == 3));
     for b in &others[..2] {
         assert_eq!(forwards(&h, o, *b), vec![name(f1)], "{b:?}");
     }
-    assert_eq!(forwards(&h, o, a), vec![name(p), name(f1)]);
+    assert_eq!(forwards(&h, o, a), vec![name(f1)]);
+    assert!(data_times(&h, o, p, a).is_empty(), "went round F1");
 }
 
-/// A kept neighbour gives way when its ban has grown (roadmap D102).
+/// A kept neighbour is waited for when its ban has grown (roadmap D106).
 /// Every DATA from O to F1 is lost. A, O's own, fails at F1 and holds
 /// on for the ban; B, from X through F2, reaches O within it and, F1
 /// its only candidate, waits for the same ban. When it ends B goes
 /// first, the more travelled (spec "Overload waits"), and its failure
-/// demotes F1 and bans it for two bans. A's ban is over but F1's has
-/// grown by a failure that was not A's: A does not wait it out but
-/// chooses afresh, F2, at once, and arrives. B holds on and goes again
-/// when the grown ban ends.
+/// bans F1 for two bans. A's ban is over but F1's has grown by a failure
+/// that was not A's; F1 is not demoted, so A waits the grown ban out
+/// rather than going round F1. B goes first again, and its failure, the
+/// third in a row, demotes F1: only then does A choose afresh, F2, and
+/// arrive.
 ///
 /// ```text
 ///          F1 - W
@@ -639,17 +641,21 @@ fn a_message_moves_on_by_its_own_count_when_the_neighbour_s_is_reset() {
 ///         (F2)
 /// ```
 #[test]
-fn a_kept_neighbour_gives_way_when_its_ban_has_grown() {
+fn a_kept_neighbour_is_waited_for_when_its_ban_has_grown() {
     let (o, f1, f2, d, w, x) = (0, 1, 2, 3, 4, 5);
+    // One at a time: built together, they would overflow a test's stack.
+    let nodes = [
+        (0.0, 0.0, 271),
+        (400.0, 50.0, 272),
+        (400.0, -100.0, 273),
+        (800.0, 0.0, 274),
+        (-400.0, 0.0, 275),
+        (800.0, -400.0, 276),
+    ]
+    .into_iter()
+    .map(|(e, n, seed)| relay(e, n, seed));
     let mut h = build(
-        vec![
-            relay(0.0, 0.0, 271),
-            relay(400.0, 50.0, 272),
-            relay(400.0, -100.0, 273),
-            relay(800.0, 0.0, 274),
-            relay(-400.0, 0.0, 275),
-            relay(800.0, -400.0, 276),
-        ],
+        nodes.collect(),
         &[(o, f1), (o, f2), (f1, d), (f2, d), (f1, w), (x, f2)],
     );
     h.lose = Some(Box::new(move |_, from, to, bytes| {
@@ -658,7 +664,7 @@ fn a_kept_neighbour_gives_way_when_its_ban_has_grown() {
     let a = send(&mut h, o, d, b"ours");
     let b = send(&mut h, x, w, b"theirs");
     assert!(
-        h.run_until(h.now + secs(20), |h| delivered(h, d, a)),
+        h.run_until(h.now + secs(30), |h| delivered(h, d, a)),
         "O {:?}",
         traces(&h, o)
     );
@@ -668,13 +674,18 @@ fn a_kept_neighbour_gives_way_when_its_ban_has_grown() {
     let a_runs = handovers(&data_times(&h, o, f1, a));
     let b_runs = handovers(&data_times(&h, o, f1, b));
     assert_eq!(a_runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3]);
-    assert!(b_runs.len() >= 2 && b_runs[0].len() == 3, "{b_runs:?}");
+    assert!(
+        b_runs.len() >= 2 && b_runs[0].len() == 3 && b_runs[1].len() == 3,
+        "{b_runs:?}"
+    );
     let on = data_times(&h, o, f2, a)[0];
     // B's first frame came when A's ban ended, and its failure grew the
-    // ban; A went to F2 right after, not two bans later.
+    // ban; B's second came when the grown ban ended, and A went to F2
+    // only after that failure demoted F1.
     assert!(b_runs[0][0].since(a_runs[0][2]) >= BAN, "{b_runs:?}");
+    assert!(b_runs[1][0].since(b_runs[0][2]) >= hold(2), "{b_runs:?}");
     assert!(
-        on > b_runs[0][2] && on.since(b_runs[0][2]) < secs(1),
+        on > b_runs[1][2] && on.since(b_runs[1][2]) < secs(1),
         "{on:?} {b_runs:?}"
     );
     assert!(traces(&h, o).contains(&Trace::Demoted {
@@ -732,8 +743,8 @@ fn returns(h: &Harness<Relay>, i: usize, id: MsgId) -> usize {
 /// A child returns the message to a parent that gave up on it, and the
 /// return ends there (spec "Receiving DATA" case 6, "Return to parent";
 /// roadmap D35 A, D90). P's hand-over to C is taken, but C's ACKs are
-/// lost, so P, once it has waited for C's bans and failed a third time
-/// (roadmap D42, D102), moves on to S. S hands it to C while C
+/// lost, so P, once it has waited for C's bans and failed a third time,
+/// which demotes C (roadmap D42, D106), moves on to S. S hands it to C while C
 /// is still offering it to S, so C takes it as S's return; C has nothing
 /// left and returns it to P, which holds none of it. C never ACKed P, so
 /// it is not among the neighbours P handed the message to: P answers
@@ -805,16 +816,20 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// A parent offers the message again to a child it forgot, and the child
 /// answers seen (spec "Receiving DATA" case 6; roadmap D35 B, D90). P's
 /// message is for L, a leaf of Q's that is not there, and Q's delivery
-/// queue is full of its own messages for L, so Q refuses it
-/// (spec "Delivery queue") and P waits for each ban to end
-/// (spec "Overload waits"). Meanwhile P has tried C, a dead end, which
-/// returned it. C is then out of P's hearing long enough for its entry to
-/// expire at P, and P's at C, and each comes back into a new slot, which
-/// clears the mark that the one handed the other the message
-/// (spec "Message records"). When Q next refuses, P offers it to C
-/// again. For C, P is now a node it did not hand the message to: C
-/// answers seen, and P, marking C tried, waits for Q, which takes it once
-/// its queue has room. Before this rule C took it and returned it at
+/// queue is full of its own messages for L. P's DATA to Q are lost at
+/// first, so after three failed hand-overs, which demote Q, P's queued
+/// message counts Q tried and moves on to C, a dead end, which returns it
+/// (spec "Next hop"). Q's link is then back: P offers the returned copy
+/// to Q, its last resort, and Q refuses it (spec "Delivery queue"), which
+/// lifts the demotion, so P waits for Q's bans (spec "Overload waits").
+/// C is meanwhile out of P's hearing long enough for its entry to expire
+/// at P, and P's at C, and each comes back into a new slot, which clears
+/// the mark that the one handed the other the message
+/// (spec "Message records"). Q's link fails again: three failures demote Q, the message
+/// counts it tried, and P offers it to C again. For C, P is now a node
+/// it did not hand the message to: C answers seen, and P, marking C
+/// tried, has nothing left to try and, the origin, drops it (spec
+/// "Return to parent"). Before this rule C took it and returned it at
 /// once: one hand-over more.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
@@ -838,6 +853,11 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     .into_iter()
     .map(|(e, n, seed, config)| relay_with(e, n, seed, config));
     let mut h = build(nodes.collect(), &[(p, c), (p, q)]);
+    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
+    let losing = lost.clone();
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        losing.get() && (from, to) == (p, q) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
+    }));
     let (pq, l) = (position(&h, q), NodeId([7; 6]));
     let to_l = |h: &mut Harness<Relay>, from: usize, text: &[u8]| {
         h.command(
@@ -858,7 +878,18 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     let back = |h: &Harness<Relay>| returns(h, c, id) == 1;
     assert!(h.run_until(h.now + secs(10), back), "C did not return it");
     let returned_at = h.now;
+    lost.set(false);
     h.unlink(p, c);
+    let nq = name(&h, q);
+    let refused = |h: &Harness<Relay>| {
+        traces(h, p)
+            .iter()
+            .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nq))
+    };
+    assert!(
+        h.run_until(h.now + secs(10), refused),
+        "Q did not refuse it"
+    );
     let expiry = secs(59);
     h.run_for(expiry + secs(1));
     let nc = name(&h, c);
@@ -866,43 +897,33 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
         !core(&h, p).neighbours().any(|n| n.id == nc),
         "C did not expire at P"
     );
+    assert!(core(&h, p).holding().any(|m| m == id), "P waits for Q");
     h.link(p, c);
+    let back_in = |h: &Harness<Relay>| core(h, p).neighbours().any(|n| n.id == nc);
+    assert!(h.run_until(h.now + secs(60), back_in), "C not heard again");
+    lost.set(true);
     let offered_again = |h: &Harness<Relay>| seen(h, p, id, c);
     assert!(
         h.run_until(h.now + secs(300), offered_again),
-        "P did not offer C again, or C did not answer seen"
+        "P did not offer C again, or C did not answer seen: P {:?}",
+        traces(&h, p)
     );
     assert!(h.now > returned_at + expiry);
-    let queued = |h: &Harness<Relay>| {
-        h.nodes[q]
-            .traces
-            .iter()
-            .any(|(_, t)| matches!(t, Trace::Queued { msg_id, .. } if *msg_id == id))
-    };
-    assert!(
-        h.run_until(h.now + secs(700), queued),
-        "lost: P {:?} C {:?}",
-        traces(&h, p),
-        traces(&h, c)
-    );
-    // Q's ACK.
     h.run_for(secs(1));
-    assert_eq!(forwards(&h, p, id), vec![nc, name(&h, q)]);
+    assert_eq!(forwards(&h, p, id), vec![nc]);
     assert_eq!(returns(&h, c, id), 1);
     assert!(seen_at(&h, c, id));
-    // Q's own messages expire in its queue; nothing else ends.
-    for i in [p, c] {
-        assert!(!traces(&h, i)
-            .iter()
-            .any(|t| matches!(t, Trace::Dropped { .. })));
-    }
+    only_dropped_at(&h, p, id, DropReason::NoRoute);
+    assert!(!traces(&h, c)
+        .iter()
+        .any(|t| matches!(t, Trace::Dropped { .. })));
 }
 
 /// A copy with a count already seen is not a retransmission, and a
 /// return from a child that never ACKed is answered seen (spec
 /// "Receiving DATA" cases 3 and 6; roadmap D35 C, D90). X's hand-over to
 /// Y is taken, but Y's ACKs are lost, so X, once Y has failed three
-/// times (roadmap D42, D102), moves on to Z. Y and Z are dead ends and
+/// times and is demoted (roadmap D42, D106), moves on to Z. Y and Z are dead ends and
 /// return it, Y after X has handed it to Z, and Z after Y, with the count
 /// Y's return raised X's highest to. Y never ACKed X, so X, holding none,
 /// answers Y seen, and Y drops the copy it carried; Z's is a return from
@@ -1058,8 +1079,8 @@ fn a_return_does_not_go_back_and_forth() {
 /// of its own messages for L, so P refuses it (spec "Delivery queue") and Y, P's only
 /// neighbour but its parent, waits for each ban to end (spec "Overload waits"). X's
 /// hand-over to Y was taken, but Y's ACKs were lost, so X counts it
-/// failed, three times, each after Y's ban has ended (roadmap D42,
-/// D102), leaves Y untried and moves on to Z, a dead end, which returns
+/// failed, three times, each after Y's ban has ended, the third
+/// demoting Y (roadmap D42, D106), leaves Y untried and moves on to Z, a dead end, which returns
 /// it. X then hands it to Y again, with a higher count. Y holds its copy,
 /// so it only ACKs (spec "Receiving DATA" case 4): the two copies merge, one round trip
 /// more than had Y's first ACK come through, and nothing is lost. Once
@@ -1233,10 +1254,13 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
     assert_eq!(counts, vec![1, 1]);
 }
 
-/// O, M, D in a line. O's message to D fails at M twice, each failure
-/// banning M (roadmap D42), and the second demotes it (spec "Neighbour table"); M is O's
-/// only way on, so the message waits for each ban and is still handed to
-/// M, as the last resort (spec "Next hop", roadmap D25), and arrives.
+/// O, M, D in a line. O's message to D fails at M three times, each
+/// failure banning M (roadmap D42), and the third demotes it (spec
+/// "Neighbour table"). The message held for M through its demotion, so
+/// it counts M tried, and O, its origin with no other neighbour, drops
+/// it (spec "Next hop", "Return to parent"). M stays a last resort for a
+/// message that has not tried it (roadmap D25): O's next message is
+/// handed to M and arrives.
 #[test]
 fn a_demoted_neighbour_is_the_last_resort() {
     let (o, m, d) = (0, 1, 2);
@@ -1254,20 +1278,23 @@ fn a_demoted_neighbour_is_the_last_resort() {
         losing.get() && (from, to) == (o, m) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
     let id = send(&mut h, o, d, b"through anyway");
-    let demoted = |h: &Harness<Relay>| {
+    let dropped = |h: &Harness<Relay>| {
         traces(h, o)
             .iter()
-            .any(|t| matches!(t, Trace::Demoted { .. }))
+            .any(|t| matches!(t, Trace::Dropped { msg_id, reason: DropReason::NoRoute } if *msg_id == id))
     };
-    assert!(h.run_until(h.now + secs(20), demoted));
-    assert!(!delivered(&h, d, id));
+    assert!(h.run_until(h.now + secs(20), dropped));
+    assert!(traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::Demoted { .. })));
     lost.set(false);
+    assert!(h.run_until(h.now + hold(3) + secs(1), |h| h.accepts(o)));
+    let next = send(&mut h, o, d, b"the last resort");
     assert!(
-        h.run_until(h.now + secs(10), |h| delivered(h, d, id)),
+        h.run_until(h.now + secs(10), |h| delivered(h, d, next)),
         "{:?}",
         traces(&h, o)
     );
-    no_drops(&h);
 }
 
 /// Packet RSSI of a link heard 2 dB above the test medium's noise
@@ -1457,10 +1484,13 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
 
 /// F1, O's nearest neighbour toward D, has its send queue full: X, whose
 /// only neighbour it is, has handed it short messages for D until it
-/// refused one, and F1's own frames are lost. F1 answers O's DATA with a refusal
-/// (spec "Receiving DATA"), and O hands the message to F2 at once, counting no failure
-/// against F1 (spec "Bans"). O bans F1: no message is offered to it until the
-/// ban ends; after it, F1 is O's first choice again (roadmap D27, D29).
+/// refused one, and F1's own frames are lost. F1 answers O's DATA with a
+/// refusal (spec "Receiving DATA"), counting no failure against F1, and O
+/// bans F1 for the wait it asks (spec "Bans"). The refused message waits
+/// for the ban and is offered to F1 again, not sent round it by F2, and
+/// O's application is told to wait meanwhile; once F1's queue moves F1
+/// takes it (roadmap D27, D29, D106). After the ban F1 is O's first
+/// choice again.
 ///
 /// ```text
 ///          F1
@@ -1490,50 +1520,53 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     }));
     fill(&mut h, x, f1, d);
     let name = |h: &Harness<Relay>, i| core(h, i).id();
-    let (n1, n2) = (name(&h, f1), name(&h, f2));
-    let to_f1 = |h: &Harness<Relay>, id: MsgId| {
-        h.nodes[o].sent.iter().any(|(_, fr)| {
-            matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == id)
-        })
-    };
+    let n1 = name(&h, f1);
     let forwarded = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
             Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some((*t, *to)),
             _ => None,
         })
     };
-
-    let first = send(&mut h, o, d, b"first");
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, first)));
-    let refused_at = h.nodes[o]
-        .traces
-        .iter()
-        .find_map(|(t, tr)| match tr {
-            Trace::TurnedAway { msg_id, by } if *msg_id == first && *by == n1 => Some(*t),
+    let refusal = |h: &Harness<Relay>, id: MsgId| {
+        h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
+            Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == n1 => Some(*t),
             _ => None,
         })
-        .expect("F1 refused");
-    let (at, to) = forwarded(&h, first).unwrap();
-    assert_eq!(to, n2);
-    assert!(
-        at.since(refused_at) < secs(1),
-        "moved on at once: {:?}",
-        at.since(refused_at)
-    );
+    };
+
+    let first = send(&mut h, o, d, b"first");
+    assert!(h.run_until(h.now + secs(5), |h| refusal(h, first).is_some()));
+    let refused_at = refusal(&h, first).unwrap();
     let p1 = position(&h, f1);
     let entry = *core(&h, o).neighbours().find(|n| n.position == p1).unwrap();
     assert_eq!(entry.fail_count, 0, "a refusal is no failure");
-    assert_eq!(entry.banned_until, refused_at + BAN);
+    assert!(entry.banned_until >= refused_at + BAN);
+    let ban_ends = entry.banned_until;
 
-    // Within the ban F1 is not offered the next message at all.
-    let second = send(&mut h, o, d, b"second");
-    assert!(h.now < refused_at + BAN);
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, second)));
-    assert!(!to_f1(&h, second), "offered to F1 within the ban");
-    assert_eq!(forwarded(&h, second).map(|(_, to)| to), Some(n2));
+    // Meanwhile the application at O is told to wait: its message is
+    // still O's.
+    assert!(!h.accepts(o));
+
+    // The first waits for F1, and is offered to it again when the ban
+    // ends, not before.
+    let after = |h: &Harness<Relay>| {
+        h.nodes[o]
+            .sent
+            .iter()
+            .find(|(t, fr)| *t > refused_at && matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == first))
+            .map(|(t, _)| *t)
+    };
+    assert!(h.run_until(ban_ends + secs(5), |h| after(h).is_some()));
+    let again = after(&h).unwrap();
+    assert!(again >= ban_ends, "{again:?} {ban_ends:?}");
+    assert!(forwarded(&h, first).is_none(), "sent round F1");
+
+    // With F1's queue moving, F1 takes it.
+    lost.set(false);
+    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, first)));
+    assert_eq!(forwarded(&h, first).map(|(_, to)| to), Some(n1));
 
     // After it, and with F1's queue gone, F1 is first again.
-    lost.set(false);
     h.run_for(secs(30));
     let third = send(&mut h, o, d, b"third");
     assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
@@ -1749,33 +1782,27 @@ fn a_relay_origin_holds_its_message_for_a_banned_neighbour() {
 }
 
 /// O's only neighbour C is gone. O's own message fails its three
-/// attempts there, which bans C (spec "Hand-over", roadmap D42); with no other
-/// neighbour the message waits for each ban and is offered to C again,
-/// and O takes no other message meanwhile (spec "Return to parent"). Once C's entry
-/// expires (spec "Neighbour table"), O has no neighbour, drops the message for want of a
-/// route, and is ready again.
+/// attempts there, which bans C (spec "Hand-over", roadmap D42), and
+/// waits for each ban to be offered to C again, O taking no other message
+/// meanwhile (spec "Return to parent"). The third failure demotes C, and
+/// the message, having held for C through its demotion, counts C tried
+/// (spec "Next hop"): O has nothing left to try, drops it for want of a
+/// route, and is ready again, long before C's entry expires (spec
+/// "Bounds").
 #[test]
-fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
-    let config = Config::default();
+fn a_relay_origin_whose_neighbour_is_gone_drops_at_its_demotion() {
     let (o, c) = (0, 1);
     let mut h = build(
         vec![relay(0.0, 0.0, 151), relay(400.0, 0.0, 152)],
         &[(o, c)],
     );
     h.kill(c);
-    let nc = core(&h, c).id();
     let gone = h.now;
-    let heard = core(&h, o)
-        .neighbours()
-        .find(|n| n.id == nc)
-        .unwrap()
-        .last_heard;
     let id = send(&mut h, o, c, b"nobody answers");
     let dropped = Trace::Dropped {
         msg_id: id,
         reason: DropReason::NoRoute,
     };
-    let expiry = NeighbourParams::from_config(&config).expire_after;
     let offers = |h: &Harness<Relay>| {
         h.nodes[o]
             .sent
@@ -1785,31 +1812,30 @@ fn a_relay_origin_whose_neighbour_is_gone_waits_then_drops() {
             })
             .count()
     };
-    h.run_for(secs(60));
+    h.run_for(BAN);
     assert!(!h.accepts(o));
-    assert!(!traces(&h, o).contains(&dropped));
-    assert!(offers(&h) >= 3 * 4, "offered {} times", offers(&h));
-    // Routed again when the ban running then ends, at most the bucket's
-    // refill later (`budget::hold`).
-    let last_ban = hold(u8::MAX);
+    // Two bans and three hand-overs (spec "Bounds").
+    assert!(h.run_until(gone + secs(15), |h| traces(h, o).contains(&dropped)));
+    assert_eq!(offers(&h), 3 * 3);
+    let nc = core(&h, c).id();
     assert!(
-        h.run_until(gone + expiry + last_ban + secs(1), |h| traces(h, o)
-            .contains(&dropped))
+        core(&h, o).neighbours().any(|n| n.id == nc),
+        "C not expired"
     );
-    assert!(h.now >= heard + expiry, "dropped before C expired");
-    h.run_for(secs(1));
-    assert!(h.accepts(o));
+    // Once C's ban, the third step of the ladder, has ended.
+    assert!(h.run_until(h.now + hold(3) + secs(1), |h| h.accepts(o)));
     assert!(h.nodes[o].app.is_empty());
 }
 
 /// P, R, C, D in a line, and C is gone. R's only candidate fails and is
 /// banned, longer after each failure (roadmap D42), and R waits for each
-/// ban rather than give up on C. Once its entry for C expires (spec "Neighbour table"), R's
-/// search ends as before: it returns the message to P, which has no
-/// other neighbour and, as the origin, drops it (spec "Return to parent").
+/// ban rather than give up on C, until the third failure in a row
+/// demotes it. The message held for C through its demotion counts C
+/// tried (spec "Next hop"), so R's search ends as before: it returns the
+/// message to P, which has no other neighbour and, as the origin, drops
+/// it (spec "Return to parent").
 #[test]
 fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
-    let config = Config::default();
     let (p, r, c, d) = (0, 1, 2, 3);
     let mut h = build(
         vec![
@@ -1821,21 +1847,16 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
         &[(p, r), (r, c), (c, d)],
     );
     h.kill(c);
-    let killed = h.now;
     let id = send(&mut h, p, d, b"no way on");
     let gone = |h: &Harness<Relay>| {
         traces(h, p)
             .iter()
             .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
     };
-    let expiry = NeighbourParams::from_config(&config).expire_after;
-    h.run_for(secs(60));
+    h.run_for(secs(4));
     assert!(!gone(&h), "P dropped it while C was banned");
     assert!(core(&h, r).holding().any(|m| m == id));
-    assert!(
-        h.run_until(killed + expiry + hold(u8::MAX) + secs(10), gone),
-        "P did not drop it"
-    );
+    assert!(h.run_until(h.now + secs(20), gone), "P did not drop it");
     // P's ACK of the return, which R traces.
     h.run_for(secs(1));
     let name = |i| core(&h, i).id();
@@ -1846,99 +1867,110 @@ fn a_relay_whose_candidates_are_gone_returns_to_the_parent() {
     }));
 }
 
-/// The same line, C gone. Every DATA of the message, the forward to R
-/// and R's return to P alike, carries the time its origin gave it less
-/// the time it has spent since, rounded down (spec "Time to live"). With a
-/// shorter TTL at P, R's copy ends at that time while it waits for C's
-/// bans, before C's entry expires, and is never returned.
+/// P, O, M, D in a line, and the link from O to M works one way: O hears
+/// M's heartbeats, M hears nothing from O. M stays live in O's table, its
+/// heartbeats renewing it, and is O's only way on. P's message fails at
+/// M three times, which demotes M; having held for M through its
+/// demotion, the message counts M tried, so O's search ends and it goes
+/// back to P, which drops it, the origin with nothing left to try (spec
+/// "Next hop", "Return to parent"). A second message tries M, its last
+/// resort, once, and goes back the same way (roadmap D106).
 #[test]
-fn the_time_left_travels_with_the_message_and_its_return() {
-    use bark_proto::wire::TTL_UNIT;
-    let (p, r, c, d) = (0, 1, 2, 3);
-    let line = |ttl| {
-        let mut h = build(
-            vec![
-                relay_with(
-                    0.0,
-                    0.0,
-                    131,
-                    Config {
-                        delivery_ttl: ttl,
-                        ..Config::default()
-                    },
-                ),
-                relay(400.0, 0.0, 132),
-                relay(800.0, 0.0, 133),
-                relay(1200.0, 0.0, 134),
-            ],
-            &[(p, r), (r, c), (c, d)],
-        );
-        h.kill(c);
-        h
-    };
-    let datas = |h: &Harness<Relay>, i: usize, id: MsgId| {
-        h.nodes[i]
-            .sent
-            .iter()
-            .filter_map(|(t, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Data(q)) if q.msg_id() == id => Some((*t, q.time_left)),
-                _ => None,
+fn a_one_way_link_left_as_the_only_candidate_ends_the_search_there() {
+    let (p, o, m, d) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 221),
+            relay(400.0, 0.0, 222),
+            relay(800.0, 0.0, 223),
+            relay(1200.0, 0.0, 224),
+        ],
+        &[(p, o), (o, m), (m, d)],
+    );
+    h.lose = Some(Box::new(move |_, from, to, _| (from, to) == (o, m)));
+    let nm = core(&h, m).id();
+    let mut handovers_to_m = Vec::new();
+    for text in [&b"one way"[..], &b"one way again"[..]] {
+        assert!(h.run_until(h.now + secs(70), |h| h.accepts(p)));
+        let id = send(&mut h, p, d, text);
+        let dropped = |h: &Harness<Relay>| {
+            traces(h, p).contains(&Trace::Dropped {
+                msg_id: id,
+                reason: DropReason::NoRoute,
             })
-            .collect::<Vec<_>>()
-    };
-    let ttl = secs(600);
-    let mut h = line(ttl);
+        };
+        assert!(
+            h.run_until(h.now + secs(30), dropped),
+            "O {:?}",
+            traces(&h, o)
+        );
+        assert!(returned_to(&h, o, id, core(&h, p).id()));
+        handovers_to_m.push(handovers(&data_times(&h, o, m, id)).len());
+        assert!(core(&h, o).holding().next().is_none());
+        assert!(core(&h, o).neighbours().any(|n| n.id == nm), "M expired");
+    }
+    assert_eq!(handovers_to_m, [3, 1]);
+}
+
+/// The same line, C gone, and a delivery TTL at P shorter than three
+/// failed hand-overs and their bans. No message ends by age on its way
+/// (spec "Time to live", roadmap D106): R's copy waits for C's bans past
+/// that time, until the demotion ends its wait, and is returned then; P,
+/// with nothing left to try, drops it. Every DATA carries the
+/// `time_left` its origin gave it, unchanged.
+#[test]
+fn a_message_outlives_the_delivery_ttl_on_its_way() {
+    let (p, r, c, d) = (0, 1, 2, 3);
+    let short = secs(5);
+    let mut h = build(
+        vec![
+            relay_with(
+                0.0,
+                0.0,
+                131,
+                Config {
+                    delivery_ttl: short,
+                    ..Config::default()
+                },
+            ),
+            relay(400.0, 0.0, 132),
+            relay(800.0, 0.0, 133),
+            relay(1200.0, 0.0, 134),
+        ],
+        &[(p, r), (r, c), (c, d)],
+    );
+    h.kill(c);
     let start = h.now;
-    // When R last heard C: its entry expires 390 s after (spec "Neighbour table").
-    let heard_c = |h: &Harness<Relay>| {
-        let c_id = core(h, c).id();
-        core(h, r)
-            .neighbours()
-            .find(|n| n.id == c_id)
-            .map(|n| n.last_heard)
-            .unwrap()
-    };
-    let c_heard = heard_c(&h);
     let id = send(&mut h, p, d, b"timed");
     let returned = |h: &Harness<Relay>| {
         traces(h, r)
             .iter()
             .any(|t| matches!(t, Trace::ReturnedToParent { msg_id, .. } if *msg_id == id))
     };
-    assert!(h.run_until(start + ttl, returned), "R did not return it");
-    let (sent_p, sent_r) = (datas(&h, p, id), datas(&h, r, id));
-    let (last, left) = *sent_r.last().unwrap();
+    h.run_until(start + short + secs(1), returned);
+    assert!(!returned(&h), "returned within the TTL");
+    assert!(core(&h, r).holding().any(|m| m == id), "R kept it");
     assert!(
-        last.since(c_heard) > secs(390),
-        "returned once C's entry expired"
+        h.run_until(start + secs(30), returned),
+        "R did not return it"
     );
-    for (t, left) in sent_p.iter().chain(&sent_r) {
-        let most = (ttl - t.since(start)).as_micros() / TTL_UNIT.as_micros();
-        assert!(
-            (*left as u64) <= most && *left >= 1,
-            "{left} units at {t:?}"
-        );
-    }
-    // Rounded down twice, at P and at R, so at most two units short.
-    let exact = (ttl - last.since(start)).as_micros() / TTL_UNIT.as_micros();
-    assert!(u64::from(left) + 2 >= exact, "{left} units, {exact} left");
-
-    let short = secs(120);
-    let mut h = line(short);
-    let start = h.now;
-    let id = send(&mut h, p, d, b"timed");
-    let ended = |h: &Harness<Relay>| {
-        traces(h, r).contains(&Trace::Dropped {
-            msg_id: id,
-            reason: DropReason::Expired,
-        })
-    };
-    assert!(h.run_until(start + short, ended), "R kept it past its time");
-    h.run_for(secs(400));
-    assert!(!returned(&h));
-    assert!(!traces(&h, p)
+    let lefts: Vec<u8> = [p, r]
         .iter()
-        .any(|t| matches!(t, Trace::Dropped { .. })));
+        .flat_map(|&i| h.nodes[i].sent.iter())
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(q)) if q.msg_id() == id => Some(q.time_left),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        lefts.len() >= 2 && lefts.iter().all(|&l| l == lefts[0]),
+        "{lefts:?}"
+    );
+    h.run_for(secs(1));
+    assert!(traces(&h, p).contains(&Trace::Dropped {
+        msg_id: id,
+        reason: DropReason::NoRoute
+    }));
 }
 
 /// P hands a message to C and moves its home channel (spec "Channel moves") while C is
@@ -2318,8 +2350,9 @@ fn home_and_away_are_measured_alike() {
 /// two transmissions of every message, so each costs F three frames and an
 /// ACK: about 0.43 s per message, 630 s an hour against the 354 s its
 /// bucket lets through (spec "Duty cycle cap"). F works at the edge of its bucket: it
-/// refuses a message when the message's frame and everything it
-/// has queued would not fit in the bucket (spec "Receiving DATA"), and a hand-over whose
+/// refuses a message while it holds another for D, or when the message's
+/// frame and everything it has queued would not fit in the bucket
+/// (spec "Receiving DATA"), and a hand-over whose
 /// retries the bucket cannot fit yet waits for it, never longer than the
 /// refill of a frame and the reply reserve, instead of being dropped. Its
 /// heartbeats are never held back. The harness panics if any hour holds
@@ -2456,9 +2489,10 @@ fn duty_budget_defers_forwarding_and_never_drops() {
             .filter(|t| matches!(t, Trace::Refused { reason, .. } if *reason == why))
             .count()
     };
-    let (full, broke) = (
+    let (full, broke, ahead) = (
         refused(DropReason::SendQueueFull),
         refused(DropReason::Budget),
+        refused(DropReason::SameHop),
     );
     let busy_sent = h.nodes[f]
         .sent
@@ -2476,7 +2510,8 @@ fn duty_budget_defers_forwarding_and_never_drops() {
     };
     println!(
         "F forwarded {}, returned {}, deferred {} for budget, refused {full} with \
-         its queue full and {broke} for its bucket, {busy_sent} refusals sent; \
+         its queue full, {broke} for its bucket and {ahead} for one ahead to D, \
+         {busy_sent} refusals sent; \
          O turned away {turned_away} times",
         tf.iter()
             .filter(|t| matches!(t, Trace::Forwarded { .. }))
@@ -2562,7 +2597,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         since_taken.get(since_taken.len() / 2),
         since_taken.last(),
     );
-    assert!(full + broke > 0, "F never refused a message");
+    assert!(full + broke + ahead > 0, "F never refused a message");
     assert!(busy_sent > 0 && turned_away > 0, "no refusal reached O");
     assert!(
         !deferred.is_empty(),
@@ -2627,13 +2662,12 @@ fn entry(h: &Harness<Relay>, at: usize, of: usize) -> Neighbour {
 
 /// O, with F1 and F2 both reaching D, F1 the nearer; P behind O. Every
 /// DATA from O to F1 is lost. O's message fails at F1, which bans F1 for
-/// one ban (spec "Bans", roadmap D42), and waits for the ban. P's message, which
-/// reaches O within it, goes to F2 at once and is never offered to F1:
-/// the ban holds for every message. When the ban ends O's message goes
-/// to F1 again with three fresh attempts; that second failure demotes F1
-/// (spec "Neighbour table") and bans it for two bans, which the message
-/// waits out too; the third failure moves it to F2, at once (roadmap
-/// D102).
+/// one ban (spec "Bans", roadmap D42), and waits for the ban. P's message,
+/// which reaches O within it, has F1 for its next hop too: a ban is a
+/// wait, not an exclusion (spec "Next hop"), so it is offered to nobody
+/// until the ban ends, and never to F2 while F1 ranks first. Each failure
+/// doubles the ban; the third in a row demotes F1, as spec "Neighbour table"
+/// says, and both messages then go to F2 at once (roadmap D106).
 ///
 /// ```text
 ///               F1
@@ -2674,39 +2708,56 @@ fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     );
 
     let second = send(&mut h, p, d, b"second");
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, second)));
-    assert!(
-        data_times(&h, o, f1, second).is_empty(),
-        "offered within the ban"
-    );
-    assert_eq!(forwards(&h, o, second), vec![name(&h, f2)]);
-    let taken = h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
-        Trace::Forwarded { msg_id, .. } if *msg_id == second => Some(*t),
-        _ => None,
-    });
-    assert!(taken.unwrap() < e.banned_until, "waited for the ban");
-
-    assert!(h.run_until(h.now + secs(20), |h| delivered(h, d, first)));
-    let runs = handovers(&data_times(&h, o, f1, first));
+    assert!(h.run_until(h.now + secs(30), |h| {
+        delivered(h, d, first) && delivered(h, d, second)
+    }));
+    let gone = Trace::Demoted {
+        neighbour: name(&h, f1),
+    };
+    let demoted = h.nodes[o]
+        .traces
+        .iter()
+        .find_map(|(t, tr)| (*tr == gone).then_some(*t))
+        .expect("F1 demoted");
+    for id in [first, second] {
+        let to_f1 = data_times(&h, o, f1, id);
+        let to_f2 = data_times(&h, o, f2, id);
+        assert!(
+            to_f1
+                .iter()
+                .chain(&to_f2)
+                .all(|&t| t <= failed_at || t >= e.banned_until),
+            "offered within the ban"
+        );
+        assert!(
+            to_f2.iter().all(|&t| t >= demoted),
+            "F2 only once F1 is demoted"
+        );
+        assert_eq!(forwards(&h, o, id), vec![name(&h, f2)]);
+    }
+    // Three hand-overs failed in a row, whichever message each carried,
+    // and the bans between them doubled.
+    let mut all: Vec<Instant> = data_times(&h, o, f1, first);
+    all.extend(data_times(&h, o, f1, second));
+    all.sort();
+    let runs = handovers(&all);
     assert_eq!(runs.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 3, 3]);
     let gap = runs[1][0].since(runs[0][2]);
     assert!(gap >= BAN && gap < BAN + secs(1), "{gap:?}");
     let gap = runs[2][0].since(runs[1][2]);
     assert!(gap >= hold(2) && gap < hold(2) + secs(1), "{gap:?}");
-    let on = data_times(&h, o, f2, first)[0];
-    assert!(on > runs[2][2] && on.since(runs[2][2]) < secs(1));
-    assert!(traces(&h, o).contains(&Trace::Demoted {
-        neighbour: name(&h, f1)
-    }));
     no_drops(&h);
 }
 
-/// P, O, M, D in a line; every DATA from O to M is lost. P's message
-/// waits at O, M being its only candidate, and is offered to M again as
-/// each ban ends: one ban after the first failure, two after the second,
-/// four after the third, and so on up to the bucket's refill, 61 s (spec "Hand-over",
-/// `budget::hold`). Once M's link is back M takes it, which clears its
-/// failure count, and the next failure bans it for one ban again.
+/// P, O, M, D in a line; every DATA from O to M is lost. P's messages
+/// wait at O, M being their only candidate, and each is offered to M
+/// as its ban ends: one ban after the first failure, two after the
+/// second, four after the third, and so on up to the bucket's refill,
+/// 61 s (spec "Hand-over", `budget::hold`), whichever message it is. The
+/// first holds for M through its demotion and ends; each later one tries
+/// M, its last resort, once (spec "Next hop"). Once M's link is back M
+/// takes the next, which clears its failure count, and the next failure
+/// bans it for one ban again.
 #[test]
 fn the_ban_after_failures_in_a_row_doubles_up_to_the_bucket_s_refill() {
     let (p, o, m, d) = (0, 1, 2, 3);
@@ -2724,9 +2775,33 @@ fn the_ban_after_failures_in_a_row_doubles_up_to_the_bucket_s_refill() {
     h.lose = Some(Box::new(move |_, from, to, bytes| {
         losing.get() && (from, to) == (o, m) && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
     }));
-    let id = send(&mut h, p, d, b"backing off");
-    h.run_for(secs(240));
-    let runs = handovers(&data_times(&h, o, m, id));
+    let mut ids = Vec::new();
+    let end = h.now + secs(240);
+    while h.now < end {
+        assert!(h.run_until(end, |h| h.accepts(p)) || h.now >= end);
+        if h.now >= end {
+            break;
+        }
+        let id = send(
+            &mut h,
+            p,
+            d,
+            format!("backing off {}", ids.len()).as_bytes(),
+        );
+        ids.push(id);
+        let ended = |h: &Harness<Relay>| {
+            traces(h, p)
+                .iter()
+                .any(|t| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
+        };
+        h.run_until(end, ended);
+    }
+    let mut all: Vec<Instant> = ids
+        .iter()
+        .flat_map(|&id| data_times(&h, o, m, id))
+        .collect();
+    all.sort();
+    let runs = handovers(&all);
     assert!(runs.len() >= 9, "{} hand-overs", runs.len());
     for (k, pair) in runs.windows(2).enumerate() {
         assert_eq!(pair[0].len(), 3, "hand-over {}: {:?}", k + 1, pair[0]);
@@ -2739,10 +2814,16 @@ fn the_ban_after_failures_in_a_row_doubles_up_to_the_bucket_s_refill() {
         );
     }
     assert_eq!(hold(8), hold(u8::MAX), "capped by the eighth");
-    assert!(!delivered(&h, d, id));
+    assert!(ids.iter().all(|&id| !delivered(&h, d, id)));
 
     lost.set(false);
-    assert!(h.run_until(h.now + secs(70), |h| delivered(h, d, id)));
+    assert!(h.run_until(h.now + secs(70), |h| h.accepts(p)));
+    let id = send(&mut h, p, d, b"through");
+    assert!(
+        h.run_until(h.now + secs(140), |h| delivered(h, d, id)),
+        "O {:?}",
+        traces(&h, o)
+    );
     assert_eq!(entry(&h, o, m).fail_count, 0);
     lost.set(true);
     let next = send(&mut h, p, d, b"from one ban again");
@@ -2810,9 +2891,9 @@ fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {
 
 /// F1 is gone. O's first message tries it three times, which bans it
 /// (roadmap D42), waits for the ban and tries it three times more, which
-/// demotes it (spec "Neighbour table"), waits for the longer ban and
-/// tries it three times more; that third failure moves the message to F2
-/// at once (roadmap D102). The next messages go to F2 without a frame to
+/// bans it for longer, waits for that ban and tries it three times
+/// more; that third failure demotes it (spec "Neighbour table") and
+/// moves the message to F2 at once (roadmap D102, D106). The next messages go to F2 without a frame to
 /// F1: a dead neighbour is routed around (roadmap D25), and only the
 /// first message pays for it.
 #[test]
@@ -2849,10 +2930,10 @@ fn a_dead_neighbour_is_routed_around() {
 /// P, C: C is a
 /// dead end for P's message, so it returns it, but every DATA from C to P
 /// is lost. The return's three attempts ban P; the return waits for the
-/// ban and goes again with three fresh attempts, whose failure demotes P
-/// (spec "Neighbour table") and bans it for two bans; it waits those out
-/// and goes a third time, and only that failure drops it, as a failed
-/// return is dropped (spec "Return to parent", roadmap D102).
+/// ban and goes again with three fresh attempts, whose failure bans P
+/// for two bans; it waits those out and goes a third time, and only that
+/// failure, which demotes P (spec "Neighbour table"), drops it, as a
+/// failed return is dropped (spec "Return to parent", roadmap D106).
 #[test]
 fn waiting_for_a_silent_parent_drops_the_return_at_its_third_failure() {
     let (p, c) = (0, 1);
@@ -3031,20 +3112,20 @@ fn a_busy_channel_keeps_the_hand_over_on_the_same_neighbour() {
     no_drops(&h);
 }
 
-/// A refusal still moves the message: it is an answer, and the next
-/// hop is chosen at once (spec "Bans"). The test
+/// A refusal after a busy channel holds the message too: the neighbour
+/// answers, so the message waits the ban it asks for and is offered to
+/// it again, not sent round it (spec "Bans", roadmap D106). The test
 /// `a_ban_excludes_the_neighbour_and_expires` has it; here the busy
-/// channel comes first, and the refusal that follows ends the wait.
+/// channel comes first, and the refusal that follows ends the wait for
+/// the channel but not the hold on B.
 #[test]
-fn a_refusal_after_a_busy_channel_moves_the_message() {
+fn a_refusal_after_a_busy_channel_holds_the_message() {
     let (mut h, b_home) = busy_channel(191, Config::default(), true);
-    let (o, b, c, d, x) = (0, 1, 2, 3, 4);
-    // X fills B's queue while B's frames are lost.
-    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
-    let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, _, bytes| {
-        losing.get() && from == b && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
-    }));
+    let (o, b, _c, d, x) = (0, 1, 2, 3, 4);
+    // X fills B's places for D while D's channel is busy at B: a busy
+    // channel is no failure, so B keeps D and holds what it took.
+    let d_home = core(&h, d).home();
+    h.jam(b, d_home);
     fill(&mut h, x, b, d);
     h.jam(o, b_home);
     let id = send(&mut h, o, d, b"refused later");
@@ -3052,19 +3133,27 @@ fn a_refusal_after_a_busy_channel_moves_the_message() {
     assert!(forwards(&h, o, id).is_empty());
     assert!(!gave_up(&h, o, id).is_empty());
     h.unjam(o, b_home);
-    assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, id)));
     let nb = core(&h, b).id();
-    assert!(traces(&h, o)
-        .iter()
-        .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb)));
-    assert_eq!(forwards(&h, o, id), vec![core(&h, c).id()]);
+    let refused = |h: &Harness<Relay>| {
+        traces(h, o)
+            .iter()
+            .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb))
+    };
+    assert!(h.run_until(h.now + secs(5), refused));
+    h.run_for(secs(5));
+    // B may take it once what it holds for D is gone; C never does.
+    assert!(forwards(&h, o, id).iter().all(|&n| n == nb), "sent round B");
+    h.unjam(b, d_home);
+    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, id)));
+    assert_eq!(forwards(&h, o, id), vec![nb]);
 }
 
-/// The time to live still ends a message that waits for a channel
-/// (spec "Time to live"): O drops it where it waits, never having
-/// offered it to C.
+/// A message that waits for a channel waits past the delivery TTL: no
+/// message ends by age on its way (spec "Time to live", roadmap D106).
+/// O holds it, never having offered it to C, and once the channel clears
+/// it goes to B and arrives.
 #[test]
-fn the_time_to_live_ends_a_message_waiting_for_a_channel() {
+fn a_message_waits_for_a_channel_past_the_delivery_ttl() {
     let short = Config {
         delivery_ttl: secs(30),
         ..Config::default()
@@ -3072,21 +3161,15 @@ fn the_time_to_live_ends_a_message_waiting_for_a_channel() {
     let (mut h, b_home) = busy_channel(201, short, false);
     let (o, _b, c, d) = (0, 1, 2, 3);
     h.jam(o, b_home);
-    let sent_at = h.now;
-    let id = send(&mut h, o, d, b"runs out");
-    let expired = Trace::Dropped {
-        msg_id: id,
-        reason: DropReason::Expired,
-    };
-    assert!(h.run_until(sent_at + secs(60), |h| traces(h, o).contains(&expired)));
-    assert!(
-        h.now.since(sent_at) < secs(30),
-        "{:?}",
-        h.now.since(sent_at)
-    );
+    let id = send(&mut h, o, d, b"waits");
+    h.run_for(secs(60));
+    assert!(core(&h, o).holding().any(|m| m == id), "O kept it");
     assert!(gave_up(&h, o, id).len() >= 20);
     assert!(forwards(&h, o, id).is_empty());
     assert_eq!(data_sent(&h, o, c), 0);
-    assert!(!delivered(&h, d, id));
-    assert!(h.run_until(h.now + secs(5), |h| h.accepts(o)));
+    h.unjam(o, b_home);
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert!(!traces(&h, o)
+        .iter()
+        .any(|t| matches!(t, Trace::Dropped { .. })));
 }
