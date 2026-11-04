@@ -2187,6 +2187,10 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
 /// is offered to it again, not to the next candidate; it chooses afresh
 /// once the neighbour is demoted (spec "Bans", roadmap D106).
 #[test]
+#[cfg_attr(
+    feature = "detour-refusal",
+    ignore = "the hold on refusal; the research build goes round"
+)]
 fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
     use crate::tables::budget::BAN;
     use crate::wire::Ack;
@@ -2224,6 +2228,27 @@ fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
             assert!(first >= refused_at + BAN, "{first:?}");
         }
     }
+}
+
+/// Research build `detour-refusal`: a refused forward goes round the
+/// refuser for the wait it told, to the next candidate at once.
+#[test]
+#[cfg(feature = "detour-refusal")]
+fn a_refused_forward_goes_round_the_refuser() {
+    use crate::wire::Ack;
+    let (mut r, mut now, id, d_pos, e_pos) = handing_to_the_nearer(b"refused");
+    let refusal = Ack {
+        msg_id: id,
+        from: id_of(d_pos),
+        to: r.me(),
+        refused: true,
+        wait: 8,
+        seen: false,
+    };
+    now += Duration::from_millis(5);
+    hear(&mut r, &mut now, &Packet::Ack(refusal));
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    assert_eq!(data_to(&sent), [(id_of(e_pos), 2)], "E at once");
 }
 
 /// Routing is a view (spec "Next hop", "Send queue"): a message waiting

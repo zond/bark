@@ -1399,6 +1399,8 @@ neighbour, banned, is still its next hop, so the message waits until
 the ban ends, however it has grown by then, and is offered to it again,
 as after a failure ([hand-over](#hand-over) step 6, roadmap D106). A
 return to the parent waits the same way.
+In the research build `detour-refusal` it goes round the refuser
+instead while another candidate is left ([next hop](#next-hop)).
 
 *Why a refused message waits for the same neighbour.* A refusal is an answer: the neighbour is
 there, hears this relay, and has said when it will have room. Sent
@@ -1802,6 +1804,11 @@ candidate for that message, so the message goes to the next. Where that
 leaves no candidate, or only a last resort the neighbour was not, the
 message waits for the ban as above. A refusal does not set the bit: a
 refusing neighbour is there and hears this relay.
+
+*Research build `detour-refusal`, not for the field:* as `detour-silence`,
+and a refusal sets the bit too, so a refused forward or return goes
+round the refuser for the wait it told, choosing afresh among the
+others, and waits for it only where no other is left.
 
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a

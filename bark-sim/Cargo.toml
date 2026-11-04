@@ -15,3 +15,4 @@ toml = "0.8"
 [features]
 # Research builds of the protocol core (bark-proto's features of the same names).
 detour-silence = ["bark-proto/detour-silence"]
+detour-refusal = ["bark-proto/detour-refusal"]

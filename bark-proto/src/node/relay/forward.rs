@@ -2062,6 +2062,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // long way past a relay that has said when it will have room
             // (spec "Bans", "Next hop", roadmap D106).
             Kind::Forward | Kind::Return => {
+                if cfg!(feature = "detour-refusal") {
+                    // Research build: gone round for the told wait.
+                    self.go_round(by);
+                }
                 if self.own.id == Some(msg_id) {
                     // Each offer costs the refuser a reply and hides its ACKs.
                     self.own.refusals = self.own.refusals.saturating_add(1);
@@ -2267,7 +2271,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The current forward goes round `to` while `to` is banned (research
-    /// build `detour-silence`; a no-op otherwise).
+    /// builds `detour-silence` and `detour-refusal`; a no-op otherwise).
     fn go_round(&mut self, to: NodeId) {
         let Some(slot) = self.neighbours.slot_of(to) else {
             return;
