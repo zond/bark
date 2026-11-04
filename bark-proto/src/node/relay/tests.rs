@@ -6,6 +6,7 @@ use super::*;
 use crate::event::{Frame, Trace};
 use crate::node::mac;
 use crate::tables::budget::BAN;
+use crate::tables::send_queue::NEIGHBOUR_PLACES;
 use crate::wire::Heartbeat;
 use std::vec::Vec;
 
@@ -2266,8 +2267,8 @@ fn a_message_waiting_for_a_ban_goes_to_a_better_newcomer_at_once() {
 }
 
 /// The application's message passes the same gate as a sleepy node's own
-/// (spec "Receiving DATA"): with a message queued for the neighbour it
-/// would go to, the relay gives it back with a wait of at least a ban,
+/// (spec "Receiving DATA"): with the neighbour's places taken by messages
+/// queued for it, the relay gives it back with a wait of at least a ban,
 /// and takes none meanwhile (roadmap D106).
 #[test]
 fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
@@ -2277,8 +2278,10 @@ fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
     for &id in &ids {
         r.neighbours.refused(id, now);
     }
-    assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
-    // Hold the queued one at its neighbour: its hand-over is not driven.
+    for tag in 1..=NEIGHBOUR_PLACES as u8 {
+        assert_eq!(offer_data(&mut r, &mut now, far, tag, 2), (Some(0), None));
+    }
+    // Hold the queued ones at their neighbour: no hand-over is driven.
     let payload = [7u8; 20];
     let send = AppCommand::Send {
         dst_pos: far,
@@ -2295,13 +2298,14 @@ fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
     let retry_at = back.expect("given back");
     assert!(retry_at >= now + BAN, "{retry_at:?}");
     assert!(!r.accepts_send(now));
-    assert_eq!(r.queue.len(), 1, "not taken");
+    assert_eq!(r.queue.len(), NEIGHBOUR_PLACES, "not taken");
 }
 
-/// The gate of the send queue (spec "Receiving DATA"): a message that
-/// would go to the same next hop as one queued here, with no higher
-/// count, is refused, told the rest of that neighbour's ban; one with a
-/// higher count, or for another next hop, is taken (roadmap D106).
+/// The gate of the send queue (spec "Send queue"): a message that would
+/// go to the same next hop as the messages that fill its places here,
+/// with no higher count, is refused, told the rest of that neighbour's
+/// ban; one with a higher count, or for another next hop, is taken
+/// (roadmap D106).
 #[test]
 fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
     use crate::event::DropReason;
@@ -2360,8 +2364,11 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
             });
         (refused, wait)
     };
-    assert_eq!(offer(&mut r, &mut now, 1, 2, far), (None, None));
-    let (why, wait) = offer(&mut r, &mut now, 2, 2, far);
+    let places = NEIGHBOUR_PLACES as u8;
+    for tag in 1..=places {
+        assert_eq!(offer(&mut r, &mut now, tag, 2, far), (None, None));
+    }
+    let (why, wait) = offer(&mut r, &mut now, places + 1, 2, far);
     assert_eq!(why, Some(DropReason::SameHop));
     // Told in whole bans, rounded down.
     let wait = wait.expect("refused, with a wait");
@@ -2369,20 +2376,25 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
         wait <= ends.since(now) && wait + BAN > ends.since(now),
         "{wait:?}"
     );
-    assert_eq!(offer(&mut r, &mut now, 3, 3, far), (None, None), "higher");
     assert_eq!(
-        offer(&mut r, &mut now, 4, 2, near),
+        offer(&mut r, &mut now, places + 2, 3, far),
+        (None, None),
+        "higher"
+    );
+    assert_eq!(
+        offer(&mut r, &mut now, places + 3, 2, near),
         (None, None),
         "elsewhere"
     );
-    assert_eq!(r.queue.len(), 3);
+    assert_eq!(r.queue.len(), NEIGHBOUR_PLACES + 2);
 }
 
 /// Senders refused at the gate stand in the way's line (spec "Bans"):
-/// with a message queued for the next hop, each next message for it is
-/// told one service time more than the one before, here a ban, the
-/// least, since the neighbour has taken nothing yet; the waits are never
-/// shorter than the rest of the neighbour's ban (roadmap D106).
+/// with the next hop's places taken, the first refused is told when one
+/// is expected to free, one service time, and each next one service time
+/// more than the one before, here a ban, the least, since the neighbour
+/// has taken nothing yet; the waits are never shorter than the rest of
+/// the neighbour's ban (roadmap D106).
 #[test]
 fn refusals_at_the_gate_are_told_a_line() {
     use crate::event::DropReason;
@@ -2433,9 +2445,12 @@ fn refusals_at_the_gate_are_told_a_line() {
             });
         (refused, wait)
     };
-    assert_eq!(offer(&mut r, &mut now, 1), (None, None));
+    let places = NEIGHBOUR_PLACES as u8;
+    for tag in 1..=places {
+        assert_eq!(offer(&mut r, &mut now, tag), (None, None));
+    }
     let mut waits = Vec::new();
-    for tag in 2..6 {
+    for tag in places + 1..places + 5 {
         let (why, wait) = offer(&mut r, &mut now, tag);
         assert_eq!(why, Some(DropReason::SameHop));
         waits.push(wait.expect("told a wait"));
@@ -2452,7 +2467,7 @@ fn refusals_at_the_gate_are_told_a_line() {
     });
     let to = to.expect("the first is being handed over");
     r.neighbours.refused(to, now + BAN.mul(20));
-    let (_, wait) = offer(&mut r, &mut now, 7);
+    let (_, wait) = offer(&mut r, &mut now, places + 6);
     let wait = wait.expect("told a wait");
     assert!(wait + BAN > BAN.mul(20) && wait <= BAN.mul(20), "{wait:?}");
 }

@@ -3122,12 +3122,10 @@ fn a_busy_channel_keeps_the_hand_over_on_the_same_neighbour() {
 fn a_refusal_after_a_busy_channel_holds_the_message() {
     let (mut h, b_home) = busy_channel(191, Config::default(), true);
     let (o, b, _c, d, x) = (0, 1, 2, 3, 4);
-    // X fills B's queue while B's frames are lost.
-    let lost = std::rc::Rc::new(std::cell::Cell::new(true));
-    let losing = lost.clone();
-    h.lose = Some(Box::new(move |_, from, _, bytes| {
-        losing.get() && from == b && matches!(Packet::decode(bytes), Ok(Packet::Data(_)))
-    }));
+    // X fills B's places for D while D's channel is busy at B: a busy
+    // channel is no failure, so B keeps D and holds what it took.
+    let d_home = core(&h, d).home();
+    h.jam(b, d_home);
     fill(&mut h, x, b, d);
     h.jam(o, b_home);
     let id = send(&mut h, o, d, b"refused later");
@@ -3145,7 +3143,7 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
     h.run_for(secs(5));
     // B may take it once what it holds for D is gone; C never does.
     assert!(forwards(&h, o, id).iter().all(|&n| n == nb), "sent round B");
-    lost.set(false);
+    h.unjam(b, d_home);
     assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, id)));
     assert_eq!(forwards(&h, o, id), vec![nb]);
 }

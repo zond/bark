@@ -1435,20 +1435,26 @@ a place in a way's line, and at least one, since 0 means taken
   time later. The line's end is kept in the way's neighbour entry, and
   one in the past is now, so time shortens the line by itself. The
   service time is the neighbour's ([neighbour table](#neighbour-table)),
-  or how long the message that bars the way has waited for it here, its
-  refusals' waits aside, if that is longer, so that a rising load is
-  seen before the next take; and at least a ban.
+  or how long the longest waiting of the messages queued for it has
+  waited since the neighbour last took one, its refusals' waits aside,
+  if that is longer, so that a rising load is seen before the next take;
+  and at least a ban.
 - Such a refusal asks for no less than the rest of the ban on that way,
   without a place in line.
 - The ACK's six bits hold 63 bans, 99.6 s; a longer wait is told as 63,
   the sender coming back early to be refused again (roadmap D54, D76).
 
-*Why a line per way.* A relay holds one message per next hop
-([send queue](#send-queue)), so the senders it refuses for one way wait
-for the same thing, that way to free. Told the same wait, they would come
-back together and all but one be refused again, each time at the cost of
-a full DATA frame and an ACK; spaced by the time this relay takes to get
-one message through, they come back as the way frees, one after another.
+*Why a line per way.* A relay holds a few messages per next hop, the
+way's places ([send queue](#send-queue)), so the senders it refuses for
+one way wait for the same thing, a place to free. One frees each time
+the way takes one of the messages queued for it, about a service time
+apart, so the first sender refused is told one service time, the next
+two, and so on: the line is the expected service of the places ahead
+of it plus the senders already in line. Told the same wait, they would
+come back together and all but one be refused again, each time at the
+cost of a full DATA frame and an ACK; spaced by the time this relay
+takes to get one message through, they come back as places free, one
+after another.
 
 *Why rounded up.* A sender that comes back before its place only costs a
 frame and a refusal, so a place is rounded up and the sender may come
@@ -1562,26 +1568,43 @@ node's own app's, takes no hop place, so overload stops new messages
 where they enter, at the app ([addresses](#addresses)).
 
 **The gate.** Before either, a relay takes a message to send on only if
-no message queued here, a delivery aside, goes to the same next hop
-now, or the new one's count is higher than every one of theirs
-([receiving DATA](#receiving-data)). The count of a queued message is
-the one it holds here, one less than the count it is sent with. So a
-relay holds about one message per next hop, more only in order of
-count. It refuses the rest, each with a place in that neighbour's line
-([bans](#bans)).
+fewer than 13 messages queued here, deliveries aside, go to the same
+next hop now, the way's **places**, or the new one's count is higher
+than every one of theirs ([receiving DATA](#receiving-data)). The count
+of a queued message is the one it holds here, one less than the count
+it is sent with. Every queued message is counted where routing sends it
+now ([next hop](#next-hop)), not where it was going when it came, so the
+gate needs no state beyond the queue. So a relay holds up to 13
+messages per next hop, more only in order of count. It refuses the
+rest, each with a place in that neighbour's line ([bans](#bans)).
 
-*Why one per next hop.* A neighbour at its cap takes one frame per ban
-and refuses the rest, so a second message waiting here for it gains
-nothing: it would only fill this queue while the sender behind still
-had room to send. Refused, it waits at the relay before, which fills
-in its turn, and the wait travels back to the origin one queue place at
-a time instead of 39 ([bans](#bans)). The next hop is the one routing
-gives now, so the gate needs no state beyond the queue.
+*Why places per next hop.* What a relay holds for a neighbour beyond
+what keeps the way to it busy only waits, and its wait is latency for
+every message behind it. Refused instead, a message waits at the relay
+before, which fills in its turn, and the wait travels back toward the
+origin a few queue places at a time instead of 39 ([bans](#bans)). A
+room per relay could not do this: a banned neighbour's messages would
+fill it and keep out the messages for every other way.
 
-*What it costs.* Two messages for one next hop that arrive within a
-frame time of each other, the second no further travelled, are not
-held together: the second waits its place in line, a ban at least, at
-the relay before, although the neighbour might have taken both. At the design's rate that is rare; under load it is the
+*Why 13.* A way's places need hold no more than keeps the air to it
+busy while the senders refused for it come back. A place that frees
+stays empty at most until the first sender in line returns: its wait
+was rounded up to whole bans, so it may come up to a ban late, 1.58 s,
+and then needs its own hand-over, a full frame and its ACK, 155.5 ms.
+In that time the way can take at most ⌈(1.58 + 0.156) / 0.156⌉ = 12
+messages back to back, so 12 waiting and the one being handed over
+make 13. A way at its neighbour's cap takes one message a ban and
+would need only three; the rest wait, at most 13 service times at this
+relay, and cost no air. Fewer places cost air: each refusal is a full
+DATA frame and an ACK, and with one or two places the city at four
+times the design's rate refused millions of them and its backlog grew
+without bound; from three places on it levels off (roadmap D106).
+
+*What it costs.* More messages for one next hop than its places,
+arriving within a service time of each other, the last no further
+travelled, are not held together: the last waits its place in line, a
+ban at least, at the relay before, although the neighbour might have
+taken them all. At the design's rate that is rare; under load it is the
 price of the wait reaching the origin.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
@@ -1657,9 +1680,8 @@ most travelled message always finds room.
 *Why the most travelled first.* For this the message that has come
 farthest must be offered when a ban ends: a less travelled one offered
 first would be refused and ban the neighbour again, each time. The gate
-keeps this right: the messages a relay holds for one next hop are
-there only in order of count, so the one it offers first is the one
-the next relay's gate lets in.
+lets a higher count in whatever the places of its way hold, so the
+message offered first is one the next relay's gate lets in.
 
 ### Routing
 
@@ -1885,8 +1907,8 @@ depends on what the packet gives it to do:
 - **Something to send on.** It first routes the packet, as the record
   it would have routes it ([next hop](#next-hop)), and routes every
   message queued here that is not a delivery: it takes the packet only
-  if none of them goes to the same next hop now, or the packet's count
-  is higher than every one of theirs (the **gate**,
+  if fewer than 13 of them go to the same next hop now, or the
+  packet's count is higher than every one of theirs (the **gate**,
   [send queue](#send-queue)). Past the gate, it takes the packet into the regular room
   of its send queue only if the room has a place and the bucket holds,
   as it stands, the ACK, the airtime of every frame in the send queue
@@ -3247,7 +3269,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with one queued message per next hop ([send queue](#send-queue)) bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | spec read-through, after roadmap D106 |
+| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with up to 13 queued messages per next hop ([send queue](#send-queue)) bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | spec read-through, after roadmap D106 |
 | O21 | The dense city over many seeds on main as it stands, D102 to D106 together, since every storm and overload result so far is from one to three seeds (`dense-power.toml`) | simulator, after D106 |
 
 ---

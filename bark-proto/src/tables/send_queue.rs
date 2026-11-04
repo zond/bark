@@ -44,24 +44,36 @@
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::MsgId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::budget::DEPTH;
+use crate::tables::budget::{BAN, DEPTH};
 use crate::tables::fixed::FixedVec;
 use crate::tables::records::MAX_HOPS;
 use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 use crate::wire::ACK_LEN;
 
+/// A full frame and the ACK that takes it, µs.
+const HAND_OVER_US: u64 = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
+    + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
+
 /// Queue length for a bucket of `depth`; see the module documentation.
 pub const fn queue_for(depth: Duration) -> usize {
-    let per_frame = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
-        + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
-    depth.as_micros().div_ceil(per_frame) as usize
+    depth.as_micros().div_ceil(HAND_OVER_US) as usize
 }
 
 /// Queue length for the design's bucket (spec "Duty cycle cap").
 pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 39);
+
+/// Messages a relay holds for one next hop, more only in order of count
+/// (spec "Send queue"): the one being handed over, and as many as the
+/// way could take back to back, a full frame and its ACK each, in the
+/// longest a freed place stays empty: the ban a refused sender was told,
+/// rounded up, and its own hand-over. ⌈(1.58 + 0.156) / 0.156⌉ + 1 = 13.
+pub const NEIGHBOUR_PLACES: usize =
+    (BAN.as_micros() + HAND_OVER_US).div_ceil(HAND_OVER_US) as usize + 1;
+
+const _: () = assert!(NEIGHBOUR_PLACES == 13);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.

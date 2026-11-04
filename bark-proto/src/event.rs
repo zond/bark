@@ -162,8 +162,8 @@ pub enum DropReason {
     /// Fresh work, and every neighbour that could take it is banned
     /// (spec "Receiving DATA"). Refused.
     Banned,
-    /// Another message queued here goes to the same next hop now and has
-    /// come as far or farther (spec "Receiving DATA", "Send queue").
+    /// The places for its next hop are taken by messages queued here, one
+    /// of which has come as far or farther (spec "Receiving DATA", "Send queue").
     /// Refused.
     SameHop,
     /// The hand-over back to the parent failed (spec "Return to parent", "Hand-over").

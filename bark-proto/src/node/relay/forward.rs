@@ -22,9 +22,10 @@
 //! order and decides whether acting on it is work: sending it on, which
 //! may be a forward or a return, or a delivery. Work to send on first
 //! passes the gate ([`Relay::gate`]): it is routed as it would be from
-//! here now, and so is every message queued, and it is refused if one of
-//! them goes to the same next hop with a count as high or higher, told
-//! the rest of that neighbour's ban (spec "Send queue"). It then goes into the
+//! here now, and so is every message queued, and it is refused if
+//! `NEIGHBOUR_PLACES` of them go to the same next hop and one has a count
+//! as high or higher, told a place in that neighbour's line
+//! (spec "Send queue", "Bans"). It then goes into the
 //! send queue's regular room if it has a place and the bucket holds the
 //! ACK, the airtime of everything queued with the new frame, and the reply
 //! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
@@ -193,7 +194,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, NEIGHBOUR_PLACES, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -572,25 +573,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         pick
     }
 
-    /// The gate of the send queue (spec "Receiving DATA"): a message
-    /// received with `hops`, other than `id`, going to `to`, enters only
-    /// if no queued message goes to `to` now, or its count is higher than
-    /// every one of theirs. If not, when the longest waiting of those that
-    /// bar it began to wait for `to` here, for the wait to tell
-    /// ([`Self::line_wait`]).
+    /// The gate of the send queue (spec "Send queue"): a message
+    /// received with `hops`, other than `id`, going to `to`, enters if
+    /// fewer than [`NEIGHBOUR_PLACES`] queued messages go to `to` now, or
+    /// its count is higher than every one of theirs. If not, when the
+    /// longest waiting of them began to wait for `to` here, for the wait
+    /// to tell ([`Self::line_wait`]).
     ///
     /// The count of a queued message is one less than the count it is
-    /// sent with: the count it holds here. Only those with a count of at
-    /// least `hops` can bar it, so the others are not routed. At most the
-    /// queue's entries times the neighbour table's entries per call, and
-    /// no allocation.
+    /// sent with: the count it holds here. At most the queue's entries
+    /// times the neighbour table's entries per call, and no allocation.
     fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Option<Instant> {
-        self.queue
-            .iter()
-            .filter(|o| o.hops().saturating_sub(1) >= hops && o.msg_id() != Some(id))
-            .filter(|o| self.bound_for(o, now) == Some(to))
-            .map(|o| o.since)
-            .min()
+        let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
+        for o in self.queue.iter().filter(|o| o.msg_id() != Some(id)) {
+            if self.bound_for(o, now) == Some(to) {
+                ahead += 1;
+                barred |= o.hops().saturating_sub(1) >= hops;
+                oldest = Some(oldest.map_or(o.since, |t| t.min(o.since)));
+            }
+        }
+        if ahead < NEIGHBOUR_PLACES || !barred {
+            return None;
+        }
+        oldest
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
