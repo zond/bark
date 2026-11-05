@@ -1794,40 +1794,35 @@ only when it owes no other reply, and acts on a packet it takes once
 the ACK has gone out ([the ACK](#the-ack)). Whether it takes the packet
 depends on what the packet gives it to do:
 
-- **Something to send on.** It first routes the packet, as the record
-  it would have routes it ([next hop](#next-hop)), and takes it only if
-  it passes the gate ([send queue](#send-queue)). Past the gate, it
-  takes the packet into the regular room
-  of its send queue only if the room has a place and the bucket holds,
-  as it stands, the ACK, the airtime of every frame in the send queue
-  and of the new one, and the reply reserve
-  ([duty cycle cap](#duty-cycle-cap)); failing that, into a hop place
-  ([send queue](#send-queue)), whatever the bucket holds. So it refuses
-  a message already in the network only at the gate, or when the hop
-  places it may use are taken too, whatever its bans:
-  [overload waits](#overload-waits) needs every such message to move on
-  (roadmap D34).
-- **Fresh work**, a message entering the network here: a sleepy
-  node's own (count 0, [hop count](#hop-count)) or the node's own
-  application's. It also needs a neighbour the relay could hand it
-  to now: a live one that is
-  not banned ([next hop](#next-hop)), demoted or not, since the message
-  has tried none. A relay with no live neighbour at all takes it, and
-  the search ends as in [return to parent](#return-to-parent). It also
-  refuses such a message while the neighbour it would go to, were none
-  banned, is banned: the way on has pushed back. A message already in
-  the network is not refused for that.
+- **Something to send on.** It routes the packet as the record it would
+  have routes it ([next hop](#next-hop)), and takes it only if it passes
+  the gate ([send queue](#send-queue)); then into the regular room of
+  its send queue if the room has a place and the bucket holds, as it
+  stands, the ACK, the airtime of everything queued and of the new
+  frame, and the reply reserve ([duty cycle cap](#duty-cycle-cap)), else
+  into a hop place, whatever the bucket holds. So a message already in
+  the network is refused only at the gate or when the hop places it may
+  use are taken, whatever the bans: [overload waits](#overload-waits)
+  needs every such message to move on (roadmap D34).
+- **Fresh work**, a message entering the network here: a sleepy node's
+  own (count 0, [hop count](#hop-count)) or the node's own
+  application's. Besides the above, without a hop place, it needs a
+  live neighbour that is not banned, demoted or not, since the message
+  has tried none, and is refused while the neighbour it would go to,
+  were none banned, is banned: the way on has pushed back. A relay with
+  no live neighbour at all takes it, and the search ends as in
+  [return to parent](#return-to-parent).
   - From its own application a node takes one message at a time, until
-    its first hop takes it: while it is running, holds none, and has
-    room in its send queue and bucket for a full frame on top of what
-    they hold, and not every neighbour is banned, or, for a sleepy node
-    with a live anchor, not the anchor
+    its first hop takes it: while it is running, holds none, has room
+    in its send queue and bucket for a full frame on top of what they
+    hold, and not every neighbour is banned, or, for a sleepy node with
+    a live anchor, not the anchor
     ([a sleepy node's own message](#a-sleepy-nodes-own-message)). The
-    message offered then passes the same gate, at count 0, and its next
-    hop must not be banned; failing either it goes back to the
-    application with the wait a refusal would tell, at least a ban.
-  - A message from its own application for a sleepy node it holds for,
-    when the delivery queue is full, is kept aside until the queue has a
+    message then passes the gate at count 0 and its next hop must not
+    be banned; failing either it goes back to the application with the
+    wait a refusal would tell, at least a ban.
+  - One from its own application for a sleepy node it holds for, when
+    the delivery queue is full, is kept aside until the queue has a
     place.
 - **Something to deliver.** It takes the packet only if its bucket holds
   the reply reserve and an ACK and, for another node, its delivery
@@ -1836,25 +1831,20 @@ depends on what the packet gives it to do:
   or seen, even when it would refuse work: a refusal would send its
   sender on with a second copy.
 
-Otherwise it refuses: it sends an ACK that refuses on the channel in
-`aux`, changes nothing, and the sender
-waits and offers it again ([bans](#bans)). A relay that cannot
-afford even the reply stays silent, and its sender retries as for a
-lost ACK (roadmap D27, D29).
+Otherwise it refuses: an ACK that refuses on the channel in `aux`,
+nothing changed, and the sender waits and offers it again
+([bans](#bans)). A relay that cannot afford even the reply stays
+silent, and its sender retries as for a lost ACK (roadmap D27, D29).
 
 *Why fresh work needs a free way on.* A relay whose neighbours are all
 banned would only hold the message until a ban ends, and its offer could
 be refused again; refused here, the message waits at its origin, where
-the application sees it. So a relay takes from sleepy nodes and its own
-application no more than it can start sending now (roadmap D34).
-
-*Why pushback refuses only fresh work.* Taken against the pushback, the
-message would only wait and age here. Each neighbour's pushback is its
-own ban, so it does not hold up the other ways, and it ends with the
-ban. A message already in the network is spared because its sender
-would wait for this relay while this relay waits for the way on, and
-around a ring of relays such refusals would keep each other up (roadmap
-D54).
+the application sees it (roadmap D34). Taken against a next hop's
+pushback, it would only wait and age here; each neighbour's pushback is
+its own ban, so it holds up no other next hop and ends with the ban. A
+message already in the network is spared, because its sender would wait
+for this relay while this relay waits for the way on, and around a ring
+of relays such refusals would keep each other up (roadmap D54).
 
 The packet is one of the following, tested in this order:
 
