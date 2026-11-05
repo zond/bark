@@ -3039,22 +3039,124 @@ node and asks the person to update it. An app that finds a version
 above its own tells the person the node's firmware is newer (roadmap
 D117).
 
-**The payload.** The sender's address, position and node ID, travels
-inside the encrypted payload, so that the relays that carry a message
-do not learn who sent it. Anyone in radio range of the sender's node
-still learns its ID and position from its heartbeats
-([what the protocol omits](#what-the-protocol-omits)). Encryption
-scheme: open item O1.
+**The payload.** The app owns it; this is its layout (roadmap D123 to
+D127). The reasons, and the alternatives a reader would ask about, are
+in `docs/app-layer-2026-11-05.md`; the codec and the vectors the app is
+tested against are `bark-app-layer`.
+
+*Keys.* A person's **identity** is an X25519 public key. Every key
+comes from a 128-bit random seed, which the person backs up as 12 words:
+the seed and the first 4 bits of its SHA-256, 11 bits a word, from a
+fixed list of 2048 (`bark-app-layer/src/words.txt`). All cryptography is
+libsodium's: the master key is `crypto_generichash(seed, 32)`, the
+identity's key pair `crypto_box_seed_keypair` of
+`crypto_kdf_derive_from_key(master, 1, "bark-key")`, and the mailbox key
+`crypto_kdf_derive_from_key(master, 2, "bark-mbx")`. No signatures, and
+keys do not change.
+
+*Forms.* A payload's first byte is its format: the version, 1, in the
+high four bits, the form in the low four. A receiver drops a payload of
+a version or form it does not know.
+
+| form | to | after the format byte | over the plaintext |
+|---|---|---|---|
+| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 41 |
+| 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 49 |
+| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 41 |
+| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key; the nonce is not sent | 17 |
+
+Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
+227 − 17 = 210 bytes, so that its mailbox can send any payload on as a
+reply. A boxed payload names no sender: the receiver tries the key of
+each contact, `crypto_box_beforenm` of each made once, until one opens
+it. An introduction carries the sender's card; its sender is shown as
+unverified until a boxed payload from that identity opens, and it is
+used until the sender has received a boxed payload from the receiver.
+An introduction naming an identity the receiver has verified is
+dropped. Payloads are not padded.
+
+*Plaintext.* Forms 0 and 1 hold a header, then records:
+
+| field | bytes | |
+|---|---|---|
+| flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two, byte by byte; the others zero |
+| sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC, on each phone later than any it sent before |
+| address | 0 or 13 | the address to answer to |
+
+| record | bytes | |
+|---|---|---|
+| text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
+| acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
+| card | 1 + 1 + 50 to 82 | type 4, the card's length, then the card |
+
+A receiver drops a message whose bit 1 is not what the two identities
+say, and a text whose contact and `sent` it already has. The address is
+the one on the sender's card, included until the contact has answered a
+message that carried it and whenever it changes. The app sends nothing
+by itself: an acknowledgement is a message the person chooses to send,
+and a text is sent again only when the person says so (roadmap D126).
+
+*The card*, what people exchange, shown as a QR code: version (1), the
+identity (32), an address (13), the address's time as `sent` (4) and a
+display name in UTF-8 (0 to 32), 50 to 82 bytes; as text, `BARK:` and
+the bytes in base32 (RFC 4648, its base32 alphabet) without padding. Its address is the
+person's home node's when they have one, else their node's current one.
+A card with a later time replaces a contact's address; the person sends
+their card to their contacts when it changes.
+
+The sender's address travels inside the encrypted payload, so that the
+relays past the first hop do not learn who sent it: a DATA with hop
+count 0 names its sending node, and anyone in radio range of that node
+learns its node ID and position from its heartbeats
+([what the protocol omits](#what-the-protocol-omits)).
 
 A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app
-must make every payload unique; end-to-end encryption with a fresh nonce
-per message does that.
+must make every payload unique; the random nonce, the introduction's
+ephemeral key and a reply's round do that.
 
 *Why unique.* Two messages to one destination with identical payloads
 are one message to every relay that still keeps the first one's record
 ([message records](#message-records), [bounds](#bounds)), and the second
 is not delivered.
+
+---
+
+## Mailbox
+
+A person may set a node as their **home**, from the app over the phone
+link; the app then puts its address on the person's card. It must be a
+fixed relay, neither sleepy nor carried ([nodes](#nodes)), so that its
+address stays. The app gives it the mailbox key and nothing else, so it
+cannot read the messages it keeps (roadmap D128;
+`docs/app-layer-2026-11-05.md`, "The mailbox").
+
+**The ring.** The home node keeps every payload delivered to its node ID
+but a fetch in a ring of slots in flash, numbered from 1, and erases the
+oldest page when the ring is full. Its phone link's inbox reads from it.
+
+**The fetch** is a form 2 payload to the home address whose plaintext
+is `sent` (4), the requester's current address (13), `since` (3), the
+number up to which it has every item, and `most` (1), the most items to
+send. The node takes it only if it opens under the mailbox key and its
+`sent` is later than the last fetch's it took, which it keeps. `since`
+0 asks for the newest `most`.
+
+**The reply.** The node sends the items after `since`, oldest first, at
+most `most`, to the fetch's address, then each new item as it arrives,
+until `since` + `most` is reached or the next fetch is taken. Each goes
+as a form 3 payload, the item sealed under the mailbox key with the
+nonce: the fetch's `sent` (4), the item's number (3), 17 zero bytes. The
+requester tries the numbers `since` + 1 to `since` + `most` and so
+learns each item's number.
+
+**When to fetch.** When the requester's address changes and then holds
+for the delivery TTL ([nodes](#nodes)), and when the person asks. The
+app asks for 23 at most, the inbox's size ([phone link](#phone-link)).
+
+The mailbox is an application on the node, beside the phone link: it
+uses the core's application interface (`core-interface.md`, Application) and
+nothing else, and the simulator runs it the same way.
 
 ---
 
@@ -3100,6 +3202,12 @@ channels they visit:
   14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
   the **design rate** the rest of this document uses.
 
+The app's encryption and header take 47 to 60 bytes of a payload
+([phone link](#phone-link)), so the 100-byte payload above holds a text
+of 40 to 53 bytes. A message fetched from a [mailbox](#mailbox) crosses
+the city twice: with a share f of messages fetched, the design rate is
+23 / (1 + f) texts a person a day.
+
 Sleepy nodes' beats cost what [beats](#beats) lists, 230 ms an hour
 each, and relays nothing for them. Summed over the domain's 20 000
 sleepy nodes they take 1.28 s of airtime a second, 10 % of one channel's
@@ -3141,7 +3249,8 @@ The design resists collisions and overload, not adversaries. Anyone in
 radio range learns every node's ID and position from its heartbeats;
 nobody farther away does. The app's end-to-end encryption keeps payloads
 private and authentic ([phone link](#phone-link)); it does nothing for
-routing.
+routing, and a listener near a home node can tie it, by timing, to the
+address its mail goes on to ([mailbox](#mailbox)).
 
 *Why no authentication.* A real node of the network with a few
 judicious bugs, by accident or intent, breaks large parts of it whether
@@ -3362,7 +3471,6 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 
 | # | Item | Owner/when |
 |---|---|---|
-| O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
 | O5 | Adjacent-channel rejection of the SX1262 at 125 kHz spacing, with a neighbour at full power; if inadequate, 11 channels at 150 kHz spacing, the same end centres, 433.170–434.670 MHz ([channel plan](#channel-plan)) | step 1 |
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
@@ -3371,7 +3479,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)) | before step 7 |
+| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)); until then the mailbox key crosses the open link ([mailbox](#mailbox)) | before step 7 |
 
 ---
 
@@ -3389,6 +3497,12 @@ are those of the bring-up order, `roadmap.md` Phase 2.
   writes, reads and errors (Vol 3 Part F), the L2CAP header (Vol 3
   Part A), UUIDs (Vol 3 Part B), advertising and the link-layer packet
   (Vol 6 Part B).
+- libsodium documentation: "Public-key authenticated encryption"
+  (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
+  (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
+  hashing" (`crypto_generichash`).
+- RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
+- FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum.
 - Nordic nRF52840 Product Specification: the radio's transmit and
   receive currents.
 - Apple, Accessory Design Guidelines for Apple Devices, "Advertising
