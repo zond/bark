@@ -869,8 +869,8 @@ Per node, up to 64 entries, by node ID:
 | line end | when the line of senders refused for want of it as the way on ends ([bans](#bans)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
-**Expiry.** An entry expires after a time without a heartbeat or an ACK
-from the neighbour ([the ACK](#the-ack)):
+**Expiry.** An entry expires after a time without a heartbeat or an
+answer from the neighbour (demotion, below):
 
 | | |
 |---|---|
@@ -925,9 +925,10 @@ where the fading differs.
 **Demotion.** A neighbour with three failed hand-overs in a row
 (`fail_count ≥ 3`) is demoted until it answers this relay or three
 rotations (390 s) pass, and is then a next hop only when no other with
-margin is left. An **answer** is an ACK addressed to this relay, whether
-it takes, refuses or has seen the packet ([the ACK](#the-ack)), or a
-DATA the neighbour addresses to this relay. An answer resets
+margin is left. An **answer** is an ACK that
+answers this relay's hand-over to the neighbour, whether it takes,
+refuses or has seen the packet ([the ACK](#the-ack)), or a DATA the
+neighbour addresses to this relay. An answer resets
 `fail_count`, so failures count as in a row only with no answer
 between them. Its heartbeats, and frames it sends to other nodes, do not
 clear the demotion. Expiry takes minutes; a failed forward must demote
@@ -1343,10 +1344,10 @@ crosses its own path. Seen, the copy stays with its sender, which has
 the one record that knows what it has still to try (roadmap D89, D90).
 
 The sender matches the ID and both names against its outstanding
-hand-over. An ACK addressed to it, taking, refusing or seen, resets the
-neighbour's failure count and refreshes its last-heard time
-([neighbour table](#neighbour-table)): a neighbour that answers is alive
-whether or not its heartbeats are heard.
+hand-over, and ignores an ACK that does not match. One that matches,
+taking, refusing or seen, resets the neighbour's failure count and
+refreshes its last-heard time ([neighbour table](#neighbour-table)): a
+neighbour that answers is alive whether or not its heartbeats are heard.
 
 *Why both IDs.* Nodes share home channels, so without the answering
 node's ID an ACK for the same message from another relay on the same
@@ -1387,21 +1388,24 @@ the transmission's own costs and the airtime
 #### Bans
 
 A neighbour that refuses a packet or fails a hand-over is **banned**:
-nothing is sent to it until the ban ends, and a message whose next hop
+no forward or return goes to it until the ban ends, and a message whose next hop
 it is waits for it, unless the neighbour refused that message
 ([next hop](#next-hop)). Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
 ([receiving DATA](#receiving-data)). The neighbour is not counted as
-tried and no failure is counted. The message stays in its place in the
-send queue and is routed again from the state as it then is, the
-refused transmission not counting as one of its attempts. It goes round
+tried and no failure is counted, and its ban is the wait asked, in
+place of any ban it had: shorter or longer, it is the neighbour's
+latest word. The message stays in its place in the send queue and is
+routed again from the state as it then is, with three fresh attempts. It goes round
 the refuser while the ban lasts, to the next candidate at once, and
 waits for the ban only where no other is left ([next hop](#next-hop),
 roadmap D110). A return to the parent is refused the same way and goes
 on as a forward. A node's own application's message waits out the
-told wait anyway, on the ladder below, and is then routed afresh.
+told wait anyway, on the ladder below, and is then routed afresh. A
+delivery refused waits the told wait and keeps the transmissions it
+has made.
 
 This differs from silence, which holds the message
 ([hand-over](#hand-over) step 6). Silence is not known to be a refusal:
@@ -1464,6 +1468,9 @@ rounded up:
   load is seen before the next take.
 - Such a refusal asks for no less than the rest of the ban on that way,
   without a place in line.
+- A refusal for want of anything else, a place for the message's
+  record or in the delivery queue, asks for one ban, with a place in
+  the room's line.
 - A wait longer than 89 min is told as 89 min, the sender coming back
   early to be refused again (roadmap D54, D76).
 
@@ -1527,7 +1534,8 @@ only 44 min, and a code exact to the ban only 63 bans.
 
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
 failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,
-6.3 s and so on, up to 61 s, the longest anything waits for a bucket. An
+6.3 s and so on, up to 61 s, the longest anything waits for a bucket;
+a longer ban the neighbour has already stands. An
 answer from the neighbour ([neighbour table](#neighbour-table),
 demotion) resets its failure count and so the ladder (roadmap D42,
 D106).
