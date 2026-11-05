@@ -1454,6 +1454,14 @@ spend the refuser's bucket as fast as it refills. A sleepy node's own
 message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
+*Research build `own-detour`, not for the field:* a relay's own
+application's message, refused, goes round the refuser as a forward
+does, and waits on the ladder only where no other neighbour is left
+that is no worse a last resort. Every refusal in a row, gone round or
+not, counts as a step of the ladder, so the origin offers no faster for
+having more neighbours to be refused by. A sleepy node's own message is
+unchanged.
+
 ### Routing
 
 A message travels as a DATA packet ([packet formats](#packet-formats))

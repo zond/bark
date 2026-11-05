@@ -2066,8 +2066,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     // Each offer costs the refuser a reply and hides its ACKs.
                     self.own.refusals = self.own.refusals.saturating_add(1);
                     let until = now + wait.max(hold(self.own.refusals));
-                    if let Some(current) = self.queue.current_mut() {
-                        current.not_before = until;
+                    if !self.own_goes_round(by, now) {
+                        if let Some(current) = self.queue.current_mut() {
+                            current.not_before = until;
+                        }
                     }
                 }
                 self.cancel_handover();
@@ -2261,6 +2263,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(o) = self.queue.current_mut() {
             o.passed |= 1u64 << slot;
         }
+    }
+
+    /// Whether the application's message, refused by `by`, goes round it
+    /// to another neighbour at once instead of waiting on its hold
+    /// (research build `own-detour`, spec "Bans"): where routed now it
+    /// goes elsewhere than `by`. A sleepy node's own never comes here.
+    ///
+    /// The refusals in a row still count every refusal, gone round or
+    /// not: each is a frame and a reply on the full channels round the
+    /// origin, whoever sent it, so the hold that follows once no other
+    /// neighbour is left grows with all of them, and the origin offers
+    /// no faster for having more neighbours to be refused by.
+    #[cfg(feature = "own-detour")]
+    fn own_goes_round(&self, by: NodeId, now: Instant) -> bool {
+        let Some(o) = self.queue.current() else {
+            return false;
+        };
+        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
+            return false;
+        };
+        self.goes_to(&d, o.passed, o.avoid, now)
+            .is_some_and(|to| to != by)
+    }
+
+    /// The default build: the application's message waits on its hold.
+    #[cfg(not(feature = "own-detour"))]
+    fn own_goes_round(&self, _: NodeId, _: Instant) -> bool {
+        false
     }
 
     /// The current forward goes round `to` while `to` is banned.

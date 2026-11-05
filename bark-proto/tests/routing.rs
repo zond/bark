@@ -1503,6 +1503,10 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
 ///          F2
 /// ```
 #[test]
+#[cfg_attr(
+    feature = "own-detour",
+    ignore = "the own message's hold on refusal; the research build goes round"
+)]
 fn a_ban_excludes_the_neighbour_and_expires() {
     use bark_proto::tables::budget::BAN;
     let (o, f1, f2, d, x) = (0, 1, 2, 3, 4);
@@ -3157,6 +3161,10 @@ fn a_busy_channel_holds_a_return_until_it_clears() {
 /// channel comes first, and the refusal that follows ends the wait for
 /// the channel but not the hold on B.
 #[test]
+#[cfg_attr(
+    feature = "own-detour",
+    ignore = "the own message's hold on refusal; the research build goes round"
+)]
 fn a_refusal_after_a_busy_channel_holds_the_message() {
     let (mut h, b_home) = busy_channel(191, Config::default(), true);
     let (o, b, _c, d, x) = (0, 1, 2, 3, 4);
