@@ -346,7 +346,10 @@ With nRF Connect for Mobile (Nordic Semiconductor), on Android, which
 lets the MTU be asked for; iOS works the same but for step 3. A node
 image built with `BARK_LAT` and `BARK_LON` relays on USB with a place.
 Each step says what the phone and the node's log must show; the node's
-log is the USB serial port (`bark-fw/README.md`).
+log is the USB serial port (`bark-fw/README.md`). A new image needs no
+button: `stty -F /dev/ttyACM1 1200`, on the board's port, resets it
+into its bootloader's `TECHOBOOT` drive, which takes the UF2
+(`bark-fw/README.md`, Flash).
 
 1. **Boot.** The log shows the 32.768 kHz clock's source:
    `lfclk: crystal, started in N ms`, or the warning

@@ -31,13 +31,14 @@ mod radio;
 mod stack;
 #[cfg(not(feature = "console"))]
 mod store;
+mod touch;
 mod update;
 
 use core::fmt::Write as _;
 
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
-use embassy_futures::join::{join3, join5};
+use embassy_futures::join::{join, join3, join5};
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
@@ -250,6 +251,8 @@ async fn main(_spawner: Spawner) {
     usb_config.max_power = 100;
     usb_config.max_packet_size_0 = USB_PACKET as u8;
 
+    // The serial port's way into the bootloader (`touch.rs`).
+    let mut touch = touch::Touch;
     let mut config_descriptor = [0u8; 128];
     let mut bos_descriptor = [0u8; 16];
     let mut msos_descriptor = [0u8; 256];
@@ -263,6 +266,8 @@ async fn main(_spawner: Spawner) {
         &mut msos_descriptor,
         &mut control_buf,
     );
+    // Before the class, so that it sees the line coding first.
+    builder.handler(&mut touch);
     let class = CdcAcmClass::new(&mut builder, &mut cdc_state, USB_PACKET);
     let mut device = builder.build();
 
@@ -440,7 +445,7 @@ async fn main(_spawner: Spawner) {
             radio_task,
             update::watchdog(p.WDT),
         ),
-        shown,
+        join(shown, touch::run()),
         phone,
     )
     .await;

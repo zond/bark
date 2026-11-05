@@ -128,6 +128,10 @@ Unverified, in the order they will fail if wrong:
   The node tries it at boot, giving it 1 s, and falls back to the
   calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
   the console keeps the RC oscillator.
+- The bootloader from the serial port (`src/touch.rs`): 0x57 in GPREGRET
+  as the bootloader's UF2 reset magic is taken from its source as
+  remembered, not read from the board's 0.6.1; the bench's first
+  `stty … 1200` shows the drive or not.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
@@ -258,6 +262,11 @@ address ranges.
    bootloader waits 500 ms after a pin reset for the second one). The
    bootloader stays resident and a USB drive named `TECHOBOOT` appears. `INFO_UF2.TXT` on it reports the
    bootloader and SoftDevice versions; expect bootloader 0.6.1, S140 6.1.1.
+   A board running this firmware takes the same step from the serial
+   port, without the button: `stty -F /dev/ttyACM0 1200` (its port by
+   ID is `/dev/serial/by-id/*bark*`) resets it into the bootloader with
+   its drive (`src/touch.rs`). Any other rate, the log's included, does
+   nothing.
 3. Copy the UF2 to it:
    ```
    cp target/bark.uf2 /media/$USER/TECHOBOOT/   # or /run/media/$USER/TECHOBOOT
