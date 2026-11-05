@@ -1546,8 +1546,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the delivery `out` goes outside its node's window, with the
-    /// long preamble, to a node not known to be out of reach
-    /// (`relay/delivery.rs`).
+    /// long preamble, to a node not known to be out of reach (spec
+    /// "Delivery", `relay/delivery.rs`).
     fn early(&self, out: &Outgoing) -> bool {
         let to = match Packet::decode(out.frame.payload()) {
             Ok(Packet::Data(d)) => d.dst_hop,

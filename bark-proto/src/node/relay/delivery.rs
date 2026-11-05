@@ -22,6 +22,10 @@
 //! beat; one whose hand-over goes unanswered marks its node asleep until
 //! then.
 //!
+//! Outside its window a heard node's oldest message goes at once with the
+//! long preamble when the bucket spares it, and not again once one has
+//! gone unanswered, until the node beats (spec "Delivery", roadmap D112).
+//!
 //! With [`Config::sleepy_listens`], a research switch, a node heard is
 //! taken to listen all the time: its messages go at once, and after an
 //! unanswered one every `delivery_retry` (60 s) as well as on its beats.

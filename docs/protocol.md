@@ -2427,7 +2427,7 @@ minute and go anchorless ([sleepy nodes alone](#sleepy-nodes-alone)),
 and the domain's channels would fill with long frames. On battery a
 fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
 airtime), so 80 % of the 850 mAh cell lasts it four days; the fifth
-left keeps it asleep for eleven more.
+left keeps it asleep for twelve and a half more at 0.56 mA ([delivery](#delivery)).
 
 *Why a carried relay keeps the grace.* A node in a pocket is its
 owner's, and nobody anchors to it ([nodes](#nodes)); relaying, it would
@@ -2673,7 +2673,7 @@ since its address is then its own position
 ([sleepy nodes alone](#sleepy-nodes-alone)). A search ends at the first
 fix that passes the checks ([position](#position)), after 60 s, or when
 the node takes an anchor; one that finds nothing holds every search
-back for 8 hours. A node with no place searches until it has one, anchor
+back for 9 hours. A node with no place searches until it has one, anchor
 or not, since without a fix of its own it rebuilds no position it hears
 ([position](#position)). A relay's GPS is in [position](#position).
 
@@ -2681,7 +2681,7 @@ or not, since without a fix of its own it rebuilds no position it hears
 |---|---|
 | with an anchor | no search: standby, 20 µA (L76K hardware design, Table 2) |
 | search limit | 60 s: two of the 30 s frames that carry the satellites' orbits (IS-GPS-200), so that a cold start under the open sky, 30 s (Table 2), survives one lost frame |
-| after a search that found nothing | none for 8 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 8 h keeps a node that never sees the sky at about a tenth of its 0.56 mA ([delivery](#delivery)) |
+| after a search that found nothing | none for 9 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 9 h, 0.054 mA, keeps a node that never sees the sky within a tenth of its 0.56 mA ([delivery](#delivery)); 8.6 h is the least that does, rounded up to the hour |
 | between searches | standby, 20 µA, which keeps what a hot start, 2 s, needs (Table 2) |
 
 *Why none with an anchor.* Hearing its anchor each rotation says the
@@ -2753,16 +2753,17 @@ not fresh work ([receiving DATA](#receiving-data)).
 
 It goes to the node as DATA addressed to the node's ID, in `dst_hop` and
 `dst_id` alike, on the node's home channel from the heard table, with
-the ordinary preamble, and the node answers with an ordinary ACK
+the ordinary preamble in the node's window, and the node answers with an ordinary ACK
 ([the ACK](#the-ack)). A delivery goes through the send queue as any
 hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue.
 A hand-over waiting between its attempts, for the channel, a retry or
 the bucket, steps aside for it and keeps its place; a return keeps the
 attempts it has made.
 
-**The window.** A delivery goes only while the node listens: for a
-window of 3.39 s from each beat the holder hears. A node whose beat
-brought nothing goes back to receiving duty-cycled after that.
+**The window.** A delivery goes while the node listens: for a window of
+3.39 s from each beat the holder hears. A node whose beat brought
+nothing goes back to receiving duty-cycled after that. One kind of
+delivery goes outside the window instead (below).
 
 *Why that window.* It is long enough for one hand-over of a DATA that
 goes first to complete. That is the attempt the holder may have under
@@ -2790,8 +2791,29 @@ for its next beat.
 The DATA carries the hop count as any hand-over ([hop count](#hop-count))
 and the `time_left` it arrived with ([time to live](#time-to-live)).
 
-So a message waits for its node a mean of about two minutes, at most a
-beat period. A node listens 3.39 s after each beat, 54 s an hour, 3.15 s
+**Outside the window, with the long preamble.** A message for a node
+the holder hears, outside the node's window, goes at once as DATA with
+the long preamble
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+the node's oldest first and one at a time, if the holder's bucket holds
+that frame beyond everything else it has to send: its send queue, every
+other message in its delivery queue at the ordinary preamble, and the
+reply reserve ([duty cycle cap](#duty-cycle-cap)). Once the node has
+taken one, it listens a hand-over more, as after any delivery, and
+what follows goes with the ordinary preamble. A delivery outside the
+window that goes unanswered marks the node out of reach, and its
+messages wait for its next beat.
+
+*Why outside the window.* A person waiting for a text feels the wait
+for the node's beat, minutes. A long frame costs the holder airtime,
+which the bucket condition keeps to what it has spare, and the node the
+hand-over it listens after taking it. One unanswered frame says the node is
+dark or gone, so no more go to it before it beats (roadmap D112).
+
+So a message for a node in reach usually goes at once. One the bucket
+cannot spare, or for a node whose last delivery went unanswered, waits
+for the node's next beat: a mean of about two minutes, at most a beat
+period. A node listens 3.39 s after each beat, 54 s an hour, 3.15 s
 after each message it takes, and for its anchor's heartbeat, under a
 second a rotation, and receives duty-cycled between
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
@@ -2807,13 +2829,13 @@ What a sleepy node with an anchor draws, in S4 at the design rate
 | receiving duty-cycled | 0.12 mA |
 | transmitting: its beats and its own messages | 0.005 mA |
 | GPS standby ([beats](#beats)) | 0.020 mA |
-| GPS searches | none with an anchor (roadmap D91); without one at most 0.060 mA, one that finds nothing in 8 h |
-| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.62 mA, 57 days** |
+| GPS searches | none with an anchor (roadmap D91); without one at most 0.054 mA, one that finds nothing in 9 h |
+| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.61 mA, 58 days** |
 
 The microcontroller is not counted.
 
-**Outside the windows.** Two kinds of delivery go outside the windows,
-after the deliveries in a window and one at a time.
+**Outside the windows.** Two more kinds of delivery go outside the
+windows, after the deliveries above and one at a time.
 
 - **The flush.** From its first far fix ([position](#position)), or the
   end of its grace on battery ([sleepy nodes](#sleepy-nodes), roadmap

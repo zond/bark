@@ -43,16 +43,17 @@ pub const ORBIT_VALID: Duration = Duration::from_secs(4 * 3600);
 pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 
 /// How long a sleepy node runs no search after one that found nothing:
-/// 8 h. A search that finds nothing costs [`SEARCH_LIMIT`] at
-/// [`GPS_CURRENT_UA`], 0.48 mAh; once in 8 h that is 0.060 mA, a tenth of
-/// a sleepy node's 0.63 mA (spec "Delivery"), for a node that never sees
-/// the sky (roadmap D80).
-pub const BACKOFF: Duration = Duration::from_secs(8 * 3600);
+/// 9 h. A search that finds nothing costs [`SEARCH_LIMIT`] at
+/// [`GPS_CURRENT_UA`], 0.48 mAh; once in 9 h that is 0.054 mA, within a
+/// tenth of a sleepy node's 0.56 mA (spec "Delivery"), for a node that
+/// never sees the sky: 8.6 h is the least that keeps it, rounded up to
+/// the hour (roadmap D80, D112).
+pub const BACKOFF: Duration = Duration::from_secs(9 * 3600);
 
-/// A sleepy node's mean current with an anchor, µA: the radio's, S4's
-/// figure (spec "Delivery"), which [`BACKOFF`] keeps the GPS within a
-/// tenth of.
-pub const SLEEPY_CURRENT_UA: u64 = 630;
+/// A sleepy node's mean current with an anchor, µA, as measured in S4
+/// (spec "Delivery", roadmap D92), which [`BACKOFF`] keeps the GPS within
+/// a tenth of.
+pub const SLEEPY_CURRENT_UA: u64 = 560;
 
 #[cfg(test)]
 mod tests {
@@ -63,8 +64,8 @@ mod tests {
         let search_uas = GPS_CURRENT_UA * SEARCH_LIMIT.as_micros() / 1_000_000;
         let mean_ua = search_uas as f64 / (BACKOFF.as_micros() as f64 / 1e6);
         assert!(mean_ua <= SLEEPY_CURRENT_UA as f64 / 10.0, "{mean_ua}");
-        // And not much less: 7.7 h is the least that keeps it.
+        // And not much less: 8.6 h is the least that keeps it.
         let least_s = search_uas as f64 / (SLEEPY_CURRENT_UA as f64 / 10.0);
-        assert!((least_s / 3600.0 - 7.7).abs() < 0.05, "{least_s}");
+        assert!((least_s / 3600.0 - 8.6).abs() < 0.05, "{least_s}");
     }
 }
