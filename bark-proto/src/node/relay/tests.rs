@@ -1208,6 +1208,75 @@ fn a_message_that_waited_goes_first_once() {
     assert!(r.queue.is_empty());
 }
 
+/// The mark that a message waited for a ban ends when its hand-over
+/// starts (spec "Overload waits"); the research build mark-until-reroute
+/// keeps it while the message is routed to the same next hop.
+#[test]
+fn the_offer_ends_the_mark() {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let d_pos = Position {
+        lat: me.lat + 10_000,
+        ..me
+    };
+    let hb = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home: Channel::new(5).unwrap(),
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id: id_of(d_pos),
+        short: d_pos.short(),
+    };
+    hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    let home = r.home;
+    let payload = [0];
+    let data = Data {
+        sender_home: home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: Position {
+            lat: me.lat + 100_000,
+            ..me
+        },
+        dst_id: NOBODY,
+        hops: 9,
+        payload: &payload,
+    };
+    let at = r.record_place().unwrap();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    r.records
+        .put(at, Record::new(data.msg_id(), parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.neighbours
+        .refused(id_of(d_pos), now + Duration::from_millis(1));
+    r.handle(Event::Wakeup, now, &mut |_| {});
+    assert!(r.queue.get(0).unwrap().waited, "it waits for D's ban");
+    now = r.next_wakeup().unwrap();
+    r.handle(Event::Wakeup, now, &mut |_| {});
+    assert!(r.queue.current().is_some(), "its hand-over has started");
+    assert_eq!(
+        r.queue.get(0).unwrap().waited,
+        cfg!(feature = "mark-until-reroute")
+    );
+}
+
 /// Two relays offer one message to the same neighbour D at once, as a
 /// retry after a lost ACK and a return can (roadmap D32). D's answers
 /// to the other sender, C, taking or refusing, neither end this

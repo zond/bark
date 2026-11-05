@@ -1491,9 +1491,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Routed::To(out) => {
                     if let Some(current) = self.queue.current_mut() {
                         // Offered, it has had the turn its wait earned
-                        // (spec "Overload waits").
+                        // (spec "Overload waits"); the research build
+                        // keeps the mark until it is routed elsewhere.
                         *current = Outgoing {
-                            waited: false,
+                            waited: cfg!(feature = "mark-until-reroute") && out.waited,
                             ..out
                         };
                     }
