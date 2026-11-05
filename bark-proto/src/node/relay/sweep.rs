@@ -75,7 +75,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Each channel once per sweep interval, one reading at a time (spec
     /// "Busy estimate", roadmap D86): each reading of another channel loses
-    /// the packets whose preamble starts in a 1.5 ms window around it.
+    /// the packets whose preamble starts in a 0.8 ms window around it.
     pub(super) fn sweep_step(&self) -> Duration {
         self.config.sweep_interval.div(CHANNELS as u64)
     }

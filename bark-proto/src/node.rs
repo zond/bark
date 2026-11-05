@@ -79,7 +79,7 @@ pub struct Config {
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages to a sleepy node
     /// that listens all the time (`sleepy_listens`), besides the retry on
-    /// each of its beats (spec "Delivery queue": 60 s).
+    /// each of its beats: 60 s, for that research switch only.
     pub delivery_retry: Duration,
     /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/138).
     pub busy_ema_inverse: u16,
@@ -271,8 +271,8 @@ const _: () = assert!(CARRY_AFTER.as_micros() == 72_000_000);
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
 /// One channel read a second, so each channel every 13 s: a reading of
-/// another channel deafens the node for 2.5 ms (spec "Busy estimate",
-/// roadmap D86).
+/// another channel deafens the node for 1.9 ms (spec "Busy estimate",
+/// roadmap D86, D88).
 const SWEEP_INTERVAL: Duration = Duration::from_secs(CHANNELS as u64);
 
 /// The busy estimate's window (spec "Busy estimate": 30 minutes), as the

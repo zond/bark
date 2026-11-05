@@ -415,8 +415,8 @@ pub enum Trace {
         /// neighbour again.
         moves_on: bool,
     },
-    /// A neighbour reached the demotion threshold and is no longer a next
-    /// hop (spec "Neighbour table").
+    /// A neighbour reached the demotion threshold and ranks behind the
+    /// others (spec "Neighbour table", "Next hop").
     Demoted {
         /// The neighbour.
         neighbour: NodeId,

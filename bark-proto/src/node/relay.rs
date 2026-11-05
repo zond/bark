@@ -253,8 +253,8 @@ struct Timers {
     /// last had no room for, as a hand-over the bucket cannot fit yet is
     /// deferred.
     feed_at: Option<Instant>,
-    /// When queued deliveries are next retried (spec "Delivery queue":
-    /// every 60 s).
+    /// When queued deliveries are next retried, every 60 s, under the
+    /// `sleepy_listens` research switch.
     delivery_retry_at: Instant,
     /// When the bucket lets the application send, if only it is missing.
     app_ready_at: Option<Instant>,

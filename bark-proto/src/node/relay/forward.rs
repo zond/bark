@@ -58,9 +58,8 @@
 //! acts on it at the ACK's `TxDone` ([`Relay::taken`]); an ACK that
 //! cannot go out, for want of budget, leaves the packet untaken,
 //! reported as refused for `DropReason::Unanswered`, and the sender's
-//! retry brings it again. Before D93 the relay acted on reception and
-//! the ACK listened first, so an ACK that lapsed on a busy channel left
-//! a copy the sender did not know of (spec "The ACK", roadmap D93).
+//! retry brings it again: a take the sender does not know of would leave
+//! a second copy searching (spec "The ACK", roadmap D93).
 //!
 //! A packet is ACKed without being acted on only where that cannot end the
 //! last copy (roadmap D35). A copy from a node this relay did not hand
@@ -1613,7 +1612,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let alone = self.neighbours.live(now).next().is_none();
         if self.sleepy() && self.own.id == Some(id) && alone {
-            // Until its time runs out (`expire`).
+            // Until it hears a neighbour again, routed every fade (spec
+            // "A sleepy node's own message").
             return Routed::Wait(now + self.config.fade_retry);
         }
         match record.parent() {
