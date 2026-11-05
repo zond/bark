@@ -131,7 +131,7 @@ class Messenger {
     final sent = await me.nextSent();
     final f = Fetch(sent, here, me.since, Me.fetchMost);
     final p = f.seal(sodium, me.keys.mailbox, sodium.randombytes.buf(nonceLen));
-    await me.fetched(sent, here);
+    await me.fetched(sent);
     await session.queue(
       Outgoing(home, p, at: now(), kind: OutKind.fetch, sent: sent),
     );

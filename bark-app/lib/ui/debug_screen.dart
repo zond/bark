@@ -88,7 +88,6 @@ class DebugScreen extends StatelessWidget {
       _row('Mailbox: have every item up to', '${me.since}'),
       _row('Mailbox: items above that', '${me.above.toList()..sort()}'),
       _row('Fetch rounds', '${me.rounds}'),
-      _row('Last fetched to', '${me.fetchedTo ?? 'never'}'),
       _row('Last sent', '${me.lastSent}'),
     ];
   }
