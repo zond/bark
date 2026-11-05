@@ -1104,108 +1104,93 @@ ban it, longer each time, and after three failures demote it
 A **hand-over** sends one DATA packet to one neighbour until that
 neighbour answers it or the relay gives up. A relay runs one hand-over
 at a time; packets waiting their turn are held in its
-[send queue](#send-queue). The answer is an ACK, which takes or refuses
-the packet and names the message and both nodes ([the ACK](#the-ack)).
+[send queue](#send-queue). The answer is an ACK, which takes, refuses or
+has seen the packet and names the message and both nodes
+([the ACK](#the-ack)).
 
-1. Retune to the next hop's home channel. Addresses and channels are
-   read at the moment of sending, before each attempt, from the latest
-   heartbeats (and DATA `aux`, [neighbour table](#neighbour-table)): a
-   retry goes to a neighbour's new home if it has moved since the last
-   attempt.
+1. Retune to the next hop's home channel, read before each attempt from
+   its latest heartbeat or DATA `aux` ([neighbour table](#neighbour-table)),
+   so that a retry follows a neighbour that has moved.
 2. Listen-before-talk: one check, the CAD with the channel's RSSI read
-   during it ([heartbeat](#heartbeat)). Random backoff 0–50 ms if busy,
-   retry. Once the checks of one attempt have found the channel busy
-   for 500 ms, the hand-over gives the radio up for a retry wait
-   ([retry wait](#retry-wait)), then listens again for the same
-   neighbour, with the transmissions it has made and a fresh 500 ms.
-   Nothing is counted against the neighbour. A return to the parent
-   ([return to parent](#return-to-parent)) does the same. For a delivery
-   to a sleepy node ([delivery](#delivery)), which the delivery queue
-   keeps if it fails and which waits for the node's next beat anyway, a
-   give-up counts as one attempt.
-3. Transmit. The packet carries the sender's home channel in `aux`
-   and is in the format below ([packet formats](#packet-formats)). Its preamble is the shortest, or
-   the long one to a sleepy neighbour, as the neighbour table has it
-   then
+   during it ([heartbeat](#heartbeat)); if busy, a random backoff of
+   0–50 ms and check again. Once one attempt's checks have found the
+   channel busy for 500 ms, the hand-over gives the radio up for a
+   retry wait ([retry wait](#retry-wait)) and listens again for the same
+   neighbour, with the transmissions it has made and a fresh 500 ms;
+   nothing is counted against the neighbour. For a delivery to a sleepy
+   node ([delivery](#delivery)), which its queue keeps if it fails and
+   which waits for the node's next beat anyway, a give-up counts as an
+   attempt.
+3. Transmit, the sender's home channel in `aux`, in the format below,
+   with the shortest preamble, or the long one to a sleepy neighbour
    ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
-4. Retune home immediately.
-5. Wait for the ACK **on the home channel**: timeout 100 ms (the ACK's
-   airtime, 17.0 ms, the receiver's retunes and turnarounds, and a reply
-   it owes already, which goes first, [the ACK](#the-ack)). An ACK
-   that takes the packet ends the hand-over: the neighbour has the
-   message and is tried ([message records](#message-records)). An ACK
-   that has seen it ends it too, without a take: the neighbour is
-   tried and the message chooses its next hop at once
-   ([the ACK](#the-ack)).
+4. Retune home at once.
+5. Wait for the ACK **on the home channel**: timeout 100 ms, the ACK's
+   17.0 ms, the receiver's retunes and turnarounds, and a reply it owes
+   already, which goes first ([the ACK](#the-ack)). An ACK that takes
+   the packet ends the hand-over: the neighbour has the message and is
+   tried ([message records](#message-records)). An ACK that has seen it
+   ends it too, without a take: the neighbour is tried and the message
+   chooses its next hop at once.
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
-   attempts; an ACK that comes before the retry still answers. Then the hand-over has failed: count a failure against the
-   neighbour and ban it ([bans](#bans)). The message stays in its place,
-   untried at that neighbour, and is routed again from the state as it
-   then is ([next hop](#next-hop)), with three fresh attempts. The
-   neighbour, banned now, is still its next hop while it ranks first, so
-   the message waits for its ban, however other messages have grown it,
-   and is offered to it again; it goes elsewhere once the neighbour is
-   demoted ([neighbour table](#neighbour-table)), or has left the table.
-   A forward whose failure leaves the neighbour demoted counts it tried
-   while it is queued here ([next hop](#next-hop)).
-   - A return is dropped once its parent is demoted or has left the
-     table ([return to parent](#return-to-parent)).
-   - The delivery queue keeps a delivery whatever happens to its
-     hand-over ([delivery queue](#delivery-queue)).
+   attempts; an ACK that comes before the retry still answers. Then the
+   hand-over has failed: count a failure against the neighbour and ban
+   it ([bans](#bans)). The message keeps its place, untried at that
+   neighbour, and is routed again with three fresh attempts
+   ([next hop](#next-hop)). While the neighbour ranks first, the message
+   waits for its ban, however other messages have grown it, and offers
+   itself again; it goes elsewhere once the neighbour is demoted
+   ([neighbour table](#neighbour-table)) or has left the table, and a
+   forward whose failure leaves the neighbour demoted counts it tried
+   while queued here ([next hop](#next-hop)). A return is dropped once
+   its parent is demoted or gone ([return to parent](#return-to-parent));
+   the delivery queue keeps a delivery whatever its hand-over does
+   ([delivery queue](#delivery-queue)).
 
 *Why the same neighbour until it is demoted.* Moving on from a receiver
 that took the message and lost its ACKs leaves two copies searching
-apart, each repeating the other's work (roadmap D89). A receiver that holds the
-message answers any later offer ([receiving DATA](#receiving-data) case
-4), and one silent for want of reply budget answers once its reserve has
-refilled, which the demotion waits for ([neighbour table](#neighbour-table)).
-While the neighbour answers this relay at all, it hears this relay, and
-going round it takes the message the long way on the same full
-channels, unless it refused this message and so has no room for it
-([bans](#bans)). How long other messages have made its ban says nothing
-about whether it hears this relay, so a grown ban is waited out, not
-gone round (roadmap D102, D106).
+apart, each repeating the other's work (roadmap D89). A receiver that
+holds the message answers any later offer
+([receiving DATA](#receiving-data) case 4), and one silent for want of
+reply budget answers once its reserve has refilled, which the demotion
+waits for ([neighbour table](#neighbour-table)). A neighbour that
+answers this relay at all hears it, and going round it takes the message
+the long way on the same full channels, unless it refused this message
+for want of room ([bans](#bans)). How long other messages have made its
+ban says nothing about whether it hears this relay, so a grown ban is
+waited out (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour, nor ends a return (step 2); what moves it is seen (step 5), a
-refusal ([bans](#bans)), or a change in the state it is routed from:
-the neighbour demoted or gone, or a better one come (step 6,
-[next hop](#next-hop)). A channel that stays
-busy holds the message, as a ban does
-([overload waits](#overload-waits)), until it clears; the message
-spends no airtime
-meanwhile, so the duty cycle cap does not bound the wait (roadmap D96,
-D111).
+to another neighbour, nor ends a return (step 2). What moves a message
+is a seen answer (step 5), a refusal ([bans](#bans)), or a change in the
+state it is routed from: its neighbour demoted or gone, or a better one
+come (step 6). A channel that stays busy holds the message, as a ban
+does, until it clears; the message spends no airtime meanwhile, so the
+duty cycle cap does not bound the wait (roadmap D96, D111).
 
 *Why a busy channel moves nothing.* The channel is heard at the sender
 and says nothing about the neighbour: not that it lacks the message,
 which a transmission may have brought it, nor that it is full or gone.
 Passed over before any transmission, the message takes the longer way
-round on the same full channels, which is what a ban keeps it from
-([bans](#bans)); passed over after one, it is offered to a second
-neighbour while the first may hold it, and the two copies search on
-apart (roadmap D89, D96).
+round on the same full channels; passed over after one, it is offered
+to a second neighbour while the first may hold it, and the two copies
+search on apart (roadmap D89, D96).
 
 **Format.** A DATA goes to a neighbour in the newest format both speak:
-
-| the neighbour | the format |
-|---|---|
-| in the neighbour table | the lower of this node's newest and the neighbour's, from its last heartbeat ([neighbour table](#neighbour-table)) |
-| known only from a DATA it sent ([packet sender](#packet-sender)) | that DATA's |
-
-The ACK answers in the format of the DATA it answers
-([packet formats](#packet-formats)).
+to a neighbour in the table the lower of this node's newest and the
+neighbour's, from its last heartbeat; to one known only from a DATA it
+sent ([packet sender](#packet-sender)), that DATA's. The ACK answers in
+the format of the DATA ([packet formats](#packet-formats)).
 
 *Why a byte in every packet.* Nodes are planted by anyone and updated by
 hand, one at a time, so a new format must work beside nodes that never
-get it. A node updated to a new format still talks to its old neighbours
-in the old one, and their heartbeats tell it, at no traffic, which
-neighbour speaks what. The byte costs no airtime in the heartbeat and
-the ACK: their 13 and 18 bytes fill the same 6 and 8 blocks of symbols
-at SF5 as 11 and 17 would. In DATA it adds a block, 1.28 ms, for two
-payload lengths in five: 0.51 ms on average, under 1 % of a text's
-frame, and nothing for the 100-byte text of
-[capacity and sizing](#capacity-and-sizing).
+get it: an updated node talks to its old neighbours in the old format,
+and their heartbeats tell it, at no traffic, which speaks what. The byte
+costs no airtime in the heartbeat and the ACK, whose 13 and 18 bytes
+fill the same 6 and 8 blocks of symbols at SF5 as 11 and 17 would. In
+DATA it adds a block, 1.28 ms, for two payload lengths in five: 0.51 ms
+on average, under 1 % of a text's frame, and nothing for the 100-byte
+text of [capacity and sizing](#capacity-and-sizing).
 
 #### Retry wait
 
