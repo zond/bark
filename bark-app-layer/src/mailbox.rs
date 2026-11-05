@@ -289,6 +289,15 @@ impl<R: Ring> Mailbox<R> {
         self.keep();
     }
 
+    /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
+    /// skips past items no longer in the ring.
+    pub fn reply_due(&self) -> bool {
+        self.key.is_some()
+            && self
+                .reply
+                .is_some_and(|r| r.next <= r.until && r.next <= self.newest)
+    }
+
     /// The next reply to hand the core, sealed into `out`, if one is due;
     /// call it while `accepts_send` holds, and send what it gives.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
