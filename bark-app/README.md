@@ -43,9 +43,9 @@ It is a prototype for the bench, not the app people will carry.
 The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
 Whenever Status counts messages in the inbox, it reads the oldest,
-stores it, writes its ID back so the node forgets it, and repeats. A
-node whose link version is above the app's is refused, with a message
-to update the app. The first rotation's countdown runs on the phone,
+stores it, writes its message ID back so the node forgets it, and
+repeats. A node whose link version is above the app's is refused, with
+a message to update the app. The first rotation's countdown runs on the phone,
 since the node does not notify it.
 
 The queue and the received texts are kept in one file in the app's

@@ -14,7 +14,7 @@ import 'common.dart';
 class ThreadScreen extends StatefulWidget {
   final AppModel app;
 
-  /// The other node's ID in hex, or null for senders the app cannot tell.
+  /// The other node's node ID in hex, or null for senders the app cannot tell.
   final String? keyHex;
   const ThreadScreen(this.app, this.keyHex, {super.key});
 
