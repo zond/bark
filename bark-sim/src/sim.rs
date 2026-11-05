@@ -410,6 +410,8 @@ struct OriginRecord {
     /// Whether its destination was sleepy then, and carried.
     dst_sleepy: bool,
     dst_carried: bool,
+    /// Whether its origin was sleepy when it was sent.
+    src_sleepy: bool,
 }
 
 /// One originated message, for the per-message table (`Sim::message_rows`).
@@ -459,6 +461,8 @@ pub struct MessageRow {
     pub dst_sleepy: bool,
     /// See `dst_sleepy`.
     pub dst_carried: bool,
+    /// Whether its origin was sleepy when it was sent.
+    pub src_sleepy: bool,
     /// Origination to the first DATA of it from a node other than its
     /// origin, seconds.
     pub entered_s: Option<f64>,
@@ -818,6 +822,10 @@ pub struct Sim {
     /// Every hand-over that ended, by message tag: the relay and the
     /// neighbour offered, in order (`metrics::Pressure`).
     offer_log: HashMap<u32, OfferLog>,
+    /// The refuser of each relay origin's own message refused last, by
+    /// origin and message tag, until its next hand-over ends
+    /// (`metrics::Pressure::own_refused`).
+    own_refused_by: HashMap<(u32, u32), u64>,
     /// Demotions not yet followed by an answer from the neighbour, by
     /// relay and the neighbour's key: when.
     demoted_at: HashMap<(u32, u64), Instant>,
@@ -1351,6 +1359,7 @@ impl Sim {
             holders_of: HashMap::new(),
             holds: HashMap::new(),
             offer_log: HashMap::new(),
+            own_refused_by: HashMap::new(),
             demoted_at: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
@@ -2589,6 +2598,7 @@ impl Sim {
                     }
                     Trace::TurnedAway { msg_id, by } => {
                         self.note_offer(node, msg_id, by);
+                        self.note_own_refusal(node, msg_id, by);
                         let c = &mut self.metrics.nodes[node as usize].core;
                         c.turned_away += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
@@ -2828,6 +2838,9 @@ impl Sim {
             return;
         };
         let to = key(to);
+        if let Some(by) = self.own_refused_by.remove(&(node, tag)) {
+            self.metrics.pressure.own_round += u64::from(by != to);
+        }
         let log = self.offer_log.entry(tag).or_default();
         let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
         if let Some(&(_, last)) = here.next() {
@@ -2837,6 +2850,21 @@ impl Sim {
             }
         }
         log.to.push((node, to));
+    }
+
+    /// `by` refused `msg_id` at `node`: counted if it is the own message
+    /// of a relay origin, not yet past its first hop, whose next
+    /// hand-over [`Sim::note_offer`] then compares with `by`.
+    fn note_own_refusal(&mut self, node: u32, msg_id: MsgId, by: NodeId) {
+        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
+            return;
+        };
+        let o = &self.origins[tag as usize];
+        if o.src != node || o.entered_at.is_some() || self.relays[node as usize].sleepy() {
+            return;
+        }
+        self.metrics.pressure.own_refused += 1;
+        self.own_refused_by.insert((node, tag), key(by));
     }
 
     /// `node` handed `msg_id` to `to`: if it had held the message on `to`
@@ -3711,6 +3739,7 @@ impl Sim {
                 dst_anchor: o.dst_anchor,
                 dst_sleepy: o.dst_sleepy,
                 dst_carried: o.dst_carried,
+                src_sleepy: o.src_sleepy,
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
                 holder_tries: o.holder_tries,
@@ -3760,7 +3789,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -3818,7 +3847,7 @@ impl Sim {
                 .get(&r.tag)
                 .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
             s.push_str(&format!(
-                ",{},{offers},{hops},{flaps},{},{},{},{},{},{}\n",
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{}\n",
                 w.elsewhere,
                 relay(r.holder),
                 r.holder_anchor_end,
@@ -3827,7 +3856,8 @@ impl Sim {
                     .map(|t| format!("{t:.1}"))
                     .unwrap_or_default(),
                 r.dst_switches,
-                r.holder_links_anchor_end
+                r.holder_links_anchor_end,
+                r.src_sleepy
             ));
         }
         s
@@ -4074,6 +4104,7 @@ impl Sim {
                 .flatten(),
             dst_sleepy: self.relays[dst as usize].sleepy(),
             dst_carried: self.relays[dst as usize].carried(),
+            src_sleepy: self.relays[src as usize].sleepy(),
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -5042,6 +5073,7 @@ mod tests {
                 dst_anchor: None,
                 dst_sleepy: true,
                 dst_carried: false,
+                src_sleepy: false,
             });
             sim.msg_tags.insert(id, tag);
         }
