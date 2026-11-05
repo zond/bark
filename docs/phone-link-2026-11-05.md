@@ -219,12 +219,64 @@ one.
    point; to clear it, write 0.
 9. Make every payload unique (spec "Phone link").
 
+## Does it fit
+
+The node image built with the stack linked: trouble-host 0.8.0 (peripheral,
+GATT, long writes), nrf-sdc 0.4.0 with the peripheral-only controller and
+nrf-mpsl 0.4.0, pinned (roadmap D5); one connection, three link-layer
+buffers each way of 251 bytes, the service's attribute table with room
+for every value's longest form, and advertising (`bark-fw/src/ble.rs`).
+The service is not wired to the node yet. Release build, `size -A`:
+
+| | before | with the stack | change |
+|---|---|---|---|
+| `.text` | 183 676 | 293 172 | +109 496 |
+| `.rodata` | 19 464 | 36 528 | +17 064 |
+| `.data` | 2 120 | 6 288 | +4 168 |
+| `.bss` | 192 860 | 204 136 | +11 276 |
+| flash (with the 256-byte vector table) | 205 516 | 336 244 | +130 728 |
+| static RAM | 194 980 | 210 424 | +15 444 |
+
+**Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
+336 244 B is 93 %, 24 204 B, 23.6 KiB, left. Of the growth, the
+controller and the MPSL's library are about 48 KB of code and the host
+about 40 KB. The wiring of stage 3 and the inbox in the core come out of
+that 23.6 KiB. If they do not fit: `opt-level = "z"` makes this image
+29 KB smaller (measured, 306 812 B at the stack's first build), at a
+speed of the core's `handle` not measured; the 148 KiB of the
+SoftDevice's slot, kept and never enabled (`bark-fw/README.md`), and the
+92 KiB of update staging, unused until updates have a transport, are
+the layout's room, a change to the layout.
+
+**RAM.** The application's RAM is 261 120 B; static memory takes
+210 424 B, the relay 181 512 of it, which leaves 50 696 B, 49.5 KiB. The
+BLE stack's share: the controller's memory 3 104 B (by `sdc.h`'s
+formulas; the controller's own count is logged at boot), the host's
+packet pool 4 036 B and resources 2 016 B, the libraries' own state, and
+the main task's future, which holds the host, 13 176 B in all. The core's
+inbox, 23 places of a delivery-queue entry's 264 B, 6 072 B, leaves
+44 624 B, 43.6 KiB, for the call stack. Its depth is not measured: the
+earlier estimate of the stacks was 16 KiB (spec "Implementation notes").
+
+What setting the stack up changed beside the service:
+
+- The MPSL and the controller take RTC0, TIMER0, TEMP and PPI channels
+  17 to 31, and run RADIO, RTC0 and TIMER0 at interrupt priority 0. Every interrupt of ours in the node build, the
+  embassy clock's and GPIOTE's included, now runs at 2, below it.
+- The die temperature for the radio's oscillator schedule comes from the
+  MPSL in the node build (`radio::Thermometer`); the console still reads
+  the sensor.
+- The 32 MHz crystal is asked of the MPSL while on USB, not started and
+  stopped by hand: the MPSL owns the clock.
+- The critical section is nrf-mpsl's in both builds, masking every
+  interrupt but the MPSL's three; cortex-m's single-core one is dropped.
+- The core's seed is drawn from the RNG before the controller takes it.
+
 ## What comes next
 
-Stage 2: link TrouBLE and nrf-sdc into the node image beside the
-relay's tables and measure the RAM and flash. Stage 3: the service in
-`bark-fw/src/ble.rs`, wired to the driver loop, and the bench procedure
-in nRF Connect, added to this note.
+Stage 3: the inbox in the core (O22), the service wired to the driver
+loop, flash writes through the MPSL, and the bench procedure in nRF
+Connect, added to this note.
 
 ## Unsure
 
@@ -233,3 +285,11 @@ in nRF Connect, added to this note.
 - iOS's chosen MTU varies by model and version; long writes and reads
   cover it, untested here.
 - O22 needs a core decision before the inbox can be full without loss.
+- Flash writes while the MPSL runs: the stored state (`store.rs`) and the
+  update's confirmation (`update.rs`) write and erase through the NVMC
+  directly, which halts the CPU for up to 85 ms an erase; the MPSL's
+  radio timing cannot wait that long. Until stage 3 routes them through
+  the MPSL's flash timeslots (`nrf_mpsl::Flash`), this image is not for
+  the bench.
+- The call stack's depth beside 43.6 KiB, which a painted stack's high
+  water mark in the 10 s log line would measure.

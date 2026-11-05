@@ -263,10 +263,10 @@ and its stored state as handed back and as last kept, 72 B; its application's me
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
-(`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 57 KiB more than a node needs. Checked by the tests in
-`tables/mod.rs` and `node/relay/tests.rs`.
+(`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
+relay, Embassy, the USB log and the BLE stack with its controller, is 210 424 B
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which leaves 50 696 B, 49.5 KiB, for
+the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target building one took 174 KiB of stack in the

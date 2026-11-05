@@ -3274,7 +3274,7 @@ hearing radius.
 **Rust stack:** `embassy-nrf` (nRF52840); the SX1262 driven by
 `bark-driver`'s sequencer, its commands encoded by a vendored copy of
 `lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for
-BLE, not yet in the firmware (D5); the stock UF2 bootloader for flashing
+BLE (D5); the stock UF2 bootloader for flashing
 (D6), and a loader of our own behind it that swaps in a new image and
 back if it does not confirm itself (D79). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
@@ -3282,8 +3282,8 @@ Crate layout is D7.
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
-(roadmap D71); their sizes, and how they fit beside Embassy and the
-stacks (≈16 KiB) in the 255 KiB the application has once 1 KiB is kept
+(roadmap D71); their sizes, and how they fit beside Embassy, the
+BLE stack and the call stack in the 255 KiB the application has once 1 KiB is kept
 for the bootloader's words and the panic message (`bark-image/src/layout.rs`),
 are in `core-interface.md`, Memory.
 
