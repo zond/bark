@@ -1071,6 +1071,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
 /// which go to E; when D's ban ends A goes ahead of M, D refuses it, and
 /// A goes round D to E. M arrived before A and has waited for nothing,
 /// so it goes before A.
+#[cfg(not(feature = "all-by-count"))]
 #[test]
 fn a_message_that_waited_goes_first_once() {
     use crate::ids::MsgId;

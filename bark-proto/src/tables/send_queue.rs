@@ -401,9 +401,14 @@ impl SendQueue {
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
+        // Research build: every due entry by count, no mark.
+        #[cfg(feature = "all-by-count")]
+        let first = |_: &Outgoing| true;
+        #[cfg(not(feature = "all-by-count"))]
+        let first = |o: &Outgoing| o.waited;
         self.iter()
             .enumerate()
-            .filter(|&(i, o)| due(i, o) && o.waited)
+            .filter(|&(i, o)| due(i, o) && first(o))
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
             .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
@@ -656,6 +661,7 @@ mod tests {
     /// A wait of its own, a retry's or a told wait at the origin, is no
     /// ban that it waited for: when it ends, the frame keeps the queue's
     /// order (spec "Overload waits").
+    #[cfg(not(feature = "all-by-count"))]
     #[test]
     fn its_own_wait_is_not_a_ban() {
         let t = |ms| Instant::ZERO + Duration::from_millis(ms);
@@ -665,6 +671,27 @@ mod tests {
         own.not_before = t(10);
         q.push(own).unwrap();
         assert_eq!(q.next_due_all(t(20)), Some(0));
+    }
+
+    /// The research build all-by-count: a due delivery first, then every
+    /// due frame by count, the earliest of equals, marked or not.
+    #[cfg(feature = "all-by-count")]
+    #[test]
+    fn every_due_frame_goes_by_count() {
+        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let mut q = SendQueue::new();
+        q.push(data(0, 1, true)).unwrap();
+        q.push(data(1, 5, false)).unwrap();
+        q.push(data(2, 5, false)).unwrap();
+        let mut own = data(3, 9, false);
+        own.not_before = t(10);
+        q.push(own).unwrap();
+        assert_eq!(q.next_due_all(t(5)), Some(1), "the earlier of equals");
+        assert_eq!(q.next_due_all(t(10)), Some(3), "its own wait ended");
+        let mut deliver = data(4, 0, false);
+        deliver.kind = Kind::Deliver;
+        q.push(deliver).unwrap();
+        assert_eq!(q.next_due_all(t(10)), Some(4), "a delivery first");
     }
 
     #[test]

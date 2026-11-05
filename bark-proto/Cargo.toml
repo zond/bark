@@ -16,3 +16,6 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 default = []
 # Enables std-only conveniences (Debug printing helpers, Vec sinks) for the simulator and tests.
 std = []
+# Research build of the send queue's order, not for the field (docs/waited-2026-11-05.md):
+# every due entry by hop count, highest first, with no mark.
+all-by-count = []
