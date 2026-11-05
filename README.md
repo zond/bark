@@ -56,6 +56,8 @@ bark-proto/   no_std protocol core: packet codecs, tables, routing, MAC state
 bark-driver/  no_std loop that drives the core against a radio and a clock;
               the firmware runs it on the board, its tests on the host
               against a fake radio.
+bark-link/    no_std: the values of the phone link's BLE service, shared by
+              the firmware and the tests (protocol.md, "Phone link").
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf and a vendored lora-phy around
               bark-driver and bark-proto; BLE (TrouBLE) is still to come.
@@ -66,6 +68,7 @@ bark-loader/  the loader the board's bootloader starts: swaps in a staged
 bark-image/   no_std: the flash layout, the image header and the swap,
               shared by the firmware, the loader and their build scripts;
               tested on the host.
+bark-app/     Flutter Android app for the phone link; not yet encrypted.
 docs/         design notes, research, decisions.
 ```
 

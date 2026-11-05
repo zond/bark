@@ -2858,18 +2858,158 @@ exchange with it.
 
 ## Phone link
 
-BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
-characteristics for send, receive-notify, node status, and setting and
-clearing a map point; there is no sleepy or carried setting ([nodes](#nodes), roadmap D71).
-The status says how the node's first rotation goes, the relays it knows
-and when the rotation ends ([channel at boot](#channel-at-boot)), so
-that the app can show "listening, 3 relays heard, 1:40 to go".
-A message the node refuses comes back to the app with its wait
-([addresses](#addresses)). The app owns identity and end-to-end
-encryption; the node sees opaque payloads. The sender's address, position and node ID, travels inside
-the encrypted payload, so that the relays that carry a message do not
-learn who sent it. Anyone in radio range of the sender's node still
-learns its ID and position from its heartbeats
+A person's app talks to their node over Bluetooth LE, through one GATT
+service on the nRF52840 (TrouBLE, roadmap D5). The app owns identity
+and end-to-end encryption; the node sees opaque payloads. Section
+numbers below are of the Bluetooth Core Specification 5.0
+([sources](#sources)).
+
+**Finding the node.** The node advertises, connectable, every
+1022.5 ms: its flags and the service's UUID, which the app scans for,
+in the advertisement; its name, `bark-` and the twelve hex digits of
+its ID as its display shows them, in the scan response. It takes one
+connection at a time and does not advertise while it has one (roadmap
+D120).
+
+*Why the name in the scan response.* A legacy advertisement holds 31
+bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
+which leaves 10, too few for the name's 17.
+
+*Why 1022.5 ms.* A person who opens the app waits about a second for
+the node to show, and an iPhone finds a node quickly only at one of the
+intervals Apple's accessory guidelines list, of which this is the one
+nearest a second ([sources](#sources)). Faster costs a sleepy node more: an
+advertising event on the three channels is about 2 ms of the radio at
+4.8 mA, about 11 µA at this interval, near a tenth of its duty-cycled
+receive (an estimate from the nRF52840 Product Specification's radio
+currents, for the bench to measure).
+
+*Why one connection.* One person's phone owns the node: two phones
+would share one inbox and one message slot.
+
+**Security.** The link is open for the prototype: no pairing, no
+bonding (roadmap D121). The payloads the link carries are encrypted by
+the app, and their addresses and the node's ID, position and flags are
+on the 433 MHz air in the clear anyway, so a listener learns little
+more. But anyone within Bluetooth range can connect while the owner's
+phone is not connected, empty the inbox and move the node with a map
+point: open item O23, before nodes leave the bench.
+
+**MTU.** The node offers an ATT MTU of 247, the longest link-layer
+payload with the data length extension, 251 bytes (Vol 6 Part B §2.4),
+less the L2CAP header's 4 (Vol 3 Part A §3.1). The app asks for 247 by
+an MTU exchange (Vol 3 Part F §3.4.2) as soon as it connects; every
+value then fits one ATT PDU and one link-layer packet. The node also
+takes long writes and serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5),
+so a phone that settles on less still works, in more round trips. A
+notified value fits the 20 bytes a notification carries at the default
+MTU of 23 (Vol 3 Part F §3.4.7.1) (roadmap D119).
+
+*Why both.* An Android app must ask for the MTU, and iOS chooses it
+itself, which the app cannot raise; a notification has no long form.
+
+**The service.** One random UUID, its second 16 bits counting the
+service and its characteristics:
+
+| | UUID | properties | value | bytes |
+|---|---|---|---|---|
+| service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
+| Node | `28bc0002-…` | read | version(1) id(6) image(4) | 11 |
+| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) | 14 |
+| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none | 0, 4–231 |
+| | | write | msg_id(4) | 4 |
+| Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
+| Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
+
+Positions and IDs are in the radio's encodings
+([positions on the wire](#positions-on-the-wire),
+[node identity](#node-identity)), a message ID is the 32-bit hash of
+[packet formats](#packet-formats), and every integer is big-endian.
+The codecs are `bark-link`, shared by the firmware and the tests. A
+write is a write request, which the node answers; a write that is not
+whole is answered with the ATT error 0x0D, invalid length, and one with
+a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
+
+**Node.** The link version, 1 in this specification; the node's ID, the
+second half of its address ([addresses](#addresses)); and the version
+of its firmware image.
+
+**Status.** How the node stands now, notified at every change but the
+countdown of `boot_left`:
+
+| | |
+|---|---|
+| flags bit 0 | ready: the node takes a message from the app now |
+| bit 1 | on external power, USB |
+| bits 2, 3, 4 | sleepy, carried, map point, as its heartbeat says them ([packet formats](#packet-formats)) |
+| bit 5 | placed: it has a place, and `address` holds a position; else `address` is zero ([position](#position)) |
+| bit 6 | its first rotation runs ([channel at boot](#channel-at-boot)) |
+| bit 7 | anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
+| relays | the relays it knows |
+| boot_left | seconds left of its first rotation, rounded up; 0 once it is over |
+| address | the position of its address: its own, or a sleepy node's anchor's ([addresses](#addresses)) |
+| battery | millivolts as last read, uncalibrated; 0 on external power and before the first reading |
+| inbox | messages in the inbox |
+
+So the app can show "listening, 3 relays heard, 1:40 to go", and the
+address the person gives others to reach them. Sleepy and carried are
+measured, not set ([nodes](#nodes)).
+
+**Sending.** The app writes Send while ready is set. The node answers
+once it has taken the message, or with the ATT error 0x80, not ready,
+when it takes none now; the app then waits for ready. A message taken
+is the node's: the app hears of it again only if the node gives it
+back ([addresses](#addresses)). The node holds one message of its app's
+at a time ([receiving DATA](#receiving-data)), so the phone is the
+queue: it keeps the rest and offers the next when ready is set again.
+
+**Given back.** When the node gives the app's message back, it sets
+Given back to the message's ID and the seconds left of the wait the
+refusal asked for, rounded up, and notifies it. The value stays until
+the node takes another message, the wait counting down to 0. The app
+finds the message by its ID among those it sent, computing each one's
+as the node does, shows the person the wait, and offers it again once
+ready is set, or gives it up, as the person chooses.
+
+*Why the value stays.* The phone may not be connected when the message
+is given back, and the node takes no other message before the wait is
+over, so the app learns of it whenever it next connects.
+
+**Receiving.** The node keeps each message for its app in an inbox of
+23, oldest first. Inbox reads the oldest; the app keeps it and writes
+its ID back, and the node then forgets it. A write of another ID is
+answered 0x13. Status's count says when to read (roadmap D118).
+
+*Why read and confirmed, not notified.* The phone is often not
+connected: the app is closed, the phone is out of range or off. A
+notification is confirmed by nobody, an indication only by the phone's
+Bluetooth stack, not by the app that must keep the message; the ID
+written back is the app's own word that it has it.
+
+*Why 23.* The texts a person receives in a day at the design rate
+([capacity and sizing](#capacity-and-sizing)), for a phone that
+connects once a day. What the node does when the inbox is full is open
+item O22. The inbox, like the message the node holds, is not kept
+across a reboot.
+
+**Map point.** A write of 1 and a position sets the node's map point,
+and of 0 clears it ([position](#position)).
+
+**Versions.** A later link version may add characteristics and append
+fields to the values the node writes, Node, Status, Given back; an app
+reads the fields it knows and ignores the rest, as a node reads a
+heartbeat. The values the app writes change only with the version, and
+the app writes the form of the node's. A change to what a field means
+takes a new service UUID, so that an app that does not know it finds no
+node and asks the person to update it. An app that finds a version
+above its own tells the person the node's firmware is newer (roadmap
+D117).
+
+**The payload.** The sender's address, position and node ID, travels
+inside the encrypted payload, so that the relays that carry a message
+do not learn who sent it. Anyone in radio range of the sender's node
+still learns its ID and position from its heartbeats
 ([what the protocol omits](#what-the-protocol-omits)). Encryption
 scheme: open item O1.
 
@@ -3198,7 +3338,8 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with a budget per hop on the wait a queued message has ([send queue](#send-queue)), bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | with the app, before step 6 |
+| O22 | A full inbox ([phone link](#phone-link)): the node should refuse a message for its own application while its inbox is full, as it refuses one for a sleepy node whose delivery queue is full ([receiving DATA](#receiving-data)), so that nothing taken is lost; the core needs to be told the inbox is full, which it is not today | with the firmware's link, before step 6 |
+| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)) | before step 7 |
 
 ---
 
@@ -3212,6 +3353,15 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 - EN 300 220-2 for polite-access (listen-before-talk) shapes (not required
   in this band).
 - Semtech SX1261/2 datasheet: LoRa sensitivity table, CAD, RSSI, SF5/SF6.
+- Bluetooth Core Specification 5.0 (Bluetooth SIG, 2016): the ATT MTU,
+  writes, reads and errors (Vol 3 Part F), the L2CAP header (Vol 3
+  Part A), UUIDs (Vol 3 Part B), advertising and the link-layer packet
+  (Vol 6 Part B).
+- Nordic nRF52840 Product Specification: the radio's transmit and
+  receive currents.
+- Apple, Accessory Design Guidelines for Apple Devices, "Advertising
+  Interval", and Technical Q&A QA1931: the advertising intervals an
+  iPhone finds quickly.
 - Weber, Andrews, Yang, de Veciana, "Transmission capacity of wireless ad
   hoc networks with outage constraints", IEEE Trans. IT 2005 (frequency
   hopping vs direct sequence).

@@ -29,6 +29,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bark-link"
+version = "0.1.0"
+dependencies = [
+ "bark-proto",
+ "proptest",
+]
+
+[[package]]
 name = "bark-proto"
 version = "0.1.0"
 dependencies = [
