@@ -857,7 +857,7 @@ Per node, up to 64 entries, by node ID:
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
-| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a next hop only while fresh ([next hop](#next-hop)) |
+| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a last resort once stale ([next hop](#next-hop)) |
 | format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
 | map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
@@ -970,8 +970,8 @@ attempts again.
 message through to the neighbour: a running average of the time from
 when a message began to wait for it here, or from the neighbour's last
 take if that is later, to the ACK that takes the message. A message
-begins to wait for a neighbour when it is queued, or when routing first
-sends it there instead of elsewhere ([next hop](#next-hop)). The time
+begins to wait for a neighbour when it is queued, or when routing
+sends it to a different neighbour than before ([next hop](#next-hop)). The time
 folds in what held the message: attempts that went unanswered and the
 bans after them, this relay's bucket, and its turn behind hand-overs to
 other neighbours. It leaves out two things: time with no message
@@ -1003,7 +1003,7 @@ newcomer replaces, in this order:
 2. the least recently heard entry, if it has missed a worst-case
    rotation, and so certainly a heartbeat on this channel;
 3. if the newcomer is a fixed relay, one that holds mail, within 50 m,
-   the owner radius ([owner](#owner)), the least recently heard relay
+   the owner radius ([owner](#owner)), the least recently heard entry
    beyond 50 m (roadmap D68, D70).
 
 Failing all three it is not added (roadmap D12). A sleepy node with an
@@ -1178,7 +1178,7 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    return answered seen is dropped: the parent has gone on without it
    ([return to parent](#return-to-parent)).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
-   attempts. Then the hand-over has failed: count a failure against the
+   attempts; an ACK that comes before the retry still answers. Then the hand-over has failed: count a failure against the
    neighbour and ban it ([bans](#bans)). The message stays in its place,
    untried at that neighbour, and is routed again from the state as it
    then is ([next hop](#next-hop)), with three fresh attempts. The
@@ -1186,8 +1186,8 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    the message waits for its ban, however other messages have grown it,
    and is offered to it again; it goes elsewhere once the neighbour is
    demoted ([neighbour table](#neighbour-table)), or has left the table.
-   A message that held for a neighbour through its demotion counts it
-   tried while it is queued here ([next hop](#next-hop)).
+   A forward whose failure leaves the neighbour demoted counts it tried
+   while it is queued here ([next hop](#next-hop)).
    - A return is dropped once its parent is demoted or has left the
      table ([return to parent](#return-to-parent)).
    - The delivery queue keeps a delivery whatever happens to its
@@ -1658,8 +1658,11 @@ The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
 go first, since with the bucket at the cap it would always fit sooner
 and the longer frame would never go. Routing every message costs at
-most the queue's entries times the neighbour table's, and nothing is
-kept of it but when the earliest ban that held a message back ends.
+most the queue's entries times the neighbour table's. Of it each entry
+keeps where it was last routed and since when, for the service time
+([neighbour table](#neighbour-table)), and whether it has waited for a
+ban; the relay keeps when the earliest ban that held a message back
+ends.
 
 *Why route at each chance.* The table changes between one chance to
 send and the next: a ban ends, a neighbour arrives, recovers or is
@@ -1686,7 +1689,9 @@ A message ends only:
 - when a return's parent is demoted or gone
   ([hand-over](#hand-over) step 6), or answers it seen (step 5);
 - when a newer message needs its place in the delivery queue
-  ([delivery queue](#delivery-queue));
+  ([delivery queue](#delivery-queue)), or when the relay holding it
+  comes to own its destination while it is queued and finds that queue
+  full ([owner](#owner));
 - at the hop cap ([hop count](#hop-count));
 - when a node holding it dies (roadmap D31, D44, D106).
 
@@ -1760,7 +1765,9 @@ D17.
 #### Packet sender
 
 A node acts on a DATA packet whose `dst_hop` is its own ID
-([node identity](#node-identity)) and ignores the rest. The packet names
+([node identity](#node-identity)); of any other it notes only the
+sender's channel and signal ([neighbour table](#neighbour-table)) and
+that a sleepy sender is in reach ([heard table](#heard-table)). The packet names
 its sender in `src_hop` and the sender's home channel in `aux`
 ([packet formats](#packet-formats)), which is all a relay needs to send
 something back: `dst_hop` set to `src_hop`, on the channel in `aux`. It
@@ -1782,7 +1789,7 @@ originated:
 | parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
 | handed | the neighbours that have had the message from this relay or offered it one: those that took a hand-over of it, a forward or a return, by ACKing it ([hand-over](#hand-over)), those that answered seen, and those whose copy this relay answered seen ([the ACK](#the-ack)), as one bit per neighbour-table slot |
 | last packet | `src_hop` and `hops` of the last DATA of the message it received, and whether it was answered seen: the same pair again is a retransmission, answered as the first was ([receiving DATA](#receiving-data)) |
-| highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that succeeded |
+| highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that was taken or answered seen |
 | arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
@@ -1792,9 +1799,9 @@ its own message. A neighbour that has neither taken nor seen the message
 stays a candidate, whether it was passed over, being demoted, expired or
 not in the table at the time, or was offered the message and refused it
 or never answered ([hand-over](#hand-over)). One exception is kept with
-the queued message, not the record: a neighbour whose demotion the
-message held through is tried for it while it is queued here, though it
-does not have it ([next hop](#next-hop)). When a neighbour-table slot
+the queued message, not the record: a neighbour that a failed hand-over
+of the message left demoted is tried for it while it is queued here,
+though it does not have it ([next hop](#next-hop)). When a neighbour-table slot
 changes hands, its bit is cleared in every record and queued message.
 
 The record is also how a relay recognises a repeat of a message it has
@@ -1813,11 +1820,12 @@ when its turn comes, so a message is never lost for want of room
 #### Next hop
 
 One function chooses where a queued message goes, from the state as it
-is when it is asked: the neighbour table, the bans and the message's
-record. It is asked each time the message is routed: for a first send,
-after the message comes back, and after a hand-over of it is refused
-or fails ([hand-over](#hand-over)). Nothing of an earlier answer is
-kept with the message. The **candidates** are the live
+is when it is asked: the neighbour table, the bans, the message's
+record, and two marks its send-queue entry keeps, the neighbours that
+refused it and those it held for until they were demoted (below). It is
+asked for every queued message whenever a hand-over may start
+([send queue](#send-queue)), and for each DATA that arrives
+([receiving DATA](#receiving-data)). The **candidates** are the live
 neighbour-table entries ([neighbour table](#neighbour-table)) except
 those in the tried set ([message records](#message-records)).
 
@@ -1924,10 +1932,9 @@ would be dropped until the demotion lapsed, six and a half minutes. What
 a neighbour that is really gone costs is in [bounds](#bounds) (roadmap
 D25, D36, D42).
 
-A message that held for a neighbour through its demotion, three of its
-own hand-overs to it unanswered in a row with no answer to this relay
-between, or whose hand-over to a neighbour already demoted failed,
-counts that neighbour as tried while it is queued here, and its search
+A message whose hand-over to a neighbour fails and leaves it demoted,
+by this failure or an earlier one, counts that neighbour as tried while
+it is queued here, and its search
 goes on: to the next candidate, back to its parent, or, at the origin,
 it ends. The neighbour stays a last resort for every message that has
 not tried it. The mark is kept with the queued message, not in the
@@ -2751,8 +2758,8 @@ the ordinary preamble in the node's window, and the node answers with an ordinar
 ([the ACK](#the-ack)). A delivery goes through the send queue as any
 hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue.
 A hand-over waiting between its attempts, for the channel, a retry or
-the bucket, steps aside for it and keeps its place; a return keeps the
-attempts it has made.
+the bucket, steps aside for it, keeps its place, and is routed again
+when its turn comes, with fresh attempts.
 
 **The window.** A delivery goes while the node listens: for a window of
 3.39 s from each beat the holder hears. A node whose beat brought
@@ -2899,7 +2906,7 @@ day each that the network carries
 TTLs in a day = 40.9, so 41 messages.
 
 A flow to one node that pauses longer than a hand-over waits for the
-next beat, at most 41 messages a period, and loses what does not fit.
+next beat, at most 41 messages a period, and the rest are refused.
 
 The owner remembers 41 delivered message IDs
 ([packet formats](#packet-formats)) and ACKs a repeat without delivering
