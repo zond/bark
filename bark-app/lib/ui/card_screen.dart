@@ -14,8 +14,8 @@ class CardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Watch(app, (context) {
-    final cs = app.contacts;
-    final a = cs.myAddress;
+    final me = app.me;
+    final card = me.card;
     return Scaffold(
       appBar: AppBar(title: const Text('My card')),
       body: ListView(
@@ -24,37 +24,56 @@ class CardScreen extends StatelessWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('My name'),
-            subtitle: Text(cs.myName.isEmpty ? 'not set' : cs.myName),
+            subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
             trailing: IconButton(
               tooltip: 'Change',
               icon: const Icon(Icons.edit),
               onPressed: () async {
-                final n = await askText(context, 'My name', cs.myName);
-                if (n != null) await cs.setMyName(n);
+                final n = await askText(context, 'My name', me.name);
+                if (n != null) await me.setName(n);
               },
             ),
           ),
-          if (a == null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('My identity'),
+            subtitle: SelectableText(
+              me.key,
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
+          ),
+          if (card == null)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Text(
                 'No address yet. Connect to your node: its address is its '
                 'position and node ID, and it has a position once it has a '
-                'GPS fix or a map point.',
+                'GPS fix or a map point. Set it as your home in Settings '
+                'if it stays where it is.',
               ),
             )
           else
-            ..._card(context, PersonCard(a, cs.myName)),
+            ..._card(context, card),
         ],
       ),
     );
   });
 
   List<Widget> _card(BuildContext context, PersonCard card) {
+    final home = app.me.home != null;
     final connected = app.session.address != null;
     final mono = const TextStyle(fontFamily: 'monospace');
     return [
-      if (!connected)
+      Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          home
+              ? 'The address is your home node\'s.'
+              : 'The address is your node\'s now; it changes when the node '
+                    'moves. Set a home node in Settings for one that stays.',
+        ),
+      ),
+      if (!home && !connected)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
@@ -100,7 +119,7 @@ class CardScreen extends StatelessWidget {
     builder: (context, box) {
       final qr = QrCode.fromData(
         data: data,
-        errorCorrectLevel: QrErrorCorrectLevel.L,
+        errorCorrectLevel: QrErrorCorrectLevel.M,
       );
       final side = box.maxWidth;
       const quiet = 4;

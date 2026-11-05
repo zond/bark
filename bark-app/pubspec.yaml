@@ -35,6 +35,8 @@ dependencies:
   path_provider: 2.1.6
   qr_code_scanner_plus: 2.3.2
   qr_flutter: 4.1.0
+  sodium: 4.1.2+1
+  crypto: 3.0.8
   universal_ble: 3.2.0
 
   # The following adds the Cupertino Icons font to your application.

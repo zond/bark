@@ -26,6 +26,8 @@ class DebugScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           NoticeCard(app),
+          heading('Me'),
+          ..._me(),
           heading('Node'),
           ..._node(context),
           heading('Status'),
@@ -45,15 +47,17 @@ class DebugScreen extends StatelessWidget {
           for (final o in s.outbox.reversed)
             _raw(
               '${msgIdHex(o.id)} to ${o.dst}',
-              '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
+              '${o.kind.name} ${o.sent} to ${_who(o.to)}, '
+                  '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
                   '${hex(o.payload)}',
             ),
           heading('Received'),
           if (s.received.isEmpty) const Text('None'),
           for (final r in s.received.reversed)
             _raw(
-              '${msgIdHex(r.id)} from ${r.from ?? 'unknown'}',
-              '${r.at.toLocal()}\n${hex(r.payload)}',
+              '${msgIdHex(r.id)} from ${r.from == null ? 'nobody: did not open' : _who(r.from)}',
+              'sent ${r.sent}${r.mailbox ? ', from the mailbox' : ''}, '
+                  '${r.at.toLocal()}\n${hex(r.payload)}',
             ),
           heading('Log'),
           if (s.log.isEmpty) const Text('Nothing yet'),
@@ -67,6 +71,27 @@ class DebugScreen extends StatelessWidget {
       ),
     );
   });
+
+  /// A contact's name and the start of its identity.
+  String _who(String? key) {
+    if (key == null) return 'the mailbox';
+    final c = app.contacts.byKey(key);
+    return '${c?.name ?? 'not a contact'} (${key.substring(0, 8)}…)';
+  }
+
+  List<Widget> _me() {
+    final me = app.me;
+    return [
+      _row('Identity', '${me.key.substring(0, 16)}…'),
+      _row('Card address', '${me.cardAddress ?? 'none yet'}'),
+      _row('Home node', '${me.home ?? 'none'}'),
+      _row('Mailbox: have every item up to', '${me.since}'),
+      _row('Mailbox: items above that', '${me.above.toList()..sort()}'),
+      _row('Fetch rounds', '${me.rounds}'),
+      _row('Last fetched to', '${me.fetchedTo ?? 'never'}'),
+      _row('Last sent', '${me.lastSent}'),
+    ];
+  }
 
   String _wait(Session s, Outgoing o) =>
       o.state == OutState.givenBack ? ', ${s.waitLeftS(o)} s left' : '';

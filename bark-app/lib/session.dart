@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 
 import 'link.dart';
 import 'node_link.dart';
-import 'payload.dart';
 import 'store.dart';
 
 enum OutState {
@@ -29,6 +28,21 @@ enum OutState {
   refused,
 }
 
+/// What a sent message carries for the person.
+enum OutKind {
+  /// A text.
+  text,
+
+  /// An acknowledgement of a received text.
+  ack,
+
+  /// The person's card.
+  card,
+
+  /// A fetch from the person's mailbox.
+  fetch,
+}
+
 class Outgoing {
   final Address dst;
   final Uint8List payload;
@@ -36,6 +50,19 @@ class Outgoing {
 
   /// When the person queued it, for ordering a conversation.
   final DateTime at;
+  final OutKind kind;
+
+  /// The contact's identity in hex; null for a fetch.
+  final String? to;
+
+  /// Its `sent`, by which the other side names it.
+  final int sent;
+
+  /// A text's words.
+  final String? body;
+
+  /// The other side acknowledged it.
+  bool acked;
   OutState state;
   DateTime? retryAt;
   String? error;
@@ -44,15 +71,30 @@ class Outgoing {
     this.dst,
     this.payload, {
     required this.at,
+    required this.kind,
+    required this.sent,
+    this.to,
+    this.body,
+    this.acked = false,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
 
-  String get text => decodeText(payload) ?? hex(payload);
+  String get text => switch (kind) {
+    OutKind.text => body ?? '',
+    OutKind.ack => 'Acknowledged',
+    OutKind.card => 'Your card',
+    OutKind.fetch => 'Fetch from your mailbox',
+  };
 
   Map<String, dynamic> toJson() => {
     'dst': dst.toString(),
     'payload': hex(payload),
     'at': at.toIso8601String(),
+    'kind': kind.name,
+    'to': to,
+    'sent': sent,
+    'body': body,
+    'acked': acked,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
     'state': (state == OutState.writing ? OutState.queued : state).name,
@@ -64,11 +106,12 @@ class Outgoing {
       Outgoing(
           Address.parse(j['dst'] as String)!,
           parseHex(j['payload'] as String)!,
-          // The app's first version did not keep it; its messages sort
-          // first.
-          at: j['at'] == null
-              ? DateTime.fromMillisecondsSinceEpoch(0)
-              : DateTime.parse(j['at'] as String),
+          at: DateTime.parse(j['at'] as String),
+          kind: OutKind.values.byName(j['kind'] as String),
+          to: j['to'] as String?,
+          sent: j['sent'] as int,
+          body: j['body'] as String?,
+          acked: j['acked'] as bool,
           state: OutState.values.byName(j['state'] as String),
         )
         ..retryAt = j['retryAt'] == null
@@ -77,40 +120,66 @@ class Outgoing {
         ..error = j['error'] as String?;
 }
 
+/// A received text, or a payload that did not open: kept for the debug
+/// screen, in no conversation.
 class Received {
   final int id;
   final Uint8List payload;
   final DateTime at;
 
-  /// The sender's address, or null when the app cannot tell (see
-  /// [Session.senderOf]).
-  final Address? from;
-  Received(this.id, List<int> payload, this.at, {this.from})
-    : payload = Uint8List.fromList(payload);
+  /// The sender's identity in hex; null if the payload did not open.
+  final String? from;
 
-  /// The text, or the payload in hex if it is not in the prototype's
-  /// format.
-  String get text => decodeText(payload) ?? '(not text) ${hex(payload)}';
+  /// Its `sent`, by which an acknowledgement names it.
+  final int? sent;
+
+  /// The text.
+  final String? body;
+
+  /// It came out of the person's mailbox.
+  final bool mailbox;
+
+  /// The person acknowledged it.
+  bool acked;
+
+  Received(
+    this.id,
+    List<int> payload,
+    this.at, {
+    this.from,
+    this.sent,
+    this.body,
+    this.mailbox = false,
+    this.acked = false,
+  }) : payload = Uint8List.fromList(payload);
+
+  String get text => body ?? '(did not open) ${hex(payload)}';
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'payload': hex(payload),
     'at': at.toIso8601String(),
-    'from': from?.toString(),
+    'from': from,
+    'sent': sent,
+    'body': body,
+    'mailbox': mailbox,
+    'acked': acked,
   };
 
   static Received fromJson(Map<String, dynamic> j) => Received(
     j['id'] as int,
     parseHex(j['payload'] as String)!,
     DateTime.parse(j['at'] as String),
-    from: j['from'] == null ? null : Address.parse(j['from'] as String),
+    from: j['from'] as String?,
+    sent: j['sent'] as int?,
+    body: j['body'] as String?,
+    mailbox: j['mailbox'] as bool,
+    acked: j['acked'] as bool,
   );
 }
 
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
-
-Address? _senderUnknown(InboxMessage m) => null;
 
 class Session extends ChangeNotifier {
   final Store store;
@@ -118,11 +187,9 @@ class Session extends ChangeNotifier {
 
   Session({required this.store, required this.now});
 
-  /// Who sent a message in the inbox. The sender's address is to travel
-  /// inside the payload (spec "Phone link", "The payload"), which the
-  /// prototype's does not carry, so a real node's messages have no known
-  /// sender; the fake node knows whom it echoes.
-  Address? Function(InboxMessage) senderOf = _senderUnknown;
+  /// Reads a message from the inbox and keeps what it says; without one
+  /// the payload is kept as it came.
+  Future<void> Function(InboxMessage)? reader;
 
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
@@ -194,7 +261,7 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _save() => store.save({
+  Future<void> save() => store.save({
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
   });
@@ -326,15 +393,22 @@ class Session extends ChangeNotifier {
     o.state = OutState.givenBack;
     o.retryAt = now().add(Duration(seconds: g.waitS));
     notifyListeners();
-    _save();
+    save();
   }
 
-  /// Queues a text to `dst`.
-  Future<void> queue(Address dst, String text) async {
-    outbox.add(Outgoing(dst, encodeText(text), at: now()));
+  /// Queues a message; the node takes it when ready.
+  Future<void> queue(Outgoing o) async {
+    outbox.add(o);
     notifyListeners();
-    await _save();
+    await save();
     _pump();
+  }
+
+  /// Keeps a received message.
+  Future<void> addReceived(Received r) async {
+    received.add(r);
+    notifyListeners();
+    await save();
   }
 
   /// Offers a given-back message again; the node takes it when ready.
@@ -342,7 +416,7 @@ class Session extends ChangeNotifier {
     o.state = OutState.queued;
     o.retryAt = null;
     notifyListeners();
-    await _save();
+    await save();
     _pump();
   }
 
@@ -350,7 +424,7 @@ class Session extends ChangeNotifier {
     if (o.state == OutState.writing) return;
     outbox.remove(o);
     notifyListeners();
-    await _save();
+    await save();
   }
 
   Future<void> _pump() async {
@@ -388,7 +462,7 @@ class Session extends ChangeNotifier {
       _writing = false;
     }
     notifyListeners();
-    await _save();
+    await save();
     if (again) _pump();
   }
 
@@ -421,16 +495,16 @@ class Session extends ChangeNotifier {
     }
   }
 
-  /// Stores a message before it is confirmed. One read again, after a
+  /// Keeps a message before it is confirmed. One read again, after a
   /// confirmation that was lost, is not kept twice.
   Future<void> _keep(InboxMessage m) async {
+    final read = reader;
+    if (read != null) return read(m);
     final dup = received.any(
       (r) => r.id == m.msgId && listEquals(r.payload, m.payload),
     );
     if (dup) return;
-    received.add(Received(m.msgId, m.payload, now(), from: senderOf(m)));
-    notifyListeners();
-    await _save();
+    await addReceived(Received(m.msgId, m.payload, now()));
   }
 
   Future<void> setMapPoint(Position? p) async {

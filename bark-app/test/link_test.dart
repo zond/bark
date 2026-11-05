@@ -1,10 +1,7 @@
 // The byte vectors of bark-link/src/tests.rs, test `vectors` and its
 // neighbours, so that the app reads and writes what the node does.
 
-import 'dart:math';
-
 import 'package:bark_app/link.dart';
-import 'package:bark_app/payload.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -160,18 +157,5 @@ void main() {
     expect(p.id, to);
     expect(Address.parse('47c0490ad9ff8001020304050'), isNull);
     expect(Address.parse('zz'), isNull);
-  });
-
-  test('payload: nonce then text, unique', () {
-    final a = encodeText('hello', random: Random(1));
-    final b = encodeText('hello', random: Random(2));
-    expect(a.length, nonceLen + 5);
-    expect(decodeText(a), 'hello');
-    expect(a, isNot(b));
-    expect(decodeText([1, 2]), isNull);
-    expect(
-      () => encodeText('x' * (maxTextBytes + 1)),
-      throwsA(isA<Malformed>()),
-    );
   });
 }

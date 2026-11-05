@@ -3,19 +3,17 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../card.dart';
+import '../app_layer.dart';
 import '../contacts.dart';
 import '../conversations.dart';
-import '../link.dart';
-import '../payload.dart';
 import '../session.dart';
 import 'common.dart';
 
 class ThreadScreen extends StatefulWidget {
   final AppModel app;
 
-  /// The other node's node ID in hex, or null for senders the app cannot tell.
-  final String? keyHex;
+  /// The other person's identity in hex.
+  final String keyHex;
   const ThreadScreen(this.app, this.keyHex, {super.key});
 
   @override
@@ -33,13 +31,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
-  Future<void> _send(Address to) async {
+  Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
     try {
-      await app.session.queue(to, text.text);
+      await app.messenger.sendText(to, text.text);
       text.clear();
-    } on Malformed {
-      if (mounted) say(context, 'The text is longer than $maxTextBytes bytes');
+    } on BadPayload catch (e) {
+      if (mounted) say(context, 'Not sent: $e');
     }
   }
 
@@ -47,25 +45,25 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Widget build(BuildContext context) => Watch(app, (context) {
     final s = app.session;
     final c = thread(widget.keyHex, app.contacts.list, s.outbox, s.received);
+    final contact = c.contact;
     return Scaffold(
       appBar: AppBar(
         title: Text(c.title, overflow: TextOverflow.ellipsis),
         actions: [
-          if (c.contact == null && c.address != null)
-            TextButton(
-              onPressed: () => _name(c.address!, ''),
-              child: const Text('Name'),
-            ),
-          if (c.contact != null)
+          if (contact != null)
             PopupMenuButton<void Function()>(
               onSelected: (f) => f(),
               itemBuilder: (_) => [
                 PopupMenuItem(
-                  value: () => _name(c.address!, c.contact!.name),
+                  value: () => _name(contact),
                   child: const Text('Rename'),
                 ),
                 PopupMenuItem(
-                  value: () => app.contacts.remove(c.contact!),
+                  value: () => app.messenger.sendCard(contact),
+                  child: const Text('Send my card'),
+                ),
+                PopupMenuItem(
+                  value: () => app.contacts.remove(contact),
                   child: const Text('Remove contact'),
                 ),
               ],
@@ -75,6 +73,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
       body: Column(
         children: [
           NoticeCard(app),
+          if (contact != null && !contact.verified)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                'Not verified yet: a first message can come from anyone. '
+                'Once a reply of theirs opens here, it is theirs.',
+              ),
+            ),
           Expanded(
             child: ListView(
               reverse: true,
@@ -84,30 +90,25 @@ class _ThreadScreenState extends State<ThreadScreen> {
               ],
             ),
           ),
-          if (c.address == null)
+          if (contact == null)
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text(
-                'The app cannot tell who sent these yet: the sender\'s '
-                'address is to travel inside the message, and this '
-                'prototype\'s messages do not carry it.',
-              ),
+              child: Text('This contact was removed.'),
             )
           else
-            _compose(c.address!),
+            _compose(contact),
         ],
       ),
     );
   });
 
-  Future<void> _name(Address a, String current) async {
-    final name = await askText(context, 'Name', current);
+  Future<void> _name(Contact c) async {
+    final name = await askText(context, 'Name', c.name);
     if (name == null || name.isEmpty) return;
-    final card = app.contacts.byKey(nodeKey(a))?.card ?? PersonCard(a, '');
-    await app.contacts.put(Contact(card, name));
+    await app.contacts.put(c.copyWith(name: name));
   }
 
-  Widget _compose(Address to) => SafeArea(
+  Widget _compose(Contact to) => SafeArea(
     child: Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       child: Row(
@@ -119,7 +120,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
               maxLines: 5,
               textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(
-                hintText: 'Text, not encrypted',
+                hintText: 'Text',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -156,15 +157,32 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Text(
                   mine
                       ? '${when(e.at)}, ${stateLabel(app.session, o)}'
-                      : when(e.at),
+                            '${o.acked ? ', acknowledged ✓' : ''}'
+                      : '${when(e.at)}'
+                            '${e.received!.mailbox ? ', from your mailbox' : ''}'
+                            '${e.received!.acked ? ', you acknowledged it' : ''}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                if (mine) _actions(o),
+                if (mine) _actions(o) else _acknowledge(e.received!),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _acknowledge(Received r) {
+    if (r.acked) return const SizedBox.shrink();
+    return TextButton(
+      onPressed: () async {
+        try {
+          await app.messenger.acknowledge(r);
+        } on BadPayload catch (e) {
+          if (mounted) say(context, 'Not sent: $e');
+        }
+      },
+      child: const Text('Acknowledge'),
     );
   }
 

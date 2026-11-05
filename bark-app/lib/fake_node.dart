@@ -1,17 +1,35 @@
 // A node in Dart that answers as the spec's "Phone link" says, so the
 // app can be tried on a phone with no board. Its network is invented:
-// it hears relays, gives some messages back and answers each message it
-// takes with an echo in its inbox.
+// it hears relays, gives some messages back, and behind it is one
+// person, the fake friend, who writes first and echoes every text sent
+// to them, sealed as a real phone would.
 
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:sodium/sodium.dart';
+
+import 'app_layer.dart';
+import 'card.dart';
 import 'link.dart';
 import 'node_link.dart';
-import 'payload.dart';
 
 class FakeNode implements NodeLink {
   final DateTime Function() now;
+  final Sodium sodium;
+
+  /// The identity of the app it serves, whom the fake friend writes to.
+  final Uint8List app;
+
+  /// The fake friend's keys, the same at every start.
+  late final Keys friend = Keys.fromSeed(
+    sodium,
+    List.generate(seedLen, (i) => 0xa0 + i),
+  );
+
+  /// The fake friend's card: their address is the fake node's.
+  PersonCard get friendCard =>
+      PersonCard(friend.identity, _own, 0, 'Fake friend');
 
   /// `bark-fa4e00000001`.
   static final id = Uint8List.fromList([0xfa, 0x4e, 0, 0, 0, 1]);
@@ -55,7 +73,7 @@ class FakeNode implements NodeLink {
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
-  final Map<int, Address> _senders = {};
+  int _friendSent = 0;
   (int, DateTime)? _givenBack;
   int _writes = 0;
   int _taken = 0;
@@ -65,31 +83,56 @@ class FakeNode implements NodeLink {
   var _closed = Completer<void>();
   final List<Timer> _timers = [];
 
-  FakeNode({required this.now}) {
+  FakeNode({required this.now, required this.sodium, required List<int> app})
+    : app = Uint8List.fromList(app) {
     _boot = now();
     final step = firstRotation ~/ (relaysHeard + 1);
     for (var i = 1; i <= relaysHeard; i++) {
       _after(step * i, () => _relays++);
     }
     _after(firstRotation, () {});
-    _inbox.add(_from(_own, 'Hello from the fake node.'));
-    _inbox.add(_from(_own, 'A second message, waiting in the inbox.'));
+    _inbox.add(_intro('Hello from the fake node.'));
+    _inbox.add(_intro('A second message, waiting in the inbox.'));
   }
 
   Address get _own => Address(_mapPoint ?? gps, id);
 
-  InboxMessage _from(Address sender, String text) {
-    final p = encodeText(text);
-    final m = InboxMessage(msgId(_own, p), p);
-    _senders[m.msgId] = sender;
-    return m;
-  }
+  late final PrecalculatedBox _pair = sodium.crypto.box.precalculate(
+    publicKey: app,
+    secretKey: friend.pair.secretKey,
+  );
 
-  /// Who sent a message in its inbox: itself for the two it starts
-  /// with, and for an echo the address the echoed message went to. The
-  /// payload will carry this (spec "Phone link", "The payload"); the
-  /// prototype's does not.
-  Address? senderOf(InboxMessage m) => _senders[m.msgId];
+  Header _header() => Header(greater(friend.identity, app), ++_friendSent);
+
+  InboxMessage _message(Uint8List p) => InboxMessage(msgId(_own, p), p);
+
+  /// The fake friend's first message, with their card.
+  InboxMessage _intro(String text) => _message(
+    sealIntro(
+      sodium,
+      app,
+      writePlain(_header(), [
+        CardRecord(friendCard.encode()),
+        TextRecord(text),
+      ]),
+    ),
+  );
+
+  /// The text of a message from the app to the fake friend, if it is one.
+  String? _textTo(Uint8List payload) {
+    try {
+      final plain = switch (formOf(payload)) {
+        Form.boxed => openBox(_pair, payload),
+        Form.introduction => openIntro(sodium, friend, payload),
+        _ => null,
+      };
+      if (plain == null) return null;
+      final (_, rs) = readPlain(plain);
+      return rs.whereType<TextRecord>().firstOrNull?.text;
+    } on BadPayload {
+      return null;
+    }
+  }
 
   /// Runs `f` after `d`, then notifies the status.
   void _after(Duration d, void Function() f) {
@@ -198,11 +241,21 @@ class FakeNode implements NodeLink {
       _after(handOver + givenBackWait, () => _ready = true);
     } else {
       _after(handOver, () => _ready = true);
-      final text = decodeText(payload);
-      _after(
-        echoAfter,
-        () => _inbox.add(_from(dst, 'Echo: ${text ?? hex(payload)}')),
-      );
+      final text = _textTo(payload);
+      if (text != null) {
+        _after(
+          echoAfter,
+          () => _inbox.add(
+            _message(
+              sealBox(
+                _pair,
+                sodium.randombytes.buf(nonceLen),
+                writePlain(_header(), [TextRecord('Echo: $text')]),
+              ),
+            ),
+          ),
+        );
+      }
     }
   });
 
