@@ -1614,55 +1614,6 @@ asked for every queued message whenever a hand-over may start
 neighbour-table entries ([neighbour table](#neighbour-table)) except
 those in the tried set ([message records](#message-records)).
 
-A ban does not take a neighbour out: a banned next hop is waited for.
-The message is not sent until the ban ends, and is routed again then
-([overload waits](#overload-waits)).
-
-The one exception is a neighbour that refused the message
-([bans](#bans)). A queued message keeps the neighbours that refused it,
-one bit per neighbour-table slot, and while such a neighbour is banned
-it is no candidate for that message, so the message goes to the next.
-Where that leaves no candidate, or only a last resort the refuser was
-not, the message waits for the ban as above. The bit is cleared when
-the ban ends. A hand-over that fails sets no bit: the message waits for
-that neighbour ([hand-over](#hand-over) step 6).
-
-A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
-bit alone ([packet formats](#packet-formats)), is a **last resort**: a
-candidate only when the search would otherwise end here, with no other
-candidate left, so that the message would go back to its parent or be
-dropped ([return to parent](#return-to-parent)).
-
-It is sent to with the long preamble. An anchorless neighbour is a
-candidate like any other, sent to with the long preamble. The first hop
-of a sleepy node's own message is its anchor while the anchor is live
-([a sleepy node's own message](#a-sleepy-nodes-own-message)).
-
-A carried neighbour ([nodes](#nodes)) that is not sleepy is a last
-resort too once nothing has been heard from it for its own heartbeat
-interval ([heartbeat](#heartbeat)); within that it is a candidate like
-any other.
-
-*Why a carried neighbour goes stale.* Its entry says where it was when
-it was last heard, and it walks: in its interval, at most 15 s, 21 m at
-a walking pace of 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the
-50 m a position is good to ([position](#position), [owner](#owner));
-its next heartbeat then tells its place to another channel, and by the
-time one comes back to this channel, a rotation, it has walked 180 m on
-average and 270 m at most, a hop's length in the dense city, and may
-have gone indoors, 14 dB down ([physical layer](#physical-layer)). A
-DATA sent to a stale walker mostly reaches nobody, and under load such
-frames were most of the channel's overload (roadmap D103, D105). Its
-ACK to a frame sent to it makes it fresh again ([the ACK](#the-ack)),
-so a walker in conversation stays a next hop.
-
-*Why a sleepy neighbour is a last resort.* A ban is no reason to go
-through a node that sleeps; the message waits for the ban
-([overload waits](#overload-waits)). Where a relay is in reach, that
-relay is the hop; the last resort is for a pocket with no relay in that
-direction, where a sleepy node that has anchored is the way out for the
-anchorless ones behind it (roadmap D58).
-
 The **order** is:
 
 - neighbours with margin before those without;
@@ -1671,80 +1622,107 @@ The **order** is:
   ([positions on the wire](#positions-on-the-wire)), nearest first;
 - equal distances by ID.
 
-The relay sends to the first candidate, once its ban has ended. If
-there is none, the relay returns the message to its parent.
+The relay sends to the first candidate once its ban has ended, and with
+none returns the message to its parent. A ban does not take a neighbour
+out: a banned next hop is waited for, and the message is routed again
+when the ban ends ([overload waits](#overload-waits)). The one
+exception is a neighbour that refused the message ([bans](#bans)): the
+queued message keeps a bit per neighbour-table slot for its refusers,
+cleared when the ban ends, and while a refuser is banned it is no
+candidate for that message, unless that leaves none, or only a last
+resort the refuser was not; then the message waits for the ban. A
+failed hand-over sets no bit ([hand-over](#hand-over) step 6).
 
-*Why a ban is a wait.* A neighbour that does not answer stays the
-first candidate until it is demoted or gone, for the reasons of
-[hand-over](#hand-over) step 6; the neighbour table holds the failures
-in a row and the ban for every message alike, so the message needs no
+*Why a ban is a wait.* A neighbour that does not answer stays the first
+candidate until it is demoted or gone, for the reasons of
+[hand-over](#hand-over) step 6; the neighbour table holds the failures in
+a row and the ban for every message alike, so the message needs no
 state of its own for it (roadmap D106). A refusal is the one thing a
-message keeps, since it says the neighbour has no room for that message
-([bans](#bans)); the messages it did not refuse still wait for it, so a
-full next hop fills this relay's queue for it and the wait goes back
-toward the origin.
+message keeps, since it says the neighbour has no room for that message;
+the messages it did not refuse still wait for it, so a full next hop
+fills this relay's queue for it and the wait goes back toward the
+origin. A neighbour that arrives, recovers or expires changes the answer
+the next time a message is routed, and nothing else does.
 
-*What a change does.* A neighbour that arrives, recovers its margin or
-its demotion, or expires changes the answer the next time a message is
-routed, and nothing else: a message waiting for a banned neighbour goes
-to a newcomer that ranks before it, and one whose next hop is demoted
-or gone goes to the next.
+**Last resorts.** Some candidates are tried only when the search would
+otherwise end here, the message going back to its parent or being
+dropped ([return to parent](#return-to-parent)):
 
-*Why margin comes first.* Neighbours without margin come after every
-neighbour with margin, demoted ones included, because fading lets a
-relay hear the 13-byte heartbeat of a neighbour whose link usually cannot
-carry a full DATA frame. Such a neighbour is often the farthest, so the
-nearest to the destination; without this rule every message would try
-it first, three DATA frames unanswered.
+- a sleepy neighbour with an anchor, whose last heartbeat had the sleepy
+  bit alone ([packet formats](#packet-formats)), sent to with the long
+  preamble;
+- a carried relay ([nodes](#nodes)) once nothing has been heard from it
+  for its own heartbeat interval ([heartbeat](#heartbeat)).
 
-It stays a last resort rather than left out, because on a sparse line it
-may be the only way on, and a weak link still carries some frames; when
-it takes one, its ACK counts toward its margin (roadmap D38).
+An anchorless neighbour is a candidate like any other, sent to with the
+long preamble. The first hop of a sleepy node's own message is its
+anchor while the anchor is live
+([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
-*Why a demoted neighbour is still tried.* A demoted neighbour with
-margin is likewise tried only when every other has been, its failures
-counted as usual. Demotion keeps a failing link from costing every
-message its attempts while another route exists; it should not drop a
-message whose only route is that link.
+*Why a sleepy neighbour is a last resort.* A ban is no reason to go
+through a node that sleeps. Where a relay is in reach, it is the hop;
+the last resort is for a pocket with no relay in that direction, where a
+sleepy node that has anchored is the way out for the anchorless ones
+behind it (roadmap D58).
 
-Three hand-overs lost to collisions demote a neighbour that works, and on
-a line it is the only route, so without the last resort every message
-would be dropped until the demotion lapsed, six and a half minutes. What
-a neighbour that is really gone costs is in [bounds](#bounds) (roadmap
-D25, D36, D42).
+*Why a carried relay goes stale.* It walks: in its interval, at most
+15 s, 21 m at 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the 50 m a
+position is good to ([position](#position)); by the time its heartbeat
+comes back to this channel, a rotation, it has walked 180 m on average
+and 270 m at most, a hop's length in the dense city, and may have gone
+indoors, 14 dB down ([physical layer](#physical-layer)). A DATA sent to
+a stale walker mostly reaches nobody, and under load such frames were
+most of the channel's overload (roadmap D103, D105). Its ACK makes it
+fresh again ([the ACK](#the-ack)), so a walker in conversation stays a
+next hop.
 
-A message whose hand-over to a neighbour fails and leaves it demoted,
-by this failure or an earlier one, counts that neighbour as tried while
-it is queued here, and its search
-goes on: to the next candidate, back to its parent, or, at the origin,
-it ends. The neighbour stays a last resort for every message that has
-not tried it. The mark is kept with the queued message, not in the
-record: the neighbour does not have the message, and a copy it offers
-later is no return ([receiving DATA](#receiving-data)).
+*Why margin comes first.* Fading lets a relay hear the 13-byte heartbeat
+of a neighbour whose link usually cannot carry a full DATA frame
+([neighbour table](#neighbour-table)). Such a neighbour is often the
+farthest, so the nearest to the destination, and every message would
+try it first, three frames unanswered. It stays a candidate rather than
+left out, because on a sparse line it may be the only way on, and a weak
+link still carries some frames; each it takes counts toward its margin
+(roadmap D38).
 
-*Why a demotion ends the wait.* A link that works one way, a neighbour
-whose heartbeats this relay hears but which never hears it, stays live,
-its heartbeats renewing it. Waited for as the only candidate left, it
-would hold the message for as long as it beats, and that relay's part
-of the search would never end. Three hand-overs in a row unanswered are
-the test that the neighbour does not hear this relay
-([neighbour table](#neighbour-table)), so that is where the message
-lets it go. The cost falls on the one message: where three collisions
-demote a working link that is the only way on, that message is returned
-or, at its origin, dropped; the next tries the link as its last resort.
+*Why a demoted neighbour is still tried.* Demotion keeps a failing link
+from costing every message its attempts while another route exists; it
+should not drop a message whose only route is that link. Three
+hand-overs lost to collisions demote a link that works, and on a line
+it is the only route, so without this every message would be dropped
+until the demotion lapsed, six and a half minutes. What a neighbour that
+is really gone costs is in [bounds](#bounds) (roadmap D25, D36, D42).
 
-*Why the next hop need not be closer.* Nothing requires the next hop to
-be closer to the destination than the relay itself. After the message
-comes back, the best neighbour left is usually farther away, and such a
-rule would turn every gap into a dead end. On a first send the nearest
-neighbour is chosen anyway.
+**The one-way link.** A message whose hand-over to a neighbour fails and
+leaves it demoted, by this failure or an earlier one, counts that
+neighbour as tried while it is queued here, and its search goes on: to
+the next candidate, back to its parent, or, at the origin, it ends. The
+neighbour stays a candidate, last, for every message that has not tried
+it. The mark is kept with the queued message, not in the record: the
+neighbour does not have the message, and a copy it offers later is no
+return ([receiving DATA](#receiving-data)).
+
+*Why a demotion ends the wait.* A neighbour whose heartbeats this relay
+hears but which never hears it stays live, its heartbeats renewing it.
+Waited for as the only candidate left, it would hold the message for as
+long as it beats, and this relay's part of the search would never end.
+Three hand-overs in a row unanswered are the test that it does not hear
+this relay, so there the message lets it go. The cost falls on that one
+message: where three collisions demote a working link that is the only
+way on, it is returned or, at its origin, dropped; the next message
+tries the link last.
+
+*Why the next hop need not be closer.* After the message comes back, the
+best neighbour left is usually farther from the destination than the
+relay itself, and such a rule would turn every gap into a dead end. On a
+first send the nearest neighbour is chosen anyway.
 
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the
-message has arrived there, or the candidate holds another copy, the
-candidate takes it and it goes no further; if the candidate has had the
-message and holds none, it answers seen, and the relay goes on to its
-next candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
+message has arrived there, or the candidate holds a copy, the candidate
+takes it and it goes no further; if the candidate has had the message
+and holds none, it answers seen, and the relay goes on to its next
+candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
 
 #### Send queue
 
