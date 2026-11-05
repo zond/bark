@@ -132,6 +132,37 @@ impl LocalPlane {
     }
 }
 
+/// Whether the triangle of `corners` encloses `p`, its edges included
+/// (spec "Next hop"). A triangle whose corners lie on one line encloses
+/// nothing.
+///
+/// Exact, in position counts: a point is inside a triangle in the local
+/// plane exactly when it is inside in counts, since the plane only
+/// scales each axis by a positive factor (module documentation), and
+/// scaling keeps which side of a line a point is on. Each offset from
+/// `p` is at most 2²⁵ counts on either axis (`position.rs`, longitude
+/// wrapped as in [`LocalPlane::point`]), so each cross product is at
+/// most 2 · 2²⁵ · 2²⁵ = 2⁵¹ in size and their sum 3 · 2⁵¹ < 2⁶³: no
+/// overflow in `i64`.
+pub fn encloses(corners: [Position; 3], p: Position) -> bool {
+    let offset = |c: Position| {
+        let north = c.lat as i64 - p.lat as i64;
+        let mut east = c.lon as i64 - p.lon as i64;
+        if east >= LON_TURN / 2 {
+            east -= LON_TURN;
+        } else if east < -LON_TURN / 2 {
+            east += LON_TURN;
+        }
+        (east, north)
+    };
+    let [a, b, c] = corners.map(offset);
+    let cross = |(e1, n1): (i64, i64), (e2, n2): (i64, i64)| e1 * n2 - e2 * n1;
+    let sides = [cross(a, b), cross(b, c), cross(c, a)];
+    // Twice the triangle's signed area.
+    let area: i64 = sides.iter().sum();
+    area != 0 && sides.iter().all(|&s| s == 0 || (s > 0) == (area > 0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +318,42 @@ mod tests {
         assert!(plane.distance2(o, a) < plane.distance2(o, b));
         let d = plane.distance_m(o, a);
         assert!((d * d - plane.distance2(o, a)).abs() < 1.0);
+    }
+
+    #[test]
+    fn a_triangle_encloses_inside_and_edges_only() {
+        let o = pos(KYIV);
+        let at = |east: f64, north: f64| {
+            let d = libm::sqrt(east * east + north * north);
+            pos(destination(KYIV, d, deg(libm::atan2(east, north))))
+        };
+        let (a, b) = (at(1000.0, 1000.0), at(-1000.0, 1000.0));
+        assert!(encloses([o, a, b], at(0.0, 500.0)));
+        assert!(encloses([b, o, a], at(0.0, 500.0)), "either orientation");
+        assert!(!encloses([o, a, b], at(0.0, -500.0)));
+        assert!(!encloses([o, a, b], at(900.0, 500.0)));
+        assert!(encloses([o, a, b], o), "a corner");
+        let mid = Position {
+            lat: (a.lat + b.lat) / 2,
+            lon: (a.lon + b.lon) / 2,
+        };
+        assert!(encloses([o, a, b], mid), "an edge");
+        // Three on a line enclose nothing, not even a point between them.
+        let line = |k: i32| Position {
+            lat: o.lat + 3 * k,
+            lon: o.lon + 7 * k,
+        };
+        assert!(!encloses([line(0), line(100), line(200)], line(50)));
+        assert!(!encloses([line(0), line(100), line(200)], at(0.0, 500.0)));
+    }
+
+    #[test]
+    fn enclosure_does_not_overflow_at_the_extremes() {
+        let corner = |lat: i32, lon: i32| Position { lat, lon };
+        let (lo, hi) = (-(1 << 24), (1 << 24) - 1);
+        let (w, e) = (-(1 << 25), (1 << 25) - 1);
+        let t = [corner(lo, w), corner(hi, 0), corner(lo, e / 2)];
+        assert!(encloses(t, corner(lo + 10, -1)));
+        assert!(!encloses(t, corner(hi, e)));
     }
 }
