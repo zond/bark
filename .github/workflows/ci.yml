@@ -87,6 +87,17 @@ jobs:
             bark-fw -> target
             bark-loader -> target
 
+      # The radio driver's build scripts (nrf-mpsl-sys, nrf-sdc-sys) run
+      # bindgen over the radio's C headers. bindgen loads the newest
+      # libclang installed but asks the `clang` on PATH for its header
+      # directories. The runner has several LLVM versions, and its `clang`
+      # is not the newest, so two versions' stdint.h end up on the include
+      # path; the first includes the second, which its include guard leaves
+      # empty, and uint32_t is never defined. Use the libclang of the
+      # `clang` on PATH, so there is one version.
+      - name: Match libclang to clang
+        run: echo "LIBCLANG_PATH=$(dirname "$(readlink -f "$(command -v clang)")")/../lib" >> "$GITHUB_ENV"
+
       - run: cargo fmt -- --check
         working-directory: bark-fw
 
