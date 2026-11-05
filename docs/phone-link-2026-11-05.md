@@ -237,16 +237,17 @@ builds it:
 
 | | before | the stack | the service and the inbox | with a place |
 |---|---|---|---|---|
-| `.text` | 183 676 | 293 172 | 300 524 | 300 484 |
-| `.rodata` | 19 464 | 36 528 | 39 052 | 38 980 |
+| `.text` | 183 676 | 293 172 | 301 748 | 301 708 |
+| `.rodata` | 19 464 | 36 528 | 39 524 | 39 452 |
 | `.data` | 2 120 | 6 288 | 6 936 | 6 936 |
 | `.bss` | 192 860 | 204 136 | 210 568 | 210 568 |
-| flash (with the 256-byte vector table) | 205 516 | 336 244 | 346 768 | 346 656 |
+| flash (with the 256-byte vector table) | 205 516 | 336 244 | 348 464 | 348 352 |
 | static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
 **Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
-346 768 B is 96 %, 13 680 B, 13.4 KiB, left. Of that, the host's own
-log lines at info and above, which the bench reads (below), are 9.4 KB;
+348 464 B is 97 %, 11 984 B, 11.7 KiB, left. Of that, the log lines
+at info and above of the host and of the link's connection steps, which
+the bench reads (below), are about 11 KB;
 every crate's debug and trace lines are left out of the build
 (`log`'s `release_max_level_info`), as the log's filter drops them
 anyway. Of the stack's growth, the
@@ -301,14 +302,18 @@ How the service meets the node (`ble.rs`, `node.rs`):
   reads), several at once. So the link puts Status, Inbox and Given back
   into it before it answers each request, but for the later parts of a
   long read, and when the node signals a change.
-- Advertising runs in rounds of a minute, each started afresh. The
-  controller stops advertising whenever a central connects; a
-  connection the host refuses at once, for want of a free slot, leaves
-  the host waiting on an advertisement that is no longer sent. The
-  rounds bound that to a minute. The host's own warnings are in the log
-  (`[link][connect] no available slot`), so the bench can tell whether
-  that happens.
-
+- Advertising runs from boot and again as soon as a connection ends.
+  Its interval is given to the host in ticks of the embassy clock,
+  1/32 768 s, which the host truncates to the 0.625 ms units: 1 022 500
+  µs would come out 1635 units, 1021.875 ms, so the firmware gives the
+  ticks just over 1636 units, and the build checks it.
+- For the bench the log has every step of a connection: `ble:
+  connected` with the peer and the interval, latency and supervision
+  timeout; each parameter, PHY or data length update; and each ATT
+  request, a write by its length; with the host's own info, warnings
+  and errors (`[host] …`). A central that never gets as far as
+  `ble: connected` did not connect at the link layer, which the
+  controller does without the host.
 - After every step of the driver the node publishes the status and a
   copy of the inbox's oldest message to the link. The status is notified
   when its flags, its relays, the inbox's count or the address change,

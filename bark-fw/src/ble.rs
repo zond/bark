@@ -31,7 +31,7 @@ use embassy_sync::signal::Signal;
 use nrf_mpsl::{raw as mpsl_raw, MultiprotocolServiceLayer};
 use nrf_sdc::{self as sdc, SoftdeviceController};
 use static_cell::StaticCell;
-use trouble_host::att::{AttClient, AttReq};
+use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
 /// The link's one connection (spec "Phone link").
@@ -60,9 +60,16 @@ const ADV_SET: usize = (5184 + ADV_DATA * 18) / 10;
 const FAL: usize = 4 + 8 * 8;
 const SDC_MEM: usize = PER_LINK + LINKS_SHARED + ADV_SET + FAL;
 
-/// The advertising interval, 1022.5 ms, in the 0.625 ms units of the
-/// advertising parameters (Vol 4 Part E §7.8.5): 1636 (roadmap D120).
-const ADV_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_micros(1_022_500);
+/// The advertising interval, 1022.5 ms, 1636 of the 0.625 ms units of the
+/// advertising parameters (Vol 4 Part E §7.8.5; roadmap D120). The host
+/// takes it as an embassy duration, in ticks of 1/32 768 s, and truncates
+/// it to the units: so it is given as the ticks just over 1636 units,
+/// since 1 022 500 µs truncated to ticks would make 1635.
+const ADV_UNITS: u64 = 1636;
+const ADV_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_ticks(
+    (ADV_UNITS * 625 * embassy_time::TICK_HZ).div_ceil(1_000_000),
+);
+const _: () = assert!(ADV_INTERVAL.as_micros() / 625 == ADV_UNITS);
 
 /// A write's values are not kept: the node takes each as a request
 /// (`Request`), so Send and Map point have no storage.
@@ -445,18 +452,12 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         }
     };
     let link = async {
-        let mut quiet = false;
         loop {
-            match advertise(&mut peripheral, &server, name, quiet).await {
-                Ok(Some(conn)) => {
-                    serve(&server, &conn).await;
-                    quiet = false;
-                }
-                Ok(None) => quiet = true,
+            match advertise(&mut peripheral, &server, name).await {
+                Ok(conn) => serve(&server, &conn).await,
                 Err(e) => {
                     log::error!("ble: advertising {:?}", e);
                     embassy_time::Timer::after(ADV_RETRY).await;
-                    quiet = false;
                 }
             }
         }
@@ -481,28 +482,16 @@ fn address() -> Address {
     ])
 }
 
-/// How long one round of advertising lasts before it is started afresh.
-/// The controller stops advertising whenever a central connects, and a
-/// connection the host then refuses, for want of a free slot, leaves the
-/// host waiting on an advertisement the controller no longer sends;
-/// starting afresh bounds that to this long. A minute is far from the
-/// advertising interval and the HCI commands it takes, and a phone looking
-/// for the node waits at most that.
-const ADV_ROUND: embassy_time::Duration = embassy_time::Duration::from_secs(60);
-
 /// The pause after advertising fails to start, so that a controller that
 /// refuses keeps the log readable and the executor free.
 const ADV_RETRY: embassy_time::Duration = embassy_time::Duration::from_secs(1);
 
-/// Advertise for a round (roadmap D120): the connection, if a phone made
-/// one. A round that ends without one logs nothing when `quiet`, so that
-/// only the first round after a connection or a failure is logged.
+/// Advertise until a phone connects (roadmap D120).
 async fn advertise<'v, 's>(
     peripheral: &mut Peripheral<'v, SoftdeviceController<'static>, DefaultPacketPool>,
     server: &'s Server<'v>,
     name: &str,
-    quiet: bool,
-) -> Result<Option<GattConnection<'v, 's, DefaultPacketPool>>, BleHostError<sdc::Error>> {
+) -> Result<GattConnection<'v, 's, DefaultPacketPool>, BleHostError<sdc::Error>> {
     let mut adv = [0; ADV_DATA];
     let adv_len = AdStructure::encode_slice(
         &[
@@ -530,16 +519,17 @@ async fn advertise<'v, 's>(
             },
         )
         .await?;
-    if !quiet {
-        log::info!("ble: advertising");
-    }
-    // Dropping the advertiser at the end of the round stops it.
-    let Ok(accepted) = embassy_time::with_timeout(ADV_ROUND, advertiser.accept()).await else {
-        return Ok(None);
-    };
-    let conn = accepted?.with_attribute_server(server)?;
-    log::info!("ble: connected");
-    Ok(Some(conn))
+    log::info!("ble: advertising");
+    let conn = advertiser.accept().await?;
+    let p = conn.params();
+    log::info!(
+        "ble: connected peer={:?} interval_us={} latency={} timeout_ms={}",
+        conn.peer_address(),
+        p.conn_interval.as_micros(),
+        p.peripheral_latency,
+        p.supervision_timeout.as_millis()
+    );
+    Ok(conn.with_attribute_server(server)?)
 }
 
 /// Serve one connection until it ends: answer its reads and writes, and
@@ -569,8 +559,37 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
                 return;
             }
             GattConnectionEvent::Gatt { event } => event,
-            _ => continue,
+            GattConnectionEvent::ConnectionParamsUpdated {
+                conn_interval,
+                peripheral_latency,
+                supervision_timeout,
+            } => {
+                log::info!(
+                    "ble: parameters interval_us={} latency={} timeout_ms={}",
+                    conn_interval.as_micros(),
+                    peripheral_latency,
+                    supervision_timeout.as_millis()
+                );
+                continue;
+            }
+            GattConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
+                log::info!("ble: phy tx={:?} rx={:?}", tx_phy, rx_phy);
+                continue;
+            }
+            GattConnectionEvent::DataLengthUpdated {
+                max_tx_octets,
+                max_rx_octets,
+                ..
+            } => {
+                log::info!("ble: data length tx={} rx={}", max_tx_octets, max_rx_octets);
+                continue;
+            }
+            _ => {
+                log::info!("ble: other connection event");
+                continue;
+            }
         };
+        log_request(&event.payload().incoming());
         // The attribute server answers every kind of read from the values
         // it holds, a read by handle or by type, of one value or several:
         // they are brought up to date before each request is answered, but
@@ -605,6 +624,28 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
         if let Ok(reply) = reply {
             reply.send().await;
         }
+    }
+}
+
+/// Log an ATT request from the phone, the written bytes only by count, so
+/// that the bench sees each step of a connection.
+fn log_request(att: &AttClient<'_>) {
+    match att {
+        AttClient::Request(AttReq::Write { handle, data })
+        | AttClient::Command(AttCmd::Write { handle, data }) => {
+            log::info!("ble: att write handle={} len={}", handle, data.len())
+        }
+        AttClient::Request(AttReq::PrepareWrite {
+            handle,
+            offset,
+            value,
+        }) => log::info!(
+            "ble: att prepare write handle={} offset={} len={}",
+            handle,
+            offset,
+            value.len()
+        ),
+        other => log::info!("ble: att {:?}", other),
     }
 }
 
