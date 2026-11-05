@@ -161,8 +161,11 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
-    /// It has waited for a ban: it goes first when the ban ends (spec
-    /// "Overload waits").
+    /// It waits, or has waited and not been offered since, for the ban
+    /// of the next hop it is routed to: it goes first when the ban ends
+    /// (spec "Overload waits"). Its own wait, `not_before`, is no ban of
+    /// a next hop and does not count: it holds the message back and
+    /// gives it no place ahead of others.
     pub waited: bool,
     /// Where its message's record was last found in the record table: a
     /// hint, checked against the ID before it is used.
@@ -231,11 +234,6 @@ impl Outgoing {
             Ok(Packet::Data(d)) => d.hops,
             _ => 0,
         }
-    }
-
-    /// Whether it has waited for a ban, or a wait of its own.
-    fn waited(&self) -> bool {
-        self.waited || self.not_before > Instant::ZERO
     }
 
     /// The message the frame carries: a DATA's computed ID (roadmap D15).
@@ -388,7 +386,7 @@ impl SendQueue {
 
     /// The entry the next hand-over goes to, of those `sendable` says may
     /// go now: a DATA to a sleepy node that is due, the first; else of
-    /// those that have waited and are due, the most travelled, the
+    /// those that have waited for a ban and are due, the most travelled, the
     /// earliest of equals; else the first that is due.
     pub fn next_due(
         &self,
@@ -405,7 +403,7 @@ impl SendQueue {
         }
         self.iter()
             .enumerate()
-            .filter(|&(i, o)| due(i, o) && o.waited())
+            .filter(|&(i, o)| due(i, o) && o.waited)
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
             .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
@@ -597,8 +595,8 @@ mod tests {
         }
     }
 
-    /// A DATA frame with `hops` that has waited until `due` ms, if given.
-    fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
+    /// A DATA frame with `hops`, waiting for a ban if `waited`.
+    fn data(tag: u8, hops: u8, waited: bool) -> Outgoing {
         use crate::ids::NodeId;
         use crate::wire::Data;
         let d = Data {
@@ -619,31 +617,54 @@ mod tests {
             bytes,
         };
         let mut o = Outgoing::new(frame, Kind::Forward);
-        if let Some(ms) = due {
-            o.not_before = Instant::ZERO + Duration::from_millis(ms);
-        }
+        o.waited = waited;
         o
     }
 
-    /// When bans end, the most travelled of the frames that waited goes
-    /// first, ahead of the queue's order; one that never waited keeps it.
+    /// The tag a [`data`] frame carries.
+    fn tag(o: &Outgoing) -> u8 {
+        match Packet::decode(o.frame.payload()) {
+            Ok(Packet::Data(d)) => d.payload[0],
+            _ => unreachable!(),
+        }
+    }
+
+    /// When bans end, the most travelled of the frames that waited for
+    /// them goes first, ahead of the queue's order; one that never waited
+    /// keeps it. `ends[tag]` is when the ban its frame waits for ends, ms.
     #[test]
     fn the_most_travelled_waiting_frame_goes_first() {
         let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let ends = [0, 10, 10, 10, 20];
+        let at = |q: &SendQueue, ms| q.next_due(t(ms), |_, o| t(ends[tag(o) as usize]) <= t(ms));
         let mut q = SendQueue::new();
-        q.push(data(0, 1, None)).unwrap();
-        q.push(data(1, 2, Some(10))).unwrap();
-        q.push(data(2, 5, Some(10))).unwrap();
-        q.push(data(3, 5, Some(10))).unwrap();
-        q.push(data(4, 9, Some(20))).unwrap();
-        assert_eq!(q.next_due_all(t(5)), Some(0), "none has waited its time");
-        assert_eq!(q.next_due_all(t(10)), Some(2), "the earlier of equals");
-        assert_eq!(q.next_due_all(t(20)), Some(4));
+        q.push(data(0, 1, false)).unwrap();
+        q.push(data(1, 2, true)).unwrap();
+        q.push(data(2, 5, true)).unwrap();
+        q.push(data(3, 5, true)).unwrap();
+        q.push(data(4, 9, true)).unwrap();
+        assert_eq!(at(&q, 5), Some(0), "no ban has ended");
+        assert_eq!(at(&q, 10), Some(2), "the earlier of equals");
+        assert_eq!(at(&q, 20), Some(4));
         q.select(4);
         q.take_current();
-        assert_eq!(q.next_due_all(t(20)), Some(2));
-        q.retain(|_, o| !o.waited());
-        assert_eq!(q.next_due_all(t(20)), Some(0), "the one that never waited");
+        assert_eq!(at(&q, 20), Some(2));
+        q.retain(|_, o| !o.waited);
+        assert_eq!(at(&q, 20), Some(0), "the one that never waited");
+    }
+
+    /// A wait of its own, a retry's or a told wait at the origin, is no
+    /// ban that it waited for: when it ends, the frame keeps the queue's
+    /// order (spec "Overload waits").
+    #[test]
+    fn its_own_wait_is_not_a_ban() {
+        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let mut q = SendQueue::new();
+        q.push(data(0, 1, false)).unwrap();
+        let mut own = data(1, 9, false);
+        own.not_before = t(10);
+        q.push(own).unwrap();
+        assert_eq!(q.next_due_all(t(20)), Some(0));
     }
 
     #[test]
