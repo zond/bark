@@ -16,6 +16,3 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 default = []
 # Enables std-only conveniences (Debug printing helpers, Vec sinks) for the simulator and tests.
 std = []
-# Research build, not for the field: the application's own message, refused, goes round the
-# refuser as a forward does (spec "Bans").
-own-detour = []

@@ -750,8 +750,8 @@ fn a_refused_message_goes_back_to_the_application_with_its_wait() {
 
 /// A sleepy node's own message that its anchor refuses goes back to the
 /// application though another relay is in reach: the anchor is its one
-/// candidate (spec "A sleepy node's own message"), in the research build
-/// `own-detour` too, whose detour serves a relay's own message alone.
+/// candidate (spec "A sleepy node's own message"); going round the
+/// refuser serves a relay's own message alone.
 #[test]
 fn a_refused_message_goes_back_though_another_relay_is_in_reach() {
     use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};

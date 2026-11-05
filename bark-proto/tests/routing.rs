@@ -1489,11 +1489,10 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
 /// only neighbour it is, has handed it short messages for D until it
 /// refused one, and F1's own frames are lost. F1 answers O's DATA with a
 /// refusal (spec "Receiving DATA"), counting no failure against F1, and O
-/// bans F1 for the wait it asks (spec "Bans"). The refused message waits
-/// for the ban and is offered to F1 again, not sent round it by F2, and
-/// O's application is told to wait meanwhile; once F1's queue moves F1
-/// takes it (roadmap D27, D29, D106). After the ban F1 is O's first
-/// choice again.
+/// bans F1 for the wait it asks (spec "Bans"). O's own message goes
+/// round F1 at once, to F2, as a forward does (spec "Bans", "Next hop");
+/// once F1's queue moves and its ban is over, F1 is O's first choice
+/// again.
 ///
 /// ```text
 ///          F1
@@ -1503,11 +1502,7 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
 ///          F2
 /// ```
 #[test]
-#[cfg_attr(
-    feature = "own-detour",
-    ignore = "the own message's hold on refusal; the research build goes round"
-)]
-fn a_ban_excludes_the_neighbour_and_expires() {
+fn a_refused_message_goes_round_and_the_ban_expires() {
     use bark_proto::tables::budget::BAN;
     let (o, f1, f2, d, x) = (0, 1, 2, 3, 4);
     let mut h = build(
@@ -1527,7 +1522,7 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     }));
     fill(&mut h, x, f1, d);
     let name = |h: &Harness<Relay>, i| core(h, i).id();
-    let n1 = name(&h, f1);
+    let (n1, n2) = (name(&h, f1), name(&h, f2));
     let forwarded = |h: &Harness<Relay>, id: MsgId| {
         h.nodes[o].traces.iter().find_map(|(t, tr)| match tr {
             Trace::Forwarded { msg_id, to, .. } if *msg_id == id => Some((*t, *to)),
@@ -1550,31 +1545,16 @@ fn a_ban_excludes_the_neighbour_and_expires() {
     assert!(entry.banned_until >= refused_at + BAN);
     let ban_ends = entry.banned_until;
 
-    // Meanwhile the application at O is told to wait: its message is
-    // still O's.
-    assert!(!h.accepts(o));
+    // The first goes round F1 to F2 before the ban ends, and arrives.
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, first)));
+    let (at, to) = forwarded(&h, first).unwrap();
+    assert_eq!(to, n2);
+    assert!(at < ban_ends, "{at:?} {ban_ends:?}");
 
-    // The first waits for F1, and is offered to it again when the ban
-    // ends, not before.
-    let after = |h: &Harness<Relay>| {
-        h.nodes[o]
-            .sent
-            .iter()
-            .find(|(t, fr)| *t > refused_at && matches!(Packet::decode(fr.payload()), Ok(Packet::Data(p)) if p.dst_hop == n1 && p.msg_id() == first))
-            .map(|(t, _)| *t)
-    };
-    assert!(h.run_until(ban_ends + secs(5), |h| after(h).is_some()));
-    let again = after(&h).unwrap();
-    assert!(again >= ban_ends, "{again:?} {ban_ends:?}");
-    assert!(forwarded(&h, first).is_none(), "sent round F1");
-
-    // With F1's queue moving, F1 takes it.
+    // After the ban, and with F1's queue gone, F1 is first again.
     lost.set(false);
-    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, first)));
-    assert_eq!(forwarded(&h, first).map(|(_, to)| to), Some(n1));
-
-    // After it, and with F1's queue gone, F1 is first again.
-    h.run_for(secs(30));
+    h.run_until(ban_ends, |_| false);
+    h.run_for(secs(120));
     let third = send(&mut h, o, d, b"third");
     assert!(h.run_until(h.now + secs(5), |h| delivered(h, d, third)));
     assert_eq!(forwarded(&h, third).map(|(_, to)| to), Some(n1));
@@ -3154,20 +3134,16 @@ fn a_busy_channel_holds_a_return_until_it_clears() {
     no_drops(&h);
 }
 
-/// A refusal after a busy channel holds the message too: the neighbour
-/// answers, so the message waits the ban it asks for and is offered to
-/// it again, not sent round it (spec "Bans", roadmap D106). The test
-/// `a_ban_excludes_the_neighbour_and_expires` has it; here the busy
-/// channel comes first, and the refusal that follows ends the wait for
-/// the channel but not the hold on B.
+/// A refusal after a busy channel sends the message round: the
+/// neighbour answers, so the message goes round it to the next candidate
+/// at once (spec "Bans", "Next hop"). While the channel was busy it
+/// stayed on B (`a_busy_channel_keeps_the_hand_over_on_the_same_neighbour`);
+/// the refusal that follows ends the wait for the channel and moves it
+/// on to C.
 #[test]
-#[cfg_attr(
-    feature = "own-detour",
-    ignore = "the own message's hold on refusal; the research build goes round"
-)]
-fn a_refusal_after_a_busy_channel_holds_the_message() {
+fn a_refusal_after_a_busy_channel_sends_the_message_round() {
     let (mut h, b_home) = busy_channel(191, Config::default(), true);
-    let (o, b, _c, d, x) = (0, 1, 2, 3, 4);
+    let (o, b, c, d, x) = (0, 1, 2, 3, 4);
     // X fills B's places for D while D's channel is busy at B: a busy
     // channel is no failure, so B keeps D and holds what it took.
     let d_home = core(&h, d).home();
@@ -3178,6 +3154,7 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
     h.run_for(secs(3));
     assert!(forwards(&h, o, id).is_empty());
     assert!(!gave_up(&h, o, id).is_empty());
+    assert_eq!(data_sent(&h, o, c), 0, "offered to C");
     h.unjam(o, b_home);
     let nb = core(&h, b).id();
     let refused = |h: &Harness<Relay>| {
@@ -3186,12 +3163,8 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
             .any(|t| matches!(t, Trace::TurnedAway { msg_id, by } if *msg_id == id && *by == nb))
     };
     assert!(h.run_until(h.now + secs(5), refused));
-    h.run_for(secs(5));
-    // B may take it once what it holds for D is gone; C never does.
-    assert!(forwards(&h, o, id).iter().all(|&n| n == nb), "sent round B");
-    h.unjam(b, d_home);
-    assert!(h.run_until(h.now + secs(120), |h| delivered(h, d, id)));
-    assert_eq!(forwards(&h, o, id), vec![nb]);
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert_eq!(forwards(&h, o, id), vec![core(&h, c).id()]);
 }
 
 /// A message that waits for a channel waits past the delivery TTL: no

@@ -2733,26 +2733,8 @@ fn first_data(sent: &[(Instant, Frame)]) -> Instant {
         .0
 }
 
-/// The application's message, refused, waits on its hold for the
-/// refuser, whose ban is over by then (spec "Bans", roadmap D29).
-#[cfg(not(feature = "own-detour"))]
-#[test]
-fn the_application_s_refused_message_waits_for_the_refuser() {
-    use crate::tables::budget::told;
-    let (lats, bans) = ([10_000, 5_000], 4);
-    let (r, refused_at, sent) = own_refused(&lats, bans);
-    let d = Position {
-        lat: r.config.position.lat + 10_000,
-        ..r.config.position
-    };
-    assert_eq!(data_to(&sent), [(id_of(d), 1)], "D again");
-    assert!(first_data(&sent) >= refused_at + told(bans));
-}
-
-/// Research build `own-detour`: the application's message, refused,
-/// goes round the refuser to the next neighbour at once, as a forward
-/// does (spec "Bans", roadmap D110).
-#[cfg(feature = "own-detour")]
+/// The application's message, refused, goes round the refuser to the
+/// next neighbour at once, as a forward does (spec "Bans").
 #[test]
 fn the_application_s_refused_message_goes_round_the_refuser() {
     let (lats, bans) = ([10_000, 5_000], 8);
@@ -2765,9 +2747,8 @@ fn the_application_s_refused_message_goes_round_the_refuser() {
     assert!(first_data(&sent) < refused_at + BAN, "at once");
 }
 
-/// Research build `own-detour`: with no other neighbour the refused
-/// message waits on its hold for the refuser, as in the default build.
-#[cfg(feature = "own-detour")]
+/// With no other neighbour the application's refused message waits for
+/// the refuser, on its hold (spec "Bans").
 #[test]
 fn the_application_s_refused_message_alone_waits_for_the_refuser() {
     use crate::tables::budget::told;
