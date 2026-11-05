@@ -238,7 +238,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), the send-queue entry 296 B, with what it waited for and the neighbours it has passed, and the neighbour entry 104 B, with its service time and line, since 2026-11-03 (roadmap D106), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), the send-queue entry 304 B, with what it waited for, the neighbours it has passed and those that refused it, since 2026-11-05 (roadmap D106, D110), and the neighbour entry 104 B, with its service time and line, since 2026-11-03 (roadmap D106), checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
@@ -247,10 +247,10 @@ test in `tables/mod.rs`:
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1571 × 40 B | 61.4 KiB |
-| Send queue (spec "Send queue") | (39 + 254) × 296 B | 84.7 KiB |
+| Send queue (spec "Send queue") | (39 + 254) × 304 B | 87.0 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **172.2 KiB** |
+| **All** | | **174.6 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -258,16 +258,16 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-177 496 B (173.3 KiB, measured 2026-11-03): the tables and, in under 1 KiB around them, the
+179 840 B (175.6 KiB, measured 2026-11-05): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 158 480 B (154.8 KiB), without the heard table and the delivery
+`SleepyNode` is 160 824 B (157.1 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 61 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 58 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by

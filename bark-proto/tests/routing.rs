@@ -821,16 +821,17 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// message counts Q tried and moves on to C, a dead end, which returns it
 /// (spec "Next hop"). Q's link is then back: P offers the returned copy
 /// to Q, its last resort, and Q refuses it (spec "Delivery queue"), which
-/// lifts the demotion, so P waits for Q's bans (spec "Overload waits").
-/// C is meanwhile out of P's hearing long enough for its entry to expire
-/// at P, and P's at C, and each comes back into a new slot, which clears
-/// the mark that the one handed the other the message
-/// (spec "Message records"). Q's link fails again: three failures demote Q, the message
-/// counts it tried, and P offers it to C again. For C, P is now a node
-/// it did not hand the message to: C answers seen, and P, marking C
-/// tried, has nothing left to try and, the origin, drops it (spec
-/// "Return to parent"). Before this rule C took it and returned it at
-/// once: one hand-over more.
+/// lifts the demotion. P would go round Q, but no other is left, so P
+/// waits for Q's bans (spec "Overload waits", "Next hop"). C is meanwhile
+/// out of P's hearing long enough for its entry to expire at P, and P's
+/// at C, and each comes back into a new slot, which clears the mark that
+/// the one handed the other the message (spec "Message records"). P, told
+/// by Q to wait, goes round Q and offers the message to C again. For C,
+/// P is now a node it did not hand the message to: C answers seen, and P
+/// marks C tried. Q's link fails again: three failures demote Q, the
+/// message counts it tried, and P, the origin, has nothing left to try
+/// and drops it (spec "Return to parent"). Before this rule C took it and
+/// returned it at once: one hand-over more.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
 /// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in minutes, not
@@ -909,6 +910,8 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
         traces(&h, p)
     );
     assert!(h.now > returned_at + expiry);
+    let dropped = |h: &Harness<Relay>| !drops(h, p, id).is_empty();
+    assert!(h.run_until(h.now + secs(30), dropped), "P did not drop it");
     h.run_for(secs(1));
     assert_eq!(forwards(&h, p, id), vec![nc]);
     assert_eq!(returns(&h, c, id), 1);

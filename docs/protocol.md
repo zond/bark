@@ -1197,15 +1197,17 @@ message answers any later offer ([receiving DATA](#receiving-data) case
 4), and one silent for want of reply budget answers once its reserve has
 refilled, which the demotion waits for ([neighbour table](#neighbour-table)).
 While the neighbour answers this relay at all, it hears this relay, and
-going round it takes the message the long way on the same channels
+going round it takes the message the long way on the same full
+channels, unless it refused this message and so has no room for it
 ([bans](#bans)). How long other messages have made its ban says nothing
 about whether it hears this relay, so a grown ban is waited out, not
 gone round (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is seen (step 5), or a
-change in the state it is routed from: the neighbour demoted or gone, or
-a better one come (step 6, [next hop](#next-hop)). A channel that stays
+to another neighbour (step 2); what moves it is seen (step 5), a
+refusal ([bans](#bans)), or a change in the state it is routed from:
+the neighbour demoted or gone, or a better one come (step 6,
+[next hop](#next-hop)). A channel that stays
 busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until it clears; the message
 spends no airtime
@@ -1383,27 +1385,35 @@ the transmission's own costs and the airtime
 
 A neighbour that refuses a packet or fails a hand-over is **banned**:
 nothing is sent to it until the ban ends, and a message whose next hop
-it is waits for it ([next hop](#next-hop)). Three rules set how long.
+it is waits for it, unless the neighbour refused that message
+([next hop](#next-hop)). Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
 ([receiving DATA](#receiving-data)). The neighbour is not counted as
 tried and no failure is counted. The message stays in its place in the
 send queue and is routed again from the state as it then is, the
-refused transmission not counting as one of its attempts: the
-neighbour, banned, is still its next hop, so the message waits until
-the ban ends, however it has grown by then, and is offered to it again,
-as after a failure ([hand-over](#hand-over) step 6, roadmap D106). A
-return to the parent waits the same way.
+refused transmission not counting as one of its attempts. It goes round
+the refuser while the ban lasts, to the next candidate at once, and
+waits for the ban only where no other is left ([next hop](#next-hop),
+roadmap D110). A return to the parent is refused the same way and goes
+on as a forward. A node's own application's message waits out the
+told wait anyway, on the ladder below, and is then routed afresh.
 
-*Why a refused message waits for the same neighbour.* A refusal is an answer: the neighbour is
-there, hears this relay, and has said when it will have room. Sent
-round it at once, the message goes the longer way on the same channels,
-and at a relay with dozens of neighbours each refusal only diverts the
-traffic to the next one, so the refusals never reach the origin. Kept,
-the message fills this relay's queue, which refuses in its turn, and the
-wait travels back hop by hop to the origin, where the application is
-told it.
+This differs from silence, which holds the message
+([hand-over](#hand-over) step 6). Silence is not known to be a refusal:
+the neighbour may have taken the message and lost its ACKs, and moving
+on would leave two copies searching.
+
+*Why a refused message goes round.* A refusal says the refuser has no
+room for the message now: its wait for the way on is past a hop's
+budget of 30 s, or its bucket is spent ([send queue](#send-queue)). A
+neighbour beside it often has room, and the refuser has not taken the
+message, so going round it leaves no copy. The wait still reaches the
+origin: where every way on is slow, every candidate refuses, the
+message waits here, this relay's queue for the way grows past the
+budget, and its gate refuses in turn, so the wait travels back hop by
+hop to the origin, where the application is told it.
 
 The ban is never shorter than 1.58 s, the time the refuser's bucket
 takes to refill what the refused packet would have cost; trying sooner
@@ -1475,9 +1485,9 @@ back up to a ban late, or an eighth of a long wait; a wait passed on is rounded 
 it only shrinks (below). Places are at least a ban apart because closer
 ones would be told the same wait and come back together.
 
-*Why the next hop's ban.* A refused message waits for its neighbour
-(above), so the message a relay refuses would wait here for its next
-hop's ban whatever room it found. Told only the bucket's refill, a
+*Why the next hop's ban.* A message queued for a banned next hop waits
+for it ([next hop](#next-hop)), so the message a relay refuses would
+wait here for its next hop's ban whatever room it found. Told only the bucket's refill, a
 sender would come back in a second or two to be refused again, and
 meanwhile take fresh work, since its own queue moves; told the ban, it
 bans this relay for as long, its own messages for this way wait as
@@ -1652,6 +1662,8 @@ Overload makes a message wait and never ends it. A message whose next
 hop is banned, by a refusal or by silence, waits in its place in the
 send queue, its airtime still counted, until the ban ends, and is
 routed again then, at the origin or anywhere else ([next hop](#next-hop)).
+A message refused by that next hop itself goes round it where another
+candidate is left ([bans](#bans)).
 When bans end, the messages that waited for them go first, the most
 travelled first. The rest of the queue keeps its order, since ordering
 it all by count would starve messages that have just entered.
@@ -1791,6 +1803,15 @@ A ban does not take a neighbour out: a banned next hop is waited for.
 The message is not sent until the ban ends, and is routed again then
 ([overload waits](#overload-waits)).
 
+The one exception is a neighbour that refused the message
+([bans](#bans)). A queued message keeps the neighbours that refused it,
+one bit per neighbour-table slot, and while such a neighbour is banned
+it is no candidate for that message, so the message goes to the next.
+Where that leaves no candidate, or only a last resort the refuser was
+not, the message waits for the ban as above. The bit is cleared when
+the ban ends. A hand-over that fails sets no bit: the message waits for
+that neighbour ([hand-over](#hand-over) step 6).
+
 A sleepy neighbour with an anchor, whose last heartbeat had the sleepy
 bit alone ([packet formats](#packet-formats)), is a **last resort**: a
 candidate only when the search would otherwise end here, with no other
@@ -1838,17 +1859,19 @@ The **order** is:
 The relay sends to the first candidate, once its ban has ended. If
 there is none, the relay returns the message to its parent.
 
-*Why a ban is a wait.* A neighbour that refuses or does not answer
-stays the first candidate, so the message waits for it, until something
-the table records changes: the neighbour is demoted by three hand-overs
-in a row with no answer to this relay between
+*Why a ban is a wait.* A neighbour that does not answer stays the
+first candidate, so the message waits for it, until something the
+table records changes: the neighbour is demoted by three hand-overs in
+a row with no answer to this relay between
 ([neighbour table](#neighbour-table)), and ranks behind the others, or
-it expires and is gone. Any answer to this relay keeps it from that, so
-a message is never sent round a neighbour that hears this relay, which
-is what pushes a refusal's wait back toward the origin
-([bans](#bans)), and the message keeps no state of its own to say so:
-the neighbour table already holds the failures in a row and the ban,
-for every message alike (roadmap D106).
+it expires and is gone. Any answer to this relay keeps it from that,
+and the message keeps no state of its own to say so: the neighbour
+table already holds the failures in a row and the ban, for every
+message alike (roadmap D106). A refusal is the one thing a message
+keeps, since it says the neighbour has no room for that message
+([bans](#bans)); the messages it did not refuse still wait for it, so
+a full way fills this relay's queue for it and the wait goes back
+toward the origin.
 
 *What a change does.* A neighbour that arrives, recovers its margin or
 its demotion, or expires changes the answer the next time a message is
@@ -2297,7 +2320,8 @@ lapses and the count starts again. A neighbour that answers this relay
 between failures is not demoted and holds a message for as long as its
 bans, which its answers set ([bans](#bans)), with no bound by count: it
 hears this relay, and each offer is another chance for the frame to get
-through. A hand-over is at most three
+through. If it refuses that message, the message goes round it where
+another candidate is left ([next hop](#next-hop)). A hand-over is at most three
 attempts of 738.6 ms, listen-before-talk until it gives up, a full frame
 and the ACK timeout ([message records](#message-records)), and the retry
 waits, 0.93 s.

@@ -2183,47 +2183,35 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
     assert!(!demoted(&r, now), "a DATA to this relay is an answer");
 }
 
-/// A refused forward waits the ban it was told at the same neighbour and
-/// is offered to it again, not to the next candidate; it chooses afresh
-/// once the neighbour is demoted (spec "Bans", roadmap D106).
+/// A refused forward goes round the refuser for the wait it told, to the
+/// next candidate at once, not after the ban (spec "Bans", "Next hop",
+/// roadmap D110).
 #[test]
-fn a_refused_forward_waits_for_its_neighbour_until_it_is_demoted() {
+fn a_refused_forward_goes_round_the_refuser() {
     use crate::tables::budget::BAN;
     use crate::wire::Ack;
-    for demoted in [false, true] {
-        let (mut r, mut now, id, d_pos, e_pos) = handing_to_the_nearer(b"refused");
-        let d = id_of(d_pos);
-        let refusal = Ack {
-            msg_id: id,
-            from: d,
-            to: r.me(),
-            refused: true,
-            wait: 1,
-            seen: false,
-        };
-        now += Duration::from_millis(5);
-        let refused_at = now;
-        let sent = hear(&mut r, &mut now, &Packet::Ack(refusal));
-        assert!(data_to(&sent).is_empty(), "nothing sent at once");
-        if demoted {
-            // Enough hand-overs of other messages to D fail meanwhile.
-            for _ in 0..crate::tables::DEMOTE_AFTER_FAILURES {
-                r.neighbours.failed(d, now);
-            }
-        }
-        let sent = until_sent(&mut r, &mut now, Vec::new());
-        let first = sent
-            .iter()
-            .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
-            .unwrap()
-            .0;
-        if demoted {
-            assert_eq!(data_to(&sent), [(id_of(e_pos), 2)], "E once D is demoted");
-        } else {
-            assert_eq!(data_to(&sent), [(d, 2)], "D again");
-            assert!(first >= refused_at + BAN, "{first:?}");
-        }
+    let (mut r, mut now, id, d_pos, e_pos) = handing_to_the_nearer(b"refused");
+    let refusal = Ack {
+        msg_id: id,
+        from: id_of(d_pos),
+        to: r.me(),
+        refused: true,
+        wait: 8,
+        seen: false,
+    };
+    now += Duration::from_millis(5);
+    let refused_at = now;
+    let mut sent = hear(&mut r, &mut now, &Packet::Ack(refusal));
+    if data_to(&sent).is_empty() {
+        sent = until_sent(&mut r, &mut now, Vec::new());
     }
+    let first = sent
+        .iter()
+        .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .unwrap()
+        .0;
+    assert_eq!(data_to(&sent), [(id_of(e_pos), 2)], "E");
+    assert!(first < refused_at + BAN, "at once: {first:?}");
 }
 
 /// Routing is a view (spec "Next hop", "Send queue"): a message waiting

@@ -124,12 +124,13 @@
 //! An ACK that refuses the current hand-over bans its receiver for the
 //! wait it asks, at least [`BAN`], so no message takes it until then
 //! (spec "Bans", roadmap D27, D29, D32). The refused message stays in its
-//! place, and since a ban is a wait and not an exclusion (spec "Next hop")
-//! the refuser is still its next hop: it waits for the ban and is
-//! offered to the same neighbour again, a return as a forward, the
-//! refused transmission not counting as an attempt. The neighbour
-//! answers, and going round it would take the message the long way past
-//! a relay that has said when it will have room.
+//! place, a return now as a forward, the refused transmission not
+//! counting as an attempt, and is routed round the refuser while that
+//! ban lasts: the refusal says the refuser's queue that way is full, and
+//! a neighbour with room may sit beside it (roadmap D110). Where no other
+//! is left that is no worse a last resort, it waits for the ban and is
+//! offered to the same neighbour again. For every other message a ban is
+//! a wait and not an exclusion (spec "Next hop").
 //!
 //! A hand-over whose attempts all go unanswered bans its receiver too,
 //! longer after each failure in a row (`tables/neighbours.rs`, roadmap
@@ -140,11 +141,11 @@
 //! send the message the long way round just when the channel is full;
 //! measured, it undoes the ban's gain (roadmap D42).
 //!
-//! Refused or failed, a forward waits for its neighbour while the
-//! neighbour ranks first, however its ban has grown meanwhile; once it is
-//! demoted it ranks behind the others and the message goes elsewhere,
-//! and a return is dropped once its parent is demoted or gone (roadmap
-//! D102, D106). The demotion, failed hand-overs in a row with no answer
+//! Failed, a forward waits for its neighbour while the neighbour ranks
+//! first, however its ban has grown meanwhile; once it is demoted it
+//! ranks behind the others and the message goes elsewhere, and a return
+//! is dropped once its parent is demoted or gone (roadmap D102, D106).
+//! Refused, it goes round the refuser, as above. The demotion, failed hand-overs in a row with no answer
 //! to this relay between ([`DEMOTE_AFTER_FAILURES`]), is the one test
 //! that the neighbour no longer hears this relay, and the neighbour table
 //! holds it for every message alike: the message keeps nothing of it.
@@ -493,10 +494,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self,
         record: &Record,
         passed: u64,
+        avoid: u64,
         dst: Position,
         now: Instant,
     ) -> Option<(NodeId, Instant)> {
-        if let Some((_, n)) = self.next_hop(record, passed, dst, now) {
+        if let Some((_, n)) = self.next_hop(record, passed, avoid, dst, now) {
             return Some((n.id, n.banned_until));
         }
         let (parent, _) = record.parent()?;
@@ -531,7 +533,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return None;
         }
         let (at, record) = self.records.find(d.msg_id(), o.record)?;
-        self.heads_to(record, o.passed, d.dst_pos, now)
+        self.heads_to(record, o.passed, o.avoid, d.dst_pos, now)
             .map(|(to, ban)| (to, ban, at))
     }
 
@@ -548,6 +550,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut hints = [None::<u16>; N];
         let mut toward = [0u8; N];
         let mut wake: Option<Instant> = None;
+        let still_banned = self.banned_slots(now);
         for (i, o) in self.queue.iter().enumerate() {
             if o.held() {
                 continue;
@@ -575,6 +578,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(o) = self.queue.get_mut(i) {
                 o.record = hints[i].unwrap_or(o.record);
                 o.waited |= banned[i];
+                o.keep_avoiding(still_banned);
                 // Routed elsewhere than before, it begins to wait for
                 // the new way now, for that way's service time.
                 if toward[i] != 0 && o.toward != toward[i] {
@@ -768,9 +772,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// from the state as it is at `now`: the live neighbour nearest `dst`
     /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
-    /// no other at all (roadmap D25, D29, D38). Bans do not enter: a banned
-    /// next hop is waited for, not gone round (roadmap D106).
+    /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
+    /// for, not gone round (roadmap D106), unless it refused this message:
+    /// the slots of `avoid` are gone round while banned where another is
+    /// left that is no worse a last resort (roadmap D110).
     fn next_hop(
+        &self,
+        record: &Record,
+        passed: u64,
+        avoid: u64,
+        dst: Position,
+        now: Instant,
+    ) -> Option<(usize, Neighbour)> {
+        let hop = self.choose(record, passed, dst, now);
+        if avoid == 0 {
+            return hop;
+        }
+        let round = avoid & self.banned_slots(now);
+        match hop {
+            Some((slot, n)) if round & (1u64 << slot) != 0 => self
+                .choose(record, passed | round, dst, now)
+                .filter(|(_, m)| !self.last_resort(m, now) || self.last_resort(&n, now))
+                .or(hop),
+            _ => hop,
+        }
+    }
+
+    /// [`Self::next_hop`] with every slot of `passed` taken out.
+    fn choose(
         &self,
         record: &Record,
         passed: u64,
@@ -802,6 +831,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .then(a.id.0.cmp(&b.id.0))
             })
             .map(|(slot, n)| (slot, *n))
+    }
+
+    /// The neighbour-table slots of the live neighbours banned at `now`.
+    fn banned_slots(&self, now: Instant) -> u64 {
+        self.neighbours
+            .live(now)
+            .filter(|(_, n)| self.neighbours.is_banned(n, now))
+            .fold(0, |m, (slot, _)| m | 1u64 << slot)
     }
 
     /// Where a sleepy node hands its own message: its anchor while that is
@@ -969,7 +1006,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
                 probe.handed_to(s);
             }
-            self.heads_to(&probe, 0, d.dst_pos, now)
+            self.heads_to(&probe, 0, 0, d.dst_pos, now)
         } else {
             None
         };
@@ -1374,7 +1411,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let record = Record::new(id, None, 0, now);
-        if let Some((to, ban)) = self.heads_to(&record, 0, dst_pos, now) {
+        if let Some((to, ban)) = self.heads_to(&record, 0, 0, dst_pos, now) {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA"): refused, it goes back to the
             // application with a place in its way's line, as an ACK
@@ -1550,7 +1587,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.arrive(id, &d, now, emit);
             return Routed::Done;
         }
-        if let Some((_, n)) = self.next_hop(&record, out.passed, d.dst_pos, now) {
+        if let Some((_, n)) = self.next_hop(&record, out.passed, out.avoid, d.dst_pos, now) {
             if self.neighbours.is_banned(&n, now) {
                 // A ban is a wait, not an exclusion (spec "Next hop").
                 return Routed::Banned(n.banned_until);
@@ -2016,12 +2053,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         match out.kind {
-            // Routed again when its turn comes: the refuser, banned now,
-            // stays its next hop while it ranks first, so the message waits
-            // for it, and going round it would only take the message the
-            // long way past a relay that has said when it will have room
-            // (spec "Bans", "Next hop", roadmap D106).
+            // Routed again when its turn comes, round the refuser for the
+            // wait it told: its queue that way is full, and a neighbour
+            // with room may sit beside it (spec "Bans", "Next hop",
+            // roadmap D110).
             Kind::Forward | Kind::Return => {
+                self.go_round(by);
                 if self.own.id == Some(msg_id) {
                     // Each offer costs the refuser a reply and hides its ACKs.
                     self.own.refusals = self.own.refusals.saturating_add(1);
@@ -2115,7 +2152,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if out.kind == Kind::Forward && !own_at_anchor {
                     self.passed_if_demoted(d.dst_hop, now);
                 }
-                let passed = self.queue.current().map_or(0, |o| o.passed);
+                let (passed, avoid) = self.queue.current().map_or((0, 0), |o| (o.passed, o.avoid));
                 let ban = self
                     .neighbours
                     .get(d.dst_hop)
@@ -2131,7 +2168,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     Kind::Forward => {
                         !own_at_anchor
                             && self
-                                .goes_to(&d, passed, now)
+                                .goes_to(&d, passed, avoid, now)
                                 .is_some_and(|to| to != d.dst_hop)
                     }
                     _ => gone,
@@ -2222,11 +2259,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// The current forward goes round `to` while `to` is banned.
+    fn go_round(&mut self, to: NodeId) {
+        let Some(slot) = self.neighbours.slot_of(to) else {
+            return;
+        };
+        if let Some(o) = self.queue.current_mut() {
+            o.go_round(slot);
+        }
+    }
+
     /// Where the forward of `d` would go if routed now: its next hop, or
     /// its parent once none is left (spec "Next hop", "Return to parent").
-    fn goes_to(&self, d: &Data<'_>, passed: u64, now: Instant) -> Option<NodeId> {
+    fn goes_to(&self, d: &Data<'_>, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(d.msg_id())?;
-        self.next_hop(record, passed, d.dst_pos, now)
+        self.next_hop(record, passed, avoid, d.dst_pos, now)
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }

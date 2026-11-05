@@ -179,6 +179,9 @@ pub struct Outgoing {
     /// neighbour-table slot: tried for it while it is queued here, though
     /// none has it (spec "Next hop").
     pub passed: u64,
+    /// The neighbours that refused it, routed past while their ban
+    /// lasts, one bit per neighbour-table slot (spec "Next hop").
+    pub avoid: u64,
 }
 
 impl Outgoing {
@@ -196,7 +199,19 @@ impl Outgoing {
             toward: 0,
             since: Instant::ZERO,
             passed: 0,
+            avoid: 0,
         }
+    }
+
+    /// Go round neighbour-table `slot` while it is banned.
+    pub fn go_round(&mut self, slot: usize) {
+        self.avoid |= 1u64 << slot;
+    }
+
+    /// Keep going round only the slots of `banned`: a ban that ended
+    /// ends the detour.
+    pub fn keep_avoiding(&mut self, banned: u64) {
+        self.avoid &= banned;
     }
 
     /// Whether it is set aside for the delivery queue.
@@ -401,6 +416,7 @@ impl SendQueue {
     pub fn slot_reoccupied(&mut self, slot: usize) {
         for o in self.frames.as_mut_slice() {
             o.passed &= !(1u64 << slot);
+            o.keep_avoiding(!(1u64 << slot));
         }
     }
 
