@@ -418,10 +418,6 @@ fn a_neighbour_whose_hand_over_failed_goes_on_when_it_offers() {
 /// hears every frame Y sends it.
 ///
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn a_split_heals_at_a_sender_that_waits() {
     use bark_proto::wire::MAX_PAYLOAD;
     let (x, y, p, z, d) = (0, 1, 2, 3, 4);
@@ -508,10 +504,6 @@ fn a_split_heals_at_a_sender_that_waits() {
 ///     Z ---------------+
 /// ```
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn a_split_heals_at_a_sender_that_holds_on_until_the_demotion() {
     let (x, y, z, e, d) = (0, 1, 2, 3, 4);
     let mut h = build(
@@ -573,10 +565,6 @@ fn a_split_heals_at_a_sender_that_holds_on_until_the_demotion() {
 ///   Q - P - O - F1 - D
 /// ```
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn a_message_holds_on_while_the_neighbour_answers_this_relay() {
     let (o, f1, d, p, q) = (0, 1, 2, 3, 4);
     let mut h = build(
@@ -653,10 +641,6 @@ fn a_message_holds_on_while_the_neighbour_answers_this_relay() {
 ///         (F2)
 /// ```
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn a_kept_neighbour_is_waited_for_when_its_ban_has_grown() {
     let (o, f1, f2, d, w, x) = (0, 1, 2, 3, 4, 5);
     // One at a time: built together, they would overflow a test's stack.
@@ -837,25 +821,22 @@ fn a_return_to_a_parent_that_gave_up_on_the_child_ends_there() {
 /// message counts Q tried and moves on to C, a dead end, which returns it
 /// (spec "Next hop"). Q's link is then back: P offers the returned copy
 /// to Q, its last resort, and Q refuses it (spec "Delivery queue"), which
-/// lifts the demotion, so P waits for Q's bans (spec "Overload waits").
-/// C is meanwhile out of P's hearing long enough for its entry to expire
-/// at P, and P's at C, and each comes back into a new slot, which clears
-/// the mark that the one handed the other the message
-/// (spec "Message records"). Q's link fails again: three failures demote Q, the message
-/// counts it tried, and P offers it to C again. For C, P is now a node
-/// it did not hand the message to: C answers seen, and P, marking C
-/// tried, has nothing left to try and, the origin, drops it (spec
-/// "Return to parent"). Before this rule C took it and returned it at
-/// once: one hand-over more.
+/// lifts the demotion. P would go round Q, but no other is left, so P
+/// waits for Q's bans (spec "Overload waits", "Next hop"). C is meanwhile
+/// out of P's hearing long enough for its entry to expire at P, and P's
+/// at C, and each comes back into a new slot, which clears the mark that
+/// the one handed the other the message (spec "Message records"). P, told
+/// by Q to wait, goes round Q and offers the message to C again. For C,
+/// P is now a node it did not hand the message to: C answers seen, and P
+/// marks C tried. Q's link fails again: three failures demote Q, the
+/// message counts it tried, and P, the origin, has nothing left to try
+/// and drops it (spec "Return to parent"). Before this rule C took it and
+/// returned it at once: one hand-over more.
 ///
 /// Heartbeats every 1 to 2 s make the rotation 19.5 s and the expiry
 /// three rotations, 58.5 s (spec "Neighbour table"), so the test runs in minutes, not
 /// hours.
 #[test]
-#[cfg_attr(
-    any(feature = "detour-silence", feature = "detour-refusal"),
-    ignore = "the holds on silence and refusal; the research builds go round"
-)]
 fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
     use bark_proto::tables::delivery::DELIVERY_QUEUE;
     let (p, c, q) = (0, 1, 2);
@@ -929,6 +910,8 @@ fn a_child_offered_the_message_again_by_a_parent_it_forgot_answers_seen() {
         traces(&h, p)
     );
     assert!(h.now > returned_at + expiry);
+    let dropped = |h: &Harness<Relay>| !drops(h, p, id).is_empty();
+    assert!(h.run_until(h.now + secs(30), dropped), "P did not drop it");
     h.run_for(secs(1));
     assert_eq!(forwards(&h, p, id), vec![nc]);
     assert_eq!(returns(&h, c, id), 1);
@@ -2697,10 +2680,6 @@ fn entry(h: &Harness<Relay>, at: usize, of: usize) -> Neighbour {
 ///               F2
 /// ```
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn an_unanswered_hand_over_bans_the_neighbour_for_every_message() {
     let (o, f1, f2, d, p) = (0, 1, 2, 3, 4);
     let mut h = build(
@@ -2913,39 +2892,6 @@ fn messages_waiting_for_a_failure_ban_go_most_travelled_first() {
     no_drops(&h);
 }
 
-/// Research build `detour-silence`: F1 is gone. Each message tries it
-/// three times, which bans it, and goes on to F2 at once, F1 being gone
-/// round while its ban lasts; once the ban ends F1 ranks first again, and
-/// the third message's failure, the third in a row, demotes it.
-#[test]
-#[cfg(feature = "detour-silence")]
-fn a_silent_neighbour_is_gone_round_while_banned() {
-    let (o, f1, f2, d) = (0, 1, 2, 3);
-    let mut h = build(
-        vec![
-            relay(0.0, 0.0, 231),
-            relay(400.0, 50.0, 232),
-            relay(400.0, -100.0, 233),
-            relay(800.0, 0.0, 234),
-        ],
-        &[(o, f1), (o, f2), (f1, d), (f2, d)],
-    );
-    h.kill(f1);
-    let mut tried = Vec::new();
-    for text in [b"one", b"two", b"six", b"ten"] {
-        let id = send(&mut h, o, d, text);
-        assert!(h.run_until(h.now + secs(20), |h| delivered(h, d, id)));
-        let to_f1 = data_times(&h, o, f1, id);
-        if let (Some(last), Some(&on)) = (to_f1.last(), data_times(&h, o, f2, id).first()) {
-            assert!(on.since(*last) < secs(1), "not at once");
-        }
-        tried.push(to_f1.len());
-        h.run_for(secs(10));
-    }
-    assert_eq!(tried, vec![3, 3, 3, 0]);
-    no_drops(&h);
-}
-
 /// F1 is gone. O's first message tries it three times, which bans it
 /// (roadmap D42), waits for the ban and tries it three times more, which
 /// bans it for longer, waits for that ban and tries it three times
@@ -2954,10 +2900,6 @@ fn a_silent_neighbour_is_gone_round_while_banned() {
 /// F1: a dead neighbour is routed around (roadmap D25), and only the
 /// first message pays for it.
 #[test]
-#[cfg_attr(
-    feature = "detour-silence",
-    ignore = "the hold on silence; the research build goes round"
-)]
 fn a_dead_neighbour_is_routed_around() {
     let (o, f1, f2, d) = (0, 1, 2, 3);
     let mut h = build(

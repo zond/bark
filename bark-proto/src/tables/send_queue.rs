@@ -179,10 +179,8 @@ pub struct Outgoing {
     /// neighbour-table slot: tried for it while it is queued here, though
     /// none has it (spec "Next hop").
     pub passed: u64,
-    /// The neighbours it is routed past while their ban lasts, one bit
-    /// per neighbour-table slot (spec "Next hop", research builds
-    /// `detour-silence` and `detour-refusal`).
-    #[cfg(feature = "detour")]
+    /// The neighbours that refused it, routed past while their ban
+    /// lasts, one bit per neighbour-table slot (spec "Next hop").
     pub avoid: u64,
 }
 
@@ -201,39 +199,19 @@ impl Outgoing {
             toward: 0,
             since: Instant::ZERO,
             passed: 0,
-            #[cfg(feature = "detour")]
             avoid: 0,
         }
     }
 
-    /// The neighbours it goes round while they are banned: none but in
-    /// the research builds `detour-silence` and `detour-refusal`.
-    pub fn avoided(&self) -> u64 {
-        #[cfg(feature = "detour")]
-        return self.avoid;
-        #[cfg(not(feature = "detour"))]
-        0
-    }
-
     /// Go round neighbour-table `slot` while it is banned.
-    pub fn avoid(&mut self, slot: usize) {
-        #[cfg(feature = "detour")]
-        {
-            self.avoid |= 1u64 << slot;
-        }
-        #[cfg(not(feature = "detour"))]
-        let _ = slot;
+    pub fn go_round(&mut self, slot: usize) {
+        self.avoid |= 1u64 << slot;
     }
 
     /// Keep going round only the slots of `banned`: a ban that ended
     /// ends the detour.
     pub fn keep_avoiding(&mut self, banned: u64) {
-        #[cfg(feature = "detour")]
-        {
-            self.avoid &= banned;
-        }
-        #[cfg(not(feature = "detour"))]
-        let _ = banned;
+        self.avoid &= banned;
     }
 
     /// Whether it is set aside for the delivery queue.
