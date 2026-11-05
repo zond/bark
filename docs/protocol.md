@@ -1119,14 +1119,6 @@ rest take 391 × 17.0 = 6631 ms: 819 ms more, ⌈819 / 17.0⌉ = 49 refusals
 A relay at the reserve answers nine DATA in ten from its refill alone,
 15.3 of every 17.0 ms.
 
-A relay takes new work into the regular room of its send queue only if
-its bucket holds the reply reserve on top of the new frame, its ACK and
-everything it has queued, and otherwise into a hop place or not at all
-([receiving DATA](#receiving-data)). So a hand-over waits for the bucket
-only when its packet holds a hop place, or when retries, replies or a
-delivery that goes first have spent it since its packet was taken
-([delivery](#delivery)).
-
 A relay below the reserve sends nothing but heartbeats and replies until
 its bucket refills. Each sender it refuses bans it, so a sender costs it
 at most one reply per ban ([bans](#bans)). Without budget even for a
@@ -1825,9 +1817,14 @@ next candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
 
 The send queue has a regular room of 39 places and one hop place for
 each count from 1 to 254; the packet being handed over keeps its place.
-A packet to send on enters the regular room only if it fits in the
-bucket with everything queued ([receiving DATA](#receiving-data)), so it
-waits for the hand-overs ahead of it, not for the bucket to refill.
+A packet to send on enters the regular room only if the bucket holds
+the reply reserve on top of the new frame, its ACK and everything
+queued ([duty cycle cap](#duty-cycle-cap),
+[receiving DATA](#receiving-data)), so it waits for the hand-overs
+ahead of it, not for the bucket to refill. A hand-over waits for the
+bucket only when its packet holds a hop place, or when retries, replies
+or a delivery that goes first have spent it since its packet was taken
+([delivery](#delivery)).
 
 *What sets the 39.* The bucket holds at most 6 s
 ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
