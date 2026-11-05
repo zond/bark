@@ -1369,186 +1369,146 @@ the transmission's own costs and the airtime
 
 #### Bans
 
-A neighbour that refuses a packet or fails a hand-over is **banned**:
-no forward or return goes to it until the ban ends, and a message whose next hop
-it is waits for it, unless the neighbour refused that message
+A neighbour that refuses a packet or fails a hand-over is **banned**: no
+forward or return goes to it until the ban ends. A message whose next
+hop it is waits for it, unless the neighbour refused that message
 ([next hop](#next-hop)). Three rules set how long.
 
 **A refusal bans for the wait it asks.** An ACK that refuses, answering
 the outstanding hand-over, means the receiver does not take the packet
-([receiving DATA](#receiving-data)). The neighbour is not counted as
-tried and no failure is counted, and its ban is the wait asked, in
-place of any ban it had: shorter or longer, it is the neighbour's
-latest word. The message stays in its place in the send queue and is
-routed again from the state as it then is, with three fresh attempts. It goes round
-the refuser while the ban lasts, to the next candidate at once, and
-waits for the ban only where no other is left ([next hop](#next-hop),
-roadmap D110). A return to the parent is refused the same way and goes
-on as a forward. A node's own application's message waits out the
-told wait anyway, doubling as below, and is then routed afresh. A
-delivery refused waits the told wait and keeps the transmissions it
-has made.
-
-Silence instead holds the message ([hand-over](#hand-over) step 6).
+([receiving DATA](#receiving-data)). No failure is counted and the
+neighbour is not tried. Its ban becomes the wait asked, in place of any
+ban it had, shorter or longer: it is the neighbour's latest word. The
+message keeps its place in the send queue and is routed again with
+three fresh attempts: round the refuser while the ban lasts, to the
+next candidate at once, and waiting for the ban only where no other is
+left (roadmap D110). A refused return goes on as a forward. A node's own
+application's message waits out the told wait anyway, doubling as
+below, and is then routed afresh. A refused delivery waits the told wait
+and keeps the transmissions it has made. Silence, by contrast, holds the
+message ([hand-over](#hand-over) step 6).
 
 *Why a refused message goes round.* A refusal says the refuser has no
 room for the message now: its wait for the way on is past a hop's
 budget of 30 s, or its bucket is spent ([send queue](#send-queue)). A
 neighbour beside it often has room, and the refuser has not taken the
-message, so going round it leaves no copy. The wait still reaches the
-origin: where every way on is slow, every candidate refuses, the
-message waits here, this relay's queue for the way grows past the
-budget, and its gate refuses in turn, so the wait travels back hop by
-hop to the origin, where the application is told it.
+message, so going round it leaves no copy. Where every way on is slow,
+every candidate refuses, the message waits here, this relay's queue for
+its next hop grows past the budget, and its gate refuses in turn: the
+wait travels back hop by hop to the origin, where the application is
+told it.
 
-The ban is never shorter than 1.58 s: a relay refuses a packet to
-send on when its frame and the ACK that would take it, at most
-138.6 + 17.0 = 155.5 ms, do not fit in its bucket and no hop place
+**The told wait.** The ban is never shorter than 1.58 s: a relay refuses
+a packet to send on when its frame and the ACK that would take it, at
+most 138.6 + 17.0 = 155.5 ms, do not fit in its bucket and no hop place
 takes it, and the bucket refills that in 155.5 ms / 9.83 % = 1.58 s
 ([duty cycle cap](#duty-cycle-cap)); trying sooner would only cost the
-refuser another reply (roadmap D29).
+refuser another reply (roadmap D29). This ban is the unit of every
+told wait: nothing in the protocol acts sooner.
 
-A refusal tells the wait as one of 63 codes, at least a ban, since 0
-means taken ([packet formats](#packet-formats)): codes 1 to 8 are 1 to 8
-bans of 1.58 s, and each code above is an eighth longer than the one
-below, rounded down to whole bans and at least a ban longer, so codes 1
-to 16 are one ban apart and code 63 is 3384 bans, 89 min. A wait is told
-rounded down to a code, but for a place in a line, which is
-rounded up:
+A refusal tells its wait as one of 63 codes, since 0 means taken
+([packet formats](#packet-formats)): codes 1 to 8 are 1 to 8 bans, and
+each code above is an eighth longer than the one below, rounded down to
+whole bans and at least a ban longer, so codes 1 to 16 are one ban apart
+and code 63 is 3384 bans, 89 min. A longer wait is told as 89 min, and
+the sender comes back early to be refused again (roadmap D54, D109).
 
-- For want of room it is the time until the bucket holds everything
-  queued and the frame and its ACK, with the reply reserve left, if
-  nothing else comes; past the bucket's depth, until it has refilled all
-  of it, by when what is queued has gone.
-- The senders refused stand in line, each told one ban later than the
-  one before, the time the bucket takes to refill the frame and ACK it
-  will bring back, so they come back one after another as room frees.
-- A refusal for want of room asks for no less than the rest of the ban
-  on the packet's next hop, without a place in line: the packet could
-  not move sooner here.
-- A refusal for want of the way on, at the gate
-  ([send queue](#send-queue)) or of a message entering the network
-  while that next hop is banned ([receiving DATA](#receiving-data)),
-  gives a place in that next hop's own
-  line instead: when the sender's hand-over here would begin, one
-  service time after the last place given, at least a ban, or after the
-  messages queued here for it if they take longer to go
-  ([send queue](#send-queue)). The line then ends at that place. Its
-  end is kept in that neighbour's entry, and one in the past is now,
-  so time shortens the line by itself. The sender is told to come back
-  when its place is a hop's budget away, the place less the budget,
-  rounded up to a code: the gate then takes it, unless more has come
-  meanwhile. The service time is the neighbour's
-  ([neighbour table](#neighbour-table)), or how long the longest waiting
-  of the messages queued for it has waited since the neighbour last took
-  one, its refusals' waits aside, if that is longer, so that a rising
-  load is seen before the next take.
-- Such a refusal asks for no less than the rest of the ban on that way,
-  without a place in line.
-- A refusal for want of anything else, a place for the message's
-  record or in the delivery queue, asks for one ban, with a place in
-  the room's line.
-- A wait longer than 89 min is told as 89 min, the sender coming back
-  early to be refused again (roadmap D54, D109).
+The senders a relay refuses stand in a **line**, each told to come back
+at its own place, so that they return one after another as room frees,
+not together to be refused again at the cost of a frame and an ACK
+each. A place is rounded up to a code, so a sender comes back at most a
+ban, or an eighth of a long wait, late; places are at least a ban apart,
+or they would get the same code. The wait told is:
 
-*Why a line per next hop.* The senders a relay refuses for one next
-hop wait for the same thing, its queue for that next hop to shorten to a
-hop's budget
-([send queue](#send-queue)). It shortens by a message about every
-service time, so the first sender refused is told the excess, the next
-a service time more, and so on. Told the same wait, they would come
-back together and all but one be refused again, each time at the cost
-of a full DATA frame and an ACK; spaced by the time this relay takes to
-get one message through, they come back one after another as the queue
-shortens.
+- *For want of room*, the bucket: the time until the bucket holds
+  everything queued, the frame and its ACK, with the reply reserve left;
+  past the bucket's depth, its whole refill, by when what is queued has
+  gone. Each sender so refused is told one ban later than the one
+  before, the refill of the frame and ACK it will bring back.
+- *For want of the way on*, at the gate ([send queue](#send-queue)), or
+  for a message entering the network while its next hop is banned
+  ([receiving DATA](#receiving-data)): a place in that next hop's own
+  line, one service time after the last place given and at least a ban,
+  or after the messages queued here for it if they take longer to go.
+  The line's end is kept in the neighbour's entry, and an end in the
+  past counts as now, so time shortens the line by itself. The sender is
+  told its place less a hop's budget: the gate then takes it, unless
+  more has come meanwhile. The service time is the neighbour's
+  ([neighbour table](#neighbour-table)), or, if longer, how long the
+  longest waiting message queued for it has waited since the neighbour
+  last took one, its refusals' waits aside, so that a rising load shows
+  before the next take.
+- *For want of anything else*, a place for the message's record or in
+  the delivery queue: one ban, in the room's line.
+- In every case, never less than the rest of the ban on the
+  packet's next hop, rounded down and without a place in line: the
+  packet could not move sooner here.
 
-*Why the gate weighs the queue, not the line.* A place in the line is a
-promise to a sender that will come back. Counted against the gate it
-would refuse that sender when it came, its own place standing in its
-way.
+*Why a line per next hop.* The senders refused for one next hop wait for
+the same thing, the queue for it here to shorten to a hop's budget. It
+shortens by about a message a service time, so the senders are spaced by
+the time this relay takes to get one message through. The gate weighs
+the queue, not the line: a place is a promise to a sender that will come
+back, and counted against the gate it would refuse that sender, its own
+place in its way.
 
-*Why rounded up.* A sender that comes back before its place only costs a
-frame and a refusal, so a place is rounded up and the sender may come
-back up to a ban late, or an eighth of a long wait; a wait passed on is rounded down instead, so that
-it only shrinks (below). Places are at least a ban apart because closer
-ones would be told the same wait and come back together.
+*Why the next hop's ban.* A message refused here would wait here for its
+next hop's ban whatever room it found ([next hop](#next-hop)). Told only
+the bucket's refill, a sender would come back in a second or two to be
+refused again, and meanwhile take messages entering the network, since
+its own queue moves. Told the ban, it bans this relay as long, its own
+messages for this next hop wait as long, its queue for it grows, and its
+gate refuses in turn: the wait travels back toward the origin per next
+hop, not per relay.
 
-*Why the next hop's ban.* A message queued for a banned next hop waits
-for it ([next hop](#next-hop)), so the message a relay refuses would
-wait here for its next hop's ban whatever room it found. Told only the bucket's refill, a
-sender would come back in a second or two to be refused again, and
-meanwhile take messages entering the network, since its own queue
-moves; told the ban, it bans this relay for as long, its own messages
-for this next hop wait as long, its queue for it grows, and its gate refuses in turn. So the
-wait travels back relay by relay toward the origin, per next hop, not per
-relay.
-
-*Why a wait passed on stands outside the line.* The rest of a ban on
-the way on is the rest of a wait told by a relay further on, which only
-shrinks as it is passed back, since it counts from when it was told and
-is rounded down at each refusal. Given a place in line it would grow at
-every relay, and around a ring of relays that refuse each other it would
-grow without end; passed on as it is, it cannot exceed the wait first
-told. A line is no wait passed on: it is spaced by this relay's
-own measure, which leaves out the waits the next hop's refusals told
-([neighbour table](#neighbour-table)), so it does not compound from
-relay to relay around a ring.
-
-*Why the ban is the unit.* The places in a line are a ban or more apart
-and nothing in the protocol acts sooner; a coarser unit would merge
-neighbouring places.
+*Why a wait passed on stands outside the line.* The rest of a ban on the
+way on is the rest of a wait told further on. It counts from when it was
+told and is rounded down at each refusal, so it only shrinks as it is
+passed back. Given a place in line it would grow at every relay, without
+end around a ring of relays that refuse each other. A line is spaced by
+this relay's own measure, which leaves out the waits the next hop told
+([neighbour table](#neighbour-table)), so it does not compound either.
 
 *Why these codes.* At the short end a wait is a few bans, the room's
-line or a ban after silence, and places a ban apart must get
-codes of their own, or they would come back together. At the long end a
-wait is a line under overload, which grows a service time with each
-sender refused and reaches minutes. Told too short a wait, a sender
-comes back early and pays a full DATA frame and an ACK to be refused
-again. Told a wait rounded up to
-within an eighth, it comes back at most an eighth late. Steps of an
-eighth reach 89 min, more than an hour; steps of a ninth would reach
-only 44 min, and a code exact to the ban only 63 bans.
+line or a ban after silence, and places a ban apart need codes of their
+own. At the long end a line under overload grows a service time with
+each sender refused and reaches minutes, and a sender told too short a
+wait pays a frame and an ACK to be refused again. Steps of an eighth
+reach 89 min, more than an hour; steps of a ninth would reach only
+44 min, and a code exact to the ban only 63 bans.
 
 **Silence doubles the ban from 1.58 s to 61 s.** The ban after the k-th
-failed hand-over in a row is 1.58 s doubled k − 1 times: 1.58 s, 3.16 s,
-6.3 s and so on, up to 61 s, the longest anything waits for a bucket;
-a longer ban the neighbour has already stands. An
-answer from the neighbour ([neighbour table](#neighbour-table),
-demotion) resets its failure count and so the doubling (roadmap D42,
-D106).
+failed hand-over in a row is 1.58 s doubled k − 1 times, 1.58, 3.16,
+6.3 s and so on, up to 61 s, the longest anything waits for a bucket; a
+longer ban the neighbour has already stands. An answer from the
+neighbour resets its failure count and so the doubling
+([neighbour table](#neighbour-table), roadmap D42, D106). The message
+waits for the neighbour until three silences in a row demote it
+([hand-over](#hand-over) step 6), so a link that is really gone costs
+the first message two bans and two more hand-overs, and later messages
+one hand-over, trying it last; [bounds](#bounds) adds up the rest.
 
-*Why silence doubles.* A refusal measures one thing, what one hand-over
-takes from the receiver's bucket. Silence says only that the channel or
-the receiver is full, or the link gone, not how full, so its ban grows.
-Without it, a neighbour that stops answering under load is offered every
-other message at once, each offer up to three more frames where frames
-are already being lost; past the cap that loop is what breaks first.
-
-The message waits for the neighbour until three silences in a row
-demote it ([hand-over](#hand-over) step 6), so a link that is really
-gone costs the first message two bans and two more hand-overs, and
-later messages one hand-over, trying it last. A
-neighbour that is gone is tried again after each ban until its entry
-expires; [bounds](#bounds) adds up what that costs.
+*Why silence doubles.* A refusal measures what one hand-over takes from
+the receiver's bucket. Silence says only that the channel or the
+receiver is full, or the link gone, not how full. Without the doubling,
+a neighbour that stops answering under load is offered every other
+message at once, each offer up to three more frames where frames are
+already being lost.
 
 *Why not counted as tried.* An attempt is lost to a collision at the
 receiver far more often than its ACK goes astray (roadmap D34), so the
-neighbour most likely does not have the message, and it stays a
-candidate once its ban has ended. If it did take it, the next offer
-costs one round trip: it holds the message and only ACKs, or has
+neighbour most likely lacks the message. If it did take it, the next
+offer costs one round trip: it holds the message and only ACKs, or has
 finished with it and returns it (roadmap D36).
 
-**A node's own message doubles its wait too.** After its k-th
-refusal in a row a node's own application's message waits the k-th step
-of the bans after silence, or the wait the refusal asks if that is longer,
-and starts again from one ban once it is taken or
-dropped. A sleepy node's own message has a wait of its own
+**A node's own message doubles its wait too.** After its k-th refusal in
+a row a node's own application's message waits the k-th ban after
+silence, or the told wait if longer, and starts again from one ban once
+it is taken or dropped. Offered every 1.58 s, it would put a full frame
+on the refuser's channel that often, 9 % of it, hiding its ACKs, and
+spend the refuser's bucket as fast as it refills. A sleepy node's own
+message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
-
-*Why it doubles here too.* Offered again every 1.58 s, the message would
-put a full frame on the refusing neighbour's channel that often, 9 % of
-it, hiding its ACKs, and spend that neighbour's bucket as fast as it
-refills.
 
 ### Routing
 
