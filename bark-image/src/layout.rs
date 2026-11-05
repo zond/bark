@@ -48,7 +48,9 @@ impl Region {
 }
 
 /// Where the board's bootloader jumps: the first page above the
-/// SoftDevice (its linker script, `FLASH` origin).
+/// SoftDevice, the end address its information structure gives; with no
+/// SoftDevice it jumps to the MBR's end instead
+/// (`docs/softdevice-2026-11-05.md`).
 pub const APPLICATION_START: u32 = 0x26000;
 
 /// The first page of the board's bootloader, above everything of ours.

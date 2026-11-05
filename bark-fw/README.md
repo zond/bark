@@ -226,7 +226,7 @@ Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
 | Region | Start | Size | Why |
 |---|---|---|---|
 | MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
-| SoftDevice S140 6.1.1 | `0x01000` | 148 KiB | kept, never enabled; whether the bootloader starts the application without it is not known |
+| SoftDevice S140 6.1.1 | `0x01000` | 148 KiB | kept, never enabled; without it the bootloader starts the application at `0x01000`, not `0x26000` (`docs/softdevice-2026-11-05.md`) |
 | loader | `0x26000` | 16 KiB, 4 pages | where the bootloader jumps; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field |
 | loader state | `0x2A000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 354 of its 1024) |
 | firmware, running | `0x2B000` | 352 KiB, 88 pages | what is left once the loader, its state and the staging have theirs, halved: 2.1 times today's 167 KiB node image, 1.44 times the 250 kB the update note plans for once BLE and the application are in |
