@@ -103,6 +103,10 @@ rustup target add thumbv7em-none-eabihf
 See `bark-fw/README.md` for packaging the UF2, with the loader, and
 flashing.
 
+`.github/workflows/ci.yml` runs the checks every commit must pass
+(`AGENTS.md`, "Commits"), with the firmware's and the app's, on every
+push to main and every pull request.
+
 ## Releases
 
 A tag `v<N>`, N a positive integer, makes release N:

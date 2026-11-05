@@ -1,0 +1,130 @@
+# The checks every commit must pass (AGENTS.md, "Commits";
+# bark-fw/README.md, "Verified and unverified"), on every push to main and
+# every pull request. One job per part, so that a red one names what broke.
+# Releases are built by release.yml, on tags only.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Nothing here writes to the repository: it checks out, builds and tests.
+# Said explicitly so the token every step can reach is a read-only one,
+# whatever the repository's default is.
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.1
+
+jobs:
+  host-lint:
+    name: Host (fmt, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all -- --check
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # Alone, and first to finish, so that a renamed heading in
+  # docs/protocol.md shows as itself rather than as one failure among the
+  # whole workspace's tests, which run it again.
+  spec-refs:
+    name: Spec references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test -p bark-proto --test spec_refs
+
+  # The slowest job: the simulator's scenario tests run a city for a
+  # simulated minute, unoptimised, one of them under a wall-clock bound
+  # (bark-sim/tests/scenarios.rs, capacity_scenario_runs_a_minute_quickly).
+  host-test:
+    name: Host (test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo test --workspace
+
+  # The firmware and the loader are each their own workspace, outside the
+  # host one (README.md, "Building"), so nothing above checks them. Clippy
+  # builds each for the board's target, set in their .cargo/config.toml,
+  # and the firmware twice: the node and the console are different code.
+  firmware:
+    name: Firmware and loader (fmt, clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            bark-fw -> target
+            bark-loader -> target
+
+      - run: cargo fmt -- --check
+        working-directory: bark-fw
+
+      - run: cargo fmt -- --check
+        working-directory: bark-loader
+
+      - name: clippy, node
+        run: cargo clippy --release -- -D warnings
+        working-directory: bark-fw
+
+      - name: clippy, console
+        run: cargo clippy --release --features console -- -D warnings
+        working-directory: bark-fw
+
+      - name: clippy, loader
+        run: cargo clippy --release -- -D warnings
+        working-directory: bark-loader
+
+  # release.yml runs analyze and test too, before it builds an APK.
+  app:
+    name: App (format, analyze, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bark-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter pub get
+
+      - run: dart format --output=none --set-exit-if-changed lib test
+
+      - run: flutter analyze
+
+      - run: flutter test
