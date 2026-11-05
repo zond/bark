@@ -20,7 +20,8 @@ is a prototype for the bench, not the app people will carry.
 - **Contact**: a card with the name this phone gives it, known by its
   identity.
 - **Home node**: a node on USB that stays where it is, set in Settings;
-  the person's mail can be fetched from it when they are elsewhere.
+  the person fetches their mail from it, when they ask, to the node they
+  are connected to.
 
 ## Screens
 
@@ -48,7 +49,7 @@ is a prototype for the bench, not the app people will carry.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
   connected node your home, or none; your new card then goes to every
-  contact; fetch your mail now), your 12 words (show them, or restore
+  contact; fetch your mail, which the app does only when asked), your 12 words (show them, or restore
   an identity from them), and the node's map point: set from typed
   degrees or the phone's location, or cleared.
 - **Debug**, from the menu. Your identity, card address, home node and

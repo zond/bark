@@ -50,12 +50,6 @@ class AppModel extends ChangeNotifier {
   }
 
   late final Timer _ticker;
-  Timer? _settle;
-
-  /// How long the node's address must hold before the app fetches its
-  /// mail to it: the delivery TTL, which the network keeps a dark node's
-  /// mail for (spec "Nodes", "Mailbox").
-  static const settle = Duration(seconds: 600);
 
   /// Everything a screen redraws on.
   Listenable get changes => Listenable.merge([this, session, contacts, me]);
@@ -72,31 +66,15 @@ class AppModel extends ChangeNotifier {
   bool connecting = false;
   int? mtu;
 
-  /// Keeps the node's address for the card, and fetches the person's
-  /// mail once a new address away from home has held for [settle].
+  /// Keeps the node's address for the card.
   void _nodeAddress() {
     final a = session.address;
     if (a == null || a.toString() == me.nodeAddress?.toString()) return;
     me.setNodeAddress(a);
-    _settle?.cancel();
-    if (!needsFetch(a)) return;
-    _settle = Timer(settle, () {
-      if (session.address?.toString() == a.toString() && needsFetch(a)) {
-        messenger.fetch(a);
-      }
-    });
   }
 
-  /// A home is set, the node is elsewhere, and its mail has not been
-  /// fetched to here.
-  bool needsFetch(Address here) {
-    final home = me.home;
-    return home != null &&
-        home.toString() != here.toString() &&
-        me.fetchedTo?.toString() != here.toString();
-  }
-
-  /// Fetches now, at the person's word, to the node's address.
+  /// Fetches to the node's address. Only the person's word fetches, as
+  /// fetched mail crosses the city twice (roadmap D128).
   Future<bool> fetchNow() async {
     final here = session.address;
     if (here == null || me.home == null) return false;
@@ -166,7 +144,6 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _ticker.cancel();
-    _settle?.cancel();
     session.removeListener(_nodeAddress);
     fakeNode?.dispose();
     session.dispose();

@@ -3163,9 +3163,9 @@ nonce: the fetch's `sent` (4), the item's number (3), 17 zero bytes. The
 requester tries the numbers `since` + 1 to `since` + `most` and so
 learns each item's number.
 
-**When to fetch.** When the requester's address changes and then holds
-for the delivery TTL ([nodes](#nodes)), and when the person asks. The
-app asks for 23 at most, the inbox's size ([phone link](#phone-link)).
+**When to fetch.** Only when the person asks, so that a mailbox costs
+air only when a person wants it (roadmap D128). The app asks for 23 at
+most, the inbox's size ([phone link](#phone-link)).
 
 The mailbox is an application on the node, beside the phone link: it
 uses the core's application interface (`core-interface.md`, Application) and

@@ -188,8 +188,8 @@ Unverified, in the order they will fail if wrong:
   console's 10 dBm cap meets the 10 mW ERP limit.
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
 - The GPS (`src/gps.rs`): NMEA at 9600 bps on P1.09 through UARTE1,
-  WAKEUP on P1.02 high to run and low for standby, a hot start after
-  standby; `docs/gps-time-2026-11-05.md`, "On the bench".
+  its sentences set by PCAS03 on P1.08 at each start, WAKEUP on P1.02
+  high to run and low for standby, a hot start after standby; `docs/gps-time-2026-11-05.md`, "On the bench".
 - Every console command. The timings it prints are its purpose; none has
   been seen.
 - The display (Display, below): the controller answered on SPIM3 at

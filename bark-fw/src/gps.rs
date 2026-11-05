@@ -6,9 +6,11 @@
 //! whenever the radio is (README, Radio power). Its WAKEUP line, P1.02,
 //! is driven high to run it and low to let it rest in standby, 20 µA with
 //! its RAM and clock kept for a hot start (L76K Hardware Design V1.0,
-//! Table 2, §3.3.3). Its reset line is never driven. It sends NMEA 0183
-//! at 9600 bps, 8N1, its default (`docs/gps-time-2026-11-05.md`), which
-//! UARTE1 receives only while it runs: at rest the UART is off.
+//! Table 2, §3.3.3). Its reset line is never driven. It talks NMEA 0183
+//! at 9600 bps, 8N1, its default (`docs/gps-time-2026-11-05.md`), over
+//! UARTE1, which is on only while it runs: at rest the UART is off and
+//! drives nothing into it. At each start it is told which sentences to
+//! send (`bark_driver::gnss::OUTPUT`).
 //!
 //! The task is its own and touches nothing of the radio's: it parses the
 //! sentences (`bark_driver::gnss`), keeps the time (`utc.rs`), and hands
@@ -19,7 +21,7 @@
 
 use core::cell::Cell;
 
-use bark_driver::gnss::{Fix, Nmea};
+use bark_driver::gnss::{Fix, Nmea, OUTPUT};
 use bark_driver::Gps;
 use bark_proto::Position;
 use embassy_futures::select::{select3, Either3};
@@ -33,9 +35,12 @@ use embassy_sync::signal::Signal;
 const BAUD: uarte::Baudrate = uarte::Baudrate::Baud9600;
 
 /// Bytes read at once: a second's sentences come together and end in a
-/// pause, at which a read returns. Two lines' worth keeps the reads few
-/// without holding a whole second.
-const READ: usize = 256;
+/// pause, at which a read returns. A whole second's, about 760 B of
+/// [`OUTPUT`]'s sentences with 28 satellites in view and 960 B at most at
+/// 9600 bps, so that a read ends at the pause and not within the burst,
+/// where the UART's FIFO of a few bytes would overrun if the task were
+/// late to start the next.
+const READ: usize = 1024;
 
 /// What the node last asked of the GPS.
 static WANT: Signal<CriticalSectionRawMutex, Gps> = Signal::new();
@@ -105,13 +110,15 @@ pub async fn run(mut p: Parts) -> ! {
         log::info!("gps: searching");
         note("searching");
         let mut state = State::Searching;
-        let mut rx = uarte::UarteRx::new(
+        let (mut tx, mut rx) = uarte::Uarte::new(
             p.uarte.reborrow(),
-            crate::Irqs,
             p.pins.rx.reborrow(),
+            p.pins.tx.reborrow(),
+            crate::Irqs,
             config.clone(),
         )
-        .with_idle(p.timer.reborrow(), p.ppi0.reborrow(), p.ppi1.reborrow());
+        .split_with_idle(p.timer.reborrow(), p.ppi0.reborrow(), p.ppi1.reborrow());
+        let mut told = false;
         while runs(want) {
             let until = async {
                 match end(want) {
@@ -121,24 +128,34 @@ pub async fn run(mut p: Parts) -> ! {
             };
             match select3(rx.read_until_idle(&mut buf), WANT.wait(), until).await {
                 Either3::First(Ok(n)) => {
+                    // Told once it is heard, so that it is up, and in the
+                    // pause after a second's sentences, so that nothing
+                    // arrives while the UART sends.
+                    if !told && n < buf.len() {
+                        let mut out = [0u8; OUTPUT.len()];
+                        out.copy_from_slice(OUTPUT);
+                        told = tx.write_from_ram(&out).await.is_ok();
+                    }
                     let mut first = None;
                     nmea.feed(&buf[..n], &mut |f| {
                         let was = state;
                         state = fixed(f, state);
                         if was != State::Fixed && state == State::Fixed {
-                            first = Some(f.cn0);
+                            first = Some(f);
                         }
                     });
-                    // A first fix whose used satellites have no C/N0
-                    // found: the sentences, once, for the bench.
-                    if let Some(c) = first.filter(|c| c.count == 0 && c.listed > 0) {
-                        let (gsa, gsv) = nmea.last_gsa_gsv();
+                    // A first fix with satellites but none of their C/N0
+                    // found: the sentences, once a search, for the bench.
+                    if let Some(f) = first.filter(|f| f.satellites > 0 && f.cn0.count == 0) {
                         log::warn!(
-                            "gps: no c/n0 for {} used of {} in view; last {} and {}",
-                            c.listed,
-                            c.in_view,
-                            core::str::from_utf8(gsa).unwrap_or("?"),
-                            core::str::from_utf8(gsv).unwrap_or("?")
+                            "gps: no c/n0 for {} sats, {} listed, {} in view, bad_sentences={}, told={}; sentences{}; last{}",
+                            f.satellites,
+                            f.cn0.listed,
+                            f.cn0.in_view,
+                            nmea.bad,
+                            told,
+                            Lines(nmea.addresses()),
+                            Lines(nmea.last_gsa_gsv())
                         );
                     }
                 }
@@ -149,7 +166,7 @@ pub async fn run(mut p: Parts) -> ! {
                 Either3::Third(()) => want = Gps::Rest,
             }
         }
-        drop(rx);
+        drop((tx, rx));
         wake.set_low();
         let found = if state == State::Fixed {
             ""
@@ -158,6 +175,18 @@ pub async fn run(mut p: Parts) -> ! {
         };
         log::info!("gps: rest{} bad_sentences={}", found, nmea.bad);
         note("rest");
+    }
+}
+
+/// Lines of text, each after a space.
+struct Lines<I>(I);
+
+impl<'a, I: Iterator<Item = &'a [u8]> + Clone> core::fmt::Display for Lines<I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for line in self.0.clone() {
+            write!(f, " {}", core::str::from_utf8(line).unwrap_or("?"))?;
+        }
+        Ok(())
     }
 }
 

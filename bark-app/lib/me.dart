@@ -39,12 +39,11 @@ class Me extends ChangeNotifier {
   bool backedUp = false;
 
   /// The mailbox: the number up to which this phone has every item, the
-  /// numbers it has above that, the rounds of its latest fetches, newest
-  /// first, and the address it last fetched to.
+  /// numbers it has above that, and the rounds of its latest fetches,
+  /// newest first.
   int since = 0;
   final Set<int> above = {};
   final List<int> rounds = [];
-  Address? fetchedTo;
 
   /// The rounds whose replies are still opened: a reply of the round
   /// before may still be on its way.
@@ -84,7 +83,6 @@ class Me extends ChangeNotifier {
     since = j['since'] as int;
     above.addAll((j['above'] as List).cast<int>());
     rounds.addAll((j['rounds'] as List).cast<int>());
-    fetchedTo = _address(j['fetchedTo']);
     notifyListeners();
   }
 
@@ -102,7 +100,6 @@ class Me extends ChangeNotifier {
     'since': since,
     'above': above.toList(),
     'rounds': rounds,
-    'fetchedTo': fetchedTo?.toString(),
   });
 
   Future<void> _changed() async {
@@ -160,11 +157,10 @@ class Me extends ChangeNotifier {
     return changed;
   }
 
-  /// A fetch of round `round` went to `to`.
-  Future<void> fetched(int round, Address to) async {
+  /// A fetch of round `round` was sent.
+  Future<void> fetched(int round) async {
     rounds.insert(0, round);
     if (rounds.length > keptRounds) rounds.removeLast();
-    fetchedTo = to;
     await _changed();
   }
 

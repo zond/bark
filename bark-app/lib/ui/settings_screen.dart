@@ -180,8 +180,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? 'No home node: your card carries the address of the node you '
                   'are connected to, which changes when it moves.'
             : 'Your home node is at $home. Your card carries its address, '
-                  'and the app fetches your mail from it when you are '
-                  'elsewhere.',
+                  'and "Fetch my mail" brings your mail from it to the '
+                  'node you are connected to.',
       ),
       if (here != null && !isHome && st != null && (st.sleepy || st.carried))
         const Padding(
