@@ -3016,19 +3016,30 @@ and its ACK (17.0 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
-| Single channel, 60 s heartbeats | 6% | 7 kB/s | 7 | 2 |
-| 7-colour fixed grid, heartbeats on all colours | 12–15% | 35 kB/s | 35 | 10 |
+| Single channel, 60 s heartbeats | 6.5% | ≈6 kB/s | ≈6 | ≈2 |
+| 7-colour fixed grid, 10 s heartbeats on all colours | 39% | none | none | none |
 | **13 channels, measured selection, rotating heartbeat (this design)** | **≈3.0%** | **≈80 kB/s** | **≈80** | **≈23** |
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The table assumes a text crosses the city. The city
 centre is the hot spot, and the per-relay 10% cap
-([duty cycle cap](#duty-cycle-cap)) binds there first. The heartbeat
+([duty cycle cap](#duty-cycle-cap)) binds there first. Each row is
+the 14 domains times the row's channels times what of a channel's 35 %
+the heartbeats leave, over 0.72 s a text, and a day of that over the
+300 000 users; a text is about 1 kB of DATA on the air. The heartbeat
 load is a domain's 270 relays' heartbeats, 14.4 ms each, on the
-channels they visit. This design's row is 14 domains of 13 channels,
-each 35 % usable less its 3 % of heartbeats, at 0.72 s a text:
-14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, and over a day 23 for each of
-300 000 users, the **design rate** the rest of this document uses.
+channels they visit:
+
+- one channel, a heartbeat every 60 s: 270 × 14.4 ms / 60 s = 6.5 %,
+  and 14 × 0.285 / 0.72 s ≈ 6 texts/s;
+- seven colours, each relay heartbeating on every colour every 10 s,
+  the mean interval of [heartbeat](#heartbeat):
+  270 × 14.4 ms / 10 s = 39 %, more than the 35 % a channel can use,
+  so no room for texts;
+- this design, one heartbeat every 10 s on each relay's next channel:
+  270 × 14.4 ms / (10 s × 13) = 3.0 %, and
+  14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
+  the **design rate** the rest of this document uses.
 
 Sleepy nodes' beats cost what [beats](#beats) lists, 230 ms an hour
 each, and relays nothing for them. Summed over the domain's 20 000
