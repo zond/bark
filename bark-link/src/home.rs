@@ -1,7 +1,8 @@
 //! Home: the characteristic by which the app makes its node a person's
-//! home and reads its mailbox (spec "Mailbox"). Its UUID and the link
-//! version that brings it are given when the firmware serves it, after
-//! the versions now being added; the values are fixed here.
+//! home and reads its mailbox (spec "Mailbox"). The values are fixed
+//! here; the firmware that serves it gives it `28bc0009-…` and link
+//! version 3, as a new characteristic takes a new version (roadmap
+//! D117), and not before, so that no node says version 3 without it.
 //!
 //! | | value | bytes |
 //! |---|---|---|
