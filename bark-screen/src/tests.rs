@@ -53,10 +53,18 @@ fn the_time_as_utc_or_local_with_the_offset() {
         .collect();
     assert_eq!(
         shown,
-        ["UTC 12:35", "14:35 +02", "09:05 -03:30", "02:35 +14"]
+        [
+            "TIME   12:35 UTC",
+            "TIME   14:35 +02",
+            "TIME 09:05 -0330",
+            "TIME   02:35 +14"
+        ]
     );
     // Unknown, no line.
-    assert_eq!(texts(&State::default(), 0).last().unwrap(), "UP 0 MIN");
+    assert_eq!(
+        texts(&State::default(), 0).last().unwrap(),
+        "UP         0 MIN"
+    );
 }
 
 #[test]
@@ -75,15 +83,15 @@ fn a_sleepy_carried_node_on_battery() {
     assert_eq!(
         texts(&state, 12),
         [
-            "BAE6E6CBF4F5",
-            "NODE V12",
-            "SLEEPY ANCHORED",
-            "CARRIED",
-            "HEARD 5",
-            "STRONG 4",
-            "BOTH WAYS 2",
-            "BATTERY 73%",
-            "UP 12 MIN",
+            "BAE6E6CBF4F5    ",
+            "NODE         V12",
+            "SLEEPY ANCHORED ",
+            "CARRIED         ",
+            "HEARD          5",
+            "STRONG         4",
+            "BOTH WAYS      2",
+            "BATTERY      73%",
+            "UP        12 MIN",
         ]
     );
 }
@@ -98,16 +106,16 @@ fn a_relay_starting_without_a_place() {
     assert_eq!(
         texts(&state, 0),
         [
-            "BAE6E6CBF4F5",
-            "NODE V12",
-            "RELAY",
-            "NO PLACE YET",
-            "STARTING",
-            "HEARD 0",
-            "STRONG 0",
-            "BOTH WAYS 0",
-            "ON USB",
-            "UP 0 MIN",
+            "BAE6E6CBF4F5    ",
+            "NODE         V12",
+            "RELAY           ",
+            "NO PLACE YET    ",
+            "STARTING        ",
+            "HEARD          0",
+            "STRONG         0",
+            "BOTH WAYS      0",
+            "POWER        USB",
+            "UP         0 MIN",
         ]
     );
 }
@@ -115,10 +123,10 @@ fn a_relay_starting_without_a_place() {
 #[test]
 fn uptime_in_minutes_hours_and_days() {
     let up = |m| texts(&State::default(), m).last().unwrap().clone();
-    assert_eq!(up(119), "UP 119 MIN");
-    assert_eq!(up(120), "UP 2 HOURS");
-    assert_eq!(up(48 * 60 - 1), "UP 47 HOURS");
-    assert_eq!(up(48 * 60), "UP 2 DAYS");
+    assert_eq!(up(119), "UP       119 MIN");
+    assert_eq!(up(120), "UP       2 HOURS");
+    assert_eq!(up(48 * 60 - 1), "UP      47 HOURS");
+    assert_eq!(up(48 * 60), "UP        2 DAYS");
 }
 
 /// Every line of every state fits across the panel, every character in
@@ -137,7 +145,7 @@ fn every_line_fits_and_is_drawable() {
     for state in [widest, State::default()] {
         for (up, clock) in [0, 119, 47 * 60, u32::MAX].into_iter().zip(CLOCKS) {
             for (t, y) in lines(&FIXED, &state, up, clock).iter().flatten() {
-                assert!(t.bytes().len() <= LINE, "{:?}", t.bytes());
+                assert_eq!(t.bytes().len(), LINE, "{:?}", t.bytes());
                 assert!(text_width(t.bytes().len(), SCALE) <= WIDTH);
                 assert!(y + line_height(SCALE) <= HEIGHT);
                 for &c in t.bytes() {
@@ -181,4 +189,36 @@ fn the_picture_is_the_lines() {
 fn line_width_and_count() {
     assert_eq!(line_chars(2), 16);
     assert_eq!(text_width(16, 2), 190);
+}
+
+/// Every line starts at the same left margin, and a value ends at the
+/// same right margin, the time's included.
+#[test]
+fn lines_align_left_and_values_right() {
+    let state = State {
+        placed: true,
+        battery: Battery::Percent(7),
+        heard: 3,
+        ..State::default()
+    };
+    let margin = (WIDTH - text_width(LINE, SCALE)) / 2;
+    for clock in CLOCKS {
+        let mut p = Picture::white();
+        draw(&mut p, &FIXED, &state, 5, clock);
+        for (t, y) in lines(&FIXED, &state, 5, clock).iter().flatten() {
+            let band = *y..*y + line_height(SCALE);
+            let inked = |x: usize| band.clone().any(|y| p.black(x, y));
+            let left = (0..WIDTH).find(|&x| inked(x)).unwrap();
+            // A glyph's first column may be blank: within one cell.
+            assert!(
+                left >= margin && left < margin + CELL * SCALE,
+                "{:?} at {left}",
+                t.bytes()
+            );
+            let right = (0..WIDTH).rev().find(|&x| inked(x)).unwrap();
+            if t.bytes()[LINE - 1] != b' ' {
+                assert!(right < WIDTH - margin && right >= WIDTH - margin - CELL * SCALE);
+            }
+        }
+    }
 }

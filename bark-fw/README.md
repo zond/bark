@@ -419,7 +419,9 @@ version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
 
 The node image draws its state, built from what its core says after
 each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
-the host. Sixteen characters to a line, top to bottom:
+the host. Sixteen characters to a line, every line from the left
+margin: a state as a word or two at the left, a quantity as its label
+at the left and its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
@@ -431,9 +433,9 @@ the host. Sixteen characters to a line, top to bottom:
 | `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
 | `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
 | `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
-| battery | `ON USB`, `BATTERY 73%`, `BATTERY LOW` or `BATTERY NOT READ` | the reading as the core calibrates it |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
-| `14:35 +02` | the time of day when it was drawn: local with the phone's offset, or `UTC 12:35` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
+| `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
 *Why three neighbour counts.* A heartbeat is one way: a node that hears
 a neighbour does not know the neighbour hears it. Only an answer to its
