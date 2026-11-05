@@ -66,7 +66,7 @@ while the app is disconnected, as a node does.
 ## Who sent a text: not yet known
 
 The spec puts the sender's address inside the payload, so that the
-relays do not learn it (spec "Phone link", "The payload"). This
+relays do not learn it (spec "Phone link"). This
 prototype's payload does not carry it, so **a text received from a
 real node has no known sender**: it goes into one conversation,
 "Sender unknown", which cannot be answered. The note on the app's
