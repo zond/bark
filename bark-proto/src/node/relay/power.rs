@@ -221,14 +221,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.battery.scale = Some(scale as u16);
             }
         }
-        let millivolts = match self.battery.scale {
-            Some(s) => (u32::from(raw_mv) * u32::from(s) / BATTERY_SCALE_ONE) as u16,
-            None => raw_mv,
-        };
+        let millivolts = self.battery_millivolts(raw_mv);
         if millivolts <= levels.low_mv {
             self.battery.low = true;
         } else if millivolts >= levels.high_mv {
             self.battery.low = false;
+        }
+    }
+
+    /// A driver's reading of the battery, `raw_mv`, as calibrated: scaled
+    /// by the calibration once there is one (module documentation).
+    pub fn battery_millivolts(&self, raw_mv: u16) -> u16 {
+        match self.battery.scale {
+            Some(s) => (u32::from(raw_mv) * u32::from(s) / BATTERY_SCALE_ONE) as u16,
+            None => raw_mv,
         }
     }
 

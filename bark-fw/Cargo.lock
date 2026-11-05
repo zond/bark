@@ -49,6 +49,7 @@ dependencies = [
  "bark-image",
  "bark-link",
  "bark-proto",
+ "bark-screen",
  "cortex-m",
  "cortex-m-rt",
  "embassy-embedded-hal",
@@ -95,6 +96,10 @@ version = "0.1.0"
 dependencies = [
  "libm",
 ]
+
+[[package]]
+name = "bark-screen"
+version = "0.1.0"
 
 [[package]]
 name = "bindgen"

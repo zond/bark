@@ -348,6 +348,20 @@ pub struct Load {
 /// design's sizes (spec "Heard table", "Delivery queue").
 pub type Relay = Node<HEARD, DELIVERY_QUEUE>;
 
+/// A node's live neighbours by what it knows of each
+/// ([`Node::neighbour_counts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NeighbourCounts {
+    /// Whose heartbeats it hears.
+    pub heard: u8,
+    /// Of them, heard with margin: a full frame reaches this node through
+    /// a fade, so one from it likely reaches them; not proven.
+    pub strong: u8,
+    /// Of them, those that have taken a message from it since it first
+    /// heard them: proven to hear it.
+    pub both_ways: u8,
+}
+
 /// A node built only to be sleepy: no heard table and no delivery queue,
 /// which a sleepy node does not keep (spec "Sleepy nodes"), so that a
 /// driver of a node that never switches to a relay does not spend their

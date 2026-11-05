@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bark-proto", "bark-driver", "bark-sim", "bark-image", "bark-link"]
+members = ["bark-proto", "bark-driver", "bark-sim", "bark-image", "bark-link", "bark-screen"]
 # bark-fw and bark-loader target thumbv7em-none-eabihf and are each their own
 # workspace; see README.
 exclude = ["bark-fw", "bark-loader"]

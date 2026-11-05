@@ -2836,3 +2836,50 @@ fn the_inbox_keeps_messages_by_the_delivery_queue_s_rule() {
     assert_eq!(r.inbox_len(), INBOX);
     assert_eq!(r.inbox().map(|(id, _)| id), Some(ids[2]));
 }
+
+/// The counts a person sees: every live neighbour heard, those with
+/// margin as strong, and as both ways only one that has taken a message.
+#[test]
+fn neighbour_counts_tell_heard_strong_and_proven() {
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let margin = Neighbours::margin_dbm(r.radio.busy.noise_floor_dbm());
+    let mut ids = Vec::new();
+    for (k, rssi) in [
+        (1, margin as i16 + 10),
+        (2, margin as i16 + 10),
+        (3, margin as i16 - 10),
+    ] {
+        let at = Position {
+            lat: me.lat + 5_000 * k,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(at),
+            short: at.short(),
+        };
+        r.neighbours.heard(&hb, at, rssi, &r.plane, now);
+        ids.push(hb.id);
+    }
+    let counts = r.neighbour_counts(now);
+    assert_eq!((counts.heard, counts.strong, counts.both_ways), (3, 2, 0));
+    r.neighbours.took(ids[2], now, now + Duration::from_secs(1));
+    let counts = r.neighbour_counts(now);
+    assert_eq!((counts.heard, counts.strong, counts.both_ways), (3, 2, 1));
+}

@@ -178,7 +178,8 @@ Unverified, in the order they will fail if wrong:
   been seen.
 - The display (Display, below): the controller answered on SPIM3 at
   4 MHz in the console build, and in the node build never started the
-  refresh (bench, 2026-11-05); it now runs on SPIM1, untried. BUSY
+  refresh (bench, 2026-11-05); it now runs on SPIM1. The node's state
+  screen and its redraws are untried. BUSY
   falls after the reset, the software reset and the refresh, the
   picture comes out black on white the right way up (`ROTATION` in
   `src/display.rs` turns it if not), and the controller's deep sleep
@@ -390,33 +391,109 @@ and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
 ## Display
 
-At boot every image writes one picture to the 1.54" e-paper
-(200 × 200, SSD1681 controller, `src/display.rs`): the board's node ID
-as twelve hex digits in two rows of six, 25 × 35 pixels each, the
-largest six fit across the panel, below them the image's name, `NODE`,
-`CONSOLE` or `SURVEY`, and its version as `V` and `BARK_IMAGE_VERSION`,
-a survey's with its channel as `CH`. The text
-comes from a 5 × 7 bitmap font of the hex digits and the few letters
-those words need, scaled by whole pixels. A board can then be told from
-another unplugged, and the hex matches the `id=` of its log and its USB
-serial number.
+The 1.54" e-paper (200 × 200, SSD1681 controller, `src/display.rs`)
+says what a person needs to tell boards apart and to see how a node is
+doing without a phone. The text comes from a 5 × 7 bitmap font of the
+digits, the capital letters and `%`, scaled by whole pixels.
 
-The panel has its own SPI (SPIM1, 4 MHz; not SPIM3, whose transmitted
-data can be corrupted while the CPU or another EasyDMA master uses its
-buffer's RAM block, nRF52840 Errata anomaly 198) and its refresh runs as its
-own future beside the radio's start, so it delays nothing: the picture
-is rendered in microseconds, the 5000-byte RAM write is DMA, and every
-wait on the controller's BUSY line is on an interrupt and bounded at
-6 s, three times the 2 s full refresh the board's label gives. A
-controller that does not answer logs `display: busy past 6 s at <step>;
-no picture` and the boot goes on without it; one that never raises BUSY
-after the refresh is asked for, 100 ms, did not take the commands and
-logs `display: the refresh never started; no picture`. The sequence is the
-controller's: reset, software reset, the driver output, data entry,
-RAM window, border and temperature settings, the picture into both RAM
-planes, one full refresh, then deep sleep mode 1, which holds the
-picture on the glass and draws nothing until a hardware reset. The
-front light (P1.11) stays off.
+The console and survey images draw one picture at boot: the node ID as
+twelve hex digits, then the image's name, `CONSOLE` or `SURVEY`, and its
+version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
+`CH`.
+
+The node image draws its state, built from what its core says after
+each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
+the host. Sixteen characters to a line, top to bottom:
+
+| line | says | from |
+|---|---|---|
+| the ID | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
+| image | `NODE V12` | `BARK_IMAGE_VERSION` |
+| role | `RELAY`, `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy and anchorless flags |
+| place | `FIXED`, `CARRIED` or `NO PLACE YET` | placed, carried |
+| `STARTING` | while the first rotation runs | booting |
+| `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
+| `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
+| `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
+| battery | `ON USB`, `BATTERY 73%`, `BATTERY LOW` or `BATTERY NOT READ` | the reading as the core calibrates it |
+| `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
+
+*Why three neighbour counts.* A heartbeat is one way: a node that hears
+a neighbour does not know the neighbour hears it. Only an answer to its
+own frame proves that, and the table keeps one sign of it, when the
+neighbour last took a hand-over of this node's. `STRONG` is a good
+guess, labelled as one: links on one channel are mostly symmetric, and
+a neighbour heard with margin will likely hear a frame at the same
+power. A refusal or an ACK that has seen the packet also prove the
+neighbour hears this node; the table keeps neither per neighbour. A
+bit for "answered" would cost no RAM, since it fits the padding of the
+104-byte entry (measured), and would count those two as well; it is
+left out while the display is its only reader, since on a quiet network
+neither comes before a take does.
+
+*Why the percentage is "about".* The node knows three open-circuit
+voltages of a typical cell: 20 %, 30 % and full (Maxim AN4189, the core's
+battery levels). It reads the charge off the straight line between them
+(`bark_proto::node::battery_percent`), which is close at the low end
+and a coarse guess between 30 % and full, where a cell's curve is not
+straight. At or below 20 % it says `LOW`: the curve falls steeply there,
+and a fixed relay turns sleepy.
+
+*Why the uptime.* A picture stays on the glass when the node stops,
+so a stale one would lie. The node redraws at least once an hour on
+battery and every ten minutes on USB; an uptime that has not moved
+after that long means the node is not running.
+
+*When it redraws.* At boot, once the node's loop has run (at most 5 s),
+then when a fact it shows changes, but not within 5 minutes of the
+last refresh on battery or a minute on USB, and at least once an hour on
+battery and every ten minutes on USB. The cost on battery: a full
+refresh holds BUSY high for 2 s (the board's label). The panel's
+current during a refresh is not in the repository's notes, nor its
+datasheet; taking 10 mA, an assumption to be replaced by a measurement
+with `scripts/measure.md`, a refresh is 20 mAs, 5.6 µAh,
+of the 850 mAh cell (spec "Hardware") one part in 150 000. At the
+5-minute floor, with something changing all the time, that is 0.067 mA
+on average, a tenth of a sleepy node's 0.65 mA
+(`docs/battery-role-2026-10-25.md`); with the hourly redraw alone,
+0.006 mA, under 1 %. So 5 minutes is the floor at which the display
+costs a sleepy node at most a tenth of its battery life, and the
+hourly redraw is the price of knowing the node runs. On USB the
+energy is the charger's; a minute keeps the picture current enough.
+Between refreshes the controller is in deep sleep, holding the picture
+and drawing nothing measurable; each refresh wakes it with a hardware
+reset.
+
+*Beside the radio.* The panel has its own SPI (SPIM1, 4 MHz; not
+SPIM3, whose transmitted data can be corrupted while the CPU or another
+EasyDMA master uses its buffer's RAM block, nRF52840 Errata anomaly
+198) and shares no pin with the radio. Its refreshes run as a task of
+their own beside the radio's loop, with the picture in a static: joined
+into the main task as a future, they grew that task's stack frame, the
+deepest, from 29 184 B to 42 752 B and a nested 8 000 B beside, past
+the 43 KiB left for the stack, and the first image hung at boot before
+USB came up (bench, 2026-11-05). As a task the main frame is 29 184 B
+again and the screen's deepest 936 B (`llvm-objdump`, the largest stack
+adjustments). In it the picture is drawn a line at a time,
+tens of microseconds each, the executor given back between lines; the
+5000-byte RAM writes are DMA; and every wait on the controller's BUSY
+line is on an interrupt, bounded at 6 s, three times the 2 s refresh.
+So a refresh during a hand-over holds the radio's loop for no more than
+one line's drawing, far inside the 3.6 ms the loop must be back by
+(D37); the bench checks it in `longest_away_us` across a refresh. The
+switched rail, which the panel shares with the radio, is raised by the
+radio first thing and held for as long as the firmware runs; the
+panel's pins stay driven between refreshes, RES# high, since a
+disconnected RES# could wake the controller.
+
+A controller that does not answer logs `display: busy past 6 s at
+<step>; no picture`; one that never raises BUSY within 100 ms of being
+asked to refresh did not take the commands and logs `display: the
+refresh never started; no picture`; the node goes on either way. The
+sequence is the controller's: hardware reset, software reset, the
+driver output, data entry, RAM window, border and temperature
+settings, the picture into both RAM planes, one full refresh, then deep
+sleep mode 1. The front light (P1.11) stays off.
 
 ## Radio power
 

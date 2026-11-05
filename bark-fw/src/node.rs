@@ -165,6 +165,33 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
     }
 }
 
+/// What the e-paper shows of `core` now (`display.rs`, `bark-screen`).
+fn screen(core: &Role, now: Instant, battery_mv: u16) -> bark_screen::State {
+    use bark_screen::Battery;
+    let counts = core.neighbour_counts(now);
+    let battery = if crate::power::reported() {
+        Battery::Usb
+    } else if battery_mv == 0 {
+        Battery::NotRead
+    } else {
+        match bark_proto::node::battery_percent(core.battery_millivolts(battery_mv)) {
+            Some(p) => Battery::Percent(p),
+            None => Battery::Low,
+        }
+    };
+    bark_screen::State {
+        starting: core.booting(),
+        placed: core.placed(),
+        sleepy: core.sleepy(),
+        anchored: core.sleepy() && !core.anchorless(),
+        carried: core.carried(),
+        battery,
+        heard: counts.heard,
+        strong: counts.strong,
+        both_ways: counts.both_ways,
+    }
+}
+
 /// The position set at build time, or none, converted by `build.rs`.
 const BUILT: Option<Position> = include!(concat!(env!("OUT_DIR"), "/place.rs"));
 
@@ -251,6 +278,7 @@ pub async fn run<'a>(
         let now = bark_driver::Clock::now(&clock);
         let core = &driver.core().0;
         crate::ble::publish(status(core, now, driver.app().battery_mv), core.inbox());
+        crate::display::publish(screen(core, now, driver.app().battery_mv));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));

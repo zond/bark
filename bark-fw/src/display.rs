@@ -1,14 +1,19 @@
-//! The e-paper: a picture drawn once at boot, then the panel asleep.
+//! The e-paper: the panel driven through its controller. The console
+//! draws one picture at boot ([`show`]); the node draws its state
+//! (`bark-screen`) at boot and again when it changes, seldom ([`run`]),
+//! the panel asleep between.
 //!
 //! The 1.54" panel (GDEH0154D67, 200 × 200, `board::Eink`) is driven by
 //! an SSD1681, whose commands below are from its datasheet's command
 //! table ("DS"). The controller holds the picture in its own RAM, one bit
 //! a pixel, so after one full refresh it can be put in deep sleep, where
 //! it draws nothing and keeps the picture on the glass; only a hardware
-//! reset wakes it. The panel has its own SPI (SPIM1) and never shares the
-//! radio's bus, and its refresh runs as its own future beside the radio's
-//! start: every wait is on an interrupt, bounded, and the picture is
-//! rendered in microseconds.
+//! reset wakes it, so each refresh starts from one. The panel has its own
+//! SPI (SPIM1) and never shares the radio's bus, and its refreshes run as
+//! a task of their own beside the radio's loop (`main.rs`, `screen`): every wait is on an
+//! interrupt, bounded, and the picture is drawn a line at a time with the
+//! executor given back between lines, so that the radio's loop waits on
+//! it for no more than one line's drawing.
 //!
 //! Not SPIM3, the nRF52840's fast instance: its transmitted data can be
 //! corrupted while the CPU or another EasyDMA master uses the same RAM
@@ -16,11 +21,6 @@
 //! BLE controller and the radio busy beside the panel, sent the panel
 //! commands it did not act on, where the console drew. SPIM1 has no such
 //! erratum, and the panel needs no more than its 8 MHz.
-//!
-//! Text is drawn from a 5 × 7 bitmap font of the hex digits and the few
-//! letters the boot picture uses, scaled up by whole pixels.
-
-use core::fmt;
 
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::typelevel::{Binding, TWISPI1};
@@ -29,21 +29,12 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::Peri;
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 
+#[cfg(not(feature = "console"))]
+use bark_screen::State;
+use bark_screen::{Picture, HEIGHT, ROW_BYTES};
+
 use crate::board;
 use crate::radio::RAIL_SETTLE;
-
-/// The panel's width and height, pixels; its RAM is `HEIGHT` rows of
-/// `WIDTH / 8` bytes, the leftmost pixel in a byte's top bit, 1 white
-/// (DS, Write RAM).
-pub const WIDTH: usize = 200;
-pub const HEIGHT: usize = 200;
-const ROW_BYTES: usize = WIDTH / 8;
-
-/// Quarter turns clockwise from the controller's own orientation to the
-/// board's. The controller's row 0 is at the edge the flex cable enters,
-/// which on the T-Echo is the board's right: drawn unturned, the picture
-/// came out a quarter turn clockwise (bench, 2026-10-30).
-const ROTATION: u8 = 1;
 
 /// A full refresh as the board's label gives it, 2 s (`board::Eink`).
 const REFRESH: Duration = Duration::from_secs(2);
@@ -100,134 +91,6 @@ const RAM_Y_RANGE: u8 = 0x45;
 const RAM_X_COUNTER: u8 = 0x4E;
 /// RAM Y address counter.
 const RAM_Y_COUNTER: u8 = 0x4F;
-
-/// A picture to show: the controller's RAM image, white until drawn on.
-pub struct Picture {
-    bytes: [u8; HEIGHT * ROW_BYTES],
-}
-
-impl Picture {
-    pub const fn white() -> Picture {
-        Picture {
-            bytes: [0xFF; HEIGHT * ROW_BYTES],
-        }
-    }
-
-    /// Black at the board's `(x, y)`, the origin top left; outside the
-    /// panel is ignored.
-    fn plot(&mut self, x: usize, y: usize) {
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
-        let (cx, cy) = match ROTATION % 4 {
-            0 => (x, y),
-            1 => (y, WIDTH - 1 - x),
-            2 => (WIDTH - 1 - x, HEIGHT - 1 - y),
-            _ => (HEIGHT - 1 - y, x),
-        };
-        self.bytes[cy * ROW_BYTES + cx / 8] &= !(0x80 >> (cx % 8));
-    }
-
-    /// `text` centred, its top edge at row `y`, each font pixel `scale`
-    /// pixels. A character the font lacks is a blank.
-    pub fn text(&mut self, text: &[u8], scale: usize, y: usize) {
-        let width = (text.len() * CELL - 1) * scale;
-        let x0 = WIDTH.saturating_sub(width) / 2;
-        for (i, &c) in text.iter().enumerate() {
-            let glyph = glyph(c);
-            for (row, bits) in glyph.iter().enumerate() {
-                for col in 0..GLYPH_WIDTH {
-                    if bits & (0x10 >> col) == 0 {
-                        continue;
-                    }
-                    let px = x0 + (i * CELL + col) * scale;
-                    let py = y + row * scale;
-                    for dy in 0..scale {
-                        for dx in 0..scale {
-                            self.plot(px + dx, py + dy);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// The font's glyph size, and the cell it takes with one column of space.
-const GLYPH_WIDTH: usize = 5;
-const GLYPH_HEIGHT: usize = 7;
-const CELL: usize = GLYPH_WIDTH + 1;
-
-/// Row height of text at `scale`, including a row of space below.
-pub const fn line_height(scale: usize) -> usize {
-    (GLYPH_HEIGHT + 1) * scale
-}
-
-/// The glyph of `c`: seven rows, the leftmost pixel in bit 4.
-fn glyph(c: u8) -> [u8; GLYPH_HEIGHT] {
-    // The font is capitals only; the ID's hex and the image's name are
-    // lowercase in the log and on the bus.
-    match c.to_ascii_uppercase() {
-        b'0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
-        b'1' => [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        b'2' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
-        b'3' => [0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E],
-        b'4' => [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
-        b'5' => [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
-        b'6' => [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E],
-        b'7' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        b'8' => [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
-        b'9' => [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
-        b'A' => [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        b'B' => [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
-        b'C' => [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
-        b'D' => [0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C],
-        b'E' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
-        b'F' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
-        b'H' => [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        b'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
-        b'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
-        b'O' => [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        b'R' => [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
-        b'S' => [0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E],
-        b'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        b'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
-        b'Y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
-        _ => [0; GLYPH_HEIGHT],
-    }
-}
-
-/// A line of text formatted without allocation: what does not fit is cut.
-pub struct Line<const N: usize> {
-    buf: [u8; N],
-    len: usize,
-}
-
-impl<const N: usize> Line<N> {
-    pub const fn new() -> Line<N> {
-        Line {
-            buf: [0; N],
-            len: 0,
-        }
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
-}
-
-impl<const N: usize> fmt::Write for Line<N> {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for &b in s.as_bytes() {
-            if self.len == N {
-                break;
-            }
-            self.buf[self.len] = b.to_ascii_uppercase();
-            self.len += 1;
-        }
-        Ok(())
-    }
-}
 
 /// How the boot picture went, for the node's `boot:` line (`boot.rs`);
 /// the console logs it only.
@@ -332,59 +195,183 @@ impl Panel {
     }
 }
 
-/// Show `picture` and leave the panel asleep with it. Never returns: the
-/// pins stay driven, RES# high above all, since a disconnected RES# could
-/// wake the controller into drawing again.
+/// The panel set up: its pins driven, RES# among them, for as long as the
+/// firmware runs, since a disconnected RES# could wake the controller into
+/// drawing again. The pins are driven only once the switched rail is up,
+/// which the radio raises first thing and holds for good
+/// (`radio::boot`), as a pin driven high into an unpowered chip feeds it
+/// through its protection diodes.
+struct Screen {
+    panel: Panel,
+    reset: Output<'static>,
+}
+
+impl Screen {
+    async fn new(
+        pins: board::Eink,
+        spim: Peri<'static, peripherals::TWISPI1>,
+        irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
+    ) -> Screen {
+        let reset = Output::new(pins.reset, Level::Low, OutputDrive::Standard);
+        Timer::after(RAIL_SETTLE).await;
+        let mut config = spim::Config::default();
+        // 4 MHz writes the 5000-byte picture in 10 ms, nothing beside the
+        // 2 s refresh, and leaves the flex cable to the panel margin. Mode
+        // 0 is the controller's (DS, serial interface).
+        config.frequency = spim::Frequency::M4;
+        config.mode = spim::MODE_0;
+        let panel = Panel {
+            spi: Spim::new_txonly(spim, irq, pins.sclk, pins.mosi, config),
+            cs: Output::new(pins.cs, Level::High, OutputDrive::Standard),
+            dc: Output::new(pins.dc, Level::Low, OutputDrive::Standard),
+            busy: Input::new(pins.busy, Pull::None),
+        };
+        Screen { panel, reset }
+    }
+
+    /// Wake the controller by a hardware reset, draw `picture`, and put it
+    /// back to sleep; how it went, logged.
+    async fn draw(&mut self, picture: &Picture) -> Outcome {
+        let t0 = Instant::now();
+        self.reset.set_low();
+        Timer::after(RESET_PULSE).await;
+        self.reset.set_high();
+        Timer::after(RESET_PULSE).await;
+        match self.panel.show(picture).await {
+            Ok(()) => {
+                let ms = t0.elapsed().as_millis() as u32;
+                log::info!("display: shown in {} ms, asleep", ms);
+                Outcome::Shown { ms }
+            }
+            Err(Error::Busy(step)) => {
+                log::warn!(
+                    "display: busy past {} s at {}; no picture",
+                    BUSY_TIMEOUT.as_secs(),
+                    step
+                );
+                Outcome::Busy(step)
+            }
+            Err(Error::NoRefresh) => {
+                log::warn!("display: the refresh never started; no picture");
+                Outcome::NoRefresh
+            }
+            Err(Error::Spi(e)) => {
+                log::warn!("display: spi {:?}; no picture", e);
+                Outcome::Spi
+            }
+        }
+    }
+}
+
+/// Show `picture` and leave the panel asleep with it, for good.
+#[cfg(feature = "console")]
 pub async fn show(
     pins: board::Eink,
     spim: Peri<'static, peripherals::TWISPI1>,
     irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
     picture: &Picture,
 ) -> ! {
-    let t0 = Instant::now();
-    // RES# low from the start. Whether the panel hangs on the switched rail
-    // is not known, so its other pins are driven only once the rail would
-    // be up, as the radio's are (`radio::Radio::new`).
-    let mut reset = Output::new(pins.reset, Level::Low, OutputDrive::Standard);
-    Timer::after(RAIL_SETTLE).await;
-    let mut config = spim::Config::default();
-    // 4 MHz writes the 5000-byte picture in 10 ms, nothing beside the 2 s
-    // refresh, and leaves the flex cable to the panel margin. Mode 0 is the
-    // controller's (DS, serial interface).
-    config.frequency = spim::Frequency::M4;
-    config.mode = spim::MODE_0;
-    let mut panel = Panel {
-        spi: Spim::new_txonly(spim, irq, pins.sclk, pins.mosi, config),
-        cs: Output::new(pins.cs, Level::High, OutputDrive::Standard),
-        dc: Output::new(pins.dc, Level::Low, OutputDrive::Standard),
-        busy: Input::new(pins.busy, Pull::None),
-    };
-    Timer::after(RESET_PULSE).await;
-    reset.set_high();
-    Timer::after(RESET_PULSE).await;
-    let outcome = match panel.show(picture).await {
-        Ok(()) => {
-            let ms = t0.elapsed().as_millis() as u32;
-            log::info!("display: shown in {} ms, asleep", ms);
-            Outcome::Shown { ms }
-        }
-        Err(Error::Busy(step)) => {
-            log::warn!(
-                "display: busy past {} s at {}; no picture",
-                BUSY_TIMEOUT.as_secs(),
-                step
-            );
-            Outcome::Busy(step)
-        }
-        Err(Error::NoRefresh) => {
-            log::warn!("display: the refresh never started; no picture");
-            Outcome::NoRefresh
-        }
-        Err(Error::Spi(e)) => {
-            log::warn!("display: spi {:?}; no picture", e);
-            Outcome::Spi
-        }
-    };
+    let mut screen = Screen::new(pins, spim, irq).await;
+    let outcome = screen.draw(picture).await;
     OUTCOME.lock(|o| o.set(Some(outcome)));
     core::future::pending().await
+}
+
+/// What the node shows of its state, as it last published it, and a
+/// signal at each change.
+#[cfg(not(feature = "console"))]
+static STATE: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<State>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(State {
+    starting: true,
+    placed: false,
+    sleepy: false,
+    anchored: false,
+    carried: false,
+    battery: bark_screen::Battery::NotRead,
+    heard: 0,
+    strong: 0,
+    both_ways: 0,
+}));
+#[cfg(not(feature = "console"))]
+static CHANGED: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+/// The node's side, after a step: its state as the screen says it.
+#[cfg(not(feature = "console"))]
+pub fn publish(state: State) {
+    if STATE.lock(|s| s.replace(state)) != state {
+        CHANGED.signal(());
+    }
+}
+
+/// How often the screen may be redrawn for a change, and how long it may
+/// go without one, on battery and on USB (`bark-fw/README.md`, Display).
+#[cfg(not(feature = "console"))]
+const BATTERY_GAP: Duration = Duration::from_secs(5 * 60);
+#[cfg(not(feature = "console"))]
+const BATTERY_STALE: Duration = Duration::from_secs(60 * 60);
+#[cfg(not(feature = "console"))]
+const USB_GAP: Duration = Duration::from_secs(60);
+#[cfg(not(feature = "console"))]
+const USB_STALE: Duration = Duration::from_secs(10 * 60);
+/// How long the first picture waits for the node's first state.
+#[cfg(not(feature = "console"))]
+const FIRST_STATE: Duration = Duration::from_secs(5);
+
+/// Draw the node's screen at boot, and again when what it shows has
+/// changed, at most once a [`BATTERY_GAP`] on battery and a [`USB_GAP`]
+/// on USB, and at least once a [`BATTERY_STALE`] or [`USB_STALE`], so
+/// that the uptime it shows says the node still runs.
+#[cfg(not(feature = "console"))]
+pub async fn run(
+    pins: board::Eink,
+    spim: Peri<'static, peripherals::TWISPI1>,
+    irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
+    fixed: bark_screen::Fixed<'static>,
+) -> ! {
+    use embassy_futures::select::select;
+    // In a static, so that no 5000-byte value is built or moved through a
+    // stack frame: the stack beside the relay is tight (`main.rs`,
+    // `screen`).
+    static PICTURE: static_cell::ConstStaticCell<Picture> =
+        static_cell::ConstStaticCell::new(Picture::zeroed());
+    let picture = PICTURE.take();
+    let mut screen = Screen::new(pins, spim, irq).await;
+    let mut shown: Option<(State, Instant)> = None;
+    // The first picture shows what the node knows once its loop has run,
+    // which is within a second of the radio coming up.
+    let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
+    loop {
+        let state = STATE.lock(core::cell::Cell::get);
+        let usb = state.battery == bark_screen::Battery::Usb;
+        let (gap, stale) = match usb {
+            true => (USB_GAP, USB_STALE),
+            false => (BATTERY_GAP, BATTERY_STALE),
+        };
+        let now = Instant::now();
+        let due = match shown {
+            None => now,
+            Some((s, at)) if s != state => at + gap,
+            Some((_, at)) => at + stale,
+        };
+        if now < due {
+            let _ = select(CHANGED.wait(), Timer::at(due)).await;
+            continue;
+        }
+        let up_min = (now.as_secs() / 60) as u32;
+        picture.clear();
+        for (text, y) in bark_screen::lines(&fixed, &state, up_min).iter().flatten() {
+            picture.text(text.bytes(), bark_screen::SCALE, *y);
+            embassy_futures::yield_now().await;
+        }
+        let outcome = screen.draw(picture).await;
+        if shown.is_none() {
+            OUTCOME.lock(|o| o.set(Some(outcome)));
+        }
+        shown = Some((state, Instant::now()));
+    }
 }

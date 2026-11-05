@@ -5,11 +5,12 @@
 //! channels, or, sleepy, the anchor it has heard.
 
 use super::motion::Motion;
-use super::{Anchor, Node, Stage};
+use super::{Anchor, NeighbourCounts, Node, Stage};
 use crate::event::{Action, AppEvent, Trace};
 use crate::node::{heartbeat_interval, Rng};
 use crate::radio::{Channel, CHANNELS};
 use crate::tables::busy::{percent, ONE};
+use crate::tables::neighbours::Neighbours;
 use crate::time::{Duration, Instant};
 
 pub(super) fn random_channel(rng: &mut Rng) -> Channel {
@@ -55,6 +56,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub fn relays_known(&self, now: Instant) -> u8 {
         let n = self.neighbours.live(now).filter(|(_, n)| n.relay()).count();
         n.min(u8::MAX as usize) as u8
+    }
+
+    /// Its live neighbours, for a person to see (`bark-screen`): those
+    /// heard, those heard with margin, likely to hear this node too but
+    /// not proven, since a heartbeat is one way, and those that have taken
+    /// a message from it, proven to hear it (spec "Neighbour table").
+    pub fn neighbour_counts(&self, now: Instant) -> NeighbourCounts {
+        let floor = self.radio.busy.noise_floor_dbm();
+        let mut c = NeighbourCounts::default();
+        for (_, n) in self.neighbours.live(now) {
+            c.heard = c.heard.saturating_add(1);
+            if Neighbours::has_margin(n, floor) {
+                c.strong = c.strong.saturating_add(1);
+            }
+            if n.taken_at > Instant::ZERO {
+                c.both_ways = c.both_ways.saturating_add(1);
+            }
+        }
+        c
     }
 
     /// End of the first rotation (spec "Channel at boot"): a node without
