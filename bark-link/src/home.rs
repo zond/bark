@@ -1,8 +1,7 @@
 //! Home: the characteristic by which the app makes its node a person's
-//! home and reads its mailbox (spec "Mailbox"). The values are fixed
-//! here; the firmware that serves it gives it `28bc0009-…` and link
-//! version 3, as a new characteristic takes a new version (roadmap
-//! D117), and not before, so that no node says version 3 without it.
+//! home and reads its mailbox (spec "Mailbox"), `28bc0009-…`
+//! ([`crate::uuid::HOME`]) from link version 3, as a new characteristic
+//! takes a new version (roadmap D117).
 //!
 //! | | value | bytes |
 //! |---|---|---|

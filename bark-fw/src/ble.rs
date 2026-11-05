@@ -117,6 +117,8 @@ pub struct Link {
     pub map_point: (),
     #[characteristic(uuid = le_bytes(uuid::CLOCK), read, write)]
     pub clock: [u8; bark_link::NodeTime::LEN],
+    #[characteristic(uuid = le_bytes(uuid::HOME), read, write)]
+    pub home: [u8; bark_link::home::Home::LEN],
 }
 
 /// What the MPSL takes.
@@ -228,6 +230,9 @@ pub struct State {
     pub boot_ends: Option<Instant>,
     /// The inbox's oldest message: its ID, length and payload.
     pub inbox: Option<(MsgId, u8, [u8; MAX_PAYLOAD])>,
+    /// Of a home, the ring's item the inbox shows: its number and ID
+    /// (`mailbox.rs`); `None` while the inbox is the core's.
+    pub ring_head: Option<(u32, MsgId)>,
     /// The message last given back and the end of its wait, until the node
     /// takes another.
     pub given_back: Option<(MsgId, Instant)>,
@@ -247,6 +252,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     status: Status::EMPTY,
     boot_ends: None,
     inbox: None,
+    ring_head: None,
     given_back: None,
     request: None,
     answer: None,
@@ -296,6 +302,20 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
 /// relays, the inbox's count or the address, or of the battery by a step
 /// (spec "Phone link", Status).
 pub fn publish(status: Status, inbox: Option<(MsgId, &[u8])>) {
+    LINK.lock(|l| l.borrow_mut().ring_head = None);
+    publish_inbox(status, inbox);
+}
+
+/// The node's side, for a home: [`publish`] with the inbox the ring's
+/// oldest unread item, its number beside (spec "Mailbox").
+pub fn publish_ring(status: Status, item: Option<(u32, MsgId, &[u8])>) {
+    LINK.lock(|l| {
+        l.borrow_mut().ring_head = Some(item.map_or((0, MsgId(0)), |(n, id, _)| (n, id)))
+    });
+    publish_inbox(status, item.map(|(_, id, p)| (id, p)));
+}
+
+fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
     let changed = LINK.lock(|l| {
         let mut l = l.borrow_mut();
         l.inbox = inbox.map(|(id, p)| {
@@ -669,6 +689,8 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
                     Some(write_map_point(&w).await)
                 } else if h == link.clock.handle {
                     Some(write_clock(&w).await)
+                } else if h == link.home.handle {
+                    Some(write_home(&w))
                 } else {
                     // Not a request: the server takes it by its own rules,
                     // a subscription's descriptor above all.
@@ -719,6 +741,7 @@ fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>
         conn.set(&link.inbox, &inbox_now()).err(),
         conn.set(&link.given_back, &given_back_now()).err(),
         conn.set(&link.clock, &clock_now()).err(),
+        conn.set(&link.home, &home_now().encode()).err(),
     ]
     .into_iter()
     .flatten()
@@ -774,6 +797,38 @@ async fn write_map_point(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<()
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
     ask(Request::MapPoint(m)).await;
+    Ok(())
+}
+
+/// Home as the phone reads it: whether the node is a home, and the
+/// numbers its ring holds.
+fn home_now() -> bark_link::home::Home {
+    crate::mailbox::with(|m| bark_link::home::Home {
+        set: m.is_home(),
+        oldest: m.oldest(),
+        newest: m.newest(),
+    })
+    .unwrap_or_default()
+}
+
+/// Home, written: the mailbox takes the key, or forgets it, at once
+/// (`mailbox.rs`); the node's loop sees it at its next step.
+fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    use bark_link::home::SetHome;
+    let set = w.with_data(|offset, data| match offset {
+        0 => SetHome::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    let key = match set {
+        SetHome::Set(k) => Some(k),
+        SetHome::Clear => None,
+    };
+    crate::mailbox::with(|m| m.set_key(key));
+    crate::mailbox::FOR_CORE.signal(());
+    log::info!(
+        "ble: home {}",
+        if key.is_some() { "set" } else { "cleared" }
+    );
     Ok(())
 }
 

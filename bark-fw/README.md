@@ -536,14 +536,43 @@ driver output, data entry, RAM window, border and temperature
 settings, the picture into both RAM planes, one full refresh, then deep
 sleep mode 1. The front light (P1.11) stays off.
 
+## Mailbox
+
+A node set as a person's home (spec "Mailbox"; Home on the phone link)
+keeps every message for its application in a ring in flash, the region
+`MAILBOX` (`bark-image/src/layout.rs`): a page of state, then 16 pages
+of 16 slots of 256 bytes, the oldest page erased when the ring is full
+(`bark_app_layer::flash_ring`, `src/mailbox.rs`). Its phone's Inbox reads
+from the ring, and a fetch from the person's phone elsewhere is answered
+with the items, sealed again, through the core's one application send
+slot, the phone's own message first (`src/node.rs`, `LinkApp::take`).
+
+The mailbox runs in microseconds and never waits on the flash: its
+writes and erases are queued and done by a task of their own through
+the MPSL's flash timeslots, the flash shared with the store, each op a
+timeslot (an erase 85 ms, a slot 2.6 ms). A message the core delivered
+is confirmed to the core only once its slot is written, so that a
+reboot meanwhile loses none: the core keeps it and delivers it again. A
+cut write leaves a slot that fails its check, and a cut state record
+the one before it, as the store's does; the host tests cut every write
+of a run at every eighth byte (`bark-app-layer`, `flash_ring` tests).
+While the node is nobody's home nothing changes: its inbox is the
+core's, read and confirmed by the phone as before.
+
+The cost (release, with a place, against `a3d9fbe`): 15 688 B of flash,
+374 012 B of the 401 408 B slot; 2 880 B of static RAM, the mailbox
+with its queue of eight ops; the flash task's deepest chain 1 064 B, the
+others unchanged within 1.2 KB, the radio's 9 392 B now the deepest,
+and the main task's 6 344 B at boot, where it opens the ring.
+
 ## Tasks and the stack
 
 In the node image every long-lived part of the firmware is an embassy
 task of its own, spawned by the main task, which sets up the chip, the
 board, USB and the log, spawns, and ends: the USB device, the log, the
 bootloader touch, the watchdog, the LED and crystal, the MPSL, the
-phone link, the radio and the core on it, the store, the GPS and the
-screen. A task's future lies in its own static storage, and the
+phone link, the radio and the core on it, the store, the mailbox's
+flash writes, the GPS and the screen. A task's future lies in its own static storage, and the
 executor polls one task at a time, so the stack needs only the deepest
 task's poll and the interrupts above it, not the sum of everything
 joined into one future. Futures stay what a task waits on for a while,

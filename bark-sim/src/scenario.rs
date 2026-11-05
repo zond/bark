@@ -763,6 +763,10 @@ pub struct Scenario {
     pub metrics: MetricsParams,
     /// Nodes held on one home channel.
     pub homes: Vec<HomeSpec>,
+    /// Nodes that are a person's home and keep a mailbox (spec
+    /// "Mailbox"), as node references; each mailbox's key is
+    /// `Sim::mailbox_key`.
+    pub mailboxes: Vec<String>,
 }
 
 impl Default for Scenario {
@@ -792,6 +796,7 @@ impl Default for Scenario {
             availability: None,
             events: Vec::new(),
             homes: Vec::new(),
+            mailboxes: Vec::new(),
             metrics: MetricsParams {
                 per_node: true,
                 ..MetricsParams::default()

@@ -24,6 +24,9 @@
 //! write's futures nested in the node's loop grew the main task's stack
 //! frame by 2.4 KB.
 //!
+//! The MPSL's flash is one, taken once ([`SharedFlash`]): the mailbox
+//! writes through it too (`mailbox.rs`), each op a timeslot of its own.
+//!
 //! The page also keeps the phone's UTC offset (`utc.rs`), in records of
 //! its own beside the core's: [`ZONE`] and the offset in the first word,
 //! its complement in the second, the rest left erased. The core's records
@@ -61,6 +64,16 @@ pub async fn run(mut flash: Flash) -> ! {
     }
 }
 
+/// The MPSL's flash, shared by the store and the mailbox.
+pub type SharedFlash =
+    embassy_sync::mutex::Mutex<CriticalSectionRawMutex, nrf_mpsl::Flash<'static>>;
+
+/// The shared flash, once.
+pub fn shared(flash: nrf_mpsl::Flash<'static>) -> &'static SharedFlash {
+    static FLASH: static_cell::StaticCell<SharedFlash> = static_cell::StaticCell::new();
+    FLASH.init(embassy_sync::mutex::Mutex::new(flash))
+}
+
 /// Records in the page.
 const SLOTS: u32 = STORE.len / RECORD_LEN as u32;
 
@@ -83,7 +96,7 @@ fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
 
 /// The page of flash and the next erased slot in it.
 pub struct Flash {
-    flash: nrf_mpsl::Flash<'static>,
+    flash: &'static SharedFlash,
     next: u32,
     /// What the page holds last, written again after an erase.
     stored: Option<Stored>,
@@ -93,14 +106,16 @@ pub struct Flash {
 impl Flash {
     /// The page, the state its last whole record holds, and the UTC
     /// offset its last offset's record holds.
-    pub fn open(mut flash: nrf_mpsl::Flash<'static>) -> (Flash, Option<Stored>, Option<i16>) {
+    pub fn open(flash: &'static SharedFlash) -> (Flash, Option<Stored>, Option<i16>) {
         let mut last = None;
+        let mut f = flash
+            .try_lock()
+            .expect("nothing writes before the store opens");
         let mut offset_min = None;
         let mut next = SLOTS;
         for slot in 0..SLOTS {
             let mut r = [0u8; RECORD_LEN];
-            if flash
-                .read(STORE.start + slot * RECORD_LEN as u32, &mut r)
+            if f.read(STORE.start + slot * RECORD_LEN as u32, &mut r)
                 .is_err()
             {
                 break;
@@ -114,6 +129,7 @@ impl Flash {
             }
             offset_min = zone(&r).or(offset_min);
         }
+        drop(f);
         let page = Flash {
             flash,
             next,
@@ -139,7 +155,13 @@ impl Flash {
     /// and the other kind of record written again, so that each survives.
     async fn write(&mut self, record: &[u8; RECORD_LEN]) {
         if self.next >= SLOTS {
-            if let Err(e) = self.flash.erase(STORE.start, STORE.end()).await {
+            let erased = self
+                .flash
+                .lock()
+                .await
+                .erase(STORE.start, STORE.end())
+                .await;
+            if let Err(e) = erased {
                 log::error!("store erase failed: {:?}", e);
                 return;
             }
@@ -158,7 +180,8 @@ impl Flash {
     async fn put(&mut self, record: &[u8; RECORD_LEN]) {
         let at = STORE.start + self.next * RECORD_LEN as u32;
         self.next += 1;
-        if let Err(e) = self.flash.write(at, record).await {
+        let written = self.flash.lock().await.write(at, record).await;
+        if let Err(e) = written {
             log::error!("store write failed: {:?}", e);
         }
     }

@@ -18,7 +18,7 @@ use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 
 /// The link version this crate speaks, in [`Node::version`].
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -58,6 +58,9 @@ pub mod uuid {
     /// Clock: write the phone's time, read the node's ([`crate::Clock`],
     /// [`crate::NodeTime`]); from link version 2.
     pub const CLOCK: u128 = 0x28bc0008_a1b8_4893_9537_2ee3559d7644;
+    /// Home: write the mailbox key or clear it, read the mailbox's
+    /// numbers ([`crate::home`]); from link version 3.
+    pub const HOME: u128 = 0x28bc0009_a1b8_4893_9537_2ee3559d7644;
 }
 
 /// A UUID's bytes in the order BLE sends them, least significant first

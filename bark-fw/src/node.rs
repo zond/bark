@@ -42,25 +42,37 @@ pub struct LinkApp<'a> {
     battery_mv: u16,
     /// The step was woken for the link's request.
     serving: bool,
+    /// A message the core delivered and the mailbox took, to confirm to
+    /// the core once its slot is written (`mailbox.rs`).
+    kept: Option<bark_proto::MsgId>,
+    /// The mailbox's reply the core holds, to tell its given back from
+    /// the phone's.
+    replying: Option<bark_proto::MsgId>,
 }
 
 impl App for LinkApp<'_> {
-    async fn ready(&mut self, _offer: bool) {
+    async fn ready(&mut self, offer: bool) {
         if crate::ble::request_waiting() {
             self.serving = true;
             return;
         }
-        use embassy_futures::select::{select3, Either3};
+        // The mailbox's reply goes once the core takes one, unless the
+        // phone's waits (`take`).
+        if offer && crate::mailbox::with(|m| m.reply_due()).unwrap_or(false) {
+            return;
+        }
+        use embassy_futures::select::{select4, Either4};
         let fix = crate::gps::FOR_CORE.wait();
-        match select3(
+        match select4(
             crate::power::FOR_CORE.wait(),
             crate::ble::FOR_CORE.wait(),
             fix,
+            crate::mailbox::FOR_CORE.wait(),
         )
         .await
         {
-            Either3::Second(()) => self.serving = true,
-            Either3::First(()) | Either3::Third(()) => {}
+            Either4::Second(()) => self.serving = true,
+            Either4::First(()) | Either4::Third(()) | Either4::Fourth(()) => {}
         }
     }
 
@@ -79,9 +91,27 @@ impl App for LinkApp<'_> {
         if let Some(position) = crate::gps::take_fix() {
             return Some(Request::Fix(position));
         }
+        // What the mailbox has written for good, confirmed to the core.
+        if let Some(id) = self.kept.filter(|_| crate::mailbox::idle()) {
+            self.kept = None;
+            return Some(Request::Confirm(id));
+        }
         let head = crate::ble::LINK.lock(|l| l.borrow().inbox.map(|(id, _, _)| id));
+        let ring = crate::ble::LINK.lock(|l| l.borrow().ring_head);
         crate::ble::take_request(|r| match *r {
             Link::Send { .. } => None,
+            // A home's inbox is the ring's: the phone's confirmation moves
+            // its mark there, and the core holds nothing for it.
+            Link::Confirm(id) if ring.is_some() => {
+                let ok = ring.is_some_and(|(n, h)| {
+                    n > 0 && h == id && {
+                        crate::mailbox::with(|m| m.confirm_read(n));
+                        true
+                    }
+                });
+                log::info!("ble: confirm id={:08x} ok={} (mailbox)", id.0, ok);
+                Some((None, ok))
+            }
             Link::Confirm(id) => {
                 let ok = head == Some(id);
                 log::info!("ble: confirm id={:08x} ok={}", id.0, ok);
@@ -105,36 +135,34 @@ impl App for LinkApp<'_> {
         .flatten()
     }
 
+    /// The one place the core's application send slot is shared: the
+    /// phone's message first, then the mailbox's reply (spec "Mailbox").
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        crate::ble::take_request(|r| match *r {
-            crate::ble::Request::Send {
-                dst_pos,
-                dst_id,
-                len,
-                payload: p,
-            } => {
-                payload[..len as usize].copy_from_slice(&p[..len as usize]);
-                let id = bark_proto::MsgId::of(dst_pos, dst_id, &p[..len as usize]);
-                log::info!("ble: send id={:08x} len={} taken", id.0, len);
-                Some((
-                    Outgoing {
-                        dst_pos,
-                        dst_id,
-                        len: len as usize,
-                    },
-                    true,
-                ))
-            }
-            _ => None,
+        self.phone_message(payload).or_else(|| {
+            let out = crate::mailbox::with(|m| m.next(payload)).flatten()?;
+            log::info!(
+                "mailbox: reply id={:08x} len={} taken",
+                out.msg_id.0,
+                out.len
+            );
+            self.replying = Some(out.msg_id);
+            Some(Outgoing {
+                dst_pos: out.address.position,
+                dst_id: out.address.node,
+                len: out.len,
+            })
         })
     }
-
     fn message(&mut self, event: &AppEvent) {
         let now = bark_driver::Clock::now(&self.clock);
         match event {
             AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
+            AppEvent::GivenBack { msg_id, .. } if self.replying == Some(*msg_id) => {
+                log::info!("mailbox: reply id={:08x} given back", msg_id.0);
+                crate::mailbox::with(|m| m.given_back(*msg_id));
+            }
             AppEvent::GivenBack { msg_id, retry_at } => {
                 log::warn!(
                     "given back id={:08x} reason=refused retry_in_ms={}",
@@ -158,6 +186,33 @@ impl App for LinkApp<'_> {
 
     fn gps(&mut self, gps: bark_driver::Gps) {
         crate::gps::want(gps);
+    }
+}
+
+impl LinkApp<'_> {
+    /// The phone's message, if it wrote one (`ble.rs`, Send).
+    fn phone_message(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
+        crate::ble::take_request(|r| match *r {
+            crate::ble::Request::Send {
+                dst_pos,
+                dst_id,
+                len,
+                payload: p,
+            } => {
+                payload[..len as usize].copy_from_slice(&p[..len as usize]);
+                let id = bark_proto::MsgId::of(dst_pos, dst_id, &p[..len as usize]);
+                log::info!("ble: send id={:08x} len={} taken", id.0, len);
+                Some((
+                    Outgoing {
+                        dst_pos,
+                        dst_id,
+                        len: len as usize,
+                    },
+                    true,
+                ))
+            }
+            _ => None,
+        })
     }
 }
 
@@ -274,6 +329,8 @@ pub async fn run<'a>(
         clock,
         battery_mv: 0,
         serving: false,
+        kept: None,
+        replying: None,
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
@@ -291,7 +348,28 @@ pub async fn run<'a>(
         }
         let now = bark_driver::Clock::now(&clock);
         let core = &driver.core().0;
-        crate::ble::publish(status(core, now, driver.app().battery_mv), core.inbox());
+        let mut status = status(core, now, driver.app().battery_mv);
+        // A home's messages go into its mailbox, one at a time, each
+        // confirmed to the core once it is written (`request`); its phone
+        // reads them from the ring.
+        let home = crate::mailbox::is_home();
+        if home && driver.app().kept.is_none() {
+            if let Some((id, payload)) = core.inbox() {
+                crate::mailbox::arrive(id, payload);
+                driver.app_mut().kept = Some(id);
+            }
+        }
+        let core = &driver.core().0;
+        if home {
+            let mut item = [0u8; MAX_PAYLOAD];
+            let unread = crate::mailbox::unread(core.address(), core.id(), &mut item);
+            status.inbox = crate::mailbox::with(|m| m.unread_count())
+                .unwrap_or(0)
+                .min(u32::from(u8::MAX)) as u8;
+            crate::ble::publish_ring(status, unread.map(|(n, id, len)| (n, id, &item[..len])));
+        } else {
+            crate::ble::publish(status, core.inbox());
+        }
         crate::display::publish(screen(core, now, driver.app().battery_mv));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.

@@ -28,6 +28,7 @@ From the core's application interface (`core-interface.md` §4):
 | the power the firmware reads, the battery it reads | Status: external power flag, battery |
 | `Config::node_id`, the image version | Node |
 | the time of day and the phone's UTC offset, the firmware's, not the core's | Clock, from link version 2 (D130, `docs/gps-time-2026-11-05.md`) |
+| the mailbox, an application beside the link (`bark-app-layer`, spec "Mailbox") | Home, from link version 3; while the node is a home, Inbox and Status's count read its ring |
 
 `AppCommand::Fix`, `Power` and `Battery` come from the board, not the
 phone; there is no sleepy or carried setting (roadmap D71).
@@ -197,7 +198,8 @@ Open for the prototype: no pairing, no bonding.
 
 ### Versions (D117)
 
-Node's first byte is the link version, 2 since Clock (D130). Read values grow at their
+Node's first byte is the link version, 2 since Clock (D130), 3 since
+Home (spec "Mailbox"). Read values grow at their
 end, as a heartbeat may (spec "Packet formats"): `bark-link`'s decoders
 of Node, Status and Given back ignore what follows the fields they
 know. Written values are taken only whole, and change only with the
@@ -226,7 +228,9 @@ one.
    point; to clear it, write 0.
 9. On a node of version 2 or later, write the phone's UTC time and
    offset to Clock at every connection.
-10. Make every payload unique (spec "Phone link").
+10. To make the node the person's home, on a node of version 3 or
+    later: write 1 and the mailbox key to Home; to undo it, write 0.
+11. Make every payload unique (spec "Phone link").
 
 ## Does it fit
 
@@ -379,7 +383,7 @@ into its bootloader's `TECHOBOOT` drive, which takes the UF2
 3. **Connect.** The log shows `ble: connected`, and the node is gone
    from the scanner. Ask for an MTU of 247 (the menu's "Request MTU");
    247 is granted.
-4. **Node.** Read `28bc0002-…`: 11 bytes, `02`, the ID's six bytes as
+4. **Node.** Read `28bc0002-…`: 11 bytes, `03`, the ID's six bytes as
    on the display, then the image version, four bytes big-endian: 0
    unless the image was built with `BARK_IMAGE_VERSION`, which a bench
    build need not set (`bark-fw/README.md`, Updates).
@@ -423,6 +427,29 @@ into its bootloader's `TECHOBOOT` drive, which takes the UF2
     stays clear until the wait is over. This needs the second board to
     refuse, which the bench can arrange by loading it past its cap; it
     may be easier to see in the second board's log first.
+12. **Home.** Read `28bc0009-…`: `00 000000 000000`, no home. Write
+    `01` and 32 key bytes: the log shows `ble: home set`, and a read
+    gives `01`. A write of 2 bytes fails with 0x0D, of `02` with 0x13.
+    Reboot the board: the boot log's `mailbox: home=true` keeps it.
+13. **Into the ring.** From the second board, send a text to this
+    board's address as in step 6: this board's log shows
+    `mailbox: id=… kept as 1` and, once the slot is written, the core's
+    message confirmed; Home reads `01 000001 000001`, Status's byte 13
+    is 1 and Inbox gives the text with the ID the second board's log
+    showed. Confirm it by its ID: byte 13 drops to 0, and Home still
+    reads `000001`: the ring keeps it. Send two more: newest 3.
+14. **A fetch.** The fake (`bark-app`, the mailbox's tests) or a phone
+    with the person's keys seals a fetch, form 2 under the same key,
+    `since` 0 and `most` 23, with the second board's address, and
+    sends it to this board through the second board's Send. This
+    board's log shows `mailbox: fetch id=… taken`, then
+    `mailbox: reply id=… len=… taken` three times, one per item, and
+    the second board's Inbox gives three form-3 payloads, which open
+    under the key at the fetch's `sent` and numbers 1 to 3. The same
+    fetch again is refused (`Refused` in the log), a replay.
+15. **Not a home.** Write `00` to Home: texts to the board wait in its
+    inbox for the phone again, as in step 7, and the ring is left as it
+    was.
 
 ## Unsure
 

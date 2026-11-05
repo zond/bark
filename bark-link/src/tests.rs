@@ -135,7 +135,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [3, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {

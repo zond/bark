@@ -27,6 +27,7 @@ use crate::scenario::{
 };
 use crate::trace::{Names, Tracer};
 use crate::walk::{MovingLink, Walks};
+use bark_app_layer::mailbox::{Arrival as Kept, Mailbox, RamRing};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
@@ -656,6 +657,10 @@ struct ScriptEntry {
     preamble: u16,
 }
 
+/// A home node's mailbox in the simulator: the board's 16 pages of 16
+/// slots, in RAM.
+pub(crate) type HomeMailbox = Mailbox<RamRing<256>>;
+
 /// The simulator.
 pub struct Sim {
     pub(crate) radio: RadioParams,
@@ -802,6 +807,14 @@ pub struct Sim {
     origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
+    /// Per node, its mailbox if it is a person's home (spec "Mailbox"),
+    /// on a ring in RAM of the board's 256 slots.
+    pub(crate) mailboxes: Vec<Option<Box<HomeMailbox>>>,
+    /// The mailbox replies nodes' applications received, with the node,
+    /// for the tests to open.
+    pub(crate) replies: Vec<(u32, Vec<u8>)>,
+    /// Whether any node keeps a mailbox.
+    with_mailboxes: bool,
     /// Message id (kept across hops) to traffic tag.
     msg_tags: HashMap<u32, u32>,
     /// What each application offered, to offer again when given back.
@@ -1213,6 +1226,13 @@ impl Sim {
                 ids[p.b as usize] = ids[p.a as usize];
             }
         }
+        let mut mailboxes: Vec<Option<Box<HomeMailbox>>> = (0..n).map(|_| None).collect();
+        for m in &sc.mailboxes {
+            let i = resolve(&placed, m)?;
+            let mut mb = Box::new(Mailbox::new(RamRing::new()));
+            mb.set_key(Some(Sim::mailbox_key(sc.seed, i)));
+            mailboxes[i as usize] = Some(mb);
+        }
         let mut homes = vec![None; n];
         for h in &sc.homes {
             let c = Channel::new(h.channel)
@@ -1351,6 +1371,9 @@ impl Sim {
             leaf_nodes: HashMap::new(),
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
+            with_mailboxes: mailboxes.iter().any(Option::is_some),
+            mailboxes,
+            replies: Vec::new(),
             msg_tags: HashMap::new(),
             offered: HashMap::new(),
             data_hops: HashMap::new(),
@@ -2122,7 +2145,10 @@ impl Sim {
             self.wakeups.set(node, order);
         }
         // The application asks again after every event (core-interface §4).
-        if self.offers[node as usize].is_some() {
+        let reply_due = self.mailboxes[node as usize]
+            .as_ref()
+            .is_some_and(|m| m.reply_due());
+        if self.offers[node as usize].is_some() || reply_due {
             self.offer(node);
         }
     }
@@ -3496,7 +3522,19 @@ impl Sim {
                 payload[..bytes.len()].copy_from_slice(bytes);
                 let len = bytes.len() as u8;
                 core.confirm(id);
+                if self.mailbox_takes(node, &payload[..len as usize]) {
+                    return;
+                }
                 (len, payload)
+            }
+            AppEvent::GivenBack { msg_id, .. }
+                if !self.msg_tags.contains_key(&msg_id.0)
+                    && self.mailboxes[node as usize].is_some() =>
+            {
+                if let Some(m) = self.mailboxes[node as usize].as_mut() {
+                    m.given_back(msg_id);
+                }
+                return;
             }
             AppEvent::GivenBack { msg_id, retry_at } => {
                 if !self.give_back(node, msg_id, retry_at) {
@@ -4167,6 +4205,7 @@ impl Sim {
             return;
         }
         let Some(o) = self.offers[src as usize].take() else {
+            self.mailbox_offer(src);
             return;
         };
         self.offered.insert(o.tag, o);
@@ -4192,6 +4231,74 @@ impl Sim {
             payload,
         };
         self.deliver(src, Event::App(cmd));
+    }
+
+    /// The mailbox key of node `node`'s home in a run of `seed`: drawn
+    /// from them, so that a test can seal a fetch.
+    pub fn mailbox_key(seed: u64, node: u32) -> [u8; 32] {
+        let mut r = bark_proto::node::Rng::new(seed ^ 0x6d61_696c_626f_7800 ^ u64::from(node));
+        let mut k = [0u8; 32];
+        for c in k.chunks_mut(8) {
+            c.copy_from_slice(&r.next_u64().to_le_bytes());
+        }
+        k
+    }
+
+    /// A payload for `node`'s application that its mailbox takes, or that
+    /// is a mailbox's reply: kept, and not counted as a text.
+    fn mailbox_takes(&mut self, node: u32, payload: &[u8]) -> bool {
+        use bark_app_layer::seal::Form;
+        // Without a mailbox in the run every payload is a traffic tag,
+        // which may begin as a reply does.
+        if !self.with_mailboxes {
+            return false;
+        }
+        if Form::of(payload) == Ok(Form::Reply) {
+            self.replies.push((node, payload.to_vec()));
+            return true;
+        }
+        let Some(m) = self.mailboxes[node as usize].as_mut() else {
+            return false;
+        };
+        // Every payload but a fetch is kept; the texts are counted as
+        // delivered as at any node.
+        !matches!(m.arrive(payload), Kept::Kept(_))
+    }
+
+    /// The mailbox's next reply, handed to the core while its application
+    /// has no message of its own: the one place the send slot is shared,
+    /// as in the firmware.
+    fn mailbox_offer(&mut self, src: u32) {
+        let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+        let Some(o) = self.mailboxes[src as usize]
+            .as_mut()
+            .and_then(|m| m.next(&mut out))
+        else {
+            return;
+        };
+        let cmd = AppCommand::Send {
+            dst_pos: o.address.position,
+            dst_id: o.address.node,
+            payload: &out[..o.len],
+        };
+        self.deliver(src, Event::App(cmd));
+    }
+
+    /// Hand `payload` from `src`'s application to `dst`, if its core takes
+    /// one now: for the tests, beside the traffic model's texts.
+    #[cfg(test)]
+    pub(crate) fn send_raw(&mut self, src: u32, dst: u32, payload: &[u8]) -> bool {
+        let local = self.clocks[src as usize].local(self.now);
+        if !self.relays[src as usize].accepts_send(local) {
+            return false;
+        }
+        let cmd = AppCommand::Send {
+            dst_pos: self.relays[dst as usize].address(),
+            dst_id: self.node_id(dst),
+            payload,
+        };
+        self.deliver(src, Event::App(cmd));
+        true
     }
 
     fn poisson_arrival(&mut self, n: u32) {
@@ -5106,5 +5213,69 @@ mod tests {
             (s.app.drops.total(), s.app.delivered, s.app.unaccounted),
             (2, 1, 0)
         );
+    }
+
+    /// A home node keeps what reaches it, and a fetch from another node's
+    /// application gets the items back, sealed for the requester, through
+    /// the home's application send slot (spec "Mailbox").
+    #[test]
+    fn a_fetch_from_another_node_gets_the_mailbox_items() {
+        use bark_app_layer::seal::{self, Fetch};
+        use bark_app_layer::Address;
+        let mut sc = Scenario::new("mailbox", 1, 1800.0)
+            .point("A", RoleSpec::Relay, 0.0, 0.0)
+            .point("B", RoleSpec::Relay, 400.0, 0.0)
+            .point("C", RoleSpec::Relay, 800.0, 0.0)
+            .link("A", "B", -80.0)
+            .link("B", "C", -80.0);
+        sc.mailboxes = vec!["A".into()];
+        let mut sim = Sim::new(&sc).unwrap();
+        let s = |t: u64| Instant::ZERO + Duration::from_secs(t);
+        sim.run_until(s(300));
+        let send = |sim: &mut Sim, src: u32, payload: &[u8]| {
+            while !sim.send_raw(src, 0, payload) {
+                let t = sim.now + Duration::from_secs(1);
+                sim.run_until(t);
+            }
+        };
+        let items: Vec<Vec<u8>> = (1..=3).map(|i| format!("item {i}").into_bytes()).collect();
+        for item in &items {
+            send(&mut sim, 1, item);
+        }
+        let t = sim.now + Duration::from_secs(60);
+        sim.run_until(t);
+        assert_eq!(sim.mailboxes[0].as_ref().unwrap().newest(), 3);
+        let key = Sim::mailbox_key(1, 0);
+        let address = Address {
+            position: sim.relays[2].address(),
+            node: sim.node_id(2),
+        };
+        let fetch = Fetch {
+            sent: 7,
+            address,
+            since: 0,
+            most: 23,
+        }
+        .seal(&key, &[1; 24])
+        .unwrap();
+        send(&mut sim, 2, &fetch);
+        let t = sim.now + Duration::from_secs(300);
+        sim.run_until(t);
+        let mut got = Vec::new();
+        for (node, r) in &sim.replies {
+            assert_eq!(*node, 2);
+            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+            let opened = (1..=3)
+                .find_map(|n| {
+                    seal::open_reply(&key, 7, n, r, &mut out)
+                        .ok()
+                        .map(|l| (n, out[..l].to_vec()))
+                })
+                .expect("a reply that opens");
+            got.push(opened);
+        }
+        got.sort();
+        got.dedup();
+        assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
     }
 }

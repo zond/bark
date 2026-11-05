@@ -73,6 +73,8 @@ nrf-sdc = { version = "=0.4.0", features = ["nrf52840", "peripheral"] }
 nrf-mpsl = { version = "=0.4.0", features = ["nrf52840", "critical-section-impl"] }
 trouble-host = { version = "=0.8.0", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "att-queued-writes"] }
 bark-link = { path = "../bark-link" }
+# The mailbox and its ring (src/mailbox.rs).
+bark-app-layer = { path = "../bark-app-layer" }
 # What the e-paper shows, built and tested on the host (src/display.rs).
 bark-screen = { path = "../bark-screen" }
 # The GATT values' storage, the version trouble-host uses.

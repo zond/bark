@@ -110,6 +110,9 @@ pub struct Mailbox<R: Ring> {
     in_flight: Option<InFlight>,
     /// The highest number kept; 0 before any.
     newest: u32,
+    /// The highest number the phone at the node has confirmed reading;
+    /// 0 before any (spec "Phone link", Receiving).
+    read: u32,
 }
 
 impl<R: Ring> Mailbox<R> {
@@ -122,6 +125,7 @@ impl<R: Ring> Mailbox<R> {
             reply: None,
             in_flight: None,
             newest: 0,
+            read: 0,
         };
         m.newest = (0..m.slots())
             .filter_map(|s| m.slot(s).map(|(n, _)| n))
@@ -136,6 +140,37 @@ impl<R: Ring> Mailbox<R> {
     /// The ring, for the driver that backs it.
     pub fn ring(&self) -> &R {
         &self.ring
+    }
+
+    /// The ring, for a driver that writes it later than it is asked to
+    /// (`flash::FlashRing`).
+    pub fn ring_mut(&mut self) -> &mut R {
+        &mut self.ring
+    }
+
+    /// The oldest item the phone at the node has not confirmed: its number
+    /// and its length in `out`. The phone reads the ring from where it
+    /// last confirmed; the ring keeps every item for fetches either way.
+    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, usize)> {
+        let from = (self.read + 1).max(self.oldest());
+        (from..=self.newest).find_map(|n| self.item(n, out).map(|l| (n, l)))
+    }
+
+    /// Items the phone at the node has not confirmed.
+    pub fn unread_count(&self) -> u32 {
+        self.newest
+            - self
+                .read
+                .max(self.oldest().saturating_sub(1))
+                .min(self.newest)
+    }
+
+    /// The phone at the node has item `n`, and every one before it.
+    pub fn confirm_read(&mut self, n: u32) {
+        if n > self.read && n <= self.newest {
+            self.read = n;
+            self.keep();
+        }
     }
 
     fn slots(&self) -> u32 {
@@ -254,6 +289,15 @@ impl<R: Ring> Mailbox<R> {
         self.keep();
     }
 
+    /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
+    /// skips past items no longer in the ring.
+    pub fn reply_due(&self) -> bool {
+        self.key.is_some()
+            && self
+                .reply
+                .is_some_and(|r| r.next <= r.until && r.next <= self.newest)
+    }
+
     /// The next reply to hand the core, sealed into `out`, if one is due;
     /// call it while `accepts_send` holds, and send what it gives.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -313,6 +357,7 @@ impl<R: Ring> Mailbox<R> {
             s[51..54].copy_from_slice(&r.next.to_be_bytes()[1..]);
             s[54..57].copy_from_slice(&r.until.to_be_bytes()[1..]);
         }
+        s[57..60].copy_from_slice(&self.read.to_be_bytes()[1..]);
         let check = fnv1a(&s[..STATE_LEN - 4]);
         s[STATE_LEN - 4..].copy_from_slice(&check.to_be_bytes());
         self.ring.keep_state(&s);
@@ -328,6 +373,7 @@ impl<R: Ring> Mailbox<R> {
             self.key = Some(k);
         }
         self.last_fetch = be(&s[33..37]);
+        self.read = be(&s[57..60]).min(self.newest);
         if s[37] == 1 {
             if let Ok(address) = Address::decode(&s[38..]) {
                 self.reply = Some(Reply {

@@ -26,6 +26,14 @@ class NewerNode extends FakeNode {
       NodeInfo(linkVersion + 1, FakeNode.id, 1);
 }
 
+/// A node at link version 2, before Home: still attached, and given the
+/// clock.
+class Version2Node extends FakeNode {
+  Version2Node({required super.now, required super.sodium, required super.app});
+  @override
+  Future<NodeInfo> readNode() async => NodeInfo(2, FakeNode.id, 1);
+}
+
 /// One phone: its person, contacts, session and messenger, with stores
 /// that outlive it for the restart tests.
 class Phone {
@@ -356,6 +364,25 @@ void main() {
       expect(lines, contains('Send ${msgIdHex(c.id)}: taken'));
       expect(lines, contains(startsWith('Given back: ${msgIdHex(c.id)}')));
       expect(lines, contains(startsWith('Inbox: confirmed')));
+    });
+  });
+
+  test('a node at link version 2 is attached and given the clock', () {
+    fakeAsync((async) {
+      final s = Session(store: MemoryStore(), now: () => start);
+      final node = Version2Node(
+        now: () => start,
+        sodium: sodium,
+        app: List.filled(32, 1),
+      );
+      bool? ok;
+      s.attach(node.connect()).then((v) => ok = v);
+      async.flushMicrotasks();
+      expect(ok, isTrue);
+      expect(s.node!.version, 2);
+      expect(s.nodeTime!.source, TimeSource.phone);
+      node.dispose();
+      s.dispose();
     });
   });
 
