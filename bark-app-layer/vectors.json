@@ -1,0 +1,71 @@
+{
+  "alice": {
+    "seed": "000102030405060708090a0b0c0d0e0f",
+    "phrase": "abandon amount liar amount expire adjust cage candy arch gather drum buyer",
+    "secret": "1439e3c7b0d5b9b7df63cbe750ca8b06f86a8287d333a59d927a411f81a35529",
+    "identity": "2b7194e5d7c6a977d201b4a197ecabdcc8a0217ceaeb78e002b579471da66973",
+    "mailbox": "58660c398165aa6933dc1cfe7596e38b548c5a84af72552f21af6e17ae1a808c"
+  },
+  "bob": {
+    "seed": "f0efeeedecebeae9e8e7e6e5e4e3e2e1",
+    "phrase": "valley legal rocket supply salt insane phone wolf tourist check weather seminar",
+    "secret": "50c819171ec988f5ddc369460464c85a0edf3475bd9993a84c145a3b35ede186",
+    "identity": "fef19434542c1c95ed80adac18433e54e70ccfe0fa801ace9d297cf99524372e",
+    "mailbox": "91128d63af8d43e96e4b42d3d07658e8c6b3d26a85f4722c644e1078fe2a9973"
+  },
+  "card": {
+    "identity": "2b7194e5d7c6a977d201b4a197ecabdcc8a0217ceaeb78e002b579471da66973",
+    "address": "47c0490ad9ff800a0b0c0d0e0f",
+    "time": 86400,
+    "name": "Аліса",
+    "bytes": "012b7194e5d7c6a977d201b4a197ecabdcc8a0217ceaeb78e002b579471da6697347c0490ad9ff800a0b0c0d0e0f00015180d090d0bbd196d181d0b0",
+    "text": "BARK:AEVXDFHF27DKS56SAG2KDF7MVPOMRIBBPTVOW6HAAK2XSRY5UZUXGR6AJEFNT74ABIFQYDIOB4AACUMA2CINBO6RS3IYDUFQ"
+  },
+  "box_1251": {
+    "text": "Привіт, Боб! Ґанок їжака — «є».",
+    "sent": 1000000,
+    "greater": false,
+    "address": "47c0490ad9ff800a0b0c0d0e0f",
+    "plaintext": "01000f424047c0490ad9ff800a0b0c0d0e0f02cff0e8e2b3f22c20c1eee12120a5e0edeeea20bfe6e0eae0209720abbabb2e",
+    "nonce": "404142434445464748494a4b4c4d4e4f5051525354555657",
+    "payload": "10404142434445464748494a4b4c4d4e4f50515253545556578a1633dc229803b7b7023be44154517d52cea132ed12e0d2bb589d6826aa132053269ab00934253f0da66de499cf8018a98a1c7e521c474e6cc9248fcff3ea4c8ce9"
+  },
+  "box_utf8_ack": {
+    "text": "ok 👍",
+    "sent": 1000060,
+    "greater": true,
+    "acknowledges": 1000000,
+    "plaintext": "02000f427c03000f4240016f6b20f09f918d",
+    "nonce": "808182838485868788898a8b8c8d8e8f9091929394959697",
+    "payload": "10808182838485868788898a8b8c8d8e8f9091929394959697c12735aad3967cb87f6bb816a97180995bcb88fa670557d62da20069f7ba5ca91aa4"
+  },
+  "box_ack": {
+    "sent": 1000120,
+    "acknowledges": 1000000,
+    "plaintext": "02000f42b803000f4240",
+    "nonce": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
+    "payload": "10c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d79a3f8da8f3e6208d4b674895e09496f418533a636ea47f95710f"
+  },
+  "intro": {
+    "text": "Hello, it is Alice.",
+    "sent": 999000,
+    "plaintext": "00000f3e58043c012b7194e5d7c6a977d201b4a197ecabdcc8a0217ceaeb78e002b579471da6697347c0490ad9ff800a0b0c0d0e0f00015180d090d0bbd196d181d0b00248656c6c6f2c20697420697320416c6963652e",
+    "ephemeral_secret": "7777777777777777777777777777777777777777777777777777777777777777",
+    "payload": "111cf579aba45a10ba1d1ef06d91fca2aa9ed0a1150515653155405d0b18cb9a670388db11cd354bffc48531d3bd563411f9b791f2c49a48eaf602b7cdbbae8515dee0ed6425b22821421f3f6a3db80245ba3c607b94e644ed003f0fa2a1535250a9337d48c87d732f131a39517bd68e8ec2bfc02e43fb8056a6aaef7a2afc3dca0fa880e42cd49e"
+  },
+  "fetch": {
+    "sent": 1000500,
+    "address": "47ae148ae147a0010203040506",
+    "since": 5,
+    "most": 23,
+    "nonce": "101112131415161718191a1b1c1d1e1f2021222324252627",
+    "payload": "12101112131415161718191a1b1c1d1e1f20212223242526279aabee55ff86a888ae245fbf25187097a25bb2dc4292525ea855d779bb263c5c23d31da9f6"
+  },
+  "reply": {
+    "round": 1000500,
+    "number": 6,
+    "nonce": "000f44340000060000000000000000000000000000000000",
+    "item": "10404142434445464748494a4b4c4d4e4f50515253545556578a1633dc229803b7b7023be44154517d52cea132ed12e0d2bb589d6826aa132053269ab00934253f0da66de499cf8018a98a1c7e521c474e6cc9248fcff3ea4c8ce9",
+    "payload": "13c4c83119281c5000f5b0f071c78ff8c78b0521e2b51c3aa9f14b2172a92b120b0d3eee5acd6a62ecdd9ec772ddacc85236eaf0fdd5582ba63ecdbdd67d4bc4c71f86ef500142858aad7a3aa1535d3ff3a1077d01534a95d0ffab16536da9e76d995fbee1eb93e95d3d59fc"
+  }
+}
