@@ -2021,7 +2021,8 @@ A message ends only:
 - when its search runs out of neighbours
   ([return to parent](#return-to-parent));
 - when a return's parent is demoted or gone
-  ([hand-over](#hand-over) step 6), or answers it seen (step 5);
+  ([hand-over](#hand-over) step 6), or answers it seen
+  ([the ACK](#the-ack));
 - when a newer message needs its place in the delivery queue
   ([delivery queue](#delivery-queue)), or when the relay holding it
   comes to own its destination while it is queued and finds that queue
@@ -2060,8 +2061,8 @@ regular room.
 *Why the gate does not lock up.* A send queue of one place per relay,
 which held whatever arrived first, locked up under crossing traffic
 once relays held messages for each other (roadmap D29). The gate
-differs in the two ways the argument above needs: it bars one next hop, not the relay, so a message for any other
-way still enters; and a message with a higher count passes it, so the
+differs in the two ways the argument above needs: it bars one next
+hop, not the relay, so a message for any other next hop still enters; and a message with a higher count passes it, so the
 most travelled message always finds room.
 
 *Why the most travelled first.* For this the message that has come
@@ -2140,30 +2141,24 @@ What breaks it:
 | message records | at most 1613 per relay ([message records](#message-records)) |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
-*What a neighbour that does not answer costs.* A relay hands the message
-to each neighbour at most once per record, in at most 3 attempts. A
-neighbour that does not answer costs 3 attempts each time it is offered
-a message, and each failure bans it for every message, the ban doubling
-up to 61 s ([bans](#bans)).
-
-So a dead neighbour costs a relay that many failed hand-overs before it
-leaves the table 390 s after its last heartbeat or ACK: the bans 1.58,
-3.16, 6.3, 12.7, 25.3 and 50.6 s add up to 100 s, and 61 s bans fill the
-rest. After three failures it ranks behind the others
-([neighbour table](#neighbour-table)) and the message that waited for it
-moves on, so the first message pays the two bans and three hand-overs,
-14.2 s, and every later one a hand-over, 3.15 s, until the demotion
-lapses and the count starts again. A neighbour that answers this relay
-between failures is not demoted and holds a message for as long as its
-bans, which its answers set ([bans](#bans)), with no bound by count: it
-hears this relay, and each offer is another chance for the frame to get
-through. If it refuses that message, the message goes round it where
-another candidate is left ([next hop](#next-hop)). A hand-over is at most three
-attempts of 738.6 ms, listen-before-talk until it gives up, a full frame
-and the ACK timeout ([hand-over](#hand-over)), and the retry
-waits, 0.93 s. A channel that stays busy adds its wait to a forward's
-or a return's hand-over, since a give-up there is no attempt, but no
-airtime ([hand-over](#hand-over) step 2).
+*What a neighbour that does not answer costs.* Each failed hand-over to
+it bans it for every message, the ban doubling up to 61 s
+([bans](#bans)), until it leaves the table 390 s after its last
+heartbeat or answer: the bans 1.58, 3.16, 6.3, 12.7, 25.3 and 50.6 s add
+up to 100 s, and 61 s bans fill the rest. After three failures it ranks
+behind the others ([neighbour table](#neighbour-table)) and the message
+that waited for it moves on, so the first message pays two bans and
+three hand-overs, 14.2 s, and every later one a hand-over, 3.15 s, until
+the demotion lapses and the count starts again. A hand-over is at most
+three attempts of 738.6 ms, listen-before-talk until it gives up, a full
+frame and the ACK timeout, and the retry waits, 0.93 s
+([hand-over](#hand-over)). A channel that stays busy adds its wait to a
+forward's or a return's hand-over, but no airtime (step 2). A neighbour
+that answers this relay between failures is not demoted and holds a
+message as long as its bans, with no bound by count: it hears this
+relay, and each offer is another chance for the frame to get through;
+if it refuses the message, the message goes round it where another
+candidate is left ([next hop](#next-hop)).
 
 *What a search costs.* In the usual case it is two hand-overs in all
 per link; a split adds a round trip on the link whose ACKs were lost. A
