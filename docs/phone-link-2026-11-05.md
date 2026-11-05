@@ -316,6 +316,9 @@ How the service meets the node (`ble.rs`, `node.rs`):
   1/32 768 s, which the host truncates to the 0.625 ms units: 1 022 500
   µs would come out 1635 units, 1021.875 ms, so the firmware gives the
   ticks just over 1636 units, and the build checks it.
+- `BARK_ADV_INTERVAL_MS` at build time sets another advertising
+  interval, for the bench alone, in multiples of 5 ms from 20 ms; the
+  log's `ble: advertising every N us` says which runs.
 - For the bench the log has every step of a connection: `ble:
   connected` with the peer and the interval, latency and supervision
   timeout; each parameter, PHY or data length update; and each ATT

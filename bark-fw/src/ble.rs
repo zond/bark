@@ -65,7 +65,26 @@ const SDC_MEM: usize = PER_LINK + LINKS_SHARED + ADV_SET + FAL;
 /// takes it as an embassy duration, in ticks of 1/32 768 s, and truncates
 /// it to the units: so it is given as the ticks just over 1636 units,
 /// since 1 022 500 µs truncated to ticks would make 1635.
-const ADV_UNITS: u64 = 1636;
+///
+/// For the bench, `BARK_ADV_INTERVAL_MS` at build time sets another, in
+/// whole ms that are whole units (multiples of 5 ms), from the 20 ms the
+/// advertising parameters allow (Vol 4 Part E §7.8.5): to see whether how
+/// often the node advertises changes how often a central connects.
+const ADV_UNITS: u64 = match option_env!("BARK_ADV_INTERVAL_MS") {
+    None => 1636,
+    Some(ms) => {
+        let us = crate::update::decimal(ms) as u64 * 1000;
+        assert!(
+            us.is_multiple_of(625),
+            "BARK_ADV_INTERVAL_MS is a multiple of 5"
+        );
+        assert!(
+            us >= 20_000 && us <= 10_240_000,
+            "BARK_ADV_INTERVAL_MS is 20 to 10240"
+        );
+        us / 625
+    }
+};
 const ADV_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_ticks(
     (ADV_UNITS * 625 * embassy_time::TICK_HZ).div_ceil(1_000_000),
 );
@@ -534,7 +553,7 @@ async fn advertise<'v, 's>(
             },
         )
         .await?;
-    log::info!("ble: advertising");
+    log::info!("ble: advertising every {} us", ADV_UNITS * 625);
     let conn = advertiser.accept().await?;
     let p = conn.params();
     log::info!(
