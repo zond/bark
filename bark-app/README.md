@@ -139,6 +139,23 @@ the required capabilities: [JAVA_COMPILER]", Gradle found a runtime
 without a compiler: set `JAVA_HOME` to a full JDK, for example
 `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`.
 
+`flutter build apk --release` signs with the key that
+`android/key.properties` names, when that file exists:
+
+```
+storeFile=release.jks
+storePassword=...
+keyPassword=...
+keyAlias=...
+```
+
+`storeFile` is relative to `android/`. Without the file a release build
+is signed with the debug key, except in CI (`CI=true`), where it fails:
+the runner's debug key is lost with the runner, and an APK signed with
+it could not be updated by the next. Both files are kept out of the
+repository by `android/.gitignore`; the release workflow writes them
+from the repository's secrets (`README.md`, "Releases").
+
 The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; run the app's
 queue and inbox against the fake node; check the card's bytes, its

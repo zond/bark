@@ -1,0 +1,297 @@
+# Builds a release: the T-Echo firmware and the Android app, attached to a
+# GitHub Release named after the tag.
+#
+# Not part of ci.yml. That one runs on every push and checks; this one
+# builds what a person installs, with fat LTO and a signed APK, and
+# only a tag needs that.
+#
+# A tag is `v<N>`, N a positive integer. N is the release's one version
+# number: the firmware's image version (bark-fw/README.md, "Updates"),
+# which the update path only ever raises, and the app's version name and
+# code, which Android also only ever raises.
+#
+# Nothing here may fail softly: a release missing a file, or carrying one
+# that did not pass its check, is worse than no release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # A build on request, to see that it still works. Off a branch it builds
+  # version 0, which the firmware takes as a bench build (bark-fw/README.md,
+  # "Updates"), and makes no Release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.1
+
+# A newer dispatch supersedes an older one on the same ref, but a tag build is
+# never cancelled: it is the one whose files a Release is made of.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      n: ${{ steps.n.outputs.n }}
+    steps:
+      # Checked here, once, so that a tag like `v1.2` stops the release
+      # before anything is built, rather than becoming an image version the
+      # firmware cannot parse or an APK version code Android refuses. Nine
+      # digits at most: Android's version code stops at 2 100 000 000
+      # (Android developer documentation, "Version your app").
+      - id: n
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            n=${GITHUB_REF_NAME#v}
+            case "$n" in
+              '' | 0* | *[!0-9]* | ??????????*)
+                echo "tag $GITHUB_REF_NAME is not v<N> with N a positive integer of at most nine digits"
+                exit 1 ;;
+            esac
+          else
+            n=0
+          fi
+          echo "version $n"
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+
+  firmware:
+    name: Firmware
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      N: ${{ needs.version.outputs.n }}
+      # Read by the firmware at build time (src/update.rs). No BARK_LAT or
+      # BARK_LON: a released node takes its place from its GPS or from the
+      # phone, never from the build.
+      BARK_IMAGE_VERSION: ${{ needs.version.outputs.n }}
+      ELF: target/thumbv7em-none-eabihf/release/bark-fw
+      LOADER: ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+
+      # Two workspaces, each its own target directory: the firmware and the
+      # loader are not members of the host workspace (README.md, "Building").
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            bark-fw -> target
+            bark-loader -> target
+
+      - run: cargo build --release
+        working-directory: bark-loader
+
+      - run: cargo build --release
+        working-directory: bark-fw
+
+      # Packed straight after its build: the console build below writes
+      # the same ELF. The scripts need only Python 3.9 or later and its
+      # standard library (bark-fw/README.md, "Toolchain"), which the runner
+      # has.
+      - name: Package the node
+        working-directory: bark-fw
+        run: |
+          mkdir -p ../dist
+          python3 -I scripts/uf2.py --loader "$LOADER" "$ELF" "../dist/bark-$N.uf2"
+          python3 -I scripts/uf2.py "$ELF" "../dist/bark-fw-$N.uf2"
+          python3 -I scripts/uf2.py --check "../dist/bark-$N.uf2"
+          python3 -I scripts/uf2.py --check "../dist/bark-fw-$N.uf2"
+
+      # Version 0 cannot be staged, and image.py refuses to pack it, so a
+      # bench build has no image.
+      - name: Pack the image to stage
+        if: env.N != '0'
+        working-directory: bark-fw
+        run: python3 -I scripts/image.py pack "$ELF" "../dist/bark-fw-$N.img"
+
+      # The measurement console (bark-fw/README.md, "Console") is what the
+      # bench flashes to measure the radio and to stage images. Shipping it
+      # spares a person a toolchain, and it costs one more build of the
+      # firmware crate alone, its dependencies already built. With the
+      # loader, so it starts on any board.
+      - run: cargo build --release --features console
+        working-directory: bark-fw
+
+      - name: Package the console
+        working-directory: bark-fw
+        run: |
+          python3 -I scripts/uf2.py --loader "$LOADER" "$ELF" "../dist/bark-console-$N.uf2"
+          python3 -I scripts/uf2.py --check "../dist/bark-console-$N.uf2"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: dist/*
+          if-no-files-found: error
+
+  android:
+    name: Android
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      N: ${{ needs.version.outputs.n }}
+    defaults:
+      run:
+        working-directory: bark-app
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('bark-app/android/**/*.gradle*', 'bark-app/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - run: flutter pub get
+
+      # Here as well as in ci.yml, so that no release is built from a tag
+      # whose app does not pass its own checks.
+      - run: flutter analyze
+
+      - run: flutter test
+
+      # The release key, which is the app's identity: Android takes a
+      # signing certificate as *which app this is*, so an APK signed with
+      # anything else cannot update an installed one. Written before the
+      # build, removed after it whatever happened, `if: always()`, so that a
+      # failed build does not leave a key on the runner.
+      # android/app/build.gradle.kts reads it, and refuses a release build
+      # in CI without it.
+      - name: Unpack the signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          umask 077
+          echo "$KEYSTORE" | base64 -d > android/release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$PASSWORD"
+            echo "keyPassword=$PASSWORD"
+            echo "keyAlias=$ALIAS"
+          } > android/key.properties
+
+      - run: flutter build apk --release --build-name="$N" --build-number="$N"
+
+      # Proved, not assumed: compare the APK's certificate with the
+      # keystore's, and fail if they differ. An APK shipped under the wrong
+      # key is one nobody can update from.
+      - name: Check the APK carries the release certificate
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          got=$("$apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk \
+            | sed -n 's/.*SHA-256 digest: //p' | head -1)
+          want=$(keytool -list -v -keystore android/release.jks \
+            -alias "$(sed -n 's/^keyAlias=//p' android/key.properties)" \
+            -storepass "$(sed -n 's/^storePassword=//p' android/key.properties)" \
+            | sed -n 's/.*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+          if [ -z "$want" ] || [ "$got" != "$want" ]; then
+            echo "signed by $got, expected $want"
+            exit 1
+          fi
+          echo "signed by the release key ($got)"
+
+      - name: Forget the signing key
+        if: always()
+        run: rm -f android/release.jks android/key.properties
+
+      - run: mv build/app/outputs/flutter-apk/app-release.apk "bark-$N.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: bark-app/bark-${{ env.N }}.apk
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [version, firmware, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      N: ${{ needs.version.outputs.n }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Downloads
+
+          | File | For |
+          |---|---|
+          | `bark-@N@.uf2` | a T-Echo's first flash: the loader and the node firmware |
+          | `bark-fw-@N@.uf2` | a T-Echo that already runs bark: the node firmware alone |
+          | `bark-fw-@N@.img` | the node firmware as an image to stage through the console's serial port (`bark-fw/README.md`, "Updates") |
+          | `bark-console-@N@.uf2` | the measurement console in place of the node, with the loader, for the bench (`bark-fw/README.md`, "Console") |
+          | `bark-@N@.apk` | the Android app, which links a phone to its node over Bluetooth |
+
+          ## Flashing a T-Echo
+
+          1. Connect it over USB. Double-tap its reset button, the top-left
+             one, within half a second: a drive named `TECHOBOOT` appears.
+          2. Copy `bark-@N@.uf2` to it. The board restarts into the firmware
+             when the copy is complete.
+
+          A board that already runs bark needs only `bark-fw-@N@.uf2`, and
+          enters the bootloader without the button when its serial port is
+          set to 1200 baud (`stty -F /dev/ttyACM0 1200` on Linux).
+          `bark-fw/README.md`, "Flash", has the details.
+
+          ## The app
+
+          Messages are not encrypted yet: anyone in radio range of a node
+          on the way can read them. Do not send anything private.
+
+          The APK is signed with the project's release key, so each release
+          installs over the one before. An app built elsewhere is signed
+          with another key: uninstall it first.
+          NOTES
+          sed -i "s/@N@/$N/g" notes.md
+          # Draft, upload, publish: three steps because `gh release create`
+          # with the files on the end creates the release first and then
+          # uploads one file at a time, so a failed upload leaves a public
+          # release missing files, and a retry fails at `create` with
+          # `already_exists` without attaching the rest. This way nothing
+          # is visible until every file is attached, and running the job
+          # again ends in the same place.
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" artifacts/*/* --clobber
+          gh release edit "$GITHUB_REF_NAME" \
+            --draft=false --notes-file notes.md

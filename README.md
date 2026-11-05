@@ -102,3 +102,38 @@ rustup target add thumbv7em-none-eabihf
 
 See `bark-fw/README.md` for packaging the UF2, with the loader, and
 flashing.
+
+`.github/workflows/ci.yml` runs the checks every commit must pass
+(`AGENTS.md`, "Commits"), with the firmware's and the app's, on every
+push to main and every pull request.
+
+## Releases
+
+A tag `v<N>`, N a positive integer, makes release N:
+`.github/workflows/release.yml` builds the firmware, the loader, the
+measurement console and the Android app, and attaches them to a GitHub
+Release whose notes say which file is for what. N is both the
+firmware's image version and the app's version, and a board or a phone
+takes an update only above the version it runs, so each tag is above the
+last:
+
+```
+git tag v1 && git push origin v1
+```
+
+The app is signed with a release key held in three repository secrets.
+Android takes the key as the app's identity, so it is made once and kept,
+outside the repository and backed up: an app signed with another key
+cannot be updated, only uninstalled and installed again. To make it and
+store it:
+
+```
+keytool -genkeypair -keystore bark-release.jks -alias bark \
+    -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 bark-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD   # the password given to keytool
+gh secret set ANDROID_KEY_ALIAS --body bark
+```
+
+The keystore keytool makes has one password for the store and the key,
+and the workflow uses it for both.
