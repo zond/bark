@@ -113,7 +113,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dst_pos: q.dst_pos,
             dst_id: node,
             hops: 0,
-            time_left: q.time_left,
             payload: q.payload(),
         };
         let preamble = if early {
@@ -248,7 +247,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dst_pos: q.dst_pos,
             dst_id: q.node,
             hops: 0,
-            time_left: q.time_left,
             payload: q.payload(),
         };
         let frame = mac::frame(&Packet::Data(data), channel, preamble);

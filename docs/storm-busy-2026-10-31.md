@@ -112,7 +112,7 @@ not a lost ACK; it says nothing about the neighbour. Built as:
   the same channel come apart.
 - **What bounds the wait.** The time to live: the message is dropped
   where it waits when its time is gone, as it is for a ban or the
-  bucket (spec "Time to live"). The duty cycle cap does not bound it,
+  bucket (spec section "Time to live" (before D113)). The duty cycle cap does not bound it,
   since a waiting message spends no airtime. The hand-over never passes
   the neighbour over for a busy channel, however long the channel
   stays busy: no number derived from the radio or the regulation says

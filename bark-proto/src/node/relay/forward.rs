@@ -175,9 +175,9 @@
 //! routed again every `fade_retry`: a node in a pocket loses its
 //! neighbours by going dark and finds them again.
 //!
-//! No message ends by age on its way (spec "Time to live", roadmap D106):
-//! the refusals that hold it carry the load back to its origin instead.
-//! The DATA's `time_left` byte is passed on as it came.
+//! No message ends by age on its way (spec "Overload waits", roadmap
+//! D106): the refusals that hold it carry the load back to its origin
+//! instead.
 //!
 //! [`HandOver`]: crate::node::transfer::HandOver
 //! [`DEMOTE_AFTER_FAILURES`]: crate::tables::DEMOTE_AFTER_FAILURES
@@ -1266,7 +1266,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
             return;
         }
-        let Some(q) = Queued::new(id, d.dst_pos, node, payload, d.time_left, now) else {
+        let Some(q) = Queued::new(id, d.dst_pos, node, payload, now) else {
             self.drop_msg(id, DropReason::PayloadTooLong, emit);
             return;
         };
@@ -1387,7 +1387,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             dst_pos,
             dst_id,
             hops: 0,
-            time_left: Data::units(self.config.delivery_ttl),
             payload,
         };
         if dst_id == self.me() || self.owns(dst_pos, now) {
@@ -2187,7 +2186,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     // fade later, doubled for each silence in a row
                     // (spec "A sleepy node's own message"): the ban's ladder would
                     // offer it every few seconds to a node whose channel is
-                    // full, and a fixed fade every minute for its whole TTL.
+                    // full, and a fixed fade every minute for as long as it
+                    // waits.
                     let ban = ban.unwrap_or(now);
                     let silences = self
                         .neighbours

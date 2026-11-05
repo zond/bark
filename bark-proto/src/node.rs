@@ -74,7 +74,8 @@ pub struct Config {
     /// not answer (spec "A sleepy node's own message": 60 s, the length of
     /// a fade).
     pub fade_retry: Duration,
-    /// Delivery-queue entry lifetime, the delivery TTL (spec "Sleepy nodes": 10 min).
+    /// The delivery TTL: the delivery queue's stale age and the least the
+    /// network keeps a node's mail (spec "Sleepy nodes": 10 min).
     pub delivery_ttl: Duration,
     /// Interval of the delivery retry for queued messages to a sleepy node
     /// that listens all the time (`sleepy_listens`), besides the retry on

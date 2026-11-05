@@ -1917,10 +1917,9 @@ fn a_one_way_link_left_as_the_only_candidate_ends_the_search_there() {
 
 /// The same line, C gone, and a delivery TTL at P shorter than three
 /// failed hand-overs and their bans. No message ends by age on its way
-/// (spec "Time to live", roadmap D106): R's copy waits for C's bans past
+/// (spec "Overload waits", roadmap D106): R's copy waits for C's bans past
 /// that time, until the demotion ends its wait, and is returned then; P,
-/// with nothing left to try, drops it. Every DATA carries the
-/// `time_left` its origin gave it, unchanged.
+/// with nothing left to try, drops it.
 #[test]
 fn a_message_outlives_the_delivery_ttl_on_its_way() {
     let (p, r, c, d) = (0, 1, 2, 3);
@@ -1956,18 +1955,6 @@ fn a_message_outlives_the_delivery_ttl_on_its_way() {
     assert!(
         h.run_until(start + secs(30), returned),
         "R did not return it"
-    );
-    let lefts: Vec<u8> = [p, r]
-        .iter()
-        .flat_map(|&i| h.nodes[i].sent.iter())
-        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Data(q)) if q.msg_id() == id => Some(q.time_left),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        lefts.len() >= 2 && lefts.iter().all(|&l| l == lefts[0]),
-        "{lefts:?}"
     );
     h.run_for(secs(1));
     assert!(traces(&h, p).contains(&Trace::Dropped {
@@ -2184,7 +2171,6 @@ fn replies_stay_within_the_reserve() {
                 dst_pos: pd,
                 dst_id: nd,
                 hops: 1,
-                time_left: u8::MAX,
                 payload: &text,
             };
             let mut frame = Frame {
@@ -3201,7 +3187,7 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
 }
 
 /// A message that waits for a channel waits past the delivery TTL: no
-/// message ends by age on its way (spec "Time to live", roadmap D106).
+/// message ends by age on its way (spec "Overload waits", roadmap D106).
 /// O holds it, never having offered it to C, and once the channel clears
 /// it goes to B and arrives.
 #[test]

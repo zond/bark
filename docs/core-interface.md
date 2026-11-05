@@ -122,7 +122,7 @@ Every node has the same application interface: the readiness query
 `Action::Store` and `Config::stored`, and the GPS request `Action::Locate`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 226 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -246,28 +246,28 @@ test in `tables/mod.rs`:
 | Neighbours (spec "Neighbour table") | 64 × 104 B | 6.5 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 1571 × 40 B | 61.4 KiB |
+| Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
 | Send queue (spec "Send queue") | (39 + 254) × 304 B | 87.0 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **174.6 KiB** |
+| **All** | | **176.2 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Send queue", roadmap D31). The records hold the 1278 messages a relay can handle in the
+(spec "Send queue", roadmap D31). The records hold the 1320 messages a relay can handle in the
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-179 840 B (175.6 KiB, measured 2026-11-05): the tables and, in under 1 KiB around them, the
+181 520 B (177.3 KiB, measured 2026-11-05, roadmap D113): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 160 824 B (157.1 KiB), without the heard table and the delivery
+`SleepyNode` is 162 504 B (158.7 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
 (`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 58 KiB more than a node needs. Checked by the tests in
+(spec "Implementation notes"), which leaves 234 KiB, 57 KiB more than a node needs. Checked by the tests in
 `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -309,11 +309,8 @@ action at a time, and the core never allocates.
   - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
     sends `hops` 1, as if it had received the message from the application at 0: a
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
-  - Application payload at most 226 bytes, what remains of 255 after the 29-byte DATA
+  - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
     header; the decoder rejects anything longer.
-  - DATA `time_left` counts units of 2.5 s (`wire::TTL_UNIT`), rounded down at each
-    transmission (spec "Receiving DATA"); a DATA to a sleepy node carries what the message
-    had when it reached the holder.
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit
     the seen flag (roadmap D76, D90). With bit 6 clear, the top bit marks a heartbeat,
     whose low four bits hold its channel, 0 to 12, and the two between are zero; the

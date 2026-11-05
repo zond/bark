@@ -586,7 +586,6 @@ mod tests {
             dst_pos: Position { lat: 0, lon: 0 },
             dst_id: NodeId([5; 6]),
             hops: 1,
-            time_left: 1,
             payload: &[id as u8],
         };
         let mut bytes = [0; MAX_FRAME];

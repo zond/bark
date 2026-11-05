@@ -399,7 +399,6 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
         dst_pos: dst,
         dst_id: node,
         hops: 1,
-        time_left: u8::MAX,
         payload: b"later",
     };
     let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -412,7 +411,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     record.set_arrived();
     let at = r.record_place().unwrap();
     r.records.put(at, record);
-    let q = Queued::new(id, dst, node, b"later", u8::MAX, now).unwrap();
+    let q = Queued::new(id, dst, node, b"later", now).unwrap();
     r.delivery.push(q);
     r.forwarding.feed_due = true;
     r.handle(Event::Wakeup, now, &mut |_| {});
@@ -486,7 +485,6 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
             dst_pos: dst,
             dst_id: name(99),
             hops: 2,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let frame = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -504,7 +502,6 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
         dst_pos: dst,
         dst_id: node,
         hops: 0,
-        time_left: u8::MAX,
         payload: b"ahead",
     };
     let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -520,7 +517,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     record.set_arrived();
     let at = r.record_place().unwrap();
     r.records.put(at, record);
-    let q = Queued::new(id, dst, node, b"ahead", u8::MAX, now).unwrap();
+    let q = Queued::new(id, dst, node, b"ahead", now).unwrap();
     r.delivery.push(q);
     r.forwarding.feed_due = true;
     let mut checked = None;
@@ -566,7 +563,6 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
         dst_pos: r.config.position,
         dst_id: r.me(),
         hops: 1,
-        time_left: u8::MAX,
         payload: text,
     };
     let (a, b) = (packet(a_home, 1, b"first"), packet(b_home, 2, b"second"));
@@ -809,7 +805,6 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
             dst_pos: far,
             dst_id: NOBODY,
             hops,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -888,7 +883,6 @@ fn a_waiting_message_keeps_its_record() {
             dst_pos: far,
             dst_id: NOBODY,
             hops,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1002,7 +996,6 @@ fn waiting_entries_keep_arrival_order_through_bans() {
             dst_pos: far,
             dst_id: NOBODY,
             hops: 2,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let parent = Some((name(7), Channel::new(6).unwrap()));
@@ -1136,7 +1129,6 @@ fn an_answer_to_another_sender_is_not_ours() {
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
-        time_left: u8::MAX,
         payload: b"one message, two senders",
     };
     let id = data.msg_id();
@@ -1275,7 +1267,6 @@ fn a_neighbour_that_answers_stays_live() {
             dst_pos: far,
             dst_id: NOBODY,
             hops: 2,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let id = data.msg_id();
@@ -1366,19 +1357,18 @@ fn offer_data(
     tag: u8,
     hops: u8,
 ) -> (Option<u8>, Option<crate::event::DropReason>) {
-    let (place, refused, _) = offer_timed(r, now, dst, tag, hops, u8::MAX);
+    let (place, refused, _) = offer_dropped(r, now, dst, tag, hops);
     (place, refused)
 }
 
-/// [`offer_data`] with `time_left` units left; also returns why the
-/// message was dropped, if it was.
-fn offer_timed(
+/// [`offer_data`], also returning why the message was dropped, if it
+/// was.
+fn offer_dropped(
     r: &mut Relay,
     now: &mut Instant,
     dst: Position,
     tag: u8,
     hops: u8,
-    time_left: u8,
 ) -> (
     Option<u8>,
     Option<crate::event::DropReason>,
@@ -1393,7 +1383,6 @@ fn offer_timed(
         dst_pos: dst,
         dst_id: NOBODY,
         hops,
-        time_left,
         payload: &payload,
     };
     let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1426,40 +1415,34 @@ fn offer_timed(
     (place, refused, dropped)
 }
 
-/// No message ends by age on its way (spec "Time to live", roadmap
-/// D106): a packet that comes with the least time left is taken like any
-/// other, and waits for its neighbours' bans, in the regular room or a
-/// hop place, far past that time, its `time_left` passed on as it came.
+/// No message ends by age on its way (spec "Overload waits", roadmap
+/// D106): packets wait for their neighbours' bans, in the regular room
+/// or a hop place, as long as the bans last.
 #[test]
-fn a_message_waits_whatever_its_time_left() {
-    use crate::wire::TTL_UNIT;
+fn a_message_waits_whatever_its_age() {
     let (mut r, start, far) = with_every_neighbour_banned();
     let mut now = start;
     assert_eq!(
-        offer_timed(&mut r, &mut now, far, 1, 2, 1),
+        offer_dropped(&mut r, &mut now, far, 1, 2),
         (Some(0), None, None)
     );
     let spend = r.radio.budget.available(now) - Duration::from_millis(300);
     r.radio.budget.record(spend, now);
     // A count higher than the first's passes the gate (spec "Receiving DATA").
     assert_eq!(
-        offer_timed(&mut r, &mut now, far, 2, 3, 1),
+        offer_dropped(&mut r, &mut now, far, 2, 3),
         (Some(3), None, None)
     );
-    // The neighbours do not answer: the messages wait for their bans,
-    // four times their time left, until three silences in a row make
-    // each neighbour tried for them (spec "Next hop").
-    let until = start + TTL_UNIT.mul(4);
+    // The neighbours do not answer: the messages wait for their bans
+    // until three silences in a row make each neighbour tried for them
+    // (spec "Next hop").
+    let until = start + Duration::from_secs(10);
     let sent = drive(&mut r, &mut now, until);
-    let offers: Vec<u8> = sent
+    let offers = sent
         .iter()
-        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Data(d)) => Some(d.time_left),
-            _ => None,
-        })
-        .collect();
-    assert!(offers.len() >= 3, "{offers:?}");
-    assert!(offers.iter().all(|&left| left == 1), "{offers:?}");
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .count();
+    assert!(offers >= 3, "{offers}");
     assert_eq!(r.holding().count(), 2, "both kept");
 }
 
@@ -1501,7 +1484,6 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
-        time_left: u8::MAX,
         payload: b"count",
     };
     let id = data.msg_id();
@@ -1576,7 +1558,6 @@ fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
             dst_pos: far,
             dst_id: NOBODY,
             hops,
-            time_left: u8::MAX,
             payload: b"again",
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -1633,7 +1614,6 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         dst_pos: addressed,
         dst_id: id_of(addressed),
         hops: 2,
-        time_left: u8::MAX,
         payload: b"arrived",
     };
     let id = data.msg_id();
@@ -1679,7 +1659,6 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         dst_hop: r.me(),
         src_hop: name(9),
         hops: 5,
-        time_left: u8::MAX,
         ..data
     };
     let sent = hear(&mut r, &mut now, &Packet::Data(copy));
@@ -1754,7 +1733,6 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
-        time_left: u8::MAX,
         payload: text,
     };
     let id = data.msg_id();
@@ -1880,7 +1858,6 @@ fn a_return_answered_seen_is_dropped() {
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
-        time_left: u8::MAX,
         payload: b"back",
     };
     let id = data.msg_id();
@@ -1951,7 +1928,6 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
             dst_pos: r.config.position,
             dst_id: r.me(),
             hops: 1,
-            time_left: u8::MAX,
             payload: b"for me",
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2076,7 +2052,6 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
         dst_pos: me,
         dst_id: NOBODY,
         hops: 3,
-        time_left: 200,
         payload: &payload,
     });
     let airtime = mac::airtime(&mac::frame(&other, home, MIN_PREAMBLE_SYMBOLS));
@@ -2153,7 +2128,6 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
         dst_pos: d_pos,
         dst_id: NOBODY,
         hops: 3,
-        time_left: u8::MAX,
         payload,
     };
     demote(&mut r, now);
@@ -2325,7 +2299,6 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
             dst_pos: dst,
             dst_id: NOBODY,
             hops,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
@@ -2412,7 +2385,6 @@ fn refusals_at_the_gate_are_told_a_line() {
             dst_pos: far,
             dst_id: NOBODY,
             hops: 2,
-            time_left: u8::MAX,
             payload: &payload,
         };
         let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);

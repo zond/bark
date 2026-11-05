@@ -608,7 +608,6 @@ mod tests {
             dst_pos: crate::position::Position { lat: 0, lon: 0 },
             dst_id: NodeId([3; 6]),
             hops,
-            time_left: 1,
             payload: &[tag],
         };
         let mut bytes = [0; MAX_FRAME];
