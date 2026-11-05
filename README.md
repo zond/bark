@@ -23,13 +23,14 @@ web from small, cheap threads.
 The protocol core, the simulator and the firmware are written. The
 simulator runs a city's collision domain, 28 km² with 270 relays and
 20 000 sleepy nodes, at the design's rate and above; what it measured, and
-the decisions it led to, are in `docs/roadmap.md`. The firmware runs on
-three T-Echo boards on the bench: the core, a relay on USB, and on battery
-a relay until its battery is low if it stands still, sleepy if carried,
-behind a loader that swaps in new images. The bench has measured the
-radio's timings, two frames on one channel and a still link's fading
-(`docs/bench-*.md`). Next are the bring-up steps on the boards, then the
-protocol on hardware (`docs/roadmap.md`, Phases 2 and 3).
+the decisions it led to, are in `docs/roadmap.md`. The firmware runs the
+core, a relay on USB, and on battery a relay until its battery is low if
+it stands still, sleepy if carried, behind a loader that swaps in new
+images; it has booted and run on one T-Echo board, alone. Three boards
+are on the bench, on a measurement build: it has measured the radio's
+timings, two frames on one channel and a still link's fading
+(`docs/bench-*.md`). Next is the protocol on the three boards together
+(`docs/roadmap.md`, Phases 2 and 3).
 
 Read, in order:
 
