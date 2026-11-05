@@ -351,7 +351,7 @@ impl core::fmt::Display for Time {
         match (self.0.utc_s, self.0.source) {
             (Some(s), Some(source)) => write!(
                 f,
-                " utc_s={} offset_min={} from={:?}",
+                " utc_s={} offset_min={:?} from={:?}",
                 s, self.0.offset_min, source
             ),
             _ => Ok(()),

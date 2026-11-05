@@ -386,7 +386,7 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "console"))]
     let (config, core, flash) = {
         let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
-        utc::init(utc::ppm(lf_source), offset_min.unwrap_or(0));
+        utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
         (config, node::core(config, seed), flash)
     };

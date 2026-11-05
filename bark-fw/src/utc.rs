@@ -21,15 +21,15 @@ pub fn ppm(source: crate::lfclk::Source) -> u32 {
     }
 }
 
-/// The time kept and the UTC offset in minutes.
-static KEPT: Mutex<CriticalSectionRawMutex, Cell<(Utc, i16)>> =
-    Mutex::new(Cell::new((Utc::new(500), 0)));
+/// The time kept and the UTC offset in minutes, once a phone gave one.
+static KEPT: Mutex<CriticalSectionRawMutex, Cell<(Utc, Option<i16>)>> =
+    Mutex::new(Cell::new((Utc::new(500), None)));
 
 fn now() -> Instant {
     Instant::from_micros(embassy_time::Instant::now().as_micros())
 }
 
-fn with<R>(f: impl FnOnce(&mut Utc, &mut i16) -> R) -> R {
+fn with<R>(f: impl FnOnce(&mut Utc, &mut Option<i16>) -> R) -> R {
     KEPT.lock(|c| {
         let (mut utc, mut offset) = c.get();
         let r = f(&mut utc, &mut offset);
@@ -39,7 +39,7 @@ fn with<R>(f: impl FnOnce(&mut Utc, &mut i16) -> R) -> R {
 }
 
 /// At boot: the clock's tolerance and the offset kept.
-pub fn init(ppm: u32, offset_min: i16) {
+pub fn init(ppm: u32, offset_min: Option<i16>) {
     with(|u, o| {
         *u = Utc::new(ppm);
         *o = offset_min;
@@ -64,8 +64,8 @@ pub fn gps(utc_s: u64) {
 pub fn phone(utc_s: u64, offset_min: i16) -> bool {
     let t = now();
     let (taken, changed) = with(|u, o| {
-        let changed = *o != offset_min;
-        *o = offset_min;
+        let changed = *o != Some(offset_min);
+        *o = Some(offset_min);
         (u.phone(utc_s, t), changed)
     });
     log::info!(
@@ -84,8 +84,8 @@ pub struct Time {
     pub utc_s: Option<u64>,
     /// Where it came from.
     pub source: Option<Source>,
-    /// The phone's UTC offset, minutes; 0 until a phone gives one.
-    pub offset_min: i16,
+    /// The phone's UTC offset, minutes, once a phone gave one.
+    pub offset_min: Option<i16>,
 }
 
 /// The time now, for the display and the log.

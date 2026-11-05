@@ -163,6 +163,9 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'Y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
         b'Z' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
         b'%' => [0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03],
+        b':' => [0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00],
+        b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
+        b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         _ => return None,
     })
 }
@@ -254,6 +257,17 @@ pub struct State {
     pub both_ways: u8,
 }
 
+/// The time of day when the picture is drawn, if the node knows it
+/// (`bark-fw/src/utc.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Clock {
+    /// UTC seconds since 1970.
+    pub utc_s: u64,
+    /// The phone's UTC offset, minutes, if a phone gave one: the time is
+    /// then shown local, with the offset, else as UTC.
+    pub offset_min: Option<i16>,
+}
+
 /// What never changes: the node's ID as hex, its image's name and version.
 #[derive(Clone, Copy, Debug)]
 pub struct Fixed<'a> {
@@ -267,15 +281,21 @@ pub struct Fixed<'a> {
 const TOP: usize = 6;
 const GAP: usize = 8;
 
-/// The most lines the screen takes: the ID and the image, and the state's
-/// eight.
-pub const LINES: usize = 10;
+/// The most lines the screen takes: the ID and the image, the state's
+/// eight, and the time.
+pub const LINES: usize = 11;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
 /// The screen's lines, each with the row its top edge is at, for `state`
-/// with the node up `up_min` minutes; `None` past the last.
-pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, usize)>; LINES] {
+/// with the node up `up_min` minutes and the time `clock`; `None` past
+/// the last.
+pub fn lines(
+    fixed: &Fixed<'_>,
+    state: &State,
+    up_min: u32,
+    clock: Option<Clock>,
+) -> [Option<(Text, usize)>; LINES] {
     let mut out: [Option<(Text, usize)>; LINES] = Default::default();
     let mut y = TOP;
     let mut n = 0;
@@ -333,7 +353,32 @@ pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, us
         },
         0,
     );
+    if let Some(c) = clock {
+        put(line(format_args!("{}", c)), 0);
+    }
     out
+}
+
+/// `UTC 12:34`, or with an offset the local time and the offset,
+/// `12:34 +02` or `12:34 +05:30`.
+impl fmt::Display for Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const DAY_MIN: i64 = 24 * 60;
+        let utc_min = (self.utc_s / 60) as i64;
+        let offset = i64::from(self.offset_min.unwrap_or(0));
+        let m = (utc_min + offset).rem_euclid(DAY_MIN);
+        let hhmm = (m / 60, m % 60);
+        let Some(o) = self.offset_min else {
+            return write!(f, "UTC {:02}:{:02}", hhmm.0, hhmm.1);
+        };
+        let sign = if o < 0 { '-' } else { '+' };
+        let (oh, om) = (o.unsigned_abs() / 60, o.unsigned_abs() % 60);
+        write!(f, "{:02}:{:02} {sign}{oh:02}", hhmm.0, hhmm.1)?;
+        if om != 0 {
+            write!(f, ":{om:02}")?;
+        }
+        Ok(())
+    }
 }
 
 /// Bytes as they are, for the ID's hex.
@@ -349,9 +394,15 @@ impl fmt::Display for Hex<'_> {
 }
 
 /// Draw the screen into `picture`, which is cleared first.
-pub fn draw(picture: &mut Picture, fixed: &Fixed<'_>, state: &State, up_min: u32) {
+pub fn draw(
+    picture: &mut Picture,
+    fixed: &Fixed<'_>,
+    state: &State,
+    up_min: u32,
+    clock: Option<Clock>,
+) {
     picture.clear();
-    for (text, y) in lines(fixed, state, up_min).iter().flatten() {
+    for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
         picture.text(text.bytes(), SCALE, *y);
     }
 }

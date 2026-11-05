@@ -451,7 +451,7 @@ fn clock_now() -> [u8; bark_link::NodeTime::LEN] {
     bark_link::NodeTime {
         // Seconds since 1970 fit 32 bits until 2106.
         utc_s: t.utc_s.unwrap_or(0) as u32,
-        offset_min: t.offset_min,
+        offset_min: t.offset_min.unwrap_or(0),
         source: match t.source {
             None => TimeSource::None,
             Some(Source::Gps) => TimeSource::Gps,

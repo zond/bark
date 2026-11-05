@@ -248,8 +248,8 @@ builds it:
 | static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
 **Flash.** (Since 2026-11-05 the GPS's driver and the time take 12.2 KB
-more and the host's own log lines, 9.9 KB, are dropped: 6 908 B are
-left, `docs/gps-time-2026-11-05.md`, "Does it fit".) The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
+more and the host's own log lines, 9.9 KB, are dropped: with the
+status screen 2 068 B are left, `docs/gps-time-2026-11-05.md`, "Does it fit".) The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
 349 040 B is 97 %, 11 408 B, 11.1 KiB, left. Of that, the log lines
 at info and above of the host and of the link's connection steps, which
 the bench reads (below), are about 11 KB;

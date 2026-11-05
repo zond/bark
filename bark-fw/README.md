@@ -423,6 +423,7 @@ the host. Sixteen characters to a line, top to bottom:
 | `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
 | battery | `ON USB`, `BATTERY 73%`, `BATTERY LOW` or `BATTERY NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
+| `14:35 +02` | the time of day when it was drawn: local with the phone's offset, or `UTC 12:35` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
 *Why three neighbour counts.* A heartbeat is one way: a node that hears
 a neighbour does not know the neighbour hears it. Only an answer to its
