@@ -42,7 +42,7 @@
 //! answered, so that a sender takes only the answer to its own offer,
 //! however many others offer the same message to the same node (D32).
 //!
-//! Choices the design leaves open (O2), fixed here and listed in
+//! Choices the spec leaves open, fixed here and listed in
 //! `docs/core-interface.md` §7:
 //!
 //! - Short positions and message IDs are big-endian; a node ID is six
