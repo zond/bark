@@ -78,7 +78,7 @@ Verified on the host:
 
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the two builds.
-- The ELF's first loadable byte (the vector table) is at `0x2B000`, the
+- The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The node image is 167 KiB of
   flash (`.text`, `.rodata` and `.data`, 171 644 B, 671 UF2 blocks) and
   uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 212 B),
@@ -103,9 +103,10 @@ Verified on the host:
   reading inside a CAD (2026-10-30, roadmap D88).
 - `scripts/uf2.py` produces UF2s that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, 256-byte payloads in ascending
-  order inside `0x26000..0xF4000`; the loader's at `0x26000`, the
-  firmware's at `0x2B000`, the erased state page and record.
-- The loader builds to 8748 B at `0x26000`, and `cargo clippy --release
+  order inside `0x01000..0xEA000`; the loader's at `0x01000`, the rest
+  of the old SoftDevice's pages erased, the firmware's at `0x06000`, the
+  erased state page and record.
+- The loader builds to 8.5 KiB at `0x01000`, and `cargo clippy --release
   -- -D warnings` passes in `../bark-loader`.
 - The swap, on a flash in RAM with the board's layout
   (`cargo test -p bark-image` in the host workspace): a staged image is
@@ -119,8 +120,9 @@ Verified on the host:
 
 Unverified, in the order they will fail if wrong:
 
-- The bootloader accepts the UF2 with the loader and jumps to it at
-  `0x26000`, and the loader jumps to the firmware at `0x2B000`.
+- The loader jumps to the firmware at `0x06000`. The bootloader's jump
+  to the loader at `0x01000` was seen on f4f5 on 2026-11-06, with the
+  firmware still at `0x2B000` (`docs/softdevice-2026-11-05.md`).
 - The bootloader writes a UF2 block of `0xFF` bytes as an erased page,
   so that a copy clears a swap asked for before it (Build and package).
 - The loader's write protection: after the jump, an erase of its pages
@@ -214,8 +216,9 @@ cargo-binutils is needed.
 
 ## Flash layout
 
-The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6): it
-jumps to `0x26000`. There sits a loader of our own, `../bark-loader`,
+The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6). With
+the SoftDevice it came with erased, it jumps to `0x01000`, the MBR's end
+(roadmap D129, `docs/softdevice-2026-11-05.md`). There sits a loader of our own, `../bark-loader`,
 which starts the firmware from the slot above it and can swap in a
 staged image (Updates, below; roadmap D79). One table,
 `bark-image/src/layout.rs`, gives every region; the build scripts of the
@@ -226,13 +229,13 @@ Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
 | Region | Start | Size | Why |
 |---|---|---|---|
 | MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
-| SoftDevice S140 6.1.1 | `0x01000` | 148 KiB | kept, never enabled; without it the bootloader starts the application at `0x01000`, not `0x26000` (`docs/softdevice-2026-11-05.md`) |
-| loader | `0x26000` | 16 KiB, 4 pages | where the bootloader jumps; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field |
-| loader state | `0x2A000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 354 of its 1024) |
-| firmware, running | `0x2B000` | 352 KiB, 88 pages | what is left once the loader, its state and the staging have theirs, halved: 2.1 times today's 167 KiB node image, 1.44 times the 250 kB the update note plans for once BLE and the application are in |
-| firmware, staged | `0x83000` | 356 KiB, 89 pages | one page larger than the running slot, which embassy-boot's swap needs |
-| staged image's record | `0xDC000` | 4 KiB | its header, and the loader's word that it matched it |
-| coded pieces | `0xDD000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
+| loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 394 of its 1024) |
+| firmware, running | `0x06000` | 392 KiB, 98 pages | what is left once the loader, its state, the staging and the mailbox have theirs, halved: 40 KiB more than the 351 368 B node image of 2026-11-05 |
+| firmware, staged | `0x68000` | 396 KiB, 99 pages | one page larger than the running slot, which embassy-boot's swap needs |
+| staged image's record | `0xCB000` | 4 KiB | its header, and the loader's word that it matched it; below `0xEA000`, where the bootloader's drive stops writing |
+| coded pieces | `0xCC000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| mailbox | `0xE2000` | 68 KiB, 17 pages | its state, then a ring of 16 pages, 256 items (`docs/app-layer-2026-11-05.md`, section 5); unused until the mailbox is built |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
@@ -269,7 +272,7 @@ cargo build --release && scripts/uf2.py --loader ../bark-loader/target/thumbv7em
 Both also write the loader state page and the record as erased, so a copy
 always boots the copied firmware, even over a swap asked for and not yet
 made. The firmware alone on a board without the loader does not start:
-the bootloader jumps to `0x26000`, which then holds an old image or nothing. `scripts/uf2.py
+the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevice or nothing. `scripts/uf2.py
 --check target/bark.uf2` validates a UF2 and prints its block count and
 address ranges.
 
@@ -290,7 +293,9 @@ build does not rebuild by itself: `cargo clean` first.
 2. Double-tap the top-left button, within about half a second (the
    bootloader waits 500 ms after a pin reset for the second one). The
    bootloader stays resident and a USB drive named `TECHOBOOT` appears. `INFO_UF2.TXT` on it reports the
-   bootloader and SoftDevice versions; expect bootloader 0.6.1, S140 6.1.1.
+   bootloader and SoftDevice versions: bootloader 0.6.1, and
+   `SoftDevice: not found` once the board has had the loader at `0x01000`
+   (S140 6.1.1 before that).
    A board running this firmware takes the same step from the serial
    port, without the button: `stty -F /dev/ttyACM0 1200` (its port by
    ID is `/dev/serial/by-id/*bark*`) resets it into the bootloader with
@@ -311,6 +316,17 @@ build does not rebuild by itself: `cargo clean` first.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
+
+A board of the layout before 2026-11-06, with its loader at `0x26000` above
+the SoftDevice, takes `bark.uf2`, the UF2 built with `--loader`, once:
+enter its drive by a double tap or by the 1200-baud touch, which its
+firmware has as well, and copy it. The copy puts the loader at `0x01000`
+and erases the rest of the SoftDevice, and from then on the bootloader
+starts the loader there and reports `SoftDevice: not found`. `bark-fw.uf2`
+alone is not for such a board: it leaves the SoftDevice's magic number
+in place, so the bootloader still jumps to `0x26000`, where the new
+firmware's bytes now lie, and the board does not start; a double tap
+and `bark.uf2` put it right.
 
 ## Updates
 
@@ -361,18 +377,17 @@ swap.
    page once each copy is whole, so a power cut anywhere is taken up from
    the copy it stopped (embassy-boot's documentation of `prepare_boot`,
    "SWAPPING" and "REVERTING", read at version 0.7.0). A swap is two
-   copies of each of the 88 pages, an erase of 85 ms and 1024 word writes
-   of 41 µs each (nRF52840 Product Specification, NVMC), 22 s; a swap back
+   copies of each of the 98 pages, an erase of 85 ms and 1024 word writes
+   of 41 µs each (nRF52840 Product Specification, NVMC), 25 s; a swap back
    as long.
 4. On those boots it starts the watchdog first, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
-5. It write-protects `0x00000..0x2A000` (the MBR, the SoftDevice and
-   itself) and `0xF4000..0x100000` (the bootloader, its settings and the
+5. It write-protects `0x00000..0x05000` (the MBR and itself) and `0xF4000..0x100000` (the bootloader, its settings and the
    MBR's parameters) through two ACL regions, until the next reset
    (Product Specification, ACL).
-6. It jumps to the firmware at `0x2B000`.
+6. It jumps to the firmware at `0x06000`.
 
 **The firmware** confirms itself once its core is set up and its radio
 is up (`update::started`), and from then on feeds the watchdog twice a
@@ -412,7 +427,7 @@ would confirm, `hang` spins there with everything else stopped; and
 protection must stop with a bus fault (should it get through, the board's
 bootloader finds nothing to start and waits for a UF2, so the test costs
 at most a copy). Every image logs the two protected regions as the ACL
-reads them back, `update: acl 0 start=0x0 len=0x2a000 write=Disable`
+reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
 ## Display

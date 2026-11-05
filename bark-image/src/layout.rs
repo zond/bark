@@ -4,20 +4,20 @@
 //!
 //! Flash, 1 MiB in 4 KiB pages (nRF52840 Product Specification, Memory and
 //! NVMC: a page is the erase unit). What the board's bootloader fixes
-//! comes from its own linker script and the S140 6.1.1 SoftDevice
-//! specification (roadmap D6); what lies between is ours, laid out in
-//! `docs/mesh-update-2026-10-25.md`, "Flash layout":
+//! comes from its own source (roadmap D6, D129); what lies between is
+//! ours, laid out in `docs/mesh-update-2026-10-25.md`, "Flash layout", and
+//! `docs/softdevice-2026-11-05.md`:
 //!
 //! | Region | Holds |
 //! |---|---|
 //! | `0x00000`–`0x01000` | MBR |
-//! | `0x01000`–`0x26000` | SoftDevice S140 6.1.1, kept, never enabled |
 //! | [`LOADER`] | our loader, where the bootloader jumps |
 //! | [`STATE`] | the loader's state: swap requested, progress, confirmed |
 //! | [`ACTIVE`] | the running image |
 //! | [`DFU`] | the staged image, one page larger than [`ACTIVE`] |
 //! | [`RECORD`] | the staged image's header, which the loader checks |
 //! | [`PIECES`] | coded pieces of an update arriving over the mesh |
+//! | [`MAILBOX`] | the mailbox's state and its ring (`docs/app-layer-2026-11-05.md`, section 5) |
 //! | [`STORE`] | the node's stored state (roadmap D73) |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
 
@@ -47,11 +47,21 @@ impl Region {
     }
 }
 
-/// Where the board's bootloader jumps: the first page above the
-/// SoftDevice, the end address its information structure gives; with no
-/// SoftDevice it jumps to the MBR's end instead
-/// (`docs/softdevice-2026-11-05.md`).
-pub const APPLICATION_START: u32 = 0x26000;
+/// Where the board's bootloader jumps when no SoftDevice is present: the
+/// MBR's end (`docs/softdevice-2026-11-05.md`). A UF2 that writes the
+/// loader here also erases what is left of the SoftDevice up to
+/// [`SOFTDEVICE_END`], and the loader's word at [`SOFTDEVICE_MAGIC_AT`]
+/// must not be [`SOFTDEVICE_MAGIC`], or the bootloader takes it for one.
+pub const APPLICATION_START: u32 = 0x1000;
+
+/// The end of the S140 6.1.1 SoftDevice the boards came with.
+pub const SOFTDEVICE_END: u32 = 0x26000;
+
+/// Where the SoftDevice's information structure keeps its magic number.
+pub const SOFTDEVICE_MAGIC_AT: u32 = 0x3004;
+
+/// The magic number the bootloader looks for there.
+pub const SOFTDEVICE_MAGIC: u32 = 0x51B1_E5DB;
 
 /// The first page of the board's bootloader, above everything of ours.
 pub const BOOTLOADER_START: u32 = 0xF4000;
@@ -70,6 +80,11 @@ const LOADER_PAGES: u32 = 4;
 /// node gathers at once (the note, "The code").
 const STAGING_PAGES: u32 = 23;
 
+/// Pages for the mailbox: one for its state, 16 for its ring, 256 items
+/// of 256 bytes, eleven days at 23 a day (`docs/app-layer-2026-11-05.md`,
+/// section 5; `docs/softdevice-2026-11-05.md`, "The layout").
+const MAILBOX_PAGES: u32 = 17;
+
 /// The pages between the loader and the stored state's page.
 const SHARED_PAGES: u32 = (STORE_START - APPLICATION_START) / PAGE;
 
@@ -77,10 +92,9 @@ const SHARED_PAGES: u32 = (STORE_START - APPLICATION_START) / PAGE;
 /// staging have theirs, split between the running image and the staged
 /// one, which needs a page more (embassy-boot, `BootLoader::new`: "The
 /// dfu partition must be at least PAGE_SIZE bigger than the active
-/// partition"). 88 pages, 352 KiB: 2.1 times the image of 2026-10-25,
-/// 1.44 times the 250 kB the note plans for once BLE and the application
-/// are in.
-const ACTIVE_PAGES: u32 = (SHARED_PAGES - LOADER_PAGES - 1 - STAGING_PAGES - 1) / 2;
+/// partition"). 98 pages, 392 KiB: 40 KiB more than the 351 368 bytes of
+/// the node image of 2026-11-05.
+const ACTIVE_PAGES: u32 = (SHARED_PAGES - LOADER_PAGES - 1 - STAGING_PAGES - MAILBOX_PAGES - 1) / 2;
 
 const STORE_START: u32 = BOOTLOADER_START - PAGE;
 
@@ -98,12 +112,14 @@ pub const RECORD: Region = Region::pages_from(DFU.end(), 1);
 /// Coded pieces of an update arriving over the mesh; unused until the
 /// transport exists.
 pub const PIECES: Region = Region::pages_from(RECORD.end(), STAGING_PAGES - 1);
+/// The mailbox: its state page, then its ring.
+pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_PAGES);
 /// The node's stored state, one page (roadmap D73).
 pub const STORE: Region = Region::pages_from(STORE_START, 1);
 
 /// What the loader write-protects before it jumps (nRF52840 Product
-/// Specification, ACL): the MBR, the SoftDevice and itself, from the
-/// bottom of flash, so that a faulty image cannot erase what boots it.
+/// Specification, ACL): the MBR and itself, from the bottom of flash, so
+/// that a faulty image cannot erase what boots it.
 pub const PROTECT_LOW: Region = Region {
     start: 0,
     len: LOADER.end(),
@@ -148,7 +164,10 @@ pub const RAM: Region = Region {
 // where D73 put it, and each protected region is within what the ACL takes:
 // page-aligned, and at most half the flash (Product Specification, ACL).
 const _: () = {
-    assert!(PIECES.end() == STORE.start);
+    assert!(MAILBOX.end() == STORE.start);
+    // Every UF2 writes the record erased, and the bootloader's drive writes
+    // only below 0xEA000 (`docs/softdevice-2026-11-05.md`).
+    assert!(RECORD.end() <= 0xEA000);
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(DFU.len == ACTIVE.len + PAGE);
@@ -203,6 +222,7 @@ pub fn write_memory_x(out: &mut impl core::fmt::Write, image: Image) -> core::fm
         ("__bootloader_dfu", DFU),
         ("__bark_record", RECORD),
         ("__bark_pieces", PIECES),
+        ("__bark_mailbox", MAILBOX),
         ("__bark_store", STORE),
     ];
     for (name, r) in symbols {
@@ -226,31 +246,38 @@ mod tests {
         assert_eq!(
             LOADER,
             Region {
-                start: 0x26000,
+                start: 0x1000,
                 len: 0x4000
             }
         );
-        assert_eq!(STATE.start, 0x2A000);
+        assert_eq!(STATE.start, 0x5000);
         assert_eq!(
             ACTIVE,
             Region {
-                start: 0x2B000,
-                len: 88 * PAGE
+                start: 0x6000,
+                len: 98 * PAGE
             }
         );
         assert_eq!(
             DFU,
             Region {
-                start: 0x83000,
-                len: 89 * PAGE
+                start: 0x68000,
+                len: 99 * PAGE
             }
         );
-        assert_eq!(RECORD.start, 0xDC000);
+        assert_eq!(RECORD.start, 0xCB000);
         assert_eq!(
             PIECES,
             Region {
-                start: 0xDD000,
+                start: 0xCC000,
                 len: 22 * PAGE
+            }
+        );
+        assert_eq!(
+            MAILBOX,
+            Region {
+                start: 0xE2000,
+                len: 17 * PAGE
             }
         );
         assert_eq!(STORE.start, 0xF3000);
@@ -258,12 +285,12 @@ mod tests {
 
     #[test]
     fn the_regions_follow_each_other() {
-        let order = [LOADER, STATE, ACTIVE, DFU, RECORD, PIECES, STORE];
+        let order = [LOADER, STATE, ACTIVE, DFU, RECORD, PIECES, MAILBOX, STORE];
         for pair in order.windows(2) {
             assert_eq!(pair[0].end(), pair[1].start);
         }
         assert_eq!(order[0].start, APPLICATION_START);
-        assert_eq!(order[6].end(), BOOTLOADER_START);
+        assert_eq!(order[7].end(), BOOTLOADER_START);
         for r in order {
             assert_eq!(r.start % PAGE, 0);
             assert_eq!(r.len % PAGE, 0);
@@ -274,12 +301,12 @@ mod tests {
     fn the_firmware_script_names_its_slot() {
         let mut s = String::new();
         write_memory_x(&mut s, Image::Firmware).unwrap();
-        assert!(s.contains("FLASH   : ORIGIN = 0x0002b000, LENGTH = 0x58000"));
-        assert!(s.contains("__bootloader_state_start = 0x0002a000;"));
+        assert!(s.contains("FLASH   : ORIGIN = 0x00006000, LENGTH = 0x62000"));
+        assert!(s.contains("__bootloader_state_start = 0x00005000;"));
         assert!(s.contains("_panic_dump_start"));
         let mut l = String::new();
         write_memory_x(&mut l, Image::Loader).unwrap();
-        assert!(l.contains("FLASH   : ORIGIN = 0x00026000, LENGTH = 0x4000"));
+        assert!(l.contains("FLASH   : ORIGIN = 0x00001000, LENGTH = 0x4000"));
         assert!(!l.contains("PANDUMP"));
     }
 }

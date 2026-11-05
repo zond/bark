@@ -56,8 +56,15 @@ FLASH_ERASED = 0xFF
 # keeps under itself for the application's data, which its drive will not
 # write: a file with a block there never completes
 # (docs/softdevice-2026-11-05.md).
-WINDOW_START = 0x26000
+WINDOW_START = 0x1000
 WINDOW_END = 0xEA000
+
+# The SoftDevice the boards came with, which a UF2 with the loader erases
+# whole; the bootloader takes the flash for a SoftDevice when its magic
+# number is at 0x3004 (bark-image/src/layout.rs, SOFTDEVICE_*).
+SOFTDEVICE_END = 0x26000
+SOFTDEVICE_MAGIC_AT = 0x3004
+SOFTDEVICE_MAGIC = 0x51B1E5DB
 
 
 def check_elf(elf: bytes) -> None:
@@ -177,6 +184,15 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
     firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
     payloads += blocks(start, firmware)
     lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
+    if loader_elf is not None:
+        written = {addr for addr, _ in payloads}
+        erased = [a for a in range(WINDOW_START, SOFTDEVICE_END, UF2_PAYLOAD) if a not in written]
+        payloads += [(a, bytes([FLASH_ERASED]) * UF2_PAYLOAD) for a in erased]
+        lines.append(f"the rest of {WINDOW_START:#x}..{SOFTDEVICE_END:#x}: {len(erased) * UF2_PAYLOAD} bytes, erased")
+        at = dict(payloads)[SOFTDEVICE_MAGIC_AT & ~(UF2_PAYLOAD - 1)]
+        (word,) = struct.unpack_from("<I", at, SOFTDEVICE_MAGIC_AT % UF2_PAYLOAD)
+        if word == SOFTDEVICE_MAGIC:
+            sys.exit(f"the word at {SOFTDEVICE_MAGIC_AT:#x} is the SoftDevice's magic number")
     return to_uf2(sorted(payloads)), lines
 
 

@@ -1,8 +1,8 @@
 # The SoftDevice's pages (2026-11-05)
 
 **Status:** read from the board's bootloader, its source and its binary;
-the bench test below is to run on board f4f5. The flash layout does not
-change until it passes.
+the bench test below passed on board f4f5 on 2026-11-06, and the layout
+moved as the last section says (roadmap D131).
 
 ## The question
 
@@ -163,7 +163,24 @@ pads recovers that, flashing the board maker's hex. The reading above
 says it cannot happen, since the MBR goes to the bootloader by the UICR
 address; step 1 is where it would show, before anything else is moved.
 
-## The layout if the test passes
+**Seen on f4f5, 2026-11-06.** Step 1: the drive came back by itself
+within 11 s, `INFO_UF2.TXT` reading `SoftDevice: not found`; no serial
+port, no firmware. Step 2: the firmware booted, its serial port up with
+its `boot:` line and the driver's lines every 10 s, and the 1200-baud
+touch gave the drive again, still `SoftDevice: not found`. The loader's
+`update: acl` lines are printed before USB is up, as every early line
+is, and were not seen; the boot itself shows the loader at `0x1000` ran,
+since without a SoftDevice the bootloader starts nothing else.
+
+**Recovery** of a board in any of these states is a double tap and a
+copy: of `CURRENT.UF2` saved from its drive before, which restores
+`0x1000..0xEA000` as it was, or of a UF2 of the SoftDevice from the
+board maker's hex with the loader and firmware, as step 3. A board whose
+bootloader itself is lost is recovered only through its SWD pads, by
+flashing the board maker's hex, which holds the MBR, the SoftDevice, the
+bootloader and its UICR words.
+
+## The layout
 
 The loader at `0x1000`, the application region from there to the stored
 state's page: 242 pages instead of 205. The loader, its state, the
@@ -179,7 +196,7 @@ staged image's record and the 22 pages of pieces stay as they are; the
 The node image is 351 368 bytes today in a slot of 360 448: 9 KB free,
 and the mailbox's code is estimated at 8 KB of it
 (`docs/app-layer-2026-11-05.md`, "Code"). A leaves no room for anything
-after the mailbox; B leaves a ring that holds five days. C is proposed:
+after the mailbox; B leaves a ring that holds five days. C is taken:
 40 KiB more for each image, and a ring that holds eleven days of a busy
 person's mail.
 
@@ -196,4 +213,9 @@ person's mail.
 | stored state | `0xF3000` | 1 |
 | bootloader and the rest | `0xF4000` | as today |
 
-The loader then write-protects `0x0..0x5000`, the MBR and itself.
+The loader then write-protects `0x0..0x5000`, the MBR and itself. Each
+UF2 that carries the loader writes the whole of `0x1000..0x26000`, the
+loader, the state page, the firmware and `0xFF` where none of them lies,
+and `scripts/uf2.py` refuses to build one whose word at `0x3004` is the
+SoftDevice's magic number. A board of the old layout takes that UF2
+once (`bark-fw/README.md`, "Flash").
