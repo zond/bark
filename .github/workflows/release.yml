@@ -88,6 +88,10 @@ jobs:
             bark-fw -> target
             bark-loader -> target
 
+      # ci.yml's firmware job has this step and says why.
+      - name: Match libclang to clang
+        run: echo "LIBCLANG_PATH=$(dirname "$(readlink -f "$(command -v clang)")")/../lib" >> "$GITHUB_ENV"
+
       - run: cargo build --release
         working-directory: bark-loader
 
