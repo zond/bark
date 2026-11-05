@@ -262,9 +262,8 @@ two detections set most of it: with no wake at all it would still be
 `I_tx C / P` for its own beats, each a preamble about `C` long every
 `P`, at 32 mA (datasheet Table 3-6, the least listed for the SX1262 at
 434 MHz). The sum is least where the two are equal,
-`C = √(I_rx (rx + wake) P / I_tx)`: 238.9 ms at `P` = 60 s, the beat
-interval the cycle was first set for, and within 7 % of that from 165 to
-345 ms.
+`C = √(I_rx (rx + wake) P / I_tx)`: 238.9 ms at `P` = 60 s, and within
+7 % of that from 165 to 345 ms.
 
 Without an anchor a node's beats come every 34.6 s, where the least is
 181 ms and 238.9 ms costs 4 % more; with one they come every 225 s
@@ -389,9 +388,8 @@ Thirteen readings a second would cost every relay 1 % of what it hears;
 one a second costs a thirteenth of that. The price is fewer samples: 138
 a channel take 30 minutes, which only slows moves, and moves are meant
 to be rare ([channel moves](#channel-moves)). 138 samples give ±2.6
-points on a 10 % channel, half the difference the move rule acts on.
-In the simulator one channel a second delivers as many texts at the
-design rate and more at three times it (roadmap D86).
+points on a 10 % channel, half the difference the move rule acts on
+(roadmap D86).
 
 ### Channel at boot
 
@@ -647,8 +645,8 @@ busy, skip; else send; retune home.
 
 | | |
 |---|---|
-| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms: 0.41 ms to prepare it, standby, the frequency, the detection's parameters and its start; 2.18 ms for its 8 symbols and half a symbol of processing; 0.51 ms back to listening, the oscillator restarted with a short delay, since a detection stops it and it is restarted within a millisecond (roadmap D88) |
-| transmission | 0.71 ms to prepare and start it, 0.55 ms for its packet parameters, payload and start and 0.16 ms before the first symbol, its airtime, 0.37 ms back to listening |
+| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms from listening to listening, 2.18 ms of it the detection's 8 symbols and half a symbol of processing (roadmap D88) |
+| transmission | its airtime and 1.8 ms more, from listening to listening (roadmap D88) |
 
 *Why the reading inside the detection.* Read after it, the reading
 needs the receiver started again on the channel and four symbol
@@ -840,9 +838,8 @@ hop for four, six and eight bytes ([capacity and sizing](#capacity-and-sizing)).
 *The low bits are assumed random.* The chip's documentation promises a
 unique 64-bit device ID, not 48 random low bits. This section, and the
 heartbeat interval taken from the ID's last byte
-([heartbeat](#heartbeat)), assume they spread as random bits would; the
-bench boards' IDs are checked for structure, such as IDs sequential
-within a lot (`roadmap.md` Phase 2).
+([heartbeat](#heartbeat)), assume they spread as random bits would,
+which the bench boards are to check (`roadmap.md` Phase 2).
 
 The ID, not the position, is a node's identity: a node whose position
 changes keeps its ID ([position](#position)). Its address changes with
@@ -1328,10 +1325,7 @@ and no listen-before-talk ([regulatory limits](#regulatory-limits)), and
 the ACK is paid from the bucket like every frame. With the ACK sent at
 once a reply fails only for budget, which the receiver checks before it
 owes it; the take at the ACK makes a reply that fails all the same
-harmless. Measured in the simulator at three times the
-design rate, the two together deliver 9 to 29 points more with 10 to
-23 % less airtime, and at the design rate the same with 2 to 11 %
-less (roadmap D93).
+harmless (roadmap D93).
 
 *Why seen, not taken.* A copy that reaches a relay that has handled the
 message and holds none of it is the search crossing itself: the relay's
@@ -1527,8 +1521,7 @@ codes of their own, or they would come back together. At the long end a
 wait is a line under overload, which grows a service time with each
 sender refused and reaches minutes. Told too short a wait, a sender
 comes back early and pays a full DATA frame and an ACK to be refused
-again; the codes before these held 63 bans, 99.6 s, so a sender with
-ten minutes to wait came back six times. Told a wait rounded up to
+again. Told a wait rounded up to
 within an eighth, it comes back at most an eighth late. Steps of an
 eighth reach 89 min, more than an hour; steps of a ninth would reach
 only 44 min, and a code exact to the ban only 63 bans.
@@ -1630,15 +1623,11 @@ neighbour's cap takes one message a ban, one with free air ten in that
 time, so no one number suits both (roadmap D106).
 
 *Why 30 s.* The budget should refuse as soon as a hop is slower than
-it is at the design's rate, and never at that rate. In the city at
-the design's rate (`scenarios/dense-power.toml`, seed 1, its settled
-hour, with no budget), the gate weighed 191 183 messages: 99.6 % would
-have waited under 0.5 s, 99.9 % under 5 s, one 20 to 30 s and none
-longer (roadmap D106). 30 s is the first round figure above the
-longest, six times the 99.9th percentile. A text takes a median 8
-hops there and 15 at the 90th percentile, so the budget bounds the
-wait in relays' queues at 4 to 8 minutes, the time of the hand-overs
-aside.
+it is at the design's rate, and never at that rate: 30 s is the first
+round figure above the longest wait the gate meets at that rate in the
+simulated city. A text takes 8 to 15 hops there, so the budget bounds
+the wait in relays' queues at 4 to 8 minutes, the time of the
+hand-overs aside (roadmap D106).
 
 *What it costs.* Messages for one next hop that arrive faster than it
 takes them, the last no further travelled, are not all held: the ones
@@ -1727,11 +1716,8 @@ regular room.
 
 *Why the gate does not lock up.* A send queue of one place per relay,
 which held whatever arrived first, locked up under crossing traffic
-once relays held messages for each other: two flows met head on in a
-line of relays delivered 39 to 44 of 91 to 93 texts against 85 to 89,
-and a mesh where everyone sent at once 68 to 89 of 98 to 100 against
-98 to 99 (roadmap D29). The gate differs in the two ways that argument
-needs: it bars one next hop, not the relay, so a message for any other
+once relays held messages for each other (roadmap D29). The gate
+differs in the two ways the argument above needs: it bars one next hop, not the relay, so a message for any other
 way still enters; and a message with a higher count passes it, so the
 most travelled message always finds room.
 
@@ -2698,9 +2684,7 @@ in, the relay's own GPS settles then, a fixed node by its first fix
 within a search's limit and a carried one by four hours still
 ([position](#position)). And a check of the anchor after a move of
 0.67 of the way to it, which the anchor missed twice makes a rotation or
-two later ([relay choice](#relay-choice)); measured with a fix at each
-anchor change, the check never fired, since the only fix came at the
-choice (roadmap D80, D91). Indoors the L76K, which acquires only 18 dB
+two later ([relay choice](#relay-choice)) (roadmap D80, D91). Indoors the L76K, which acquires only 18 dB
 below the open sky, mostly finds nothing, and a search before each beat
 would hold it on at 29 mA, 1.2 days on the battery (roadmap D80).
 
@@ -2824,19 +2808,10 @@ second a rotation, and receives duty-cycled between
 What it listens besides, checking its anchor after the dark, depends on
 how often it is out of reach (roadmap D47, D48, D50, D58).
 
-What a sleepy node with an anchor draws, in S4 at the design rate
-(`scenarios/s4-capacity.toml`, roadmap D80, D91, D92):
-
-| | mean current |
-|---|---|
-| listening: its windows, its anchor's heartbeats, checks | 0.41 mA |
-| receiving duty-cycled | 0.12 mA |
-| transmitting: its beats and its own messages | 0.005 mA |
-| GPS standby ([beats](#beats)) | 0.020 mA |
-| GPS searches | none with an anchor (roadmap D91); without one at most 0.054 mA, one that finds nothing in 9 h |
-| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.61 mA, 58 days** |
-
-The microcontroller is not counted.
+A sleepy node with an anchor draws 0.56 mA at the design rate in the
+simulator, three quarters of it listening, 63 days on the 850 mAh
+battery; without an anchor at most 0.61 mA, 58 days. The
+microcontroller is not counted (roadmap D92).
 
 **Outside the windows.** Two more kinds of delivery go outside the
 windows, after the deliveries above and one at a time.
@@ -3173,9 +3148,7 @@ costs a block, 1.28 ms.
 
 From the first node planted, any change to what a field of DATA or the
 ACK means, not only to where it is, takes a new format: an old node
-would read the new meaning as the old. Before that, format 1 was
-changed in place twice, for the ACK's wait (roadmap D109) and to drop a
-byte of DATA no node read (roadmap D113).
+would read the new meaning as the old.
 
 A heartbeat's third byte is its **flags**. Each says one thing about the
 sender and is set on its own:
@@ -3352,8 +3325,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with a budget per hop on the wait a queued message has ([send queue](#send-queue)), bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | spec read-through, after roadmap D106 |
-| O21 | The dense city over many seeds on main as it stands, D102 to D106 together, since every storm and overload result so far is from one to three seeds (`dense-power.toml`) | simulator, after D106 |
+| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with a budget per hop on the wait a queued message has ([send queue](#send-queue)), bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | with the app, before step 6 |
 
 ---
 
