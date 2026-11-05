@@ -27,8 +27,9 @@ use crate::tables::fixed::FixedVec;
 use crate::tables::{attempt_span, retry_waits};
 use crate::time::{Duration, Instant};
 
-/// Table capacity (spec "Heard table": ≈80 sleepy nodes per relay expected
-/// at indoor density with 10 % adoption, 400 at 50 %).
+/// Table capacity (spec "Heard table"): three times the ≈80 sleepy nodes
+/// per relay expected at indoor density with 10 % adoption; at 50 %, ≈400,
+/// a full table does no harm.
 pub const HEARD: usize = 256;
 
 /// The longest interval between two heartbeats of a sleepy node: half the

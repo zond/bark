@@ -885,7 +885,7 @@ from the frames they exchange.
 
 *Why two rotations for an anchorless entry.* 13 beats, one on each
 channel, take at most 13 anchorless beat periods, so two rotations take
-26, 1200 s, and the lag is 1.0 s ([heartbeat](#heartbeat)). Two, because
+26, 1200 s, and a heartbeat's lag adds at most 872.8 ms ([heartbeat](#heartbeat)). Two, because
 a listening receiver loses about one beat in ten (roadmap D47): with one
 rotation a live neighbour, perhaps the only way on where there is no
 relay, would drop out every tenth rotation, for 13 minutes; with two,
@@ -941,7 +941,7 @@ the message and its ACKs were lost, or it could not afford them
 ([duty cycle cap](#duty-cycle-cap)). A receiver silent for want of reply
 budget, a siege having spent its reserve ([duty cycle cap](#duty-cycle-cap)),
 answers again once its bucket has refilled what a sender's retries cost
-it. The retrying takes at least 2.41 s: the two retry waits, 311 +
+it. The retrying takes at most 2.41 s: the two retry waits, 311 +
 622 ms, and two more attempts, each up to 500 ms of listen-before-talk,
 a 138.6 ms full frame and the 100 ms ACK timeout ([hand-over](#hand-over));
 the bucket refills 9.83 % × 2.41 s = 237 ms meanwhile, 13 refusals.
@@ -2725,9 +2725,10 @@ holder for more nodes than its table keeps still sends each its mail
 after each beat, and a full table does not leave the nodes it has no
 place for without their mail until it expires (roadmap D61).
 
-*Why that size.* 256 covers ≈80 sleepy nodes per relay expected at
-indoor density in Kyiv with 10 % adoption, 400 at 50 %
-([capacity and sizing](#capacity-and-sizing)).
+*Why that size.* 256 is three times the ≈80 sleepy nodes per relay
+expected at indoor density in Kyiv with 10 % adoption
+([capacity and sizing](#capacity-and-sizing)); at 50 %, ≈400, a full
+table does no harm (above).
 
 ### Delivery
 
@@ -3037,8 +3038,8 @@ Rooftop relays hear ≈3 km ([physical layer](#physical-layer)), so a
 collision domain, the area within which transmissions interfere, is
 ≈28 km² with ≈270 relays, ≈14 domains across the built-up city.
 
-One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
-listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
+One 125 kHz channel at SF5 carries 1.95 kB/s raw (15.6 kbps) and
+≈680 B/s with listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
 takes ≈0.72 s of channel time: per hop a 128-byte DATA packet (73.3 ms)
 and its ACK (17.0 ms).
 
@@ -3046,16 +3047,17 @@ and its ACK (17.0 ms).
 |---|---|---|---|---|
 | Single channel, 60 s heartbeats | 6% | 7 kB/s | 7 | 2 |
 | 7-colour fixed grid, heartbeats on all colours | 12–15% | 35 kB/s | 35 | 10 |
-| **13 channels, measured selection, rotating heartbeat (this design)** | **≈3.0%** | **≈80 kB/s** | **≈73** | **≈21** |
+| **13 channels, measured selection, rotating heartbeat (this design)** | **≈3.0%** | **≈80 kB/s** | **≈80** | **≈23** |
 
 These are orders of magnitude; the hearing radius and hop count are each
 uncertain by 2×. The table assumes a text crosses the city. The city
 centre is the hot spot, and the per-relay 10% cap
 ([duty cycle cap](#duty-cycle-cap)) binds there first. The heartbeat
 load is a domain's 270 relays' heartbeats, 14.4 ms each, on the
-channels they visit. The design rate used elsewhere is 23 texts per
-user per day ([delivery queue](#delivery-queue)); within this table's
-uncertainty it and the 21 here are one figure.
+channels they visit. This design's row is 14 domains of 13 channels,
+each 35 % usable less its 3 % of heartbeats, at 0.72 s a text:
+14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, and over a day 23 for each of
+300 000 users, the **design rate** the rest of this document uses.
 
 Sleepy nodes' beats cost what [beats](#beats) lists, 230 ms an hour
 each, and relays nothing for them. Summed over the domain's 20 000
@@ -3088,7 +3090,7 @@ authenticated. Any node in radio range, by a bug or on purpose, can
 forge any frame and disrupt its district, within its duty cycle and
 unnoticed:
 
-- refuse in a relay's name and ban it for up to 100 s ([bans](#bans));
+- refuse in a relay's name and ban it for up to 89 min ([bans](#bans));
 - take a message in a relay's name, and the message is lost;
 - send a heartbeat in an anchor's name and send its sleepy nodes
   elsewhere ([relay choice](#relay-choice));
