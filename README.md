@@ -68,6 +68,7 @@ bark-loader/  the loader the board's bootloader starts: swaps in a staged
 bark-image/   no_std: the flash layout, the image header and the swap,
               shared by the firmware, the loader and their build scripts;
               tested on the host.
+bark-app/     Flutter Android app for the phone link; not yet encrypted.
 docs/         design notes, research, decisions.
 ```
 
