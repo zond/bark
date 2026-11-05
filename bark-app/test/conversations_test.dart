@@ -1,73 +1,77 @@
-// Grouping sent and received texts into conversations.
+// Grouping sent and received texts into conversations, one an identity.
+
+import 'dart:typed_data';
 
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/conversations.dart';
 import 'package:bark_app/link.dart';
-import 'package:bark_app/payload.dart';
 import 'package:bark_app/session.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final t0 = DateTime.utc(2026, 11, 5, 12);
   DateTime at(int min) => t0.add(Duration(minutes: min));
-  Address addr(int n, {double lat = 50}) =>
-      Address(Position.fromDegrees(lat, 30), [0, 0, 0, 0, 0, n]);
-  final olena = Contact(PersonCard(addr(1), 'O.'), 'Olena');
-  Outgoing out(Address to, String t, int min) =>
-      Outgoing(to, encodeText(t), at: at(min));
-  Received got(Address? from, String t, int min) =>
-      Received(0, encodeText(t), at(min), from: from);
+  final where = Address(Position.fromDegrees(50, 30), [0, 0, 0, 0, 0, 1]);
+  String id(int n) => hex(List.filled(32, n));
+  final olena = Contact(
+    PersonCard(List.filled(32, 1), where, 0, 'O.'),
+    'Olena',
+  );
+  final petro = Contact(PersonCard(List.filled(32, 2), where, 0, ''), 'Petro');
+  var sent = 0;
+  Outgoing out(String to, String t, int min, {OutKind kind = OutKind.text}) =>
+      Outgoing(
+        where,
+        Uint8List.fromList([sent++]),
+        at: at(min),
+        kind: kind,
+        sent: sent,
+        to: to,
+        body: t,
+      );
+  Received got(String? from, String t, int min) => Received(
+    0,
+    [sent++],
+    at(min),
+    from: from,
+    sent: sent,
+    body: from == null ? null : t,
+  );
 
-  test('one conversation a node, newest first, texts in order', () {
+  test('one conversation an identity, newest first, texts in order', () {
     final cs = conversations(
-      [olena],
-      [out(addr(1), 'hi', 0), out(addr(2), 'to a stranger', 2)],
-      [got(addr(1), 'hello', 1), got(addr(1), 'how are you', 3)],
+      [olena, petro],
+      [out(id(1), 'hi', 0), out(id(2), 'to Petro', 2)],
+      [got(id(1), 'hello', 1), got(id(1), 'how are you', 3)],
     );
-    expect(cs.map((c) => c.title), ['Olena', addr(2).toString()]);
+    expect(cs.map((c) => c.title), ['Olena', 'Petro']);
     expect(cs.first.entries.map((e) => e.text), ['hi', 'hello', 'how are you']);
     expect(cs.first.entries.map((e) => e.sent != null), [true, false, false]);
     expect(cs.first.contact, same(olena));
   });
 
-  test('a contact is its node, wherever the node has moved', () {
-    final moved = addr(1, lat: 51);
-    final cs = conversations([olena], [out(addr(1), 'before', 0)], [
-      got(moved, 'after', 1),
-    ]);
-    expect(cs.single.title, 'Olena');
-    expect(cs.single.entries.length, 2);
-    // A reply goes to the address on the contact's card.
-    expect(cs.single.address.toString(), addr(1).toString());
-  });
-
-  test('a stranger is named by the latest address, until named', () {
-    final moved = addr(2, lat: 51);
-    final texts = [got(addr(2), 'one', 0), got(moved, 'two', 1)];
-    final c = conversations([olena], [], texts).single;
-    expect(c.contact, isNull);
-    expect(c.title, moved.toString());
-    expect(c.address.toString(), moved.toString());
-    final named = Contact(PersonCard(moved, ''), 'Petro');
-    expect(conversations([olena, named], [], texts).single.title, 'Petro');
-  });
-
-  test('texts whose sender is unknown have their own conversation', () {
-    final cs = conversations([olena], [out(addr(1), 'hi', 0)], [
-      got(null, 'who?', 1),
-    ]);
-    expect(cs.first.key, isNull);
-    expect(cs.first.title, 'Sender unknown');
-    expect(cs.first.address, isNull);
-  });
+  test(
+    'acknowledgements, cards, fetches and what did not open are in none',
+    () {
+      final cs = conversations(
+        [olena],
+        [
+          out(id(1), 'hi', 0),
+          out(id(1), '', 1, kind: OutKind.ack),
+          out(id(1), '', 2, kind: OutKind.card),
+        ],
+        [got(null, 'noise', 3)],
+      );
+      expect(cs.single.entries.map((e) => e.text), ['hi']);
+    },
+  );
 
   test('at the same time, sent before received, each in its order', () {
-    final c = conversations(
-      [olena],
-      [out(addr(1), 'a', 0), out(addr(1), 'b', 0)],
-      [got(addr(1), 'c', 0), got(addr(1), 'd', 0)],
-    ).single;
+    final c = conversations([olena], [out(id(1), 'a', 0), out(id(1), 'b', 0)], [
+      got(id(1), 'c', 0),
+      got(id(1), 'd', 0),
+    ]).single;
     expect(c.entries.map((e) => e.text), ['a', 'b', 'c', 'd']);
   });
 
@@ -75,6 +79,11 @@ void main() {
     final c = thread(olena.key, [olena], [], []);
     expect(c.entries, isEmpty);
     expect(c.title, 'Olena');
-    expect(c.address.toString(), addr(1).toString());
+  });
+
+  test('a removed contact\'s texts stay, under a plain title', () {
+    final c = conversations([], [out(id(1), 'hi', 0)], []).single;
+    expect(c.contact, isNull);
+    expect(c.title, 'Removed contact');
   });
 }

@@ -54,6 +54,18 @@ class ConversationsScreen extends StatelessWidget {
       body: ListView(
         children: [
           NoticeCard(app),
+          if (!app.me.backedUp)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.key),
+                title: const Text('Write down your 12 backup words'),
+                subtitle: const Text(
+                  'They are your identity; without them a lost phone '
+                  'loses it. In Settings.',
+                ),
+                onTap: () => _open(context, SettingsScreen(app)),
+              ),
+            ),
           _connection(context),
           if (list.isEmpty)
             const Padding(

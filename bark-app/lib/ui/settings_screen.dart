@@ -1,11 +1,12 @@
-// Settings: the node to connect to, the person's name, the node's map
-// point, and the fake node.
+// Settings: the node to connect to, the person's name, their home node,
+// their backup words, the node's map point, and the fake node.
 
 import 'package:flutter/material.dart';
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
     show GeolocatorPlatform, LocationPermission;
 
 import '../app.dart';
+import '../app_layer.dart';
 import '../ble_link.dart';
 import '../link.dart';
 import 'common.dart';
@@ -81,23 +82,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _heading('My name'),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(
-              app.contacts.myName.isEmpty ? 'not set' : app.contacts.myName,
-            ),
+            title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
             subtitle: const Text('On your card, for others to see'),
             trailing: IconButton(
               tooltip: 'Change',
               icon: const Icon(Icons.edit),
               onPressed: () async {
-                final n = await askText(
-                  context,
-                  'My name',
-                  app.contacts.myName,
-                );
-                if (n != null) await app.contacts.setMyName(n);
+                final n = await askText(context, 'My name', app.me.name);
+                if (n != null) await app.me.setName(n);
               },
             ),
           ),
+          ..._home(),
+          ..._backup(),
           ..._mapPoint(),
         ],
       ),
@@ -168,6 +165,140 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
       ],
     ];
+  }
+
+  List<Widget> _home() {
+    final s = app.session;
+    final home = app.me.home;
+    final here = s.address;
+    final st = s.status;
+    final isHome = here != null && home?.toString() == here.toString();
+    return [
+      _heading('Home node'),
+      Text(
+        home == null
+            ? 'No home node: your card carries the address of the node you '
+                  'are connected to, which changes when it moves.'
+            : 'Your home node is at $home. Your card carries its address, '
+                  'and the app fetches your mail from it when you are '
+                  'elsewhere.',
+      ),
+      if (here != null && !isHome && st != null && (st.sleepy || st.carried))
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'This node is sleepy or carried, so its address changes: a home '
+            'should be a node on USB power that stays where it is.',
+          ),
+        ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        children: [
+          if (here != null && !isHome)
+            FilledButton(
+              onPressed: () => _setHome(here),
+              child: const Text('Make this node my home'),
+            ),
+          if (home != null)
+            OutlinedButton(
+              onPressed: () => _setHome(null),
+              child: const Text('No home node'),
+            ),
+          if (home != null && here != null && !isHome)
+            OutlinedButton(
+              onPressed: () async {
+                if (await app.fetchNow() && mounted) {
+                  say(context, 'Fetching your mail');
+                }
+              },
+              child: const Text('Fetch my mail'),
+            ),
+        ],
+      ),
+    ];
+  }
+
+  Future<void> _setHome(Address? a) async {
+    final n = app.contacts.list.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(a == null ? 'No home node' : 'Make this node my home'),
+        content: Text(
+          'Your card\'s address changes, and your new card goes to your '
+          '$n contacts, one message each.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Go ahead'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await app.setHome(a);
+  }
+
+  List<Widget> _backup() => [
+    _heading('Backup'),
+    Text(
+      app.me.backedUp
+          ? 'Your identity comes from 12 words. With them it can be '
+                'restored on another phone.'
+          : 'Write down these 12 words: they are your identity. Without '
+                'them, a lost phone loses it.',
+    ),
+    const SizedBox(height: 8),
+    Wrap(
+      spacing: 8,
+      children: [
+        FilledButton(
+          onPressed: () => _showWords(),
+          child: const Text('Show my words'),
+        ),
+        OutlinedButton(
+          onPressed: _restore,
+          child: const Text('Restore from words'),
+        ),
+      ],
+    ),
+  ];
+
+  Future<void> _showWords() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('My 12 words'),
+        content: SelectableText(
+          app.me.phrase.join(' '),
+          style: const TextStyle(fontSize: 18),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('I wrote them down'),
+          ),
+        ],
+      ),
+    );
+    await app.me.setBackedUp();
+  }
+
+  Future<void> _restore() async {
+    final w = await askText(context, 'Your 12 words', '');
+    if (w == null || w.isEmpty) return;
+    final seed = seedOfPhrase(w);
+    if (seed == null) {
+      if (mounted) say(context, 'Those are not 12 words of a backup');
+      return;
+    }
+    await app.me.restore(seed);
+    if (mounted) say(context, 'Identity restored');
   }
 
   List<Widget> _mapPoint() {

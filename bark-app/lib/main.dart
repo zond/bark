@@ -2,12 +2,15 @@
 // settings, and a debug screen with everything the link says.
 
 import 'package:flutter/material.dart';
+import 'package:sodium/sodium.dart';
 
 import 'app.dart';
 import 'ui/conversations_screen.dart';
 
-void main() {
-  final app = AppModel.onPhone()..load();
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final app = AppModel.onPhone(await SodiumInit.init());
+  await app.load();
   runApp(BarkApp(app));
 }
 
