@@ -11,7 +11,7 @@
 
 use core::mem::MaybeUninit;
 
-use bark_driver::{App, Driver, Outgoing};
+use bark_driver::{App, Driver, Outgoing, Request};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
 use embassy_time::{Duration, Timer};
@@ -53,22 +53,17 @@ impl App for LogApp<'_> {
         Some(self.battery.read().await)
     }
 
+    fn request(&mut self) -> Option<Request> {
+        None
+    }
+
     fn take(&mut self, _: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         None
     }
 
     fn message(&mut self, event: &AppEvent) {
         match event {
-            AppEvent::Message {
-                msg_id,
-                len,
-                payload,
-            } => log::info!(
-                "message id={:08x} len={} bytes={:02x?}",
-                msg_id.0,
-                len,
-                &payload[..*len as usize]
-            ),
+            AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
             AppEvent::GivenBack { msg_id, retry_at } => {
@@ -231,5 +226,17 @@ impl Core for Static {
 
     fn accepts_send(&self, now: Instant) -> bool {
         self.0.accepts_send(now)
+    }
+
+    fn inbox(&self) -> Option<(bark_proto::MsgId, &[u8])> {
+        self.0.inbox()
+    }
+
+    fn inbox_len(&self) -> usize {
+        self.0.inbox_len()
+    }
+
+    fn confirm(&mut self, msg_id: bark_proto::MsgId) -> bool {
+        self.0.confirm(msg_id)
     }
 }

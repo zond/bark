@@ -213,3 +213,8 @@ fn every_value_fits_its_pdu() {
     assert_eq!(Status::LEN, 14);
     assert_eq!(Node::LEN, 11);
 }
+
+#[test]
+fn the_empty_status_is_the_default() {
+    assert_eq!(Status::EMPTY, Status::default());
+}

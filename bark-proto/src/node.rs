@@ -8,7 +8,7 @@
 //! `node/transfer.rs`.
 
 use crate::event::{Action, Event, MAX_FRAME};
-use crate::ids::NodeId;
+use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
@@ -341,6 +341,19 @@ pub trait Core {
     /// `Send` offered while this is false is a driver bug, and the core
     /// ignores it (`docs/core-interface.md` §4).
     fn accepts_send(&self, now: Instant) -> bool;
+
+    /// The oldest message in the inbox, the messages for this node's
+    /// application that it has not confirmed yet: its ID and payload
+    /// (`docs/core-interface.md` §4). The driver reads it after an
+    /// `AppEvent::Message` and whenever its application asks.
+    fn inbox(&self) -> Option<(MsgId, &[u8])>;
+
+    /// Messages in the inbox.
+    fn inbox_len(&self) -> usize;
+
+    /// The application has the oldest message, `msg_id`, and the node may
+    /// forget it. Another ID changes nothing, and the answer is false.
+    fn confirm(&mut self, msg_id: MsgId) -> bool;
 }
 
 /// SplitMix64: 64 bits of state, full-period, every bit of output usable.

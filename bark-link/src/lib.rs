@@ -222,6 +222,24 @@ impl Status {
     /// Bytes in the value.
     pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1;
 
+    /// Every flag clear and every count zero: a node that has said
+    /// nothing yet.
+    pub const EMPTY: Status = Status {
+        ready: false,
+        external_power: false,
+        sleepy: false,
+        carried: false,
+        map_point: false,
+        placed: false,
+        booting: false,
+        anchorless: false,
+        relays: 0,
+        boot_left_s: 0,
+        address: Position { lat: 0, lon: 0 },
+        battery_mv: 0,
+        inbox: 0,
+    };
+
     fn flags(&self) -> u8 {
         [
             self.ready,
@@ -324,8 +342,9 @@ impl<'a> Send<'a> {
     }
 }
 
-/// Inbox, read: the oldest message the node holds for the app, as
-/// `AppEvent::Message` carries it; the value is empty when it holds none.
+/// Inbox, read: the oldest message the node holds for the app, as the
+/// core's inbox holds it (`Core::inbox`); the value is empty when it holds
+/// none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Message<'a> {
     /// Its ID, which [`Confirm`] names.

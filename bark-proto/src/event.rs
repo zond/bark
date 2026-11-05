@@ -174,7 +174,8 @@ pub enum DropReason {
     /// The node it is for did not take it within the delivery TTL (spec
     /// "Delivery queue").
     QueueExpired,
-    /// The delivery queue had no room for it (spec "Delivery queue").
+    /// The delivery queue, or for this node's application the inbox, had
+    /// no room for it (spec "Delivery queue").
     DeliveryFull,
     /// The payload is longer than a DATA frame holds (spec "Packet formats").
     PayloadTooLong,
@@ -198,14 +199,12 @@ pub enum DropReason {
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppEvent {
-    /// A message arrived for this node's application.
+    /// A message arrived for this node's application, and waits in the
+    /// inbox until the application confirms it ([`crate::Core::inbox`],
+    /// [`crate::Core::confirm`]).
     Message {
         /// Its id.
         msg_id: MsgId,
-        /// Number of valid bytes in `payload`.
-        len: u8,
-        /// Opaque payload; only `..len` is meaningful.
-        payload: [u8; MAX_FRAME],
     },
     /// The application's message, refused by the node's own gate or, a
     /// sleepy node's, by its first hop, is the application's again: the
