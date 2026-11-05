@@ -43,13 +43,14 @@ use core::fmt::Write as _;
 
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
-use embassy_futures::join::{join, join3, join5};
+#[cfg(feature = "console")]
+use embassy_futures::join::join3;
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::Instant;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
-// The logger macro constructs the input handler through this trait.
+// The input handler is constructed through this trait.
 use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 // The critical section, in both builds: it masks every interrupt but the
@@ -183,9 +184,6 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    // The console spawns nothing.
-    #[cfg(feature = "console")]
-    let _ = spawner;
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
@@ -251,7 +249,9 @@ async fn main(spawner: Spawner) {
     let hex: &'static [u8; 2 * NodeId::LEN] = SERIAL.init(node_id_hex());
     let serial = core::str::from_utf8(hex).expect("hex digits are ASCII");
 
-    // USB device with one CDC-ACM interface carrying the log.
+    // USB device with one CDC-ACM interface carrying the log. Its buffers
+    // live in a static, since the device runs in a task of its own for as
+    // long as the firmware runs.
     let driver = usb::Driver::new(board.usbd, Irqs, HardwareVbusDetect::new(Irqs));
     let mut usb_config = embassy_usb::Config::new(USB_VID, USB_PID);
     usb_config.manufacturer = Some("bark");
@@ -261,53 +261,48 @@ async fn main(spawner: Spawner) {
     // without negotiation (USB 2.0 §7.2.1).
     usb_config.max_power = 100;
     usb_config.max_packet_size_0 = USB_PACKET as u8;
-
-    // The serial port's way into the bootloader (`touch.rs`).
-    let mut touch = touch::Touch;
-    let mut config_descriptor = [0u8; 128];
-    let mut bos_descriptor = [0u8; 16];
-    let mut msos_descriptor = [0u8; 256];
-    let mut control_buf = [0u8; 64];
-    let mut cdc_state = State::new();
+    static USB: static_cell::StaticCell<UsbParts> = static_cell::StaticCell::new();
+    let UsbParts {
+        config_descriptor,
+        bos_descriptor,
+        msos_descriptor,
+        control_buf,
+        cdc_state,
+        touch,
+    } = USB.init(UsbParts {
+        config_descriptor: [0; 128],
+        bos_descriptor: [0; 16],
+        msos_descriptor: [0; 256],
+        control_buf: [0; 64],
+        cdc_state: State::new(),
+        // The serial port's way into the bootloader (`touch.rs`).
+        touch: touch::Touch,
+    });
     let mut builder = embassy_usb::Builder::new(
         driver,
         usb_config,
-        &mut config_descriptor,
-        &mut bos_descriptor,
-        &mut msos_descriptor,
-        &mut control_buf,
+        config_descriptor,
+        bos_descriptor,
+        msos_descriptor,
+        control_buf,
     );
     // Before the class, so that it sees the line coding first.
-    builder.handler(&mut touch);
-    let class = CdcAcmClass::new(&mut builder, &mut cdc_state, USB_PACKET);
-    let mut device = builder.build();
+    builder.handler(touch);
+    let class = CdcAcmClass::new(&mut builder, cdc_state, USB_PACKET);
+    spawner.spawn(usb_device(builder.build()).expect("spawned once"));
 
-    // Installs the global logger now; the returned future drains it to the
-    // host once the host asserts DTR (opens the port), and feeds what the
-    // host sends to the console.
-    let log_sink = embassy_usb_logger::with_custom_style!(
-        LOG_BUFFER,
-        log::LevelFilter::Info,
-        class,
-        |record, writer| {
-            use core::fmt::Write as _;
-            #[cfg(feature = "console")]
-            if record.target() == console::ECHO {
-                let _ = write!(writer, "> {}\r\n", record.args());
-                return;
-            }
-            let ms = Instant::now().as_millis();
-            let _ = write!(
-                writer,
-                "[{:>6}.{:03} {:<5}] {}\r\n",
-                ms / 1000,
-                ms % 1000,
-                record.level(),
-                record.args()
-            );
-        },
-        Input
-    );
+    // The global logger, installed now; its task drains it to the host
+    // once the host asserts DTR (opens the port), and feeds what the host
+    // sends to the console.
+    static LOGGER: static_cell::ConstStaticCell<Logger> =
+        static_cell::ConstStaticCell::new(Logger::with_custom_style(log_line));
+    let logger = LOGGER.take();
+    logger.with_handler(Input::new());
+    let logger: &'static Logger = logger;
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+    spawner.spawn(log_sink(logger, class).expect("spawned once"));
 
     log::info!(
         "bark-fw {} on LILYGO T-Echo, {} image version {}, id={}",
@@ -335,166 +330,273 @@ async fn main(spawner: Spawner) {
     if let Some(msg) = previous_panic {
         log::error!("previous boot panicked: {}", msg);
     }
-
-    #[cfg(feature = "console")]
-    let blink = on_usb_only(board.leds.green);
-    #[cfg(not(feature = "console"))]
-    let blink = on_usb_only(board.leds.green, mpsl);
-    #[cfg(not(feature = "console"))]
-    let phone = embassy_futures::join::join(mpsl.run(), async {
-        let parts = nrf_sdc::Peripherals::new(
-            p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
-            p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
-        );
-        ble::START.wait().await;
-        match ble::controller(parts, p.RNG, mpsl) {
-            Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
-            Err(e) => log::error!("ble: controller {:?}", e),
-        }
-    });
-    #[cfg(feature = "console")]
-    let phone = async {};
-    #[cfg(feature = "console")]
-    let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
-    // The node's flash: the stored state through the MPSL's timeslots
-    // (`store.rs`), and the update's confirmation through the NVMC driver
-    // directly, which runs once at boot before the BLE controller starts
-    // (`ble::START`).
-    #[cfg(not(feature = "console"))]
-    let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
-    // SAFETY: a second handle on the NVMC, for `update::started` alone,
-    // which writes before the controller starts and so before anything
-    // writes through the MPSL: the core asks to store only once the node
-    // runs, after `update::started`.
-    #[cfg(not(feature = "console"))]
-    let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
-        embassy_nrf::peripherals::NVMC::steal()
-    }));
-
-    #[cfg(feature = "console")]
-    let clock = clock::Clock::new(p.TIMER1);
-    #[cfg(not(feature = "console"))]
-    let clock = clock::Clock::new();
+    spawner.spawn(touch_task().expect("spawned once"));
+    spawner.spawn(watchdog(p.WDT).expect("spawned once"));
     let battery = battery::Battery::new(embassy_nrf::saadc::Saadc::new(
         p.SAADC,
         Irqs,
         battery::Battery::config(),
         [battery::Battery::channel(board.battery.adc)],
     ));
+
     #[cfg(feature = "console")]
-    let mut lines = console::Lines::new();
+    {
+        // The console keeps its one-shot structure in this task: it holds
+        // no relay, and its frame is small.
+        let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+        let clock = clock::Clock::new(p.TIMER1);
+        let mut lines = console::Lines::new();
+        let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
+        let radio_task = async {
+            let t0 = clock.now();
+            match radio::boot(
+                board.radio,
+                board.power,
+                p.SPI2,
+                Irqs,
+                radio::Thermometer::Sensor(embassy_nrf::temp::Temp::new(p.TEMP, Irqs)),
+                &clock,
+                channel,
+            )
+            .await
+            {
+                Ok(radio) => {
+                    radio_up(&radio, &clock, t0);
+                    update::started(shared);
+                    console::Console::new(radio, &clock, battery, shared)
+                        .run(&mut lines)
+                        .await;
+                }
+                // Without a radio there is nothing to measure; USB and the
+                // log keep running so the error can be read.
+                Err(e) => log::error!("radio init failed: {:?}", e),
+            }
+        };
+        let picture = boot_picture(hex);
+        // After the radio's future, which raises the switched rail first
+        // thing.
+        let shown = display::show(board.eink, p.TWISPI1, Irqs, &picture);
+        join3(on_usb_only(board.leds.green), radio_task, shown).await;
+    }
+
+    // The node: every long-lived part a task of its own, so that none
+    // passes through this task's stack frame, and this task ends here.
     #[cfg(not(feature = "console"))]
-    let (config, core, flash) = {
+    {
+        spawner.spawn(blink(board.leds.green, mpsl).expect("spawned once"));
+        spawner.spawn(mpsl_task(mpsl).expect("spawned once"));
+        let ble_parts = nrf_sdc::Peripherals::new(
+            p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+            p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+        );
+        spawner.spawn(phone(ble_parts, p.RNG, mpsl).expect("spawned once"));
+        // The node's flash: the stored state through the MPSL's timeslots
+        // (`store.rs`), and the update's confirmation through the NVMC
+        // driver directly, which runs once at boot before the BLE
+        // controller starts (`ble::START`).
+        let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
+        // SAFETY: a second handle on the NVMC, for `update::started` alone,
+        // which writes before the controller starts and so before anything
+        // writes through the MPSL: the core asks to store only once the
+        // node runs, after `update::started`.
+        let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
+            embassy_nrf::peripherals::NVMC::steal()
+        }));
         let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
         utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
-        (config, node::core(config, seed), flash)
-    };
-    // Its flash writes in a task of their own (`store.rs`).
-    #[cfg(not(feature = "console"))]
-    spawner.spawn(store::run(flash).expect("spawned once"));
-    // Its own task, so that its UART's bytes wake nothing else.
-    #[cfg(not(feature = "console"))]
-    spawner.spawn(
-        gps::run(gps::Parts {
-            uarte: p.UARTE1,
-            timer: p.TIMER2,
-            ppi0: p.PPI_CH0,
-            ppi1: p.PPI_CH1,
-            pins: board.gps,
-        })
-        .expect("spawned once"),
-    );
-    // Where the radio's self-check reads the channel at boot: the home
-    // channel if one is stored, else the console's or the first.
-    #[cfg(feature = "console")]
-    let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
-    #[cfg(not(feature = "console"))]
-    let channel = config
-        .stored
-        .map_or(bark_proto::Channel::new(0).expect("in the plan"), |s| {
-            s.home
-        });
-    let radio_task = async {
-        let t0 = clock.now();
-        match radio::boot(
-            board.radio,
-            board.power,
-            p.SPI2,
-            Irqs,
-            #[cfg(feature = "console")]
-            radio::Thermometer::Sensor(embassy_nrf::temp::Temp::new(p.TEMP, Irqs)),
-            #[cfg(not(feature = "console"))]
-            radio::Thermometer::Mpsl(mpsl),
-            &clock,
-            channel,
-        )
-        .await
-        {
-            Ok(radio) => {
-                log::info!(
-                    "radio up in {} us, tcxo {} us after {} probes, lbt reading {:?}",
-                    clock.since(t0),
-                    radio.tcxo().delay.as_micros(),
-                    radio.tcxo().probes,
-                    radio.lbt_read()
-                );
-                update::started(shared);
-                #[cfg(not(feature = "console"))]
-                ble::START.signal(());
-                #[cfg(feature = "console")]
-                console::Console::new(radio, &clock, battery, shared)
-                    .run(&mut lines)
-                    .await;
-                #[cfg(not(feature = "console"))]
-                node::run(core, radio, battery, &config, &clock).await;
-            }
-            // Without a radio there is nothing to measure; USB and the log
-            // keep running so the error can be read.
-            Err(e) => {
-                log::error!("radio init failed: {:?}", e);
-                // The phone link still comes up, so the node can be found.
-                #[cfg(not(feature = "console"))]
-                ble::START.signal(());
-            }
-        }
-    };
-
-    #[cfg(feature = "console")]
-    let picture = boot_picture(hex);
-    // After the radio's future, which raises the switched rail first thing.
-    #[cfg(feature = "console")]
-    let shown = display::show(board.eink, p.TWISPI1, Irqs, &picture);
-    #[cfg(not(feature = "console"))]
-    // A task of its own, not a future joined into this one: this task's
-    // poll is the deepest stack frame there is, and the screen's future
-    // joined here grew it past the stack beside the relay in RAM.
-    #[cfg(not(feature = "console"))]
-    let shown = {
+        let core = node::core(config, seed);
+        // Its flash writes in a task of their own (`store.rs`).
+        spawner.spawn(store::run(flash).expect("spawned once"));
+        // Its own task, so that its UART's bytes wake nothing else.
+        spawner.spawn(
+            gps::run(gps::Parts {
+                uarte: p.UARTE1,
+                timer: p.TIMER2,
+                ppi0: p.PPI_CH0,
+                ppi1: p.PPI_CH1,
+                pins: board.gps,
+            })
+            .expect("spawned once"),
+        );
+        spawner.spawn(
+            node_radio(NodeRadio {
+                radio: board.radio,
+                power: board.power,
+                spi: p.SPI2,
+                mpsl,
+                shared,
+                battery,
+                core,
+                config,
+            })
+            .expect("spawned once"),
+        );
+        // After the radio's task, which raises the switched rail first
+        // thing.
         let fixed = bark_screen::Fixed {
             id: hex,
             image: IMAGE,
             version: update::BARK_IMAGE_VERSION,
         };
-        match screen(board.eink, p.TWISPI1, fixed) {
-            Ok(task) => spawner.spawn(task),
-            Err(e) => log::error!("display: not started: {:?}", e),
-        }
-        core::future::pending::<()>()
-    };
+        spawner.spawn(screen(board.eink, p.TWISPI1, fixed).expect("spawned once"));
+    }
+}
 
-    join3(
-        join5(
-            device.run(),
-            log_sink,
-            blink,
-            radio_task,
-            update::watchdog(p.WDT),
-        ),
-        join(shown, touch::run()),
-        phone,
+/// The USB device's buffers and its two handlers, kept for as long as it
+/// runs.
+struct UsbParts {
+    config_descriptor: [u8; 128],
+    bos_descriptor: [u8; 16],
+    msos_descriptor: [u8; 256],
+    control_buf: [u8; 64],
+    cdc_state: State<'static>,
+    touch: touch::Touch,
+}
+
+type UsbDriver = usb::Driver<'static, HardwareVbusDetect>;
+type Logger = embassy_usb_logger::UsbLogger<LOG_BUFFER, Input>;
+
+/// One log line as the host reads it: the time since boot, the level and
+/// the message; in the console, the host's own command echoed.
+fn log_line(record: &log::Record<'_>, writer: &mut embassy_usb_logger::Writer<'_, LOG_BUFFER>) {
+    use core::fmt::Write as _;
+    #[cfg(feature = "console")]
+    if record.target() == console::ECHO {
+        let _ = write!(writer, "> {}\r\n", record.args());
+        return;
+    }
+    let ms = Instant::now().as_millis();
+    let _ = write!(
+        writer,
+        "[{:>6}.{:03} {:<5}] {}\r\n",
+        ms / 1000,
+        ms % 1000,
+        record.level(),
+        record.args()
+    );
+}
+
+/// The USB device.
+#[embassy_executor::task]
+async fn usb_device(mut device: embassy_usb::UsbDevice<'static, UsbDriver>) {
+    device.run().await
+}
+
+/// The log, to the host.
+#[embassy_executor::task]
+async fn log_sink(logger: &'static Logger, class: CdcAcmClass<'static, UsbDriver>) {
+    logger.create_future_from_class(class).await
+}
+
+/// The bootloader from the serial port (`touch.rs`).
+#[embassy_executor::task]
+async fn touch_task() {
+    touch::run().await
+}
+
+/// The watchdog of an image on trial (`update.rs`).
+#[embassy_executor::task]
+async fn watchdog(dog: embassy_nrf::Peri<'static, peripherals::WDT>) {
+    update::watchdog(dog).await
+}
+
+/// The radio's start, logged.
+fn radio_up(radio: &radio::Radio<'_>, clock: &clock::Clock, t0: u32) {
+    log::info!(
+        "radio up in {} us, tcxo {} us after {} probes, lbt reading {:?}",
+        clock.since(t0),
+        radio.tcxo().delay.as_micros(),
+        radio.tcxo().probes,
+        radio.lbt_read()
+    );
+}
+
+/// The LED and the crystal while on USB (`on_usb_only`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn blink(
+    pin: embassy_nrf::Peri<'static, peripherals::P1_01>,
+    mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+) {
+    on_usb_only(pin, mpsl).await
+}
+
+/// The MPSL's own work (`ble.rs`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn mpsl_task(mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>) {
+    mpsl.run().await
+}
+
+/// The phone link: the controller once the image has confirmed itself
+/// (`ble::START`), and the host and the service over it (`ble.rs`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn phone(
+    parts: nrf_sdc::Peripherals<'static>,
+    rng: embassy_nrf::Peri<'static, peripherals::RNG>,
+    mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+) {
+    ble::START.wait().await;
+    match ble::controller(parts, rng, mpsl) {
+        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
+        Err(e) => log::error!("ble: controller {:?}", e),
+    }
+}
+
+/// What the radio's task takes.
+#[cfg(not(feature = "console"))]
+struct NodeRadio {
+    radio: board::Radio,
+    power: board::Power,
+    spi: embassy_nrf::Peri<'static, peripherals::SPI2>,
+    mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+    shared: &'static update::Flash,
+    battery: battery::Battery<'static>,
+    core: &'static mut node::Role,
+    config: bark_proto::Config,
+}
+
+/// The radio and the core on it: the radio up, the image confirmed, the
+/// phone link let start, and the driver's loop (`node.rs`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn node_radio(n: NodeRadio) {
+    let clock = clock::Clock::new();
+    // Where the radio's self-check reads the channel at boot: the home
+    // channel if one is stored, else the first.
+    let channel = n
+        .config
+        .stored
+        .map_or(bark_proto::Channel::new(0).expect("in the plan"), |s| {
+            s.home
+        });
+    let t0 = clock.now();
+    match radio::boot(
+        n.radio,
+        n.power,
+        n.spi,
+        Irqs,
+        radio::Thermometer::Mpsl(n.mpsl),
+        &clock,
+        channel,
     )
-    .await;
+    .await
+    {
+        Ok(radio) => {
+            radio_up(&radio, &clock, t0);
+            update::started(n.shared);
+            ble::START.signal(());
+            node::run(n.core, radio, n.battery, &n.config, &clock).await;
+        }
+        // Without a radio USB and the log keep running so the error can be
+        // read, and the phone link still comes up, so the node can be found.
+        Err(e) => {
+            log::error!("radio init failed: {:?}", e);
+            ble::START.signal(());
+        }
+    }
 }
 
 /// The node's screen (`display::run`).
