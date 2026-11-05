@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A web of three rings and three threads, drawn as a vector so the
+     repository holds no image files. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="#FF5D4037" android:pathData="M0,0h48v48h-48z" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M24,6V42M8.4,15L39.6,33M8.4,33L39.6,15M24,12A12,12 0,1 1,23.99,12M24,18A6,6 0,1 1,23.99,18" />
+</vector>
