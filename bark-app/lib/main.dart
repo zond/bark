@@ -39,7 +39,7 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  final session = Session(store: FileStore(), now: DateTime.now);
+  final session = Session(store: FileStore('bark.json'), now: DateTime.now);
   final Map<String, FoundNode> found = {};
   bool fake = false;
   FakeNode? fakeNode;

@@ -13,8 +13,11 @@ abstract class Store {
 }
 
 class FileStore implements Store {
+  final String name;
+  FileStore(this.name);
+
   Future<File> _file() async =>
-      File('${(await getApplicationSupportDirectory()).path}/bark.json');
+      File('${(await getApplicationSupportDirectory()).path}/$name');
 
   @override
   Future<Map<String, dynamic>?> load() async {
