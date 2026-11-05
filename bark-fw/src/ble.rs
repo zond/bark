@@ -10,12 +10,24 @@
 //! comes from the MPSL (`radio.rs`), and the 32 MHz crystal is asked of
 //! it (`main.rs`).
 //!
-//! Not yet wired to the node: the service answers reads with empty
-//! values and refuses every write as not ready (roadmap D117).
+//! The node's side (`node.rs`) and this side meet in [`LINK`]: the node
+//! publishes what the phone reads after every step of its driver, and
+//! takes what the phone writes as requests, one at a time, each answered
+//! before the phone's write is (roadmap D117).
 
-use bark_link::{le_bytes, uuid, Node, Status, ATT_MTU};
+use core::cell::RefCell;
+
+use bark_link::{
+    le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
+};
+use bark_proto::wire::MAX_PAYLOAD;
+use bark_proto::{Instant, MsgId, NodeId, Position};
 use embassy_futures::join::join;
+use embassy_futures::select::{select, Either};
 use embassy_nrf::{peripherals, rng, Peri};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::signal::Signal;
 use nrf_mpsl::{raw as mpsl_raw, MultiprotocolServiceLayer};
 use nrf_sdc::{self as sdc, SoftdeviceController};
 use static_cell::StaticCell;
@@ -51,6 +63,9 @@ const SDC_MEM: usize = PER_LINK + LINKS_SHARED + ADV_SET + FAL;
 /// advertising parameters (Vol 4 Part E §7.8.5): 1636 (roadmap D120).
 const ADV_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_micros(1_022_500);
 
+/// A write's values are not kept: the node takes each as a request
+/// (`Request`), so Send and Map point have no storage.
+///
 /// The GATT server: one service.
 #[gatt_server]
 pub struct Server {
@@ -66,13 +81,13 @@ pub struct Link {
     #[characteristic(uuid = le_bytes(uuid::STATUS), read, notify)]
     pub status: [u8; Status::LEN],
     #[characteristic(uuid = le_bytes(uuid::SEND), write)]
-    pub send: heapless::Vec<u8, { bark_link::Send::MAX_LEN }>,
+    pub send: (),
     #[characteristic(uuid = le_bytes(uuid::INBOX), read, write)]
     pub inbox: heapless::Vec<u8, { bark_link::Message::MAX_LEN }>,
     #[characteristic(uuid = le_bytes(uuid::GIVEN_BACK), read, notify)]
     pub given_back: heapless::Vec<u8, { bark_link::GivenBack::LEN }>,
     #[characteristic(uuid = le_bytes(uuid::MAP_POINT), write)]
-    pub map_point: heapless::Vec<u8, { bark_link::MapPoint::MAX_LEN }>,
+    pub map_point: (),
 }
 
 /// What the MPSL takes.
@@ -98,9 +113,16 @@ pub fn mpsl(p: MpslParts) -> &'static MultiprotocolServiceLayer<'static> {
         accuracy_ppm: mpsl_raw::MPSL_WORST_CLOCK_ACCURACY_PPM as u16,
         skip_wait_lfclk_started: mpsl_raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
     };
+    // One timeslot session: the stored state's flash writes (`store.rs`).
+    static SESSIONS: StaticCell<nrf_mpsl::SessionMem<1>> = StaticCell::new();
     let parts = nrf_mpsl::Peripherals::new(p.rtc0, p.timer0, p.temp, p.ppi19, p.ppi30, p.ppi31);
-    let mpsl = MultiprotocolServiceLayer::new(parts, crate::Irqs, lfclk)
-        .expect("the MPSL starts once, with its peripherals");
+    let mpsl = MultiprotocolServiceLayer::with_timeslots(
+        parts,
+        crate::Irqs,
+        lfclk,
+        SESSIONS.init(nrf_mpsl::SessionMem::new()),
+    )
+    .expect("the MPSL starts once, with its peripherals");
     MPSL.init(mpsl)
 }
 
@@ -132,8 +154,248 @@ pub fn controller(
     )
 }
 
+/// What the phone asks of the node, one at a time: the link answers the
+/// phone's write once the node has answered it.
+// One request at a time lives in [`LINK`]; the small ones costing a
+// message's room there is what a single place for any request takes.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Copy)]
+pub enum Request {
+    /// A message to send (spec "Phone link", Sending).
+    Send {
+        dst_pos: Position,
+        dst_id: NodeId,
+        len: u8,
+        payload: [u8; MAX_PAYLOAD],
+    },
+    /// The app has the inbox's oldest message.
+    Confirm(MsgId),
+    /// Set or clear the map point.
+    MapPoint(bark_link::MapPoint),
+}
+
+/// What the node publishes and the phone reads, and the request waiting.
+pub struct State {
+    /// The status but for the countdown, which is read against `boot_ends`.
+    pub status: Status,
+    /// When the first rotation ends, while it runs.
+    pub boot_ends: Option<Instant>,
+    /// The inbox's oldest message: its ID, length and payload.
+    pub inbox: Option<(MsgId, u8, [u8; MAX_PAYLOAD])>,
+    /// The message last given back and the end of its wait, until the node
+    /// takes another.
+    pub given_back: Option<(MsgId, Instant)>,
+    /// The phone's request, until the node answers it.
+    pub request: Option<Request>,
+    /// The node's answer, until the step that gave it has published what
+    /// it changed ([`answer`]).
+    answer: Option<bool>,
+    /// What the phone was last told of the status, for when to tell it again.
+    told: Status,
+}
+
+/// The state both sides share.
+pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(RefCell::new(State {
+    status: Status::EMPTY,
+    boot_ends: None,
+    inbox: None,
+    given_back: None,
+    request: None,
+    answer: None,
+    told: Status::EMPTY,
+}));
+
+/// Raised when a request waits for the node.
+pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// The node's answer to the request: taken, or not.
+static ANSWER: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+/// Raised when the phone is to be notified: the status or a message given
+/// back.
+static NOTIFY: Signal<CriticalSectionRawMutex, Notify> = Signal::new();
+/// Raised once the image has confirmed itself (`update.rs`): the
+/// controller starts only then, since the confirmation writes the flash
+/// directly, which the controller's radio timing could not wait for.
+pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// What to notify.
+#[derive(Clone, Copy, Default)]
+struct Notify {
+    status: bool,
+    given_back: bool,
+}
+
+fn notify(n: Notify) {
+    let both = match NOTIFY.try_take() {
+        Some(o) => Notify {
+            status: o.status || n.status,
+            given_back: o.given_back || n.given_back,
+        },
+        None => n,
+    };
+    NOTIFY.signal(both);
+}
+
+/// The battery step the status is notified at: 1 % of a cell's charge
+/// between 20 % and full, from the open-circuit voltages the core's
+/// levels use (`BatteryLevels::DESIGN`, `BATTERY_FULL_MV`), rounded up.
+const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
+    - bark_proto::BatteryLevels::DESIGN.low_mv)
+    .div_ceil(100 - 20);
+
+/// The node's side: publish the status and the inbox's oldest message
+/// after a step, and notify the phone of a change of the flags, the
+/// relays, the inbox's count or the address, or of the battery by a step
+/// (spec "Phone link", Status).
+pub fn publish(status: Status, inbox: Option<(MsgId, &[u8])>) {
+    let changed = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        l.inbox = inbox.map(|(id, p)| {
+            let mut payload = [0; MAX_PAYLOAD];
+            payload[..p.len()].copy_from_slice(p);
+            (id, p.len() as u8, payload)
+        });
+        l.status = status;
+        let told = l.told;
+        let quiet = |s: Status| Status {
+            boot_left_s: 0,
+            battery_mv: 0,
+            ..s
+        };
+        let changed = quiet(told) != quiet(status)
+            || told.battery_mv.abs_diff(status.battery_mv) >= BATTERY_STEP_MV;
+        if changed {
+            l.told = status;
+        }
+        changed
+    });
+    if changed {
+        notify(Notify {
+            status: true,
+            given_back: false,
+        });
+    }
+}
+
+/// The node's side: the first rotation's end, from `AppEvent::Boot`.
+pub fn booting(ends: Option<Instant>) {
+    LINK.lock(|l| l.borrow_mut().boot_ends = ends);
+}
+
+/// The node's side: its application's message was given back.
+pub fn given_back(msg_id: MsgId, retry_at: Instant) {
+    LINK.lock(|l| l.borrow_mut().given_back = Some((msg_id, retry_at)));
+    notify(Notify {
+        status: false,
+        given_back: true,
+    });
+}
+
+/// Whether a request waits for the node.
+pub fn request_waiting() -> bool {
+    LINK.lock(|l| l.borrow().request.is_some())
+}
+
+/// The node's side: take the request waiting if `f` takes it, with the
+/// answer `f` gives, which goes to the phone after the step ([`answer`]).
+pub fn take_request<R>(f: impl FnOnce(&Request) -> Option<(R, bool)>) -> Option<R> {
+    let taken = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        let (r, answer) = f(l.request.as_ref()?)?;
+        if let Some(Request::Send { .. }) = l.request {
+            if answer {
+                l.given_back = None;
+            }
+        }
+        l.request = None;
+        l.answer = Some(answer);
+        Some(r)
+    });
+    taken
+}
+
+/// The node's side, after a step and its [`publish`]: answer the request
+/// the step took, or one it was woken for and did not take, no; so that
+/// what the phone reads after its write is answered shows the write.
+pub fn answer(woken: bool) {
+    let answer = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        if woken && l.request.take().is_some() {
+            l.answer = Some(false);
+        }
+        l.answer.take()
+    });
+    if let Some(a) = answer {
+        ANSWER.signal(a);
+    }
+}
+
+/// How long the link waits for the node's answer: half the ATT
+/// transaction's 30 s (Vol 3 Part F §3.3.3), so that the phone has its
+/// answer before it gives up. The node answers within one step of its
+/// driver, at most a frame's airtime and a flash erase.
+const ANSWER_WAIT: embassy_time::Duration = embassy_time::Duration::from_secs(15);
+
+/// Hand `request` to the node and wait for its answer.
+async fn ask(request: Request) -> bool {
+    ANSWER.reset();
+    LINK.lock(|l| l.borrow_mut().request = Some(request));
+    FOR_CORE.signal(());
+    match embassy_time::with_timeout(ANSWER_WAIT, ANSWER.wait()).await {
+        Ok(answer) => answer,
+        Err(_) => {
+            LINK.lock(|l| l.borrow_mut().request = None);
+            log::warn!("ble: the node did not answer");
+            false
+        }
+    }
+}
+
+fn now() -> Instant {
+    Instant::from_micros(embassy_time::Instant::now().as_micros())
+}
+
+/// The status as the phone reads it now.
+fn status_now() -> Status {
+    LINK.lock(|l| {
+        let l = l.borrow();
+        Status {
+            ready: l.status.ready && l.request.is_none(),
+            boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now(), e)),
+            ..l.status
+        }
+    })
+}
+
+fn given_back_now() -> heapless::Vec<u8, { GivenBack::LEN }> {
+    LINK.lock(|l| match l.borrow().given_back {
+        Some((msg_id, retry_at)) => {
+            let g = GivenBack {
+                msg_id,
+                wait_s: seconds_left(now(), retry_at),
+            };
+            heapless::Vec::from_slice(&g.encode()).expect("it fits")
+        }
+        None => heapless::Vec::new(),
+    })
+}
+
+fn inbox_now() -> heapless::Vec<u8, { Message::MAX_LEN }> {
+    LINK.lock(|l| match &l.borrow().inbox {
+        Some((msg_id, len, payload)) => {
+            let mut b = [0; Message::MAX_LEN];
+            let n = Message {
+                msg_id: *msg_id,
+                payload: &payload[..*len as usize],
+            }
+            .encode(&mut b);
+            heapless::Vec::from_slice(&b[..n]).expect("it fits")
+        }
+        None => heapless::Vec::new(),
+    })
+}
+
 /// Run the host and the advertising, for ever.
-pub async fn run(controller: SoftdeviceController<'static>, id: bark_proto::NodeId, image: u32) {
+pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u32) {
     static RESOURCES: StaticCell<HostResources<DefaultPacketPool, CONNECTIONS, CHANNELS>> =
         StaticCell::new();
     let resources = RESOURCES.init(HostResources::new());
@@ -166,7 +428,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: bark_proto::Node
     let link = async {
         loop {
             match advertise(&mut peripheral, &server, name).await {
-                Ok(conn) => serve(&conn).await,
+                Ok(conn) => serve(&server, &conn).await,
                 Err(e) => log::error!("ble: advertising {:?}", e),
             }
         }
@@ -229,24 +491,117 @@ async fn advertise<'v, 's>(
     Ok(conn)
 }
 
-/// Serve one connection until it ends.
-async fn serve(conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+/// Serve one connection until it ends: answer its reads and writes, and
+/// notify what changes.
+async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+    // What changed while no phone was connected is read, not notified.
+    NOTIFY.reset();
+    let link = &server.link;
     loop {
-        match conn.next().await {
+        let event = match select(conn.next(), NOTIFY.wait()).await {
+            Either::First(e) => e,
+            Either::Second(n) => {
+                if n.status {
+                    let _ = link.status.notify(conn, &status_now().encode(), true).await;
+                }
+                if n.given_back {
+                    let _ = link.given_back.notify(conn, &given_back_now(), true).await;
+                }
+                continue;
+            }
+        };
+        let event = match event {
             GattConnectionEvent::Disconnected { reason } => {
                 log::info!("ble: disconnected {:?}", reason);
                 return;
             }
-            GattConnectionEvent::Gatt { event } => {
-                let reply = match event {
-                    GattEvent::Write(w) => w.reject(AttErrorCode::new(bark_link::att::NOT_READY)),
-                    other => other.accept(),
+            GattConnectionEvent::Gatt { event } => event,
+            _ => continue,
+        };
+        let reply = match event {
+            GattEvent::Read(r) => {
+                let h = r.handle();
+                let _ = if h == link.status.handle {
+                    server.set(&link.status, &status_now().encode())
+                } else if h == link.inbox.handle {
+                    server.set(&link.inbox, &inbox_now())
+                } else if h == link.given_back.handle {
+                    server.set(&link.given_back, &given_back_now())
+                } else {
+                    Ok(())
                 };
-                if let Ok(reply) = reply {
-                    reply.send().await;
+                r.accept()
+            }
+            GattEvent::Write(w) => {
+                let h = w.handle();
+                let answer = if h == link.send.handle {
+                    write_send(&w).await
+                } else if h == link.inbox.handle {
+                    write_confirm(&w).await
+                } else if h == link.map_point.handle {
+                    write_map_point(&w).await
+                } else {
+                    Err(AttErrorCode::WRITE_NOT_PERMITTED)
+                };
+                match answer {
+                    Ok(()) => w.accept_unprocessed(),
+                    Err(e) => w.reject(e),
                 }
             }
-            _ => {}
+            other => other.accept(),
+        };
+        if let Ok(reply) = reply {
+            reply.send().await;
         }
     }
+}
+
+fn malformed(m: Malformed) -> AttErrorCode {
+    AttErrorCode::new(m.att_error())
+}
+
+const NOT_READY: AttErrorCode = AttErrorCode::new(bark_link::att::NOT_READY);
+
+async fn write_send(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    let request = w.with_data(|offset, data| {
+        if offset != 0 {
+            return Err(AttErrorCode::INVALID_OFFSET);
+        }
+        let s = bark_link::Send::decode(data).map_err(malformed)?;
+        let mut payload = [0; MAX_PAYLOAD];
+        payload[..s.payload.len()].copy_from_slice(s.payload);
+        Ok(Request::Send {
+            dst_pos: s.dst_pos,
+            dst_id: s.dst_id,
+            len: s.payload.len() as u8,
+            payload,
+        })
+    })?;
+    if !status_now().ready {
+        return Err(NOT_READY);
+    }
+    match ask(request).await {
+        true => Ok(()),
+        false => Err(NOT_READY),
+    }
+}
+
+async fn write_confirm(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    let c = w.with_data(|offset, data| match offset {
+        0 => bark_link::Confirm::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    match ask(Request::Confirm(c.0)).await {
+        true => Ok(()),
+        false => Err(malformed(Malformed::Value)),
+    }
+}
+
+async fn write_map_point(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    let m = w.with_data(|offset, data| match offset {
+        0 => bark_link::MapPoint::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    ask(Request::MapPoint(m)).await;
+    Ok(())
 }

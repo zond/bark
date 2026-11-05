@@ -2,9 +2,9 @@
 //! (`power.rs`, spec "Nodes"), driven by `bark_driver::Driver` against
 //! the SX1262. Its node ID is the chip's (`crate::node_id`).
 //!
-//! The node's place comes from `BARK_LAT` and `BARK_LON` (degrees) at
-//! build time until the phone app or the GPS can set it
-//! (spec "Node identity", "Position"). Built without them, and with no
+//! Its application is the phone link (`ble.rs`). The node's place comes
+//! from `BARK_LAT` and `BARK_LON` (degrees) at build time, or from a map
+//! point the phone sets (spec "Node identity", "Position"). Built without them, and with no
 //! stored place, the node has none: it sends no heartbeat until its first
 //! accepted fix or a map point (roadmap D83). Its seed comes from the
 //! chip's random number generator (`docs/core-interface.md` §5).
@@ -12,6 +12,7 @@
 use core::mem::MaybeUninit;
 
 use bark_driver::{App, Driver, Outgoing, Request};
+use bark_link::Status;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
 use embassy_time::{Duration, Timer};
@@ -31,18 +32,33 @@ const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// radio that stays broken logs once a second instead of filling the log.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
 
-/// No application yet (BLE comes later, roadmap D5): nothing to send, and
-/// what the core tells the application goes to the log. The power comes
-/// from USB (`power.rs`); what the core keeps goes to flash (`store.rs`).
-pub struct LogApp<'a> {
-    flash: Flash,
+/// The node's application: the phone link (`ble.rs`), which offers the
+/// phone's messages and requests and reads what the core tells it; the
+/// power from USB (`power.rs`); and what the core keeps, written to flash
+/// after the step that asked (`store.rs`).
+pub struct LinkApp<'a> {
     battery: Battery<'a>,
     clock: &'a Clock,
+    /// The last battery reading, for the status.
+    battery_mv: u16,
+    /// What the core last asked to keep, until it is written.
+    to_store: Option<Stored>,
+    /// The step was woken for the link's request.
+    serving: bool,
 }
 
-impl App for LogApp<'_> {
+impl App for LinkApp<'_> {
     async fn ready(&mut self, _offer: bool) {
-        crate::power::FOR_CORE.wait().await
+        use embassy_futures::select::{select, Either};
+        if crate::ble::request_waiting() {
+            self.serving = true;
+            return;
+        }
+        if let Either::Second(()) =
+            select(crate::power::FOR_CORE.wait(), crate::ble::FOR_CORE.wait()).await
+        {
+            self.serving = true;
+        }
     }
 
     fn power(&mut self) -> Option<bool> {
@@ -50,41 +66,106 @@ impl App for LogApp<'_> {
     }
 
     async fn battery(&mut self) -> Option<u16> {
-        Some(self.battery.read().await)
+        let mv = self.battery.read().await;
+        self.battery_mv = mv;
+        Some(mv)
     }
 
     fn request(&mut self) -> Option<Request> {
-        None
+        use crate::ble::Request as Link;
+        let head = crate::ble::LINK.lock(|l| l.borrow().inbox.map(|(id, _, _)| id));
+        crate::ble::take_request(|r| match *r {
+            Link::Send { .. } => None,
+            Link::Confirm(id) => {
+                let ok = head == Some(id);
+                log::info!("ble: confirm id={:08x} ok={}", id.0, ok);
+                Some((ok.then_some(Request::Confirm(id)), ok))
+            }
+            Link::MapPoint(bark_link::MapPoint::Set(position)) => {
+                log::info!(
+                    "ble: map point {} {}",
+                    position.lat_deg(),
+                    position.lon_deg()
+                );
+                Some((Some(Request::SetPosition(position)), true))
+            }
+            Link::MapPoint(bark_link::MapPoint::Clear) => {
+                log::info!("ble: map point cleared");
+                Some((Some(Request::ClearMapPoint), true))
+            }
+        })
+        .flatten()
     }
 
-    fn take(&mut self, _: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        None
+    fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
+        crate::ble::take_request(|r| match *r {
+            crate::ble::Request::Send {
+                dst_pos,
+                dst_id,
+                len,
+                payload: p,
+            } => {
+                payload[..len as usize].copy_from_slice(&p[..len as usize]);
+                let id = bark_proto::MsgId::of(dst_pos, dst_id, &p[..len as usize]);
+                log::info!("ble: send id={:08x} len={} taken", id.0, len);
+                Some((
+                    Outgoing {
+                        dst_pos,
+                        dst_id,
+                        len: len as usize,
+                    },
+                    true,
+                ))
+            }
+            _ => None,
+        })
     }
 
     fn message(&mut self, event: &AppEvent) {
+        let now = bark_driver::Clock::now(&self.clock);
         match event {
             AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
             AppEvent::GivenBack { msg_id, retry_at } => {
-                let now = bark_driver::Clock::now(&self.clock);
                 log::warn!(
                     "given back id={:08x} reason=refused retry_in_ms={}",
                     msg_id.0,
                     retry_at.since(now).as_micros() / 1000
-                )
+                );
+                crate::ble::given_back(*msg_id, *retry_at);
             }
             AppEvent::Boot { relays, ends } => {
-                let now = bark_driver::Clock::now(&self.clock);
                 let left = ends.map(|t| t.since(now).as_micros() / 1_000_000);
-                log::info!("boot relays={} first_rotation_left_s={:?}", relays, left)
+                log::info!("boot relays={} first_rotation_left_s={:?}", relays, left);
+                crate::ble::booting(*ends);
             }
         }
     }
 
     fn store(&mut self, stored: &Stored) {
         log::info!("store {:?}", stored);
-        self.flash.keep(stored);
+        self.to_store = Some(*stored);
+    }
+}
+
+/// What the phone reads of `core` now (spec "Phone link", Status).
+fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
+    let external_power = crate::power::reported();
+    Status {
+        ready: core.accepts_send(now),
+        external_power,
+        sleepy: core.sleepy(),
+        carried: core.carried(),
+        map_point: core.on_map_point(),
+        placed: core.placed(),
+        booting: core.booting(),
+        anchorless: core.anchorless(),
+        relays: core.relays_known(now),
+        boot_left_s: 0,
+        address: core.address(),
+        battery_mv: if external_power { 0 } else { battery_mv },
+        inbox: core.inbox_len().min(u8::MAX as usize) as u8,
     }
 }
 
@@ -148,16 +229,18 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 pub async fn run<'a>(
     core: &'static mut Role,
     radio: Radio<'a>,
-    flash: Flash,
+    mut flash: Flash,
     battery: Battery<'a>,
     config: &Config,
     clock: &'a Clock,
 ) -> ! {
     let dbm = config.tx_power_dbm.clamp(MIN_TX_DBM, MAX_TX_DBM);
-    let app = LogApp {
-        flash,
+    let app = LinkApp {
         battery,
         clock,
+        battery_mv: 0,
+        to_store: None,
+        serving: false,
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
@@ -173,6 +256,15 @@ pub async fn run<'a>(
         if driver.step().await.is_err() {
             Timer::after(RETRY_PAUSE).await;
         }
+        let now = bark_driver::Clock::now(&clock);
+        let core = &driver.core().0;
+        crate::ble::publish(status(core, now, driver.app().battery_mv), core.inbox());
+        // A request the step was woken for and did not take is answered
+        // no: a message the core does not take now.
+        crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
+        if let Some(stored) = driver.app_mut().to_store.take() {
+            flash.keep(&stored).await;
+        }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             let s = driver.stats();
@@ -180,7 +272,7 @@ pub async fn run<'a>(
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -193,7 +285,8 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={}",
                 r.configured,
                 r.cold_starts,
                 t.delay.as_micros(),
-                t.errors
+                t.errors,
+                crate::stack::used()
             );
         }
     }

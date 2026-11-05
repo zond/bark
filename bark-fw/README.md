@@ -47,9 +47,11 @@ a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
-its longest times. There is no application yet: the node sends no
-messages of its own. It does not touch GPS or BLE (the GPS does
-get power, see Radio power below).
+its longest times and `stack_used`, the call stack's high-water mark.
+Its application is the phone link over BLE (`src/ble.rs`;
+spec "Phone link"), whose bench procedure in nRF Connect is in
+`docs/phone-link-2026-11-05.md`, "On the bench". It does not touch the
+GPS (which does get power, see Radio power below).
 
 ## Verified and unverified
 
@@ -116,8 +118,9 @@ Unverified, in the order they will fail if wrong:
   running.
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
-- The 32 MHz crystal starts (USB needs it) when a node boots on USB
-  power or the cable comes, and stops when it goes; whether USB enumerates
+- The 32 MHz crystal, which USB needs: the console starts it at boot and
+  keeps it, and the node asks it of the MPSL while on USB (`src/main.rs`,
+  `src/ble.rs`) and lets it go on battery; whether USB enumerates
   when the cable comes after a boot on battery is not known; the
   low-frequency clock uses the internal RC oscillator so no 32.768 kHz
   crystal is assumed.
@@ -130,7 +133,7 @@ Unverified, in the order they will fail if wrong:
 - A panic message survives the soft reset through the bootloader and the
   loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
   next boot.
-- The stored state: the NVMC writes each record the core asks to keep into
+- The stored state: the NVMC, through the MPSL's flash timeslots, writes each record the core asks to keep into
   the next slot of the `STORE` page and erases the page when it is full,
   and the next boot logs `stored Some(..)` and comes back on the same home
   channel (`src/store.rs`, roadmap D73).

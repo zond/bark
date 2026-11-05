@@ -24,6 +24,8 @@ mod node;
 mod power;
 mod radio;
 #[cfg(not(feature = "console"))]
+mod stack;
+#[cfg(not(feature = "console"))]
 mod store;
 mod update;
 
@@ -171,6 +173,8 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 async fn main(_spawner: Spawner) {
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
+    #[cfg(not(feature = "console"))]
+    stack::paint();
 
     let mut config = Config::default();
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
@@ -305,6 +309,7 @@ async fn main(_spawner: Spawner) {
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
             p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
         );
+        ble::START.wait().await;
         match ble::controller(parts, p.RNG, mpsl) {
             Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
             Err(e) => log::error!("ble: controller {:?}", e),
@@ -312,7 +317,22 @@ async fn main(_spawner: Spawner) {
     });
     #[cfg(feature = "console")]
     let phone = async {};
+    #[cfg(feature = "console")]
     let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+    // The node's flash: the stored state through the MPSL's timeslots
+    // (`store.rs`), and the update's confirmation through the NVMC driver
+    // directly, which runs once at boot before the BLE controller starts
+    // (`ble::START`).
+    #[cfg(not(feature = "console"))]
+    let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
+    // SAFETY: a second handle on the NVMC, for `update::started` alone,
+    // which writes before the controller starts and so before anything
+    // writes through the MPSL: the core asks to store only once the node
+    // runs, after `update::started`.
+    #[cfg(not(feature = "console"))]
+    let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
+        embassy_nrf::peripherals::NVMC::steal()
+    }));
 
     #[cfg(feature = "console")]
     let clock = clock::Clock::new(p.TIMER1);
@@ -328,7 +348,7 @@ async fn main(_spawner: Spawner) {
     let mut lines = console::Lines::new();
     #[cfg(not(feature = "console"))]
     let (config, core, flash) = {
-        let (flash, stored) = store::Flash::open(shared);
+        let (flash, stored) = store::Flash::open(mpsl_flash);
         let config = node::config(stored);
         (config, node::core(config, seed), flash)
     };
@@ -367,6 +387,8 @@ async fn main(_spawner: Spawner) {
                     radio.lbt_read()
                 );
                 update::started(shared);
+                #[cfg(not(feature = "console"))]
+                ble::START.signal(());
                 #[cfg(feature = "console")]
                 console::Console::new(radio, &clock, battery, shared)
                     .run(&mut lines)
@@ -376,7 +398,12 @@ async fn main(_spawner: Spawner) {
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.
-            Err(e) => log::error!("radio init failed: {:?}", e),
+            Err(e) => {
+                log::error!("radio init failed: {:?}", e);
+                // The phone link still comes up, so the node can be found.
+                #[cfg(not(feature = "console"))]
+                ble::START.signal(());
+            }
         }
     };
 
