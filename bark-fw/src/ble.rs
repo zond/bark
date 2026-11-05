@@ -640,17 +640,20 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
             GattEvent::Write(w) => {
                 let h = w.handle();
                 let answer = if h == link.send.handle {
-                    write_send(&w).await
+                    Some(write_send(&w).await)
                 } else if h == link.inbox.handle {
-                    write_confirm(&w).await
+                    Some(write_confirm(&w).await)
                 } else if h == link.map_point.handle {
-                    write_map_point(&w).await
+                    Some(write_map_point(&w).await)
                 } else {
-                    Err(AttErrorCode::WRITE_NOT_PERMITTED)
+                    // Not a request: the server takes it by its own rules,
+                    // a subscription's descriptor above all.
+                    None
                 };
                 match answer {
-                    Ok(()) => w.accept_unprocessed(),
-                    Err(e) => w.reject(e),
+                    Some(Ok(())) => w.accept_unprocessed(),
+                    Some(Err(e)) => w.reject(e),
+                    None => w.accept(),
                 }
             }
             other => other.accept(),

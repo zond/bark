@@ -377,7 +377,10 @@ into its bootloader's `TECHOBOOT` drive, which takes the UF2
    on the display, then the image version, four bytes big-endian: 0
    unless the image was built with `BARK_IMAGE_VERSION`, which a bench
    build need not set (`bark-fw/README.md`, Updates).
-5. **Status.** Enable notifications on `28bc0003-…` and read it: 14
+5. **Status.** Enable notifications on `28bc0003-…`: the subscription
+   is taken, the log shows `ble: att write handle=N len=2` and no error,
+   and a Status notification arrives at the next change, such as the
+   first rotation's end or a second board switched on (below). Read it: 14
    bytes. On USB with a built place, byte 0 has bits 1 (USB) and 5
    (placed), and bit 0 (ready) once the node takes messages; bit 6 and
    bytes 2–3 count down the first rotation, 195 s, at each read; bytes
