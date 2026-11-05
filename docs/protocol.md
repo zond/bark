@@ -1154,9 +1154,11 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    for 500 ms, the hand-over gives the radio up for a retry wait
    ([retry wait](#retry-wait)), then listens again for the same
    neighbour, with the transmissions it has made and a fresh 500 ms.
-   Nothing is counted against the neighbour. For a return to the
-   parent or a delivery to a sleepy node ([delivery](#delivery)), which
-   have no other candidate, a give-up counts as one attempt.
+   Nothing is counted against the neighbour. A return to the parent
+   ([return to parent](#return-to-parent)) does the same. For a delivery
+   to a sleepy node ([delivery](#delivery)), which the delivery queue
+   keeps if it fails and which waits for the node's next beat anyway, a
+   give-up counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
    and is in the format below ([packet formats](#packet-formats)). Its preamble is the shortest, or
    the long one to a sleepy neighbour, as the neighbour table has it
@@ -1204,14 +1206,15 @@ about whether it hears this relay, so a grown ban is waited out, not
 gone round (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is seen (step 5), a
+to another neighbour, nor ends a return (step 2); what moves it is seen (step 5), a
 refusal ([bans](#bans)), or a change in the state it is routed from:
 the neighbour demoted or gone, or a better one come (step 6,
 [next hop](#next-hop)). A channel that stays
 busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until it clears; the message
 spends no airtime
-meanwhile, so the duty cycle cap does not bound the wait (roadmap D96).
+meanwhile, so the duty cycle cap does not bound the wait (roadmap D96,
+D111).
 
 *Why a busy channel moves nothing.* The channel is heard at the sender
 and says nothing about the neighbour: not that it lacks the message,
@@ -2112,7 +2115,8 @@ Once a return to the parent fails and the parent is demoted, the
 message having waited for the parent's bans and gone again
 ([hand-over](#hand-over) step 6), or has left the table, the relay
 drops the message and the search ends early. A parent that refuses the
-return has not failed.
+return has not failed, and a busy channel is no attempt: the return
+waits for it to clear ([hand-over](#hand-over) step 2, roadmap D111).
 
 #### Hop count
 
@@ -2297,7 +2301,7 @@ What breaks it:
 |---|---|
 | hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
-| a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
+| a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s on a free channel ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
 | life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists ([time to live](#time-to-live)); then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
 | cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer |
 | message records | at most 1571 per relay ([message records](#message-records)) |
@@ -2324,7 +2328,9 @@ through. If it refuses that message, the message goes round it where
 another candidate is left ([next hop](#next-hop)). A hand-over is at most three
 attempts of 738.6 ms, listen-before-talk until it gives up, a full frame
 and the ACK timeout ([message records](#message-records)), and the retry
-waits, 0.93 s.
+waits, 0.93 s. A channel that stays busy adds its wait to a forward's
+or a return's hand-over, since a give-up there is no attempt, but no
+airtime ([hand-over](#hand-over) step 2).
 
 *What a search costs.* In the usual case it is two hand-overs in all
 per link; a split adds a round trip on the link whose ACKs were lost. A

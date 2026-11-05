@@ -112,14 +112,16 @@
 //! lacks the message; marked tried, it would end its own search if it
 //! later got the message elsewhere and offered it here.
 //!
-//! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96).
-//! When listen-before-talk gives up on a forward's neighbour, the forward
-//! keeps the neighbour and its transmissions so far, waits a retry wait
-//! and listens again: the channel says nothing about the neighbour, and
-//! after a transmission the neighbour may hold the message, so offering
-//! it to the next candidate would split it. A return and a DATA to a
-//! sleepy node have nowhere else to go; for them a give-up counts as one
-//! of the three attempts, and never as a failure against the neighbour.
+//! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96,
+//! D111). When listen-before-talk gives up on a forward's or a return's
+//! neighbour, the hand-over keeps the neighbour and its transmissions so
+//! far, waits a retry wait and listens again: the channel says nothing
+//! about the neighbour, and after a transmission the neighbour may hold
+//! the message, so offering it to the next candidate would split it, and
+//! dropping a return would lose the last copy. A DATA from the delivery
+//! queue stays there when it fails and waits for its node's next beat;
+//! for it a give-up counts as one of the three attempts, and never as a
+//! failure against the neighbour.
 //!
 //! An ACK that refuses the current hand-over bans its receiver for the
 //! wait it asks, at least [`BAN`], so no message takes it until then
@@ -1902,10 +1904,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .expect(self.me())
             .map_or((MsgId::default(), NodeId::NONE), |e| (e.msg_id, e.from));
         match out.kind {
-            Kind::Forward => {
+            Kind::Forward | Kind::Return => {
                 // The channel says nothing about the neighbour: the same
                 // neighbour again, after a retry wait (spec "Hand-over"
-                // step 2, roadmap D96).
+                // step 2, roadmap D96, D111).
                 let unit = self.retry_unit();
                 let Some((mut h, rng)) = self.handover() else {
                     return;
@@ -1913,7 +1915,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let until = h.channel_busy(now, rng, unit);
                 emit(Action::Trace(Trace::ChannelBusy { msg_id, to, until }));
             }
-            Kind::Return | Kind::Deliver | Kind::Direct => {
+            // A failed delivery stays in the delivery queue and waits for
+            // its node's next beat, so a give-up counts as an attempt.
+            Kind::Deliver | Kind::Direct => {
                 let (max, retry) = (self.config.hop_attempts, self.retry_unit());
                 let Some((mut h, rng)) = self.handover() else {
                     return;
