@@ -21,8 +21,9 @@
 //!    and its transmissions, waits the retry window of those
 //!    transmissions ([`HandOver::channel_busy`]) and goes back to 1 with
 //!    a fresh period, since a busy channel says nothing about the
-//!    receiver (roadmap D96); a return or a delivery, with nowhere else
-//!    to go, counts it as an attempt ([`HandOver::lost_attempt`]).
+//!    receiver (roadmap D96); so does a return (D111). A delivery, which
+//!    the delivery queue keeps if it fails, counts it as an attempt
+//!    ([`HandOver::lost_attempt`]).
 //! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
 //! 3. No ACK: wait a random time in `[0, retry_window]` and go back to 1,
 //!    up to `hop_attempts` (3) transmissions; then the hand-over has
@@ -275,8 +276,7 @@ impl<'a> HandOver<'a> {
     }
 
     /// Count an attempt that could not be made, as if it had gone
-    /// unanswered: for a hand-over that has nowhere else to go when
-    /// listen-before-talk gives up.
+    /// unanswered: for a delivery when listen-before-talk gives up.
     pub(crate) fn lost_attempt(
         &mut self,
         now: Instant,
@@ -586,7 +586,6 @@ mod tests {
             dst_pos: Position { lat: 0, lon: 0 },
             dst_id: NodeId([5; 6]),
             hops: 1,
-            time_left: 1,
             payload: &[id as u8],
         };
         let mut bytes = [0; MAX_FRAME];

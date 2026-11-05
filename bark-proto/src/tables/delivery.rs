@@ -11,7 +11,7 @@
 //!
 //! A message waits at most a beat period for its node, unless that node
 //! is a phone in a pocket, a basement or the metro, and then for its first
-//! beat after it is back, or for the TTL. Nodes in one train or one
+//! beat after it is back. Nodes in one train or one
 //! basement go dark together, so the queue holds what arrives in a TTL for
 //! every sleepy node a node can serve, its heard table's [`HEARD`], at the
 //! [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
@@ -58,9 +58,6 @@ pub struct Queued {
     pub dst_pos: Position,
     /// The node it is for.
     pub node: NodeId,
-    /// The `time_left` it arrived with, which the DATA to the node
-    /// carries as it came (spec "Time to live").
-    pub time_left: u8,
     /// When it was queued.
     pub enqueued: Instant,
     /// It went once with the long preamble after a far fix (spec
@@ -81,7 +78,6 @@ impl Queued {
         dst_pos: Position,
         node: NodeId,
         payload: &[u8],
-        time_left: u8,
         now: Instant,
     ) -> Option<Queued> {
         if payload.len() > MAX_PAYLOAD {
@@ -91,7 +87,6 @@ impl Queued {
             msg_id,
             dst_pos,
             node,
-            time_left,
             enqueued: now,
             flushed: false,
             relay_home: None,
@@ -143,12 +138,11 @@ pub struct DeliveryQueue<const N: usize = DELIVERY_QUEUE> {
 }
 
 impl<const N: usize> DeliveryQueue<N> {
-    /// An empty queue whose messages live `ttl`.
+    /// An empty queue whose messages turn stale after `ttl`.
     pub const fn new(ttl: Duration) -> DeliveryQueue<N> {
         let fill = Queued {
             msg_id: MsgId(0),
             dst_pos: Position { lat: 0, lon: 0 },
-            time_left: 0,
             node: NodeId::NONE,
             enqueued: Instant::ZERO,
             flushed: false,
@@ -270,7 +264,6 @@ mod tests {
             Position::default(),
             leaf(to),
             &id.to_be_bytes(),
-            0,
             at(t),
         )
         .unwrap()
@@ -279,8 +272,8 @@ mod tests {
     #[test]
     fn payload_bound() {
         let p = Position::default();
-        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD], 0, at(0)).is_some());
-        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD + 1], 0, at(0)).is_none());
+        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD], at(0)).is_some());
+        assert!(Queued::new(MsgId(1), p, leaf(1), &[0; MAX_PAYLOAD + 1], at(0)).is_none());
         assert_eq!(msg(7, 1, 0).payload(), &[0, 0, 0, 7]);
     }
 

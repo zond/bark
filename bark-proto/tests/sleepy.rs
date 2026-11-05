@@ -223,19 +223,6 @@ fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
             LONG_PREAMBLE_SYMBOLS
         };
         assert_eq!(preambles, [want]);
-        let ttl = Data::units(Config::default().delivery_ttl);
-        let to_node: Vec<_> = h.nodes[r]
-            .sent
-            .iter()
-            .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-                Ok(Packet::Data(d)) if d.dst_hop == h.nodes[s].core.id() => Some(d.time_left),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            !to_node.is_empty() && to_node.iter().all(|&left| left == ttl),
-            "{to_node:?}"
-        );
         h.run_for(secs(1));
         assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
             *t,
@@ -1246,7 +1233,6 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
         dst_pos,
         dst_id,
         hops: u8::MAX,
-        time_left: u8::MAX,
         payload: text,
     };
     let mut frame = Frame {

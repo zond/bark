@@ -131,7 +131,7 @@ The rest of this document uses these words:
   time; it is used only where nothing else reaches.
 - A sleepy node goes **dark** when it is out of reach for minutes: a
   pocket, a basement or the metro. The network keeps what it holds for a
-  node for the **delivery TTL**, 600 s.
+  node for at least the **delivery TTL**, 600 s.
 
 ---
 
@@ -1154,9 +1154,11 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    for 500 ms, the hand-over gives the radio up for a retry wait
    ([retry wait](#retry-wait)), then listens again for the same
    neighbour, with the transmissions it has made and a fresh 500 ms.
-   Nothing is counted against the neighbour. For a return to the
-   parent or a delivery to a sleepy node ([delivery](#delivery)), which
-   have no other candidate, a give-up counts as one attempt.
+   Nothing is counted against the neighbour. A return to the parent
+   ([return to parent](#return-to-parent)) does the same. For a delivery
+   to a sleepy node ([delivery](#delivery)), which the delivery queue
+   keeps if it fails and which waits for the node's next beat anyway, a
+   give-up counts as one attempt.
 3. Transmit. The packet carries the sender's home channel in `aux`
    and is in the format below ([packet formats](#packet-formats)). Its preamble is the shortest, or
    the long one to a sleepy neighbour, as the neighbour table has it
@@ -1204,14 +1206,15 @@ about whether it hears this relay, so a grown ban is waited out, not
 gone round (roadmap D102, D106).
 
 **An attempt is a transmission.** A busy channel never moves a message
-to another neighbour (step 2); what moves it is seen (step 5), a
+to another neighbour, nor ends a return (step 2); what moves it is seen (step 5), a
 refusal ([bans](#bans)), or a change in the state it is routed from:
 the neighbour demoted or gone, or a better one come (step 6,
 [next hop](#next-hop)). A channel that stays
 busy holds the message, as a ban does
 ([overload waits](#overload-waits)), until it clears; the message
 spends no airtime
-meanwhile, so the duty cycle cap does not bound the wait (roadmap D96).
+meanwhile, so the duty cycle cap does not bound the wait (roadmap D96,
+D111).
 
 *Why a busy channel moves nothing.* The channel is heard at the sender
 and says nothing about the neighbour: not that it lacks the message,
@@ -1240,7 +1243,7 @@ neighbour speaks what. The byte costs no airtime in the heartbeat and
 the ACK: their 13 and 18 bytes fill the same 6 and 8 blocks of symbols
 at SF5 as 11 and 17 would. In DATA it adds a block, 1.28 ms, for two
 payload lengths in five: 0.51 ms on average, under 1 % of a text's
-frame, and 1.7 % for the 100-byte text of
+frame, and nothing for the 100-byte text of
 [capacity and sizing](#capacity-and-sizing).
 
 #### Retry wait
@@ -1333,8 +1336,8 @@ message and holds none of it is the search crossing itself: the relay's
 own search goes on when its child returns the message, or is over. Taken
 there and searched on from the relay's record, the copy would start that
 search again; the relays that split a message under load made thousands
-of such copies, and each copy taken that way searched on until the time
-to live or the hop cap ended it. Taken and dropped there instead, the
+of such copies, and each copy taken that way searched on until the hop
+cap ended it. Taken and dropped there instead, the
 copy would end, and with it a single search whose way round a gap
 crosses its own path. Seen, the copy stays with its sender, which has
 the one record that knows what it has still to try (roadmap D89, D90).
@@ -1680,7 +1683,19 @@ A message ends only:
 - at the hop cap ([hop count](#hop-count));
 - when a node holding it dies (roadmap D31, D44, D106).
 
-Never by age on its way ([time to live](#time-to-live)).
+Never by age on its way: at its owner the delivery queue keeps it by
+its own rule ([delivery queue](#delivery-queue)).
+
+*Why no end by time.* Overload makes a message wait where it is
+refused, at the neighbour that refused it ([bans](#bans)), so a relay
+that cannot keep up fills the queues of the relays that send to it, and
+they refuse in turn, back to the origin, where the application is told
+to wait ([receiving DATA](#receiving-data)). An end by time would throw
+away what the network has taken and could still deliver; a person
+would rather have a text late than lose it after the network took it
+(roadmap D44, D106). The cost: under a long overload the messages the
+network has taken outrank new ones, and the origins are refused while
+older messages are still carried.
 
 *Why hop places.* Waiting alone can lock relays up: two neighbours whose
 queues are full of messages for each other would refuse each other
@@ -1783,7 +1798,7 @@ of recent IDs.
 its place; a new record then replaces the least recently active one
 whose message the relay does not hold. A relay holds a message while it
 is in its send queue ([send queue](#send-queue)), the hand-over included,
-or set aside for a full delivery queue. The table holds 1571 records
+or set aside for a full delivery queue. The table holds 1613 records
 ([bounds](#bounds)). Without its record the message could not be routed
 when its turn comes, so a message is never lost for want of room
 (roadmap D31).
@@ -2112,7 +2127,8 @@ Once a return to the parent fails and the parent is demoted, the
 message having waited for the parent's bans and gone again
 ([hand-over](#hand-over) step 6), or has left the table, the relay
 drops the message and the search ends early. A parent that refuses the
-return has not failed.
+return has not failed, and a busy channel is no attempt: the return
+waits for it to clear ([hand-over](#hand-over) step 2, roadmap D111).
 
 #### Hop count
 
@@ -2164,33 +2180,6 @@ straight route across the city of
 [capacity and sizing](#capacity-and-sizing) (≈30 km at the ≈750 m
 street range of [physical layer](#physical-layer)) is about 40
 hand-overs, leaving about 200 for routing around gaps.
-
-#### Time to live
-
-A message has no time to live on its way. Once a node has taken it from
-its application it ends only as [overload waits](#overload-waits)
-lists: delivered, its search run out, a return failed or answered seen,
-at the hop cap, at its owner when a newer message needs its place in
-the delivery queue, or with a node that dies. At its owner the delivery
-queue keeps it by its own rule ([delivery queue](#delivery-queue)).
-
-*Why no end by time.* Overload makes a message wait where it is
-refused, at the neighbour that refused it ([bans](#bans)), so a relay
-that cannot keep up fills the queues of the relays that send to it, and
-they refuse in turn, back to the origin, where the application is told
-to wait ([receiving DATA](#receiving-data)). An end by time would throw
-away what the network has taken and could still deliver; a person
-would rather have a text late than lose it after the network took it
-(roadmap D44, D104, D106).
-
-*What it costs.* Under a long overload the messages the network has
-taken outrank new ones: the origins are refused while older messages
-are still carried.
-
-Every DATA still carries the byte `time_left`
-([packet formats](#packet-formats)), which no node reads: a node that
-takes a message from its application writes the delivery TTL in it, in
-units of 2.5 s, 240, and every relay passes it on as it came.
 
 #### Owner
 
@@ -2297,10 +2286,10 @@ What breaks it:
 |---|---|
 | hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages |
-| a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
-| life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists ([time to live](#time-to-live)); then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
+| a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s on a free channel ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
+| life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
 | cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer |
-| message records | at most 1571 per relay ([message records](#message-records)) |
+| message records | at most 1613 per relay ([message records](#message-records)) |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
 *What a neighbour that does not answer costs.* A relay hands the message
@@ -2324,7 +2313,9 @@ through. If it refuses that message, the message goes round it where
 another candidate is left ([next hop](#next-hop)). A hand-over is at most three
 attempts of 738.6 ms, listen-before-talk until it gives up, a full frame
 and the ACK timeout ([message records](#message-records)), and the retry
-waits, 0.93 s.
+waits, 0.93 s. A channel that stays busy adds its wait to a forward's
+or a return's hand-over, since a give-up there is no attempt, but no
+airtime ([hand-over](#hand-over) step 2).
 
 *What a search costs.* In the usual case it is two hand-overs in all
 per link; a split adds a round trip on the link whose ACKs were lost. A
@@ -2347,15 +2338,15 @@ come back to a relay that has replaced its record, where the hop cap
 ends a search that loses its way ([hop count](#hop-count)).
 
 Every message a relay handles costs at least an ACK (18 bytes, 17.0 ms)
-and one DATA packet with no payload (29 bytes, 23.4 ms,
-[physical layer](#physical-layer)), together 40.3 ms.
+and one DATA packet with no payload (28 bytes, 22.1 ms,
+[physical layer](#physical-layer)), together 39.0 ms.
 
 Any 463.4 s carries at most a full bucket and its refill,
 6 s + 9.83% × 463.4 s = 51.6 s of airtime
-([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1278
+([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1320
 messages in that time. The records of held messages are never evicted
 and may be older, so the table has room for the 293 a send queue holds
-on top: 1571.
+on top: 1613.
 
 ---
 
@@ -2421,7 +2412,7 @@ minute and go anchorless ([sleepy nodes alone](#sleepy-nodes-alone)),
 and the domain's channels would fill with long frames. On battery a
 fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
 airtime), so 80 % of the 850 mAh cell lasts it four days; the fifth
-left keeps it asleep for eleven more.
+left keeps it asleep for twelve and a half more at 0.56 mA ([delivery](#delivery)).
 
 *Why a carried relay keeps the grace.* A node in a pocket is its
 owner's, and nobody anchors to it ([nodes](#nodes)); relaying, it would
@@ -2606,8 +2597,9 @@ P = 300 s. At the mean interval of 225 s a node beats 16 times an hour,
 
 *Why that period.* It is half the delivery TTL, so that two beats are
 never more than a TTL apart. A holder that keeps a node for a TTL then
-loses it only after two lost beats, and keeps a node that has gone no
-longer than its messages ([heard table](#heard-table)).
+loses it only after two lost beats, and keeps a node that has gone for
+a TTL, as long as its messages are kept at least
+([heard table](#heard-table)).
 
 *Why random.* The spread keeps two nodes whose beats met once from
 meeting again. The interval is random, not fixed, since nobody wakes for
@@ -2667,7 +2659,7 @@ since its address is then its own position
 ([sleepy nodes alone](#sleepy-nodes-alone)). A search ends at the first
 fix that passes the checks ([position](#position)), after 60 s, or when
 the node takes an anchor; one that finds nothing holds every search
-back for 8 hours. A node with no place searches until it has one, anchor
+back for 9 hours. A node with no place searches until it has one, anchor
 or not, since without a fix of its own it rebuilds no position it hears
 ([position](#position)). A relay's GPS is in [position](#position).
 
@@ -2675,7 +2667,7 @@ or not, since without a fix of its own it rebuilds no position it hears
 |---|---|
 | with an anchor | no search: standby, 20 µA (L76K hardware design, Table 2) |
 | search limit | 60 s: two of the 30 s frames that carry the satellites' orbits (IS-GPS-200), so that a cold start under the open sky, 30 s (Table 2), survives one lost frame |
-| after a search that found nothing | none for 8 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 8 h keeps a node that never sees the sky at about a tenth of its 0.56 mA ([delivery](#delivery)) |
+| after a search that found nothing | none for 9 h: 60 s at the L76K's 29 mA is 0.48 mAh, and once in 9 h, 0.054 mA, keeps a node that never sees the sky within a tenth of its 0.56 mA ([delivery](#delivery)); 8.6 h is the least that does, rounded up to the hour |
 | between searches | standby, 20 µA, which keeps what a hot start, 2 s, needs (Table 2) |
 
 *Why none with an anchor.* Hearing its anchor each rotation says the
@@ -2747,16 +2739,17 @@ not fresh work ([receiving DATA](#receiving-data)).
 
 It goes to the node as DATA addressed to the node's ID, in `dst_hop` and
 `dst_id` alike, on the node's home channel from the heard table, with
-the ordinary preamble, and the node answers with an ordinary ACK
+the ordinary preamble in the node's window, and the node answers with an ordinary ACK
 ([the ACK](#the-ack)). A delivery goes through the send queue as any
 hand-over ([hand-over](#hand-over)), but ahead of the rest of the queue.
 A hand-over waiting between its attempts, for the channel, a retry or
 the bucket, steps aside for it and keeps its place; a return keeps the
 attempts it has made.
 
-**The window.** A delivery goes only while the node listens: for a
-window of 3.39 s from each beat the holder hears. A node whose beat
-brought nothing goes back to receiving duty-cycled after that.
+**The window.** A delivery goes while the node listens: for a window of
+3.39 s from each beat the holder hears. A node whose beat brought
+nothing goes back to receiving duty-cycled after that. One kind of
+delivery goes outside the window instead (below).
 
 *Why that window.* It is long enough for one hand-over of a DATA that
 goes first to complete. That is the attempt the holder may have under
@@ -2781,11 +2774,31 @@ leaves its window and the rest wait for its next beat. A delivery that
 goes unanswered marks the node out of its window, and its messages wait
 for its next beat.
 
-The DATA carries the hop count as any hand-over ([hop count](#hop-count))
-and the `time_left` it arrived with ([time to live](#time-to-live)).
+The DATA carries the hop count as any hand-over ([hop count](#hop-count)).
 
-So a message waits for its node a mean of about two minutes, at most a
-beat period. A node listens 3.39 s after each beat, 54 s an hour, 3.15 s
+**Outside the window, with the long preamble.** A message for a node
+the holder hears, outside the node's window, goes at once as DATA with
+the long preamble
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
+the node's oldest first and one at a time, if the holder's bucket holds
+that frame beyond everything else it has to send: its send queue, every
+other message in its delivery queue at the ordinary preamble, and the
+reply reserve ([duty cycle cap](#duty-cycle-cap)). Once the node has
+taken one, it listens a hand-over more, as after any delivery, and
+what follows goes with the ordinary preamble. A delivery outside the
+window that goes unanswered marks the node out of reach, and its
+messages wait for its next beat.
+
+*Why outside the window.* A person waiting for a text feels the wait
+for the node's beat, minutes. A long frame costs the holder airtime,
+which the bucket condition keeps to what it has spare, and the node the
+hand-over it listens after taking it. One unanswered frame says the node is
+dark or gone, so no more go to it before it beats (roadmap D112).
+
+So a message for a node in reach usually goes at once. One the bucket
+cannot spare, or for a node whose last delivery went unanswered, waits
+for the node's next beat: a mean of about two minutes, at most a beat
+period. A node listens 3.39 s after each beat, 54 s an hour, 3.15 s
 after each message it takes, and for its anchor's heartbeat, under a
 second a rotation, and receives duty-cycled between
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
@@ -2801,13 +2814,13 @@ What a sleepy node with an anchor draws, in S4 at the design rate
 | receiving duty-cycled | 0.12 mA |
 | transmitting: its beats and its own messages | 0.005 mA |
 | GPS standby ([beats](#beats)) | 0.020 mA |
-| GPS searches | none with an anchor (roadmap D91); without one at most 0.060 mA, one that finds nothing in 8 h |
-| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.62 mA, 57 days** |
+| GPS searches | none with an anchor (roadmap D91); without one at most 0.054 mA, one that finds nothing in 9 h |
+| **total** | **0.56 mA, 63 days on the 850 mAh battery; anchorless at most 0.61 mA, 58 days** |
 
 The microcontroller is not counted.
 
-**Outside the windows.** Two kinds of delivery go outside the windows,
-after the deliveries in a window and one at a time.
+**Outside the windows.** Two more kinds of delivery go outside the
+windows, after the deliveries above and one at a time.
 
 - **The flush.** From its first far fix ([position](#position)), or the
   end of its grace on battery ([sleepy nodes](#sleepy-nodes), roadmap
@@ -2846,9 +2859,8 @@ full and holds no stale message, a message for another node is refused
 ([receiving DATA](#receiving-data)): what is queued stays, and the
 sender learns at once.
 
-The queue's TTL starts afresh when the message arrives: it is the wait
-for a node that sleeps or is dark, not the way there
-([time to live](#time-to-live)).
+A message's age counts from its arrival in the queue: the delivery TTL
+is the wait for a node that sleeps or is dark, not for the way there.
 
 *Why age alone drops nothing.* A message dropped when no other needs its
 place is lost for nothing, and its node may yet beat, back from a pocket
@@ -2928,8 +2940,9 @@ anchor is full, so the wait doubles as the ban does: tried again every
 fade instead, a text its anchor never takes would cost its sender three
 frames a minute on the anchor's channel, where the anchor hears its
 other nodes' beats (roadmap D54). The wait stops doubling at the
-delivery TTL, the longest the network waits for a node that has gone
-dark, so a text whose anchor is back is not held longer than that.
+delivery TTL, as long as the anchor keeps a node that has gone dark in
+its table ([heard table](#heard-table)), so a text whose anchor is back
+is not held longer than that.
 
 A message that finds no live neighbour at all waits for one, routed
 again every 60 s: a node in a pocket loses its neighbours by going dark
@@ -2962,8 +2975,8 @@ of transmit current.
 
 *Why that period.* Beats at most a period apart visit every channel
 within a TTL, so a relay in reach on any channel hears the node, and two
-nodes in anchorless mode find each other, before anything the network
-holds for them runs out ([sleepy nodes](#sleepy-nodes)).
+nodes in anchorless mode find each other, within the least time the
+network keeps what it holds for them ([sleepy nodes](#sleepy-nodes)).
 
 Nodes in anchorless mode route among themselves and are a next hop like
 any other ([next hop](#next-hop)), each DATA to one with the long
@@ -3026,7 +3039,7 @@ collision domain, the area within which transmissions interfere, is
 
 One 125 kHz channel at SF5 carries 1.8 kB/s raw and ≈640 B/s with
 listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.73 s of channel time: per hop a 129-byte DATA packet (74.6 ms)
+takes ≈0.72 s of channel time: per hop a 128-byte DATA packet (73.3 ms)
 and its ACK (17.0 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
@@ -3139,7 +3152,8 @@ costs a block, 1.28 ms.
 From the first node planted, any change to what a field of DATA or the
 ACK means, not only to where it is, takes a new format: an old node
 would read the new meaning as the old. Before that, format 1 was
-changed in place once, for the ACK's wait (roadmap D109).
+changed in place twice, for the ACK's wait (roadmap D109) and to drop a
+byte of DATA no node read (roadmap D113).
 
 A heartbeat's third byte is its **flags**. Each says one thing about the
 sender and is set on its own:
@@ -3189,11 +3203,9 @@ ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           in the answered packet's aux
           from, to = the IDs of the answering and the answered node
 DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
-          hops(1) time_left(1) payload                                      = 29 + payload
+          hops(1) payload                                                   = 28 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
-          aux = sender's home channel, so the receiver knows where to ACK;
-          time_left = written once by the origin, 240, the 600 s delivery TTL in
-          2.5 s, and passed on unread ([time to live](#time-to-live))
+          aux = sender's home channel, so the receiver knows where to ACK
 ```
 
 *Why the wait in the first byte.* Every answer is then one packet, of
@@ -3212,7 +3224,7 @@ acknowledges. The app must keep payloads unique
 `dst_hop` lets every node on a channel discard packets not addressed to
 it after 8 bytes. `src_hop` and `aux` name the sender and its home
 channel, where the ACK goes and where a return is sent
-([routing](#routing)). The payload is at most 255 − 29 = 226 bytes; the
+([routing](#routing)). The payload is at most 255 − 28 = 227 bytes; the
 sender's address is inside it, encrypted.
 
 ### Positions on the wire

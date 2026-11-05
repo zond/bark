@@ -19,7 +19,7 @@ use crate::time::Duration;
 use crate::wire::ACK_LEN;
 
 /// How long a hand-over keeps trying listen-before-talk before it gives
-/// up and chooses the next hop again (spec "Hand-over" step 2).
+/// up and waits a retry wait (spec "Hand-over" step 2).
 pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 
 /// How long a sender listens for the ACK of a frame it sent: the ACK's

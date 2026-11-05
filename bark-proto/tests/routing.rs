@@ -1917,10 +1917,9 @@ fn a_one_way_link_left_as_the_only_candidate_ends_the_search_there() {
 
 /// The same line, C gone, and a delivery TTL at P shorter than three
 /// failed hand-overs and their bans. No message ends by age on its way
-/// (spec "Time to live", roadmap D106): R's copy waits for C's bans past
+/// (spec "Overload waits", roadmap D106): R's copy waits for C's bans past
 /// that time, until the demotion ends its wait, and is returned then; P,
-/// with nothing left to try, drops it. Every DATA carries the
-/// `time_left` its origin gave it, unchanged.
+/// with nothing left to try, drops it.
 #[test]
 fn a_message_outlives_the_delivery_ttl_on_its_way() {
     let (p, r, c, d) = (0, 1, 2, 3);
@@ -1956,18 +1955,6 @@ fn a_message_outlives_the_delivery_ttl_on_its_way() {
     assert!(
         h.run_until(start + secs(30), returned),
         "R did not return it"
-    );
-    let lefts: Vec<u8> = [p, r]
-        .iter()
-        .flat_map(|&i| h.nodes[i].sent.iter())
-        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Data(q)) if q.msg_id() == id => Some(q.time_left),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        lefts.len() >= 2 && lefts.iter().all(|&l| l == lefts[0]),
-        "{lefts:?}"
     );
     h.run_for(secs(1));
     assert!(traces(&h, p).contains(&Trace::Dropped {
@@ -2184,7 +2171,6 @@ fn replies_stay_within_the_reserve() {
                 dst_pos: pd,
                 dst_id: nd,
                 hops: 1,
-                time_left: u8::MAX,
                 payload: &text,
             };
             let mut frame = Frame {
@@ -3115,6 +3101,55 @@ fn a_busy_channel_keeps_the_hand_over_on_the_same_neighbour() {
     no_drops(&h);
 }
 
+/// A busy channel never ends a return (spec "Hand-over" step 2, "Return
+/// to parent", roadmap D111). In the dead end of
+/// `dead_end_returns_to_parent_and_parent_tries_next`, X hears a carrier
+/// on O's home channel, so its return gives up again and again, far past
+/// three give-ups; it is still held, and once the carrier is gone O takes
+/// it and Y delivers it. Nothing is counted against O.
+#[test]
+fn a_busy_channel_holds_a_return_until_it_clears() {
+    let (o, x, y, d) = (0, 1, 2, 3);
+    let pinned = |east, north, seed, c| {
+        relay_with(
+            east,
+            north,
+            seed,
+            Config {
+                home_override: bark_proto::Channel::new(c),
+                sweep_interval: secs(3600),
+                ..Config::default()
+            },
+        )
+    };
+    let mut h = build(
+        vec![
+            pinned(0.0, 0.0, 271, 8),
+            pinned(400.0, 100.0, 272, 2),
+            pinned(300.0, -300.0, 273, 5),
+            pinned(1000.0, 0.0, 274, 11),
+        ],
+        &[(o, x), (o, y), (y, d)],
+    );
+    let o_home = core(&h, o).home();
+    h.jam(x, o_home);
+    let id = send(&mut h, o, d, b"back through the noise");
+    h.run_for(secs(10));
+    let no = core(&h, o).id();
+    let to_o = gave_up(&h, x, id);
+    assert!(to_o.len() >= 6, "{} give-ups", to_o.len());
+    assert!(to_o.iter().all(|&to| to == no), "{to_o:?}");
+    assert!(!returned_to(&h, x, id, no));
+    assert!(!delivered(&h, d, id));
+    let entry = *core(&h, x).neighbours().find(|n| n.id == no).unwrap();
+    assert_eq!(entry.fail_count, 0, "a busy channel is no failure");
+
+    h.unjam(x, o_home);
+    assert!(h.run_until(h.now + secs(10), |h| delivered(h, d, id)));
+    assert!(returned_to(&h, x, id, no));
+    no_drops(&h);
+}
+
 /// A refusal after a busy channel holds the message too: the neighbour
 /// answers, so the message waits the ban it asks for and is offered to
 /// it again, not sent round it (spec "Bans", roadmap D106). The test
@@ -3152,7 +3187,7 @@ fn a_refusal_after_a_busy_channel_holds_the_message() {
 }
 
 /// A message that waits for a channel waits past the delivery TTL: no
-/// message ends by age on its way (spec "Time to live", roadmap D106).
+/// message ends by age on its way (spec "Overload waits", roadmap D106).
 /// O holds it, never having offered it to C, and once the channel clears
 /// it goes to B and arrives.
 #[test]

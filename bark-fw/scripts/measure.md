@@ -248,7 +248,7 @@ hour after the cable goes (spec "Sleepy nodes").
 ### 5.1 Every long preamble is caught
 
 On A, a bench frame of a DATA's length (36 bytes: the 29-byte DATA header
-and a short text) with the long preamble, 100 times, 5 s apart: 261.4 ms
+before roadmap D113, 28 bytes since, and a short text) with the long preamble, 100 times, 5 s apart: 261.4 ms
 on air, 5.2 % of the period, under the console's 10 % cap. 5 s is not a
 multiple of S's 238.875 ms cycle, so the frames start at offsets spread
 over it (5000 mod 238.875 = 222.5 ms a step).

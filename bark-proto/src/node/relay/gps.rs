@@ -376,7 +376,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// When a sleepy node's next search is due of its own accord, if one
     /// is: anchorless, once a delivery TTL, so that its address, its own
-    /// position, is never older than what the network keeps for it (spec
+    /// position, is never older than the least the network keeps its mail (spec
     /// "Sleepy nodes alone"); without a place, when the back-off ends.
     fn gps_sleepy_at(&self) -> Option<Instant> {
         if self.gps.until > 0 {
