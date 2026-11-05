@@ -68,6 +68,7 @@ impl fmt::Display for Facts {
         match self.display {
             Some(Outcome::Shown { ms }) => write!(f, " display=shown in {ms} ms")?,
             Some(Outcome::Busy(step)) => write!(f, " display=busy at {step}")?,
+            Some(Outcome::NoRefresh) => f.write_str(" display=no refresh")?,
             Some(Outcome::Spi) => f.write_str(" display=spi error")?,
             None => f.write_str(" display=pending")?,
         }

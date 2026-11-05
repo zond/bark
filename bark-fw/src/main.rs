@@ -56,7 +56,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
+    TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
     TEMP => embassy_nrf::temp::InterruptHandler;
 });
@@ -67,7 +67,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler, nrf_mpsl::ClockInterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
+    TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
     SAADC => embassy_nrf::saadc::InterruptHandler;
     EGU0_SWI0 => nrf_mpsl::LowPrioInterruptHandler;
     RADIO => nrf_mpsl::HighPrioInterruptHandler;
@@ -202,7 +202,7 @@ async fn main(_spawner: Spawner) {
         for irq in [
             Interrupt::USBD,
             Interrupt::SPI2,
-            Interrupt::SPIM3,
+            Interrupt::TWISPI1,
             Interrupt::SAADC,
         ] {
             irq.set_priority(APP_PRIORITY);
@@ -435,7 +435,7 @@ async fn main(_spawner: Spawner) {
 
     let picture = boot_picture(hex);
     // After the radio's future, which raises the switched rail first thing.
-    let shown = display::show(board.eink, p.SPI3, Irqs, &picture);
+    let shown = display::show(board.eink, p.TWISPI1, Irqs, &picture);
 
     join3(
         join5(

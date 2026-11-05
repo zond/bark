@@ -5,10 +5,17 @@
 //! table ("DS"). The controller holds the picture in its own RAM, one bit
 //! a pixel, so after one full refresh it can be put in deep sleep, where
 //! it draws nothing and keeps the picture on the glass; only a hardware
-//! reset wakes it. The panel has its own SPI (SPIM3) and never shares the
+//! reset wakes it. The panel has its own SPI (SPIM1) and never shares the
 //! radio's bus, and its refresh runs as its own future beside the radio's
 //! start: every wait is on an interrupt, bounded, and the picture is
 //! rendered in microseconds.
+//!
+//! Not SPIM3, the nRF52840's fast instance: its transmitted data can be
+//! corrupted while the CPU or another EasyDMA master uses the same RAM
+//! block as its buffer (nRF52840 Errata, anomaly 198). The node, with the
+//! BLE controller and the radio busy beside the panel, sent the panel
+//! commands it did not act on, where the console drew. SPIM1 has no such
+//! erratum, and the panel needs no more than its 8 MHz.
 //!
 //! Text is drawn from a 5 × 7 bitmap font of the hex digits and the few
 //! letters the boot picture uses, scaled up by whole pixels.
@@ -16,7 +23,7 @@
 use core::fmt;
 
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
-use embassy_nrf::interrupt::typelevel::{Binding, SPIM3};
+use embassy_nrf::interrupt::typelevel::{Binding, TWISPI1};
 use embassy_nrf::peripherals;
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::Peri;
@@ -40,6 +47,10 @@ const ROTATION: u8 = 1;
 
 /// A full refresh as the board's label gives it, 2 s (`board::Eink`).
 const REFRESH: Duration = Duration::from_secs(2);
+
+/// How long after MASTER_ACTIVATION BUSY must have risen: far more than
+/// the controller's reaction to a command, far less than the refresh.
+const REFRESH_START: Duration = Duration::from_millis(100);
 
 /// Bound on any one BUSY-high stretch: three refreshes. Past it the
 /// controller is absent, unpowered or wedged, and the boot goes on without
@@ -227,6 +238,8 @@ pub enum Outcome {
     Shown { ms: u32 },
     /// BUSY stayed high past [`BUSY_TIMEOUT`] at this step.
     Busy(&'static str),
+    /// The refresh never started: the panel did not act on the commands.
+    NoRefresh,
     /// The bus failed.
     Spi,
 }
@@ -242,6 +255,8 @@ pub static OUTCOME: embassy_sync::blocking_mutex::Mutex<
 enum Error {
     /// BUSY stayed high past [`BUSY_TIMEOUT`] at this step.
     Busy(&'static str),
+    /// BUSY never rose after the refresh was asked for.
+    NoRefresh,
     Spi(spim::Error),
 }
 
@@ -307,6 +322,11 @@ impl Panel {
         }
         self.command(DISPLAY_UPDATE_CONTROL_2, &[0xF7]).await?;
         self.command(MASTER_ACTIVATION, &[]).await?;
+        // A refresh holds BUSY high for its 2 s; a controller that never
+        // raises it did not take the commands, and the glass is unchanged.
+        with_timeout(REFRESH_START, self.busy.wait_for_high())
+            .await
+            .map_err(|_| Error::NoRefresh)?;
         self.wait_ready("refresh").await?;
         self.command(DEEP_SLEEP, &[0x01]).await
     }
@@ -317,8 +337,8 @@ impl Panel {
 /// wake the controller into drawing again.
 pub async fn show(
     pins: board::Eink,
-    spim: Peri<'static, peripherals::SPI3>,
-    irq: impl Binding<SPIM3, spim::InterruptHandler<peripherals::SPI3>> + 'static,
+    spim: Peri<'static, peripherals::TWISPI1>,
+    irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
     picture: &Picture,
 ) -> ! {
     let t0 = Instant::now();
@@ -355,6 +375,10 @@ pub async fn show(
                 step
             );
             Outcome::Busy(step)
+        }
+        Err(Error::NoRefresh) => {
+            log::warn!("display: the refresh never started; no picture");
+            Outcome::NoRefresh
         }
         Err(Error::Spi(e)) => {
             log::warn!("display: spi {:?}; no picture", e);

@@ -176,9 +176,11 @@ Unverified, in the order they will fail if wrong:
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
 - Every console command. The timings it prints are its purpose; none has
   been seen.
-- The display (Display, below): the controller answers on SPIM3 at
-  4 MHz, BUSY falls after the reset, the software reset and the refresh,
-  the picture comes out black on white the right way up (`ROTATION` in
+- The display (Display, below): the controller answered on SPIM3 at
+  4 MHz in the console build, and in the node build never started the
+  refresh (bench, 2026-11-05); it now runs on SPIM1, untried. BUSY
+  falls after the reset, the software reset and the refresh, the
+  picture comes out black on white the right way up (`ROTATION` in
   `src/display.rs` turns it if not), and the controller's deep sleep
   keeps it on the glass.
 
@@ -399,13 +401,17 @@ those words need, scaled by whole pixels. A board can then be told from
 another unplugged, and the hex matches the `id=` of its log and its USB
 serial number.
 
-The panel has its own SPI (SPIM3, 4 MHz) and its refresh runs as its
+The panel has its own SPI (SPIM1, 4 MHz; not SPIM3, whose transmitted
+data can be corrupted while the CPU or another EasyDMA master uses its
+buffer's RAM block, nRF52840 Errata anomaly 198) and its refresh runs as its
 own future beside the radio's start, so it delays nothing: the picture
 is rendered in microseconds, the 5000-byte RAM write is DMA, and every
 wait on the controller's BUSY line is on an interrupt and bounded at
 6 s, three times the 2 s full refresh the board's label gives. A
 controller that does not answer logs `display: busy past 6 s at <step>;
-no picture` and the boot goes on without it. The sequence is the
+no picture` and the boot goes on without it; one that never raises BUSY
+after the refresh is asked for, 100 ms, did not take the commands and
+logs `display: the refresh never started; no picture`. The sequence is the
 controller's: reset, software reset, the driver output, data entry,
 RAM window, border and temperature settings, the picture into both RAM
 planes, one full refresh, then deep sleep mode 1, which holds the
