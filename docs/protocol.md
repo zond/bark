@@ -1101,29 +1101,28 @@ the hour, so that a burst cannot carry an hour over the limit.
 **Out of budget.** A hand-over the bucket cannot fit yet waits for it;
 it is not dropped. Two reserves stay in the bucket:
 
-- Replies, ACKs that take or refuse, leave one heartbeat's airtime,
-  14.4 ms. The bucket refills that in 146 ms, far less than the 5 s
+- Replies that take on no work, refusals and seen answers among them,
+  leave one heartbeat's airtime, 14.4 ms. The bucket refills that in 146 ms, far less than the 5 s
   between heartbeats ([heartbeat](#heartbeat)), so heartbeats always go.
-- Forwarding, and the ACK that takes on a packet, leave the **reply
+- Forwarding, and the ACK that takes on work, leave the **reply
   reserve**, 845 ms: the heartbeat, and 49 refusals, enough for a relay
   at its cap to answer every DATA it receives for the longest ban.
 
 *Why the reply reserve.* A relay at its cap that falls silent is
-banned by its senders on the silence ladder and goes round, so its
-refusals no longer tell the wait back ([bans](#bans)); it must answer
-for as long as anything waits for it. A relay receives at most one DATA
+banned by its senders, longer each time, and after three silences
+demoted ([bans](#bans)), and its refusals no longer tell the wait back;
+it must answer every DATA for as long as the longest ban. A relay receives at most one DATA
 per full frame and the ACK that answers it, 138.6 + 17.0 = 155.5 ms,
 and sends a heartbeat at most every 5 s ([heartbeat](#heartbeat)). Over
 the longest ban, 61.0 s, the bucket refills exactly its depth, 6 s,
 while 13 heartbeats take 187 ms and the 391 refusals that fit in the
 rest take 391 × 17.0 = 6631 ms: 819 ms more, ⌈819 / 17.0⌉ = 49 refusals
 ([the ACK](#the-ack)). With the heartbeat's 14.4 ms that is 845 ms.
-After the longest ban every sender refused has met the top of its ladder
-or been answered, and a relay at the reserve answers nine DATA in ten
-from its refill alone, 15.3 of every 17.0 ms.
+A relay at the reserve answers nine DATA in ten from its refill alone,
+15.3 of every 17.0 ms.
 
 A relay takes new work into the regular room of its send queue only if
-its bucket holds the reply reserve on top of the work's ACK and of
+its bucket holds the reply reserve on top of the new frame, its ACK and
 everything it has queued, and otherwise into a hop place or not at all
 ([receiving DATA](#receiving-data)). So a hand-over waits for the bucket
 only when its packet holds a hop place, or when retries, replies or a
@@ -1134,7 +1133,8 @@ A relay below the reserve sends nothing but heartbeats and replies until
 its bucket refills. Each sender it refuses bans it, so a sender costs it
 at most one reply per ban ([bans](#bans)). Without budget even for a
 reply it stays silent; its neighbours' hand-overs to it fail, and they
-ban it, longer each time, and route around it (roadmap D27, D29, D42).
+ban it, longer each time, and after three failures demote it
+(roadmap D27, D29, D42, D106).
 
 ### Hand-over
 
@@ -1368,9 +1368,8 @@ A node ACKs a packet as soon as it has received it, even while waiting
 for an ACK of its own; if that makes it miss its own ACK, its next
 attempt covers it.
 
-A node owes at most one reply at a time. A DATA that arrives while its
-reply to another packet still waits for the channel is neither taken nor
-refused: the node says nothing and changes nothing, and the sender
+A node owes at most one reply at a time. A DATA that arrives while it
+still owes a reply to another packet is neither taken nor refused: the node says nothing and changes nothing, and the sender
 retries as for a lost ACK. A copy of the packet the owed reply answers,
 sent again because that reply is late, is answered by it (roadmap D29).
 
