@@ -12,8 +12,13 @@
     <!-- Location: the phone's position as the node's map point. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Camera: scanning another phone's card. A phone without one
+         can still paste the card. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.bluetooth_le"
         android:required="true" />
+    <uses-feature android:name="android.hardware.camera"
+        android:required="false" />
     <application
         android:label="bark"
         android:name="${applicationName}"

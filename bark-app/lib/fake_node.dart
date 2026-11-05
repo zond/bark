@@ -50,6 +50,7 @@ class FakeNode implements NodeLink {
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
+  final Map<int, Address> _senders = {};
   (int, DateTime)? _givenBack;
   int _writes = 0;
   int _taken = 0;
@@ -66,16 +67,24 @@ class FakeNode implements NodeLink {
       _after(step * i, () => _relays++);
     }
     _after(firstRotation, () {});
-    _inbox.add(_from('Hello from the fake node.'));
-    _inbox.add(_from('A second message, waiting in the inbox.'));
+    _inbox.add(_from(_own, 'Hello from the fake node.'));
+    _inbox.add(_from(_own, 'A second message, waiting in the inbox.'));
   }
 
   Address get _own => Address(_mapPoint ?? gps, id);
 
-  InboxMessage _from(String text) {
+  InboxMessage _from(Address sender, String text) {
     final p = encodeText(text);
-    return InboxMessage(msgId(_own, p), p);
+    final m = InboxMessage(msgId(_own, p), p);
+    _senders[m.msgId] = sender;
+    return m;
   }
+
+  /// Who sent a message in its inbox: itself for the two it starts
+  /// with, and for an echo the address the echoed message went to. The
+  /// payload will carry this (spec "Phone link", "The payload"); the
+  /// prototype's does not.
+  Address? senderOf(InboxMessage m) => _senders[m.msgId];
 
   /// Runs `f` after `d`, then notifies the status.
   void _after(Duration d, void Function() f) {
@@ -187,7 +196,7 @@ class FakeNode implements NodeLink {
       final text = decodeText(payload);
       _after(
         echoAfter,
-        () => _inbox.add(_from('Echo: ${text ?? hex(payload)}')),
+        () => _inbox.add(_from(dst, 'Echo: ${text ?? hex(payload)}')),
       );
     }
   });
