@@ -11,6 +11,7 @@ import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 void main() {
   testWidgets('conversations, a thread, settings, card and debug', (t) async {
@@ -58,7 +59,18 @@ void main() {
 
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
-    expect(find.text(own), findsOneWidget);
+    expect(find.byType(QrImageView), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text(own),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final mine = PersonCard(Address(FakeNode.gps, FakeNode.id), '');
+    await t.scrollUntilVisible(
+      find.text(mine.toText()),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.pageBack();
     await t.pumpAndSettle();
 

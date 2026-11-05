@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../app.dart';
 import '../card.dart';
@@ -61,6 +62,9 @@ class CardScreen extends StatelessWidget {
             'it up to date.',
           ),
         ),
+      const SizedBox(height: 16),
+      Center(child: _qr(card.toText())),
+      const SizedBox(height: 16),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Address'),
@@ -89,4 +93,23 @@ class CardScreen extends StatelessWidget {
       ),
     ];
   }
+
+  /// Dark on white whatever the theme, as scanners expect, with the
+  /// quiet zone of four modules the QR code standard asks for.
+  Widget _qr(String data) => LayoutBuilder(
+    builder: (context, box) {
+      final qr = QrCode.fromData(
+        data: data,
+        errorCorrectLevel: QrErrorCorrectLevel.L,
+      );
+      final side = box.maxWidth;
+      const quiet = 4;
+      return QrImageView.withQr(
+        qr: qr,
+        size: side,
+        backgroundColor: Colors.white,
+        padding: EdgeInsets.all(side * quiet / (qr.moduleCount + 2 * quiet)),
+      );
+    },
+  );
 }

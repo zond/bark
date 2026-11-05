@@ -131,6 +131,11 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.0"
+  flutter_web_plugins:
+    dependency: transitive
+    description: flutter
+    source: sdk
+    version: "0.0.0"
   geolocator_android:
     dependency: "direct main"
     description:
@@ -347,6 +352,30 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.1"
+  qr:
+    dependency: transitive
+    description:
+      name: qr
+      sha256: "2c0189dca64a3ab08dda7acd7911c89af2374f08eb4eaded3e8ef4609f3b9c8b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.0.3"
+  qr_code_scanner_plus:
+    dependency: "direct main"
+    description:
+      name: qr_code_scanner_plus
+      sha256: a49eb677d59becaab21a27bf908f860fd033987777cdc04e621e4b75f97531fa
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.2"
+  qr_flutter:
+    dependency: "direct main"
+    description:
+      name: qr_flutter
+      sha256: "5095f0fc6e3f71d08adef8feccc8cea4f12eec18a2e31c2e8d82cb6019f4b097"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.1.0"
   record_use:
     dependency: transitive
     description:
@@ -474,4 +503,4 @@ packages:
     version: "3.1.4"
 sdks:
   dart: ">=3.13.1 <4.0.0"
-  flutter: ">=3.38.4"
+  flutter: ">=3.44.0"

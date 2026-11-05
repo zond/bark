@@ -7,6 +7,7 @@ import '../card.dart';
 import '../contacts.dart';
 import '../link.dart';
 import 'common.dart';
+import 'scan_screen.dart';
 import 'thread_screen.dart';
 
 class ContactsScreen extends StatelessWidget {
@@ -93,6 +94,15 @@ class _AddContactScreenState extends State<AddContactScreen> {
     });
   }
 
+  Future<void> _scan() async {
+    final c = await Navigator.of(
+      context,
+    ).push<PersonCard>(MaterialPageRoute(builder: (_) => const ScanScreen()));
+    if (c == null) return;
+    pasted.text = c.toText();
+    _read(pasted.text);
+  }
+
   Future<void> _save() async {
     final c = card;
     final n = name.text.trim();
@@ -115,13 +125,22 @@ class _AddContactScreenState extends State<AddContactScreen> {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Scan their card'),
+            onPressed: _scan,
+          ),
+        ),
+        const SizedBox(height: 16),
         TextField(
           controller: pasted,
           onChanged: _read,
           maxLines: null,
           decoration: InputDecoration(
             labelText: 'Card or address',
-            helperText: 'Paste the card or the address they sent you',
+            helperText: 'Or paste the card or the address they sent you',
             errorText: error,
             errorMaxLines: 3,
           ),
