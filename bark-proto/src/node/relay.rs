@@ -491,7 +491,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .unwrap_or_else(|| random_channel(&mut rng));
         let rotation = random_channel(&mut rng);
         // Every field by name, so that a new one cannot be left out. The
-        // large tables are emptied where they lie.
+        // large tables are emptied where they lie: built and assigned,
+        // each would pass through the stack, and together they made the
+        // deepest frame the firmware had (`bark-fw/README.md`).
         let Node {
             config: c,
             timers,
@@ -528,15 +530,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Channel::all().next().expect("the plan has channels"),
             rotation,
         );
-        *neighbours = Neighbours::new(NeighbourParams::from_config(&config));
+        neighbours.reset(NeighbourParams::from_config(&config));
         records.clear();
         queue.clear();
         *forwarding = Forwarding::IDLE;
-        *heard = Heard::from_config(&config);
+        heard.reset(&config);
         *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
-        *delivery = DeliveryQueue::from_config(&config);
-        *inbox = DeliveryQueue::from_config(&config);
+        delivery.reset(&config);
+        inbox.reset(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
         *timers = Timers::UNSET;

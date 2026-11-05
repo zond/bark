@@ -85,10 +85,8 @@ Verified on the host:
   which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`); the
   console image is 105 804 B. The
   relay, 172 432 B, is in `.bss`: its static holds zero bytes, which the
-  startup code writes, and `src/node.rs` sets it up in place. Its deepest
-  single stack frame, the largest stack adjustment in the disassembly
-  (`llvm-objdump`), is 34 560 B (33.8 KiB), in the main task
-  (2026-10-25).
+  startup code writes, and `src/node.rs` sets it up in place. The
+  stack's depth is in "Tasks and the stack", below.
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
   the host workspace), duty-cycled receive included: it starts at the
   core's `Sniff`, starts again after each frame, ends at the sniff's end or
@@ -516,9 +514,8 @@ their own beside the radio's loop, with the picture in a static: joined
 into the main task as a future, they grew that task's stack frame, the
 deepest, from 29 184 B to 42 752 B and a nested 8 000 B beside, past
 the 43 KiB left for the stack, and the first image hung at boot before
-USB came up (bench, 2026-11-05). As a task the main frame is 29 184 B
-again and the screen's deepest 936 B (`llvm-objdump`, the largest stack
-adjustments). In it the picture is drawn a line at a time,
+USB came up (bench, 2026-11-05); "Tasks and the stack", below, has the
+rest. In its task the picture is drawn a line at a time,
 tens of microseconds each, the executor given back between lines; the
 5000-byte RAM writes are DMA; and every wait on the controller's BUSY
 line is on an interrupt, bounded at 6 s, three times the 2 s refresh.
@@ -538,6 +535,44 @@ sequence is the controller's: hardware reset, software reset, the
 driver output, data entry, RAM window, border and temperature
 settings, the picture into both RAM planes, one full refresh, then deep
 sleep mode 1. The front light (P1.11) stays off.
+
+## Tasks and the stack
+
+In the node image every long-lived part of the firmware is an embassy
+task of its own, spawned by the main task, which sets up the chip, the
+board, USB and the log, spawns, and ends: the USB device, the log, the
+bootloader touch, the watchdog, the LED and crystal, the MPSL, the
+phone link, the radio and the core on it, the store, the GPS and the
+screen. A task's future lies in its own static storage, and the
+executor polls one task at a time, so the stack needs only the deepest
+task's poll and the interrupts above it, not the sum of everything
+joined into one future. Futures stay what a task waits on for a while,
+a read raced against a timer. The console keeps its one-shot structure,
+its radio, LED and picture joined in the main task, which holds no
+relay; its USB device, log, touch and watchdog are tasks as in the node.
+
+Measured with `llvm-objdump` (the release image with a place): the
+largest single frames, and the deepest chain of calls the disassembly
+shows from each task's poll, an upper bound since calls through
+pointers are not followed.
+
+| | before (`5248d65`) | after |
+|---|---|---|
+| main task's frame | 29 312 B | 1 372 B |
+| main task's deepest chain | 38 840 B | 2 476 B |
+| phone link's deepest chain | in the main task's | 10 352 B (its own frame 8 384 B) |
+| radio and core's deepest chain | in the main task's | 9 344 B (its own frame 2 224 B) |
+| screen, GPS, store | 880, 760, 516 B | 880, 760, 516 B |
+| any other task | in the main task's | under 400 B |
+
+The main task's 29 KB frame was mostly the relay's set-up at boot: the
+neighbour table, the heard table, the delivery queue and the inbox,
+each built and assigned, passed through it, 32 KB together; they are
+now emptied in place (`Relay::reset`, `docs/core-interface.md` §6). So
+the stack's high-water mark should fall from the 37.0 KB painted
+(`stack_used`) to about 11 KB, the phone link's chain and the executor's
+200 B, with the interrupts' frames above it, of the 41.7 KB the stack
+has.
 
 ## Radio power
 

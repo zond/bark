@@ -216,6 +216,13 @@ impl<const N: usize> DeliveryQueue<N> {
         self.entries.clear();
     }
 
+    /// What [`DeliveryQueue::from_config`] builds, made where the queue
+    /// lies, with no copy of it on the stack.
+    pub fn reset(&mut self, config: &Config) {
+        self.ttl = config.delivery_ttl;
+        self.entries.clear();
+    }
+
     /// Take the oldest message for `node`.
     pub fn pop_for(&mut self, node: NodeId) -> Option<Queued> {
         let i = self.iter().position(|q| q.node == node)?;

@@ -248,6 +248,13 @@ impl<const N: usize> Heard<N> {
         self.nodes.clear();
     }
 
+    /// What [`Heard::from_config`] builds, made where the table lies,
+    /// with no copy of it on the stack.
+    pub fn reset(&mut self, config: &Config) {
+        self.params = HeardParams::from_config(config);
+        self.nodes.clear();
+    }
+
     /// Remove every entry of a node not heard for two beat periods at `now`.
     pub fn expire(&mut self, now: Instant) {
         // Called on every event, mostly of an empty table.

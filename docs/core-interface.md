@@ -288,7 +288,9 @@ That holds only if the relay is not built on the stack. `Relay::new` returns a r
 value, and on the board's target building one took 174 KiB of stack in the
 firmware's release build, more than the 88 KiB left beside a
 relay in static memory. So `Relay::reset(config, seed)` sets up a relay in place, as
-`Relay::new` would have, whatever it held before. A driver can keep the relay in a static
+`Relay::new` would have, whatever it held before; it empties its large tables where they
+lie, since a table built and assigned passes through the stack, and the four largest
+together made a 28 KiB frame in the firmware's boot. A driver can keep the relay in a static
 holding `Relay::UNSET`, a relay with empty tables built at compile time, or holding zero
 bytes, which are a valid relay. The firmware does the second: a static of zero bytes is in
 `.bss`, which takes no flash, where `Relay::UNSET`, whose empty tables are not all zeros,
