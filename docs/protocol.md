@@ -1225,64 +1225,17 @@ waiting for the same channel come apart as retrying ones do.
 #### The ACK
 
 The receiver retunes to the sender's channel, sends the ACK at once,
-without listening first, and retunes home. The ACK is the first byte, the format,
-the message ID, and the IDs of the answering and the answered node:
-18 bytes, 17.0 ms ([packet formats](#packet-formats)). It answers taken,
-refused or seen, and its first byte says which: a wait of 0 takes the
-packet, a refusal puts there the wait it asks for ([bans](#bans)), and
-the seen flag, with a wait of 0, says the receiver has seen the message
-and takes nothing.
-
-**Seen** answers a copy of a message the receiver has a record of, holds
-no copy of, and did not hand to the sender ([receiving DATA](#receiving-data)
-case 6). The receiver changes nothing but its record: the sender has the
-message and searches on from its own record, so it counts as tried
-there. The sender treats the answer as if the receiver had returned the
-message the moment it got it: the receiver is tried, the count the
-receiver recorded is spent ([hop count](#hop-count)), and the message
-chooses its next hop at once ([hand-over](#hand-over) step 5). Nothing
-is banned and no failure is counted on either side. A return answered
-seen is dropped ([return to parent](#return-to-parent)).
-
-A seen ACK is sent from the reply reserve like any answer that takes no
-work; a receiver that cannot afford it stays silent, and the sender's
-hand-over fails as for any silence ([hand-over](#hand-over) step 6). A
-seen ACK that is lost costs the sender a retry, which the receiver
-answers seen again ([receiving DATA](#receiving-data) case 3).
-
-**A take is final when the ACK has gone out.** The receiver decides on
-reception whether it takes or refuses the packet, but acts on a packet
-it takes, into its send queue, its delivery queue and its record, only
-once the ACK has left the antenna. An ACK that cannot go out, for want
-of budget or for a fault of the radio, leaves the packet untaken, and
-the sender's retry brings it again as a new packet. A packet that gives
-no work ([receiving DATA](#receiving-data) cases 1, 3, 4 and 6) is
-noted on reception: nothing is lost if its ACK never goes.
-
-*Why at once, and why final only then.* Being unable to send is not
-having answered. Sent with a listen-before-talk, the ACK waited for a
-busy channel and lapsed when its backoff passed the sender's timeout,
-while the packet stayed taken: the sender, hearing nothing, retried,
-failed and handed the message to someone else as well, and there were
-two searchers. The sender is listening for the ACK on its home channel
-and expects nothing else there in the 100 ms it waits, so the ACK
-collides with whatever is on that channel whether it listens first or
-not; listening only moved the collision to the ACK's own backoff. The band's rules ask a duty cycle of each node
-and no listen-before-talk ([regulatory limits](#regulatory-limits)), and
-the ACK is paid from the bucket like every frame. With the ACK sent at
-once a reply fails only for budget, which the receiver checks before it
-owes it; the take at the ACK makes a reply that fails all the same
-harmless (roadmap D93).
-
-*Why seen, not taken.* A copy that reaches a relay that has handled the
-message and holds none of it is the search crossing itself: the relay's
-own search goes on when its child returns the message, or is over. Taken
-there and searched on from the relay's record, the copy would start that
-search again, and each copy taken that way would search on until the
-hop cap ended it. Taken and dropped there instead, the
-copy would end, and with it a single search whose way round a gap
-crosses its own path. Seen, the copy stays with its sender, which has
-the one record that knows what it has still to try (roadmap D89, D90).
+without listening first, and retunes home. The ACK is the first byte, the
+format, the message ID, and the IDs of the answering and the answered
+node: 18 bytes, 17.0 ms ([packet formats](#packet-formats)). Its first
+byte says taken, refused or seen: a wait of 0 takes the packet, a
+refusal puts there the wait it asks for ([bans](#bans)), and the seen
+flag, with a wait of 0, says the receiver has seen the message and takes
+nothing. ACKs arrive, like everything else for a node, on its home
+channel; a sleepy node's is its anchor's, so traffic between them never
+retunes. A node is deaf for 20 ms per ACK it sends, its two retunes, the
+transmission's own costs and the airtime ([heartbeat](#heartbeat)), and a
+sender that gets no ACK retries: the cost of one radio.
 
 The sender matches the ID and both names against its outstanding
 hand-over, and ignores an ACK that does not match. One that matches,
@@ -1293,37 +1246,70 @@ neighbour that answers is alive whether or not its heartbeats are heard.
 *Why both IDs.* Nodes share home channels, so without the answering
 node's ID an ACK for the same message from another relay on the same
 channel, which the depth-first search can produce, would end the wrong
-hand-over and strand the message.
+hand-over and strand the message. And two senders can offer the same
+message to one node at once, one retrying a hand-over whose ACK was lost
+while another returns the message there, or the two copies of a split
+message ([why the search finds a path](#why-the-search-finds-a-path)):
+if the ACK named only the message and the relay, each would take the
+other's answer as its own. A take would end a hand-over the relay never
+took, and the message would be lost; a refusal would send a sender on
+from a relay that took its packet, and the message would have a second
+copy (roadmap D32).
 
-And two senders can offer the same message to one node at once: one
-retrying a hand-over whose ACK was lost while another returns the
-message there, or the two copies of a split message
-([why the search finds a path](#why-the-search-finds-a-path)). If the
-ACK named only the message and the relay, each sender would take the
-answer to the other as its own. A taken one would end a hand-over the
-relay never took, and the message would be lost; a refused one would
-send a sender on from a relay that took its packet, and the message
-would have a second copy (roadmap D32).
+**Seen** answers a copy of a message the receiver has a record of, holds
+no copy of, and did not hand to the sender
+([receiving DATA](#receiving-data) case 6). The receiver changes nothing
+but its record. The sender treats the answer as if the receiver had
+returned the message the moment it got it: the receiver is tried, the
+count it recorded is spent ([hop count](#hop-count)), and the message
+chooses its next hop at once. Nothing is banned and no failure is
+counted on either side. A return answered seen is dropped
+([return to parent](#return-to-parent)). A seen ACK is sent from the
+heartbeat reserve like any answer that takes no work; a receiver that
+cannot afford it stays silent, and the sender's hand-over fails as for
+any silence. A seen ACK that is lost costs the sender a retry, answered
+seen again ([receiving DATA](#receiving-data) case 3).
+
+*Why seen, not taken.* A copy that reaches a relay that has handled the
+message and holds none of it is the search crossing itself: the relay's
+own search goes on when its child returns the message, or is over.
+Taken and searched on from the relay's record, the copy would start that
+search again and search on until the hop cap ended it; taken and
+dropped, it would end, and with it a single search whose way round a gap
+crosses its own path. Seen, the copy stays with its sender, which has
+the one record that knows what it has still to try (roadmap D89, D90).
+
+**A take is final when the ACK has gone out.** The receiver decides on
+reception whether it takes or refuses the packet, but acts on a packet
+it takes, into its send queue, its delivery queue and its record, only
+once the ACK has left the antenna. An ACK that cannot go out, for want
+of budget or a fault of the radio, leaves the packet untaken, and the
+sender's retry brings it again as a new packet. A packet that gives no
+work ([receiving DATA](#receiving-data) cases 1, 3, 4 and 6) is noted on
+reception: nothing is lost if its ACK never goes.
+
+*Why at once, and why final only then.* Being unable to send is not
+having answered. An ACK that waited for a busy channel could lapse past
+the sender's timeout with the packet taken, and the sender would hand
+the message to someone else as well: two searchers. The sender listens
+for the ACK on its home channel and expects nothing else there in its
+100 ms, so the ACK collides with whatever is on that channel whether it
+listens first or not; listening only moves the collision into the ACK's
+backoff. The band's rules ask a duty cycle and no listen-before-talk
+([regulatory limits](#regulatory-limits)), and the ACK is paid from the
+bucket like every frame. Sent at once, a reply fails only for budget,
+which the receiver checks before it owes it, and the take at the ACK
+makes a reply that fails all the same harmless (roadmap D93).
 
 A node ACKs a packet as soon as it has received it, even while waiting
 for an ACK of its own; if that makes it miss its own ACK, its next
-attempt covers it.
-
-A node owes at most one reply at a time. A DATA that arrives while it
-still owes a reply to another packet is neither taken nor refused: the node says nothing and changes nothing, and the sender
-retries as for a lost ACK. A copy of the packet the owed reply answers,
-sent again because that reply is late, is answered by it (roadmap D29).
-
-*Why one reply at a time.* A second reply would go out only after the
-first and its retunes; taking a packet it may not answer in time would
-let its sender hand the message to someone else as well.
-
-So ACKs too arrive on the home channel, which a node leaves only to
-transmit ([home channel selection](#home-channel-selection)). A sleepy
-node's home channel is its anchor's, so traffic between them never
-retunes. A node is deaf for 20 ms per ACK it sends, its two retunes,
-the transmission's own costs and the airtime
-([heartbeat](#heartbeat)); a sender that gets no ACK retries. That is the cost of one radio.
+attempt covers it. It owes at most one reply at a time: a DATA that
+arrives while it still owes one is neither taken nor refused, and its
+sender retries as for a lost ACK, while a copy of the packet the owed
+reply answers, sent again because that reply is late, is answered by it
+(roadmap D29). A second reply would go out only after the first and its
+retunes, and taking a packet it may not answer in time would let its
+sender hand the message to someone else as well.
 
 #### Bans
 
