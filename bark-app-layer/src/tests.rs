@@ -347,3 +347,186 @@ fn records_read_back_in_order() {
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
     assert_eq!(r.next(), None);
 }
+
+mod mailbox {
+    use std::vec::Vec;
+
+    use crate::mailbox::{Arrival, Mailbox, RamRing, Ring};
+    use crate::seal::{self, Fetch};
+    use crate::vectors::fixture;
+    use crate::MAX_PAYLOAD;
+
+    type Small = RamRing<32>;
+
+    fn home() -> Mailbox<Box<Small>> {
+        let mut m = Mailbox::new(Box::new(Small::new()));
+        m.set_key(Some(fixture().alice.mailbox));
+        m
+    }
+
+    impl<R: Ring> Ring for Box<R> {
+        fn pages(&self) -> u32 {
+            (**self).pages()
+        }
+        fn read(&self, slot: u32, out: &mut [u8; 256]) {
+            (**self).read(slot, out)
+        }
+        fn write(&mut self, slot: u32, bytes: &[u8; 256]) {
+            (**self).write(slot, bytes)
+        }
+        fn erase(&mut self, page: u32) {
+            (**self).erase(page)
+        }
+        fn state(&self) -> Option<[u8; 64]> {
+            (**self).state()
+        }
+        fn keep_state(&mut self, state: &[u8; 64]) {
+            (**self).keep_state(state)
+        }
+    }
+
+    use std::boxed::Box;
+
+    fn fetch(key: &[u8; 32], sent: u32, since: u32, most: u8) -> [u8; Fetch::LEN] {
+        Fetch {
+            sent,
+            address: fixture().away,
+            since,
+            most,
+        }
+        .seal(key, &[sent as u8; 24])
+        .unwrap()
+    }
+
+    /// Every reply due now, opened as the requester opens them: the item
+    /// numbers and payloads, in order.
+    fn drain<R: Ring>(m: &mut Mailbox<R>, round: u32, since: u32) -> Vec<(u32, Vec<u8>)> {
+        let key = fixture().alice.mailbox;
+        let mut got = Vec::new();
+        let mut out = [0u8; MAX_PAYLOAD];
+        while let Some(o) = m.next(&mut out) {
+            assert_eq!(o.address, fixture().away);
+            let n = (since + 1..since + 64)
+                .find_map(|n| {
+                    let mut item = [0u8; MAX_PAYLOAD];
+                    seal::open_reply(&key, round, n, &out[..o.len], &mut item)
+                        .ok()
+                        .map(|l| (n, item[..l].to_vec()))
+                })
+                .expect("a reply the requester opens");
+            got.push(n);
+        }
+        got
+    }
+
+    fn item(i: u32) -> Vec<u8> {
+        std::format!("item {i}").into_bytes()
+    }
+
+    #[test]
+    fn items_come_back_in_order_then_as_they_arrive() {
+        let mut m = home();
+        for i in 1..=5 {
+            assert_eq!(m.arrive(&item(i)), Arrival::Kept(i));
+        }
+        let k = fixture().alice.mailbox;
+        assert_eq!(m.arrive(&fetch(&k, 100, 2, 23)), Arrival::Fetch);
+        let got = drain(&mut m, 100, 2);
+        assert_eq!(got, [(3, item(3)), (4, item(4)), (5, item(5))]);
+        m.arrive(&item(6));
+        assert_eq!(drain(&mut m, 100, 2), [(6, item(6))]);
+    }
+
+    #[test]
+    fn most_bounds_a_reply() {
+        let mut m = home();
+        for i in 1..=10 {
+            m.arrive(&item(i));
+        }
+        let k = fixture().alice.mailbox;
+        m.arrive(&fetch(&k, 100, 0, 3));
+        let got: Vec<u32> = drain(&mut m, 100, 0).into_iter().map(|g| g.0).collect();
+        assert_eq!(got, [8, 9, 10]);
+        // Past since + most nothing more is pushed until the next fetch.
+        m.arrive(&item(11));
+        assert!(drain(&mut m, 100, 0).is_empty());
+    }
+
+    #[test]
+    fn a_fetch_under_another_key_is_refused_and_not_kept() {
+        let mut m = home();
+        m.arrive(&item(1));
+        let other = fixture().bob.mailbox;
+        assert_eq!(m.arrive(&fetch(&other, 100, 0, 23)), Arrival::Refused);
+        assert_eq!(m.newest(), 1);
+        assert!(drain(&mut m, 100, 0).is_empty());
+    }
+
+    #[test]
+    fn a_replayed_fetch_is_refused_even_after_a_reboot() {
+        let mut m = home();
+        m.arrive(&item(1));
+        let k = fixture().alice.mailbox;
+        let f = fetch(&k, 100, 0, 23);
+        assert_eq!(m.arrive(&f), Arrival::Fetch);
+        assert_eq!(m.arrive(&f), Arrival::Refused);
+        assert_eq!(m.arrive(&fetch(&k, 99, 0, 23)), Arrival::Refused);
+        let ring = Box::new(clone_ring(m.ring()));
+        let mut m = Mailbox::new(ring);
+        assert!(m.is_home());
+        assert_eq!(m.newest(), 1);
+        assert_eq!(m.arrive(&f), Arrival::Refused);
+        assert_eq!(m.arrive(&fetch(&k, 101, 0, 23)), Arrival::Fetch);
+    }
+
+    fn clone_ring(r: &Small) -> Small {
+        let mut c = Small::new();
+        let mut b = [0u8; 256];
+        for s in 0..32 {
+            r.read(s, &mut b);
+            c.write(s, &b);
+        }
+        if let Some(st) = r.state() {
+            c.keep_state(&st);
+        }
+        c
+    }
+
+    #[test]
+    fn the_ring_overwrites_the_oldest() {
+        let mut m = home();
+        for i in 1..=40 {
+            m.arrive(&item(i));
+        }
+        // 32 slots in two pages: writing item 33 erased the page of 1 to 16.
+        assert_eq!(m.oldest(), 17);
+        let mut b = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.item(16, &mut b), None);
+        assert_eq!(m.item(17, &mut b), Some(item(17).len()));
+        let k = fixture().alice.mailbox;
+        m.arrive(&fetch(&k, 100, 3, 23));
+        let got: Vec<u32> = drain(&mut m, 100, 3).into_iter().map(|g| g.0).collect();
+        assert_eq!(got, (17..=39).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_reply_given_back_goes_again() {
+        let mut m = home();
+        m.arrive(&item(1));
+        m.arrive(&item(2));
+        let k = fixture().alice.mailbox;
+        m.arrive(&fetch(&k, 100, 0, 23));
+        let mut out = [0u8; MAX_PAYLOAD];
+        let first = m.next(&mut out).unwrap();
+        m.given_back(first.msg_id);
+        let again = m.next(&mut out).unwrap();
+        assert_eq!(again, first);
+    }
+
+    #[test]
+    fn a_node_that_is_no_home_keeps_nothing() {
+        let mut m = Mailbox::new(Box::new(Small::new()));
+        assert_eq!(m.arrive(&item(1)), Arrival::NotHome);
+        assert_eq!(m.newest(), 0);
+    }
+}

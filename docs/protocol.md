@@ -3127,8 +3127,9 @@ is not delivered.
 A person may set a node as their **home**, from the app over the phone
 link; the app then puts its address on the person's card. It must be a
 fixed relay, neither sleepy nor carried ([nodes](#nodes)), so that its
-address stays. The app gives it the mailbox key and nothing else, so it
-cannot read the messages it keeps (roadmap D128;
+address stays. The app gives it the mailbox key and nothing else, by a
+Home characteristic still to be served (its values: `bark-link` `home`),
+so it cannot read the messages it keeps (roadmap D128;
 `docs/app-layer-2026-11-05.md`, "The mailbox").
 
 **The ring.** The home node keeps every payload delivered to its node ID

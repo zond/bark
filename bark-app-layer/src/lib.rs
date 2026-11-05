@@ -16,6 +16,7 @@
 
 pub mod card;
 pub mod keys;
+pub mod mailbox;
 pub mod plain;
 pub mod seal;
 pub mod text;
