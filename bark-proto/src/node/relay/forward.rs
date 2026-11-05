@@ -578,18 +578,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         for i in 0..self.queue.len() {
             if let Some(o) = self.queue.get_mut(i) {
                 o.record = hints[i].unwrap_or(o.record);
+                o.waited |= banned[i];
                 o.keep_avoiding(still_banned);
                 // Routed elsewhere than before, it begins to wait for
-                // the new way now, for that way's service time, and has
-                // waited for no ban of it.
+                // the new way now, for that way's service time.
                 if toward[i] != 0 && o.toward != toward[i] {
                     if o.toward != 0 {
                         o.since = now;
                     }
                     o.toward = toward[i];
-                    o.waited = false;
                 }
-                o.waited |= banned[i];
             }
         }
         let pick = self.queue.next_due(now, |i, _| !banned[i]);
@@ -1490,13 +1488,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             match routed {
                 Routed::To(out) => {
                     if let Some(current) = self.queue.current_mut() {
-                        // Offered, it has had the turn its wait earned
-                        // (spec "Overload waits"); the research build
-                        // keeps the mark until it is routed elsewhere.
-                        *current = Outgoing {
-                            waited: cfg!(feature = "mark-until-reroute") && out.waited,
-                            ..out
-                        };
+                        *current = out;
                     }
                     if let Some((mut h, _)) = self.handover() {
                         h.start(now);

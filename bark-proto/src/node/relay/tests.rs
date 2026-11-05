@@ -1065,15 +1065,13 @@ fn waiting_entries_keep_arrival_order_through_bans() {
     assert!(r.queue.is_empty());
 }
 
-/// A message that waited for a ban goes first when the ban ends, once
-/// (spec "Overload waits"): offered, it takes its place in the queue's
-/// order again. A, far travelled, waits for D's ban behind K and M,
+/// A message that has waited for a ban goes ahead of those that have
+/// not, the most travelled first, for as long as it is queued (spec
+/// "Overload waits"). A, far travelled, waits for D's ban behind K and M,
 /// which go to E; when D's ban ends A goes ahead of M, D refuses it, and
-/// A goes round D to E. M arrived before A and has waited for nothing,
-/// so it goes before A.
-#[cfg(not(feature = "all-by-count"))]
+/// A goes round D to E, still ahead of M, which has waited for nothing.
 #[test]
-fn a_message_that_waited_goes_first_once() {
+fn a_message_that_waited_keeps_its_turn() {
     use crate::ids::MsgId;
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
@@ -1204,15 +1202,14 @@ fn a_message_that_waited_goes_first_once() {
         r.handle(event, now, &mut |a| pending.push(a));
     }
     let [k, m, a] = [ids[0], ids[1], ids[2]];
-    assert_eq!(offers, [(e, k), (d, a), (e, m), (e, a)]);
+    assert_eq!(offers, [(e, k), (d, a), (e, a), (e, m)]);
     assert!(r.queue.is_empty());
 }
 
-/// The mark that a message waited for a ban ends when its hand-over
-/// starts (spec "Overload waits"); the research build mark-until-reroute
-/// keeps it while the message is routed to the same next hop.
+/// The mark that a message waited for a ban outlasts its offer (spec
+/// "Overload waits").
 #[test]
-fn the_offer_ends_the_mark() {
+fn the_offer_keeps_the_mark() {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;
@@ -1271,10 +1268,7 @@ fn the_offer_ends_the_mark() {
     now = r.next_wakeup().unwrap();
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(r.queue.current().is_some(), "its hand-over has started");
-    assert_eq!(
-        r.queue.get(0).unwrap().waited,
-        cfg!(feature = "mark-until-reroute")
-    );
+    assert!(r.queue.get(0).unwrap().waited);
 }
 
 /// Two relays offer one message to the same neighbour D at once, as a

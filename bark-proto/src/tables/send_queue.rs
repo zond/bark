@@ -32,10 +32,12 @@
 //! next hop is banned waits in its place until the ban ends (spec
 //! "Overload waits", "Send queue"). The next hand-over goes to a DATA to a sleepy node
 //! if one is due, since its node listens only briefly (spec "Delivery");
-//! else to the first entry that is due, except that one that has waited
-//! goes first, the most travelled first: the place one higher is free
-//! only for the message that has come farthest, and a lower one offered
-//! first would be refused and ban the neighbour again. Choosing an entry
+//! else to the first entry that is due, except that one that has waited,
+//! for a ban or a wait of its own, goes ahead of those that have not, the
+//! most travelled first, for as long as it is queued: a message that has
+//! waited travels a loaded way, where the next relay's gate lets a higher
+//! count in and refuses a lower one once the way's wait passes the
+//! budget, banning the neighbour again (roadmap D114). Choosing an entry
 //! does not move it: the hand-over refers to it where it stands, so of
 //! equals the one that arrived first is offered first, however often they
 //! wait (roadmap D31 rule 4). One set aside for the delivery queue keeps
@@ -161,11 +163,9 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
-    /// It waits, or has waited and not been offered since, for the ban
-    /// of the next hop it is routed to: it goes first when the ban ends
-    /// (spec "Overload waits"). Its own wait, `not_before`, is no ban of
-    /// a next hop and does not count: it holds the message back and
-    /// gives it no place ahead of others.
+    /// Its next hop has been banned while it was queued, whichever next
+    /// hop it is routed to now: it goes ahead of those that have not
+    /// waited (spec "Overload waits").
     pub waited: bool,
     /// Where its message's record was last found in the record table: a
     /// hint, checked against the ID before it is used.
@@ -234,6 +234,12 @@ impl Outgoing {
             Ok(Packet::Data(d)) => d.hops,
             _ => 0,
         }
+    }
+
+    /// Whether it has waited for a ban, or a wait of its own, since it was
+    /// queued.
+    fn waited(&self) -> bool {
+        self.waited || self.not_before > Instant::ZERO
     }
 
     /// The message the frame carries: a DATA's computed ID (roadmap D15).
@@ -386,8 +392,8 @@ impl SendQueue {
 
     /// The entry the next hand-over goes to, of those `sendable` says may
     /// go now: a DATA to a sleepy node that is due, the first; else of
-    /// those that have waited for a ban and are due, the most travelled, the
-    /// earliest of equals; else the first that is due.
+    /// those that have waited since they were queued and are due, the most
+    /// travelled, the earliest of equals; else the first that is due.
     pub fn next_due(
         &self,
         now: Instant,
@@ -401,14 +407,9 @@ impl SendQueue {
         if let Some(i) = self.delivery_due(now) {
             return Some(i);
         }
-        // Research build: every due entry by count, no mark.
-        #[cfg(feature = "all-by-count")]
-        let first = |_: &Outgoing| true;
-        #[cfg(not(feature = "all-by-count"))]
-        let first = |o: &Outgoing| o.waited;
         self.iter()
             .enumerate()
-            .filter(|&(i, o)| due(i, o) && first(o))
+            .filter(|&(i, o)| due(i, o) && o.waited())
             .max_by(|(i, a), (j, b)| a.hops().cmp(&b.hops()).then(j.cmp(i)))
             .map(|(i, _)| i)
             .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
@@ -600,8 +601,8 @@ mod tests {
         }
     }
 
-    /// A DATA frame with `hops`, waiting for a ban if `waited`.
-    fn data(tag: u8, hops: u8, waited: bool) -> Outgoing {
+    /// A DATA frame with `hops` that has waited until `due` ms, if given.
+    fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
         use crate::ids::NodeId;
         use crate::wire::Data;
         let d = Data {
@@ -622,76 +623,32 @@ mod tests {
             bytes,
         };
         let mut o = Outgoing::new(frame, Kind::Forward);
-        o.waited = waited;
+        if let Some(ms) = due {
+            o.not_before = Instant::ZERO + Duration::from_millis(ms);
+        }
         o
     }
 
-    /// The tag a [`data`] frame carries.
-    fn tag(o: &Outgoing) -> u8 {
-        match Packet::decode(o.frame.payload()) {
-            Ok(Packet::Data(d)) => d.payload[0],
-            _ => unreachable!(),
-        }
-    }
-
-    /// When bans end, the most travelled of the frames that waited for
-    /// them goes first, ahead of the queue's order; one that never waited
-    /// keeps it. `ends[tag]` is when the ban its frame waits for ends, ms.
+    /// The most travelled of the due frames that have waited, here for
+    /// waits of their own, goes first, ahead of the queue's order, also
+    /// after its wait; one that never waited keeps its place.
     #[test]
     fn the_most_travelled_waiting_frame_goes_first() {
         let t = |ms| Instant::ZERO + Duration::from_millis(ms);
-        let ends = [0, 10, 10, 10, 20];
-        let at = |q: &SendQueue, ms| q.next_due(t(ms), |_, o| t(ends[tag(o) as usize]) <= t(ms));
         let mut q = SendQueue::new();
-        q.push(data(0, 1, false)).unwrap();
-        q.push(data(1, 2, true)).unwrap();
-        q.push(data(2, 5, true)).unwrap();
-        q.push(data(3, 5, true)).unwrap();
-        q.push(data(4, 9, true)).unwrap();
-        assert_eq!(at(&q, 5), Some(0), "no ban has ended");
-        assert_eq!(at(&q, 10), Some(2), "the earlier of equals");
-        assert_eq!(at(&q, 20), Some(4));
+        q.push(data(0, 1, None)).unwrap();
+        q.push(data(1, 2, Some(10))).unwrap();
+        q.push(data(2, 5, Some(10))).unwrap();
+        q.push(data(3, 5, Some(10))).unwrap();
+        q.push(data(4, 9, Some(20))).unwrap();
+        assert_eq!(q.next_due_all(t(5)), Some(0), "none has waited its time");
+        assert_eq!(q.next_due_all(t(10)), Some(2), "the earlier of equals");
+        assert_eq!(q.next_due_all(t(20)), Some(4));
         q.select(4);
         q.take_current();
-        assert_eq!(at(&q, 20), Some(2));
-        q.retain(|_, o| !o.waited);
-        assert_eq!(at(&q, 20), Some(0), "the one that never waited");
-    }
-
-    /// A wait of its own, a retry's or a told wait at the origin, is no
-    /// ban that it waited for: when it ends, the frame keeps the queue's
-    /// order (spec "Overload waits").
-    #[cfg(not(feature = "all-by-count"))]
-    #[test]
-    fn its_own_wait_is_not_a_ban() {
-        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
-        let mut q = SendQueue::new();
-        q.push(data(0, 1, false)).unwrap();
-        let mut own = data(1, 9, false);
-        own.not_before = t(10);
-        q.push(own).unwrap();
-        assert_eq!(q.next_due_all(t(20)), Some(0));
-    }
-
-    /// The research build all-by-count: a due delivery first, then every
-    /// due frame by count, the earliest of equals, marked or not.
-    #[cfg(feature = "all-by-count")]
-    #[test]
-    fn every_due_frame_goes_by_count() {
-        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
-        let mut q = SendQueue::new();
-        q.push(data(0, 1, true)).unwrap();
-        q.push(data(1, 5, false)).unwrap();
-        q.push(data(2, 5, false)).unwrap();
-        let mut own = data(3, 9, false);
-        own.not_before = t(10);
-        q.push(own).unwrap();
-        assert_eq!(q.next_due_all(t(5)), Some(1), "the earlier of equals");
-        assert_eq!(q.next_due_all(t(10)), Some(3), "its own wait ended");
-        let mut deliver = data(4, 0, false);
-        deliver.kind = Kind::Deliver;
-        q.push(deliver).unwrap();
-        assert_eq!(q.next_due_all(t(10)), Some(4), "a delivery first");
+        assert_eq!(q.next_due_all(t(20)), Some(2));
+        q.retain(|_, o| !o.waited());
+        assert_eq!(q.next_due_all(t(20)), Some(0), "the one that never waited");
     }
 
     #[test]
