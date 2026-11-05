@@ -46,7 +46,9 @@ Whenever Status counts messages in the inbox, it reads the oldest,
 stores it, writes its message ID back so the node forgets it, and
 repeats. A node whose link version is above the app's is refused, with
 a message to update the app. The first rotation's countdown runs on the phone,
-since the node does not notify it.
+since the node does not notify it. On every connection to a node of link
+version 2 or later the app writes the phone's UTC time and offset to Clock,
+silently, and the debug screen shows what the node then has.
 
 The queue and the received texts are kept in one file in the app's
 private storage, the contacts, the person's name and the node's last
@@ -173,7 +175,8 @@ pasted card and a pasted address, my card, and the debug screen.
    **Connect**: it shows `bark-fa4e00000001`, connected, MTU 247.
 2. Go back. A conversation named by the fake's address, 26 hex digits,
    holds its two messages.
-3. Menu, **Debug**: link version 1, the node ID `fa4e00000001`, an
+3. Menu, **Debug**: link version 2, the node ID `fa4e00000001`, the
+   clock from the phone with the phone's offset, an
    address, and Status: ready, external power, placed, first rotation
    running with about 3:15 to go, the relays known rising from 0 to 3
    as it counts down, the inbox 0. The log shows the Node read, each
@@ -208,7 +211,9 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
 2. In **Settings**, with **Fake node** off, press **Scan** and allow
    Bluetooth. The node shows within about a second as `bark-` and those
    digits. Tap it: "Connected, MTU 247".
-3. **Debug** shows link version 1 and, on a node fresh from boot, the
+3. **Debug** shows link version 2, the node's clock (from its GPS if it
+   has a fix, else from the phone, with the phone's offset) and, on a node
+   fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an

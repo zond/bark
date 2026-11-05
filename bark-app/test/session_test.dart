@@ -49,6 +49,16 @@ void main() {
     });
   });
 
+  test('attach gives the node the phone\'s clock', () {
+    run((async, s, node, store) {
+      final t = s.nodeTime!;
+      expect(t.source, TimeSource.phone);
+      expect(t.utcS, start.millisecondsSinceEpoch ~/ 1000);
+      expect(t.offsetMin, start.timeZoneOffset.inMinutes);
+      expect(describeTime(t), startsWith('2026-11-05T00:00:00.000Z'));
+    });
+  });
+
   test('the first rotation counts down here', () {
     run((async, s, node, store) {
       expect(s.bootLeftS, 195);

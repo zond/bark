@@ -32,6 +32,10 @@ abstract class NodeLink {
   Future<void> send(Uint8List value);
   Future<void> setMapPoint(Position? p);
 
+  /// Link version 2 and later.
+  Future<void> setClock(int utcS, int offsetMin);
+  Future<NodeTime> readClock();
+
   Stream<Status> get statusNotified;
   Stream<GivenBack?> get givenBackNotified;
 

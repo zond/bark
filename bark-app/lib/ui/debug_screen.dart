@@ -109,6 +109,15 @@ class DebugScreen extends StatelessWidget {
       _row('MTU', '${app.mtu ?? '?'}'),
       _row('Link version', '${n.version}'),
       _row('Firmware image', '${n.image}'),
+      _row(
+        'Clock',
+        n.version < clockVersion
+            ? 'none before link version $clockVersion'
+            : switch (s.nodeTime) {
+                null => 'not read',
+                final t => describeTime(t),
+              },
+      ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Address'),

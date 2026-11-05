@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -119,6 +119,32 @@ void main() {
     expect(m.payload, hello);
     expect(InboxMessage.decode([0, 0, 0, 1])!.payload, isEmpty);
     expect(encodeConfirm(0x357b6010), [0x35, 0x7b, 0x60, 0x10]);
+  });
+
+  test('clock', () {
+    // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
+    expect(encodeClock(1793882119, 60), [0x6a, 0xec, 0x78, 0x07, 0, 60]);
+    expect(encodeClock(1793882119, -210), [0x6a, 0xec, 0x78, 0x07, 0xff, 0x2e]);
+    expect(() => encodeClock(0, 841), throwsA(isA<Malformed>()));
+    expect(encodeClock(0, -720), [0, 0, 0, 0, 0xfd, 0x30]);
+    const t = NodeTime(1793882119, 60, TimeSource.gps);
+    expect(t.encode(), [0x6a, 0xec, 0x78, 0x07, 0, 60, 1]);
+    expect(const NodeTime(1793882119, 60, TimeSource.none).encode(), [
+      0, 0, 0, 0, 0, 60, 0, //
+    ]);
+    final d = NodeTime.decode([0x6a, 0xec, 0x78, 0x07, 0xff, 0x2e, 2, 0xaa]);
+    expect(
+      [d.utcS, d.offsetMin, d.source],
+      [1793882119, -210, TimeSource.phone],
+    );
+    expect(
+      () => NodeTime.decode([0, 0, 0, 0, 0, 0]),
+      throwsA(isA<Malformed>()),
+    );
+    expect(
+      () => NodeTime.decode([0, 0, 0, 0, 0, 0, 3]),
+      throwsA(isA<Malformed>()),
+    );
   });
 
   test('map point', () {

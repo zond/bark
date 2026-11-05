@@ -47,6 +47,11 @@ class FakeNode implements NodeLink {
 
   late final DateTime _boot;
   Position? _mapPoint;
+
+  /// The time the phone gave, against the fake's own clock, and the
+  /// offset; the fake has no GPS time.
+  (int, DateTime)? _time;
+  int _offsetMin = 0;
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
@@ -205,6 +210,24 @@ class FakeNode implements NodeLink {
   Future<void> setMapPoint(Position? p) => _answer(() {
     _mapPoint = p;
     _notify();
+  });
+
+  @override
+  Future<void> setClock(int utcS, int offsetMin) => _answer(() {
+    encodeClock(utcS, offsetMin);
+    _time = (utcS, now());
+    _offsetMin = offsetMin;
+  });
+
+  @override
+  Future<NodeTime> readClock() => _answer(() {
+    final t = _time;
+    if (t == null) return NodeTime(0, _offsetMin, TimeSource.none);
+    return NodeTime(
+      t.$1 + now().difference(t.$2).inSeconds,
+      _offsetMin,
+      TimeSource.phone,
+    );
   });
 
   @override

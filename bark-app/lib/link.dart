@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 1;
+const int linkVersion = 2;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -25,6 +25,9 @@ class Uuids {
   static const inbox = '28bc0005-a1b8-4893-9537-2ee3559d7644';
   static const givenBack = '28bc0006-a1b8-4893-9537-2ee3559d7644';
   static const mapPoint = '28bc0007-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 2.
+  static const clock = '28bc0008-a1b8-4893-9537-2ee3559d7644';
 }
 
 /// ATT error codes the node answers a write with.
@@ -337,6 +340,52 @@ class GivenBack {
     if (b.isEmpty) return null;
     if (b.length < len) throw const Malformed('Given back');
     return GivenBack(_u32(b, 0), _u16(b, 4));
+  }
+}
+
+/// The link version that has Clock.
+const int clockVersion = 2;
+
+/// The UTC offsets in use, minutes: UTC−12:00 to UTC+14:00.
+const int minOffsetMin = -12 * 60;
+const int maxOffsetMin = 14 * 60;
+
+/// Clock, write: the phone's UTC seconds since 1970 and its UTC offset
+/// in minutes.
+Uint8List encodeClock(int utcS, int offsetMin) {
+  if (offsetMin < minOffsetMin || offsetMin > maxOffsetMin) {
+    throw const Malformed('offset');
+  }
+  return Uint8List.fromList([..._be32(utcS), ..._be16(offsetMin & 0xffff)]);
+}
+
+/// Where the node's time came from.
+enum TimeSource { none, gps, phone }
+
+/// Clock, read: the node's time, the offset it keeps and the source.
+class NodeTime {
+  static const len = 4 + 2 + 1;
+  final int utcS;
+  final int offsetMin;
+  final TimeSource source;
+  const NodeTime(this.utcS, this.offsetMin, this.source);
+
+  Uint8List encode() => Uint8List.fromList([
+    ..._be32(source == TimeSource.none ? 0 : utcS),
+    ..._be16(offsetMin & 0xffff),
+    source.index,
+  ]);
+
+  static NodeTime decode(List<int> b) {
+    if (b.length < len || b[6] >= TimeSource.values.length) {
+      throw const Malformed('Clock');
+    }
+    final o = _u16(b, 4);
+    return NodeTime(
+      _u32(b, 0),
+      o >= 0x8000 ? o - 0x10000 : o,
+      TimeSource.values[b[6]],
+    );
   }
 }
 
