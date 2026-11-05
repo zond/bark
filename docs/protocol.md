@@ -171,7 +171,7 @@ on the channel; it works below the noise floor.
 | Parameter | Value | Note |
 |---|---|---|
 | Modulation | LoRa (chirp spread spectrum) | SX1262 native; `lora-phy` Rust driver exists |
-| Spreading factor | 5, fixed network-wide | SF5/SF6 are SX126x-only; all nodes are SX126x. Compile-time constant, changeable only for bench work |
+| Spreading factor | 5, fixed network-wide | SF5/SF6 are SX126x-only; all nodes are SX126x. A compile-time constant |
 | Bandwidth | 125 kHz | |
 | Coding rate | 4/5 | |
 | Raw bit rate | 15.6 kbps at SF5 | 5.5 kbps at SF7 |
@@ -180,7 +180,7 @@ on the channel; it works below the noise floor.
 | 255-byte packet | 138.6 ms at SF5 | ≈400 ms at SF7. Airtime from the datasheet formula (§6.1.4), `time_on_air` in `radio.rs`: an n-byte packet takes its preamble, 14.25 symbols of sync and header, and 5 symbols for each 20 bits, or part of 20, of 8n + 16 |
 | Sensitivity | ≈−120 dBm at SF5 | ≈−124 dBm at SF7 |
 | Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
-| Sync word | private (not the LoRaWAN 0x34) | other LoRa networks and this one ignore each other's packets |
+| Sync word | 0x12, the private one, written 0x1424 to the SX126x (not LoRaWAN's 0x34) | other LoRa networks and this one ignore each other's packets |
 | CRC | on (LoRa hardware CRC) | |
 | Maximum packet (MTU) | 255 bytes | SX126x maximum LoRa payload |
 | Range, relay↔handheld, street | ≈750 m at SF5, ≈1 km at SF7 | |
@@ -243,8 +243,8 @@ and adds half of it to its window (`bark-proto/src/sniff.rs`,
 
 *Why the long preamble is that long.* The radio catches a preamble only
 if a window holds `D` of it, the time the modem takes to lock, taken
-here as 4 symbols (≈1 ms; measured in bring-up step 1, `roadmap.md`
-Phase 2). A preamble that starts just too late for one window must reach
+here as 4 symbols (≈1 ms; to be measured in bring-up step 1,
+`roadmap.md` Phase 2). A preamble that starts just too late for one window must reach
 `D` into the next, so it is caught wherever it starts if it is at least
 `gap + 2D` long.
 
@@ -318,7 +318,7 @@ count exactly like peers.
 | a reading of the home channel | taken as the radio listens, without a restart |
 | sweep | one channel a second, channels in turn: each channel every 13 s |
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
-| noise floor | calibrated per device at boot as a low percentile of RSSI readings over the first rotation, and recalibrated slowly |
+| noise floor | the 10th percentile of every reading, all channels pooled in 1 dB bins, each bin halved whenever they hold two windows of samples, about an hour; −118 dBm before the first reading (open item O11) |
 
 A reading of another channel takes 1.9 ms off the home channel
 (roadmap D88):
@@ -437,9 +437,9 @@ holds its own application's message while it knows no relay
 
 ### Channel moves
 
-A node moves only when `busy[home] − min_c busy[c] > 0.05` continuously
-for 10 minutes; then it waits a random 0–5 minutes, checks again, and
-moves to `argmin` with random tie-break.
+A relay moves only when `busy[home] − min_c busy[c] > 0.05`
+continuously for 10 minutes; then it waits a random 0–5 minutes, checks
+again, and moves to the quietest channel, ties broken as at boot.
 
 *Why the hysteresis.* It keeps moves rare: without it, every rooftop
 relay in range of the same interference sees the same ranking, and they
@@ -737,7 +737,7 @@ ms. The next heartbeat goes after them, so that the node is on its home
 when they arrive.
 
 **Outside the slots.** A relay that is past its own first rotation,
-neither carried nor past its grace on battery
+neither carried nor flushing to turn sleepy
 ([sleepy nodes](#sleepy-nodes)), answers a heartbeat with the
 anchorless flag with one of its own on the channel the heartbeat names,
 at a random time within a listen-before-talk backoff, 0–200 ms, of it:
@@ -756,7 +756,8 @@ together learn each other from their bursts, which are heartbeats like
 any other; answers would add to the busiest minute after a power cut.
 
 And a node, sleepy or not, heartbeats once when its sleepy or
-carried flag changes or, if it is not sleepy, its map point does
+carried flag changes or its map point is cleared, and a relay also
+when a map point is set or its place moves to a fix it takes
 ([position](#position), roadmap D71, D72). That heartbeat:
 
 - goes on its home channel, with the ordinary preamble, the long one if
@@ -2474,9 +2475,10 @@ the node listening at full current. A TTL is what the network promises a
 node it cannot reach.
 
 Then it is sleepy, and stays carried or fixed as it was. It holds
-nothing, so what the flush did not deliver is dropped, and it takes as
-its anchor the strongest relay it knows, as at the end of a first
-rotation ([relay choice](#relay-choice)), or is anchorless with none. Its sleepy
+nothing, so what the flush did not deliver is dropped, and it takes the
+strongest relay it knows as its anchor and listens a rotation, as at a
+first choice ([relay choice](#relay-choice)), or is anchorless with
+none. Its sleepy
 nodes hear no more slot heartbeats of it, and leave it as an anchor
 heard sleepy.
 
@@ -2837,11 +2839,11 @@ The microcontroller is not counted.
 **Outside the windows.** Two more kinds of delivery go outside the
 windows, after the deliveries above and one at a time.
 
-- **The flush.** From its first far fix ([position](#position)), or the
-  end of its grace on battery ([sleepy nodes](#sleepy-nodes), roadmap
+- **The flush.** From its first far fix ([position](#position)), or
+  once it is to turn sleepy ([sleepy nodes](#sleepy-nodes), roadmap
   D71), a node sends each message in its delivery queue once, as DATA
   with the long preamble on the channel its node listens on, from the
-  heard table, or on its own home channel if it has not heard the node.
+  heard table, else the neighbour table, else its own home channel.
   It is one attempt, through the bucket as any send. A message whose ACK
   comes is done; the rest stay and go at beats as before until their
   place is needed.
@@ -2978,12 +2980,13 @@ does a relay's work where there is none:
 
 It receives duty-cycled, as every sleepy node does between its windows,
 and has no window: every frame to it carries the long preamble. It
-keeps the home channel it chose at boot; it does not sweep or move.
+keeps the home channel it has, its last anchor's or the one it chose at
+boot; it does not sweep or move.
 
 It beats with the sleepy and anchorless bits and the long preamble, each
 beat a random half to one **anchorless beat period** after the last, on
 the next channel of the rotation each time ([heartbeat](#heartbeat)),
-naming its own channel in `aux`. The period is the delivery TTL over the
+naming its home channel in its first byte. The period is the delivery TTL over the
 13 channels, 600 / 13 = 46.2 s. At the mean interval of 34.6 s the beats
 cost 26 s an hour of airtime, 7.2 % of its budget, and 0.23 mA at 32 mA
 of transmit current.
@@ -3017,13 +3020,14 @@ exchange with it.
 ## Phone link
 
 BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
-characteristics for send, receive-notify, node status and position set;
-there is no sleepy or carried setting ([nodes](#nodes), roadmap D71).
+characteristics for send, receive-notify, node status, and setting and
+clearing a map point; there is no sleepy or carried setting ([nodes](#nodes), roadmap D71).
 The status says how the node's first rotation goes, the relays it knows
 and when the rotation ends ([channel at boot](#channel-at-boot)), so
 that the app can show "listening, 3 relays heard, 1:40 to go".
-The app owns identity and end-to-end encryption; the node sees opaque
-payloads. The sender's address, position and node ID, travels inside
+A message the node refuses comes back to the app with its wait
+([addresses](#addresses)). The app owns identity and end-to-end
+encryption; the node sees opaque payloads. The sender's address, position and node ID, travels inside
 the encrypted payload, so that the relays that carry a message do not
 learn who sent it. Anyone in radio range of the sender's node still
 learns its ID and position from its heartbeats
@@ -3279,9 +3283,12 @@ hearing radius.
 
 ## Implementation notes
 
-**Rust stack:** `embassy-nrf` (nRF52840), `lora-phy` from git (SF5, CAD,
-RSSI; roadmap D4), TrouBLE with the Nordic controller for BLE (D5), the
-stock UF2 bootloader for flashing (D6). The protocol core does no I/O of
+**Rust stack:** `embassy-nrf` (nRF52840); the SX1262 driven by
+`bark-driver`'s sequencer, its commands encoded by a vendored copy of
+`lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for
+BLE, not yet in the firmware (D5); the stock UF2 bootloader for flashing
+(D6), and a loader of our own behind it that swaps in a new image and
+back if it does not confirm itself (D79). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
