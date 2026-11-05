@@ -51,11 +51,13 @@ PT_LOAD = 1
 SHT_SYMTAB = 2
 FLASH_ERASED = 0xFF
 
-# What the board's bootloader lets a UF2 write: from where it jumps to
-# below itself (bark-image/src/layout.rs, APPLICATION_START and
-# BOOTLOADER_START).
+# Where our images go: from where the bootloader jumps
+# (bark-image/src/layout.rs, APPLICATION_START) to below the ten pages it
+# keeps under itself for the application's data, which its drive will not
+# write: a file with a block there never completes
+# (docs/softdevice-2026-11-05.md).
 WINDOW_START = 0x26000
-WINDOW_END = 0xF4000
+WINDOW_END = 0xEA000
 
 
 def check_elf(elf: bytes) -> None:
