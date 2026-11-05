@@ -1169,12 +1169,9 @@ the packet and names the message and both nodes ([the ACK](#the-ack)).
    it owes already, which goes first, [the ACK](#the-ack)). An ACK
    that takes the packet ends the hand-over: the neighbour has the
    message and is tried ([message records](#message-records)). An ACK
-   that has seen it ([the ACK](#the-ack)) ends it the same way, except
-   that the neighbour did not take the packet: it is tried, and the
-   message chooses the next hop at once, as it would after that
-   neighbour returned it. Nothing is banned and no failure is counted. A
-   return answered seen is dropped: the parent has gone on without it
-   ([return to parent](#return-to-parent)).
+   that has seen it ends it too, without a take: the neighbour is
+   tried and the message chooses its next hop at once
+   ([the ACK](#the-ack)).
 6. On timeout: wait ([retry wait](#retry-wait)) and retry, up to 3
    attempts; an ACK that comes before the retry still answers. Then the hand-over has failed: count a failure against the
    neighbour and ban it ([bans](#bans)). The message stays in its place,
@@ -1400,10 +1397,7 @@ told wait anyway, doubling as below, and is then routed afresh. A
 delivery refused waits the told wait and keeps the transmissions it
 has made.
 
-This differs from silence, which holds the message
-([hand-over](#hand-over) step 6). Silence is not known to be a refusal:
-the neighbour may have taken the message and lost its ACKs, and moving
-on would leave two copies searching.
+Silence instead holds the message ([hand-over](#hand-over) step 6).
 
 *Why a refused message goes round.* A refusal says the refuser has no
 room for the message now: its wait for the way on is past a hop's
@@ -1415,15 +1409,12 @@ message waits here, this relay's queue for the way grows past the
 budget, and its gate refuses in turn, so the wait travels back hop by
 hop to the origin, where the application is told it.
 
-The ban is never shorter than 1.58 s, the time the refuser's bucket
-takes to refill what the refused packet would have cost; trying sooner
-would only cost it another reply (roadmap D29).
-
-*Where the shortest ban comes from.* A relay refuses a packet to send on
-when its frame and the ACK that would take it, at most
-138.6 + 17.0 = 155.5 ms, do not fit in its bucket and no hop place takes
-it, and the bucket refills that in 155.5 ms / 9.83 % = 1.58 s
-([duty cycle cap](#duty-cycle-cap)).
+The ban is never shorter than 1.58 s: a relay refuses a packet to
+send on when its frame and the ACK that would take it, at most
+138.6 + 17.0 = 155.5 ms, do not fit in its bucket and no hop place
+takes it, and the bucket refills that in 155.5 ms / 9.83 % = 1.58 s
+([duty cycle cap](#duty-cycle-cap)); trying sooner would only cost the
+refuser another reply (roadmap D29).
 
 A refusal tells the wait as one of 63 codes, at least a ban, since 0
 means taken ([packet formats](#packet-formats)): codes 1 to 8 are 1 to 8
@@ -1541,17 +1532,12 @@ Without it, a neighbour that stops answering under load is offered every
 other message at once, each offer up to three more frames where frames
 are already being lost; past the cap that loop is what breaks first.
 
-The message whose hand-over failed waits for the same neighbour
-([hand-over](#hand-over) step 6), and the neighbour is not counted as
-tried. Three silences in a row demote the neighbour, which then ranks
-behind the others, and the message moves on; so a link that is really gone costs the first message two bans and
-two more hand-overs, and later messages one hand-over, trying it last. A
+The message waits for the neighbour until three silences in a row
+demote it ([hand-over](#hand-over) step 6), so a link that is really
+gone costs the first message two bans and two more hand-overs, and
+later messages one hand-over, trying it last. A
 neighbour that is gone is tried again after each ban until its entry
 expires; [bounds](#bounds) adds up what that costs.
-
-*Why the same neighbour.* The next is usually a longer way round on the
-same full channels: going there at once undoes what the ban gains
-(roadmap D42).
 
 *Why not counted as tried.* An attempt is lost to a collision at the
 receiver far more often than its ACK goes astray (roadmap D34), so the
@@ -1578,9 +1564,7 @@ The send queue has a regular room of 39 places and one hop place for
 each count from 1 to 254; the packet being handed over keeps its place.
 A packet to send on enters the regular room only if it fits in the
 bucket with everything queued ([receiving DATA](#receiving-data)), so it
-waits for the hand-overs ahead of it, not for the bucket to refill. A
-delivery in its node's window, which goes ahead of them all, needs only
-its own frame ([delivery queue](#delivery-queue)).
+waits for the hand-overs ahead of it, not for the bucket to refill.
 
 *What sets the 39.* The bucket holds at most 6 s
 ([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
@@ -1878,17 +1862,13 @@ The relay sends to the first candidate, once its ban has ended. If
 there is none, the relay returns the message to its parent.
 
 *Why a ban is a wait.* A neighbour that does not answer stays the
-first candidate, so the message waits for it, until something the
-table records changes: the neighbour is demoted by three hand-overs in
-a row with no answer to this relay between
-([neighbour table](#neighbour-table)), and ranks behind the others, or
-it expires and is gone. Any answer to this relay keeps it from that,
-and the message keeps no state of its own to say so: the neighbour
-table already holds the failures in a row and the ban, for every
-message alike (roadmap D106). A refusal is the one thing a message
-keeps, since it says the neighbour has no room for that message
-([bans](#bans)); the messages it did not refuse still wait for it, so
-a full way fills this relay's queue for it and the wait goes back
+first candidate until it is demoted or gone, for the reasons of
+[hand-over](#hand-over) step 6; the neighbour table holds the failures
+in a row and the ban for every message alike, so the message needs no
+state of its own for it (roadmap D106). A refusal is the one thing a
+message keeps, since it says the neighbour has no room for that message
+([bans](#bans)); the messages it did not refuse still wait for it, so a
+full next hop fills this relay's queue for it and the wait goes back
 toward the origin.
 
 *What a change does.* A neighbour that arrives, recovers its margin or
@@ -1962,11 +1942,9 @@ the ACK has gone out ([the ACK](#the-ack)). Whether it takes the packet
 depends on what the packet gives it to do:
 
 - **Something to send on.** It first routes the packet, as the record
-  it would have routes it ([next hop](#next-hop)), and routes every
-  message queued here that is not a delivery: it takes the packet only
-  if those that go to the same next hop now take no longer than a hop's
-  budget to go, or the packet's count is higher than every one of
-  theirs (the **gate**, [send queue](#send-queue)). Past the gate, it takes the packet into the regular room
+  it would have routes it ([next hop](#next-hop)), and takes it only if
+  it passes the gate ([send queue](#send-queue)). Past the gate, it
+  takes the packet into the regular room
   of its send queue only if the room has a place and the bucket holds,
   as it stands, the ACK, the airtime of every frame in the send queue
   and of the new one, and the reply reserve
@@ -2057,7 +2035,7 @@ The packet is one of the following, tested in this order:
    changes nothing but its record: the sender has the message and
    searches on from its own record, so it is tried here. The sender
    counts this relay tried and goes on to its next candidate at once
-   ([hand-over](#hand-over) step 5).
+   ([the ACK](#the-ack)).
 
 In every case the relay records the packet's sender and count as the
 last packet, with whether it was answered seen, raises its highest count
@@ -2126,10 +2104,8 @@ A message whose next hop is banned is neither returned nor dropped: it
 waits ([overload waits](#overload-waits)), a node's own application's
 message as in [bans](#bans).
 
-Once a return to the parent fails and the parent is demoted, the
-message having waited for the parent's bans and gone again
-([hand-over](#hand-over) step 6), or has left the table, the relay
-drops the message and the search ends early. A parent that refuses the
+A return whose parent is demoted, or has left the table, is dropped
+and the search ends early ([hand-over](#hand-over) step 6). A parent that refuses the
 return has not failed, and a busy channel is no attempt: the return
 waits for it to clear ([hand-over](#hand-over) step 2, roadmap D111).
 
@@ -2304,7 +2280,7 @@ up to 61 s ([bans](#bans)).
 So a dead neighbour costs a relay that many failed hand-overs before it
 leaves the table 390 s after its last heartbeat or ACK: the bans 1.58,
 3.16, 6.3, 12.7, 25.3 and 50.6 s add up to 100 s, and 61 s bans fill the
-rest. After three failures it is a last resort
+rest. After three failures it ranks behind the others
 ([neighbour table](#neighbour-table)) and the message that waited for it
 moves on, so the first message pays the two bans and three hand-overs,
 14.2 s, and every later one a hand-over, 3.15 s, until the demotion
@@ -2915,8 +2891,8 @@ instead, the first hop would often be a faint, far relay (roadmap D46).
 A refused message goes back to the application with the wait the
 refusal asks for ([bans](#bans)), and the node takes no message of the
 application's until that wait is over; the application may offer it
-again then, or give it up, and tell the person either way. Held by the
-node instead, it would wait at its origin with the person unaware.
+again then, or give it up, and tell the person either way
+([addresses](#addresses)).
 
 One whose hand-over goes unanswered is tried again a fade later, 60 s,
 doubled for each unanswered hand-over to the anchor in a row up to the
@@ -3122,7 +3098,7 @@ third byte holds its flags. Each field has one place.
 |---|---|---|
 | `1000 cccc` | heartbeat | `cccc` the home channel, 0 to 12 |
 | `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
-| `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the code of the wait the refuser asks for, 1 to 63: 1 to 16 bans, then each an eighth longer, up to 89 min ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
+| `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the code of the wait the refuser asks for, 1 to 63 ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
 
 The second byte is the **format version**. This specification is
 format 1.
