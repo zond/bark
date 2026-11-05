@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 2;
+const int linkVersion = 3;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -28,6 +28,9 @@ class Uuids {
 
   /// From link version 2.
   static const clock = '28bc0008-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 3 (spec "Mailbox"); the app does not use it yet.
+  static const home = '28bc0009-a1b8-4893-9537-2ee3559d7644';
 }
 
 /// ATT error codes the node answers a write with.

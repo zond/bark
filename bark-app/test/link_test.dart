@@ -101,7 +101,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [3, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);

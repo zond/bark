@@ -2933,6 +2933,8 @@ service and its characteristics:
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
 | Clock | `28bc0008-…` | read | utc(4) offset(2) source(1) | 7 |
 | | | write | utc(4) offset(2) | 6 |
+| Home | `28bc0009-…` | read | set(1) oldest(3) newest(3) | 7 |
+| | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -2943,7 +2945,7 @@ write is a write request, which the node answers; a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 2 in this specification; the node's ID, the
+**Node.** The link version, 3 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3024,6 +3026,15 @@ takes the time only while it has none from its GPS
 ([position](#position)). A read gives the node's time, the offset it
 keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
 none the time is 0. From link version 2 (roadmap D130).
+
+**Home.** A write of 1 and the mailbox key makes the node its person's
+home, and of 0 makes it nobody's ([mailbox](#mailbox)); the node keeps
+it across a reboot. A read says whether it is a home and the numbers of
+the oldest and the newest item its ring holds, 0 when none. While it is
+a home, the inbox is its ring: Inbox reads the oldest item after the
+last the phone confirmed, with the ID it arrived with, the written ID
+confirms it, and Status's count is the items not yet confirmed; the
+ring keeps them for fetches either way. From link version 3.
 
 *Why the offset from the phone.* Turning a position into a time zone
 takes the zones' boundaries and rules, which the node has no room for
@@ -3127,9 +3138,9 @@ is not delivered.
 A person may set a node as their **home**, from the app over the phone
 link; the app then puts its address on the person's card. It must be a
 fixed relay, neither sleepy nor carried ([nodes](#nodes)), so that its
-address stays. The app gives it the mailbox key and nothing else, by a
-Home characteristic still to be served, `28bc0009-…` at link version 3
-(its values: `bark-link` `home`),
+address stays. The app gives it the mailbox key and nothing else, by the
+Home characteristic ([phone link](#phone-link); its values: `bark-link`
+`home`),
 so it cannot read the messages it keeps (roadmap D128;
 `docs/app-layer-2026-11-05.md`, "The mailbox").
 

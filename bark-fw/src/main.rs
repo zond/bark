@@ -26,6 +26,8 @@ mod gps;
 #[cfg(not(feature = "console"))]
 mod lfclk;
 #[cfg(not(feature = "console"))]
+mod mailbox;
+#[cfg(not(feature = "console"))]
 mod node;
 mod power;
 mod radio;
@@ -402,7 +404,11 @@ async fn main(spawner: Spawner) {
         let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
             embassy_nrf::peripherals::NVMC::steal()
         }));
+        let mpsl_flash = store::shared(mpsl_flash);
         let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
+        // The mailbox, beside the store on the same flash (`mailbox.rs`).
+        mailbox::open();
+        spawner.spawn(mailbox::run(mpsl_flash).expect("spawned once"));
         utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
         let core = node::core(config, seed);
