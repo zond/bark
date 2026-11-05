@@ -34,6 +34,7 @@ mod store;
 mod touch;
 mod update;
 
+#[cfg(feature = "console")]
 use core::fmt::Write as _;
 
 use bark_proto::NodeId;
@@ -142,21 +143,22 @@ pub fn node_id_hex() -> [u8; 2 * NodeId::LEN] {
 
 /// The boot picture: the ID in two rows of six digits, large, then the
 /// image and its version.
-fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> display::Picture {
+#[cfg(feature = "console")]
+fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> bark_screen::Picture {
     // Twelve 5-pixel glyphs with a column between, at 2 pixels each, span
     // 142 of the 200 columns: the largest the whole ID fits on one row,
     // which reads as one word.
     const ID_SCALE: usize = 2;
     const TEXT_SCALE: usize = 2;
     const TOP: usize = 60;
-    let mut picture = display::Picture::white();
+    let mut picture = bark_screen::Picture::white();
     let mut y = TOP;
     picture.text(hex, ID_SCALE, y);
-    y += display::line_height(ID_SCALE);
-    y += display::line_height(TEXT_SCALE) / 2;
+    y += bark_screen::line_height(ID_SCALE);
+    y += bark_screen::line_height(TEXT_SCALE) / 2;
     picture.text(IMAGE.as_bytes(), TEXT_SCALE, y);
-    y += display::line_height(TEXT_SCALE);
-    let mut line = display::Line::<32>::new();
+    y += bark_screen::line_height(TEXT_SCALE);
+    let mut line = bark_screen::Line::<32>::new();
     let _ = write!(line, "V{}", update::BARK_IMAGE_VERSION);
     #[cfg(feature = "console")]
     if let Some(ch) = console::SURVEY {
@@ -433,9 +435,22 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    #[cfg(feature = "console")]
     let picture = boot_picture(hex);
     // After the radio's future, which raises the switched rail first thing.
+    #[cfg(feature = "console")]
     let shown = display::show(board.eink, p.TWISPI1, Irqs, &picture);
+    #[cfg(not(feature = "console"))]
+    let shown = display::run(
+        board.eink,
+        p.TWISPI1,
+        Irqs,
+        bark_screen::Fixed {
+            id: hex,
+            image: IMAGE,
+            version: update::BARK_IMAGE_VERSION,
+        },
+    );
 
     join3(
         join5(

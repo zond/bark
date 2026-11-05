@@ -73,6 +73,8 @@ nrf-sdc = { version = "=0.4.0", features = ["nrf52840", "peripheral"] }
 nrf-mpsl = { version = "=0.4.0", features = ["nrf52840", "critical-section-impl"] }
 trouble-host = { version = "=0.8.0", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "att-queued-writes", "log"] }
 bark-link = { path = "../bark-link" }
+# What the e-paper shows, built and tested on the host (src/display.rs).
+bark-screen = { path = "../bark-screen" }
 # The GATT values' storage, the version trouble-host uses.
 heapless = "=0.9.3"
 # The SpiDevice trait lora-phy takes, implemented over the SPIM bus driven blocking (src/radio.rs).

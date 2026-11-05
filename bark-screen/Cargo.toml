@@ -1,0 +1,9 @@
+[package]
+name = "bark-screen"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What a bark node shows on its e-paper: the picture built from the node's state, testable on the host."
+
+[dependencies]

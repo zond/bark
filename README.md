@@ -58,6 +58,8 @@ bark-driver/  no_std loop that drives the core against a radio and a clock;
               against a fake radio.
 bark-link/    no_std: the values of the phone link's BLE service, shared by
               the firmware and the tests (protocol.md, "Phone link").
+bark-screen/  no_std: what a node's e-paper shows, the picture built from
+              its state; tested on the host (bark-fw/README.md, Display).
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf and a vendored lora-phy around
               bark-driver and bark-proto, and the phone link's BLE stack
