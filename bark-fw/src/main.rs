@@ -6,12 +6,14 @@
 //! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
 //! (`console.rs`) on the serial port. Reads the battery (`battery.rs`);
-//! touches no GPS or BLE.
+//! touches no GPS. The node build runs the phone link (`ble.rs`).
 
 #![no_std]
 #![no_main]
 
 mod battery;
+#[cfg(not(feature = "console"))]
+mod ble;
 mod board;
 mod clock;
 #[cfg(feature = "console")]
@@ -29,7 +31,7 @@ use core::fmt::Write as _;
 
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
-use embassy_futures::join::{join, join5};
+use embassy_futures::join::{join3, join5};
 use embassy_nrf::config::{Config, HfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
@@ -38,7 +40,11 @@ use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 // The logger macro constructs the input handler through this trait.
 use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
+// The critical section, in both builds: it masks every interrupt but the
+// MPSL's radio timing (`ble.rs`); the console links it for that alone.
+use nrf_mpsl as _;
 
+#[cfg(feature = "console")]
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler;
@@ -47,6 +53,26 @@ bind_interrupts!(struct Irqs {
     SAADC => embassy_nrf::saadc::InterruptHandler;
     TEMP => embassy_nrf::temp::InterruptHandler;
 });
+
+// The MPSL's interrupts beside ours (`ble.rs`); TEMP is the MPSL's.
+#[cfg(not(feature = "console"))]
+bind_interrupts!(struct Irqs {
+    USBD => usb::InterruptHandler<peripherals::USBD>;
+    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler, nrf_mpsl::ClockInterruptHandler;
+    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    SPIM3 => spim::InterruptHandler<peripherals::SPI3>;
+    SAADC => embassy_nrf::saadc::InterruptHandler;
+    EGU0_SWI0 => nrf_mpsl::LowPrioInterruptHandler;
+    RADIO => nrf_mpsl::HighPrioInterruptHandler;
+    TIMER0 => nrf_mpsl::HighPrioInterruptHandler;
+    RTC0 => nrf_mpsl::HighPrioInterruptHandler;
+});
+
+/// The priority of every interrupt of ours in the node build: below the
+/// MPSL's radio timing at 0, whose deadlines nothing may delay
+/// (`ble.rs`), and above its low-priority work at 4.
+#[cfg(not(feature = "console"))]
+const APP_PRIORITY: embassy_nrf::interrupt::Priority = embassy_nrf::interrupt::Priority::P2;
 
 /// What the host types: commands for the console, or nothing to the node.
 #[cfg(feature = "console")]
@@ -148,18 +174,44 @@ async fn main(_spawner: Spawner) {
 
     let mut config = Config::default();
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
-    // Specification, USBD chapter), and once started it runs while the CPU
-    // sleeps. A node that boots without USB power keeps it off, so its USB
-    // works only after a reset with the cable in; the console always
-    // starts it, for its stopwatch (clock.rs). The 32.768 kHz clock stays
-    // on the internal RC oscillator, which assumes nothing about a fitted
-    // LF crystal.
-    let on_usb = embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect();
-    config.hfclk_source = match cfg!(feature = "console") || on_usb {
+    // Specification, USBD chapter). The console starts it at boot, for its
+    // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
+    // starts the crystal for its radio, and holds it while asked to, on
+    // USB (`on_usb_only`). The 32.768 kHz clock stays on the internal RC
+    // oscillator, which assumes nothing about a fitted LF crystal.
+    config.hfclk_source = match cfg!(feature = "console") {
         true => HfclkSource::ExternalXtal,
         false => HfclkSource::Internal,
     };
-    let p = embassy_nrf::init(config);
+    #[cfg(not(feature = "console"))]
+    {
+        config.gpiote_interrupt_priority = APP_PRIORITY;
+        config.time_interrupt_priority = APP_PRIORITY;
+        use embassy_nrf::interrupt::{Interrupt, InterruptExt as _};
+        for irq in [
+            Interrupt::USBD,
+            Interrupt::SPI2,
+            Interrupt::SPIM3,
+            Interrupt::SAADC,
+        ] {
+            irq.set_priority(APP_PRIORITY);
+        }
+    }
+    // Mutable for the seed's borrow of the generator in the node build.
+    #[cfg_attr(feature = "console", allow(unused_mut))]
+    let mut p = embassy_nrf::init(config);
+    #[cfg(not(feature = "console"))]
+    let mpsl = ble::mpsl(ble::MpslParts {
+        rtc0: p.RTC0,
+        timer0: p.TIMER0,
+        temp: p.TEMP,
+        ppi19: p.PPI_CH19,
+        ppi30: p.PPI_CH30,
+        ppi31: p.PPI_CH31,
+    });
+    // The core's seed, before the controller takes the generator.
+    #[cfg(not(feature = "console"))]
+    let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG.reborrow()).blocking_next_u64();
     let board = board::take_board!(p);
 
     // The ID as the USB serial number, so that the host names each board's
@@ -243,7 +295,23 @@ async fn main(_spawner: Spawner) {
         log::error!("previous boot panicked: {}", msg);
     }
 
+    #[cfg(feature = "console")]
     let blink = on_usb_only(board.leds.green);
+    #[cfg(not(feature = "console"))]
+    let blink = on_usb_only(board.leds.green, mpsl);
+    #[cfg(not(feature = "console"))]
+    let phone = embassy_futures::join::join(mpsl.run(), async {
+        let parts = nrf_sdc::Peripherals::new(
+            p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
+            p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
+        );
+        match ble::controller(parts, p.RNG, mpsl) {
+            Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
+            Err(e) => log::error!("ble: controller {:?}", e),
+        }
+    });
+    #[cfg(feature = "console")]
+    let phone = async {};
     let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
 
     #[cfg(feature = "console")]
@@ -262,7 +330,6 @@ async fn main(_spawner: Spawner) {
     let (config, core, flash) = {
         let (flash, stored) = store::Flash::open(shared);
         let config = node::config(stored);
-        let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG).blocking_next_u64();
         (config, node::core(config, seed), flash)
     };
     // Where the radio's self-check reads the channel at boot: the home
@@ -282,8 +349,10 @@ async fn main(_spawner: Spawner) {
             board.power,
             p.SPI2,
             Irqs,
-            p.TEMP,
-            Irqs,
+            #[cfg(feature = "console")]
+            radio::Thermometer::Sensor(embassy_nrf::temp::Temp::new(p.TEMP, Irqs)),
+            #[cfg(not(feature = "console"))]
+            radio::Thermometer::Mpsl(mpsl),
             &clock,
             channel,
         )
@@ -315,7 +384,7 @@ async fn main(_spawner: Spawner) {
     // After the radio's future, which raises the switched rail first thing.
     let shown = display::show(board.eink, p.SPI3, Irqs, &picture);
 
-    join(
+    join3(
         join5(
             device.run(),
             log_sink,
@@ -324,6 +393,7 @@ async fn main(_spawner: Spawner) {
             update::watchdog(p.WDT),
         ),
         shown,
+        phone,
     )
     .await;
 }
@@ -339,24 +409,33 @@ const UPTIME_EVERY: u32 = 20;
 /// current, a blink would wake the CPU twice a second, and the crystal,
 /// once started, runs on while the CPU sleeps, where the internal
 /// oscillator starts only while something needs it.
-async fn on_usb_only(pin: embassy_nrf::Peri<'static, peripherals::P1_01>) {
+async fn on_usb_only(
+    pin: embassy_nrf::Peri<'static, peripherals::P1_01>,
+    #[cfg(not(feature = "console"))] mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+) {
     use embassy_futures::select::{select, Either};
     use embassy_nrf::gpio::{Level, Output, OutputDrive};
     // LED assumed active low (board.rs, Leds): start dark.
     let mut green = Output::new(pin, Level::High, OutputDrive::Standard);
     let mut half_periods: u32 = 0;
+    // The crystal, held for USB while on it: asked of the MPSL, which owns
+    // the clock in the node build (`ble.rs`); the console starts it for
+    // good at boot.
+    #[cfg(not(feature = "console"))]
+    let mut crystal = None;
     loop {
         let usb = power::usb();
-        let crystal = embassy_nrf::pac::CLOCK;
         if !usb {
             green.set_high();
-            if !cfg!(feature = "console") {
-                crystal.tasks_hfclkstop().write_value(1);
-            }
+            #[cfg(not(feature = "console"))]
+            drop(crystal.take());
             power::FOR_LED.wait().await;
             continue;
         }
-        crystal.tasks_hfclkstart().write_value(1);
+        #[cfg(not(feature = "console"))]
+        if crystal.is_none() {
+            crystal = mpsl.request_hfclk().await.ok();
+        }
         let half = embassy_time::Timer::after(BLINK_HALF_PERIOD);
         if let Either::First(()) = select(half, power::FOR_LED.wait()).await {
             green.toggle();
