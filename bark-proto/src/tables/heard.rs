@@ -12,8 +12,8 @@
 //! An entry is kept for two beat periods, the delivery TTL, after the last
 //! frame heard from the node, its beat, its own DATA or its ACK: one lost
 //! beat does not lose it, a node that answers is not lost for its beats
-//! going unheard, and a node that has gone is kept no longer than the
-//! messages held for it (spec "Sleepy nodes", "Heard table"). When the table
+//! going unheard, and a node that has gone is kept for the TTL, the least
+//! its messages are kept (spec "Sleepy nodes", "Heard table"). When the table
 //! is full a newcomer takes the place of an expired entry, else of the one
 //! heard longest ago: a node that beats now listens now, so a holder for
 //! more nodes than the table keeps still sends each its mail after each
@@ -27,14 +27,15 @@ use crate::tables::fixed::FixedVec;
 use crate::tables::{attempt_span, retry_waits};
 use crate::time::{Duration, Instant};
 
-/// Table capacity (spec "Heard table": ≈80 sleepy nodes per relay expected
-/// at indoor density with 10 % adoption, 400 at 50 %).
+/// Table capacity (spec "Heard table"): three times the ≈80 sleepy nodes
+/// per relay expected at indoor density with 10 % adoption; at 50 %, ≈400,
+/// a full table does no harm.
 pub const HEARD: usize = 256;
 
 /// The longest interval between two heartbeats of a sleepy node: half the
 /// delivery TTL, 300 s (spec "Beats"). A
 /// holder keeps a node for two periods, a TTL, so one lost beat does not
-/// lose it and a node that has gone is kept no longer than its messages;
+/// lose it and a node that has gone is kept the least its messages are;
 /// a message waits at most a period for its node to wake.
 pub const fn beat_period(delivery_ttl: Duration) -> Duration {
     delivery_ttl.div(2)

@@ -48,8 +48,9 @@
 //! # Bans
 //!
 //! A neighbour that refuses a hand-over (spec "Receiving DATA") is banned for
-//! [`BAN`]: no next hop at all until then (spec "Next hop", roadmap D29). A refusal
-//! is no failure: it says the neighbour hears us.
+//! the wait it tells, at least [`BAN`], in place of any ban it had; the
+//! refused message goes round it meanwhile (spec "Bans", "Next hop",
+//! roadmap D110). A refusal is no failure: it says the neighbour hears us.
 //!
 //! A failed hand-over bans it too, for [`hold`] of its `fail_count`: one
 //! ban after the first failure in a row, doubling with each further one up
@@ -57,7 +58,7 @@
 //! receiver's bucket lacks; silence says only that the channel or the
 //! receiver is full, and not how full, so the sender backs off further
 //! each time. Any answer to this relay resets `fail_count`, and so the
-//! ladder.
+//! doubling.
 //!
 //! [`BAN`]: crate::tables::budget::BAN
 //! [`hold`]: crate::tables::budget::hold
@@ -78,7 +79,7 @@
 //!    full worst-case rotation (`CHANNELS × heartbeat_max`, 195 s), so it
 //!    has certainly missed a heartbeat on our channel; else
 //! 3. for a relay within the owner radius (spec "Owner"), the least
-//!    recently heard relay beyond it, since the owner rule reads from the
+//!    recently heard entry beyond it, since the owner rule reads from the
 //!    table that no relay that near is closer (roadmap D68); else
 //! 4. nothing: the newcomer is not added.
 //!
@@ -86,9 +87,8 @@
 //! relays (spec "Capacity and sizing"): about two heartbeats a second arrive on its channel, so
 //! an entry would last about 64 / 2 = 30 s and every `fail_count` would be
 //! forgotten within a minute. Keeping incumbents replaces exactly the
-//! entries that are failing or not being heard. Whether a set spread
-//! around the relay routes better is open item O4; [`victim`] is the one
-//! function to replace if so.
+//! entries that are failing or not being heard. A set spread around the
+//! relay by bearing routes no better (roadmap D69).
 //!
 //! # Sleepy and anchorless neighbours
 //!

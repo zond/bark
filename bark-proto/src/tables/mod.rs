@@ -44,8 +44,8 @@ pub const HOP_ATTEMPTS: u8 = 3;
 pub const DEMOTE_AFTER_FAILURES: u8 = 3;
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
-/// gives up, a full frame on air, and the ACK timeout (spec "Message records",
-/// "Hand-over"): 738.6 ms with the design's 100 ms timeout.
+/// gives up, a full frame on air, and the ACK timeout (spec "Hand-over"):
+/// 738.6 ms with the design's 100 ms timeout.
 pub const fn attempt_span(ack_timeout: Duration) -> Duration {
     Duration::from_micros(
         LBT_GIVE_UP.as_micros()

@@ -64,7 +64,7 @@
 //!
 //! A relay refuses a packet to send on when the packet's frame and the ACK
 //! that takes it do not fit in its bucket on top of what it has queued
-//! (spec "Receiving DATA", roadmap D29). The sender bans it for [`BAN`], the time the
+//! (spec "Receiving DATA", roadmap D29). The sender bans it for at least [`BAN`], the time the
 //! bucket takes to refill a full frame and its ACK, 138.56 + 16.96 =
 //! 155.52 ms at 9.83 %: 1.58 s: by then the bucket has refilled what the
 //! refusal lacked, unless the relay has spent it on what it already held.
@@ -169,8 +169,8 @@ pub const RETRY_REPLIES: u64 = refilled(retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS,
 pub const REPLY_RESERVE: Duration =
     Duration::from_micros(REPLIES * ACK_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
 
-/// How long a sender refused bans the relay (spec "Bans"); see the module
-/// documentation.
+/// The shortest ban, and the unit of the wait a refusal tells (spec
+/// "Bans"); see the module documentation.
 pub const BAN: Duration = refill_time(Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
 ));

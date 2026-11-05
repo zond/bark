@@ -18,14 +18,19 @@ spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-10-21)
+## Status (2026-11-05)
 
-The protocol core, the simulator and the firmware are written. In the
-simulator, 28 km² of city with 270 relays and 20 000 sleepy nodes delivers
-96 % of the texts it can reach at the design's rate. The firmware runs the
-core, a relay on USB, and on battery a relay until its battery is low if it
-stands still, sleepy if carried, but has not yet run on a board; four
-T-Echo boards are expected around 2026-11-04. `docs/roadmap.md` has the phases.
+The protocol core, the simulator and the firmware are written. The
+simulator runs a city's collision domain, 28 km² with 270 relays and
+20 000 sleepy nodes, at the design's rate and above; what it measured, and
+the decisions it led to, are in `docs/roadmap.md`. The firmware runs the
+core, a relay on USB, and on battery a relay until its battery is low if
+it stands still, sleepy if carried, behind a loader that swaps in new
+images; it has booted and run on one T-Echo board, alone. Three boards
+are on the bench, on a measurement build: it has measured the radio's
+timings, two frames on one channel and a still link's fading
+(`docs/bench-*.md`). Next is the protocol on the three boards together
+(`docs/roadmap.md`, Phases 2 and 3).
 
 Read, in order:
 
@@ -36,7 +41,7 @@ Read, in order:
    its drivers (simulator, firmware).
 4. `docs/simulator-design.md`: the simulator.
 5. `docs/implementation-research-2026-10-14.md`: what exists in the Rust
-   ecosystem, hardware facts, and corrections to the design doc.
+   ecosystem, hardware facts, and corrections to the specification.
 6. `docs/reception-research-2026-10-15.md`: how the simulator decides
    that a packet near sensitivity is lost.
 7. `docs/firmware-adapter-2026-10-15.md`: the loop that runs the core on
@@ -52,8 +57,9 @@ bark-driver/  no_std loop that drives the core against a radio and a clock;
               the firmware runs it on the board, its tests on the host
               against a fake radio.
 bark-sim/     discrete-event simulator and scenario runner (std, host).
-bark-fw/      T-Echo firmware: embassy-nrf + lora-phy + TrouBLE around
-              bark-proto. Its own Cargo workspace, cross-compiled.
+bark-fw/      T-Echo firmware: embassy-nrf and a vendored lora-phy around
+              bark-driver and bark-proto; BLE (TrouBLE) is still to come.
+              Its own Cargo workspace, cross-compiled.
 bark-loader/  the loader the board's bootloader starts: swaps in a staged
               firmware image and swaps it back if it does not confirm
               itself. Its own Cargo workspace, cross-compiled.
@@ -66,7 +72,9 @@ docs/         design notes, research, decisions.
 Every node runs the same protocol, and what it does follows its power
 and its motion. A relay, a node on USB or another supply, forwards a
 message to the neighbour closest to the destination's position,
-backtracks around gaps, and expects an acknowledgement from every hop. A sleepy node, on battery,
+backtracks around gaps, and expects an acknowledgement from every hop.
+Overload is refused back toward the sender's app with a time to try
+again; nothing the network has taken is dropped for its age. A sleepy node, on battery,
 heartbeats rarely to the relay it has chosen, which holds its messages
 until it listens. The protocol core has no external routing dependency (roadmap D1).
 

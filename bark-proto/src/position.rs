@@ -54,7 +54,7 @@ impl Position {
 
     /// Encode: 56-bit big-endian value, latitude in the top 25 bits,
     /// longitude in the next 26, five spare bits zero.
-    /// (Bit layout is this implementation's choice; design O2 leaves it open.)
+    /// (Bit layout is this implementation's choice; the spec leaves it open.)
     pub fn encode(self) -> [u8; Self::WIRE_LEN] {
         let lat = (self.lat as u64) & ((1 << LAT_BITS) - 1);
         let lon = (self.lon as u64) & ((1 << LON_BITS) - 1);

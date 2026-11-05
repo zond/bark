@@ -1,8 +1,6 @@
 # Core interface
 
-**Status:** fixed for Phase 0, 2026-10-14; the application interface (§4) revised
-2026-10-15, roadmap D29; one node type, 2026-10-17, roadmap D46; the sleep signal (§3 rule 10), 2026-10-17,
-roadmap D47; duty-cycled receive and the long preamble (§3 rules 4, 8, 11), 2026-10-17, roadmap D51; every sleepy node receives duty-cycled and `Action::Sleep` goes (§3 rule 10), 2026-10-18, roadmap D58; the firmware's duty-cycled receive and `AppEvent::GivenBack` (§3 rule 10, §4, §5), 2026-10-20; `AppCommand::Fix` and the bench frames at type 0x6 (§4, §7), 2026-10-21, roadmap D70; `AppCommand::Power` (§2, §4), 2026-10-21, roadmap D71; every node measures from `AppCommand::Fix` whether it is carried (§4), 2026-10-22, roadmap D72; the first rotation, `Action::Store`, `Config::stored` and `AppEvent::Boot` (§2, §4, §6, §7), 2026-10-24, roadmap D73; six-byte node IDs (§6, §7), 2026-10-24, roadmap D75; the first byte's two shapes, one ACK with the wait in `aux`, and the bench frames on channel 15 (§7), 2026-10-24, roadmap D76; the records and sizes after the airtime correction (§6, §7), 2026-10-25; `Action::Locate` (§4, §5), 2026-10-25, roadmap D80; the format version byte and the heartbeat's flags byte (§6, §7), 2026-10-25, roadmap D77; `AppCommand::Battery`, the stored relay flag and the battery readings' scale (§4, §5), 2026-10-26, roadmap D81; `Node::gps_tracks` and a resting relay's searches (§4, §5), 2026-10-27, roadmap D82; one listen-before-talk excursion, `Action::Lbt` and `Event::LbtDone`, in place of a CAD and a reading (§3, §5), 2026-10-30, roadmap D88; a sleepy node with an anchor takes no fix and asks for no search, and a `Locate` at or before now ends one (§4, §5), 2026-10-31, roadmap D91. Roadmap decision D3. The types are in
+**Status:** live contract, changed only by roadmap decisions (first D3). The types are in
 `bark-proto/src/{time,radio,position,ids,event,node}.rs`; this page is the contract
 around them that a driver (the simulator, the firmware) must honour and the core may rely on.
 
@@ -91,7 +89,7 @@ Rules:
    cut a packet short (spec "Busy estimate").
    `Transmit` is never held. The core's timeouts allow for the hold.
 9. **`Action::Trace` carries no obligation.** It reports protocol events (a dropped message
-   and why, a deferral, a forward, a backtrack, a demotion, a channel move) for the simulator's
+   and why, a deferral, a forward, a return to the parent, a demotion, a channel move) for the simulator's
    metrics and the firmware's log. A driver may ignore it.
 10. **`Action::Sniff(until)` lets the radio receive duty-cycled** on the resting channel
     until `until`: the SX1262's SetRxDutyCycle (datasheet §13.1.7) with a receive period of
@@ -117,7 +115,8 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::Fix`, `AppCommand::Power` and `AppCommand::Battery`, the events
+`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::Power` and
+`AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
 `Action::Store` and `Config::stored`, and the GPS request `Action::Locate`.
 
@@ -135,10 +134,9 @@ It accepts a message from its boot on while it holds none, its send queue takes 
 frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
 for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
 bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
-it. A node whose message's next hop is banned once it holds the message keeps it and
-tries again when the ban ends, or later after refusals in a row
-(spec "Bans"); one for a sleepy node it holds for that finds the delivery
-queue full waits for a place (spec "Return to parent"). A message the node's own gate refuses
+it. A message the node holds waits for bans as spec "Bans" says; one for a
+sleepy node it holds for that finds the delivery queue full waits for a
+place (spec "Receiving DATA"). A message the node's own gate refuses
 when it is offered (spec "Receiving DATA"), or a sleepy node's own message that
 its first hop refuses, goes back to the application (spec "A sleepy node's own message"):
 the core emits `AppEvent::GivenBack` with the message's ID and `retry_at`, the end of the
@@ -238,7 +236,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 
 ## 6. Memory
 
-`Relay` holds its tables inline (spec "Implementation notes"). Sizes as built, 2026-10-25 (roadmap D75, D77 and the airtime correction), the send-queue entry 304 B, with what it waited for, the neighbours it has passed and those that refused it, since 2026-11-05 (roadmap D106, D110), and the neighbour entry 104 B, with its service time and line, since 2026-11-03 (roadmap D106), checked by the
+`Relay` holds its tables inline (spec "Implementation notes"). Their sizes, checked by the
 test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
@@ -258,7 +256,7 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-181 520 B (177.3 KiB, measured 2026-11-05, roadmap D113): the tables and, in under 1 KiB around them, the
+181 520 B (177.3 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 162 504 B (158.7 KiB), without the heard table and the delivery
@@ -271,8 +269,8 @@ the sizes follow from the design. The board's application has 255 KiB of RAM
 `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
-value, and on the board's target it takes 174 KiB of stack to build one (measured
-2026-10-15 in the firmware's release build), more than the 88 KiB left beside a
+value, and on the board's target building one took 174 KiB of stack in the
+firmware's release build, more than the 88 KiB left beside a
 relay in static memory. So `Relay::reset(config, seed)` sets up a relay in place, as
 `Relay::new` would have, whatever it held before. A driver can keep the relay in a static
 holding `Relay::UNSET`, a relay with empty tables built at compile time, or holding zero
@@ -286,7 +284,7 @@ The simulator, on the host, uses `Relay::new`.
 `Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
-## 7. Wire-format choices made here (design O2)
+## 7. Wire-format choices made here
 
 - Position: 56-bit big-endian, latitude in the top 25 bits, longitude in the next 26, five
   spare bits zero (`position.rs`).
@@ -302,7 +300,7 @@ action at a time, and the core never allocates.
   `dst_pos` in its 7 wire bytes (`MsgId::of` in `ids.rs`; `Data::msg_id` on a decoded
   DATA).
 - Everything else in spec "Packet formats" is encoded by the codecs in `wire.rs`. Choices made
-  there, 2026-10-14:
+  there:
   - Multi-byte integers (short positions, message IDs) are big-endian; a node ID is six
     opaque bytes in order, compared whole.
   - ACK `to` of a DATA is its `src_hop`.
