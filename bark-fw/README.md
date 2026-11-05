@@ -44,7 +44,17 @@ BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
 `build.rs` converts them to the position's counts with the core's
 conversion, so the image parses no numbers; one set without the other,
 or a value that is not a number, fails the build. Without them the node
-has no place until the phone sets a map point (roadmap D83). Every protocol event (`Trace`), every message for the node, and
+has no place until the phone sets a map point (roadmap D83).
+
+A built place is not a map point: the GPS runs with one as without, and
+only a map point the phone sets keeps it at rest (spec "Position"; the
+`boot:` line says `gps=` and `map_point=`). But a fix is taken only
+within 3 km of a relay the node knows (spec "Position"), and a board
+built with a place it does not stand at, beside others built the same,
+knows only relays at that place: its every true fix is dropped
+(`gps: fix … beyond every known relay; dropped`, once), though it still
+keeps the time from them. To bench the GPS, build without a place or
+with the place the board stands at. Every protocol event (`Trace`), every message for the node, and
 a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the

@@ -19,6 +19,11 @@
 //! for. The LoRa radio keeps receiving meanwhile, and a frame that ends
 //! then waits in it.
 //!
+//! The writes run in a task of their own ([`run`]), handed the latest of
+//! each kind by the node after the step that asked: an erase's and a
+//! write's futures nested in the node's loop grew the main task's stack
+//! frame by 2.4 KB.
+//!
 //! The page also keeps the phone's UTC offset (`utc.rs`), in records of
 //! its own beside the core's: [`ZONE`] and the offset in the first word,
 //! its complement in the second, the rest left erased. The core's records
@@ -27,6 +32,34 @@
 
 use bark_image::layout::STORE;
 use bark_proto::store::{Stored, RECORD_LEN};
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+
+/// The state and the offset to keep next, the latest of each.
+static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
+static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
+
+/// The node's side: keep `stored`, in place of the state kept before.
+pub fn keep(stored: Stored) {
+    STORED.signal(stored);
+}
+
+/// The node's side: keep the UTC offset, in place of the one kept before.
+pub fn keep_offset(offset_min: i16) {
+    OFFSET.signal(offset_min);
+}
+
+/// Write what the node hands, for ever.
+#[embassy_executor::task]
+pub async fn run(mut flash: Flash) -> ! {
+    loop {
+        match select(STORED.wait(), OFFSET.wait()).await {
+            Either::First(stored) => flash.keep(&stored).await,
+            Either::Second(offset_min) => flash.keep_offset(offset_min).await,
+        }
+    }
+}
 
 /// Records in the page.
 const SLOTS: u32 = STORE.len / RECORD_LEN as u32;
@@ -91,13 +124,13 @@ impl Flash {
     }
 
     /// Keep `stored`, in place of the state kept before.
-    pub async fn keep(&mut self, stored: &Stored) {
+    async fn keep(&mut self, stored: &Stored) {
         self.stored = Some(*stored);
         self.write(&stored.record()).await;
     }
 
     /// Keep the UTC offset, in place of the one kept before.
-    pub async fn keep_offset(&mut self, offset_min: i16) {
+    async fn keep_offset(&mut self, offset_min: i16) {
         self.offset_min = Some(offset_min);
         self.write(&zone_record(offset_min)).await;
     }

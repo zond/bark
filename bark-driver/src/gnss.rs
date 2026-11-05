@@ -54,6 +54,11 @@ pub struct Cn0 {
     pub mean: u8,
     /// The highest, dB-Hz; 0 with none.
     pub max: u8,
+    /// Satellites the GSA sentences name as used: with `count`, where a
+    /// lookup fails.
+    pub listed: u8,
+    /// Satellites the GSV sentences report a C/N0 for.
+    pub in_view: u8,
 }
 
 impl Cn0 {
@@ -91,6 +96,9 @@ pub struct Nmea {
     seen: [(Sat, u8); IN_VIEW],
     n_seen: usize,
     satellites: u8,
+    /// The last GSA and GSV sentences, as they came, for the bench.
+    gsa: ([u8; LINE], usize),
+    gsv: ([u8; LINE], usize),
     /// Sentences dropped for their checksum or their length.
     pub bad: u32,
 }
@@ -107,6 +115,8 @@ impl Default for Nmea {
             seen: [(Sat::default(), 0); IN_VIEW],
             n_seen: 0,
             satellites: 0,
+            gsa: ([0; LINE], 0),
+            gsv: ([0; LINE], 0),
             bad: 0,
         }
     }
@@ -277,6 +287,8 @@ impl Nmea {
                 if new_group {
                     self.n_used = 0;
                 }
+                self.gsa.0[..line.len()].copy_from_slice(line);
+                self.gsa.1 = line.len();
                 let system = match (system(talker), number(f[17])) {
                     (0, Some(s)) => s as u8,
                     (s, _) => s,
@@ -297,6 +309,8 @@ impl Nmea {
                 if new_group {
                     self.n_seen = 0;
                 }
+                self.gsv.0[..line.len()].copy_from_slice(line);
+                self.gsv.1 = line.len();
                 let system = system(talker);
                 // After the three counts, a satellite is four fields:
                 // number, elevation, azimuth, C/N0; a field may follow,
@@ -337,8 +351,18 @@ impl Nmea {
         }
     }
 
+    /// The last GSA and GSV sentences, from `$` to the checksum.
+    pub fn last_gsa_gsv(&self) -> (&[u8], &[u8]) {
+        (&self.gsa.0[..self.gsa.1], &self.gsv.0[..self.gsv.1])
+    }
+
     /// The C/N0 of the satellites used, as last reported.
     fn cn0(&self) -> Cn0 {
+        let lists = Cn0 {
+            listed: self.n_used as u8,
+            in_view: self.n_seen as u8,
+            ..Cn0::default()
+        };
         let mut c = Cn0 {
             min: u8::MAX,
             ..Cn0::default()
@@ -356,10 +380,14 @@ impl Nmea {
             }
         }
         if c.count == 0 {
-            return Cn0::default();
+            return lists;
         }
         c.mean = (sum / u32::from(c.count)) as u8;
-        c
+        Cn0 {
+            listed: lists.listed,
+            in_view: lists.in_view,
+            ..c
+        }
     }
 }
 
@@ -420,7 +448,9 @@ mod tests {
                 count: 5,
                 min: 31,
                 mean: 37,
-                max: 44
+                max: 44,
+                listed: 5,
+                in_view: 6,
             }
         );
         assert!(f.cn0.real());

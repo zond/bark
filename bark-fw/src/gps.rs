@@ -103,6 +103,7 @@ pub async fn run(mut p: Parts) -> ! {
         }
         wake.set_high();
         log::info!("gps: searching");
+        note("searching");
         let mut state = State::Searching;
         let mut rx = uarte::UarteRx::new(
             p.uarte.reborrow(),
@@ -119,7 +120,28 @@ pub async fn run(mut p: Parts) -> ! {
                 }
             };
             match select3(rx.read_until_idle(&mut buf), WANT.wait(), until).await {
-                Either3::First(Ok(n)) => nmea.feed(&buf[..n], &mut |f| state = fixed(f, state)),
+                Either3::First(Ok(n)) => {
+                    let mut first = None;
+                    nmea.feed(&buf[..n], &mut |f| {
+                        let was = state;
+                        state = fixed(f, state);
+                        if was != State::Fixed && state == State::Fixed {
+                            first = Some(f.cn0);
+                        }
+                    });
+                    // A first fix whose used satellites have no C/N0
+                    // found: the sentences, once, for the bench.
+                    if let Some(c) = first.filter(|c| c.count == 0 && c.listed > 0) {
+                        let (gsa, gsv) = nmea.last_gsa_gsv();
+                        log::warn!(
+                            "gps: no c/n0 for {} used of {} in view; last {} and {}",
+                            c.listed,
+                            c.in_view,
+                            core::str::from_utf8(gsa).unwrap_or("?"),
+                            core::str::from_utf8(gsv).unwrap_or("?")
+                        );
+                    }
+                }
                 // A framing or overrun error loses a sentence, which the
                 // checksum would drop anyway.
                 Either3::First(Err(_)) => nmea.bad += 1,
@@ -135,7 +157,14 @@ pub async fn run(mut p: Parts) -> ! {
             " without a fix"
         };
         log::info!("gps: rest{} bad_sentences={}", found, nmea.bad);
+        note("rest");
     }
+}
+
+/// The receiver's state for the `boot:` line, whose lines a host that
+/// opens the port late still reads (`boot.rs`).
+fn note(state: &'static str) {
+    crate::boot::note(|f| f.gps = state);
 }
 
 /// Take a second's [`Fix`]: keep its time, hand its position to the node
@@ -144,6 +173,7 @@ fn fixed(f: Fix, state: State) -> State {
     let Some(position) = f.position else {
         if state != State::Searching {
             log::info!("gps: no fix, searching");
+            note("searching");
         }
         return State::Searching;
     };
@@ -171,6 +201,9 @@ fn fixed(f: Fix, state: State) -> State {
             c.mean,
             c.max
         );
+    }
+    if state != State::Fixed {
+        note("fix");
     }
     FIX.lock(|x| x.set(Some(position)));
     FOR_CORE.signal(());

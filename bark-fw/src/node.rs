@@ -20,7 +20,6 @@ use embassy_time::{Duration, Timer};
 use crate::battery::Battery;
 use crate::clock::Clock;
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
-use crate::store::Flash;
 
 /// The node: every board runs the full one, which can be a relay.
 pub type Role = bark_proto::Relay;
@@ -41,10 +40,6 @@ pub struct LinkApp<'a> {
     clock: &'a Clock,
     /// The last battery reading, for the status.
     battery_mv: u16,
-    /// What the core last asked to keep, until it is written.
-    to_store: Option<Stored>,
-    /// A UTC offset the phone changed, until it is written.
-    offset_to_store: Option<i16>,
     /// The step was woken for the link's request.
     serving: bool,
 }
@@ -102,7 +97,7 @@ impl App for LinkApp<'_> {
             }
             Link::Clock(c) => {
                 if crate::utc::phone(c.utc_s.into(), c.offset_min) {
-                    self.offset_to_store = Some(c.offset_min);
+                    crate::store::keep_offset(c.offset_min);
                 }
                 Some((None, true))
             }
@@ -158,7 +153,7 @@ impl App for LinkApp<'_> {
 
     fn store(&mut self, stored: &Stored) {
         log::info!("store {:?}", stored);
-        self.to_store = Some(*stored);
+        crate::store::keep(*stored);
     }
 
     fn gps(&mut self, gps: bark_driver::Gps) {
@@ -269,7 +264,6 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 pub async fn run<'a>(
     core: &'static mut Role,
     radio: Radio<'a>,
-    mut flash: Flash,
     battery: Battery<'a>,
     config: &Config,
     clock: &'a Clock,
@@ -279,8 +273,6 @@ pub async fn run<'a>(
         battery,
         clock,
         battery_mv: 0,
-        to_store: None,
-        offset_to_store: None,
         serving: false,
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
@@ -304,18 +296,15 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        if let Some(stored) = driver.app_mut().to_store.take() {
-            flash.keep(&stored).await;
-        }
-        if let Some(offset) = driver.app_mut().offset_to_store.take() {
-            flash.keep_offset(offset).await;
-        }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
                 let mut facts = crate::boot::facts();
                 facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
-                log::info!("boot: {}", facts);
+                // A map point keeps the GPS at rest by rule (spec
+                // "Position").
+                let map_point = driver.core().0.on_map_point();
+                log::info!("boot: {} map_point={}", facts, map_point);
             }
             let s = driver.stats();
             let r = driver.radio().stats();

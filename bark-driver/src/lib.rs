@@ -255,6 +255,9 @@ pub struct Driver<C, R, K, A> {
     search_until: Option<Instant>,
     /// What the application was last told of the GPS.
     gps: Option<Gps>,
+    /// The last fix was dropped as out of reach: the next is logged only
+    /// once one is taken again.
+    fix_dropped: bool,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
     /// Until when the core lets the radio receive duty-cycled
@@ -291,6 +294,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             battery_at: None,
             search_until: None,
             gps: None,
+            fix_dropped: false,
             resting: None,
             sniff_until: None,
             listening: None,
@@ -513,8 +517,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// (spec "Position"); the first such fix ends a search
     /// (core-interface §4).
     async fn fix(&mut self, position: Position) -> Result<(), R::Error> {
-        if !self.core.fix_in_reach(position) {
+        let in_reach = self.core.fix_in_reach(position);
+        if !in_reach && !self.fix_dropped {
             log::warn!("gps: fix {} beyond every known relay; dropped", position);
+        }
+        self.fix_dropped = !in_reach;
+        if !in_reach {
             return Ok(());
         }
         self.search_until = None;

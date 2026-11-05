@@ -1101,3 +1101,16 @@ fn the_gps_follows_the_core() {
     assert_eq!(fixes(&d), 2);
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "tracking goes on");
 }
+
+/// A relay built with a place runs its GPS on external power: the place
+/// is not a map point (roadmap D83).
+#[test]
+fn a_placed_relay_on_usb_tracks() {
+    let world = World::default();
+    let me = Position::from_degrees(50.45, 30.52);
+    let mut d = driver(Relay::new(relay_config(me), 7), &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    run_until(&mut d, &world, Instant::ZERO + Duration::from_secs(5));
+    assert!(!d.core().on_map_point());
+    assert_eq!(d.app().gps.last(), Some(&Gps::Track), "{:?}", d.app().gps);
+}

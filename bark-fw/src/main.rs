@@ -390,6 +390,9 @@ async fn main(spawner: Spawner) {
         let config = node::config(stored);
         (config, node::core(config, seed), flash)
     };
+    // Its flash writes in a task of their own (`store.rs`).
+    #[cfg(not(feature = "console"))]
+    spawner.spawn(store::run(flash).expect("spawned once"));
     // Its own task, so that its UART's bytes wake nothing else.
     #[cfg(not(feature = "console"))]
     spawner.spawn(
@@ -444,7 +447,7 @@ async fn main(spawner: Spawner) {
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
-                node::run(core, radio, flash, battery, &config, &clock).await;
+                node::run(core, radio, battery, &config, &clock).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.
