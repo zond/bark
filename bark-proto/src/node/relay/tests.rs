@@ -2652,3 +2652,112 @@ fn refusals_at_the_gate_are_told_a_line() {
     let wait = wait.expect("told a wait");
     assert!(wait <= ban && wait + ban.div(8) + BAN > ban, "{wait:?}");
 }
+
+/// A relay with neighbours at `lats` north of it, each that far nearer
+/// a far destination, whose application's message has gone out to the
+/// nearest and been refused by it, told a wait of `bans` bans. The
+/// relay, the time of the refusal and the frames sent after it.
+fn own_refused(lats: &[i32], bans: u8) -> (Relay, Instant, Vec<(Instant, Frame)>) {
+    use crate::wire::Ack;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let at = |k: i32| Position {
+        lat: me.lat + k,
+        ..me
+    };
+    for (i, &k) in lats.iter().enumerate() {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5 + i as u8).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(at(k)),
+            short: at(k).short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let payload = [7u8; 20];
+    let send = AppCommand::Send {
+        dst_pos: at(100_000),
+        dst_id: NOBODY,
+        payload: &payload,
+    };
+    assert!(r.accepts_send(now));
+    let mut pending = Vec::new();
+    r.handle(Event::App(send), now, &mut |a| pending.push(a));
+    let sent = until_sent(&mut r, &mut now, pending);
+    let nearest = id_of(at(*lats.iter().max().unwrap()));
+    assert_eq!(data_to(&sent), [(nearest, 1)], "the nearest first");
+    let id = sent
+        .iter()
+        .find_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some(d.msg_id()),
+            _ => None,
+        })
+        .unwrap();
+    now += Duration::from_millis(5);
+    let refusal = Ack {
+        msg_id: id,
+        from: nearest,
+        to: r.me(),
+        refused: true,
+        wait: bans,
+        seen: false,
+    };
+    let refused_at = now;
+    let mut sent = hear(&mut r, &mut now, &Packet::Ack(refusal));
+    if data_to(&sent).is_empty() {
+        sent = until_sent(&mut r, &mut now, Vec::new());
+    }
+    (r, refused_at, sent)
+}
+
+/// The time of the first DATA in `sent`.
+fn first_data(sent: &[(Instant, Frame)]) -> Instant {
+    sent.iter()
+        .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .unwrap()
+        .0
+}
+
+/// The application's message, refused, goes round the refuser to the
+/// next neighbour at once, as a forward does (spec "Bans").
+#[test]
+fn the_application_s_refused_message_goes_round_the_refuser() {
+    let (lats, bans) = ([10_000, 5_000], 8);
+    let (r, refused_at, sent) = own_refused(&lats, bans);
+    let e = Position {
+        lat: r.config.position.lat + 5_000,
+        ..r.config.position
+    };
+    assert_eq!(data_to(&sent), [(id_of(e), 1)], "E");
+    assert!(first_data(&sent) < refused_at + BAN, "at once");
+}
+
+/// With no other neighbour the application's refused message waits for
+/// the refuser, on its hold (spec "Bans").
+#[test]
+fn the_application_s_refused_message_alone_waits_for_the_refuser() {
+    use crate::tables::budget::told;
+    let bans = 4;
+    let (r, refused_at, sent) = own_refused(&[10_000], bans);
+    let d = Position {
+        lat: r.config.position.lat + 10_000,
+        ..r.config.position
+    };
+    assert_eq!(data_to(&sent), [(id_of(d), 1)], "D again");
+    assert!(first_data(&sent) >= refused_at + told(bans));
+}

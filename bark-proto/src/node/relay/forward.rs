@@ -157,12 +157,13 @@
 //! spec "Overload waits"). Only a search exhausted by neighbours tried
 //! returns or drops.
 //! Waiting entries keep their airtime in admission, and the queue hands
-//! over the first entry that is due. The application's own message waits
-//! the same way, longer after refusals in a row ([`hold`]); one for a node
-//! this one holds for that finds the delivery queue full is set aside in
-//! its place ([`State::Held`]) until the queue has a place
-//! (spec "Return to parent"). Either way the application is given no
-//! other meanwhile.
+//! over the first entry that is due. The application's own message,
+//! refused, goes round the refuser as a forward does; where no other is
+//! left it waits for the refuser, longer after refusals in a row
+//! ([`hold`]). One for a node this one holds for that finds the delivery
+//! queue full is set aside in its place ([`State::Held`]) until the queue
+//! has a place (spec "Return to parent"). Either way the application is
+//! given no other meanwhile.
 //!
 //! A sleepy node with an anchor hands its own message to the anchor
 //! (spec "A sleepy node's own message", "Packet sender") with count 0, so
@@ -2063,11 +2064,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Kind::Forward | Kind::Return => {
                 self.go_round(by);
                 if self.own.id == Some(msg_id) {
-                    // Each offer costs the refuser a reply and hides its ACKs.
+                    // Every refusal in a row counts, gone round or not:
+                    // each is a frame and a reply on the full channels
+                    // round the origin, so the origin offers no faster
+                    // for having more neighbours to be refused by.
                     self.own.refusals = self.own.refusals.saturating_add(1);
-                    let until = now + wait.max(hold(self.own.refusals));
-                    if let Some(current) = self.queue.current_mut() {
-                        current.not_before = until;
+                    if !self.goes_elsewhere(by, now) {
+                        // Each offer costs the refuser a reply and hides its ACKs.
+                        let until = now + wait.max(hold(self.own.refusals));
+                        if let Some(current) = self.queue.current_mut() {
+                            current.not_before = until;
+                        }
                     }
                 }
                 self.cancel_handover();
@@ -2261,6 +2268,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(o) = self.queue.current_mut() {
             o.passed |= 1u64 << slot;
         }
+    }
+
+    /// Whether the current forward, refused by `by`, would go elsewhere
+    /// if routed now.
+    fn goes_elsewhere(&self, by: NodeId, now: Instant) -> bool {
+        let Some(o) = self.queue.current() else {
+            return false;
+        };
+        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
+            return false;
+        };
+        self.goes_to(&d, o.passed, o.avoid, now)
+            .is_some_and(|to| to != by)
     }
 
     /// The current forward goes round `to` while `to` is banned.
