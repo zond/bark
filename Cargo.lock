@@ -73,6 +73,7 @@ version = "0.1.0"
 name = "bark-sim"
 version = "0.1.0"
 dependencies = [
+ "bark-app-layer",
  "bark-proto",
  "serde",
  "serde_json",
