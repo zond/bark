@@ -34,22 +34,26 @@ sleepy and still logs (`scripts/measure.md` step 5).
 
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
-describes it. A node's position is set when it is built, from `BARK_LAT`
-and `BARK_LON` in degrees, until the phone app or the GPS can set it:
+describes it. A node's place can be set when it is built, from `BARK_LAT`
+and `BARK_LON` in degrees:
 
 ```
 BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
 ```
 
-Without them the position is 0, 0, and boards built alike share one
-identity. Every protocol event (`Trace`), every message for the node, and
+`build.rs` converts them to the position's counts with the core's
+conversion, so the image parses no numbers; one set without the other,
+or a value that is not a number, fails the build. Without them the node
+has no place until the phone sets a map point (roadmap D83). Every protocol event (`Trace`), every message for the node, and
 a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
-its longest times. There is no application yet: the node sends no
-messages of its own. It does not touch GPS or BLE (the GPS does
-get power, see Radio power below).
+its longest times and `stack_used`, the call stack's high-water mark.
+Its application is the phone link over BLE (`src/ble.rs`;
+spec "Phone link"), whose bench procedure in nRF Connect is in
+`docs/phone-link-2026-11-05.md`, "On the bench". It does not touch the
+GPS (which does get power, see Radio power below).
 
 ## Verified and unverified
 
@@ -116,11 +120,18 @@ Unverified, in the order they will fail if wrong:
   running.
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
-- The 32 MHz crystal starts (USB needs it) when a node boots on USB
-  power or the cable comes, and stops when it goes; whether USB enumerates
-  when the cable comes after a boot on battery is not known; the
-  low-frequency clock uses the internal RC oscillator so no 32.768 kHz
-  crystal is assumed.
+- The 32 MHz crystal, which USB needs: the console starts it at boot and
+  keeps it, and the node asks it of the MPSL while on USB (`src/main.rs`,
+  `src/ble.rs`) and lets it go on battery; whether USB enumerates
+  when the cable comes after a boot on battery is not known.
+- The 32.768 kHz clock: whether the board has the crystal is not known.
+  The node tries it at boot, giving it 1 s, and falls back to the
+  calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
+  the console keeps the RC oscillator.
+- The bootloader from the serial port (`src/touch.rs`): 0x57 in GPREGRET
+  as the bootloader's UF2 reset magic is taken from its source as
+  remembered, not read from the board's 0.6.1; the bench's first
+  `stty … 1200` shows the drive or not.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
@@ -130,7 +141,7 @@ Unverified, in the order they will fail if wrong:
 - A panic message survives the soft reset through the bootloader and the
   loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
   next boot.
-- The stored state: the NVMC writes each record the core asks to keep into
+- The stored state: the NVMC, through the MPSL's flash timeslots, writes each record the core asks to keep into
   the next slot of the `STORE` page and erases the page when it is full,
   and the next boot logs `stored Some(..)` and comes back on the same home
   channel (`src/store.rs`, roadmap D73).
@@ -165,9 +176,11 @@ Unverified, in the order they will fail if wrong:
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
 - Every console command. The timings it prints are its purpose; none has
   been seen.
-- The display (Display, below): the controller answers on SPIM3 at
-  4 MHz, BUSY falls after the reset, the software reset and the refresh,
-  the picture comes out black on white the right way up (`ROTATION` in
+- The display (Display, below): the controller answered on SPIM3 at
+  4 MHz in the console build, and in the node build never started the
+  refresh (bench, 2026-11-05); it now runs on SPIM1, untried. BUSY
+  falls after the reset, the software reset and the refresh, the
+  picture comes out black on white the right way up (`ROTATION` in
   `src/display.rs` turns it if not), and the controller's deep sleep
   keeps it on the glass.
 
@@ -251,6 +264,11 @@ address ranges.
    bootloader waits 500 ms after a pin reset for the second one). The
    bootloader stays resident and a USB drive named `TECHOBOOT` appears. `INFO_UF2.TXT` on it reports the
    bootloader and SoftDevice versions; expect bootloader 0.6.1, S140 6.1.1.
+   A board running this firmware takes the same step from the serial
+   port, without the button: `stty -F /dev/ttyACM0 1200` (its port by
+   ID is `/dev/serial/by-id/*bark*`) resets it into the bootloader with
+   its drive (`src/touch.rs`). Any other rate, the log's included, does
+   nothing.
 3. Copy the UF2 to it:
    ```
    cp target/bark.uf2 /media/$USER/TECHOBOOT/   # or /run/media/$USER/TECHOBOOT
@@ -290,10 +308,13 @@ as `scripts/uf2.py` lays them:
 
 The header is not signed yet: signatures come with the key policy, and
 the running firmware will check them before it stages, never the loader
-(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time (0
-without it), kept under its own symbol, from which `scripts/image.py`
+(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time,
+kept under its own symbol, from which `scripts/image.py`
 writes the header's; an image is staged only above the running one's
-version. The hash is computed with the `sha2` crate (0.10.9), the
+version. Without the variable the version is 0: a bench build, flashed
+by UF2, which any staged image replaces and which can itself never be
+staged over another, since `scripts/image.py` packs only a version
+above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
 swap.
 
@@ -380,13 +401,17 @@ those words need, scaled by whole pixels. A board can then be told from
 another unplugged, and the hex matches the `id=` of its log and its USB
 serial number.
 
-The panel has its own SPI (SPIM3, 4 MHz) and its refresh runs as its
+The panel has its own SPI (SPIM1, 4 MHz; not SPIM3, whose transmitted
+data can be corrupted while the CPU or another EasyDMA master uses its
+buffer's RAM block, nRF52840 Errata anomaly 198) and its refresh runs as its
 own future beside the radio's start, so it delays nothing: the picture
 is rendered in microseconds, the 5000-byte RAM write is DMA, and every
 wait on the controller's BUSY line is on an interrupt and bounded at
 6 s, three times the 2 s full refresh the board's label gives. A
 controller that does not answer logs `display: busy past 6 s at <step>;
-no picture` and the boot goes on without it. The sequence is the
+no picture` and the boot goes on without it; one that never raises BUSY
+after the refresh is asked for, 100 ms, did not take the commands and
+logs `display: the refresh never started; no picture`. The sequence is the
 controller's: reset, software reset, the driver output, data entry,
 RAM window, border and temperature settings, the picture into both RAM
 planes, one full refresh, then deep sleep mode 1, which holds the

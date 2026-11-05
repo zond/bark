@@ -35,10 +35,11 @@ fn sizes() {
     std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
     assert!(relay <= tables + 1024 + kept, "{relay}");
     // It fits the board's RAM: 255 KiB for the application
-    // (bark-image/src/layout.rs), less the BLE controller's buffer, under 5 KiB
-    // (docs/implementation-research-2026-10-14.md), and Embassy and the
-    // stacks, about 16 KiB (spec "Implementation notes").
-    let ram = (255 - 5 - 16) * 1024;
+    // (bark-image/src/layout.rs), less the firmware's other static memory,
+    // the BLE stack, Embassy and the USB log, 29 896 B as measured
+    // (docs/phone-link-2026-11-05.md, "Does it fit"), and the call
+    // stack, estimated at 16 KiB (spec "Implementation notes").
+    let ram = 255 * 1024 - 29_896 - 16 * 1024;
     assert!(relay <= ram, "{relay} of {ram}");
     // A node built only to be sleepy spends nothing on the heard table
     // and the delivery queue (spec "Sleepy nodes").
@@ -2760,4 +2761,78 @@ fn the_application_s_refused_message_alone_waits_for_the_refuser() {
     };
     assert_eq!(data_to(&sent), [(id_of(d), 1)], "D again");
     assert!(first_data(&sent) >= refused_at + told(bans));
+}
+
+/// The inbox follows the delivery queue's rule (spec "Delivery queue",
+/// "Receiving DATA"): a message for this node's application waits until
+/// the application confirms it, the oldest first; a full inbox of fresh
+/// messages refuses the next with a wait, and once the oldest is stale a
+/// newer message takes its place.
+#[test]
+fn the_inbox_keeps_messages_by_the_delivery_queue_s_rule() {
+    use crate::event::{AppEvent, DropReason};
+    use crate::tables::delivery::INBOX;
+    use crate::wire::Data;
+    let (mut r, mut now, _) = with_every_neighbour_banned();
+    let me = r.me();
+    let at = r.config.position;
+    // Offer a message for this node's application; whether it was taken
+    // and, refused, why.
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8| {
+        let payload = [tag; 8];
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: me,
+            src_hop: name(1),
+            dst_pos: at,
+            dst_id: me,
+            hops: 1,
+            payload: &payload,
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let (mut refused, mut arrived) = (None, false);
+        let mut pending = Vec::new();
+        r.handle(event, *now, &mut |a| match a {
+            Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::App(AppEvent::Message { msg_id }) if msg_id == d.msg_id() => arrived = true,
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            _ => {}
+        });
+        let until = *now + Duration::from_millis(100);
+        let mut taken = arrived;
+        let start = *now;
+        drive_all(r, now, until, pending, &mut |_, a| {
+            taken |= matches!(a, Action::App(AppEvent::Message { msg_id }) if msg_id == d.msg_id());
+        });
+        *now = (*now).max(start + Duration::from_secs(2));
+        (d.msg_id(), taken, refused)
+    };
+    let mut ids = Vec::new();
+    for tag in 0..INBOX as u8 {
+        let (id, taken, refused) = offer(&mut r, &mut now, tag);
+        assert!(taken && refused.is_none(), "message {tag}");
+        ids.push(id);
+    }
+    assert_eq!(r.inbox_len(), INBOX);
+    let (_, taken, refused) = offer(&mut r, &mut now, 100);
+    assert!(!taken);
+    assert_eq!(refused, Some(DropReason::DeliveryFull));
+    // Only the oldest is confirmed.
+    assert!(!r.confirm(ids[1]));
+    assert_eq!(r.inbox().map(|(id, p)| (id, p[0])), Some((ids[0], 0)));
+    assert!(r.confirm(ids[0]));
+    let (_, taken, _) = offer(&mut r, &mut now, 101);
+    assert!(taken, "a confirmed message makes room");
+    // Once the oldest is stale, a newer message takes its place.
+    now += r.config.delivery_ttl;
+    let (_, taken, refused) = offer(&mut r, &mut now, 102);
+    assert!(taken && refused.is_none());
+    assert_eq!(r.inbox_len(), INBOX);
+    assert_eq!(r.inbox().map(|(id, _)| id), Some(ids[2]));
 }

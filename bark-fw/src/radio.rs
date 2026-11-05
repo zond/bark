@@ -13,9 +13,8 @@ use bark_proto::radio::{
 };
 use bark_proto::{Duration, MAX_FRAME};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
-use embassy_nrf::interrupt::typelevel::{Binding, SPI2, TEMP};
+use embassy_nrf::interrupt::typelevel::{Binding, SPI2};
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::temp::{self, Temp};
 use embassy_nrf::{peripherals, Peri};
 use embassy_time::{with_timeout, Delay, Timer};
 use lora_phy::mod_params::{
@@ -205,11 +204,36 @@ impl InterfaceVariant for Pins {
     }
 }
 
+/// The processor's die temperature sensor, for the oscillator's
+/// schedule: the sensor itself, or the MPSL's reading of it once the
+/// MPSL owns it (`ble.rs`).
+pub enum Thermometer<'a> {
+    /// The sensor.
+    #[cfg(feature = "console")]
+    Sensor(embassy_nrf::temp::Temp<'a>),
+    /// The MPSL's reading.
+    #[cfg(not(feature = "console"))]
+    Mpsl(&'a nrf_mpsl::MultiprotocolServiceLayer<'static>),
+}
+
+impl Thermometer<'_> {
+    /// Quarter degrees, the sensor's unit (nRF52840 Product
+    /// Specification, TEMP).
+    async fn quarters(&mut self) -> i32 {
+        match self {
+            #[cfg(feature = "console")]
+            Thermometer::Sensor(t) => t.read().await.to_bits(),
+            #[cfg(not(feature = "console"))]
+            Thermometer::Mpsl(m) => m.get_temperature().raw(),
+        }
+    }
+}
+
 /// The chip over its bus and pins, one command at a time, and the
-/// processor's die temperature sensor for the oscillator's schedule.
+/// processor's die temperature for the oscillator's schedule.
 pub struct Hardware<'a> {
     sx: Sx126x<BlockingSpi, Pins, sx126x::Sx1262>,
-    temp: Temp<'a>,
+    temp: Thermometer<'a>,
     modulation: ModulationParams,
     // Dropping an Output disconnects the pin, which would cut the rail.
     _radio_en: Output<'static>,
@@ -236,8 +260,7 @@ pub async fn boot<'a>(
     power: board::Power,
     spim: Peri<'static, peripherals::SPI2>,
     irq: impl Binding<SPI2, spim::InterruptHandler<peripherals::SPI2>> + 'static,
-    temp: Peri<'a, peripherals::TEMP>,
-    temp_irq: impl Binding<TEMP, temp::InterruptHandler> + 'a,
+    temp: Thermometer<'a>,
     clock: &'a Clock,
     channel: Channel,
 ) -> Result<Radio<'a>, Error> {
@@ -274,7 +297,7 @@ pub async fn boot<'a>(
     let modulation = sx.create_modulation_params(SF, BW, CR, CHANNEL_0_HZ)?;
     let hardware = Hardware {
         sx,
-        temp: Temp::new(temp, temp_irq),
+        temp,
         modulation,
         _radio_en: radio_en,
         _rail_on: rail_on,
@@ -413,8 +436,7 @@ impl Chip for Hardware<'_> {
     }
 
     async fn die_temperature(&mut self) -> Option<i16> {
-        // The sensor's quarter degrees, as the fixed-point value's bits.
-        let quarters = self.temp.read().await.to_bits();
+        let quarters = self.temp.quarters().await;
         Some(quarters.clamp(i16::MIN.into(), i16::MAX.into()) as i16)
     }
 }

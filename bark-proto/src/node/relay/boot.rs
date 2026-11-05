@@ -50,8 +50,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }));
     }
 
-    /// The relays this node knows: live neighbours that are not sleepy.
-    pub(super) fn relays_known(&self, now: Instant) -> u8 {
+    /// The relays this node knows: live neighbours that are not sleepy
+    /// (spec "Phone link", Status).
+    pub fn relays_known(&self, now: Instant) -> u8 {
         let n = self.neighbours.live(now).filter(|(_, n)| n.relay()).count();
         n.min(u8::MAX as usize) as u8
     }

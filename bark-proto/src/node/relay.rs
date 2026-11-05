@@ -63,7 +63,7 @@ use crate::store::Stored;
 use crate::tables::budget::Budget;
 use crate::tables::busy::BusyEstimator;
 use crate::tables::delivered::Delivered;
-use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE};
+use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE, INBOX};
 use crate::tables::heard::{Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use crate::tables::records::Records;
@@ -393,6 +393,9 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The sleepy nodes heard, for delivery.
     heard: Heard<H>,
     delivery: DeliveryQueue<Q>,
+    /// The messages for its own application, until the application
+    /// confirms each (spec "Receiving DATA", "Phone link").
+    inbox: DeliveryQueue<INBOX>,
     neighbours: Neighbours,
     queue: SendQueue,
     records: Records,
@@ -437,6 +440,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
+            inbox: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             own: OwnMessage::NONE,
             config,
@@ -494,6 +498,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             motion,
             gps,
             delivery,
+            inbox,
             delivered,
             own,
         } = self;
@@ -517,6 +522,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
         *delivery = DeliveryQueue::from_config(&config);
+        *inbox = DeliveryQueue::from_config(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
         *timers = Timers::UNSET;
@@ -586,6 +592,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// has no window (spec "Sleepy nodes alone").
     pub fn anchorless(&self) -> bool {
         self.sleep().is_some_and(|s| s.anchor.is_none()) && self.stage == Stage::Running
+    }
+
+    /// Whether its position is a map point a person set in the app (spec
+    /// "Position").
+    pub fn on_map_point(&self) -> bool {
+        self.motion.map_point
     }
 
     /// The preamble the frames this node forwards are counted with before
@@ -1052,6 +1064,23 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.sniff(now, emit);
         self.keep(emit);
+    }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        self.inbox.iter().next().map(|q| (q.msg_id, q.payload()))
+    }
+
+    fn inbox_len(&self) -> usize {
+        self.inbox.len()
+    }
+
+    fn confirm(&mut self, msg_id: MsgId) -> bool {
+        if self.inbox.iter().next().is_some_and(|q| q.msg_id == msg_id) {
+            self.inbox.remove(msg_id);
+            true
+        } else {
+            false
+        }
     }
 
     fn next_wakeup(&self) -> Option<Instant> {

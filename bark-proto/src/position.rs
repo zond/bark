@@ -52,6 +52,24 @@ impl Position {
         self.lon as f64 * UNIT_DEG
     }
 
+    /// Latitude and longitude in millionths of a degree, rounded to the
+    /// nearest, in integers alone: a count is 5.36 µdeg, so six decimals
+    /// show every count apart, and a firmware that prints a position needs
+    /// no floating-point formatting.
+    pub fn micro_degrees(self) -> (i64, i64) {
+        // 180 · 10⁶ / 2²⁵ µdeg a count, rounded half away from zero.
+        let udeg = |c: i32| {
+            let num = c as i64 * 180_000_000;
+            let half = 1i64 << (LAT_BITS - 1);
+            if num >= 0 {
+                (num + half) >> LAT_BITS
+            } else {
+                -((-num + half) >> LAT_BITS)
+            }
+        };
+        (udeg(self.lat), udeg(self.lon))
+    }
+
     /// Encode: 56-bit big-endian value, latitude in the top 25 bits,
     /// longitude in the next 26, five spare bits zero.
     /// (Bit layout is this implementation's choice; the spec leaves it open.)
@@ -119,6 +137,22 @@ pub const SHORT_PERIOD: i32 = 1 << 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct ShortName(pub u32);
 
+/// Degrees to six decimals, latitude then longitude
+/// ([`Position::micro_degrees`]).
+impl core::fmt::Display for Position {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (lat, lon) = self.micro_degrees();
+        let deg = |f: &mut core::fmt::Formatter<'_>, u: i64| {
+            let sign = if u < 0 { "-" } else { "" };
+            let u = u.unsigned_abs();
+            write!(f, "{sign}{}.{:06}", u / 1_000_000, u % 1_000_000)
+        };
+        deg(f, lat)?;
+        f.write_str(" ")?;
+        deg(f, lon)
+    }
+}
+
 /// Round half away from zero without `std`.
 fn round(x: f64) -> i64 {
     if x >= 0.0 {
@@ -140,9 +174,28 @@ fn wrap(v: i32, bits: u32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
 
     const _: () = assert!(UNIT_M > 0.596 && UNIT_M < 0.597, "one count is about 0.6 m");
+
+    #[test]
+    fn micro_degrees_match_the_degrees() {
+        for (lat, lon) in [
+            (50.4501, 30.5234),
+            (-33.8688, -151.2093),
+            (0.0, 0.0),
+            (89.9, -179.9),
+        ] {
+            let p = Position::from_degrees(lat, lon);
+            let (a, b) = p.micro_degrees();
+            assert_eq!(a, (p.lat_deg() * 1e6).round() as i64);
+            assert_eq!(b, (p.lon_deg() * 1e6).round() as i64);
+        }
+        let p = Position::from_degrees(-0.25, 30.5);
+        let want = std::format!("{:.6} {:.6}", p.lat_deg(), p.lon_deg());
+        assert_eq!(std::format!("{p}"), want);
+    }
 
     #[test]
     fn round_trips_and_clamps() {

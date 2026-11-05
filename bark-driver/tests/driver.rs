@@ -17,8 +17,8 @@ use bark_driver::{App, Clock, Driver, Heard, Outgoing, Radio, MAX_AIRTIME, RSSI_
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, Position, Relay, Stored,
-    MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, Position, Relay,
+    Stored, MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -335,6 +335,10 @@ impl App for TestApp {
         self.battery
     }
 
+    fn request(&mut self) -> Option<bark_driver::Request> {
+        None
+    }
+
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         let (out, bytes) = self.outgoing.take()?;
         payload[..bytes.len()].copy_from_slice(&bytes);
@@ -461,6 +465,18 @@ impl Core for Scripted {
     }
 
     fn accepts_send(&self, _: Instant) -> bool {
+        false
+    }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        None
+    }
+
+    fn inbox_len(&self) -> usize {
+        0
+    }
+
+    fn confirm(&mut self, _: MsgId) -> bool {
         false
     }
 }
@@ -711,12 +727,14 @@ fn a_relay_runs_through_the_loop() {
             }
         }
     }
+    let (id, payload) = d.core().inbox().expect("its own message came back");
+    assert_eq!(payload, b"hello");
     assert!(
         d.app()
             .messages
             .iter()
-            .any(|e| matches!(e, AppEvent::Message { payload, len, .. } if &payload[..*len as usize] == b"hello")),
-        "its own message came back: {:?}",
+            .any(|e| matches!(e, AppEvent::Message { msg_id } if *msg_id == id)),
+        "and was announced: {:?}",
         d.app().messages
     );
     assert!(d.app().outgoing.is_none(), "taken");
@@ -967,6 +985,18 @@ impl Core for Boxed {
 
     fn accepts_send(&self, now: Instant) -> bool {
         self.0.accepts_send(now)
+    }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        self.0.inbox()
+    }
+
+    fn inbox_len(&self) -> usize {
+        self.0.inbox_len()
+    }
+
+    fn confirm(&mut self, msg_id: MsgId) -> bool {
+        self.0.confirm(msg_id)
     }
 }
 

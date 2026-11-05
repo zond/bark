@@ -33,8 +33,8 @@ use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{
-    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, NodeId, Position, Stored,
-    MAX_FRAME,
+    Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
+    Stored, MAX_FRAME,
 };
 use embassy_futures::select::{select3, Either3};
 
@@ -140,12 +140,30 @@ pub struct Outgoing {
     pub len: usize,
 }
 
+/// What the application asks of the node besides a message to send
+/// (core-interface §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    /// It has the inbox's oldest message, this one: the node may forget
+    /// it ([`Core::confirm`]).
+    Confirm(MsgId),
+    /// Set the node's position to this map point
+    /// (`AppCommand::SetPosition`).
+    SetPosition(Position),
+    /// Clear the map point (`AppCommand::ClearMapPoint`).
+    ClearMapPoint,
+}
+
 /// The application side of the node (core-interface §4).
 pub trait App {
     /// Resolves when a message waits to be sent, at once if one already
-    /// does, if `offer`; and when the power may have changed since
-    /// [`App::power`] last answered. Cancel-safe.
+    /// does, if `offer`; when a [`Request`] waits; and when the power may
+    /// have changed since [`App::power`] last answered. Cancel-safe.
     async fn ready(&mut self, offer: bool);
+
+    /// The next request waiting, if any. The driver takes every one each
+    /// time [`App::ready`] resolves, before it offers a message.
+    fn request(&mut self) -> Option<Request>;
 
     /// Hand over the waiting message: its payload into `payload`, the rest
     /// returned. The driver calls this only while the core accepts a
@@ -334,7 +352,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
             Either3::Third(()) => match self.report_power().await {
-                Ok(()) => self.offer().await,
+                Ok(()) => match self.requests().await {
+                    Ok(()) => self.offer().await,
+                    e => e,
+                },
                 e => e,
             },
         };
@@ -436,6 +457,25 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             }
             None => Ok(()),
         }
+    }
+
+    /// Carry out the application's requests.
+    async fn requests(&mut self) -> Result<(), R::Error> {
+        while let Some(request) = self.app.request() {
+            match request {
+                Request::Confirm(msg_id) => {
+                    self.core.confirm(msg_id);
+                }
+                Request::SetPosition(position) => {
+                    self.deliver(Event::App(AppCommand::SetPosition { position }))
+                        .await?
+                }
+                Request::ClearMapPoint => {
+                    self.deliver(Event::App(AppCommand::ClearMapPoint)).await?
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn offer(&mut self) -> Result<(), R::Error> {

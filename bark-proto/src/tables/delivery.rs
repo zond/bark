@@ -48,6 +48,15 @@ pub const DELIVERY_QUEUE: usize = queue_for(HEARD, Duration::from_secs(600));
 
 const _: () = assert!(DELIVERY_QUEUE == 41);
 
+/// The inbox's capacity, the messages a node keeps for its own
+/// application until the application confirms each (spec "Phone link"):
+/// what one node receives in a day, for a phone that connects once a
+/// day. It follows the delivery queue's rule, a stale message making way
+/// and a full one of fresh messages refusing.
+pub const INBOX: usize = queue_for(1, Duration::from_secs(86_400));
+
+const _: () = assert!(INBOX == 23);
+
 /// A queued message.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Queued {

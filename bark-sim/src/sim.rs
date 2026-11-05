@@ -3497,7 +3497,20 @@ impl Sim {
     /// message given back.
     fn app_event(&mut self, node: u32, e: AppEvent) {
         let (len, payload) = match e {
-            AppEvent::Message { len, payload, .. } => (len, payload),
+            // The application reads the message at once and confirms it,
+            // so the inbox never fills (core-interface §4).
+            AppEvent::Message { msg_id } => {
+                let core = &mut self.relays[node as usize];
+                let mut payload = [0u8; MAX_FRAME];
+                let Some((id, bytes)) = core.inbox() else {
+                    return;
+                };
+                debug_assert_eq!(id, msg_id, "the oldest is the newest");
+                payload[..bytes.len()].copy_from_slice(bytes);
+                let len = bytes.len() as u8;
+                core.confirm(id);
+                (len, payload)
+            }
             AppEvent::GivenBack { msg_id, retry_at } => {
                 if !self.give_back(node, msg_id, retry_at) {
                     self.mark_dropped(node, msg_id, DropReason::Pushback);
@@ -3506,6 +3519,13 @@ impl Sim {
             }
             AppEvent::Boot { .. } => return,
         };
+        self.app_message(node, &payload[..len as usize]);
+    }
+
+    /// A message read from `node`'s inbox: counted against its origin by
+    /// the tag its payload starts with.
+    fn app_message(&mut self, node: u32, payload: &[u8]) {
+        let len = payload.len();
         let m = &mut self.metrics;
         m.nodes[node as usize].messages_in += 1;
         if len < 4 {
@@ -5079,14 +5099,7 @@ mod tests {
         }
         sim.message_dropped(1, MsgId(7), DropReason::NoRoute);
         sim.message_dropped(1, MsgId(8), DropReason::QueueExpired);
-        let mut payload = [0u8; MAX_FRAME];
-        payload[..4].copy_from_slice(&1u32.to_le_bytes());
-        let msg = AppEvent::Message {
-            msg_id: MsgId(8),
-            len: 4,
-            payload,
-        };
-        sim.app_event(2, msg);
+        sim.app_message(2, &1u32.to_le_bytes());
         let fates: Vec<Fate> = sim.fates().collect();
         let no_route = Fate::Dropped {
             node: 1,

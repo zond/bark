@@ -1831,8 +1831,9 @@ depends on what the packet gives it to do:
     the delivery queue is full, is kept aside until the queue has a
     place.
 - **Something to deliver.** It takes the packet only if its bucket holds
-  the reply reserve and an ACK and, for another node, its delivery
-  queue has room ([delivery queue](#delivery-queue)).
+  the reply reserve and an ACK and it has room for the message: in its
+  delivery queue for another node, in its inbox for its own application
+  ([delivery queue](#delivery-queue), [phone link](#phone-link)).
 - **No work**, cases 1, 3, 4 and 6 below. It answers the packet, taken
   or seen, even when it would refuse work: a refusal would send its
   sender on with a second copy.
@@ -2602,7 +2603,9 @@ its node's next beat as any other, until a message arrives at a full
 queue; then the oldest stale message makes way for it. When the queue is
 full and holds no stale message, a message for another node is refused
 ([receiving DATA](#receiving-data)): what is queued stays, and the
-sender learns at once.
+sender learns at once. Every node, sleepy or not, keeps the messages
+for its own application by the same rule, in its inbox
+([phone link](#phone-link)).
 
 A message's age counts from its arrival in the queue: the delivery TTL
 is the wait for a node that sleeps or is dark, not for the way there.
@@ -2977,9 +2980,13 @@ is given back, and the node takes no other message before the wait is
 over, so the app learns of it whenever it next connects.
 
 **Receiving.** The node keeps each message for its app in an inbox of
-23, oldest first. Inbox reads the oldest; the app keeps it and writes
-its ID back, and the node then forgets it. A write of another ID is
-answered 0x13. Status's count says when to read (roadmap D118).
+23, oldest first, by the delivery queue's rule: a message stale there
+makes way for a new one, and while the inbox is full of fresh messages
+the node refuses the next ([delivery queue](#delivery-queue),
+[receiving DATA](#receiving-data); roadmap D118, D122). Inbox reads the
+oldest; the app keeps it and writes its ID back, and the node then
+forgets it. A write of another ID is answered 0x13. Status's count says
+when to read.
 
 *Why read and confirmed, not notified.* The phone is often not
 connected: the app is closed, the phone is out of range or off. A
@@ -2989,9 +2996,14 @@ written back is the app's own word that it has it.
 
 *Why 23.* The texts a person receives in a day at the design rate
 ([capacity and sizing](#capacity-and-sizing)), for a phone that
-connects once a day. What the node does when the inbox is full is open
-item O22. The inbox, like the message the node holds, is not kept
-across a reboot.
+connects once a day. The inbox, like the message the node holds, is
+not kept across a reboot.
+
+*Why the delivery queue's rule.* A message the node has taken is not
+lost for want of room: refused, it waits at its sender, as one for a
+sleepy node does. A phone away longer than the delivery TTL has its
+oldest message give way rather than hold up every sender, as a dark
+node's mail does.
 
 **Map point.** A write of 1 and a position sets the node's map point,
 and of 0 clears it ([position](#position)).
@@ -3274,7 +3286,7 @@ hearing radius.
 **Rust stack:** `embassy-nrf` (nRF52840); the SX1262 driven by
 `bark-driver`'s sequencer, its commands encoded by a vendored copy of
 `lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for
-BLE, not yet in the firmware (D5); the stock UF2 bootloader for flashing
+BLE (D5); the stock UF2 bootloader for flashing
 (D6), and a loader of our own behind it that swaps in a new image and
 back if it does not confirm itself (D79). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
@@ -3282,8 +3294,8 @@ Crate layout is D7.
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
-(roadmap D71); their sizes, and how they fit beside Embassy and the
-stacks (≈16 KiB) in the 255 KiB the application has once 1 KiB is kept
+(roadmap D71); their sizes, and how they fit beside Embassy, the
+BLE stack and the call stack in the 255 KiB the application has once 1 KiB is kept
 for the bootloader's words and the panic message (`bark-image/src/layout.rs`),
 are in `core-interface.md`, Memory.
 
@@ -3338,7 +3350,6 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O22 | A full inbox ([phone link](#phone-link)): the node should refuse a message for its own application while its inbox is full, as it refuses one for a sleepy node whose delivery queue is full ([receiving DATA](#receiving-data)), so that nothing taken is lost; the core needs to be told the inbox is full, which it is not today | with the firmware's link, before step 6 |
 | O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)) | before step 7 |
 
 ---
