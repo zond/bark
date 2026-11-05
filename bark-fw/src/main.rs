@@ -177,7 +177,10 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 .as_micros();
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
+    // The console spawns nothing.
+    #[cfg(feature = "console")]
+    let _ = spawner;
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
@@ -441,16 +444,22 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "console")]
     let shown = display::show(board.eink, p.TWISPI1, Irqs, &picture);
     #[cfg(not(feature = "console"))]
-    let shown = display::run(
-        board.eink,
-        p.TWISPI1,
-        Irqs,
-        bark_screen::Fixed {
+    // A task of its own, not a future joined into this one: this task's
+    // poll is the deepest stack frame there is, and the screen's future
+    // joined here grew it past the stack beside the relay in RAM.
+    #[cfg(not(feature = "console"))]
+    let shown = {
+        let fixed = bark_screen::Fixed {
             id: hex,
             image: IMAGE,
             version: update::BARK_IMAGE_VERSION,
-        },
-    );
+        };
+        match screen(board.eink, p.TWISPI1, fixed) {
+            Ok(task) => spawner.spawn(task),
+            Err(e) => log::error!("display: not started: {:?}", e),
+        }
+        core::future::pending::<()>()
+    };
 
     join3(
         join5(
@@ -464,6 +473,17 @@ async fn main(_spawner: Spawner) {
         phone,
     )
     .await;
+}
+
+/// The node's screen (`display::run`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn screen(
+    pins: board::Eink,
+    spim: embassy_nrf::Peri<'static, peripherals::TWISPI1>,
+    fixed: bark_screen::Fixed<'static>,
+) {
+    display::run(pins, spim, Irqs, fixed).await
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.

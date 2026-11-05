@@ -36,9 +36,17 @@ impl Picture {
         }
     }
 
+    /// Black all over, all bits zero: what a static that should cost no
+    /// flash holds until it is cleared, since zeros go to `.bss`.
+    pub const fn zeroed() -> Picture {
+        Picture {
+            bytes: [0; HEIGHT * ROW_BYTES],
+        }
+    }
+
     /// White all over again.
     pub fn clear(&mut self) {
-        self.bytes = [0xFF; HEIGHT * ROW_BYTES];
+        self.bytes.fill(0xFF);
     }
 
     /// Whether the board's `(x, y)` is black.

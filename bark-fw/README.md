@@ -467,8 +467,14 @@ reset.
 *Beside the radio.* The panel has its own SPI (SPIM1, 4 MHz; not
 SPIM3, whose transmitted data can be corrupted while the CPU or another
 EasyDMA master uses its buffer's RAM block, nRF52840 Errata anomaly
-198) and shares no pin with the radio. Its refreshes run as their own
-future beside the radio's loop: the picture is drawn a line at a time,
+198) and shares no pin with the radio. Its refreshes run as a task of
+their own beside the radio's loop, with the picture in a static: joined
+into the main task as a future, they grew that task's stack frame, the
+deepest, from 29 184 B to 42 752 B and a nested 8 000 B beside, past
+the 43 KiB left for the stack, and the first image hung at boot before
+USB came up (bench, 2026-11-05). As a task the main frame is 29 184 B
+again and the screen's deepest 936 B (`llvm-objdump`, the largest stack
+adjustments). In it the picture is drawn a line at a time,
 tens of microseconds each, the executor given back between lines; the
 5000-byte RAM writes are DMA; and every wait on the controller's BUSY
 line is on an interrupt, bounded at 6 s, three times the 2 s refresh.

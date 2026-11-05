@@ -10,7 +10,7 @@
 //! it draws nothing and keeps the picture on the glass; only a hardware
 //! reset wakes it, so each refresh starts from one. The panel has its own
 //! SPI (SPIM1) and never shares the radio's bus, and its refreshes run as
-//! their own future beside the radio's loop: every wait is on an
+//! a task of their own beside the radio's loop (`main.rs`, `screen`): every wait is on an
 //! interrupt, bounded, and the picture is drawn a line at a time with the
 //! executor given back between lines, so that the radio's loop waits on
 //! it for no more than one line's drawing.
@@ -334,8 +334,13 @@ pub async fn run(
     fixed: bark_screen::Fixed<'static>,
 ) -> ! {
     use embassy_futures::select::select;
+    // In a static, so that no 5000-byte value is built or moved through a
+    // stack frame: the stack beside the relay is tight (`main.rs`,
+    // `screen`).
+    static PICTURE: static_cell::ConstStaticCell<Picture> =
+        static_cell::ConstStaticCell::new(Picture::zeroed());
+    let picture = PICTURE.take();
     let mut screen = Screen::new(pins, spim, irq).await;
-    let mut picture = Picture::white();
     let mut shown: Option<(State, Instant)> = None;
     // The first picture shows what the node knows once its loop has run,
     // which is within a second of the radio coming up.
@@ -363,7 +368,7 @@ pub async fn run(
             picture.text(text.bytes(), bark_screen::SCALE, *y);
             embassy_futures::yield_now().await;
         }
-        let outcome = screen.draw(&picture).await;
+        let outcome = screen.draw(picture).await;
         if shown.is_none() {
             OUTCOME.lock(|o| o.set(Some(outcome)));
         }
