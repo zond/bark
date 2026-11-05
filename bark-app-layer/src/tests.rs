@@ -530,3 +530,210 @@ mod mailbox {
         assert_eq!(m.newest(), 0);
     }
 }
+
+/// The mailbox on its ring in flash, the board's pages in RAM: what it
+/// keeps survives a reboot, and a power cut at any write or erase leaves
+/// every item whole or gone and the state the last whole one.
+mod flash_ring {
+    use std::vec::Vec;
+
+    use crate::flash_ring::{FlashRing, Op, Region, PAGE_LEN};
+    use crate::mailbox::{Arrival, Mailbox};
+    use crate::seal::Fetch;
+    use crate::vectors::fixture;
+    use crate::MAX_PAYLOAD;
+
+    /// The region's pages: the state's and four of the ring.
+    const PAGES: u32 = 5;
+
+    /// Flash in RAM, as NOR flash behaves: a write clears bits, an erase
+    /// sets a page's.
+    #[derive(Clone)]
+    struct Ram(Vec<u8>);
+
+    impl Ram {
+        fn erased() -> Ram {
+            Ram(std::vec![0xff; (PAGES * PAGE_LEN) as usize])
+        }
+
+        /// Do `op`, or as a power cut leaves it: of a write its first
+        /// `cut` bytes, of an erase nothing.
+        fn apply(&mut self, op: &Op, cut: Option<usize>) {
+            match *op {
+                Op::Erase { offset } => {
+                    if cut.is_none() {
+                        let o = offset as usize;
+                        self.0[o..o + PAGE_LEN as usize].fill(0xff);
+                    }
+                }
+                Op::Write { offset, .. } => {
+                    let d = op.data();
+                    let n = cut.unwrap_or(d.len()).min(d.len());
+                    for (i, b) in d[..n].iter().enumerate() {
+                        self.0[offset as usize + i] &= b;
+                    }
+                }
+            }
+        }
+    }
+
+    impl Region for &Ram {
+        fn pages(&self) -> u32 {
+            PAGES
+        }
+        fn read(&self, offset: u32, out: &mut [u8]) {
+            let o = offset as usize;
+            out.copy_from_slice(&self.0[o..o + out.len()]);
+        }
+    }
+
+    type Home<'a> = Mailbox<FlashRing<&'a Ram>>;
+
+    fn item(i: u32) -> Vec<u8> {
+        std::format!("item {i}").into_bytes()
+    }
+
+    fn fetch(sent: u32, since: u32) -> [u8; Fetch::LEN] {
+        Fetch {
+            sent,
+            address: fixture().away,
+            since,
+            most: 23,
+        }
+        .seal(&fixture().alice.mailbox, &[sent as u8; 24])
+        .unwrap()
+    }
+
+    fn home(m: &mut Home<'_>) {
+        m.set_key(Some(fixture().alice.mailbox));
+    }
+
+    /// The ops the mailbox has queued, taken from it in order.
+    fn take_ops(m: &mut Home<'_>) -> Vec<Op> {
+        let mut q = Vec::new();
+        while let Some(op) = m.ring().op() {
+            q.push(op);
+            m.ring_mut().op_done();
+        }
+        assert_eq!(m.ring().lost(), 0);
+        q
+    }
+
+    /// Boot a mailbox from `flash`, do `f`, and do every op it queued.
+    fn step(flash: &mut Ram, f: impl FnOnce(&mut Home<'_>)) {
+        let view = flash.clone();
+        let mut m = Mailbox::new(FlashRing::open(&view));
+        f(&mut m);
+        for op in take_ops(&mut m) {
+            flash.apply(&op, None);
+        }
+    }
+
+    #[test]
+    fn items_and_state_survive_a_reboot() {
+        let mut flash = Ram::erased();
+        step(&mut flash, home);
+        for i in 1..=70 {
+            step(&mut flash, |m| {
+                assert_eq!(m.arrive(&item(i)), Arrival::Kept(i))
+            });
+        }
+        step(&mut flash, |m| {
+            assert_eq!(m.arrive(&fetch(100, 0)), Arrival::Fetch)
+        });
+        step(&mut flash, |m| m.confirm_read(60));
+        let mut m = Mailbox::new(FlashRing::open(&flash));
+        assert!(m.is_home());
+        assert_eq!(m.newest(), 70);
+        // Four pages of 16: item 65 erased the page of 1 to 16.
+        assert_eq!(m.oldest(), 17);
+        let mut b = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.item(17, &mut b), Some(item(17).len()));
+        assert_eq!(&b[..item(17).len()], item(17).as_slice());
+        assert_eq!(m.unread(&mut b).map(|u| u.0), Some(61));
+        assert_eq!(m.unread_count(), 10);
+        assert_eq!(m.arrive(&fetch(100, 0)), Arrival::Refused, "replayed");
+    }
+
+    /// The state page fills, is erased and starts again, and the state
+    /// read back is always the last kept.
+    #[test]
+    fn the_state_log_wraps() {
+        let mut flash = Ram::erased();
+        step(&mut flash, home);
+        for i in 1..=100u32 {
+            step(&mut flash, |m| {
+                m.arrive(&item(i));
+                m.confirm_read(i);
+            });
+        }
+        let m = Mailbox::new(FlashRing::open(&flash));
+        assert!(m.is_home());
+        assert_eq!(m.unread_count(), 0);
+        assert_eq!(m.newest(), 100);
+    }
+
+    /// A power cut at every op of a run, at every eighth byte of a
+    /// write: the mailbox comes back with every item it reads whole and
+    /// right, its key, and no number above what was kept.
+    #[test]
+    fn a_cut_anywhere_leaves_items_whole_or_gone() {
+        // The run: home, 40 items, a fetch, a read confirmed; one mailbox
+        // throughout, its ops collected in order.
+        let mut all: Vec<Op> = Vec::new();
+        {
+            let view = Ram::erased();
+            let mut m = Mailbox::new(FlashRing::open(&view));
+            home(&mut m);
+            all.extend(take_ops(&mut m));
+            for i in 1..=40 {
+                m.arrive(&item(i));
+                all.extend(take_ops(&mut m));
+            }
+            m.arrive(&fetch(100, 0));
+            all.extend(take_ops(&mut m));
+            m.confirm_read(30);
+            all.extend(take_ops(&mut m));
+        }
+        let mut flash = Ram::erased();
+        let mut cuts = 0;
+        for (k, op) in all.iter().enumerate() {
+            let points: Vec<usize> = match op {
+                Op::Erase { .. } => std::vec![0],
+                Op::Write { .. } => (0..op.data().len()).step_by(8).collect(),
+            };
+            for cut in points {
+                let mut f = flash.clone();
+                f.apply(op, Some(cut));
+                let m = Mailbox::new(FlashRing::open(&f));
+                cuts += 1;
+                let mut b = [0u8; MAX_PAYLOAD];
+                for n in 1..=m.newest() {
+                    if let Some(l) = m.item(n, &mut b) {
+                        assert_eq!(&b[..l], item(n).as_slice(), "op {k} cut {cut}");
+                    }
+                }
+                assert!(m.newest() <= 40);
+                // The key is lost only by a cut in its own first record.
+                if k > 0 {
+                    assert!(m.is_home(), "op {k} cut {cut}");
+                }
+            }
+            flash.apply(op, None);
+        }
+        assert!(cuts > 1000, "{cuts}");
+        let m = Mailbox::new(FlashRing::open(&flash));
+        assert_eq!((m.newest(), m.unread_count()), (40, 10));
+    }
+
+    #[test]
+    fn reads_see_what_is_queued() {
+        let flash = Ram::erased();
+        let mut m = Mailbox::new(FlashRing::open(&flash));
+        home(&mut m);
+        m.arrive(&item(1));
+        assert!(!m.ring().idle());
+        let mut b = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.item(1, &mut b), Some(item(1).len()));
+    }
+}

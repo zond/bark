@@ -15,6 +15,7 @@
 #![warn(missing_docs)]
 
 pub mod card;
+pub mod flash_ring;
 pub mod keys;
 pub mod mailbox;
 pub mod plain;
