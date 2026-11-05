@@ -34,7 +34,7 @@ Future<void> startScan(void Function(FoundNode) found) async {
   );
 }
 
-Future<void> stopScan() async {
+Future<void> stopBleScan() async {
   UniversalBle.onScanResult = null;
   await UniversalBle.stopScan();
 }

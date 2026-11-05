@@ -36,8 +36,6 @@ class Conversation {
   Entry? get last => entries.lastOrNull;
 }
 
-String keyOf(Address a) => hex(a.id);
-
 /// The conversations, newest first. A contact without texts has none.
 List<Conversation> conversations(
   List<Contact> contacts,
@@ -58,7 +56,7 @@ List<Conversation> conversations(
   final byKey = <String?, List<Entry>>{};
   final seen = <String, Address>{};
   for (final (e, a, _, _) in all) {
-    final k = a == null ? null : keyOf(a);
+    final k = a == null ? null : nodeKey(a);
     (byKey[k] ??= []).add(e);
     if (a != null) seen[k!] = a;
   }

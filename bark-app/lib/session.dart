@@ -205,6 +205,11 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
+  void dismissNotice() {
+    notice = null;
+    notifyListeners();
+  }
+
   /// Adds a line to the log.
   void note(String s) {
     log.add((at: now(), text: s));

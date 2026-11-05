@@ -6,6 +6,9 @@ import 'card.dart';
 import 'link.dart';
 import 'store.dart';
 
+/// What a contact and a conversation are known by: the node ID in hex.
+String nodeKey(Address a) => hex(a.id);
+
 /// A card with the name this phone gives it.
 class Contact {
   final PersonCard card;
@@ -16,7 +19,7 @@ class Contact {
 
   /// A contact is its node: a card scanned again after the node moved
   /// has a new position but the same node ID.
-  String get key => hex(address.id);
+  String get key => nodeKey(address);
 
   Map<String, dynamic> toJson() => {'card': card.toText(), 'name': name};
 

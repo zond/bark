@@ -1,0 +1,189 @@
+// One conversation: its texts in order and a field to write the next.
+
+import 'package:flutter/material.dart';
+
+import '../app.dart';
+import '../card.dart';
+import '../contacts.dart';
+import '../conversations.dart';
+import '../link.dart';
+import '../payload.dart';
+import '../session.dart';
+import 'common.dart';
+
+class ThreadScreen extends StatefulWidget {
+  final AppModel app;
+
+  /// The other node's ID in hex, or null for senders the app cannot tell.
+  final String? keyHex;
+  const ThreadScreen(this.app, this.keyHex, {super.key});
+
+  @override
+  State<ThreadScreen> createState() => _ThreadScreenState();
+}
+
+class _ThreadScreenState extends State<ThreadScreen> {
+  final text = TextEditingController();
+
+  AppModel get app => widget.app;
+
+  @override
+  void dispose() {
+    text.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send(Address to) async {
+    if (text.text.isEmpty) return;
+    try {
+      await app.session.queue(to, text.text);
+      text.clear();
+    } on Malformed {
+      if (mounted) say(context, 'The text is longer than $maxTextBytes bytes');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Watch(app, (context) {
+    final s = app.session;
+    final c = thread(widget.keyHex, app.contacts.list, s.outbox, s.received);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(c.title, overflow: TextOverflow.ellipsis),
+        actions: [
+          if (c.contact == null && c.address != null)
+            TextButton(
+              onPressed: () => _name(c.address!, ''),
+              child: const Text('Name'),
+            ),
+          if (c.contact != null)
+            PopupMenuButton<void Function()>(
+              onSelected: (f) => f(),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: () => _name(c.address!, c.contact!.name),
+                  child: const Text('Rename'),
+                ),
+                PopupMenuItem(
+                  value: () => app.contacts.remove(c.contact!),
+                  child: const Text('Remove contact'),
+                ),
+              ],
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          NoticeCard(app),
+          Expanded(
+            child: ListView(
+              reverse: true,
+              padding: const EdgeInsets.all(8),
+              children: [
+                for (final e in c.entries.reversed) _bubble(context, e),
+              ],
+            ),
+          ),
+          if (c.address == null)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'The app cannot tell who sent these yet: the sender\'s '
+                'address is to travel inside the message, and this '
+                'prototype\'s messages do not carry it.',
+              ),
+            )
+          else
+            _compose(c.address!),
+        ],
+      ),
+    );
+  });
+
+  Future<void> _name(Address a, String current) async {
+    final name = await askText(context, 'Name', current);
+    if (name == null || name.isEmpty) return;
+    final card = app.contacts.byKey(nodeKey(a))?.card ?? PersonCard(a, '');
+    await app.contacts.put(Contact(card, name));
+  }
+
+  Widget _compose(Address to) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: text,
+              minLines: 1,
+              maxLines: 5,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                hintText: 'Text, not encrypted',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Send',
+            icon: const Icon(Icons.send),
+            onPressed: () => _send(to),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _bubble(BuildContext context, Entry e) {
+    final scheme = Theme.of(context).colorScheme;
+    final o = e.sent;
+    final mine = o != null;
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.8,
+        ),
+        child: Card(
+          color: mine ? scheme.primaryContainer : scheme.surfaceContainerHigh,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(e.text),
+                const SizedBox(height: 4),
+                Text(
+                  mine
+                      ? '${when(e.at)}, ${stateLabel(app.session, o)}'
+                      : when(e.at),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (mine) _actions(o),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _actions(Outgoing o) {
+    final s = app.session;
+    final again = o.state == OutState.givenBack;
+    final drop = o.state != OutState.writing && o.state != OutState.taken;
+    if (!again && !drop) return const SizedBox.shrink();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (again)
+          TextButton(
+            onPressed: s.waitLeftS(o) > 0 ? null : () => s.offerAgain(o),
+            child: const Text('Send again'),
+          ),
+        if (drop)
+          TextButton(onPressed: () => s.drop(o), child: const Text('Drop')),
+      ],
+    );
+  }
+}
