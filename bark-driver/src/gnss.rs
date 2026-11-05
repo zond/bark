@@ -30,6 +30,11 @@ const USED: usize = 4 * GSA_SLOTS;
 /// use, since only those are looked up.
 const IN_VIEW: usize = USED;
 
+/// GSA and GSV sentences kept as they came, for the bench: one per
+/// talker and kind, and of a combined talker's GSA one per system, so a
+/// receiver of GPS, GLONASS and BeiDou fills six.
+const RAW: usize = 8;
+
 /// The C/N0 band of a real sky, dB-Hz: open item O18 of the spec, a
 /// bench number. Until it is measured the band is the receiver's whole
 /// scale, 0 to 99 dB-Hz (NMEA 0183, GSV), and no fix is dropped by it;
@@ -96,9 +101,10 @@ pub struct Nmea {
     seen: [(Sat, u8); IN_VIEW],
     n_seen: usize,
     satellites: u8,
-    /// The last GSA and GSV sentences, as they came, for the bench.
-    gsa: ([u8; LINE], usize),
-    gsv: ([u8; LINE], usize),
+    /// The last GSA and GSV sentences, as they came, for the bench: the
+    /// sentence's address and, for a GSA, its system field's first byte;
+    /// the line; its length.
+    raw: [([u8; 6], [u8; LINE], usize); RAW],
     /// Sentences dropped for their checksum or their length.
     pub bad: u32,
 }
@@ -115,8 +121,7 @@ impl Default for Nmea {
             seen: [(Sat::default(), 0); IN_VIEW],
             n_seen: 0,
             satellites: 0,
-            gsa: ([0; LINE], 0),
-            gsv: ([0; LINE], 0),
+            raw: [([0; 6], [0; LINE], 0); RAW],
             bad: 0,
         }
     }
@@ -287,8 +292,7 @@ impl Nmea {
                 if new_group {
                     self.n_used = 0;
                 }
-                self.gsa.0[..line.len()].copy_from_slice(line);
-                self.gsa.1 = line.len();
+                self.keep(head, f[17].first().copied().unwrap_or(0), line);
                 let system = match (system(talker), number(f[17])) {
                     (0, Some(s)) => s as u8,
                     (s, _) => s,
@@ -309,8 +313,7 @@ impl Nmea {
                 if new_group {
                     self.n_seen = 0;
                 }
-                self.gsv.0[..line.len()].copy_from_slice(line);
-                self.gsv.1 = line.len();
+                self.keep(head, 0, line);
                 let system = system(talker);
                 // After the three counts, a satellite is four fields:
                 // number, elevation, azimuth, C/N0; a field may follow,
@@ -351,9 +354,25 @@ impl Nmea {
         }
     }
 
-    /// The last GSA and GSV sentences, from `$` to the checksum.
-    pub fn last_gsa_gsv(&self) -> (&[u8], &[u8]) {
-        (&self.gsa.0[..self.gsa.1], &self.gsv.0[..self.gsv.1])
+    /// Keep `line` as the last of its address and `system`.
+    fn keep(&mut self, head: &[u8], system: u8, line: &[u8]) {
+        let mut key = [0; 6];
+        key[..5].copy_from_slice(head);
+        key[5] = system;
+        let slot = self.raw.iter().position(|r| r.0 == key);
+        let Some(i) = slot.or_else(|| self.raw.iter().position(|r| r.2 == 0)) else {
+            return;
+        };
+        let r = &mut self.raw[i];
+        r.0 = key;
+        r.1[..line.len()].copy_from_slice(line);
+        r.2 = line.len();
+    }
+
+    /// The last GSA and GSV sentences of each talker, from `$` to the
+    /// checksum, in the order first seen.
+    pub fn last_gsa_gsv(&self) -> impl Iterator<Item = &[u8]> {
+        self.raw.iter().filter(|r| r.2 > 0).map(|r| &r.1[..r.2])
     }
 
     /// The C/N0 of the satellites used, as last reported.
@@ -455,6 +474,9 @@ mod tests {
         );
         assert!(f.cn0.real());
         assert_eq!(n.bad, 0);
+        // A GSA of each system, the last GSV of each talker.
+        let raw: Vec<_> = n.last_gsa_gsv().map(|l| l[..6].to_vec()).collect();
+        assert_eq!(raw, [b"$GNGSA", b"$GNGSA", b"$GPGSV", b"$BDGSV"]);
         // The next second starts its groups afresh.
         let again = fixes(&mut n, &second());
         assert_eq!(again[0].cn0, f.cn0);

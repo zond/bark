@@ -126,19 +126,19 @@ pub async fn run(mut p: Parts) -> ! {
                         let was = state;
                         state = fixed(f, state);
                         if was != State::Fixed && state == State::Fixed {
-                            first = Some(f.cn0);
+                            first = Some(f);
                         }
                     });
-                    // A first fix whose used satellites have no C/N0
-                    // found: the sentences, once, for the bench.
-                    if let Some(c) = first.filter(|c| c.count == 0 && c.listed > 0) {
-                        let (gsa, gsv) = nmea.last_gsa_gsv();
+                    // A first fix with satellites but none of their C/N0
+                    // found: the sentences, once a search, for the bench.
+                    if let Some(f) = first.filter(|f| f.satellites > 0 && f.cn0.count == 0) {
                         log::warn!(
-                            "gps: no c/n0 for {} used of {} in view; last {} and {}",
-                            c.listed,
-                            c.in_view,
-                            core::str::from_utf8(gsa).unwrap_or("?"),
-                            core::str::from_utf8(gsv).unwrap_or("?")
+                            "gps: no c/n0 for {} sats, {} listed, {} in view, bad_sentences={}; last{}",
+                            f.satellites,
+                            f.cn0.listed,
+                            f.cn0.in_view,
+                            nmea.bad,
+                            Raw(&nmea)
                         );
                     }
                 }
@@ -158,6 +158,18 @@ pub async fn run(mut p: Parts) -> ! {
         };
         log::info!("gps: rest{} bad_sentences={}", found, nmea.bad);
         note("rest");
+    }
+}
+
+/// The last GSA and GSV sentences of each talker, each after a space.
+struct Raw<'a>(&'a Nmea);
+
+impl core::fmt::Display for Raw<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for line in self.0.last_gsa_gsv() {
+            write!(f, " {}", core::str::from_utf8(line).unwrap_or("?"))?;
+        }
+        Ok(())
     }
 }
 
