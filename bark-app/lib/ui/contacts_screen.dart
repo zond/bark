@@ -1,11 +1,10 @@
-// The contacts, and adding one from a card or an address.
+// The contacts, and adding one from a card.
 
 import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../card.dart';
 import '../contacts.dart';
-import '../link.dart';
 import 'common.dart';
 import 'scan_screen.dart';
 import 'thread_screen.dart';
@@ -31,7 +30,7 @@ class ContactsScreen extends StatelessWidget {
               leading: const CircleAvatar(child: Icon(Icons.person)),
               title: Text(c.name),
               subtitle: Text(
-                c.address.toString(),
+                c.verified ? c.address.toString() : 'not verified yet',
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
               onTap: () => Navigator.of(context).pushReplacement(
@@ -72,24 +71,18 @@ class _AddContactScreenState extends State<AddContactScreen> {
     super.dispose();
   }
 
-  /// A pasted card, or an address alone, which makes a card with no name.
+  /// A pasted card: its identity is what the app seals texts to, so an
+  /// address alone is not enough.
   void _read(String s) {
     setState(() {
       card = null;
       error = null;
       if (s.trim().isEmpty) return;
-      final a = Address.parse(s);
-      if (a != null) {
-        card = PersonCard(a, '');
-        return;
-      }
       try {
         card = PersonCard.parse(s);
         if (name.text.isEmpty) name.text = card!.name;
       } on BadCard catch (e) {
-        error =
-            '$e. Paste a card, or an address of '
-            '${Address.len * 2} hex digits.';
+        error = '$e. Paste a card: it starts with ${PersonCard.prefix}';
       }
     });
   }
@@ -107,15 +100,15 @@ class _AddContactScreenState extends State<AddContactScreen> {
     final c = card;
     final n = name.text.trim();
     if (c == null || n.isEmpty) return;
-    await widget.app.contacts.put(Contact(c, n));
+    final cs = widget.app.contacts;
+    final known = cs.byKey(c.key);
+    await cs.put(known?.copyWith(card: c, name: n) ?? Contact(c, n));
     if (!mounted) return;
     // Back from the new thread leads to the conversations.
     Navigator.of(context)
       ..popUntil((r) => r.isFirst)
       ..push(
-        MaterialPageRoute(
-          builder: (_) => ThreadScreen(widget.app, nodeKey(c.address)),
-        ),
+        MaterialPageRoute(builder: (_) => ThreadScreen(widget.app, c.key)),
       );
   }
 
@@ -139,8 +132,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
           onChanged: _read,
           maxLines: null,
           decoration: InputDecoration(
-            labelText: 'Card or address',
-            helperText: 'Or paste the card or the address they sent you',
+            labelText: 'Card',
+            helperText: 'Or paste the card they sent you',
             errorText: error,
             errorMaxLines: 3,
           ),

@@ -1,5 +1,7 @@
-// The screens against the fake node: they build, and a text goes from
-// a thread to the fake and its echo comes back into the same thread.
+// The screens against the fake node: they build; a text goes to the fake
+// friend and its echo comes back into the same thread, sealed both ways;
+// the echo is acknowledged; the card, the backup words, adding a contact
+// and the debug screen.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -7,24 +9,37 @@ import 'package:bark_app/contacts.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
+import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:sodium/sodium.dart';
 
 void main() {
-  testWidgets('conversations, a thread, settings, card and debug', (t) async {
+  late Sodium sodium;
+  setUpAll(() async => sodium = await SodiumInit.init());
+
+  Future<AppModel> model(WidgetTester t) async {
     final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, DateTime.now),
       session: Session(store: MemoryStore(), now: DateTime.now),
       contacts: Contacts(MemoryStore()),
+      now: DateTime.now,
     );
-    final olena = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    await app.contacts.put(Contact(PersonCard(olena, 'O.'), 'Olena'));
+    await t.runAsync(app.load);
+    return app;
+  }
+
+  testWidgets('conversations, a thread, settings, card and debug', (t) async {
+    final app = await model(t);
     await t.pumpWidget(BarkApp(app));
     expect(find.textContaining('No conversations yet'), findsOneWidget);
+    expect(find.textContaining('12 backup words'), findsOneWidget);
 
-    // Settings: the fake node.
+    // Settings: the fake node, and the backup words.
     await t.tap(find.textContaining('Not connected'));
     await t.pumpAndSettle();
     await t.tap(find.text('Fake node'));
@@ -32,40 +47,63 @@ void main() {
     await t.tap(find.text('Connect'));
     await t.pump();
     expect(find.text('bark-fa4e00000001'), findsOneWidget);
-    expect(find.text('Map point'), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text('Show my words'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.ensureVisible(find.text('Show my words'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Show my words'));
+    await t.pumpAndSettle();
+    expect(find.text('My 12 words'), findsOneWidget);
+    expect(find.text(app.me.phrase.join(' ')), findsOneWidget);
+    await t.tap(find.text('I wrote them down'));
+    await t.pumpAndSettle();
+    expect(app.me.backedUp, isTrue);
+    await t.scrollUntilVisible(
+      find.text('Map point'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.pageBack();
     await t.pumpAndSettle();
 
-    // The fake's two messages, from itself, named by its address.
-    final own = Address(FakeNode.gps, FakeNode.id).toString();
-    expect(find.text(own), findsOneWidget);
+    // The fake friend's two first messages, in one conversation.
+    expect(find.text('Fake friend'), findsOneWidget);
     expect(find.textContaining('A second message'), findsOneWidget);
+    expect(find.textContaining('12 backup words'), findsNothing);
 
-    // A text to Olena, and its echo in her thread.
-    await t.tap(find.byTooltip('New conversation'));
+    // A text to the fake friend, and its echo in the same thread.
+    await t.tap(find.text('Fake friend'));
     await t.pumpAndSettle();
-    await t.tap(find.text('Olena'));
-    await t.pumpAndSettle();
+    expect(find.textContaining('Not verified yet'), findsOneWidget);
     await t.enterText(find.byType(TextField), 'hello');
     await t.tap(find.byTooltip('Send'));
+    await t.pump();
     await t.pump();
     expect(find.text('hello'), findsOneWidget);
     expect(find.textContaining('taken by the node'), findsOneWidget);
     await t.pump(FakeNode.echoAfter + const Duration(seconds: 1));
     expect(find.text('Echo: hello'), findsOneWidget);
+    expect(find.textContaining('Not verified yet'), findsNothing);
+
+    // Acknowledge the echo.
+    await t.tap(find.text('Acknowledge').first);
+    await t.pump();
+    await t.pump();
+    expect(find.textContaining('you acknowledged it'), findsOneWidget);
     await t.pageBack();
     await t.pumpAndSettle();
-    expect(find.text('Olena'), findsOneWidget);
 
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
-    await t.scrollUntilVisible(
-      find.text(own),
-      100,
-      scrollable: find.byType(Scrollable).first,
+    final mine = app.me.card!;
+    expect(
+      mine.address.toString(),
+      Address(FakeNode.gps, FakeNode.id).toString(),
     );
-    final mine = PersonCard(Address(FakeNode.gps, FakeNode.id), '');
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
@@ -79,7 +117,12 @@ void main() {
     await t.tap(find.text('Debug'));
     await t.pumpAndSettle();
     expect(find.text('fa4e00000001'), findsOneWidget);
-    expect(find.text('Clock'), findsOneWidget);
+    expect(find.text('Identity'), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text('Clock'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.scrollUntilVisible(
       find.text('Relays known'),
       100,
@@ -93,37 +136,11 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('a contact from a pasted card or a pasted address', (t) async {
-    final app = AppModel(
-      session: Session(store: MemoryStore(), now: DateTime.now),
-      contacts: Contacts(MemoryStore()),
-    );
-    final a = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final b = Address(Position.fromDegrees(51, 31), [6, 5, 4, 3, 2, 1]);
+  testWidgets('a contact from a pasted card', (t) async {
+    final app = await model(t);
+    final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
     await t.pumpWidget(BarkApp(app));
-    for (final (pasted, name) in [
-      (PersonCard(a, 'Olena').toText(), null),
-      (b.toString(), 'Petro'),
-    ]) {
-      await t.tap(find.byTooltip('New conversation'));
-      await t.pumpAndSettle();
-      await t.tap(find.text('Add contact'));
-      await t.pumpAndSettle();
-      await t.enterText(find.byType(TextField).first, pasted);
-      await t.pump();
-      if (name != null) await t.enterText(find.byType(TextField).last, name);
-      await t.pump();
-      await t.tap(find.text('Save'));
-      await t.pumpAndSettle();
-      // The new contact's thread, empty, ready to write in.
-      expect(find.text(name ?? 'Olena'), findsOneWidget);
-      expect(find.byIcon(Icons.send), findsOneWidget);
-      await t.pageBack();
-      await t.pumpAndSettle();
-    }
-    expect(app.contacts.list.map((c) => c.name), ['Olena', 'Petro']);
-    expect(app.contacts.list.last.address.toString(), b.toString());
-
     await t.tap(find.byTooltip('New conversation'));
     await t.pumpAndSettle();
     await t.tap(find.text('Add contact'));
@@ -131,6 +148,18 @@ void main() {
     await t.enterText(find.byType(TextField).first, 'not a card');
     await t.pump();
     expect(find.textContaining('Not a card'), findsOneWidget);
+    await t.enterText(find.byType(TextField).first, where.toString());
+    await t.pump();
+    expect(find.textContaining('Not a card'), findsOneWidget);
+    await t.enterText(find.byType(TextField).first, card.toText());
+    await t.pump();
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    // The new contact's thread, empty, ready to write in.
+    expect(find.text('Olena'), findsOneWidget);
+    expect(find.byIcon(Icons.send), findsOneWidget);
+    expect(app.contacts.list.single.key, card.key);
+    expect(app.contacts.list.single.verified, isFalse);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

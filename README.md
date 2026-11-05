@@ -60,6 +60,11 @@ bark-link/    no_std: the values of the phone link's BLE service, shared by
               the firmware and the tests (protocol.md, "Phone link").
 bark-screen/  no_std: what a node's e-paper shows, the picture built from
               its state; tested on the host (bark-fw/README.md, Display).
+bark-app-layer/
+              no_std: what the app puts in a payload, its keys, forms,
+              records and card, and the home node's mailbox; its
+              vectors.json is what the app's tests check (protocol.md,
+              "Phone link", "Mailbox").
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf and a vendored lora-phy around
               bark-driver and bark-proto, and the phone link's BLE stack
@@ -71,7 +76,8 @@ bark-loader/  the loader the board's bootloader starts: swaps in a staged
 bark-image/   no_std: the flash layout, the image header and the swap,
               shared by the firmware, the loader and their build scripts;
               tested on the host.
-bark-app/     Flutter Android app for the phone link; not yet encrypted.
+bark-app/     Flutter Android app for the phone link, sealing its texts end to
+              end (bark-app-layer).
 docs/         design notes, research, decisions.
 ```
 
