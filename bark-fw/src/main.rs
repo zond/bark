@@ -20,6 +20,8 @@ mod clock;
 mod console;
 mod display;
 #[cfg(not(feature = "console"))]
+mod lfclk;
+#[cfg(not(feature = "console"))]
 mod node;
 mod power;
 mod radio;
@@ -181,8 +183,10 @@ async fn main(_spawner: Spawner) {
     // Specification, USBD chapter). The console starts it at boot, for its
     // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
     // starts the crystal for its radio, and holds it while asked to, on
-    // USB (`on_usb_only`). The 32.768 kHz clock stays on the internal RC
-    // oscillator, which assumes nothing about a fitted LF crystal.
+    // USB (`on_usb_only`). The 32.768 kHz clock starts on the internal RC
+    // oscillator, which assumes nothing about a fitted crystal; the node
+    // build then tries the crystal (`lfclk.rs`), and the console keeps the
+    // RC oscillator.
     config.hfclk_source = match cfg!(feature = "console") {
         true => HfclkSource::ExternalXtal,
         false => HfclkSource::Internal,
@@ -204,15 +208,21 @@ async fn main(_spawner: Spawner) {
     // Mutable for the seed's borrow of the generator in the node build.
     #[cfg_attr(feature = "console", allow(unused_mut))]
     let mut p = embassy_nrf::init(config);
+    // The 32.768 kHz clock's source, before the MPSL takes the clock.
     #[cfg(not(feature = "console"))]
-    let mpsl = ble::mpsl(ble::MpslParts {
-        rtc0: p.RTC0,
-        timer0: p.TIMER0,
-        temp: p.TEMP,
-        ppi19: p.PPI_CH19,
-        ppi30: p.PPI_CH30,
-        ppi31: p.PPI_CH31,
-    });
+    let lf_source = lfclk::probe();
+    #[cfg(not(feature = "console"))]
+    let mpsl = ble::mpsl(
+        ble::MpslParts {
+            rtc0: p.RTC0,
+            timer0: p.TIMER0,
+            temp: p.TEMP,
+            ppi19: p.PPI_CH19,
+            ppi30: p.PPI_CH30,
+            ppi31: p.PPI_CH31,
+        },
+        lf_source,
+    );
     // The core's seed, before the controller takes the generator.
     #[cfg(not(feature = "console"))]
     let seed = embassy_nrf::rng::Rng::new_blocking(p.RNG.reborrow()).blocking_next_u64();
@@ -295,6 +305,13 @@ async fn main(_spawner: Spawner) {
         bark_proto::radio::SYMBOL_TIME.as_micros(),
         HEARTBEAT_AIRTIME_US,
     );
+    #[cfg(not(feature = "console"))]
+    match lf_source {
+        lfclk::Source::Crystal { started_ms } => {
+            log::info!("lfclk: crystal, started in {} ms", started_ms)
+        }
+        lfclk::Source::Rc => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+    }
     if let Some(msg) = previous_panic {
         log::error!("previous boot panicked: {}", msg);
     }

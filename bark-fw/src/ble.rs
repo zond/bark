@@ -108,18 +108,35 @@ pub struct MpslParts {
     pub ppi31: Peri<'static, peripherals::PPI_CH31>,
 }
 
-/// Start the MPSL, once. The 32.768 kHz clock stays the internal RC
-/// oscillator (`main.rs`), calibrated as often as the MPSL recommends, at
-/// the nRF52840's ±500 ppm after calibration (Product Specification,
-/// LFRC).
-pub fn mpsl(p: MpslParts) -> &'static MultiprotocolServiceLayer<'static> {
+/// Start the MPSL, once, on the 32.768 kHz clock's source found at boot
+/// (`lfclk.rs`). On the crystal, its accuracy is taken as ±250 ppm, the
+/// tolerance the Product Specification requires of a crystal for a BLE
+/// stack (32.768 kHz crystal oscillator, fTOL,LFXO,BLE): the fitted
+/// crystal's own is not known, and a figure too small would narrow the
+/// windows in which the controller listens for the phone. On the RC
+/// oscillator, it is calibrated as often as the MPSL recommends, every 4 s
+/// and at least every 8 s, which holds it to ±500 ppm (Product
+/// Specification, LFRC).
+pub fn mpsl(
+    p: MpslParts,
+    source: crate::lfclk::Source,
+) -> &'static MultiprotocolServiceLayer<'static> {
     static MPSL: StaticCell<MultiprotocolServiceLayer<'static>> = StaticCell::new();
-    let lfclk = mpsl_raw::mpsl_clock_lfclk_cfg_t {
-        source: mpsl_raw::MPSL_CLOCK_LF_SRC_RC as u8,
-        rc_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_CTIV as u8,
-        rc_temp_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-        accuracy_ppm: mpsl_raw::MPSL_WORST_CLOCK_ACCURACY_PPM as u16,
-        skip_wait_lfclk_started: mpsl_raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
+    let lfclk = match source {
+        crate::lfclk::Source::Crystal { .. } => mpsl_raw::mpsl_clock_lfclk_cfg_t {
+            source: mpsl_raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
+            rc_ctiv: 0,
+            rc_temp_ctiv: 0,
+            accuracy_ppm: mpsl_raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+            skip_wait_lfclk_started: mpsl_raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
+        },
+        crate::lfclk::Source::Rc => mpsl_raw::mpsl_clock_lfclk_cfg_t {
+            source: mpsl_raw::MPSL_CLOCK_LF_SRC_RC as u8,
+            rc_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_CTIV as u8,
+            rc_temp_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
+            accuracy_ppm: mpsl_raw::MPSL_WORST_CLOCK_ACCURACY_PPM as u16,
+            skip_wait_lfclk_started: mpsl_raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
+        },
     };
     // One timeslot session: the stored state's flash writes (`store.rs`).
     static SESSIONS: StaticCell<nrf_mpsl::SessionMem<1>> = StaticCell::new();

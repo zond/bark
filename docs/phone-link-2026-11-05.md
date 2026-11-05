@@ -237,15 +237,15 @@ builds it:
 
 | | before | the stack | the service and the inbox | with a place |
 |---|---|---|---|---|
-| `.text` | 183 676 | 293 172 | 301 748 | 301 708 |
-| `.rodata` | 19 464 | 36 528 | 39 524 | 39 452 |
+| `.text` | 183 676 | 293 172 | 302 204 | 302 172 |
+| `.rodata` | 19 464 | 36 528 | 39 644 | 39 572 |
 | `.data` | 2 120 | 6 288 | 6 936 | 6 936 |
 | `.bss` | 192 860 | 204 136 | 210 568 | 210 568 |
-| flash (with the 256-byte vector table) | 205 516 | 336 244 | 348 464 | 348 352 |
+| flash (with the 256-byte vector table) | 205 516 | 336 244 | 349 040 | 348 936 |
 | static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
 **Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
-348 464 B is 97 %, 11 984 B, 11.7 KiB, left. Of that, the log lines
+349 040 B is 97 %, 11 408 B, 11.1 KiB, left. Of that, the log lines
 at info and above of the host and of the link's connection steps, which
 the bench reads (below), are about 11 KB;
 every crate's debug and trace lines are left out of the build
@@ -276,6 +276,15 @@ gives `stack_used`, the high-water mark of a stack painted at boot
 
 What setting the stack up changed:
 
+- The 32.768 kHz clock, on which the controller keeps a connection's
+  timing, runs from the crystal if the board has one: the node tries it
+  at boot for 1 s, four times its typical start-up (Product
+  Specification, tSTART,LFXO), and otherwise falls back to the internal
+  RC oscillator (`lfclk.rs`). The MPSL is told the crystal is good to
+  ±250 ppm, the tolerance the Product Specification requires of one for
+  a BLE stack, since the fitted crystal's own is not known; the RC
+  oscillator it calibrates every 4 s, which holds it to ±500 ppm. The
+  MPSL offers no report of a calibration to log.
 - The MPSL and the controller take RTC0, TIMER0, TEMP and PPI channels
   17 to 31, and run RADIO, RTC0 and TIMER0 at interrupt priority 0.
   Every interrupt of ours in the node build, the embassy clock's and
@@ -339,7 +348,10 @@ image built with `BARK_LAT` and `BARK_LON` relays on USB with a place.
 Each step says what the phone and the node's log must show; the node's
 log is the USB serial port (`bark-fw/README.md`).
 
-1. **Boot.** The log shows `ble: controller memory N of 3104 bytes`,
+1. **Boot.** The log shows the 32.768 kHz clock's source:
+   `lfclk: crystal, started in N ms`, or the warning
+   `lfclk: no crystal started; RC oscillator, calibrated`. Then
+   `ble: controller memory N of 3104 bytes`,
    N at most 3104, `ble: advertising`, `ble: status flags=0x22 …` with
    the built address in degrees (bits 1 and 5, USB and placed; bit 6
    while the first rotation runs), `display: shown`, and no `ble:` error.
@@ -394,6 +406,10 @@ log is the USB serial port (`bark-fw/README.md`).
     may be easier to see in the second board's log first.
 
 ## Unsure
+
+- Whether the T-Echo has the 32.768 kHz crystal: the boot log says. On
+  the RC oscillator the node's clock is good to ±500 ppm, ten times the
+  ±50 ppm spec "Heartbeat" assumes of a node's clock.
 
 - The advertising and connection currents are estimates; the bench
   measures them.

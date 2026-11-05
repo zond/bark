@@ -123,9 +123,11 @@ Unverified, in the order they will fail if wrong:
 - The 32 MHz crystal, which USB needs: the console starts it at boot and
   keeps it, and the node asks it of the MPSL while on USB (`src/main.rs`,
   `src/ble.rs`) and lets it go on battery; whether USB enumerates
-  when the cable comes after a boot on battery is not known; the
-  low-frequency clock uses the internal RC oscillator so no 32.768 kHz
-  crystal is assumed.
+  when the cable comes after a boot on battery is not known.
+- The 32.768 kHz clock: whether the board has the crystal is not known.
+  The node tries it at boot, giving it 1 s, and falls back to the
+  calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
+  the console keeps the RC oscillator.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
