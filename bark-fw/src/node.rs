@@ -43,21 +43,29 @@ pub struct LinkApp<'a> {
     battery_mv: u16,
     /// What the core last asked to keep, until it is written.
     to_store: Option<Stored>,
+    /// A UTC offset the phone changed, until it is written.
+    offset_to_store: Option<i16>,
     /// The step was woken for the link's request.
     serving: bool,
 }
 
 impl App for LinkApp<'_> {
     async fn ready(&mut self, _offer: bool) {
-        use embassy_futures::select::{select, Either};
         if crate::ble::request_waiting() {
             self.serving = true;
             return;
         }
-        if let Either::Second(()) =
-            select(crate::power::FOR_CORE.wait(), crate::ble::FOR_CORE.wait()).await
+        use embassy_futures::select::{select3, Either3};
+        let fix = crate::gps::FOR_CORE.wait();
+        match select3(
+            crate::power::FOR_CORE.wait(),
+            crate::ble::FOR_CORE.wait(),
+            fix,
+        )
+        .await
         {
-            self.serving = true;
+            Either3::Second(()) => self.serving = true,
+            Either3::First(()) | Either3::Third(()) => {}
         }
     }
 
@@ -73,6 +81,9 @@ impl App for LinkApp<'_> {
 
     fn request(&mut self) -> Option<Request> {
         use crate::ble::Request as Link;
+        if let Some(position) = crate::gps::take_fix() {
+            return Some(Request::Fix(position));
+        }
         let head = crate::ble::LINK.lock(|l| l.borrow().inbox.map(|(id, _, _)| id));
         crate::ble::take_request(|r| match *r {
             Link::Send { .. } => None,
@@ -88,6 +99,12 @@ impl App for LinkApp<'_> {
             Link::MapPoint(bark_link::MapPoint::Clear) => {
                 log::info!("ble: map point cleared");
                 Some((Some(Request::ClearMapPoint), true))
+            }
+            Link::Clock(c) => {
+                if crate::utc::phone(c.utc_s.into(), c.offset_min) {
+                    self.offset_to_store = Some(c.offset_min);
+                }
+                Some((None, true))
             }
         })
         .flatten()
@@ -145,7 +162,7 @@ impl App for LinkApp<'_> {
     }
 
     fn gps(&mut self, gps: bark_driver::Gps) {
-        log::info!("gps: {:?}", gps);
+        crate::gps::want(gps);
     }
 }
 
@@ -263,6 +280,7 @@ pub async fn run<'a>(
         clock,
         battery_mv: 0,
         to_store: None,
+        offset_to_store: None,
         serving: false,
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
@@ -289,6 +307,9 @@ pub async fn run<'a>(
         if let Some(stored) = driver.app_mut().to_store.take() {
             flash.keep(&stored).await;
         }
+        if let Some(offset) = driver.app_mut().offset_to_store.take() {
+            flash.keep_offset(offset).await;
+        }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
@@ -301,7 +322,7 @@ pub async fn run<'a>(
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -315,8 +336,25 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}",
                 r.cold_starts,
                 t.delay.as_micros(),
                 t.errors,
-                crate::stack::used()
+                crate::stack::used(),
+                Time(crate::utc::time())
             );
+        }
+    }
+}
+
+/// The time for the 10 s line, once known.
+struct Time(crate::utc::Time);
+
+impl core::fmt::Display for Time {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match (self.0.utc_s, self.0.source) {
+            (Some(s), Some(source)) => write!(
+                f,
+                " utc_s={} offset_min={} from={:?}",
+                s, self.0.offset_min, source
+            ),
+            _ => Ok(()),
         }
     }
 }

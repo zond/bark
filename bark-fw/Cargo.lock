@@ -1545,7 +1545,6 @@ dependencies = [
  "embedded-io 0.7.1",
  "futures",
  "heapless 0.9.3",
- "log",
  "static_cell",
  "trouble-host-macros",
  "zerocopy",

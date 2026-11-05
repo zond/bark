@@ -18,7 +18,7 @@ use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 
 /// The link version this crate speaks, in [`Node::version`].
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -55,6 +55,9 @@ pub mod uuid {
     pub const GIVEN_BACK: u128 = 0x28bc0006_a1b8_4893_9537_2ee3559d7644;
     /// Map point: write ([`crate::MapPoint`]).
     pub const MAP_POINT: u128 = 0x28bc0007_a1b8_4893_9537_2ee3559d7644;
+    /// Clock: write the phone's time, read the node's ([`crate::Clock`],
+    /// [`crate::NodeTime`]); from link version 2.
+    pub const CLOCK: u128 = 0x28bc0008_a1b8_4893_9537_2ee3559d7644;
 }
 
 /// A UUID's bytes in the order BLE sends them, least significant first
@@ -483,6 +486,114 @@ impl MapPoint {
             (Some(&Self::CLEAR | &Self::SET), _) | (None, _) => Err(Malformed::Length),
             (Some(_), _) => Err(Malformed::Value),
         }
+    }
+}
+
+/// The UTC offsets in use, minutes: UTC−12:00 to UTC+14:00 (the time
+/// zone database's range).
+pub const OFFSETS_MIN: core::ops::RangeInclusive<i16> = -12 * 60..=14 * 60;
+
+/// Clock, write: the phone's time, UTC seconds since 1970, and its UTC
+/// offset in minutes. The node takes the offset always and the time while
+/// it has none from its GPS (spec "Phone link").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Clock {
+    /// UTC seconds since 1970-01-01.
+    pub utc_s: u32,
+    /// Minutes to add to UTC for the phone's local time.
+    pub offset_min: i16,
+}
+
+impl Clock {
+    /// Bytes in the value.
+    pub const LEN: usize = 4 + 2;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        let mut b = [0u8; Self::LEN];
+        b[..4].copy_from_slice(&self.utc_s.to_be_bytes());
+        b[4..].copy_from_slice(&self.offset_min.to_be_bytes());
+        b
+    }
+
+    /// Take a written value whole; an offset outside [`OFFSETS_MIN`] is
+    /// not taken.
+    pub fn decode(b: &[u8]) -> Result<Clock, Malformed> {
+        if b.len() != Self::LEN {
+            return Err(Malformed::Length);
+        }
+        let offset_min = u16_at(b, 4) as i16;
+        if !OFFSETS_MIN.contains(&offset_min) {
+            return Err(Malformed::Value);
+        }
+        Ok(Clock {
+            utc_s: u32::from_be_bytes(b[..4].try_into().expect("four bytes")),
+            offset_min,
+        })
+    }
+}
+
+/// Where the node's time came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeSource {
+    /// It has no time: none came, or the one that came has drifted past a
+    /// minute.
+    None = 0,
+    /// Its GPS.
+    Gps = 1,
+    /// The phone.
+    Phone = 2,
+}
+
+/// Clock, read: the node's time as it keeps it, and the offset it keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeTime {
+    /// UTC seconds since 1970; 0 when the source is none.
+    pub utc_s: u32,
+    /// The UTC offset the phone last gave, minutes; 0 before one.
+    pub offset_min: i16,
+    /// Where the time came from.
+    pub source: TimeSource,
+}
+
+impl NodeTime {
+    /// Bytes in the value.
+    pub const LEN: usize = Clock::LEN + 1;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        let mut b = [0u8; Self::LEN];
+        let utc_s = match self.source {
+            TimeSource::None => 0,
+            _ => self.utc_s,
+        };
+        b[..Clock::LEN].copy_from_slice(
+            &Clock {
+                utc_s,
+                offset_min: self.offset_min,
+            }
+            .encode(),
+        );
+        b[Clock::LEN] = self.source as u8;
+        b
+    }
+
+    /// Read a value, ignoring what a later version appends.
+    pub fn decode(b: &[u8]) -> Result<NodeTime, Malformed> {
+        if b.len() < Self::LEN {
+            return Err(Malformed::Length);
+        }
+        let source = match b[Clock::LEN] {
+            0 => TimeSource::None,
+            1 => TimeSource::Gps,
+            2 => TimeSource::Phone,
+            _ => return Err(Malformed::Value),
+        };
+        Ok(NodeTime {
+            utc_s: u32::from_be_bytes(b[..4].try_into().expect("four bytes")),
+            offset_min: u16_at(b, 4) as i16,
+            source,
+        })
     }
 }
 
