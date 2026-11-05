@@ -152,6 +152,23 @@ pub enum Request {
     SetPosition(Position),
     /// Clear the map point (`AppCommand::ClearMapPoint`).
     ClearMapPoint,
+    /// A GPS fix that passed the receiver's own checks, the satellites'
+    /// C/N0 among them; the driver hands it to the core as
+    /// `AppCommand::Fix` if it passes the core's
+    /// ([`Core::fix_in_reach`]) too.
+    Fix(Position),
+}
+
+/// What the GPS is to do (core-interface §4): rest in standby, search
+/// until an instant for one fix, or run all the time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gps {
+    /// In standby.
+    Rest,
+    /// Running until this instant, or until the driver says otherwise.
+    Search(Instant),
+    /// Running.
+    Track,
 }
 
 /// The application side of the node (core-interface §4).
@@ -189,6 +206,11 @@ pub trait App {
     /// to hand back in `Config::stored` at the next boot (core-interface
     /// §4).
     fn store(&mut self, stored: &Stored);
+
+    /// Run the GPS as `gps` says, from now until told otherwise. Called
+    /// at each change; the receiver's fixes come back as
+    /// [`Request::Fix`].
+    fn gps(&mut self, gps: Gps);
 }
 
 /// Counters for the log, and the timings that say whether the loop keeps
@@ -227,6 +249,10 @@ pub struct Driver<C, R, K, A> {
     power: Option<bool>,
     /// When the battery is read next: on battery only.
     battery_at: Option<Instant>,
+    /// Until when the search the core asked for runs (`Action::Locate`).
+    search_until: Option<Instant>,
+    /// What the application was last told of the GPS.
+    gps: Option<Gps>,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
     /// Until when the core lets the radio receive duty-cycled
@@ -261,6 +287,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             booted: false,
             power: None,
             battery_at: None,
+            search_until: None,
+            gps: None,
             resting: None,
             sniff_until: None,
             listening: None,
@@ -473,9 +501,36 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 Request::ClearMapPoint => {
                     self.deliver(Event::App(AppCommand::ClearMapPoint)).await?
                 }
+                Request::Fix(position) => self.fix(position).await?,
             }
         }
         Ok(())
+    }
+
+    /// Hand the core a fix if it is in reach of the relays the core knows
+    /// (spec "Position"); the first such fix ends a search
+    /// (core-interface §4).
+    async fn fix(&mut self, position: Position) -> Result<(), R::Error> {
+        if !self.core.fix_in_reach(position) {
+            log::warn!("gps: fix {} beyond every known relay; dropped", position);
+            return Ok(());
+        }
+        self.search_until = None;
+        self.deliver(Event::App(AppCommand::Fix { position })).await
+    }
+
+    /// Tell the application what the GPS is to do now, if that changed.
+    fn follow_gps(&mut self, now: Instant) {
+        let search = self.search_until.filter(|&t| t > now);
+        let gps = match (self.core.gps_tracks(), search) {
+            (true, _) => Gps::Track,
+            (false, Some(t)) => Gps::Search(t),
+            (false, None) => Gps::Rest,
+        };
+        if self.gps != Some(gps) {
+            self.gps = Some(gps);
+            self.app.gps(gps);
+        }
     }
 
     async fn offer(&mut self) -> Result<(), R::Error> {
@@ -501,6 +556,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let mut resting = self.resting;
         let mut excursion = self.excursion;
         let mut sniff = self.sniff_until;
+        let mut search = self.search_until;
         let app = &mut self.app;
         self.core.handle(event, now, &mut |action| match action {
             Action::Listen(c) => {
@@ -518,8 +574,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Sniff(until) => sniff = Some(until).filter(|&t| t > now),
             Action::App(e) => app.message(&e),
             Action::Store(s) => app.store(&s),
-            // No GPS driver yet (roadmap Phase 2): the request is logged.
-            Action::Locate(until) => log::info!("locate until {:?}", until),
+            Action::Locate(until) => search = Some(until).filter(|&t| t > now),
             Action::Trace(t) => log::info!("{:?}", t),
         });
         let took = self.clock.now().since(now);
@@ -528,6 +583,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.resting = resting;
         self.excursion = excursion;
         self.sniff_until = sniff;
+        self.search_until = search;
+        self.follow_gps(now);
         self.listen_resting().await
     }
 

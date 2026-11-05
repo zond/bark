@@ -3122,9 +3122,8 @@ impl Sim {
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
-    /// the checks on (spec "Position"), a fix farther than the longest
-    /// hearing radius from every neighbour the node keeps is not handed
-    /// over. The check of the satellites' C/N0 cannot be modelled: the
+    /// the checks on (spec "Position"), a fix the core finds out of reach
+    /// of every relay it knows (`Node::fix_in_reach`) is not handed over. The check of the satellites' C/N0 cannot be modelled: the
     /// simulator has no satellites.
     fn fix(&mut self, n: u32) {
         self.fix_now(n);
@@ -3164,25 +3163,13 @@ impl Sim {
         }
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
-        // A node with no place cannot rebuild its neighbours' positions,
-        // so its fixes go unchecked against them (roadmap D83).
-        if self.gps.checks && self.relays[n as usize].placed() {
-            // The longest hearing radius, rooftop to rooftop (spec
-            // "Physical layer").
-            const HEARING_M: f32 = 3000.0;
-            let plane = bark_proto::geo::LocalPlane::new(position);
-            let far = |p: Position| plane.point(p).distance_m(Default::default()) > HEARING_M;
-            let mut heard = self.relays[n as usize]
-                .neighbours()
-                .map(|e| e.position)
-                .peekable();
-            let alone = heard.peek().is_some() && heard.all(far);
-            if alone {
-                if fault.is_some() {
-                    self.metrics.research.fixes[k][1] += 1;
-                }
-                return false;
+        // The check of spec "Position" the core answers, unchecked while
+        // the node has no place (roadmap D83).
+        if self.gps.checks && !self.relays[n as usize].fix_in_reach(position) {
+            if fault.is_some() {
+                self.metrics.research.fixes[k][1] += 1;
             }
+            return false;
         }
         if fault.is_some() {
             self.metrics.research.fixes[k][0] += 1;

@@ -130,3 +130,27 @@ fn a_sleepy_node_with_no_place_waits_for_its_first_fix() {
     assert!(!sent.is_empty() && sent.iter().all(|&p| p == pos(0.0)));
     assert_eq!(h.nodes[1].located.len(), searches);
 }
+
+/// The check a driver makes before it hands a fix (spec "Position",
+/// roadmap D74): within the hearing radius of a relay the node knows, or
+/// any fix while it knows none or has no place.
+#[test]
+fn a_fix_is_in_reach_near_a_known_relay() {
+    let mut h = pair(true);
+    assert!(h.nodes[0].core.fix_in_reach(pos(10_000.0)), "knows none");
+    assert!(h.nodes[1].core.fix_in_reach(pos(10_000.0)), "no place");
+    h.run_until(at(600), |_| false);
+    assert!(h.nodes[0].core.neighbours().next().is_none());
+    h.command(
+        1,
+        AppCommand::Fix {
+            position: pos(300.0),
+        },
+    );
+    h.run_until(at(700), |_| false);
+    let relay = &h.nodes[0].core;
+    assert!(relay.neighbours().next().is_some());
+    assert!(relay.fix_in_reach(pos(3_200.0)));
+    assert!(!relay.fix_in_reach(pos(3_400.0)));
+    assert!(!relay.fix_in_reach(pos(-2_800.0)));
+}

@@ -143,6 +143,10 @@ impl App for LinkApp<'_> {
         log::info!("store {:?}", stored);
         self.to_store = Some(*stored);
     }
+
+    fn gps(&mut self, gps: bark_driver::Gps) {
+        log::info!("gps: {:?}", gps);
+    }
 }
 
 /// What the phone reads of `core` now (spec "Phone link", Status).
@@ -356,5 +360,13 @@ impl Core for Static {
 
     fn confirm(&mut self, msg_id: bark_proto::MsgId) -> bool {
         self.0.confirm(msg_id)
+    }
+
+    fn gps_tracks(&self) -> bool {
+        self.0.gps_tracks()
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        self.0.fix_in_reach(position)
     }
 }
