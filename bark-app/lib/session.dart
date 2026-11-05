@@ -33,18 +33,26 @@ class Outgoing {
   final Address dst;
   final Uint8List payload;
   final int id;
+
+  /// When the person queued it, for ordering a conversation.
+  final DateTime at;
   OutState state;
   DateTime? retryAt;
   String? error;
 
-  Outgoing(this.dst, this.payload, {this.state = OutState.queued})
-    : id = msgId(dst, payload);
+  Outgoing(
+    this.dst,
+    this.payload, {
+    required this.at,
+    this.state = OutState.queued,
+  }) : id = msgId(dst, payload);
 
   String get text => decodeText(payload) ?? hex(payload);
 
   Map<String, dynamic> toJson() => {
     'dst': dst.toString(),
     'payload': hex(payload),
+    'at': at.toIso8601String(),
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
     'state': (state == OutState.writing ? OutState.queued : state).name,
@@ -56,6 +64,11 @@ class Outgoing {
       Outgoing(
           Address.parse(j['dst'] as String)!,
           parseHex(j['payload'] as String)!,
+          // The app's first version did not keep it; its messages sort
+          // first.
+          at: j['at'] == null
+              ? DateTime.fromMillisecondsSinceEpoch(0)
+              : DateTime.parse(j['at'] as String),
           state: OutState.values.byName(j['state'] as String),
         )
         ..retryAt = j['retryAt'] == null
@@ -68,7 +81,11 @@ class Received {
   final int id;
   final Uint8List payload;
   final DateTime at;
-  Received(this.id, List<int> payload, this.at)
+
+  /// The sender's address, or null when the app cannot tell (see
+  /// [Session.senderOf]).
+  final Address? from;
+  Received(this.id, List<int> payload, this.at, {this.from})
     : payload = Uint8List.fromList(payload);
 
   /// The text, or the payload in hex if it is not in the prototype's
@@ -79,20 +96,42 @@ class Received {
     'id': id,
     'payload': hex(payload),
     'at': at.toIso8601String(),
+    'from': from?.toString(),
   };
 
   static Received fromJson(Map<String, dynamic> j) => Received(
     j['id'] as int,
     parseHex(j['payload'] as String)!,
     DateTime.parse(j['at'] as String),
+    from: j['from'] == null ? null : Address.parse(j['from'] as String),
   );
 }
+
+/// A line of the link's event log.
+typedef LogLine = ({DateTime at, String text});
+
+Address? _senderUnknown(InboxMessage m) => null;
 
 class Session extends ChangeNotifier {
   final Store store;
   final DateTime Function() now;
 
   Session({required this.store, required this.now});
+
+  /// Who sent a message in the inbox. The sender's address is to travel
+  /// inside the payload (spec "Phone link", "The payload"), which the
+  /// prototype's does not carry, so a real node's messages have no known
+  /// sender; the fake node knows whom it echoes.
+  Address? Function(InboxMessage) senderOf = _senderUnknown;
+
+  /// The last value of Given back read or notified.
+  GivenBack? givenBack;
+
+  /// The link's events since the app started, newest last; the oldest
+  /// go once there are [logLines], which is more than a bench session
+  /// scrolls back through.
+  final List<LogLine> log = [];
+  static const logLines = 500;
 
   NodeLink? _link;
   NodeInfo? node;
@@ -162,6 +201,14 @@ class Session extends ChangeNotifier {
 
   void _tell(String s) {
     notice = s;
+    note(s);
+    notifyListeners();
+  }
+
+  /// Adds a line to the log.
+  void note(String s) {
+    log.add((at: now(), text: s));
+    if (log.length > logLines) log.removeAt(0);
     notifyListeners();
   }
 
@@ -187,6 +234,9 @@ class Session extends ChangeNotifier {
     node = n;
     _link = link;
     notice = null;
+    note(
+      'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}',
+    );
     _subs
       ..add(link.statusNotified.listen(_onStatus, onError: _badValue))
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue));
@@ -212,10 +262,15 @@ class Session extends ChangeNotifier {
     _link = null;
     status = null;
     node = null;
-    notifyListeners();
+    givenBack = null;
+    note('Disconnected');
   }
 
   void _onStatus(Status s) {
+    note(
+      'Status: ready ${s.ready}, inbox ${s.inbox}, relays ${s.relays}, '
+      'boot left ${s.bootLeftS} s',
+    );
     status = s;
     _statusAt = now();
     notifyListeners();
@@ -224,6 +279,12 @@ class Session extends ChangeNotifier {
   }
 
   void _onGivenBack(GivenBack? g) {
+    givenBack = g;
+    note(
+      g == null
+          ? 'Given back: empty'
+          : 'Given back: ${msgIdHex(g.msgId)}, wait ${g.waitS} s',
+    );
     if (g == null) return;
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
@@ -244,7 +305,7 @@ class Session extends ChangeNotifier {
 
   /// Queues a text to `dst`.
   Future<void> queue(Address dst, String text) async {
-    outbox.add(Outgoing(dst, encodeText(text)));
+    outbox.add(Outgoing(dst, encodeText(text), at: now()));
     notifyListeners();
     await _save();
     _pump();
@@ -278,7 +339,9 @@ class Session extends ChangeNotifier {
     try {
       await link.send(encodeSend(o.dst, o.payload));
       o.state = OutState.taken;
+      note('Send ${msgIdHex(o.id)}: taken');
     } on AttException catch (e) {
+      note('Send ${msgIdHex(o.id)}: $e');
       if (e.code == AttError.notReady) {
         // Ready turned false between the status read and the write; wait
         // for the node to say ready again, and read it in case that
@@ -312,9 +375,11 @@ class Session extends ChangeNotifier {
         if (link == null) break;
         final m = await link.readInbox();
         if (m == null) break;
+        note('Inbox: ${msgIdHex(m.msgId)}, ${m.payload.length} bytes');
         await _keep(m);
         try {
           await link.confirm(m.msgId);
+          note('Inbox: confirmed ${msgIdHex(m.msgId)}');
         } on AttException catch (e) {
           // The oldest is the one just read, so the node should not
           // refuse its ID; stop rather than read it in a loop.
@@ -337,7 +402,7 @@ class Session extends ChangeNotifier {
       (r) => r.id == m.msgId && listEquals(r.payload, m.payload),
     );
     if (dup) return;
-    received.add(Received(m.msgId, m.payload, now()));
+    received.add(Received(m.msgId, m.payload, now(), from: senderOf(m)));
     notifyListeners();
     await _save();
   }
@@ -347,6 +412,7 @@ class Session extends ChangeNotifier {
     if (link == null) return;
     try {
       await link.setMapPoint(p);
+      note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
       _tell('Setting the map point failed: $e');
     }

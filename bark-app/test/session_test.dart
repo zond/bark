@@ -116,6 +116,41 @@ void main() {
     });
   });
 
+  test('the fake names the sender, a real node cannot yet', () {
+    run((async, s, node, store) {
+      // Attached before the hook was set, as with a real node.
+      expect(s.received.map((r) => r.from), [null, null]);
+      s.senderOf = node.senderOf;
+      s.queue(to, 'a');
+      async.elapse(const Duration(seconds: 6));
+      final echo = s.received.last;
+      expect(echo.text, 'Echo: a');
+      expect(echo.from.toString(), to.toString());
+      // Kept across a restart.
+      final again = Session(store: store, now: () => start);
+      again.load();
+      async.flushMicrotasks();
+      expect(again.received.last.from.toString(), to.toString());
+      expect(again.outbox.single.at, s.outbox.single.at);
+    });
+  });
+
+  test('the log and the last given back', () {
+    run((async, s, node, store) {
+      for (final t in ['a', 'b', 'c']) {
+        s.queue(to, t);
+      }
+      async.elapse(const Duration(seconds: 1));
+      final c = s.outbox[2];
+      expect(s.givenBack!.msgId, c.id);
+      final lines = s.log.map((l) => l.text).toList();
+      expect(lines.first, startsWith('Node: bark-fa4e00000001'));
+      expect(lines, contains('Send ${msgIdHex(c.id)}: taken'));
+      expect(lines, contains(startsWith('Given back: ${msgIdHex(c.id)}')));
+      expect(lines, contains(startsWith('Inbox: confirmed')));
+    });
+  });
+
   test('a node with a newer link is refused', () {
     fakeAsync((async) {
       final s = Session(store: MemoryStore(), now: () => start);

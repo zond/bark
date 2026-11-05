@@ -97,6 +97,7 @@ class _HomeState extends State<Home> {
     try {
       final (link, m) = await BleLink.connect(n.deviceId);
       mtu = m;
+      session.senderOf = (_) => null;
       await session.attach(link);
     } catch (e) {
       say('Connecting failed: $e');
@@ -108,6 +109,7 @@ class _HomeState extends State<Home> {
   Future<void> connectFake() async {
     final f = fakeNode ??= FakeNode(now: DateTime.now);
     mtu = attMtu;
+    session.senderOf = f.senderOf;
     await session.attach(f.connect());
   }
 
