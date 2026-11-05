@@ -82,11 +82,7 @@ impl App for LinkApp<'_> {
                 Some((ok.then_some(Request::Confirm(id)), ok))
             }
             Link::MapPoint(bark_link::MapPoint::Set(position)) => {
-                log::info!(
-                    "ble: map point {} {}",
-                    position.lat_deg(),
-                    position.lon_deg()
-                );
+                log::info!("ble: map point {}", position);
                 Some((Some(Request::SetPosition(position)), true))
             }
             Link::MapPoint(bark_link::MapPoint::Clear) => {
@@ -169,17 +165,13 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
     }
 }
 
-/// The position set at build time, or none.
-fn position() -> Option<Position> {
-    let lat = option_env!("BARK_LAT")?.parse::<f64>().ok()?;
-    let lon = option_env!("BARK_LON")?.parse::<f64>().ok()?;
-    Some(Position::from_degrees(lat, lon))
-}
+/// The position set at build time, or none, converted by `build.rs`.
+const BUILT: Option<Position> = include!(concat!(env!("OUT_DIR"), "/place.rs"));
 
 /// The protocol configuration for this board, with what it stored before
 /// its last reboot.
 pub fn config(stored: Option<Stored>) -> Config {
-    let built = position();
+    let built = BUILT;
     if built.is_none() {
         log::warn!("no BARK_LAT/BARK_LON at build time: no place until a fix");
     }
@@ -244,10 +236,9 @@ pub async fn run<'a>(
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
-        "node id={:02x?} at {} {} power_dbm={} usb={}",
+        "node id={:02x?} at {} power_dbm={} usb={}",
         config.node_id.0,
-        config.position.lat_deg(),
-        config.position.lon_deg(),
+        config.position,
         dbm,
         crate::power::reported()
     );

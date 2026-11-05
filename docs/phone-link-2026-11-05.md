@@ -231,23 +231,30 @@ The node image with the service wired, release build, `size -A`, beside
 the image before the phone link and the one with only the stack linked
 (trouble-host 0.8.0 with long writes, nrf-sdc 0.4.0 peripheral-only,
 nrf-mpsl 0.4.0, pinned, roadmap D5; one connection, three link-layer
-buffers each way of 251 bytes):
+buffers each way of 251 bytes). The first three are built without a
+place; the last with `BARK_LAT=50.4501 BARK_LON=30.5234`, as the bench
+builds it:
 
-| | before | the stack | the service and the inbox |
-|---|---|---|---|
-| `.text` | 183 676 | 293 172 | 304 676 |
-| `.rodata` | 19 464 | 36 528 | 37 632 |
-| `.data` | 2 120 | 6 288 | 6 936 |
-| `.bss` | 192 860 | 204 136 | 210 568 |
-| flash (with the 256-byte vector table) | 205 516 | 336 244 | 349 500 |
-| static RAM | 194 980 | 210 424 | 217 504 |
+| | before | the stack | the service and the inbox | with a place |
+|---|---|---|---|---|
+| `.text` | 183 676 | 293 172 | 294 364 | 294 364 |
+| `.rodata` | 19 464 | 36 528 | 34 936 | 34 864 |
+| `.data` | 2 120 | 6 288 | 6 936 | 6 936 |
+| `.bss` | 192 860 | 204 136 | 210 568 | 210 568 |
+| flash (with the 256-byte vector table) | 205 516 | 336 244 | 336 492 | 336 420 |
+| static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
 **Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
-349 500 B is 97 %, 10 948 B, 10.7 KiB, left. Of the stack's growth, the
+336 492 B is 93 %, 23 956 B, 23.4 KiB, left. Of the stack's growth, the
 controller and the MPSL's library are about 48 KB of code and the host
-about 40 KB. It fits as every crate is built now; `opt-level = "z"` for
-the BLE crates alone, by per-package profile overrides, is the first
-room if a later change does not fit.
+about 40 KB. The node image formats and parses no floating-point
+numbers: `build.rs` converts the built place to the position's counts
+with the core's conversion, and positions are logged in integer
+millionths of a degree (`Position`'s `Display`). Parsing the place at
+run time had pulled in the code to parse and print floats, about 13 KB,
+and the image built with a place did not link. `opt-level = "z"` for the
+BLE crates alone, by per-package profile overrides, is the first room if
+a later change does not fit.
 
 **RAM.** The application's RAM is 261 120 B; static memory takes
 217 504 B, the relay with its inbox 187 608 of it, which leaves 43 616 B,

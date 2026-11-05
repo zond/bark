@@ -78,6 +78,8 @@ embedded-hal-async = "=1.0.0"
 [build-dependencies]
 # memory.x is written from the layout table.
 bark-image = { path = "../bark-image", default-features = false }
+# The built place is converted to counts by the core's conversion.
+bark-proto = { path = "../bark-proto" }
 
 [profile.release]
 debug = 2
