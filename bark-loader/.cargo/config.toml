@@ -1,6 +1,9 @@
 [build]
 # nRF52840: Cortex-M4F.
 target = "thumbv7em-none-eabihf"
+# The source paths in the image made independent of the checkout's place
+# (the script says why). Relative to this directory's parent.
+rustc-wrapper = "../bark-fw/scripts/rustc-remap.sh"
 
 [target.thumbv7em-none-eabihf]
 rustflags = [

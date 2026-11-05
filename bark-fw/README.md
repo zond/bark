@@ -273,6 +273,16 @@ the bootloader jumps to `0x26000`, which then holds an old image or nothing. `sc
 --check target/bark.uf2` validates a UF2 and prints its block count and
 address ranges.
 
+The image is the same wherever the repository is checked out. Source
+paths end up in it, a panic's location among them, and absolute ones
+would make its size depend on the checkout's path: a build from a path
+18 characters longer once took 168 B more flash. So Cargo runs rustc
+through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
+`.cargo/config.toml`, the loader's too), which maps the checkout's root
+to `/bark` and Cargo's home to `/cargo`; the build commands above need
+nothing more, here and in the workflows. A wrapper changed after a
+build does not rebuild by itself: `cargo clean` first.
+
 ## Flash
 
 1. Connect the T-Echo over USB-C. A USB-C-to-USB-C cable may not power it;
