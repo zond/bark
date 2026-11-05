@@ -14,7 +14,8 @@
 //! A sleepy neighbour with an anchor is a next hop only as a last resort,
 //! where no other neighbour is left that could take the message but for
 //! a ban, and every DATA to a sleepy neighbour carries the long preamble
-//! (spec "Next hop").
+//! (spec "Next hop"). The node a message is addressed to goes first, a
+//! last resort or not.
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
@@ -500,7 +501,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         record: &Record,
         passed: u64,
         avoid: u64,
-        dst: Position,
+        dst: (NodeId, Position),
         now: Instant,
     ) -> Option<(NodeId, Instant)> {
         if let Some((_, n)) = self.next_hop(record, passed, avoid, dst, now) {
@@ -538,7 +539,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return None;
         }
         let (at, record) = self.records.find(d.msg_id(), o.record)?;
-        self.heads_to(record, o.passed, o.avoid, d.dst_pos, now)
+        self.heads_to(record, o.passed, o.avoid, (d.dst_id, d.dst_pos), now)
             .map(|(to, ban)| (to, ban, at))
     }
 
@@ -754,14 +755,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the message of `record` to `dst` ends here by the triangle
     /// rule (spec "Next hop"): this relay and two neighbours it has
     /// tried for it, those in `handed` but its parent, enclose `dst`,
-    /// each at a fixed place and owning near it, and none owns `dst`.
+    /// each at a fixed place and owning near it, and none owns `dst`;
+    /// unless the addressed node `dst_id` is a live neighbour it has not
+    /// tried, which goes first ([`Self::next_hop`]).
     /// At most the neighbour table's entries squared, when a message comes
     /// back here and is routed again.
-    fn enclosed(&self, record: &Record, dst: Position) -> bool {
+    fn enclosed(&self, record: &Record, dst: Position, dst_id: NodeId, now: Instant) -> bool {
         if !self.owns_near() {
             return false;
         }
         let parent = record.parent().map(|(name, _)| name);
+        if self
+            .neighbours
+            .live(now)
+            .any(|(slot, n)| n.id == dst_id && !record.handed(slot) && Some(n.id) != parent)
+        {
+            return false;
+        }
         let corner = |&(slot, n): &(usize, &Neighbour)| {
             record.handed(slot) && n.holds_mail() && Some(n.id) != parent
         };
@@ -804,8 +814,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         })
     }
 
-    /// The next hop for the message of `record` to `dst` (spec "Next hop"),
-    /// from the state as it is at `now`: the live neighbour nearest `dst`
+    /// The next hop for the message of `record` to node and position `dst`
+    /// (spec "Next hop"), from the state as it is at `now`: the addressed
+    /// node itself if it is a live neighbour not in the tried set, a last
+    /// resort or not; otherwise the live neighbour nearest the position
     /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
     /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
@@ -817,7 +829,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         record: &Record,
         passed: u64,
         avoid: u64,
-        dst: Position,
+        dst: (NodeId, Position),
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let hop = self.choose(record, passed, dst, now);
@@ -839,10 +851,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self,
         record: &Record,
         passed: u64,
-        dst: Position,
+        (dst_id, dst): (NodeId, Position),
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
+        // Only the node itself can end the search for it, and a frame to
+        // it costs little against a search through the city: first even
+        // where it would be a last resort (roadmap D116a).
+        let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.radio.busy.noise_floor_dbm());
@@ -854,14 +870,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
-                    && (first.is_some() || self.tier(n, others, now))
+                    && (first.is_some() || addressed(n) || self.tier(n, others, now))
                     && !tried(record, passed, *slot)
                     && Some(n.id) != parent
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                faint(a)
-                    .cmp(&faint(b))
+                addressed(b)
+                    .cmp(&addressed(a))
+                    .then(faint(a).cmp(&faint(b)))
                     .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.id.0.cmp(&b.id.0))
@@ -1042,7 +1059,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
                 probe.handed_to(s);
             }
-            self.heads_to(&probe, 0, 0, d.dst_pos, now)
+            self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
         } else {
             None
         };
@@ -1446,7 +1463,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let record = Record::new(id, None, 0, now);
-        if let Some((to, ban)) = self.heads_to(&record, 0, 0, dst_pos, now) {
+        if let Some((to, ban)) = self.heads_to(&record, 0, 0, (dst_id, dst_pos), now) {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA"): refused, it goes back to the
             // application with a place in its way's line, as an ACK
@@ -1622,11 +1639,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.arrive(id, &d, now, emit);
             return Routed::Done;
         }
-        if self.enclosed(&record, d.dst_pos) {
+        if self.enclosed(&record, d.dst_pos, d.dst_id, now) {
             self.drop_msg(id, DropReason::Triangle, emit);
             return Routed::Done;
         }
-        if let Some((_, n)) = self.next_hop(&record, out.passed, out.avoid, d.dst_pos, now) {
+        if let Some((_, n)) =
+            self.next_hop(&record, out.passed, out.avoid, (d.dst_id, d.dst_pos), now)
+        {
             if self.neighbours.is_banned(&n, now) {
                 // A ban is a wait, not an exclusion (spec "Next hop").
                 return Routed::Banned(n.banned_until);
@@ -2316,7 +2335,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// its parent once none is left (spec "Next hop", "Return to parent").
     fn goes_to(&self, d: &Data<'_>, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(d.msg_id())?;
-        self.next_hop(record, passed, avoid, d.dst_pos, now)
+        self.next_hop(record, passed, avoid, (d.dst_id, d.dst_pos), now)
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }

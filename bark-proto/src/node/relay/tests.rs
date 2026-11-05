@@ -2450,11 +2450,13 @@ fn refusals_at_the_gate_are_told_a_line() {
 /// A running relay with neighbours D and E north-east and north-west of
 /// it, E carried if `e_carried`, and a forward to a destination `north`
 /// and `east` counts from it, with a parent, being handed to D, the
-/// nearer (spec "Next hop"). The relay, the time, the message, D and E.
+/// nearer (spec "Next hop"); to E if it is addressed to E, `to_e`. The
+/// relay, the time, the message, D and E.
 fn handing_between(
     north: i32,
     east: i32,
     e_carried: bool,
+    to_e: bool,
 ) -> (Relay, Instant, MsgId, NodeId, NodeId) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
@@ -2497,7 +2499,7 @@ fn handing_between(
         dst_hop: name(0),
         src_hop: r.me(),
         dst_pos: at(north, east),
-        dst_id: NOBODY,
+        dst_id: if to_e { id_of(e_pos) } else { NOBODY },
         hops: 2,
         payload: b"gone",
     };
@@ -2508,7 +2510,8 @@ fn handing_between(
     let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
     r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
-    assert_eq!(data_to(&sent), [(id_of(d_pos), 2)], "D first");
+    let first = if to_e { e_pos } else { d_pos };
+    assert_eq!(data_to(&sent), [(id_of(first), 2)], "first");
     (r, now, id, id_of(d_pos), id_of(e_pos))
 }
 
@@ -2590,7 +2593,7 @@ fn settle(
 #[test]
 fn a_destination_two_tried_neighbours_enclose_ends_the_message() {
     use crate::event::DropReason;
-    let (mut r, mut now, id, d, e) = handing_between(500, 0, false);
+    let (mut r, mut now, id, d, e) = handing_between(500, 0, false, false);
     let a = answered(&mut r, &mut now, id, d, true);
     let (to, drops) = settle(&mut r, &mut now, a);
     assert_eq!((to, drops), (Some(e), std::vec![]), "E next");
@@ -2606,7 +2609,7 @@ fn a_destination_two_tried_neighbours_enclose_ends_the_message() {
 #[test]
 fn a_destination_outside_or_a_carried_corner_returns_to_the_parent() {
     for (north, carried) in [(-500, false), (500, true)] {
-        let (mut r, mut now, id, d, e) = handing_between(north, 0, carried);
+        let (mut r, mut now, id, d, e) = handing_between(north, 0, carried, false);
         let a = answered(&mut r, &mut now, id, d, true);
         let (to, _) = settle(&mut r, &mut now, a);
         assert_eq!(to, Some(e));
@@ -2617,5 +2620,18 @@ fn a_destination_outside_or_a_carried_corner_returns_to_the_parent() {
             (Some(name(7)), std::vec![]),
             "{north} {carried}"
         );
+    }
+}
+
+/// The addressed node goes first where it is a neighbour, though another
+/// is nearer its position and it is carried (spec "Next hop"); answered
+/// seen, the search goes on as before.
+#[test]
+fn the_addressed_node_goes_first() {
+    for carried in [false, true] {
+        let (mut r, mut now, id, d, e) = handing_between(500, 0, carried, true);
+        let a = answered(&mut r, &mut now, id, e, true);
+        let (to, drops) = settle(&mut r, &mut now, a);
+        assert_eq!((to, drops), (Some(d), std::vec![]), "{carried}");
     }
 }

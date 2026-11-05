@@ -161,11 +161,11 @@ fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
         config(300.0, 2, true),
         config(20.0, 3, false),
     ]);
+    // O does not hear S: a neighbour, it would be handed the message
+    // itself (spec "Next hop").
     h.link(r, o);
     h.link(r, s);
-    h.link(o, s);
     h.set_rssi(r, s, -80);
-    h.set_rssi(o, s, -100);
     h.start_at(s, at(10));
     h.run_until(at(1000), |_| false);
     assert_eq!(

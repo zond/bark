@@ -1467,7 +1467,8 @@ relay it first got it from, which tries its next neighbour.
 Each relay keeps a small record per message
 ([message records](#message-records)), and the packet carries nothing
 for the search but its sender and a hop count. The search only routes
-around gaps; it never searches for an ID. A sleepy node that is a next
+around gaps; it never searches for an ID, though it hands a message to
+the node it is addressed to where that is a neighbour. A sleepy node that is a next
 hop ([next hop](#next-hop)) forwards as a relay does, and what this
 section says of a relay holds for it then.
 
@@ -1587,6 +1588,7 @@ those in the tried set ([message records](#message-records)).
 
 The **order** is:
 
+- the addressed node itself, if it is a candidate, before all others;
 - neighbours with margin before those without;
 - within each, neighbours that are not demoted before demoted ones;
 - within each, distance to the destination position in the local plane
@@ -1625,8 +1627,10 @@ dropped ([return to parent](#return-to-parent)):
 - a carried relay ([nodes](#nodes)) once nothing has been heard from it
   for its own heartbeat interval ([heartbeat](#heartbeat)).
 
-An anchorless neighbour is a candidate like any other, sent to with the
-long preamble. The first hop of a sleepy node's own message is its
+The addressed node is no last resort for its own message: sleepy with an
+anchor or carried and stale, it is first all the same. An anchorless
+neighbour is a candidate like any other, sent to with the long
+preamble. The first hop of a sleepy node's own message is its
 anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
@@ -1688,6 +1692,15 @@ best neighbour left is usually farther from the destination than the
 relay itself, and such a rule would turn every gap into a dead end. On a
 first send the nearest neighbour is chosen anyway.
 
+*Why the addressed node goes first.* A node owns what is addressed to
+its ID wherever it is ([owner](#owner)), and a carried node is seldom at
+the position a message bears: the search for it ends only when it meets
+the node, and otherwise goes through the city to the hop cap
+([hop count](#hop-count)). Nothing is looked up: the relay reads its
+neighbour table, which it ranks anyway. A stale walker or a sleepy node
+costs three frames unanswered at most, against hundreds of hand-overs
+that only that node can end (roadmap D116a).
+
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the
 message has arrived there, or the candidate holds a copy, the candidate
@@ -1708,7 +1721,8 @@ fixed place ([position](#position)). The relay is the third corner, and
 applies the rule only where it may own a destination near it: it holds
 mail, is past its first rotation and has a place ([owner](#owner)). If
 the triangle of the relay and two corners holds the destination
-position, its edges included, the message ends; three corners on a line
+position, its edges included, the message ends, unless the addressed
+node is a candidate, which goes first; three corners on a line
 hold nothing. The test is exact in the counts of the position
 ([positions on the wire](#positions-on-the-wire)): the local plane only
 scales each axis, which keeps the side of a line a point is on.
