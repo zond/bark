@@ -32,10 +32,12 @@
 //! next hop is banned waits in its place until the ban ends (spec
 //! "Overload waits", "Send queue"). The next hand-over goes to a DATA to a sleepy node
 //! if one is due, since its node listens only briefly (spec "Delivery");
-//! else to the first entry that is due, except that one that has waited
-//! goes first, the most travelled first: the place one higher is free
-//! only for the message that has come farthest, and a lower one offered
-//! first would be refused and ban the neighbour again. Choosing an entry
+//! else to the first entry that is due, except that one that has waited,
+//! for a ban or a wait of its own, goes ahead of those that have not, the
+//! most travelled first, for as long as it is queued: a message that has
+//! waited travels a loaded way, where the next relay's gate lets a higher
+//! count in and refuses a lower one once the way's wait passes the
+//! budget, banning the neighbour again (roadmap D114). Choosing an entry
 //! does not move it: the hand-over refers to it where it stands, so of
 //! equals the one that arrived first is offered first, however often they
 //! wait (roadmap D31 rule 4). One set aside for the delivery queue keeps
@@ -161,8 +163,9 @@ pub struct Outgoing {
     pub tries: u8,
     /// The hop place it holds; 0 for the regular room.
     pub place: u8,
-    /// It has waited for a ban: it goes first when the ban ends (spec
-    /// "Overload waits").
+    /// Its next hop has been banned while it was queued, whichever next
+    /// hop it is routed to now: it goes ahead of those that have not
+    /// waited (spec "Overload waits").
     pub waited: bool,
     /// Where its message's record was last found in the record table: a
     /// hint, checked against the ID before it is used.
@@ -233,7 +236,8 @@ impl Outgoing {
         }
     }
 
-    /// Whether it has waited for a ban, or a wait of its own.
+    /// Whether it has waited for a ban, or a wait of its own, since it was
+    /// queued.
     fn waited(&self) -> bool {
         self.waited || self.not_before > Instant::ZERO
     }
@@ -388,8 +392,8 @@ impl SendQueue {
 
     /// The entry the next hand-over goes to, of those `sendable` says may
     /// go now: a DATA to a sleepy node that is due, the first; else of
-    /// those that have waited and are due, the most travelled, the
-    /// earliest of equals; else the first that is due.
+    /// those that have waited since they were queued and are due, the most
+    /// travelled, the earliest of equals; else the first that is due.
     pub fn next_due(
         &self,
         now: Instant,
@@ -625,8 +629,9 @@ mod tests {
         o
     }
 
-    /// When bans end, the most travelled of the frames that waited goes
-    /// first, ahead of the queue's order; one that never waited keeps it.
+    /// The most travelled of the due frames that have waited, here for
+    /// waits of their own, goes first, ahead of the queue's order, also
+    /// after its wait; one that never waited keeps its place.
     #[test]
     fn the_most_travelled_waiting_frame_goes_first() {
         let t = |ms| Instant::ZERO + Duration::from_millis(ms);

@@ -1768,8 +1768,9 @@ is banned is not sendable until the ban ends. Of the sendable, packets
 are handed over in the order they arrived, except that:
 
 - a delivery goes first ([delivery](#delivery));
-- when bans end, the packets that waited for them go first, the most
-  travelled first ([overload waits](#overload-waits)).
+- a packet that has waited since it was queued, for a ban or a wait of
+  its own, goes ahead of those that have not, the most travelled first
+  ([overload waits](#overload-waits)).
 
 The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
@@ -1777,9 +1778,9 @@ go first, since with the bucket at the cap it would always fit sooner
 and the longer frame would never go. Routing every message costs at
 most the queue's entries times the neighbour table's. Of it each entry
 keeps where it was last routed and since when, for the service time
-([neighbour table](#neighbour-table)), and whether it has waited for a
-ban; the relay keeps when the earliest ban that held a message back
-ends.
+([neighbour table](#neighbour-table)), and whether its next hop has
+been banned since it was queued; the relay keeps when the earliest ban
+that held a message back ends.
 
 *Why route at each chance.* The table changes between one chance to
 send and the next: a ban ends, a neighbour arrives, recovers or is
@@ -2011,9 +2012,13 @@ send queue, its airtime still counted, until the ban ends, and is
 routed again then, at the origin or anywhere else ([next hop](#next-hop)).
 A message refused by that next hop itself goes round it where another
 candidate is left ([bans](#bans)).
-When bans end, the messages that waited for them go first, the most
-travelled first. The rest of the queue keeps its order, since ordering
-it all by count would starve messages that have just entered.
+A message that has waited since it was queued, for a ban of its next
+hop or a wait of its own (the node's own message, refused or with no
+neighbour to take it), goes ahead of every message that has not, the
+most travelled first, for as long as it is queued: after its offer
+too, and whatever next hop it is routed to later. The messages that have not waited keep
+their order, since ordering them all by count would starve those that
+have just entered.
 
 A message ends only:
 
@@ -2070,6 +2075,18 @@ farthest must be offered when a ban ends: a less travelled one offered
 first would be refused and ban the neighbour again, each time. The gate
 lets a higher count in whatever the wait on its way, so the message
 offered first is one the next relay's gate lets in.
+
+The same holds at every offer to a loaded way, not only when a ban
+ends: the gate refuses a lower count once the way's wait passes the
+budget, so a less travelled message offered first there costs a DATA
+frame and a refusal and bans the neighbour again. A message that has
+waited has met a loaded way and is likely to meet one again, so it
+keeps its place ahead for as long as it is queued: the messages that
+meet the gate go by count, and those on free ways keep their order.
+Ending that place at the offer, or when the message is routed to
+another next hop, refused more and delivered less under overload;
+ordering every message by count left the least travelled longest in
+the queues (roadmap D114).
 
 ### Why the search finds a path
 
