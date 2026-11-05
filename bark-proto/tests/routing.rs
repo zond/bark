@@ -3211,3 +3211,100 @@ fn a_message_waits_for_a_channel_past_the_delivery_ttl() {
         .iter()
         .any(|t| matches!(t, Trace::Dropped { .. })));
 }
+
+/// O, between two dead ends X and Y, is W's only way on, for the
+/// triangle rule of spec "Next hop". The positions of W, O, X and Y, and the
+/// destination D's, inside the triangle O, X, Y.
+///
+/// ```text
+///              X
+///            /
+///   W ---- O      D
+///            \
+///              Y
+/// ```
+const AROUND: [(f64, f64); 5] = [
+    (-600.0, 0.0),
+    (0.0, 0.0),
+    (550.0, 550.0),
+    (600.0, -600.0),
+    (500.0, 0.0),
+];
+
+/// W's application sends `text` to a node no test builds, at `east`,
+/// `north`; the message.
+fn send_to_nobody(h: &mut Harness<Relay>, w: usize, at: (f64, f64), text: &[u8]) -> MsgId {
+    let dst_pos = pos(at.0, at.1);
+    h.command(
+        w,
+        AppCommand::Send {
+            dst_pos,
+            dst_id: NOBODY,
+            payload: text,
+        },
+    );
+    MsgId::of(dst_pos, NOBODY, text)
+}
+
+/// A message to an address no node is at any more ends at O when Y
+/// returns it, X having returned it already: O, X and Y enclose the
+/// address, and none owns it. O sends nothing more for it, and W, its
+/// parent, never gets it back.
+#[test]
+fn a_departed_address_ends_at_the_second_return_around_it() {
+    let (w, o, x, y) = (0, 1, 2, 3);
+    let nodes = (0..)
+        .zip(&AROUND[..4])
+        .map(|(i, &(e, n))| relay(e, n, 231 + i));
+    let mut h = build(nodes.collect(), &[(w, o), (o, x), (o, y)]);
+    let id = send_to_nobody(&mut h, w, AROUND[4], b"gone");
+    let ended = |h: &Harness<Relay>| !drops(h, o, id).is_empty();
+    assert!(
+        h.run_until(h.now + secs(20), ended),
+        "O {:?}",
+        traces(&h, o)
+    );
+    h.run_for(secs(5));
+    let name = |i| core(&h, i).id();
+    assert_eq!(forwards(&h, o, id), vec![name(x), name(y)]);
+    assert!(returned_to(&h, x, id, name(o)) && returned_to(&h, y, id, name(o)));
+    only_dropped_at(&h, o, id, DropReason::Triangle);
+    assert!(!returned_to(&h, o, id, name(w)));
+    assert!(core(&h, o).holding().next().is_none());
+}
+
+/// The same address outside the triangle: the search goes back to W,
+/// which drops it, the origin with nothing left to try.
+#[test]
+fn an_address_outside_the_triangle_is_searched_back_to_the_origin() {
+    let (w, o) = (0, 1);
+    let nodes = (0..)
+        .zip(&AROUND[..4])
+        .map(|(i, &(e, n))| relay(e, n, 241 + i));
+    let mut h = build(nodes.collect(), &[(w, o), (o, 2), (o, 3)]);
+    let id = send_to_nobody(&mut h, w, (300.0, -900.0), b"elsewhere");
+    let ended = |h: &Harness<Relay>| !drops(h, w, id).is_empty();
+    assert!(
+        h.run_until(h.now + secs(20), ended),
+        "W {:?}",
+        traces(&h, w)
+    );
+    assert!(returned_to(&h, o, id, core(&h, w).id()));
+    only_dropped_at(&h, w, id, DropReason::NoRoute);
+}
+
+/// A message for D, inside the triangle and reached through Y, is
+/// delivered: X returns it to O, which has tried one neighbour only, and
+/// Y takes it on (spec "Next hop").
+#[test]
+fn a_destination_inside_the_triangle_that_answers_is_reached() {
+    let (w, o, x, y, d) = (0, 1, 2, 3, 4);
+    let nodes = (0..).zip(&AROUND).map(|(i, &(e, n))| relay(e, n, 251 + i));
+    let mut h = build(nodes.collect(), &[(w, o), (o, x), (o, y), (y, d)]);
+    let id = send(&mut h, w, d, b"inside");
+    assert!(h.run_until(h.now + secs(20), |h| delivered(h, d, id)));
+    let name = |i| core(&h, i).id();
+    assert_eq!(forwards(&h, o, id), vec![name(x), name(y)]);
+    assert!(returned_to(&h, x, id, name(o)));
+    no_drops(&h);
+}

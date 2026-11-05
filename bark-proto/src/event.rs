@@ -150,6 +150,9 @@ pub enum DropReason {
     NoRoute,
     /// Sending it on would need a count above 255 (spec "Hop count").
     HopCap,
+    /// This relay and two neighbours it has tried for it enclose its
+    /// destination, and none owns it (spec "Next hop").
+    Triangle,
     /// No place for its record: every record is of a message this relay
     /// holds (spec "Message records"). Refused; the table outnumbers the send
     /// queue's places, so this does not happen.

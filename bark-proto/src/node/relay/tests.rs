@@ -2446,3 +2446,176 @@ fn refusals_at_the_gate_are_told_a_line() {
     let wait = wait.expect("told a wait");
     assert!(wait <= ban && wait + ban.div(8) + BAN > ban, "{wait:?}");
 }
+
+/// A running relay with neighbours D and E north-east and north-west of
+/// it, E carried if `e_carried`, and a forward to a destination `north`
+/// and `east` counts from it, with a parent, being handed to D, the
+/// nearer (spec "Next hop"). The relay, the time, the message, D and E.
+fn handing_between(
+    north: i32,
+    east: i32,
+    e_carried: bool,
+) -> (Relay, Instant, MsgId, NodeId, NodeId) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    assert!(!r.booting() && r.placed());
+    let me = r.config.position;
+    let at = |n: i32, e: i32| Position {
+        lat: me.lat + n,
+        lon: me.lon + e,
+    };
+    // About 600 m north and 400 m east and west: D a little nearer.
+    let (d_pos, e_pos) = (at(1_000, 900), at(1_000, -1_000));
+    for (p, home, carried) in [(d_pos, 5, false), (e_pos, 7, e_carried)] {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried,
+            home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(p),
+            short: p.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let data = Data {
+        sender_home: r.home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: at(north, east),
+        dst_id: NOBODY,
+        hops: 2,
+        payload: b"gone",
+    };
+    let id = data.msg_id();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    let at = r.record_place().unwrap();
+    r.records.put(at, Record::new(id, parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    assert_eq!(data_to(&sent), [(id_of(d_pos), 2)], "D first");
+    (r, now, id, id_of(d_pos), id_of(e_pos))
+}
+
+/// `from` answers the hand-over of `id` under way, taking it or, if
+/// `seen`, having seen it; the actions that follow at once.
+fn answered(r: &mut Relay, now: &mut Instant, id: MsgId, from: NodeId, seen: bool) -> Vec<Action> {
+    use crate::wire::Ack;
+    let ack = Ack {
+        msg_id: id,
+        from,
+        to: r.me(),
+        refused: false,
+        wait: 0,
+        seen,
+    };
+    *now += Duration::from_millis(5);
+    let f = mac::frame(&Packet::Ack(ack), r.home, MIN_PREAMBLE_SYMBOLS);
+    let event = Event::Received {
+        channel: r.home,
+        rssi_dbm: -80,
+        snr_db: 10,
+        bytes: &f.bytes[..f.len as usize],
+    };
+    let mut actions = Vec::new();
+    r.handle(event, *now, &mut |a| actions.push(a));
+    actions
+}
+
+/// Run `r` from `pending` until it sends a DATA frame or drops a
+/// message, for at most ten seconds; the receiver of the frame, if any,
+/// and the drops it traced.
+fn settle(
+    r: &mut Relay,
+    now: &mut Instant,
+    pending: Vec<Action>,
+) -> (Option<NodeId>, Vec<crate::event::DropReason>) {
+    let mut woken = Vec::new();
+    r.handle(Event::Wakeup, *now, &mut |a| woken.push(a));
+    let (mut seen, mut all): (Vec<_>, Vec<_>) = pending
+        .into_iter()
+        .chain(woken)
+        .partition(|a| matches!(a, Action::Trace(_)));
+    let outcome = |seen: &[Action]| {
+        let to = seen.iter().find_map(|a| match a {
+            Action::Transmit(f) => match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) => Some(d.dst_hop),
+                _ => None,
+            },
+            _ => None,
+        });
+        let drops: Vec<_> = seen
+            .iter()
+            .filter_map(|a| match a {
+                Action::Trace(Trace::Dropped { reason, .. }) => Some(*reason),
+                _ => None,
+            })
+            .collect();
+        (to, drops)
+    };
+    let end = *now + Duration::from_secs(10);
+    let mut until = *now;
+    loop {
+        drive_all(r, now, until, core::mem::take(&mut all), &mut |_, a| {
+            seen.push(a)
+        });
+        let (to, drops) = outcome(&seen);
+        if to.is_some() || !drops.is_empty() || until >= end {
+            return (to, drops);
+        }
+        until += Duration::from_millis(10);
+    }
+}
+
+/// A message whose destination the relay and two neighbours it tried
+/// enclose ends there, and nothing more is sent for it, by the triangle
+/// rule of spec "Next hop": D answers seen, the relay goes on to E, and E's seen makes
+/// the triangle. Without it the relay would return the message to its
+/// parent.
+#[test]
+fn a_destination_two_tried_neighbours_enclose_ends_the_message() {
+    use crate::event::DropReason;
+    let (mut r, mut now, id, d, e) = handing_between(500, 0, false);
+    let a = answered(&mut r, &mut now, id, d, true);
+    let (to, drops) = settle(&mut r, &mut now, a);
+    assert_eq!((to, drops), (Some(e), std::vec![]), "E next");
+    let a = answered(&mut r, &mut now, id, e, true);
+    let (to, drops) = settle(&mut r, &mut now, a);
+    assert_eq!((to, drops), (None, std::vec![DropReason::Triangle]));
+    assert!(r.holding().next().is_none() && r.handover_idle());
+}
+
+/// Outside the triangle, or with a carried corner, whose place is not
+/// fixed (spec "Position"), the search goes on as before: back to the
+/// parent.
+#[test]
+fn a_destination_outside_or_a_carried_corner_returns_to_the_parent() {
+    for (north, carried) in [(-500, false), (500, true)] {
+        let (mut r, mut now, id, d, e) = handing_between(north, 0, carried);
+        let a = answered(&mut r, &mut now, id, d, true);
+        let (to, _) = settle(&mut r, &mut now, a);
+        assert_eq!(to, Some(e));
+        let a = answered(&mut r, &mut now, id, e, true);
+        let (to, drops) = settle(&mut r, &mut now, a);
+        assert_eq!(
+            (to, drops),
+            (Some(name(7)), std::vec![]),
+            "{north} {carried}"
+        );
+    }
+}
