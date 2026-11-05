@@ -40,7 +40,9 @@ embassy-usb = "=0.6.0"
 embassy-usb-logger = "=0.6.0"
 embassy-futures = "=0.1.2"
 embassy-sync = "=0.8.0"
-log = "=0.4.34"
+# Debug and trace lines are left out of every build: the USB log's
+# filter is info (`main.rs`), and the BLE host's would cost flash.
+log = { version = "=0.4.34", features = ["max_level_info", "release_max_level_info"] }
 # No critical-section feature: nrf-mpsl provides the implementation (below).
 cortex-m = "=0.7.9"
 # `set-vtor`: point VTOR at our vector table in the reset handler, so
@@ -65,10 +67,11 @@ embassy-embedded-hal = "=0.6.0"
 # layer (MPSL), and TrouBLE's host over it. `critical-section-impl`: a
 # critical section that masks every interrupt but the three the MPSL's
 # radio timing needs (RADIO, RTC0, TIMER0), for the console build too.
-# `att-queued-writes`: long writes (D119).
+# `att-queued-writes`: long writes (D119). `log`: the host's info,
+# warnings and errors in the USB log, for the bench.
 nrf-sdc = { version = "=0.4.0", features = ["nrf52840", "peripheral"] }
 nrf-mpsl = { version = "=0.4.0", features = ["nrf52840", "critical-section-impl"] }
-trouble-host = { version = "=0.8.0", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "att-queued-writes"] }
+trouble-host = { version = "=0.8.0", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "att-queued-writes", "log"] }
 bark-link = { path = "../bark-link" }
 # The GATT values' storage, the version trouble-host uses.
 heapless = "=0.9.3"

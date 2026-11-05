@@ -295,10 +295,13 @@ as `scripts/uf2.py` lays them:
 
 The header is not signed yet: signatures come with the key policy, and
 the running firmware will check them before it stages, never the loader
-(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time (0
-without it), kept under its own symbol, from which `scripts/image.py`
+(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time,
+kept under its own symbol, from which `scripts/image.py`
 writes the header's; an image is staged only above the running one's
-version. The hash is computed with the `sha2` crate (0.10.9), the
+version. Without the variable the version is 0: a bench build, flashed
+by UF2, which any staged image replaces and which can itself never be
+staged over another, since `scripts/image.py` packs only a version
+above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
 swap.
 

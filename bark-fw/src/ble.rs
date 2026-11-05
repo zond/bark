@@ -31,6 +31,7 @@ use embassy_sync::signal::Signal;
 use nrf_mpsl::{raw as mpsl_raw, MultiprotocolServiceLayer};
 use nrf_sdc::{self as sdc, SoftdeviceController};
 use static_cell::StaticCell;
+use trouble_host::att::{AttClient, AttReq};
 use trouble_host::prelude::*;
 
 /// The link's one connection (spec "Phone link").
@@ -192,6 +193,8 @@ pub struct State {
     answer: Option<bool>,
     /// What the phone was last told of the status, for when to tell it again.
     told: Status,
+    /// The flags byte last logged.
+    flags: Option<u8>,
 }
 
 /// The state both sides share.
@@ -203,6 +206,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     request: None,
     answer: None,
     told: Status::EMPTY,
+    flags: None,
 }));
 
 /// Raised when a request waits for the node.
@@ -266,8 +270,23 @@ pub fn publish(status: Status, inbox: Option<(MsgId, &[u8])>) {
         if changed {
             l.told = status;
         }
-        changed
+        // The flags as the phone reads them, at the first publish and each
+        // change, for the bench to check reads against.
+        let flags = status.encode()[0];
+        let new_flags = l.flags != Some(flags);
+        l.flags = Some(flags);
+        (changed, new_flags.then_some(flags))
     });
+    let (changed, flags) = changed;
+    if let Some(flags) = flags {
+        log::info!(
+            "ble: status flags={:#04x} relays={} inbox={} address={}",
+            flags,
+            status.relays,
+            status.inbox,
+            status.address
+        );
+    }
     if changed {
         notify(Notify {
             status: true,
@@ -426,10 +445,19 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         }
     };
     let link = async {
+        let mut quiet = false;
         loop {
-            match advertise(&mut peripheral, &server, name).await {
-                Ok(conn) => serve(&server, &conn).await,
-                Err(e) => log::error!("ble: advertising {:?}", e),
+            match advertise(&mut peripheral, &server, name, quiet).await {
+                Ok(Some(conn)) => {
+                    serve(&server, &conn).await;
+                    quiet = false;
+                }
+                Ok(None) => quiet = true,
+                Err(e) => {
+                    log::error!("ble: advertising {:?}", e);
+                    embassy_time::Timer::after(ADV_RETRY).await;
+                    quiet = false;
+                }
             }
         }
     };
@@ -453,12 +481,28 @@ fn address() -> Address {
     ])
 }
 
-/// Advertise until a phone connects (roadmap D120).
+/// How long one round of advertising lasts before it is started afresh.
+/// The controller stops advertising whenever a central connects, and a
+/// connection the host then refuses, for want of a free slot, leaves the
+/// host waiting on an advertisement the controller no longer sends;
+/// starting afresh bounds that to this long. A minute is far from the
+/// advertising interval and the HCI commands it takes, and a phone looking
+/// for the node waits at most that.
+const ADV_ROUND: embassy_time::Duration = embassy_time::Duration::from_secs(60);
+
+/// The pause after advertising fails to start, so that a controller that
+/// refuses keeps the log readable and the executor free.
+const ADV_RETRY: embassy_time::Duration = embassy_time::Duration::from_secs(1);
+
+/// Advertise for a round (roadmap D120): the connection, if a phone made
+/// one. A round that ends without one logs nothing when `quiet`, so that
+/// only the first round after a connection or a failure is logged.
 async fn advertise<'v, 's>(
     peripheral: &mut Peripheral<'v, SoftdeviceController<'static>, DefaultPacketPool>,
     server: &'s Server<'v>,
     name: &str,
-) -> Result<GattConnection<'v, 's, DefaultPacketPool>, BleHostError<sdc::Error>> {
+    quiet: bool,
+) -> Result<Option<GattConnection<'v, 's, DefaultPacketPool>>, BleHostError<sdc::Error>> {
     let mut adv = [0; ADV_DATA];
     let adv_len = AdStructure::encode_slice(
         &[
@@ -486,9 +530,16 @@ async fn advertise<'v, 's>(
             },
         )
         .await?;
-    let conn = advertiser.accept().await?.with_attribute_server(server)?;
+    if !quiet {
+        log::info!("ble: advertising");
+    }
+    // Dropping the advertiser at the end of the round stops it.
+    let Ok(accepted) = embassy_time::with_timeout(ADV_ROUND, advertiser.accept()).await else {
+        return Ok(None);
+    };
+    let conn = accepted?.with_attribute_server(server)?;
     log::info!("ble: connected");
-    Ok(conn)
+    Ok(Some(conn))
 }
 
 /// Serve one connection until it ends: answer its reads and writes, and
@@ -497,10 +548,12 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
     // What changed while no phone was connected is read, not notified.
     NOTIFY.reset();
     let link = &server.link;
+    refresh(server, conn);
     loop {
         let event = match select(conn.next(), NOTIFY.wait()).await {
             Either::First(e) => e,
             Either::Second(n) => {
+                refresh(server, conn);
                 if n.status {
                     let _ = link.status.notify(conn, &status_now().encode(), true).await;
                 }
@@ -518,20 +571,19 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
             GattConnectionEvent::Gatt { event } => event,
             _ => continue,
         };
+        // The attribute server answers every kind of read from the values
+        // it holds, a read by handle or by type, of one value or several:
+        // they are brought up to date before each request is answered, but
+        // for the later parts of a long read, which must read on in the
+        // value its first part began.
+        let continued = matches!(
+            event.payload().incoming(),
+            AttClient::Request(AttReq::ReadBlob { offset, .. }) if offset > 0
+        );
+        if !continued {
+            refresh(server, conn);
+        }
         let reply = match event {
-            GattEvent::Read(r) => {
-                let h = r.handle();
-                let _ = if h == link.status.handle {
-                    server.set(&link.status, &status_now().encode())
-                } else if h == link.inbox.handle {
-                    server.set(&link.inbox, &inbox_now())
-                } else if h == link.given_back.handle {
-                    server.set(&link.given_back, &given_back_now())
-                } else {
-                    Ok(())
-                };
-                r.accept()
-            }
             GattEvent::Write(w) => {
                 let h = w.handle();
                 let answer = if h == link.send.handle {
@@ -553,6 +605,22 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
         if let Ok(reply) = reply {
             reply.send().await;
         }
+    }
+}
+
+/// Put what the node publishes now into the attribute server's values.
+fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+    let link = &server.link;
+    let status = status_now().encode();
+    for e in [
+        conn.set(&link.status, &status).err(),
+        conn.set(&link.inbox, &inbox_now()).err(),
+        conn.set(&link.given_back, &given_back_now()).err(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        log::error!("ble: setting a value {:?}", e);
     }
 }
 

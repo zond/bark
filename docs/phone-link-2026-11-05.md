@@ -237,15 +237,19 @@ builds it:
 
 | | before | the stack | the service and the inbox | with a place |
 |---|---|---|---|---|
-| `.text` | 183 676 | 293 172 | 294 364 | 294 364 |
-| `.rodata` | 19 464 | 36 528 | 34 936 | 34 864 |
+| `.text` | 183 676 | 293 172 | 300 524 | 300 484 |
+| `.rodata` | 19 464 | 36 528 | 39 052 | 38 980 |
 | `.data` | 2 120 | 6 288 | 6 936 | 6 936 |
 | `.bss` | 192 860 | 204 136 | 210 568 | 210 568 |
-| flash (with the 256-byte vector table) | 205 516 | 336 244 | 336 492 | 336 420 |
+| flash (with the 256-byte vector table) | 205 516 | 336 244 | 346 768 | 346 656 |
 | static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
 **Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
-336 492 B is 93 %, 23 956 B, 23.4 KiB, left. Of the stack's growth, the
+346 768 B is 96 %, 13 680 B, 13.4 KiB, left. Of that, the host's own
+log lines at info and above, which the bench reads (below), are 9.4 KB;
+every crate's debug and trace lines are left out of the build
+(`log`'s `release_max_level_info`), as the log's filter drops them
+anyway. Of the stack's growth, the
 controller and the MPSL's library are about 48 KB of code and the host
 about 40 KB. The node image formats and parses no floating-point
 numbers: `build.rs` converts the built place to the position's counts
@@ -292,6 +296,19 @@ What setting the stack up changed:
 
 How the service meets the node (`ble.rs`, `node.rs`):
 
+- The attribute server answers reads from the values it holds, for every
+  kind of read: by handle, by type (as `gatttool --char-read --uuid`
+  reads), several at once. So the link puts Status, Inbox and Given back
+  into it before it answers each request, but for the later parts of a
+  long read, and when the node signals a change.
+- Advertising runs in rounds of a minute, each started afresh. The
+  controller stops advertising whenever a central connects; a
+  connection the host refuses at once, for want of a free slot, leaves
+  the host waiting on an advertisement that is no longer sent. The
+  rounds bound that to a minute. The host's own warnings are in the log
+  (`[link][connect] no available slot`), so the bench can tell whether
+  that happens.
+
 - After every step of the driver the node publishes the status and a
   copy of the inbox's oldest message to the link. The status is notified
   when its flags, its relays, the inbox's count or the address change,
@@ -318,8 +335,10 @@ Each step says what the phone and the node's log must show; the node's
 log is the USB serial port (`bark-fw/README.md`).
 
 1. **Boot.** The log shows `ble: controller memory N of 3104 bytes`,
-   N at most 3104, and no `ble:` error. The 10 s line ends in
-   `stack_used=`, which is the number to note.
+   N at most 3104, `ble: advertising`, `ble: status flags=0x22 …` with
+   the built address in degrees (bits 1 and 5, USB and placed; bit 6
+   while the first rotation runs), `display: shown`, and no `ble:` error.
+   The 10 s line ends in `stack_used=`, which is the number to note.
 2. **Scan.** The scanner lists `bark-` and the twelve hex digits on the
    node's display, advertising about once a second (nRF Connect shows
    the interval), with the 128-bit service UUID
@@ -328,7 +347,9 @@ log is the USB serial port (`bark-fw/README.md`).
    from the scanner. Ask for an MTU of 247 (the menu's "Request MTU");
    247 is granted.
 4. **Node.** Read `28bc0002-…`: 11 bytes, `01`, the ID's six bytes as
-   on the display, then the image version, four bytes big-endian.
+   on the display, then the image version, four bytes big-endian: 0
+   unless the image was built with `BARK_IMAGE_VERSION`, which a bench
+   build need not set (`bark-fw/README.md`, Updates).
 5. **Status.** Enable notifications on `28bc0003-…` and read it: 14
    bytes. On USB with a built place, byte 0 has bits 1 (USB) and 5
    (placed), and bit 0 (ready) once the node takes messages; bit 6 and
@@ -357,8 +378,9 @@ log is the USB serial port (`bark-fw/README.md`).
 9. **Long writes.** With the MTU left at 23 (reconnect without asking),
    write a Send of 240 bytes: nRF Connect sends it as a long write, and
    it is taken as in step 6.
-10. **Disconnect.** The log shows `ble: disconnected`, and the node
-    advertises again: it is back in the scanner.
+10. **Disconnect.** The log shows `ble: disconnected`, then
+    `ble: advertising`, and the node is back in the scanner within a
+    second or two.
 11. **Given back.** On a node whose every neighbour has refused it, a
     Send is given back: Given back (`28bc0006-…`), notified, holds the
     message's ID and the seconds of the wait, and Status's ready bit
