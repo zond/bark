@@ -166,11 +166,9 @@ pub fn controller(
         .support_dle_peripheral()
         .peripheral_count(CONNECTIONS as u8)?
         .buffer_cfg(LL_PAYLOAD, LL_PAYLOAD, LL_BUFFERS, LL_BUFFERS)?;
-    log::info!(
-        "ble: controller memory {} of {} bytes",
-        builder.required_memory()?,
-        SDC_MEM
-    );
+    let need = builder.required_memory()?;
+    log::info!("ble: controller memory {} of {} bytes", need, SDC_MEM);
+    crate::boot::note(|f| f.controller = Some((need, SDC_MEM)));
     builder.build(
         p,
         RNG.init(rng::Rng::new_blocking(rng)),

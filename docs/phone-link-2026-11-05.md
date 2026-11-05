@@ -356,6 +356,10 @@ log is the USB serial port (`bark-fw/README.md`).
    the built address in degrees (bits 1 and 5, USB and placed; bit 6
    while the first rotation runs), `display: shown`, and no `ble:` error.
    The 10 s line ends in `stack_used=`, which is the number to note.
+   A host that opens the port seconds after the board starts misses
+   these lines; the first 10 s report repeats them in one line, `boot:
+   lfclk=… display=… controller_memory=N of 3104 image_version=…
+   image=N of 360448 B`.
 2. **Scan.** The scanner lists `bark-` and the twelve hex digits on the
    node's display, advertising about once a second (nRF Connect shows
    the interval), with the 128-bit service UUID

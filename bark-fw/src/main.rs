@@ -15,6 +15,8 @@ mod battery;
 #[cfg(not(feature = "console"))]
 mod ble;
 mod board;
+#[cfg(not(feature = "console"))]
+mod boot;
 mod clock;
 #[cfg(feature = "console")]
 mod console;
@@ -211,6 +213,8 @@ async fn main(_spawner: Spawner) {
     // The 32.768 kHz clock's source, before the MPSL takes the clock.
     #[cfg(not(feature = "console"))]
     let lf_source = lfclk::probe();
+    #[cfg(not(feature = "console"))]
+    boot::note(|f| f.lfclk = Some(lf_source));
     #[cfg(not(feature = "console"))]
     let mpsl = ble::mpsl(
         ble::MpslParts {

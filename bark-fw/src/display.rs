@@ -218,6 +218,25 @@ impl<const N: usize> fmt::Write for Line<N> {
     }
 }
 
+/// How the boot picture went, for the node's `boot:` line (`boot.rs`);
+/// the console logs it only.
+#[cfg_attr(feature = "console", allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+pub enum Outcome {
+    /// On the glass, this long after boot.
+    Shown { ms: u32 },
+    /// BUSY stayed high past [`BUSY_TIMEOUT`] at this step.
+    Busy(&'static str),
+    /// The bus failed.
+    Spi,
+}
+
+/// The outcome of [`show`], once known.
+pub static OUTCOME: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Option<Outcome>>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(None));
+
 /// Why the picture did not reach the glass.
 #[derive(Debug)]
 enum Error {
@@ -323,14 +342,25 @@ pub async fn show(
     Timer::after(RESET_PULSE).await;
     reset.set_high();
     Timer::after(RESET_PULSE).await;
-    match panel.show(picture).await {
-        Ok(()) => log::info!("display: shown in {} ms, asleep", t0.elapsed().as_millis()),
-        Err(Error::Busy(step)) => log::warn!(
-            "display: busy past {} s at {}; no picture",
-            BUSY_TIMEOUT.as_secs(),
-            step
-        ),
-        Err(Error::Spi(e)) => log::warn!("display: spi {:?}; no picture", e),
-    }
+    let outcome = match panel.show(picture).await {
+        Ok(()) => {
+            let ms = t0.elapsed().as_millis() as u32;
+            log::info!("display: shown in {} ms, asleep", ms);
+            Outcome::Shown { ms }
+        }
+        Err(Error::Busy(step)) => {
+            log::warn!(
+                "display: busy past {} s at {}; no picture",
+                BUSY_TIMEOUT.as_secs(),
+                step
+            );
+            Outcome::Busy(step)
+        }
+        Err(Error::Spi(e)) => {
+            log::warn!("display: spi {:?}; no picture", e);
+            Outcome::Spi
+        }
+    };
+    OUTCOME.lock(|o| o.set(Some(outcome)));
     core::future::pending().await
 }

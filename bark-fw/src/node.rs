@@ -243,6 +243,7 @@ pub async fn run<'a>(
         crate::power::reported()
     );
     let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
+    let mut first_report = true;
     loop {
         if driver.step().await.is_err() {
             Timer::after(RETRY_PAUSE).await;
@@ -258,6 +259,11 @@ pub async fn run<'a>(
         }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
+            if core::mem::take(&mut first_report) {
+                let mut facts = crate::boot::facts();
+                facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
+                log::info!("boot: {}", facts);
+            }
             let s = driver.stats();
             let r = driver.radio().stats();
             let t = driver.radio().tcxo();
