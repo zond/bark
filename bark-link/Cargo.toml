@@ -1,0 +1,13 @@
+[package]
+name = "bark-link"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The values of the bark phone link's BLE GATT service: one codec for the firmware and the app's tests."
+
+[dependencies]
+bark-proto = { path = "../bark-proto" }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
