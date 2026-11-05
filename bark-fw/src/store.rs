@@ -18,23 +18,84 @@
 //! tWRITE and tERASEPAGE), which the controller's timing could not wait
 //! for. The LoRa radio keeps receiving meanwhile, and a frame that ends
 //! then waits in it.
+//!
+//! The writes run in a task of their own ([`run`]), handed the latest of
+//! each kind by the node after the step that asked: an erase's and a
+//! write's futures nested in the node's loop grew the main task's stack
+//! frame by 2.4 KB.
+//!
+//! The page also keeps the phone's UTC offset (`utc.rs`), in records of
+//! its own beside the core's: [`ZONE`] and the offset in the first word,
+//! its complement in the second, the rest left erased. The core's records
+//! start with their layout's version, counted from 1, and a cut record
+//! leaves the second word erased, which is no complement of the first.
 
 use bark_image::layout::STORE;
 use bark_proto::store::{Stored, RECORD_LEN};
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+
+/// The state and the offset to keep next, the latest of each.
+static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
+static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
+
+/// The node's side: keep `stored`, in place of the state kept before.
+pub fn keep(stored: Stored) {
+    STORED.signal(stored);
+}
+
+/// The node's side: keep the UTC offset, in place of the one kept before.
+pub fn keep_offset(offset_min: i16) {
+    OFFSET.signal(offset_min);
+}
+
+/// Write what the node hands, for ever.
+#[embassy_executor::task]
+pub async fn run(mut flash: Flash) -> ! {
+    loop {
+        match select(STORED.wait(), OFFSET.wait()).await {
+            Either::First(stored) => flash.keep(&stored).await,
+            Either::Second(offset_min) => flash.keep_offset(offset_min).await,
+        }
+    }
+}
 
 /// Records in the page.
 const SLOTS: u32 = STORE.len / RECORD_LEN as u32;
+
+/// The first byte of an offset's record.
+const ZONE: u8 = 0x80;
+
+fn zone_record(offset_min: i16) -> [u8; RECORD_LEN] {
+    let [hi, lo] = offset_min.to_be_bytes();
+    let word = [ZONE, hi, lo, 0];
+    let mut r = [0xff; RECORD_LEN];
+    r[..4].copy_from_slice(&word);
+    r[4..8].copy_from_slice(&word.map(|b| !b));
+    r
+}
+
+fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
+    let whole = r[0] == ZONE && (0..4).all(|i| r[4 + i] == !r[i]);
+    whole.then(|| i16::from_be_bytes([r[1], r[2]]))
+}
 
 /// The page of flash and the next erased slot in it.
 pub struct Flash {
     flash: nrf_mpsl::Flash<'static>,
     next: u32,
+    /// What the page holds last, written again after an erase.
+    stored: Option<Stored>,
+    offset_min: Option<i16>,
 }
 
 impl Flash {
-    /// The page, and the state its last whole record holds.
-    pub fn open(mut flash: nrf_mpsl::Flash<'static>) -> (Flash, Option<Stored>) {
+    /// The page, the state its last whole record holds, and the UTC
+    /// offset its last offset's record holds.
+    pub fn open(mut flash: nrf_mpsl::Flash<'static>) -> (Flash, Option<Stored>, Option<i16>) {
         let mut last = None;
+        let mut offset_min = None;
         let mut next = SLOTS;
         for slot in 0..SLOTS {
             let mut r = [0u8; RECORD_LEN];
@@ -51,22 +112,53 @@ impl Flash {
             if let Some(s) = Stored::from_record(&r) {
                 last = Some(s);
             }
+            offset_min = zone(&r).or(offset_min);
         }
-        (Flash { flash, next }, last)
+        let page = Flash {
+            flash,
+            next,
+            stored: last,
+            offset_min,
+        };
+        (page, last, offset_min)
     }
 
-    /// Keep `stored` in the next slot, erasing the page when it is full.
-    pub async fn keep(&mut self, stored: &Stored) {
+    /// Keep `stored`, in place of the state kept before.
+    async fn keep(&mut self, stored: &Stored) {
+        self.stored = Some(*stored);
+        self.write(&stored.record()).await;
+    }
+
+    /// Keep the UTC offset, in place of the one kept before.
+    async fn keep_offset(&mut self, offset_min: i16) {
+        self.offset_min = Some(offset_min);
+        self.write(&zone_record(offset_min)).await;
+    }
+
+    /// Write `record` into the next slot. A full page is erased first,
+    /// and the other kind of record written again, so that each survives.
+    async fn write(&mut self, record: &[u8; RECORD_LEN]) {
         if self.next >= SLOTS {
             if let Err(e) = self.flash.erase(STORE.start, STORE.end()).await {
                 log::error!("store erase failed: {:?}", e);
                 return;
             }
             self.next = 0;
+            let other = match zone(record) {
+                Some(_) => self.stored.map(|s| s.record()),
+                None => self.offset_min.map(zone_record),
+            };
+            if let Some(r) = other {
+                self.put(&r).await;
+            }
         }
+        self.put(record).await;
+    }
+
+    async fn put(&mut self, record: &[u8; RECORD_LEN]) {
         let at = STORE.start + self.next * RECORD_LEN as u32;
         self.next += 1;
-        if let Err(e) = self.flash.write(at, &stored.record()).await {
+        if let Err(e) = self.flash.write(at, record).await {
             log::error!("store write failed: {:?}", e);
         }
     }

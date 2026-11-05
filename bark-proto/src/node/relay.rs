@@ -1097,6 +1097,14 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
     }
 
+    fn gps_tracks(&self) -> bool {
+        Node::gps_tracks(self)
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        Node::fix_in_reach(self, position)
+    }
+
     fn next_wakeup(&self) -> Option<Instant> {
         if self.stage == Stage::Off {
             return Some(Instant::ZERO);

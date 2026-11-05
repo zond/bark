@@ -163,6 +163,9 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'Y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
         b'Z' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
         b'%' => [0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03],
+        b':' => [0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00],
+        b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
+        b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         _ => return None,
     })
 }
@@ -183,6 +186,14 @@ impl<const N: usize> Line<N> {
 
     pub fn bytes(&self) -> &[u8] {
         &self.buf[..self.len]
+    }
+
+    /// Blanks after what is written, up to `len` characters.
+    pub fn pad_to(&mut self, len: usize) {
+        while self.len < len.min(N) {
+            self.buf[self.len] = b' ';
+            self.len += 1;
+        }
     }
 }
 
@@ -254,6 +265,17 @@ pub struct State {
     pub both_ways: u8,
 }
 
+/// The time of day when the picture is drawn, if the node knows it
+/// (`bark-fw/src/utc.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Clock {
+    /// UTC seconds since 1970.
+    pub utc_s: u64,
+    /// The phone's UTC offset, minutes, if a phone gave one: the time is
+    /// then shown local, with the offset, else as UTC.
+    pub offset_min: Option<i16>,
+}
+
 /// What never changes: the node's ID as hex, its image's name and version.
 #[derive(Clone, Copy, Debug)]
 pub struct Fixed<'a> {
@@ -267,15 +289,25 @@ pub struct Fixed<'a> {
 const TOP: usize = 6;
 const GAP: usize = 8;
 
-/// The most lines the screen takes: the ID and the image, and the state's
-/// eight.
-pub const LINES: usize = 10;
+/// The most lines the screen takes: the ID and the image, the state's
+/// eight, and the time.
+pub const LINES: usize = 11;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
 /// The screen's lines, each with the row its top edge is at, for `state`
-/// with the node up `up_min` minutes; `None` past the last.
-pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, usize)>; LINES] {
+/// with the node up `up_min` minutes and the time `clock`; `None` past
+/// the last.
+///
+/// Every line is a full line wide, so that it starts at the left margin:
+/// a state is a word or two at the left, a quantity its label at the left
+/// and its value flush right.
+pub fn lines(
+    fixed: &Fixed<'_>,
+    state: &State,
+    up_min: u32,
+    clock: Option<Clock>,
+) -> [Option<(Text, usize)>; LINES] {
     let mut out: [Option<(Text, usize)>; LINES] = Default::default();
     let mut y = TOP;
     let mut n = 0;
@@ -284,18 +316,10 @@ pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, us
         n += 1;
         y += line_height(SCALE) + gap;
     };
-    let line = |args: fmt::Arguments<'_>| {
-        let mut t = Text::new();
-        let _ = t.write_fmt(args);
-        t
-    };
-    put(line(format_args!("{}", Hex(fixed.id))), 0);
+    put(plain(format_args!("{}", Hex(fixed.id))), 0);
+    put(row(fixed.image, format_args!("V{}", fixed.version)), GAP);
     put(
-        line(format_args!("{} V{}", fixed.image, fixed.version)),
-        GAP,
-    );
-    put(
-        line(match (state.sleepy, state.anchored) {
+        plain(match (state.sleepy, state.anchored) {
             (false, _) => format_args!("RELAY"),
             (true, true) => format_args!("SLEEPY ANCHORED"),
             (true, false) => format_args!("SLEEPY NO ANCHOR"),
@@ -303,7 +327,7 @@ pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, us
         0,
     );
     put(
-        line(match (state.placed, state.carried) {
+        plain(match (state.placed, state.carried) {
             (false, _) => format_args!("NO PLACE YET"),
             (true, true) => format_args!("CARRIED"),
             (true, false) => format_args!("FIXED"),
@@ -311,29 +335,74 @@ pub fn lines(fixed: &Fixed<'_>, state: &State, up_min: u32) -> [Option<(Text, us
         0,
     );
     if state.starting {
-        put(line(format_args!("STARTING")), 0);
+        put(plain(format_args!("STARTING")), 0);
     }
-    put(line(format_args!("HEARD {}", state.heard)), 0);
-    put(line(format_args!("STRONG {}", state.strong)), 0);
-    put(line(format_args!("BOTH WAYS {}", state.both_ways)), 0);
+    put(row("HEARD", format_args!("{}", state.heard)), 0);
+    put(row("STRONG", format_args!("{}", state.strong)), 0);
+    put(row("BOTH WAYS", format_args!("{}", state.both_ways)), 0);
     put(
         match state.battery {
-            Battery::Usb => line(format_args!("ON USB")),
-            Battery::NotRead => line(format_args!("BATTERY NOT READ")),
-            Battery::Low => line(format_args!("BATTERY LOW")),
-            Battery::Percent(p) => line(format_args!("BATTERY {p}%")),
+            Battery::Usb => row("POWER", format_args!("USB")),
+            Battery::NotRead => row("BATTERY", format_args!("NOT READ")),
+            Battery::Low => row("BATTERY", format_args!("LOW")),
+            Battery::Percent(p) => row("BATTERY", format_args!("{p}%")),
         },
         0,
     );
     put(
         match up_min {
-            m if m < 120 => line(format_args!("UP {m} MIN")),
-            m if m < 48 * 60 => line(format_args!("UP {} HOURS", m / 60)),
-            m => line(format_args!("UP {} DAYS", m / (24 * 60))),
+            m if m < 120 => row("UP", format_args!("{m} MIN")),
+            m if m < 48 * 60 => row("UP", format_args!("{} HOURS", m / 60)),
+            m => row("UP", format_args!("{} DAYS", m / (24 * 60))),
         },
         0,
     );
+    if let Some(c) = clock {
+        put(row("TIME", format_args!("{}", c)), 0);
+    }
     out
+}
+
+/// `args` at the left, the rest of the line blank.
+fn plain(args: fmt::Arguments<'_>) -> Text {
+    let mut t = Text::new();
+    let _ = t.write_fmt(args);
+    t.pad_to(LINE);
+    t
+}
+
+/// `label` at the left and `value` flush right, blanks between.
+fn row(label: &str, value: fmt::Arguments<'_>) -> Text {
+    let mut v = Text::new();
+    let _ = v.write_fmt(value);
+    let mut t = Text::new();
+    let _ = t.write_str(label);
+    t.pad_to(LINE.saturating_sub(v.bytes().len()).max(label.len() + 1));
+    let _ = t.write_str(core::str::from_utf8(v.bytes()).unwrap_or(""));
+    t
+}
+
+/// The time as the `TIME` line's value: `12:34 UTC`, or with an offset
+/// the local time and the offset, `12:34 +02` or `12:34 +0530`, which
+/// fits the line beside its label.
+impl fmt::Display for Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const DAY_MIN: i64 = 24 * 60;
+        let utc_min = (self.utc_s / 60) as i64;
+        let offset = i64::from(self.offset_min.unwrap_or(0));
+        let m = (utc_min + offset).rem_euclid(DAY_MIN);
+        write!(f, "{:02}:{:02}", m / 60, m % 60)?;
+        let Some(o) = self.offset_min else {
+            return f.write_str(" UTC");
+        };
+        let sign = if o < 0 { '-' } else { '+' };
+        let (oh, om) = (o.unsigned_abs() / 60, o.unsigned_abs() % 60);
+        write!(f, " {sign}{oh:02}")?;
+        if om != 0 {
+            write!(f, "{om:02}")?;
+        }
+        Ok(())
+    }
 }
 
 /// Bytes as they are, for the ID's hex.
@@ -349,9 +418,15 @@ impl fmt::Display for Hex<'_> {
 }
 
 /// Draw the screen into `picture`, which is cleared first.
-pub fn draw(picture: &mut Picture, fixed: &Fixed<'_>, state: &State, up_min: u32) {
+pub fn draw(
+    picture: &mut Picture,
+    fixed: &Fixed<'_>,
+    state: &State,
+    up_min: u32,
+    clock: Option<Clock>,
+) {
     picture.clear();
-    for (text, y) in lines(fixed, state, up_min).iter().flatten() {
+    for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
         picture.text(text.bytes(), SCALE, *y);
     }
 }

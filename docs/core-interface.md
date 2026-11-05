@@ -118,7 +118,8 @@ Every node has the same application interface: the readiness query
 `AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
-`Action::Store` and `Config::stored`, and the GPS request `Action::Locate`.
+`Action::Store` and `Config::stored`, and the GPS: the request `Action::Locate` and
+the queries `gps_tracks` and `fix_in_reach`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -152,9 +153,12 @@ panic or never offer it.
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
 over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMapPoint`
 clears it: the node stays where it is and its next accepted fix is its place (roadmap
-D84). `AppCommand::Fix` hands the core a GPS fix that passed the driver's plausibility
-checks; the driver hands each one, and none while a map point is set, and the core takes
-none then. A node decides from the fixes whether it is carried; a carried node, or a
+D84). `AppCommand::Fix` hands the core a GPS fix that passed the checks of spec
+"Position": the satellites' C/N0, which the driver makes from what the receiver reports,
+and the distance to the relays the node knows, which it asks of the core with
+`fix_in_reach(position)`: within the hearing radius, 3 km (`gps::HEARING_RADIUS_M`), of
+one of them, or any fix while the node knows none or has no place. The driver hands each
+fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node, or a
 sleepy one without an anchor, takes each fix, a fixed relay keeps its position, and a
 sleepy node with an anchor takes none and keeps the flag it had: its position is its
 anchor's, which it beats and rebuilds the short positions it hears near, and
@@ -174,7 +178,7 @@ anchor, and ends the search under way when it takes one (spec "Beats", roadmap D
 a resting relay asks at boot and at its radio's sign of motion (spec "Position", roadmap
 D82).
 
-`Node::gps_tracks` says whether the GPS is to run all the time now: a relay's on external
+`gps_tracks()` says whether the GPS is to run all the time now: a relay's on external
 power, for its grace on battery, while it follows a far fix and while it is carried, never
 with a map point; a sleepy node's never. The driver reads it after every `handle` call, as
 it reads `next_wakeup`, runs the receiver while it holds and keeps it in standby when it
@@ -241,7 +245,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
-| GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `Node::gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
+| GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
 | Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 

@@ -383,6 +383,15 @@ pub trait Core {
     /// The application has the oldest message, `msg_id`, and the node may
     /// forget it. Another ID changes nothing, and the answer is false.
     fn confirm(&mut self, msg_id: MsgId) -> bool;
+
+    /// Whether the GPS is to run all the time now; the driver re-reads it
+    /// after each call (`docs/core-interface.md` §4).
+    fn gps_tracks(&self) -> bool;
+
+    /// Whether a fix at `position` passes the check against the relays
+    /// the node knows; the driver hands only such a fix
+    /// (`docs/core-interface.md` §4).
+    fn fix_in_reach(&self, position: Position) -> bool;
 }
 
 /// SplitMix64: 64 bits of state, full-period, every bit of output usable.

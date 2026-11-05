@@ -115,6 +115,8 @@ pub struct Link {
     pub given_back: heapless::Vec<u8, { bark_link::GivenBack::LEN }>,
     #[characteristic(uuid = le_bytes(uuid::MAP_POINT), write)]
     pub map_point: (),
+    #[characteristic(uuid = le_bytes(uuid::CLOCK), read, write)]
+    pub clock: [u8; bark_link::NodeTime::LEN],
 }
 
 /// What the MPSL takes.
@@ -214,6 +216,8 @@ pub enum Request {
     Confirm(MsgId),
     /// Set or clear the map point.
     MapPoint(bark_link::MapPoint),
+    /// The phone's time and UTC offset.
+    Clock(bark_link::Clock),
 }
 
 /// What the node publishes and the phone reads, and the request waiting.
@@ -439,6 +443,24 @@ fn given_back_now() -> heapless::Vec<u8, { GivenBack::LEN }> {
     })
 }
 
+/// The node's time as the phone reads it (`utc.rs`).
+fn clock_now() -> [u8; bark_link::NodeTime::LEN] {
+    use bark_driver::utc::Source;
+    use bark_link::TimeSource;
+    let t = crate::utc::time();
+    bark_link::NodeTime {
+        // Seconds since 1970 fit 32 bits until 2106.
+        utc_s: t.utc_s.unwrap_or(0) as u32,
+        offset_min: t.offset_min.unwrap_or(0),
+        source: match t.source {
+            None => TimeSource::None,
+            Some(Source::Gps) => TimeSource::Gps,
+            Some(Source::Phone) => TimeSource::Phone,
+        },
+    }
+    .encode()
+}
+
 fn inbox_now() -> heapless::Vec<u8, { Message::MAX_LEN }> {
     LINK.lock(|l| match &l.borrow().inbox {
         Some((msg_id, len, payload)) => {
@@ -645,6 +667,8 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
                     Some(write_confirm(&w).await)
                 } else if h == link.map_point.handle {
                     Some(write_map_point(&w).await)
+                } else if h == link.clock.handle {
+                    Some(write_clock(&w).await)
                 } else {
                     // Not a request: the server takes it by its own rules,
                     // a subscription's descriptor above all.
@@ -694,6 +718,7 @@ fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>
         conn.set(&link.status, &status).err(),
         conn.set(&link.inbox, &inbox_now()).err(),
         conn.set(&link.given_back, &given_back_now()).err(),
+        conn.set(&link.clock, &clock_now()).err(),
     ]
     .into_iter()
     .flatten()
@@ -749,5 +774,14 @@ async fn write_map_point(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<()
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
     ask(Request::MapPoint(m)).await;
+    Ok(())
+}
+
+async fn write_clock(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    let c = w.with_data(|offset, data| match offset {
+        0 => bark_link::Clock::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    ask(Request::Clock(c)).await;
     Ok(())
 }

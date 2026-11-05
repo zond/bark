@@ -66,6 +66,15 @@ proptest! {
     }
 
     #[test]
+    fn clock_round_trips(utc_s: u32, offset_min in OFFSETS_MIN, source in 0u8..3) {
+        let c = Clock { utc_s, offset_min };
+        prop_assert_eq!(Clock::decode(&c.encode()), Ok(c));
+        let source = [TimeSource::None, TimeSource::Gps, TimeSource::Phone][source as usize];
+        let t = NodeTime { utc_s: if source == TimeSource::None { 0 } else { utc_s }, offset_min, source };
+        prop_assert_eq!(NodeTime::decode(&t.encode()), Ok(t));
+    }
+
+    #[test]
     fn map_point_round_trips(p in pos()) {
         let mut b = [0; MapPoint::MAX_LEN];
         for m in [MapPoint::Clear, MapPoint::Set(p)] {
@@ -126,7 +135,30 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+
+    // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
+    let clock = Clock {
+        utc_s: 1_793_882_119,
+        offset_min: 60,
+    };
+    assert_eq!(clock.encode(), [0x6a, 0xec, 0x78, 0x07, 0, 60]);
+    let west = Clock {
+        offset_min: -210,
+        ..clock
+    };
+    assert_eq!(west.encode(), [0x6a, 0xec, 0x78, 0x07, 0xff, 0x2e]);
+    let time = NodeTime {
+        utc_s: 1_793_882_119,
+        offset_min: 60,
+        source: TimeSource::Gps,
+    };
+    assert_eq!(time.encode(), [0x6a, 0xec, 0x78, 0x07, 0, 60, 1]);
+    let none = NodeTime {
+        source: TimeSource::None,
+        ..time
+    };
+    assert_eq!(none.encode(), [0, 0, 0, 0, 0, 60, 0]);
     assert_eq!(&name(to), b"bark-010203040506");
 }
 
@@ -140,6 +172,7 @@ fn uuids_are_one_base_counted() {
         uuid::INBOX,
         uuid::GIVEN_BACK,
         uuid::MAP_POINT,
+        uuid::CLOCK,
     ];
     for (i, u) in all.into_iter().enumerate() {
         assert_eq!(u & !(0xffff << 96), uuid::SERVICE & !(0xffff << 96));
@@ -166,6 +199,24 @@ fn writes_are_taken_only_whole() {
     assert_eq!(MapPoint::decode(&[0, 0]), Err(Malformed::Length));
     assert_eq!(MapPoint::decode(&[1; 7]), Err(Malformed::Length));
     assert_eq!(MapPoint::decode(&[2]), Err(Malformed::Value));
+    assert_eq!(Clock::decode(&[0; 5]), Err(Malformed::Length));
+    assert_eq!(Clock::decode(&[0; 7]), Err(Malformed::Length));
+    assert_eq!(
+        Clock::decode(&[0, 0, 0, 0, 0x03, 0x49]),
+        Err(Malformed::Value)
+    );
+    assert_eq!(
+        Clock::decode(&[0, 0, 0, 0, 0x03, 0x48]).map(|c| c.offset_min),
+        Ok(840)
+    );
+    assert_eq!(
+        Clock::decode(&[0, 0, 0, 0, 0xfd, 0x30]).map(|c| c.offset_min),
+        Ok(-720)
+    );
+    assert_eq!(
+        Clock::decode(&[0, 0, 0, 0, 0xfd, 0x2f]),
+        Err(Malformed::Value)
+    );
     assert_eq!(Malformed::Length.att_error(), 0x0D);
     assert_eq!(Malformed::Value.att_error(), 0x13);
 }
@@ -193,6 +244,15 @@ fn reads_ignore_what_a_later_version_appends() {
     assert_eq!(GivenBack::decode(&[]), Ok(None));
     assert_eq!(Message::decode(&[]), Ok(None));
     assert_eq!(Message::decode(&[1, 2, 3]), Err(Malformed::Length));
+    let t = NodeTime {
+        utc_s: 5,
+        offset_min: -60,
+        source: TimeSource::Phone,
+    };
+    let mut longer = [0xAA; NodeTime::LEN + 2];
+    longer[..NodeTime::LEN].copy_from_slice(&t.encode());
+    assert_eq!(NodeTime::decode(&longer), Ok(t));
+    assert_eq!(NodeTime::decode(&longer[..6]), Err(Malformed::Length));
 }
 
 #[test]

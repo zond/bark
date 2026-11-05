@@ -364,7 +364,15 @@ pub async fn run(
         }
         let up_min = (now.as_secs() / 60) as u32;
         picture.clear();
-        for (text, y) in bark_screen::lines(&fixed, &state, up_min).iter().flatten() {
+        let t = crate::utc::time();
+        let clock = t.utc_s.map(|utc_s| bark_screen::Clock {
+            utc_s,
+            offset_min: t.offset_min,
+        });
+        for (text, y) in bark_screen::lines(&fixed, &state, up_min, clock)
+            .iter()
+            .flatten()
+        {
             picture.text(text.bytes(), bark_screen::SCALE, *y);
             embassy_futures::yield_now().await;
         }

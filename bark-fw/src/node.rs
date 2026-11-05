@@ -20,7 +20,6 @@ use embassy_time::{Duration, Timer};
 use crate::battery::Battery;
 use crate::clock::Clock;
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
-use crate::store::Flash;
 
 /// The node: every board runs the full one, which can be a relay.
 pub type Role = bark_proto::Relay;
@@ -41,23 +40,27 @@ pub struct LinkApp<'a> {
     clock: &'a Clock,
     /// The last battery reading, for the status.
     battery_mv: u16,
-    /// What the core last asked to keep, until it is written.
-    to_store: Option<Stored>,
     /// The step was woken for the link's request.
     serving: bool,
 }
 
 impl App for LinkApp<'_> {
     async fn ready(&mut self, _offer: bool) {
-        use embassy_futures::select::{select, Either};
         if crate::ble::request_waiting() {
             self.serving = true;
             return;
         }
-        if let Either::Second(()) =
-            select(crate::power::FOR_CORE.wait(), crate::ble::FOR_CORE.wait()).await
+        use embassy_futures::select::{select3, Either3};
+        let fix = crate::gps::FOR_CORE.wait();
+        match select3(
+            crate::power::FOR_CORE.wait(),
+            crate::ble::FOR_CORE.wait(),
+            fix,
+        )
+        .await
         {
-            self.serving = true;
+            Either3::Second(()) => self.serving = true,
+            Either3::First(()) | Either3::Third(()) => {}
         }
     }
 
@@ -73,6 +76,9 @@ impl App for LinkApp<'_> {
 
     fn request(&mut self) -> Option<Request> {
         use crate::ble::Request as Link;
+        if let Some(position) = crate::gps::take_fix() {
+            return Some(Request::Fix(position));
+        }
         let head = crate::ble::LINK.lock(|l| l.borrow().inbox.map(|(id, _, _)| id));
         crate::ble::take_request(|r| match *r {
             Link::Send { .. } => None,
@@ -88,6 +94,12 @@ impl App for LinkApp<'_> {
             Link::MapPoint(bark_link::MapPoint::Clear) => {
                 log::info!("ble: map point cleared");
                 Some((Some(Request::ClearMapPoint), true))
+            }
+            Link::Clock(c) => {
+                if crate::utc::phone(c.utc_s.into(), c.offset_min) {
+                    crate::store::keep_offset(c.offset_min);
+                }
+                Some((None, true))
             }
         })
         .flatten()
@@ -141,7 +153,11 @@ impl App for LinkApp<'_> {
 
     fn store(&mut self, stored: &Stored) {
         log::info!("store {:?}", stored);
-        self.to_store = Some(*stored);
+        crate::store::keep(*stored);
+    }
+
+    fn gps(&mut self, gps: bark_driver::Gps) {
+        crate::gps::want(gps);
     }
 }
 
@@ -248,7 +264,6 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 pub async fn run<'a>(
     core: &'static mut Role,
     radio: Radio<'a>,
-    mut flash: Flash,
     battery: Battery<'a>,
     config: &Config,
     clock: &'a Clock,
@@ -258,7 +273,6 @@ pub async fn run<'a>(
         battery,
         clock,
         battery_mv: 0,
-        to_store: None,
         serving: false,
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
@@ -282,22 +296,22 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        if let Some(stored) = driver.app_mut().to_store.take() {
-            flash.keep(&stored).await;
-        }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
                 let mut facts = crate::boot::facts();
                 facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
-                log::info!("boot: {}", facts);
+                // A map point keeps the GPS at rest by rule (spec
+                // "Position").
+                let map_point = driver.core().0.on_map_point();
+                log::info!("boot: {} map_point={}", facts, map_point);
             }
             let s = driver.stats();
             let r = driver.radio().stats();
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -311,8 +325,25 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}",
                 r.cold_starts,
                 t.delay.as_micros(),
                 t.errors,
-                crate::stack::used()
+                crate::stack::used(),
+                Time(crate::utc::time())
             );
+        }
+    }
+}
+
+/// The time for the 10 s line, once known.
+struct Time(crate::utc::Time);
+
+impl core::fmt::Display for Time {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match (self.0.utc_s, self.0.source) {
+            (Some(s), Some(source)) => write!(
+                f,
+                " utc_s={} offset_min={:?} from={:?}",
+                s, self.0.offset_min, source
+            ),
+            _ => Ok(()),
         }
     }
 }
@@ -356,5 +387,13 @@ impl Core for Static {
 
     fn confirm(&mut self, msg_id: bark_proto::MsgId) -> bool {
         self.0.confirm(msg_id)
+    }
+
+    fn gps_tracks(&self) -> bool {
+        self.0.gps_tracks()
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        self.0.fix_in_reach(position)
     }
 }

@@ -136,6 +136,9 @@ class Session extends ChangeNotifier {
   NodeLink? _link;
   NodeInfo? node;
   Status? status;
+
+  /// The node's time as last read, after the app wrote its own.
+  NodeTime? nodeTime;
   DateTime? _statusAt;
 
   /// The last thing worth telling the person.
@@ -253,7 +256,24 @@ class Session extends ChangeNotifier {
     } catch (e) {
       _tell('Reading the node failed: $e');
     }
+    if (n.version >= clockVersion) await _setClock(link);
     return true;
+  }
+
+  /// Gives the node the phone's time and UTC offset, silently: a node
+  /// without them only shows no time.
+  Future<void> _setClock(NodeLink link) async {
+    final t = now();
+    try {
+      await link.setClock(
+        t.millisecondsSinceEpoch ~/ 1000,
+        t.timeZoneOffset.inMinutes,
+      );
+      nodeTime = await link.readClock();
+      note('Clock: ${describeTime(nodeTime!)}');
+    } catch (e) {
+      note('Clock: $e');
+    }
   }
 
   Future<void> disconnect() async => _link?.close();
@@ -268,6 +288,7 @@ class Session extends ChangeNotifier {
     status = null;
     node = null;
     givenBack = null;
+    nodeTime = null;
     note('Disconnected');
   }
 
@@ -430,4 +451,16 @@ class Session extends ChangeNotifier {
     }
     super.dispose();
   }
+}
+
+/// The node's time as a person reads it: UTC, the source, the offset.
+String describeTime(NodeTime t) {
+  final o = t.offsetMin;
+  final sign = o < 0 ? '-' : '+';
+  final offset =
+      'UTC$sign${(o.abs() ~/ 60).toString().padLeft(2, '0')}:'
+      '${(o.abs() % 60).toString().padLeft(2, '0')}';
+  if (t.source == TimeSource.none) return 'no time, offset $offset';
+  final utc = DateTime.fromMillisecondsSinceEpoch(t.utcS * 1000, isUtc: true);
+  return '${utc.toIso8601String()} from the ${t.source.name}, offset $offset';
 }

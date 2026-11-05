@@ -5,8 +5,8 @@
 //! up the SX1262 at bark's modulation and runs the protocol core on it
 //! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
-//! (`console.rs`) on the serial port. Reads the battery (`battery.rs`);
-//! touches no GPS. The node build runs the phone link (`ble.rs`).
+//! (`console.rs`) on the serial port. Reads the battery (`battery.rs`).
+//! The node build runs the phone link (`ble.rs`) and the GPS (`gps.rs`).
 
 #![no_std]
 #![no_main]
@@ -22,6 +22,8 @@ mod clock;
 mod console;
 mod display;
 #[cfg(not(feature = "console"))]
+mod gps;
+#[cfg(not(feature = "console"))]
 mod lfclk;
 #[cfg(not(feature = "console"))]
 mod node;
@@ -33,6 +35,8 @@ mod stack;
 mod store;
 mod touch;
 mod update;
+#[cfg(not(feature = "console"))]
+mod utc;
 
 #[cfg(feature = "console")]
 use core::fmt::Write as _;
@@ -74,6 +78,7 @@ bind_interrupts!(struct Irqs {
     RADIO => nrf_mpsl::HighPrioInterruptHandler;
     TIMER0 => nrf_mpsl::HighPrioInterruptHandler;
     RTC0 => nrf_mpsl::HighPrioInterruptHandler;
+    UARTE1 => embassy_nrf::uarte::InterruptHandler<peripherals::UARTE1>;
 });
 
 /// The priority of every interrupt of ours in the node build: below the
@@ -209,6 +214,7 @@ async fn main(spawner: Spawner) {
             Interrupt::SPI2,
             Interrupt::TWISPI1,
             Interrupt::SAADC,
+            Interrupt::UARTE1,
         ] {
             irq.set_priority(APP_PRIORITY);
         }
@@ -379,10 +385,26 @@ async fn main(spawner: Spawner) {
     let mut lines = console::Lines::new();
     #[cfg(not(feature = "console"))]
     let (config, core, flash) = {
-        let (flash, stored) = store::Flash::open(mpsl_flash);
+        let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
+        utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
         (config, node::core(config, seed), flash)
     };
+    // Its flash writes in a task of their own (`store.rs`).
+    #[cfg(not(feature = "console"))]
+    spawner.spawn(store::run(flash).expect("spawned once"));
+    // Its own task, so that its UART's bytes wake nothing else.
+    #[cfg(not(feature = "console"))]
+    spawner.spawn(
+        gps::run(gps::Parts {
+            uarte: p.UARTE1,
+            timer: p.TIMER2,
+            ppi0: p.PPI_CH0,
+            ppi1: p.PPI_CH1,
+            pins: board.gps,
+        })
+        .expect("spawned once"),
+    );
     // Where the radio's self-check reads the channel at boot: the home
     // channel if one is stored, else the console's or the first.
     #[cfg(feature = "console")]
@@ -425,7 +447,7 @@ async fn main(spawner: Spawner) {
                     .run(&mut lines)
                     .await;
                 #[cfg(not(feature = "console"))]
-                node::run(core, radio, flash, battery, &config, &clock).await;
+                node::run(core, radio, battery, &config, &clock).await;
             }
             // Without a radio there is nothing to measure; USB and the log
             // keep running so the error can be read.

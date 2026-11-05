@@ -606,9 +606,16 @@ an hour, 60 s each at 29 mA: 0.20 mA, 3 % of its 6.4 mA.
 *Why a map point rests it.* No fix moves a node with a map point
 ([nodes](#nodes)), so the GPS has nothing to do.
 
-**Time.** GPS is for position only. There is no network time: every
-timer is local and monotonic, and nothing depends on two nodes agreeing
-on a clock.
+**Time.** The protocol has no network time: every timer is local and
+monotonic, and nothing depends on two nodes agreeing on a clock. A node
+keeps the time of day for the people who read it, its display and the
+phone: UTC from a fix, or from the phone while it has none
+([phone link](#phone-link)), carried on by its own clock while the error
+can be under a minute, and the phone's UTC offset (roadmap D129, D130).
+
+*Why under a minute.* A clock that shows minutes needs no better, and
+past that the node shows no time rather than a wrong one: on a crystal
+taken at ±250 ppm, 2.7 days after the fix.
 
 ---
 
@@ -2924,6 +2931,8 @@ service and its characteristics:
 | | | write | msg_id(4) | 4 |
 | Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
+| Clock | `28bc0008-…` | read | utc(4) offset(2) source(1) | 7 |
+| | | write | utc(4) offset(2) | 6 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -2934,7 +2943,7 @@ write is a write request, which the node answers; a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 1 in this specification; the node's ID, the
+**Node.** The link version, 2 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3007,6 +3016,18 @@ node's mail does.
 
 **Map point.** A write of 1 and a position sets the node's map point,
 and of 0 clears it ([position](#position)).
+
+**Clock.** The app writes the phone's time, UTC seconds since 1970, and
+its UTC offset in minutes, −720 to +840, at every connection; another
+offset is answered 0x13. The node keeps the offset across a reboot and
+takes the time only while it has none from its GPS
+([position](#position)). A read gives the node's time, the offset it
+keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
+none the time is 0. From link version 2 (roadmap D130).
+
+*Why the offset from the phone.* Turning a position into a time zone
+takes the zones' boundaries and rules, which the node has no room for
+and which change by law; the phone has them, set by its person.
 
 **Versions.** A later link version may add characteristics and append
 fields to the values the node writes, Node, Status, Given back; an app

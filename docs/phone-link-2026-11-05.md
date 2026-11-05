@@ -27,6 +27,7 @@ From the core's application interface (`core-interface.md` §4):
 | `Node::sleepy`, `carried`, `anchorless`, `address`, `placed`, the map point | Status flags and address |
 | the power the firmware reads, the battery it reads | Status: external power flag, battery |
 | `Config::node_id`, the image version | Node |
+| the time of day and the phone's UTC offset, the firmware's, not the core's | Clock, from link version 2 (D130, `docs/gps-time-2026-11-05.md`) |
 
 `AppCommand::Fix`, `Power` and `Battery` come from the board, not the
 phone; there is no sleepy or carried setting (roadmap D71).
@@ -196,7 +197,7 @@ Open for the prototype: no pairing, no bonding.
 
 ### Versions (D117)
 
-Node's first byte is the link version, 1. Read values grow at their
+Node's first byte is the link version, 2 since Clock (D130). Read values grow at their
 end, as a heartbeat may (spec "Packet formats"): `bark-link`'s decoders
 of Node, Status and Given back ignore what follows the fields they
 know. Written values are taken only whole, and change only with the
@@ -223,7 +224,9 @@ one.
    offer it again once ready, or give it up.
 8. To set the node's position by hand: write 1 and the position to Map
    point; to clear it, write 0.
-9. Make every payload unique (spec "Phone link").
+9. On a node of version 2 or later, write the phone's UTC time and
+   offset to Clock at every connection.
+10. Make every payload unique (spec "Phone link").
 
 ## Does it fit
 
@@ -244,7 +247,9 @@ builds it:
 | flash (with the 256-byte vector table) | 205 516 | 336 244 | 349 040 | 348 936 |
 | static RAM | 194 980 | 210 424 | 217 504 | 217 504 |
 
-**Flash.** The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
+**Flash.** (Since 2026-11-05 the GPS's driver and the time take 12.2 KB
+more and the host's own log lines, 9.9 KB, are dropped: with the
+status screen 2 068 B are left, `docs/gps-time-2026-11-05.md`, "Does it fit".) The image slot is 88 pages, 360 448 B (`bark-image/src/layout.rs`):
 349 040 B is 97 %, 11 408 B, 11.1 KiB, left. Of that, the log lines
 at info and above of the host and of the link's connection steps, which
 the bench reads (below), are about 11 KB;
@@ -322,8 +327,9 @@ How the service meets the node (`ble.rs`, `node.rs`):
 - For the bench the log has every step of a connection: `ble:
   connected` with the peer and the interval, latency and supervision
   timeout; each parameter, PHY or data length update; and each ATT
-  request, a write by its length; with the host's own info, warnings
-  and errors (`[host] …`). A central that never gets as far as
+  request, a write by its length. The host's own info, warnings and
+  errors were logged too until the GPS needed their 9.9 KB of flash
+  (`docs/gps-time-2026-11-05.md`). A central that never gets as far as
   `ble: connected` did not connect at the link layer, which the
   controller does without the host.
 - After every step of the driver the node publishes the status and a
@@ -373,7 +379,7 @@ into its bootloader's `TECHOBOOT` drive, which takes the UF2
 3. **Connect.** The log shows `ble: connected`, and the node is gone
    from the scanner. Ask for an MTU of 247 (the menu's "Request MTU");
    247 is granted.
-4. **Node.** Read `28bc0002-…`: 11 bytes, `01`, the ID's six bytes as
+4. **Node.** Read `28bc0002-…`: 11 bytes, `02`, the ID's six bytes as
    on the display, then the image version, four bytes big-endian: 0
    unless the image was built with `BARK_IMAGE_VERSION`, which a bench
    build need not set (`bark-fw/README.md`, Updates).

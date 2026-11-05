@@ -20,12 +20,15 @@ pub struct Facts {
     pub display: Option<Outcome>,
     /// The BLE controller's memory: what it needs and what it has.
     pub controller: Option<(usize, usize)>,
+    /// The GPS's state now (`gps.rs`).
+    pub gps: &'static str,
 }
 
 static FACTS: Mutex<CriticalSectionRawMutex, Cell<Facts>> = Mutex::new(Cell::new(Facts {
     lfclk: None,
     display: None,
     controller: None,
+    gps: "rest",
 }));
 
 /// Note a fact.
@@ -76,6 +79,7 @@ impl fmt::Display for Facts {
             Some((need, have)) => write!(f, " controller_memory={need} of {have}")?,
             None => f.write_str(" controller_memory=?")?,
         }
+        write!(f, " gps={}", self.gps)?;
         let slot = bark_image::layout::ACTIVE.len;
         write!(
             f,

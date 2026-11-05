@@ -44,7 +44,17 @@ BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
 `build.rs` converts them to the position's counts with the core's
 conversion, so the image parses no numbers; one set without the other,
 or a value that is not a number, fails the build. Without them the node
-has no place until the phone sets a map point (roadmap D83). Every protocol event (`Trace`), every message for the node, and
+has no place until the phone sets a map point (roadmap D83).
+
+A built place is not a map point: the GPS runs with one as without, and
+only a map point the phone sets keeps it at rest (spec "Position"; the
+`boot:` line says `gps=` and `map_point=`). But a fix is taken only
+within 3 km of a relay the node knows (spec "Position"), and a board
+built with a place it does not stand at, beside others built the same,
+knows only relays at that place: its every true fix is dropped
+(`gps: fix … beyond every known relay; dropped`, once), though it still
+keeps the time from them. To bench the GPS, build without a place or
+with the place the board stands at. Every protocol event (`Trace`), every message for the node, and
 a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
@@ -52,8 +62,11 @@ loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times and `stack_used`, the call stack's high-water mark.
 Its application is the phone link over BLE (`src/ble.rs`;
 spec "Phone link"), whose bench procedure in nRF Connect is in
-`docs/phone-link-2026-11-05.md`, "On the bench". It does not touch the
-GPS (which does get power, see Radio power below).
+`docs/phone-link-2026-11-05.md`, "On the bench". Its GPS runs as the
+core says, in its own task (`src/gps.rs`; `docs/gps-time-2026-11-05.md`):
+on USB all the time, on battery in standby but for the searches the core
+asks for. Once a fix or the phone has given the time, the 10 s line ends
+in `utc_s=`, `offset_min=` and its source.
 
 ## Verified and unverified
 
@@ -174,6 +187,9 @@ Unverified, in the order they will fail if wrong:
   antenna port, and the stock antenna has no gain over a dipole, so the
   console's 10 dBm cap meets the 10 mW ERP limit.
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
+- The GPS (`src/gps.rs`): NMEA at 9600 bps on P1.09 through UARTE1,
+  WAKEUP on P1.02 high to run and low for standby, a hot start after
+  standby; `docs/gps-time-2026-11-05.md`, "On the bench".
 - Every console command. The timings it prints are its purpose; none has
   been seen.
 - The display (Display, below): the controller answered on SPIM3 at
@@ -256,6 +272,16 @@ made. The firmware alone on a board without the loader does not start:
 the bootloader jumps to `0x26000`, which then holds an old image or nothing. `scripts/uf2.py
 --check target/bark.uf2` validates a UF2 and prints its block count and
 address ranges.
+
+The image is the same wherever the repository is checked out. Source
+paths end up in it, a panic's location among them, and absolute ones
+would make its size depend on the checkout's path: a build from a path
+18 characters longer once took 168 B more flash. So Cargo runs rustc
+through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
+`.cargo/config.toml`, the loader's too), which maps the checkout's root
+to `/bark` and Cargo's home to `/cargo`; the build commands above need
+nothing more, here and in the workflows. A wrapper changed after a
+build does not rebuild by itself: `cargo clean` first.
 
 ## Flash
 
@@ -403,7 +429,9 @@ version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
 
 The node image draws its state, built from what its core says after
 each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
-the host. Sixteen characters to a line, top to bottom:
+the host. Sixteen characters to a line, every line from the left
+margin: a state as a word or two at the left, a quantity as its label
+at the left and its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
@@ -415,8 +443,9 @@ the host. Sixteen characters to a line, top to bottom:
 | `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
 | `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
 | `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
-| battery | `ON USB`, `BATTERY 73%`, `BATTERY LOW` or `BATTERY NOT READ` | the reading as the core calibrates it |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
+| `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
 *Why three neighbour counts.* A heartbeat is one way: a node that hears
 a neighbour does not know the neighbour hears it. Only an answer to its
@@ -508,8 +537,8 @@ for BUSY low, which the chip raises from reset until it is ready (DS §9.1;
 
 `PWR_ON` is needed on battery: the rail is up when
 `PWR_EN AND (PWR_ON OR VBUS)`. The rail also feeds the GPS, which is
-therefore powered (and drawing current) though this firmware does not talk
-to it.
+therefore powered whenever the radio is; its WAKEUP line (P1.02) keeps it
+in standby when the core does not want it (`src/gps.rs`).
 
 ## Console
 
@@ -747,10 +776,9 @@ keep the board awake stop while it is on battery, and start again on USB:
 
 What stays, and is not this firmware's to fix without a board:
 
-- The GPS. It is on the switched rail with the radio (Radio power) and
-  draws its own current, likely more than everything else together; its
-  standby pin (P1.02, `board.rs`) has an unverified polarity. Measure
-  the board with it as it is first, then decide.
+- The GPS's standby: 20 µA with WAKEUP low (L76K Hardware Design,
+  Table 2), if the pin's polarity is as taken (`src/gps.rs`); its cost
+  per day in each state is in `docs/gps-time-2026-11-05.md`.
 - The battery divider, about 12 µA all the time (`board.rs`, Battery).
 - The nRF52840's regulator runs as an LDO (embassy's default); the DC-DC
   needs an inductor the T-Echo may or may not have.

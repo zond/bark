@@ -79,6 +79,12 @@ void main() {
     await t.tap(find.text('Debug'));
     await t.pumpAndSettle();
     expect(find.text('fa4e00000001'), findsOneWidget);
+    expect(find.text('Clock'), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text('Relays known'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Relays known'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
