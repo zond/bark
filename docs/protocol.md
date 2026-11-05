@@ -1326,21 +1326,24 @@ ban it had, shorter or longer: it is the neighbour's latest word. The
 message keeps its place in the send queue and is routed again with
 three fresh attempts: round the refuser while the ban lasts, to the
 next candidate at once, and waiting for the ban only where no other is
-left (roadmap D110). A refused return goes on as a forward. A node's own
-application's message waits out the told wait anyway, doubling as
-below, and is then routed afresh. A refused delivery waits the told wait
-and keeps the transmissions it has made. Silence, by contrast, holds the
-message ([hand-over](#hand-over) step 6).
+left (roadmap D110). A node's own application's message does the same,
+waiting longer where no other is left, as below (roadmap D115). A
+refused return goes on as a forward. A refused delivery waits the told
+wait and keeps the transmissions it has made. Silence, by contrast,
+holds the message ([hand-over](#hand-over) step 6).
 
 *Why a refused message goes round.* A refusal says the refuser has no
 room for the message now: its wait for the way on is past a hop's
 budget of 30 s, or its bucket is spent ([send queue](#send-queue)). A
 neighbour beside it often has room, and the refuser has not taken the
-message, so going round it leaves no copy. Where every way on is slow,
-every candidate refuses, the message waits here, this relay's queue for
-its next hop grows past the budget, and its gate refuses in turn: the
-wait travels back hop by hop to the origin, where the application is
-told it.
+message, so going round it leaves no copy. This holds at the origin as
+anywhere: a node with several neighbours offers its own message where
+there is room, while a sleepy node has one candidate, its anchor, and
+is told to wait ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+Where every way on is slow, every candidate refuses, the message waits
+here, this relay's queue for its next hop grows past the budget, and
+its gate refuses in turn: the wait travels back hop by hop to the
+origin, where the application is told it.
 
 **The told wait.** The ban is never shorter than 1.58 s: a relay refuses
 a packet to send on when its frame and the ACK that would take it, at
@@ -1445,22 +1448,16 @@ neighbour most likely lacks the message. If it did take it, the next
 offer costs one round trip: it holds the message and only ACKs, or has
 finished with it and returns it (roadmap D36).
 
-**A node's own message doubles its wait too.** After its k-th refusal in
-a row a node's own application's message waits the k-th ban after
-silence, or the told wait if longer, and starts again from one ban once
-it is taken or dropped. Offered every 1.58 s, it would put a full frame
-on the refuser's channel that often, 9 % of it, hiding its ACKs, and
-spend the refuser's bucket as fast as it refills. A sleepy node's own
-message has a wait of its own
+**A node's own message doubles its wait too.** Where no other
+candidate is left, a node's own application's message waits after its
+k-th refusal in a row the k-th ban after silence, or the told wait if
+longer, and starts again from one ban once it is taken or dropped.
+Every refusal in a row counts, gone round or not, so the origin offers
+no faster for having more neighbours to be refused by. Offered every
+1.58 s, it would put a full frame on the refuser's channel that often,
+9 % of it, hiding its ACKs, and spend the refuser's bucket as fast as
+it refills. A sleepy node's own message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
-
-*Research build `own-detour`, not for the field:* a relay's own
-application's message, refused, goes round the refuser as a forward
-does, and waits on the ladder only where no other neighbour is left
-that is no worse a last resort. Every refusal in a row, gone round or
-not, counts as a step of the ladder, so the origin offers no faster for
-having more neighbours to be refused by. A sleepy node's own message is
-unchanged.
 
 ### Routing
 
