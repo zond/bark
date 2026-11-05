@@ -1558,159 +1558,6 @@ put a full frame on the refusing neighbour's channel that often, 9 % of
 it, hiding its ACKs, and spend that neighbour's bucket as fast as it
 refills.
 
-#### Send queue
-
-The send queue has a regular room of 39 places and one hop place for
-each count from 1 to 254; the packet being handed over keeps its place.
-A packet to send on enters the regular room only if it fits in the
-bucket with everything queued ([receiving DATA](#receiving-data)), so it
-waits for the hand-overs ahead of it, not for the bucket to refill.
-
-*What sets the 39.* The bucket holds at most 6 s
-([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
-took it on cost 138.6 + 17.0 = 155.5 ms, so ⌈6 s / 155.5 ms⌉ = 39. With
-the reply reserve left in, a full bucket takes at most 33 full frames,
-so for full frames the bucket is the limit; shorter frames fill the 39
-places first, and 39 hand-overs of them go out within a few seconds.
-
-A packet received with count h that the regular room refuses takes the
-highest free hop place numbered h or lower, and keeps it until it leaves
-the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A packet received at 255 ends at
-the cap ([hop count](#hop-count)), so 254 hop places are enough.
-
-A message entering the network, a sleepy node's own with count 0 or a
-node's own app's, takes no hop place, so overload stops new messages
-where they enter, at the app ([addresses](#addresses)).
-
-**The gate.** Before either, a relay takes a message to send on only if
-its wait here would be within a hop's **budget**, 30 s, or its
-count is higher than every one of theirs ([receiving DATA](#receiving-data)).
-Its wait is its next hop's service time, as that next hop's line takes it
-([bans](#bans)), for each message queued here, deliveries aside, that goes to the same
-next hop now. The count of a queued message is the one it holds here,
-one less than the count it is sent with. Every queued message is
-counted where routing sends it now ([next hop](#next-hop)), not where it
-was going when it came, so the gate needs no state beyond the queue and
-the neighbour table. It refuses the rest, each with a place in that
-neighbour's line ([bans](#bans)).
-
-*Why a wait per next hop.* What a relay holds for a neighbour beyond
-what keeps the way to it busy only waits, and its wait is latency for
-every message behind it. Refused instead, a message waits at the relay
-before, whose queue for the way grows in its turn, and the wait travels
-back toward the origin, where the application is told it
-([bans](#bans)). A room per relay could not do this: a banned
-neighbour's messages would fill it and keep out the messages for every
-other way. It weighs time, not a number of messages: a way at its
-neighbour's cap takes one message a ban, one with free air ten in that
-time, so no one number suits both (roadmap D106).
-
-*Why 30 s.* The budget should refuse as soon as a hop is slower than
-it is at the design's rate, and never at that rate: 30 s is the first
-round figure above the longest wait the gate meets at that rate in the
-simulated city. A text takes 8 to 15 hops there, so the budget bounds
-the wait in relays' queues at 4 to 8 minutes, the time of the
-hand-overs aside (roadmap D106).
-
-*What it costs.* Messages for one next hop that arrive faster than it
-takes them, the last no further travelled, are not all held: the ones
-past the budget wait their place in line at the relay before, at the
-cost of a refused DATA frame and an ACK each. At the design's rate that
-is rare; under load it is the price of the wait reaching the origin.
-
-**Choosing what to send.** Whenever no hand-over is under way and the
-radio is free, the relay routes every queued message from the state as
-it is then ([next hop](#next-hop)); a message whose next hop, or parent,
-is banned is not sendable until the ban ends. Of the sendable, packets
-are handed over in the order they arrived, except that:
-
-- a delivery goes first ([delivery](#delivery));
-- when bans end, the packets that waited for them go first, the most
-  travelled first ([overload waits](#overload-waits)).
-
-The chosen hand-over then waits for the bucket if it must
-([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
-go first, since with the bucket at the cap it would always fit sooner
-and the longer frame would never go. Routing every message costs at
-most the queue's entries times the neighbour table's. Of it each entry
-keeps where it was last routed and since when, for the service time
-([neighbour table](#neighbour-table)), and whether it has waited for a
-ban; the relay keeps when the earliest ban that held a message back
-ends.
-
-*Why route at each chance.* The table changes between one chance to
-send and the next: a ban ends, a neighbour arrives, recovers or is
-demoted. Routed only when its turn came, a message waiting for one ban
-would miss a better way that opened meanwhile.
-
-#### Overload waits
-
-Overload makes a message wait and never ends it. A message whose next
-hop is banned, by a refusal or by silence, waits in its place in the
-send queue, its airtime still counted, until the ban ends, and is
-routed again then, at the origin or anywhere else ([next hop](#next-hop)).
-A message refused by that next hop itself goes round it where another
-candidate is left ([bans](#bans)).
-When bans end, the messages that waited for them go first, the most
-travelled first. The rest of the queue keeps its order, since ordering
-it all by count would starve messages that have just entered.
-
-A message ends only:
-
-- when it is delivered;
-- when its search runs out of neighbours
-  ([return to parent](#return-to-parent));
-- when a return's parent is demoted or gone
-  ([hand-over](#hand-over) step 6), or answers it seen (step 5);
-- when a newer message needs its place in the delivery queue
-  ([delivery queue](#delivery-queue)), or when the relay holding it
-  comes to own its destination while it is queued and finds that queue
-  full ([owner](#owner));
-- at the hop cap ([hop count](#hop-count));
-- when a node holding it dies (roadmap D31, D44, D106).
-
-Never by age on its way: at its owner the delivery queue keeps it by
-its own rule ([delivery queue](#delivery-queue)).
-
-*Why no end by time.* Overload makes a message wait where it is
-refused, at the neighbour that refused it ([bans](#bans)), so a relay
-that cannot keep up fills the queues of the relays that send to it, and
-they refuse in turn, back to the origin, where the application is told
-to wait ([receiving DATA](#receiving-data)). An end by time would throw
-away what the network has taken and could still deliver; a person
-would rather have a text late than lose it after the network took it
-(roadmap D44, D106). The cost: under a long overload the messages the
-network has taken outrank new ones, and the origins are refused while
-older messages are still carried.
-
-*Why hop places.* Waiting alone can lock relays up: two neighbours whose
-queues are full of messages for each other would refuse each other
-forever, since what a relay holds drains only as it sends (roadmap
-D29). The hop places of the send queue prevent it, and the gate keeps
-them able to.
-
-Take the highest count held at any relay, k. Its message is sent with
-k + 1 or more. At the neighbour it is offered to, every queued message
-holds k or less, so the gate lets it in, and place k + 1 is free there
-as at every relay, since a place is never numbered above its message's
-count, so the queue takes it, unless its count is at the cap, where it
-ends. That message moves, then the next highest, and so on down to the
-regular room.
-
-*Why the gate does not lock up.* A send queue of one place per relay,
-which held whatever arrived first, locked up under crossing traffic
-once relays held messages for each other (roadmap D29). The gate
-differs in the two ways the argument above needs: it bars one next hop, not the relay, so a message for any other
-way still enters; and a message with a higher count passes it, so the
-most travelled message always finds room.
-
-*Why the most travelled first.* For this the message that has come
-farthest must be offered when a ban ends: a less travelled one offered
-first would be refused and ban the neighbour again, each time. The gate
-lets a higher count in whatever the wait on its way, so the message
-offered first is one the next relay's gate lets in.
-
 ### Routing
 
 A message travels as a DATA packet ([packet formats](#packet-formats))
@@ -1788,6 +1635,47 @@ or set aside for a full delivery queue. The table holds 1613 records
 ([bounds](#bounds)). Without its record the message could not be routed
 when its turn comes, so a message is never lost for want of room
 (roadmap D31).
+
+#### Owner
+
+A node **owns** a message's destination when:
+
+- `dst_id` is its own ID: it is the addressed node, wherever it is; or
+- its own position is `dst_pos`; or
+- it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
+  closer to it than itself.
+
+*Why the third case.* The relay at that position has then probably died
+or moved; 50 m is what two GPS fixes of a node that has not moved may
+differ by ([position](#position)), so a relay this close is, for the
+radio, in the same place.
+
+A node farther than 50 m with no closer neighbour is at a gap, not the
+owner, and the search goes on ([next hop](#next-hop)). A sleepy or
+carried node owns only what is addressed to its ID and sends anything
+else on ([nodes](#nodes)), and a sleepy or carried neighbour closer to
+`dst_pos` does not keep a node from owning it. A node in its first
+rotation owns no position but its own: its table may not yet hold the
+closer relay ([channel at boot](#channel-at-boot)).
+
+A message whose destination is the sending node's own address is
+delivered there without entering the search. Otherwise the destination
+position decides who holds it: a relay that hears the sleepy node but
+does not own the position routes the message on like any other.
+
+*Why not the heard table.* A sleepy node that has just moved to another
+anchor stays in the old relay's heard table for a delivery TTL
+([heard table](#heard-table)), so the table disagrees with the address
+exactly when the address is new; delivering from the table would queue
+the message for a node that has gone (roadmap D21).
+
+The addressed node delivers the message to its application. Any other
+owner queues it for the addressed node
+([delivery queue](#delivery-queue)) and sends it when the node listens
+([delivery](#delivery)), whether or not it hears the node now; a later
+copy of a delivered message is only ACKed
+([receiving DATA](#receiving-data), case 1). A message for a relay that
+is gone waits there until a newer message needs its place, and ends.
 
 #### Next hop
 
@@ -1932,6 +1820,92 @@ message has arrived there, or the candidate holds another copy, the
 candidate takes it and it goes no further; if the candidate has had the
 message and holds none, it answers seen, and the relay goes on to its
 next candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
+
+#### Send queue
+
+The send queue has a regular room of 39 places and one hop place for
+each count from 1 to 254; the packet being handed over keeps its place.
+A packet to send on enters the regular room only if it fits in the
+bucket with everything queued ([receiving DATA](#receiving-data)), so it
+waits for the hand-overs ahead of it, not for the bucket to refill.
+
+*What sets the 39.* The bucket holds at most 6 s
+([duty cycle cap](#duty-cycle-cap)), and a full frame and the ACK that
+took it on cost 138.6 + 17.0 = 155.5 ms, so ⌈6 s / 155.5 ms⌉ = 39. With
+the reply reserve left in, a full bucket takes at most 33 full frames,
+so for full frames the bucket is the limit; shorter frames fill the 39
+places first, and 39 hand-overs of them go out within a few seconds.
+
+A packet received with count h that the regular room refuses takes the
+highest free hop place numbered h or lower, and keeps it until it leaves
+the queue. A hop place holds its packet whatever the bucket holds; the
+bucket still decides when it is sent. A packet received at 255 ends at
+the cap ([hop count](#hop-count)), so 254 hop places are enough.
+
+A message entering the network, a sleepy node's own with count 0 or a
+node's own app's, takes no hop place, so overload stops new messages
+where they enter, at the app ([addresses](#addresses)).
+
+**The gate.** Before either, a relay takes a message to send on only if
+its wait here would be within a hop's **budget**, 30 s, or its
+count is higher than every one of theirs ([receiving DATA](#receiving-data)).
+Its wait is its next hop's service time, as that next hop's line takes it
+([bans](#bans)), for each message queued here, deliveries aside, that goes to the same
+next hop now. The count of a queued message is the one it holds here,
+one less than the count it is sent with. Every queued message is
+counted where routing sends it now ([next hop](#next-hop)), not where it
+was going when it came, so the gate needs no state beyond the queue and
+the neighbour table. It refuses the rest, each with a place in that
+neighbour's line ([bans](#bans)).
+
+*Why a wait per next hop.* What a relay holds for a neighbour beyond
+what keeps the way to it busy only waits, and its wait is latency for
+every message behind it. Refused instead, a message waits at the relay
+before, whose queue for the way grows in its turn, and the wait travels
+back toward the origin, where the application is told it
+([bans](#bans)). A room per relay could not do this: a banned
+neighbour's messages would fill it and keep out the messages for every
+other way. It weighs time, not a number of messages: a way at its
+neighbour's cap takes one message a ban, one with free air ten in that
+time, so no one number suits both (roadmap D106).
+
+*Why 30 s.* The budget should refuse as soon as a hop is slower than
+it is at the design's rate, and never at that rate: 30 s is the first
+round figure above the longest wait the gate meets at that rate in the
+simulated city. A text takes 8 to 15 hops there, so the budget bounds
+the wait in relays' queues at 4 to 8 minutes, the time of the
+hand-overs aside (roadmap D106).
+
+*What it costs.* Messages for one next hop that arrive faster than it
+takes them, the last no further travelled, are not all held: the ones
+past the budget wait their place in line at the relay before, at the
+cost of a refused DATA frame and an ACK each. At the design's rate that
+is rare; under load it is the price of the wait reaching the origin.
+
+**Choosing what to send.** Whenever no hand-over is under way and the
+radio is free, the relay routes every queued message from the state as
+it is then ([next hop](#next-hop)); a message whose next hop, or parent,
+is banned is not sendable until the ban ends. Of the sendable, packets
+are handed over in the order they arrived, except that:
+
+- a delivery goes first ([delivery](#delivery));
+- when bans end, the packets that waited for them go first, the most
+  travelled first ([overload waits](#overload-waits)).
+
+The chosen hand-over then waits for the bucket if it must
+([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
+go first, since with the bucket at the cap it would always fit sooner
+and the longer frame would never go. Routing every message costs at
+most the queue's entries times the neighbour table's. Of it each entry
+keeps where it was last routed and since when, for the service time
+([neighbour table](#neighbour-table)), and whether it has waited for a
+ban; the relay keeps when the earliest ban that held a message back
+ends.
+
+*Why route at each chance.* The table changes between one chance to
+send and the next: a ban ends, a neighbour arrives, recovers or is
+demoted. Routed only when its turn came, a message waiting for one ban
+would miss a better way that opened meanwhile.
 
 #### Receiving DATA
 
@@ -2160,46 +2134,72 @@ straight route across the city of
 street range of [physical layer](#physical-layer)) is about 40
 hand-overs, leaving about 200 for routing around gaps.
 
-#### Owner
+#### Overload waits
 
-A node **owns** a message's destination when:
+Overload makes a message wait and never ends it. A message whose next
+hop is banned, by a refusal or by silence, waits in its place in the
+send queue, its airtime still counted, until the ban ends, and is
+routed again then, at the origin or anywhere else ([next hop](#next-hop)).
+A message refused by that next hop itself goes round it where another
+candidate is left ([bans](#bans)).
+When bans end, the messages that waited for them go first, the most
+travelled first. The rest of the queue keeps its order, since ordering
+it all by count would starve messages that have just entered.
 
-- `dst_id` is its own ID: it is the addressed node, wherever it is; or
-- its own position is `dst_pos`; or
-- it is within 50 m of `dst_pos` and no live, non-demoted neighbour is
-  closer to it than itself.
+A message ends only:
 
-*Why the third case.* The relay at that position has then probably died
-or moved; 50 m is what two GPS fixes of a node that has not moved may
-differ by ([position](#position)), so a relay this close is, for the
-radio, in the same place.
+- when it is delivered;
+- when its search runs out of neighbours
+  ([return to parent](#return-to-parent));
+- when a return's parent is demoted or gone
+  ([hand-over](#hand-over) step 6), or answers it seen (step 5);
+- when a newer message needs its place in the delivery queue
+  ([delivery queue](#delivery-queue)), or when the relay holding it
+  comes to own its destination while it is queued and finds that queue
+  full ([owner](#owner));
+- at the hop cap ([hop count](#hop-count));
+- when a node holding it dies (roadmap D31, D44, D106).
 
-A node farther than 50 m with no closer neighbour is at a gap, not the
-owner, and the search goes on ([next hop](#next-hop)). A sleepy or
-carried node owns only what is addressed to its ID and sends anything
-else on ([nodes](#nodes)), and a sleepy or carried neighbour closer to
-`dst_pos` does not keep a node from owning it. A node in its first
-rotation owns no position but its own: its table may not yet hold the
-closer relay ([channel at boot](#channel-at-boot)).
+Never by age on its way: at its owner the delivery queue keeps it by
+its own rule ([delivery queue](#delivery-queue)).
 
-A message whose destination is the sending node's own address is
-delivered there without entering the search. Otherwise the destination
-position decides who holds it: a relay that hears the sleepy node but
-does not own the position routes the message on like any other.
+*Why no end by time.* Overload makes a message wait where it is
+refused, at the neighbour that refused it ([bans](#bans)), so a relay
+that cannot keep up fills the queues of the relays that send to it, and
+they refuse in turn, back to the origin, where the application is told
+to wait ([receiving DATA](#receiving-data)). An end by time would throw
+away what the network has taken and could still deliver; a person
+would rather have a text late than lose it after the network took it
+(roadmap D44, D106). The cost: under a long overload the messages the
+network has taken outrank new ones, and the origins are refused while
+older messages are still carried.
 
-*Why not the heard table.* A sleepy node that has just moved to another
-anchor stays in the old relay's heard table for a delivery TTL
-([heard table](#heard-table)), so the table disagrees with the address
-exactly when the address is new; delivering from the table would queue
-the message for a node that has gone (roadmap D21).
+*Why hop places.* Waiting alone can lock relays up: two neighbours whose
+queues are full of messages for each other would refuse each other
+forever, since what a relay holds drains only as it sends (roadmap
+D29). The hop places of the send queue prevent it, and the gate keeps
+them able to.
 
-The addressed node delivers the message to its application. Any other
-owner queues it for the addressed node
-([delivery queue](#delivery-queue)) and sends it when the node listens
-([delivery](#delivery)), whether or not it hears the node now; a later
-copy of a delivered message is only ACKed
-([receiving DATA](#receiving-data), case 1). A message for a relay that
-is gone waits there until a newer message needs its place, and ends.
+Take the highest count held at any relay, k. Its message is sent with
+k + 1 or more. At the neighbour it is offered to, every queued message
+holds k or less, so the gate lets it in, and place k + 1 is free there
+as at every relay, since a place is never numbered above its message's
+count, so the queue takes it, unless its count is at the cap, where it
+ends. That message moves, then the next highest, and so on down to the
+regular room.
+
+*Why the gate does not lock up.* A send queue of one place per relay,
+which held whatever arrived first, locked up under crossing traffic
+once relays held messages for each other (roadmap D29). The gate
+differs in the two ways the argument above needs: it bars one next hop, not the relay, so a message for any other
+way still enters; and a message with a higher count passes it, so the
+most travelled message always finds room.
+
+*Why the most travelled first.* For this the message that has come
+farthest must be offered when a ban ends: a less travelled one offered
+first would be refused and ban the neighbour again, each time. The gate
+lets a higher count in whatever the wait on its way, so the message
+offered first is one the next relay's gate lets in.
 
 ### Why the search finds a path
 
@@ -2708,6 +2708,61 @@ expected at indoor density in Kyiv with 10 % adoption
 ([capacity and sizing](#capacity-and-sizing)); at 50 %, ≈400, a full
 table does no harm (above).
 
+### Delivery queue
+
+Kept by nodes that are not sleepy, up to 41 messages per node. A message
+queued the delivery TTL ago or longer is **stale**: it stays, and goes at
+its node's next beat as any other, until a message arrives at a full
+queue; then the oldest stale message makes way for it. When the queue is
+full and holds no stale message, a message for another node is refused
+([receiving DATA](#receiving-data)): what is queued stays, and the
+sender learns at once.
+
+A message's age counts from its arrival in the queue: the delivery TTL
+is the wait for a node that sleeps or is dark, not for the way there.
+
+*Why age alone drops nothing.* A message dropped when no other needs its
+place is lost for nothing, and its node may yet beat, back from a pocket
+or a basement, or heard at last by a holder that missed its beats.
+
+A queued message goes to the send queue one per node at a time, oldest
+first: when it arrives, when the node beats, when the node takes the one
+before, and whenever a hand-over ends and leaves room in the send queue;
+there it goes first ([delivery](#delivery)). In the node's window it
+needs a place in the regular room ([send queue](#send-queue)) and, in
+the bucket, its own frame and the reply reserve, not the airtime of
+everything queued, which it goes ahead of.
+
+*Why not behind the forwards.* Counted behind them, it would be kept out
+by a holder at its cap while the node listens, and wait a beat period or
+expire (roadmap D55).
+
+One the bucket cannot fit yet goes the moment the bucket will. One whose
+node has stopped listening by the time its hand-over would start waits
+for the next beat. A failed delivery counts no failure against anyone:
+the node is not a neighbour the holder routes through.
+
+*Why that size.* Nodes in one train or one basement go dark together, so
+the queue holds what arrives in a TTL for every node a holder can keep,
+its heard table's 256 ([heard table](#heard-table)), at the 23 texts a
+day each that the network carries
+([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute
+TTLs in a day = 40.9, so 41 messages.
+
+A flow to one node that pauses longer than a hand-over waits for the
+next beat, at most 41 messages a period, and the rest are refused.
+
+The owner remembers 41 delivered message IDs
+([packet formats](#packet-formats)) and ACKs a repeat without delivering
+it twice. When it needs the place, it forgets the one delivered or last
+repeated longest ago; time alone forgets nothing. 41 is the delivery
+queue's size, for the same reason.
+
+Nothing covers a node that has moved out of reach of every holder that
+has its mail: the old holder does not forward to the new anchor, the
+mail waits there until its place is needed, and the sender is not told
+([addresses](#addresses)).
+
 ### Delivery
 
 A message that reaches the owner of its position ([owner](#owner)) and is
@@ -2818,61 +2873,6 @@ opens no window, so its messages would otherwise wait until their place
 is needed (roadmap D66). It is a node that slept and now relays, or a
 relay whose messages a neighbour within 50 m owned because it did not
 keep it in its table ([neighbour table](#neighbour-table)).
-
-### Delivery queue
-
-Kept by nodes that are not sleepy, up to 41 messages per node. A message
-queued the delivery TTL ago or longer is **stale**: it stays, and goes at
-its node's next beat as any other, until a message arrives at a full
-queue; then the oldest stale message makes way for it. When the queue is
-full and holds no stale message, a message for another node is refused
-([receiving DATA](#receiving-data)): what is queued stays, and the
-sender learns at once.
-
-A message's age counts from its arrival in the queue: the delivery TTL
-is the wait for a node that sleeps or is dark, not for the way there.
-
-*Why age alone drops nothing.* A message dropped when no other needs its
-place is lost for nothing, and its node may yet beat, back from a pocket
-or a basement, or heard at last by a holder that missed its beats.
-
-A queued message goes to the send queue one per node at a time, oldest
-first: when it arrives, when the node beats, when the node takes the one
-before, and whenever a hand-over ends and leaves room in the send queue;
-there it goes first ([delivery](#delivery)). In the node's window it
-needs a place in the regular room ([send queue](#send-queue)) and, in
-the bucket, its own frame and the reply reserve, not the airtime of
-everything queued, which it goes ahead of.
-
-*Why not behind the forwards.* Counted behind them, it would be kept out
-by a holder at its cap while the node listens, and wait a beat period or
-expire (roadmap D55).
-
-One the bucket cannot fit yet goes the moment the bucket will. One whose
-node has stopped listening by the time its hand-over would start waits
-for the next beat. A failed delivery counts no failure against anyone:
-the node is not a neighbour the holder routes through.
-
-*Why that size.* Nodes in one train or one basement go dark together, so
-the queue holds what arrives in a TTL for every node a holder can keep,
-its heard table's 256 ([heard table](#heard-table)), at the 23 texts a
-day each that the network carries
-([capacity and sizing](#capacity-and-sizing)): 256 × 23 / 144 ten-minute
-TTLs in a day = 40.9, so 41 messages.
-
-A flow to one node that pauses longer than a hand-over waits for the
-next beat, at most 41 messages a period, and the rest are refused.
-
-The owner remembers 41 delivered message IDs
-([packet formats](#packet-formats)) and ACKs a repeat without delivering
-it twice. When it needs the place, it forgets the one delivered or last
-repeated longest ago; time alone forgets nothing. 41 is the delivery
-queue's size, for the same reason.
-
-Nothing covers a node that has moved out of reach of every holder that
-has its mail: the old holder does not forward to the new anchor, the
-mail waits there until its place is needed, and the sender is not told
-([addresses](#addresses)).
 
 ### A sleepy node's own message
 
