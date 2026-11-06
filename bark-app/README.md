@@ -49,8 +49,8 @@ is a prototype for the bench, not the app people will carry.
   camera, or paste it, and give a name. An address alone is not
   enough: a text is sealed to the identity on the card.
 - **My card**, the QR button. Your identity, the card as a QR code for
-  another phone to scan, and the address and the card as text to copy
-  and send. Without a home node it needs the node's address, kept from
+  another phone to scan, **Scan their card** to add theirs as in
+  Contacts, and the address and the card as text to copy and send. Without a home node it needs the node's address, kept from
   the last connection.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
@@ -192,8 +192,8 @@ and the mailbox's replies against the fake node; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
 conversations; and drive the screens: a text to the fake friend, its
-echo, an acknowledgement, the backup words, a contact from a pasted
-card, my card, the debug screen and the fetch button.
+echo, an acknowledgement, the backup words, a contact from a pasted or a
+scanned card, my card, the debug screen and the fetch button.
 
 ## Trying it
 
@@ -260,7 +260,7 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    point in Settings: Status changes to placed and map point, and the
    card appears.
 5. With a second node and a second phone, each phone scans the other's
-   card from **Add contact**, **Scan their card** (allow the camera).
+   card from **My card**, **Scan their card** (allow the camera).
    Send a text from one: it shows as taken, and the other phone shows
    it in the sender's conversation within the time the network takes.
    Status's inbox count on the receiving node, in Debug, rises to 1

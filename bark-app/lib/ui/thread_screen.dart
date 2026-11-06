@@ -71,34 +71,37 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          NoticeCard(app),
-          if (contact != null && !contact.verified)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Text(
-                'Not verified yet: a first message can come from anyone. '
-                'Once a reply of theirs opens here, it is theirs.',
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            NoticeCard(app),
+            if (contact != null && !contact.verified)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text(
+                  'Not verified yet: a first message can come from anyone. '
+                  'Once a reply of theirs opens here, it is theirs.',
+                ),
+              ),
+            Expanded(
+              child: ListView(
+                reverse: true,
+                padding: const EdgeInsets.all(8),
+                children: [
+                  for (final e in c.entries.reversed) _bubble(context, e),
+                ],
               ),
             ),
-          Expanded(
-            child: ListView(
-              reverse: true,
-              padding: const EdgeInsets.all(8),
-              children: [
-                for (final e in c.entries.reversed) _bubble(context, e),
-              ],
-            ),
-          ),
-          if (contact == null)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('This contact was removed.'),
-            )
-          else
-            _compose(contact),
-        ],
+            if (contact == null)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('This contact was removed.'),
+              )
+            else
+              _compose(contact),
+          ],
+        ),
       ),
     );
   });
@@ -109,30 +112,28 @@ class _ThreadScreenState extends State<ThreadScreen> {
     await app.contacts.put(c.copyWith(name: name));
   }
 
-  Widget _compose(Contact to) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: text,
-              minLines: 1,
-              maxLines: 5,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                hintText: 'Text',
-                border: OutlineInputBorder(),
-              ),
+  Widget _compose(Contact to) => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: text,
+            minLines: 1,
+            maxLines: 5,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              hintText: 'Text',
+              border: OutlineInputBorder(),
             ),
           ),
-          IconButton(
-            tooltip: 'Send',
-            icon: const Icon(Icons.send),
-            onPressed: () => _send(to),
-          ),
-        ],
-      ),
+        ),
+        IconButton(
+          tooltip: 'Send',
+          icon: const Icon(Icons.send),
+          onPressed: () => _send(to),
+        ),
+      ],
     ),
   );
 
