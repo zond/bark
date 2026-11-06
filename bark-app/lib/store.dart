@@ -22,8 +22,10 @@ abstract class Store {
   /// Replaces the file's text.
   Future<void> write(String text);
 
-  /// Moves the file to `<name>.old-<suffix>`, replacing one there.
-  Future<void> setAside(String suffix);
+  /// Moves the file to `<name>.old-<suffix>`, or to `-2`, `-3` and on
+  /// after it if that is taken: an older file set aside may hold an
+  /// identity. Returns the name it took.
+  Future<String> setAside(String suffix);
 
   /// What happened to a file set aside at the last load, for the log.
   String? fault;
@@ -57,8 +59,8 @@ abstract class Store {
   }
 
   Future<void> _setAside(String suffix, String why) async {
-    await setAside(suffix);
-    fault = 'Stored $name $why; kept as $name.old-$suffix, started afresh';
+    final aside = await setAside(suffix);
+    fault = 'Stored $name $why; kept as $aside, started afresh';
   }
 
   Future<void> save(int version, Map<String, dynamic> state) =>
@@ -90,9 +92,15 @@ class FileStore extends Store {
   }
 
   @override
-  Future<void> setAside(String suffix) async {
+  Future<String> setAside(String suffix) async {
     final f = await _file();
-    await f.rename('${f.path}.old-$suffix');
+    final dir = f.parent.path;
+    var aside = '$name.old-$suffix';
+    for (var n = 2; await File('$dir/$aside').exists(); n++) {
+      aside = '$name.old-$suffix-$n';
+    }
+    await f.rename('$dir/$aside');
+    return aside;
   }
 }
 
@@ -115,8 +123,13 @@ class MemoryStore extends Store {
   Future<void> write(String t) async => text = t;
 
   @override
-  Future<void> setAside(String suffix) async {
-    aside['$name.old-$suffix'] = text!;
+  Future<String> setAside(String suffix) async {
+    var a = '$name.old-$suffix';
+    for (var n = 2; aside.containsKey(a); n++) {
+      a = '$name.old-$suffix-$n';
+    }
+    aside[a] = text!;
     text = null;
+    return a;
   }
 }

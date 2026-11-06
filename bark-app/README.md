@@ -73,9 +73,10 @@ files in the app's private storage, so they survive a restart. The
 seed is kept there in the clear: anyone who can read the app's storage
 has the identity. Each file names the version of its format, 1 if it
 names none; a file of another version, or one with any part that does
-not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, the
-debug screen's log says so, and the app starts that file empty (for the
-person, with a new identity).
+not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, with
+`-2`, `-3` and on added if that name is taken, so no file set aside is
+ever overwritten; the debug screen's log says so, and the app starts that
+file empty (for the person, with a new identity).
 
 ## The fake node
 

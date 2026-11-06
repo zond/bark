@@ -117,6 +117,15 @@ void main() {
     expect(store.state!['seed'], hex(m.keys.seed));
   });
 
+  test('a second fault keeps the first file set aside', () async {
+    final store = MemoryStore('me.json')..text = '{';
+    await Me(store, sodium, () => at).load();
+    store.text = '[';
+    await Me(store, sodium, () => at).load();
+    expect(store.aside, {'me.json.old-bad': '{', 'me.json.old-bad-2': '['});
+    expect(store.fault, contains('kept as me.json.old-bad-2'));
+  });
+
   test('the app starts on an old bark.json and logs it once', () async {
     final app = AppModel(
       sodium: sodium,
