@@ -73,7 +73,7 @@ fn fix(h: &mut Harness<Relay>, i: usize, east: f64) {
 /// is carried, and a second more. Returns where it is then.
 fn walk_until_carried(h: &mut Harness<Relay>, i: usize, from: f64) -> f64 {
     let mut east = from;
-    for _ in 0..20 {
+    for _ in 0..40 {
         fix(h, i, east);
         if h.nodes[i].core.carried() {
             h.run_for(secs(1));

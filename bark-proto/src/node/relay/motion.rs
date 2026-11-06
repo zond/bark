@@ -3,12 +3,13 @@
 //! Whether a node is fixed or carried is measured the same way whether it
 //! is sleepy or not. Fixed, its fixes are compared with the place it
 //! stands: its first fix, its map point, or the fix it had when it was
-//! last made fixed. A fix farther than the GPS allowance
-//! ([`OWNER_RADIUS_M`]) from that place is a far fix. After far fixes for
-//! [`CARRY_AFTER`] with none within the allowance between, it is carried.
-//! Carried, it is fixed again once its fixes have stayed within the
-//! allowance of one place for [`Config::fixed_after`], and keeps the fix
-//! it has then.
+//! last made fixed. A fix farther than [`CARRY_RADIUS_M`] from that place
+//! is a far fix. After far fixes for [`CARRY_AFTER`] with none near
+//! between, it is carried. The run counts only time in which the GPS gave
+//! fixes: from a loss of fix (`AppCommand::NoFix`) to the next far fix
+//! adds nothing, since where the node was meanwhile is unknown. Carried,
+//! it is fixed again once its fixes have stayed within the radius of one
+//! place for [`Config::fixed_after`], and keeps the fix it has then.
 //!
 //! A node that is neither sleepy nor carried keeps its place as its
 //! position, so that no later fix, true or spoofed, moves it (roadmap
@@ -29,7 +30,7 @@ use super::gps::mark;
 use super::Node;
 use crate::event::{Action, Trace};
 use crate::gps::SEARCH_LIMIT;
-use crate::node::{CARRY_AFTER, OWNER_RADIUS_M};
+use crate::node::{CARRY_AFTER, CARRY_RADIUS_M};
 use crate::position::Position;
 use crate::time::Instant;
 use crate::Config;
@@ -50,8 +51,13 @@ pub(super) struct Motion {
     /// it has none or its map point was cleared, for a search's limit
     /// after it was plugged in (roadmap D83, D84, D85).
     pub(super) first_fix: u32,
-    /// Fixed: since when its fixes have been far, with none near since.
+    /// Fixed: since when its fixes have been far, with none near since,
+    /// moved on by the time the GPS gave no fix.
     far_since: Option<Instant>,
+    /// The last far fix of the run under way.
+    far_last: Instant,
+    /// The GPS lost its fix since [`Motion::far_last`].
+    far_lost: bool,
     /// The place its fixes are compared with, and, carried, since when
     /// they have stayed within the allowance of it.
     still_at: Position,
@@ -67,6 +73,8 @@ impl Motion {
             placed: true,
             first_fix: 0,
             far_since: None,
+            far_last: Instant::ZERO,
+            far_lost: false,
             still_at: at,
             still_since: Instant::ZERO,
         }
@@ -103,6 +111,8 @@ impl Motion {
             placed: true,
             first_fix: 0,
             far_since: None,
+            far_last: Instant::ZERO,
+            far_lost: false,
             still_at: at,
             still_since: now,
         }
@@ -175,7 +185,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.anchored_sleepy() {
             return false;
         }
-        let far = self.plane.distance2(at, self.motion.still_at) > OWNER_RADIUS_M * OWNER_RADIUS_M;
+        let far = self.plane.distance2(at, self.motion.still_at) > CARRY_RADIUS_M * CARRY_RADIUS_M;
         let takes = self.sleepy() || self.motion.carried;
         if takes {
             self.set_position(at);
@@ -196,16 +206,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.motion.far_since = None;
             return takes;
         }
-        let since = match self.motion.far_since {
+        let m = &mut self.motion;
+        let since = match m.far_since {
+            Some(t) if m.far_lost => t + now.since(m.far_last),
             Some(t) => t,
             None => {
-                self.motion.far_since = Some(now);
                 emit(Action::Trace(Trace::FarFix));
                 // A sleepy node holds nothing to flush.
                 self.forwarding.feed_due |= !self.sleepy();
                 now
             }
         };
+        let m = &mut self.motion;
+        m.far_since = Some(since);
+        m.far_last = now;
+        m.far_lost = false;
         if now.since(since) < CARRY_AFTER {
             return takes;
         }
@@ -214,6 +229,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.changed();
         emit(Action::Trace(Trace::Carried { carried: true }));
         true
+    }
+
+    /// The driver says the GPS, running, gave no fix it hands: the time
+    /// until the next fix does not count towards a run of far fixes
+    /// (module documentation).
+    pub(super) fn no_fix(&mut self) {
+        self.motion.far_lost = true;
     }
 
     /// The first accepted fix of a node that takes it as its place: fixed

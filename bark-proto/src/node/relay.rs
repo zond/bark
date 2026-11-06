@@ -983,6 +983,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.fix(position, now, emit);
                 self.gps_after_fix();
             }
+            AppCommand::NoFix => self.no_fix(),
             AppCommand::SetPosition { position } => {
                 // A sleepy node's position is no news, but a change of
                 // its carried flag is.

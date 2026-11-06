@@ -102,6 +102,9 @@ impl App for LinkApp<'_> {
 
     fn request(&mut self) -> Option<Request> {
         use crate::ble::Request as Link;
+        if crate::gps::take_lost() {
+            return Some(Request::NoFix);
+        }
         if let Some(position) = crate::gps::take_fix() {
             return Some(Request::Fix(position));
         }

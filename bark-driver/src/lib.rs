@@ -201,6 +201,10 @@ pub enum Request {
     /// `AppCommand::Fix` if it passes the core's
     /// ([`Core::fix_in_reach`]) too.
     Fix(Position),
+    /// The GPS runs and gave no fix that passed the receiver's checks,
+    /// since the last fix: the driver tells the core
+    /// (`AppCommand::NoFix`). Sent at the change from fixes to none.
+    NoFix,
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -606,6 +610,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                     self.deliver(Event::App(AppCommand::ClearMapPoint)).await?
                 }
                 Request::Fix(position) => self.fix(position).await?,
+                Request::NoFix => self.deliver(Event::App(AppCommand::NoFix)).await?,
             }
         }
         Ok(any)
@@ -619,8 +624,13 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if !in_reach && !self.fix_dropped {
             log::warn!("gps: fix {} beyond every known relay; dropped", position);
         }
+        let was = self.fix_dropped;
         self.fix_dropped = !in_reach;
         if !in_reach {
+            // A dropped fix is no fix (spec "Position").
+            if !was {
+                self.deliver(Event::App(AppCommand::NoFix)).await?;
+            }
             return Ok(());
         }
         self.search_until = None;

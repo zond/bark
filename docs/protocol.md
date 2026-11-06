@@ -513,7 +513,9 @@ A fix is dropped as unreliable, a sign of spoofing, when:
 A jammed receiver gives no fix, and the node keeps the position it has.
 
 Two fixes of a still node may differ by 50 m. That is the **allowance**
-the [owner](#owner) rule uses.
+the [owner](#owner) rule uses. Indoors at a window they wander farther:
+a fix of a still node may lie up to 250 m from another of its fixes
+for minutes. That is the **carried radius**.
 
 **Fixed and carried.** Every node measures from its fixes whether it
 moves, but a sleepy node with an anchor, which takes none and keeps the
@@ -522,9 +524,9 @@ flag it has ([beats](#beats)):
 | | |
 |---|---|
 | the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
-| far fix | an accepted fix more than the allowance from that place |
-| carried | after 72 s of far fixes with none near between |
-| fixed again | after four hours of fixes within the allowance of one place; it keeps the fix it has then |
+| far fix | an accepted fix more than the carried radius from that place |
+| carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes |
+| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then |
 | map point | fixed at once; cleared, the next accepted fix is the place |
 | power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has (roadmap D85) |
 
@@ -534,11 +536,31 @@ new one ([node identity](#node-identity)). At its first far fix a relay
 that holds mail flushes its delivery queue ([delivery](#delivery)), since
 once it has left it will hear none of its sleepy nodes' beats.
 
-*Why 72 s.* A walker at 1.4 m/s, a common walking pace, crosses the
-allowance's whole width, 2 × 50 m, in 72 of the L76K's one-a-second
-fixes. A still node's stray fix comes back inside; a walker's keeps
-going. A sleepy node without an anchor fixes once a delivery TTL
-([beats](#beats)), so for it 72 s is two far fixes at least 72 s apart.
+*Why 250 m.* The place is one fix, which may itself lie at the edge of
+the wander, so the radius must hold the wander's whole width. On the
+bench of 2026-11-06 three still boards at a window had fixes up to
+199 m from one of their own fixes for 72 s, and no two of their fixes
+lay more than 218 m apart; measured against the allowance's 50 m, the
+three turned carried ten times in three and a half hours (roadmap
+D136). 250 m, five allowances, clears both. A walker at 1.4 m/s, a
+common walking pace, is past it after 179 s and carried after 251 s,
+351 m away; at a brisk 1.5 m/s after 239 s. Until then it heartbeats
+the place it left, and the [owner](#owner) rule sends mail for that
+place to it as if it were still there.
+
+*Why 72 s.* A walker crosses the allowance's whole width, 2 × 50 m, in
+72 of the L76K's one-a-second fixes, so it is carried an owner area
+beyond the radius. A still node's stray fix comes back inside; a
+walker's keeps going. A sleepy node without an anchor fixes once a
+delivery TTL ([beats](#beats)), so for it 72 s is two far fixes at least
+72 s apart.
+
+*Why only time with fixes.* While the GPS runs and gives no fix, the
+node may be anywhere; two far fixes with a minute without a fix between
+are not a minute far. The driver says when the GPS, running, stops
+giving fixes that pass the checks, and that time until the next fix
+does not count. Its searches end at a fix, so a sleepy node's time
+between them counts.
 
 *Why four hours.* A node that stopped for less would take mail for new
 sleepy nodes and strand it when it moved on. A node carried by mistake
@@ -2790,7 +2812,7 @@ windows, after the deliveries above and one at a time.
 *Why the flush.* The node is leaving: once it has gone its sleepy nodes'
 beats no longer reach it, and the long preamble reaches them now,
 whatever their windows. Each message is flushed once, so a still node
-whose fixes stray past the allowance again pays no more. The cost is
+whose fixes stray past the carried radius again pays no more. The cost is
 bounded: a full queue, 41 messages of 372.8 ms, is 15.3 s of airtime,
 two and a half buckets, paced by the bucket.
 
@@ -3633,7 +3655,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s. Bench 2026-11-06: at a window the first fixes after each loss spread 134 by 139 m, a third beyond 50 m of their median and an eighth of pairs over 100 m apart; the runs need each second's fix (`docs/gps-bench-2026-11-06.md`) | step 2 bench, roadmap D70 |
+| O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)). Bench 2026-11-06, three boards at a window by day: up to 199 m, no two fixes more than 218 m apart, so the carried radius is 250 m (roadmap D136); a night's logs are to confirm it (`docs/gps-bench-2026-11-06.md`) | step 2 bench, roadmap D70, D136 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 

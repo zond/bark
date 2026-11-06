@@ -124,6 +124,11 @@ pub enum AppCommand<'a> {
         /// Where the fix puts the node.
         position: Position,
     },
+    /// The GPS runs but gave no fix the driver hands: the receiver lost
+    /// its fix, or the driver dropped one. Sent at the change from fixes
+    /// to none. Time until the next fix does not count towards a run of
+    /// far fixes (spec "Position").
+    NoFix,
     /// Whether external power, USB, is present: at boot and at every
     /// change (spec "Nodes", roadmap D71). It sets the node's role: on
     /// external power a relay, on battery sleepy.

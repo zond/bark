@@ -290,7 +290,7 @@ fn a_relay_carried_in_its_grace_turns_sleepy_carried_without_a_second_flush() {
     let off = h.now;
     let before = long_to_s(&h);
     for k in 0..=8 {
-        fix(&mut h, r, 100.0 + 10.0 * k as f64);
+        fix(&mut h, r, 300.0 + 10.0 * k as f64);
         h.run_for(secs(10));
     }
     assert!(h.nodes[r].core.carried());

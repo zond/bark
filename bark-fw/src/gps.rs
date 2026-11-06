@@ -46,7 +46,10 @@ const READ: usize = 1024;
 static WANT: Signal<CriticalSectionRawMutex, Gps> = Signal::new();
 /// The last fix that passed the receiver's checks, until the node takes it.
 static FIX: Mutex<CriticalSectionRawMutex, Cell<Option<Position>>> = Mutex::new(Cell::new(None));
-/// Raised when a fix waits for the node.
+/// The receiver lost its fix since the node last took one, until the
+/// node takes this.
+static LOST: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(false));
+/// Raised when a fix, or its loss, waits for the node.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The node's side: run the GPS as `gps` says.
@@ -59,10 +62,16 @@ pub fn take_fix() -> Option<Position> {
     FIX.lock(Cell::take)
 }
 
+/// The node's side: whether the receiver lost its fix since it last
+/// asked. It hands this before the fix waiting, which came after.
+pub fn take_lost() -> bool {
+    LOST.lock(|l| l.replace(false))
+}
+
 /// The node's side: whether anything [`FOR_CORE`] was raised for waits,
 /// so that a signal whose fix was taken wakes no one.
 pub fn waiting() -> bool {
-    FIX.lock(|x| x.get().is_some())
+    FIX.lock(|x| x.get().is_some()) || LOST.lock(Cell::get)
 }
 
 /// What the task takes.
@@ -184,6 +193,29 @@ pub async fn run(mut p: Parts) -> ! {
     }
 }
 
+/// A fix is lost: the core counts no time without one towards a run of
+/// far fixes (spec "Position").
+fn lose(state: State) {
+    if state == State::Fixed {
+        LOST.lock(|l| l.set(true));
+        FOR_CORE.signal(());
+    }
+}
+
+/// A value the receiver may leave out, `-` if it did, in tenths if the
+/// flag says so.
+struct Given(Option<u16>, bool);
+
+impl core::fmt::Display for Given {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Given(None, _) => f.write_str("-"),
+            Given(Some(v), false) => write!(f, "{v}"),
+            Given(Some(v), true) => write!(f, "{}.{}", v / 10, v % 10),
+        }
+    }
+}
+
 /// Lines of text, each after a space.
 struct Lines<I>(I);
 
@@ -211,6 +243,7 @@ fn fixed(f: Fix, state: State) -> State {
             log::info!("gps: no fix, searching");
             note("searching");
         }
+        lose(state);
         return State::Searching;
     };
     if let Some(s) = f.utc_s {
@@ -225,13 +258,15 @@ fn fixed(f: Fix, state: State) -> State {
                 c.max
             );
         }
+        lose(state);
         return State::Dropped;
     }
-    // Every fix, for the bench: how a still board's fixes wander, and
-    // with what quality, decides the carried rule (spec "Open items", O16,
-    // O18; `docs/gps-bench-2026-11-06.md`).
+    // Every fix, for the bench: how a still board's fixes wander, with
+    // what quality, and what speed its receiver measures meanwhile,
+    // decides the carried rule (spec "Open items", O16, O18;
+    // `docs/gps-bench-2026-11-06.md`).
     log::info!(
-        "gps: fix at {} sats={} hdop={}.{} mode={} c/n0 n={} min={} mean={} max={} dB-Hz",
+        "gps: fix at {} sats={} hdop={}.{} mode={} speed={}cm/s course={} c/n0 n={} min={} mean={} max={} dB-Hz",
         position,
         f.satellites,
         f.hdop_tenths / 10,
@@ -241,6 +276,8 @@ fn fixed(f: Fix, state: State) -> State {
         } else {
             '-'
         },
+        Given(f.speed_cm_s, false),
+        Given(f.course_tenths, true),
         c.count,
         c.min,
         c.mean,
