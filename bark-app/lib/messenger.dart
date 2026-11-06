@@ -2,6 +2,7 @@
 // opened from it (spec "Phone link", "Mailbox"): what the person sends
 // and receives, on top of the session's queue and inbox.
 
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:sodium/sodium.dart';
@@ -45,18 +46,23 @@ class Messenger {
     ),
   );
 
-  /// Seals `records` to `c`: boxed once `c` is verified, else a first
-  /// message with the person's card. The header names the node the
-  /// person writes from, the one connected or the last, until `c` has
-  /// answered a message that named it. Returns the payload and its `sent`.
-  Future<(Uint8List, int)> _seal(Contact c, List<Record> records) async {
-    final sent = await me.nextSent();
+  /// Seals `records` to `c`: boxed once `c` holds the person's card, else
+  /// a first message with it. Being verified cannot choose: only a box
+  /// verifies, so two people waiting for it would never send one. The
+  /// header names the node the person writes from, the one connected or
+  /// the last, until `c` has answered a message that named it. Returns the payload and its `sent`.
+  Future<(Uint8List, int)> _seal(
+    Contact c,
+    List<Record> records, {
+    int? sent,
+  }) async {
     final card = me.card;
     final here = me.nodeAddress;
-    if (!c.verified && card.home == null && here == null) {
+    if (!c.hasMine && card.home == null && here == null) {
       throw const BadPayload('no address to answer to yet');
     }
-    final withAddress = here != null && c.knowsMine != here.toString();
+    sent ??= await me.nextSent();
+    final withAddress = _withAddress(c);
     final header = Header(
       greater(me.identity, c.card.identity),
       sent,
@@ -65,7 +71,7 @@ class Messenger {
     if (withAddress) {
       await contacts.put(c.copyWith(sentMine: here.toString()));
     }
-    if (!c.verified) {
+    if (!c.hasMine) {
       final plain = writePlain(header, [CardRecord(card.encode()), ...records]);
       return (sealIntro(sodium, c.card.identity, plain), sent);
     }
@@ -79,45 +85,88 @@ class Messenger {
     );
   }
 
+  /// Whether the header names the node the person writes from: until `c`
+  /// has answered a message that named it.
+  bool _withAddress(Contact c) {
+    final here = me.nodeAddress;
+    return here != null && c.knowsMine != here.toString();
+  }
+
+  /// The plaintext's room for records in a message to `c` now: a first
+  /// message also carries the person's card.
+  int _recordRoom(Contact c) =>
+      maxAppPayload -
+      (c.hasMine ? boxOverhead : introOverhead + 2 + me.card.encode().length) -
+      5 -
+      (_withAddress(c) ? Address.len : 0);
+
+  /// `text` as the parts a message to `c` holds now, one if it fits.
+  List<String> partsOf(Contact c, String text) =>
+      splitText(text, _recordRoom(c) - 1);
+
   /// Sends a text to `c`, to the address `toward` names, by default the
-  /// one the person need not choose.
+  /// one the person need not choose; split into parts, queued in order,
+  /// if one message does not hold it.
   Future<void> sendText(Contact c, String text, {Toward? toward}) async {
     final t = toward ?? c.unasked(now());
     if (t == null) throw BadPayload('${c.name} has no address yet');
-    final (p, sent) = await _seal(c, [TextRecord(text)]);
-    await session.queue(
-      Outgoing(
-        c.addressOf(t),
-        p,
-        at: now(),
-        kind: OutKind.text,
-        to: c.key,
-        sent: sent,
-        body: text,
-        toward: t,
-      ),
-    );
+    final parts = partsOf(c, text);
+    final n = parts.length;
+    if (n > maxParts) throw BadPayload('too long: $n parts, $maxParts at most');
+    final first = await me.nextSents(n);
+    for (final (i, part) in parts.indexed) {
+      final (p, sent) = await _seal(c, [
+        TextRecord(part, i + 1, n),
+      ], sent: first + i);
+      await session.queue(
+        Outgoing(
+          c.addressOf(t),
+          p,
+          at: now(),
+          kind: OutKind.text,
+          to: c.key,
+          sent: sent,
+          body: part,
+          toward: t,
+          part: i + 1,
+          of: n,
+        ),
+      );
+    }
   }
 
-  /// Acknowledges a received text: a record naming it, and no text.
+  /// Acknowledges a received text: every part of it that has come and is
+  /// not acknowledged yet, a record naming each, in as few messages as
+  /// hold them, and no text.
   Future<void> acknowledge(Received r) async {
     final c = contacts.byKey(r.from);
-    final named = r.sent;
     final t = c?.unasked(now());
-    if (c == null || t == null || named == null || r.acked) return;
-    final (p, sent) = await _seal(c, [AckRecord(named)]);
-    r.acked = true;
-    await session.queue(
-      Outgoing(
-        c.addressOf(t),
-        p,
-        at: now(),
-        kind: OutKind.ack,
-        to: c.key,
-        sent: sent,
-        toward: t,
-      ),
-    );
+    if (c == null || t == null) return;
+    final open = [
+      for (final x in session.partsOf(r))
+        if (x != null && x.sent != null && !x.acked) x,
+    ];
+    final each = _recordRoom(c) ~/ (1 + 4);
+    for (var i = 0; i < open.length; i += each) {
+      final some = open.sublist(i, min(i + each, open.length));
+      final (p, sent) = await _seal(c, [
+        for (final x in some) AckRecord(x.sent!),
+      ]);
+      for (final x in some) {
+        x.acked = true;
+      }
+      await session.queue(
+        Outgoing(
+          c.addressOf(t),
+          p,
+          at: now(),
+          kind: OutKind.ack,
+          to: c.key,
+          sent: sent,
+          toward: t,
+        ),
+      );
+    }
   }
 
   /// Sends the person's card to `c`.
@@ -138,10 +187,15 @@ class Messenger {
     );
   }
 
+  /// Sends the person's card to every contact. Only the person's word
+  /// sends it, as a card to every contact on each change of the home's
+  /// position flooded the mesh (roadmap D126).
   Future<void> sendCardToAll() async {
+    final t = me.cardTime;
     for (final c in [...contacts.list]) {
       await sendCard(c);
     }
+    await me.setCardSent(t);
   }
 
   /// Asks the home node for every item after this phone's `since`, to be
@@ -259,15 +313,27 @@ class Messenger {
     }
     if (h.greater != greater(card.identity, me.identity)) return false;
     final known = contacts.byKey(card.key);
-    // Only the holder of a verified identity can box; a sealed box
-    // naming it may be anyone's.
-    if (known != null && known.verified) return true;
+    if (known != null && known.verified) {
+      // A first message of theirs that a box overtook on the way, or
+      // anyone's who holds both cards: its text is kept, marked, but it
+      // changes nothing a box has proven, so a forger can only add
+      // marked texts.
+      await _records(
+        m,
+        card.key,
+        h,
+        rs.whereType<TextRecord>(),
+        mailbox,
+        intro: true,
+      );
+      return true;
+    }
     await contacts.put(
       (known?.copyWith(card: card) ??
               Contact(card, card.name.isEmpty ? 'Unnamed' : card.name))
           .heard(h.sent, h.address, now()),
     );
-    await _records(m, card.key, h, rs.sublist(1), mailbox);
+    await _records(m, card.key, h, rs.skip(1), mailbox, intro: true);
     return true;
   }
 
@@ -275,12 +341,13 @@ class Messenger {
     InboxMessage m,
     String from,
     Header h,
-    List<Record> rs,
-    bool mailbox,
-  ) async {
+    Iterable<Record> rs,
+    bool mailbox, {
+    bool intro = false,
+  }) async {
     for (final r in rs) {
       switch (r) {
-        case TextRecord(:final text):
+        case TextRecord(:final text, :final part, :final of):
           final dup = session.received.any(
             (x) => x.from == from && x.sent == h.sent,
           );
@@ -294,6 +361,9 @@ class Messenger {
                 sent: h.sent,
                 body: text,
                 mailbox: mailbox,
+                part: part,
+                of: of,
+                intro: intro,
               ),
             );
           }

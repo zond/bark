@@ -17,10 +17,10 @@ use bark_driver::{
     App, Clock, Driver, Gps, Heard, Outgoing, Radio, Request, MAX_AIRTIME, RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
+use bark_proto::wire::{Ack, Data, Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, Position, Relay,
-    Stored, MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
+    Relay, Stored, MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -317,20 +317,50 @@ struct TestApp {
     /// Requests waiting, and what the driver said of the GPS, in order.
     requests: VecDeque<Request>,
     gps: Vec<Gps>,
+    /// A signal raised and not yet seen by `ready`.
+    signalled: bool,
+    /// `ready` resolves at once whether anything waits or not, against
+    /// its contract, as the node's did while its mailbox said a reply was
+    /// due that it then did not give; and how many times it resolved.
+    eager: bool,
+    readies: u32,
+    /// What it queues, without a signal, when the core hands it a
+    /// message, as a home's mailbox does a reply to a fetch.
+    reply: Option<(Outgoing, Vec<u8>)>,
+}
+
+impl TestApp {
+    fn signal(&mut self) {
+        self.signalled = true;
+    }
+
+    fn set_power(&mut self, power: bool) {
+        self.power = Some(power);
+        self.signal();
+    }
+
+    fn push_request(&mut self, request: Request) {
+        self.requests.push_back(request);
+        self.signal();
+    }
 }
 
 impl App for TestApp {
+    /// At a signal, resolves if the driver gets something, and otherwise
+    /// takes the signal and waits on.
     async fn ready(&mut self, offer: bool) {
         poll_fn(|_| {
-            match (offer && self.outgoing.is_some())
-                || self.power != self.read
-                || !self.requests.is_empty()
-            {
+            let new = core::mem::take(&mut self.signalled)
+                && ((offer && self.outgoing.is_some())
+                    || self.power != self.read
+                    || !self.requests.is_empty());
+            match self.eager || new {
                 true => Poll::Ready(()),
                 false => Poll::Pending,
             }
         })
-        .await
+        .await;
+        self.readies += 1;
     }
 
     fn power(&mut self) -> Option<bool> {
@@ -355,6 +385,9 @@ impl App for TestApp {
 
     fn message(&mut self, event: &AppEvent) {
         self.messages.push(*event);
+        if let AppEvent::Message { .. } = event {
+            self.outgoing = self.outgoing.take().or(self.reply.take());
+        }
     }
 
     fn store(&mut self, stored: &Stored) {
@@ -366,7 +399,7 @@ impl App for TestApp {
     }
 }
 
-type TestDriver<C> = Driver<C, FakeRadio, FakeClock, TestApp>;
+type TestDriver<C, R = FakeRadio> = Driver<C, R, FakeClock, TestApp>;
 
 fn driver<C: Core>(core: C, world: &World, early: Duration) -> TestDriver<C> {
     let radio = FakeRadio {
@@ -382,7 +415,7 @@ fn driver<C: Core>(core: C, world: &World, early: Duration) -> TestDriver<C> {
 }
 
 /// One step, moving the clock whenever the step waits.
-fn step<C: Core>(d: &mut TestDriver<C>, world: &World) {
+fn step<C: Core, R: Radio<Error = ()>>(d: &mut TestDriver<C, R>, world: &World) {
     let mut fut = pin!(d.step());
     loop {
         match poll_once(fut.as_mut()) {
@@ -392,7 +425,11 @@ fn step<C: Core>(d: &mut TestDriver<C>, world: &World) {
     }
 }
 
-fn run_until<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant) {
+fn run_until<C: Core, R: Radio<Error = ()>>(
+    d: &mut TestDriver<C, R>,
+    world: &World,
+    until: Instant,
+) {
     while world.now() < until {
         step(d, world);
     }
@@ -420,6 +457,10 @@ struct Scripted {
     /// From when its GPS tracks, and fixes beyond reach of what it knows.
     tracks_from: Option<Instant>,
     beyond: Vec<Position>,
+    /// Whether it accepts a message from the application, and from when
+    /// it does in any case.
+    accepts: bool,
+    accepts_from: Option<Instant>,
 }
 
 impl Scripted {
@@ -433,6 +474,8 @@ impl Scripted {
             seen: Vec::new(),
             tracks_from: None,
             beyond: Vec::new(),
+            accepts: false,
+            accepts_from: None,
         }
     }
 }
@@ -481,8 +524,8 @@ impl Core for Scripted {
         self.wakeups.front().copied()
     }
 
-    fn accepts_send(&self, _: Instant) -> bool {
-        false
+    fn accepts_send(&self, now: Instant) -> bool {
+        self.accepts || self.accepts_from.is_some_and(|t| now >= t)
     }
 
     fn inbox(&self) -> Option<(MsgId, &[u8])> {
@@ -507,7 +550,7 @@ impl Core for Scripted {
     }
 }
 
-fn seen(d: &TestDriver<Scripted>) -> Vec<(u64, &str)> {
+fn seen<R: Radio>(d: &TestDriver<Scripted, R>) -> Vec<(u64, &str)> {
     d.core()
         .seen
         .iter()
@@ -554,6 +597,132 @@ fn a_received_frame_reaches_the_core() {
     );
     assert_eq!(d.stats().frames, 1);
     assert_eq!(world.0.borrow().lost, 1, "the other channel's frame");
+}
+
+/// The node the deaf radio below drops the frames of.
+const DEAF: NodeId = NodeId([0xba, 0xe6, 0xe6, 0xcb, 0xf4, 0xf5]);
+
+/// A bench build's radio (`bark_driver::BENCH_DEAF_TO`): the fake radio,
+/// deaf to [`DEAF`].
+struct DeafRadio(FakeRadio);
+
+impl Radio for DeafRadio {
+    type Error = ();
+    const DEAF_TO: Option<NodeId> = Some(DEAF);
+
+    async fn listen(&mut self, channel: Channel) -> Result<(), ()> {
+        self.0.listen(channel).await
+    }
+
+    async fn sniff(&mut self, channel: Channel) -> Result<(), ()> {
+        self.0.sniff(channel).await
+    }
+
+    async fn wait(&mut self) -> Result<(), ()> {
+        self.0.wait().await
+    }
+
+    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, ()> {
+        self.0.service(buf).await
+    }
+
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), ()> {
+        self.0.lbt(channel).await
+    }
+
+    async fn rssi(&mut self) -> Result<i16, ()> {
+        self.0.rssi().await
+    }
+
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), ()> {
+        self.0.transmit(frame, dbm).await
+    }
+}
+
+/// A radio deaf to one node passes the core none of its frames, a
+/// heartbeat, a DATA or an ACK, and counts none of them, while every other
+/// node's frame and a frame that names no sender reach the core.
+#[test]
+fn a_deaf_radio_drops_every_frame_of_its_node() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(600)]);
+    let radio = DeafRadio(FakeRadio {
+        world: world.clone(),
+        cad_busy: false,
+    });
+    let clock = FakeClock {
+        world: world.clone(),
+        early: Duration::ZERO,
+        fired_early: Default::default(),
+    };
+    let mut d = Driver::new(core, radio, clock, TestApp::default(), 10);
+    let other = NodeId([1, 2, 3, 4, 5, 6]);
+    let encode = |p: Packet<'_>| {
+        let mut buf = [0; MAX_FRAME];
+        let len = p.encode(&mut buf).expect("encodes");
+        buf[..len].to_vec()
+    };
+    let heartbeat = |id| {
+        encode(Packet::Heartbeat(Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: ch(3),
+            format: bark_proto::wire::FORMAT,
+            map_point: false,
+            id,
+            short: Position::default().short(),
+        }))
+    };
+    let data = encode(Packet::Data(Data {
+        sender_home: ch(3),
+        dst_hop: other,
+        src_hop: DEAF,
+        dst_pos: Position::default(),
+        dst_id: other,
+        hops: 1,
+        payload: b"text",
+    }));
+    let ack = encode(Packet::Ack(Ack {
+        msg_id: MsgId(7),
+        from: DEAF,
+        to: other,
+        refused: false,
+        wait: 0,
+        seen: false,
+    }));
+    let heard = heartbeat(other);
+    let bench = [bark_proto::wire::BENCH_FIRST, 1, 0];
+    for (end, bytes) in [
+        (100, heartbeat(DEAF)),
+        (200, data),
+        (300, ack),
+        (400, heard.clone()),
+        (500, bench.to_vec()),
+    ] {
+        world.send(at_ms(end), ch(3), &bytes);
+    }
+    run_until(&mut d, &world, at_ms(600));
+    let heard = format!("rx 3 {heard:?}");
+    let bench = format!("rx 3 {:?}", &bench[..]);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (400_000, heard.as_str()),
+            (500_000, bench.as_str()),
+            (600_000, "wakeup")
+        ]
+    );
+    assert_eq!(world.0.borrow().lost, 0, "the radio heard all five");
+    assert_eq!(d.stats().frames, 2);
+}
+
+/// `BARK_IGNORE` is read as the log prints a node ID.
+#[test]
+fn a_node_id_is_read_from_its_hex_digits() {
+    assert_eq!(bark_driver::node_id_of_hex("bae6e6cbf4f5"), DEAF);
+    assert_eq!(bark_driver::node_id_of_hex("BAE6E6CBF4F5"), DEAF);
 }
 
 /// A transmit goes out on the frame's channel, the core hears `TxDone`
@@ -956,7 +1125,7 @@ fn the_power_reaches_the_core_at_boot_and_at_each_change() {
     let mut d = driver(core, &world, Duration::ZERO);
     d.app_mut().power = Some(true);
     run_until(&mut d, &world, at_ms(100));
-    d.app_mut().power = Some(false);
+    d.app_mut().set_power(false);
     step(&mut d, &world);
     run_until(&mut d, &world, at_ms(300));
     assert_eq!(
@@ -983,7 +1152,7 @@ fn the_battery_reaches_the_core_once_a_minute_on_battery() {
     d.app_mut().battery = Some(3900);
     run_until(&mut d, &world, at_ms(1));
     assert_eq!(d.app().battery_reads, 0, "none on USB");
-    d.app_mut().power = Some(false);
+    d.app_mut().set_power(false);
     run_until(&mut d, &world, at_ms(200_000));
     let readings: Vec<u64> = seen(&d)
         .iter()
@@ -1059,7 +1228,8 @@ fn a_relay_reset_in_zeroed_memory_is_a_new_one() {
 /// The GPS follows the core (core-interface §4): a search from a
 /// `Locate` until its end, ended by the first fix in reach and by a
 /// `Locate` at or before now, and running all the time while the core
-/// says it tracks; a fix beyond reach of every known relay is not handed.
+/// says it tracks; a fix beyond reach of every known relay is not handed,
+/// and the core is told once that it has no fix.
 #[test]
 fn the_gps_follows_the_core() {
     let world = World::default();
@@ -1077,16 +1247,27 @@ fn the_gps_follows_the_core() {
         d.core()
             .seen
             .iter()
-            .filter(|(_, s)| s.contains("Fix"))
+            .filter(|(_, s)| s.contains("Fix {"))
+            .count()
+    };
+    let none = |d: &TestDriver<Scripted>| {
+        d.core()
+            .seen
+            .iter()
+            .filter(|(_, s)| s.contains("NoFix"))
             .count()
     };
     run_until(&mut d, &world, at_ms(1));
     assert_eq!(d.app().gps, [Gps::Rest, Gps::Search(at_ms(500))]);
-    d.app_mut().requests.push_back(Request::Fix(far));
+    d.app_mut().push_request(Request::Fix(far));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 0, "beyond reach");
+    assert_eq!(none(&d), 1, "no fix");
+    d.app_mut().requests.push_back(Request::Fix(far));
+    step(&mut d, &world);
+    assert_eq!(none(&d), 1, "once, at the change");
     assert_eq!(d.app().gps.last(), Some(&Gps::Search(at_ms(500))));
-    d.app_mut().requests.push_back(Request::Fix(here));
+    d.app_mut().push_request(Request::Fix(here));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 1);
     assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "the fix ends it");
@@ -1096,7 +1277,7 @@ fn the_gps_follows_the_core() {
     assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "ended at once");
     run_until(&mut d, &world, at_ms(40));
     assert_eq!(d.app().gps.last(), Some(&Gps::Track));
-    d.app_mut().requests.push_back(Request::Fix(here));
+    d.app_mut().push_request(Request::Fix(here));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 2);
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "tracking goes on");
@@ -1113,4 +1294,167 @@ fn a_placed_relay_on_usb_tracks() {
     run_until(&mut d, &world, Instant::ZERO + Duration::from_secs(5));
     assert!(!d.core().on_map_point());
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "{:?}", d.app().gps);
+}
+
+/// Steps until the clock reaches `until`, at most `max`: a loop that never
+/// waits takes steps without moving the clock and runs out of them.
+fn run_bounded<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant, max: u32) {
+    let mut steps = 0;
+    while world.now() < until {
+        assert!(
+            steps < max,
+            "{max} steps and the clock still at {:?}",
+            world.now()
+        );
+        step(d, world);
+        steps += 1;
+    }
+}
+
+/// An application that says it is ready at once, always, and then gives
+/// nothing, as the node's did on the bench 2026-11-06 while its mailbox
+/// said a reply was due that it then did not give: the loop still waits for its clock
+/// and its radio as with an idle application, and asks the application
+/// again only after one of them woke it (core-interface §4).
+#[test]
+fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200), at_ms(300)]);
+    core.accepts = true;
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().eager = true;
+    world.send(at_ms(150), ch(3), &[1, 2, 3]);
+    // The boot, and per event of the clock or the radio, the frame's start
+    // and its end among them, one step for it and one for the
+    // application's empty readiness.
+    run_bounded(&mut d, &world, at_ms(300), 1 + 2 * 5);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (100_000, "wakeup"),
+            (150_000, "rx 3 [1, 2, 3]"),
+            (200_000, "wakeup"),
+            (300_000, "wakeup")
+        ]
+    );
+    assert_eq!(
+        d.app().readies,
+        5,
+        "after the boot and each event but the last"
+    );
+    assert_eq!(d.stats().empty_readies, 5);
+}
+
+/// A message the application has goes to the core at once, and so does
+/// one that comes after an empty readiness, at the next step: the driver
+/// offers before it waits (core-interface §4).
+#[test]
+fn a_message_offered_goes_at_once() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts = true;
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    d.app_mut().outgoing = Some((out(), vec![4, 5]));
+    d.app_mut().signal();
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    // Empty, then a message: it does not wait for the wakeup.
+    d.app_mut().eager = true;
+    step(&mut d, &world);
+    d.app_mut().eager = false;
+    d.app_mut().outgoing = Some((out(), vec![6]));
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(sends(&d), [0, 0]);
+}
+
+fn out() -> Outgoing {
+    Outgoing {
+        dst_pos: Position::default(),
+        dst_id: NodeId([7; 6]),
+        len: 2,
+    }
+}
+
+/// When the core took each message from the application.
+fn sends(d: &TestDriver<Scripted>) -> Vec<u64> {
+    seen(d)
+        .into_iter()
+        .filter(|(_, s)| s.contains("Send"))
+        .map(|(t, _)| t)
+        .collect()
+}
+
+/// A message queued with no signal goes at the next step, and one the
+/// application holds while the core takes none goes at the step after the
+/// one that lets the core take it; neither is a readiness.
+#[test]
+fn a_waiting_message_goes_without_a_signal() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts_from = Some(at_ms(100));
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    // The core takes none until its wakeup at 100 ms; the application
+    // holds what arrives meanwhile.
+    d.app_mut().outgoing = Some((out(), vec![6]));
+    d.app_mut().signal();
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    // With no signal at all.
+    d.app_mut().outgoing = Some((out(), vec![7]));
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(sends(&d), [100_000, 100_000]);
+    assert_eq!(d.app().readies, 0);
+    assert_eq!(d.stats().empty_readies, 0);
+}
+
+/// A signal with nothing behind it, and a power event that changed
+/// nothing, end no wait: the loop waits for its clock as with an idle
+/// application.
+#[test]
+fn a_signal_with_nothing_behind_it_is_no_readiness() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    step(&mut d, &world);
+    d.app_mut().signal();
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    d.app_mut().set_power(true);
+    run_bounded(&mut d, &world, at_ms(200), 1);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (0, "App(Power { external: true })"),
+            (100_000, "wakeup"),
+            (200_000, "wakeup")
+        ]
+    );
+    assert_eq!(d.app().readies, 0);
+    assert_eq!(d.stats().empty_readies, 0);
+}
+
+/// A reply that becomes due when the core hands the application a
+/// message, as a home's to a fetch, goes at the next step, with no
+/// signal and no write from the phone.
+#[test]
+fn a_reply_that_becomes_due_goes_without_a_signal() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts = true;
+    let fetch = AppEvent::Message { msg_id: MsgId(9) };
+    core.then.push((at_ms(100), Action::App(fetch)));
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().reply = Some((out(), vec![4, 5]));
+    run_bounded(&mut d, &world, at_ms(100), 2);
+    step(&mut d, &world);
+    assert_eq!(d.app().messages, [fetch]);
+    assert_eq!(sends(&d), [100_000]);
+    assert_eq!(d.app().readies, 0);
 }

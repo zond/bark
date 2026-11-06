@@ -3195,6 +3195,8 @@ impl Sim {
             if fault.is_some() {
                 self.metrics.research.fixes[k][1] += 1;
             }
+            // A dropped fix is no fix, as the firmware's driver tells it.
+            self.deliver(n, Event::App(AppCommand::NoFix));
             return false;
         }
         if fault.is_some() {
@@ -3522,7 +3524,7 @@ impl Sim {
                 payload[..bytes.len()].copy_from_slice(bytes);
                 let len = bytes.len() as u8;
                 core.confirm(id);
-                if self.mailbox_takes(node, &payload[..len as usize]) {
+                if self.mailbox_takes(node, id, &payload[..len as usize]) {
                     return;
                 }
                 (len, payload)
@@ -4246,7 +4248,7 @@ impl Sim {
 
     /// A payload for `node`'s application that its mailbox takes, or that
     /// is a mailbox's reply: kept, and not counted as a text.
-    fn mailbox_takes(&mut self, node: u32, payload: &[u8]) -> bool {
+    fn mailbox_takes(&mut self, node: u32, msg_id: MsgId, payload: &[u8]) -> bool {
         use bark_app_layer::seal::Form;
         // Without a mailbox in the run every payload is a traffic tag,
         // which may begin as a reply does.
@@ -4262,7 +4264,7 @@ impl Sim {
         };
         // Every payload but a fetch is kept; the texts are counted as
         // delivered as at any node.
-        !matches!(m.arrive(payload), Kept::Kept(_))
+        !matches!(m.arrive(msg_id, payload), Kept::Kept(_))
     }
 
     /// The mailbox's next reply, handed to the core while its application
@@ -5023,7 +5025,9 @@ mod tests {
                 count: 1,
                 at_s: 400.0,
                 distance_m: 5000.0,
-                speed_m_s: 1.0,
+                // Carried within the run: past the carried radius,
+                // 250 m, in 83 s, and 72 s on.
+                speed_m_s: 3.0,
             });
             let mut sim = Sim::new(&sc).unwrap();
             sim.run();

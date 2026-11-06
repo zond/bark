@@ -15,6 +15,19 @@
     <!-- Camera: scanning another phone's card. A phone without one
          can still paste the card. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Notifications: each new text, and the one that a foreground
+         service must show; the service keeps the app running with the
+         screen off while it holds the link to a node, a connected
+         device, or looks for the node it is paired with. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Starting with the phone, to take up the link to the paired node
+         again without anyone opening the app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Asking to be exempt from battery optimisation, which some phones
+         need to keep the service running for hours. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.bluetooth_le"
         android:required="true" />
     <uses-feature android:name="android.hardware.camera"
@@ -22,7 +35,7 @@
     <application
         android:label="bark"
         android:name="${applicationName}"
-        android:icon="@drawable/ic_launcher">
+        android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -45,6 +58,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Running while the app holds the link or looks for the paired
+             node; it goes on when the person closes the app's window. -->
+        <service
+            android:name=".LinkService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
+        <!-- Not exported: the system still delivers its own broadcasts. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

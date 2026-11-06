@@ -30,8 +30,9 @@ pub struct Config {
     pub position: Position,
     /// Whether `position` is the node's place: set when it was built or
     /// placed, as on a bench board or in the simulator. Without it, and
-    /// without a stored place, the node has none until its first accepted
-    /// fix or a map point (spec "Position", roadmap D83).
+    /// without a stored place of a fixed node, the node has none until its
+    /// first accepted fix or a map point (spec "Position", roadmap D83,
+    /// D133).
     pub placed: bool,
     /// The node's ID: on the board from the chip's hardware ID, in the
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
@@ -110,8 +111,8 @@ pub struct Config {
     /// Fixed home channel for bench work instead of the measured choice
     /// (spec "Channel at boot"). The move rule is off while it is set.
     pub home_override: Option<Channel>,
-    /// How long the fixes of a carried node must stay within the GPS
-    /// allowance of one place before it is fixed again
+    /// How long the fixes of a carried node must stay within
+    /// [`CARRY_RADIUS_M`] of one place before it is fixed again
     /// (spec "Position": 4 h, the longer of the two measured,
     /// roadmap D70). Long, so that a node that stops for a while does not
     /// take mail it would strand when it moves on.
@@ -281,13 +282,23 @@ pub const WALKING_SPEED_M_S: f32 = 1.4;
 /// default output rate (L76K hardware design and specification).
 pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 
-/// How long a fixed node's fixes must all be farther than the GPS
-/// allowance, [`OWNER_RADIUS_M`], from the place it stands before it is carried
-/// (spec "Position"): as long as a walker takes to cross the
-/// whole width of the allowance, 2 × 50 m at [`WALKING_SPEED_M_S`],
-/// 71.4 s, in whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A
-/// still node's fix that strays past the allowance comes back within it;
-/// one that walks keeps going.
+/// How far a fixed node's fix must lie from the place it stands to count
+/// towards making it carried (spec "Position"): beyond the farthest a
+/// still board's fixes wander. At a window on 2026-11-06 three still
+/// boards' fixes stayed up to 199 m from one of their own fixes for 72 s,
+/// and no two of them lay more than 218 m apart
+/// (`docs/gps-bench-2026-11-06.md`); five owner allowances clear both. A
+/// place is one fix, so the radius must hold the wander's whole width,
+/// not its distance from a mean.
+pub const CARRY_RADIUS_M: f32 = 5.0 * OWNER_RADIUS_M;
+
+/// How long a fixed node's fixes must all be farther than
+/// [`CARRY_RADIUS_M`] from the place it stands before it is carried
+/// (spec "Position"): as long as a walker takes to cross the whole width
+/// of the owner allowance, 2 × 50 m at [`WALKING_SPEED_M_S`], 71.4 s, in
+/// whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A still node's
+/// stray fix comes back within the radius; a walker keeps going, and is
+/// carried an owner area beyond it.
 pub const CARRY_AFTER: Duration = {
     let walk_us = (2.0 * OWNER_RADIUS_M / WALKING_SPEED_M_S * 1e6) as u64;
     let fix_us = FIX_INTERVAL.as_micros();

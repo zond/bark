@@ -40,6 +40,35 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.refused => 'refused: ${o.error}',
 };
 
+/// Whether a sent text's parts are all in one state, so that one part's
+/// marks stand for them all.
+bool partsAgree(List<Outgoing> outs) => outs.every(
+  (o) => o.state == outs.first.state && o.acked == outs.first.acked,
+);
+
+/// A sent text's parts' states in words when they differ: how many the
+/// node has taken, how many are acknowledged, and the first problem.
+String partsLabel(Session s, List<Outgoing> outs) {
+  final taken = outs.where((o) => o.acked || o.state == OutState.taken);
+  final acked = outs.where((o) => o.acked);
+  final problem = outs
+      .where(
+        (o) =>
+            !o.acked &&
+            (o.state == OutState.givenBack || o.state == OutState.refused),
+      )
+      .firstOrNull;
+  return [
+    '${taken.length} of ${outs.length} taken',
+    if (acked.isNotEmpty) '${acked.length} acknowledged',
+    if (problem != null) 'part ${problem.part} ${stateLabel(s, problem)}',
+  ].join(', ');
+}
+
+/// A sent text's state in words, one part's or the parts'.
+String textLabel(Session s, List<Outgoing> outs) =>
+    partsAgree(outs) ? stateLabel(s, outs.first) : partsLabel(s, outs);
+
 /// Rebuilds on every change of the model, the session and the contacts.
 class Watch extends StatelessWidget {
   final AppModel app;
@@ -116,6 +145,41 @@ class FetchButton extends StatelessWidget {
   }
 }
 
+/// While the card has changed and not gone to the contacts, says why, with
+/// **Send my card**: the app sends no card by itself (roadmap D126).
+class SendCardLine extends StatelessWidget {
+  final AppModel app;
+  final EdgeInsetsGeometry? padding;
+  const SendCardLine(this.app, {this.padding, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!app.cardUnsent) return const SizedBox.shrink();
+    final n = app.contacts.list.length;
+    return ListTile(
+      contentPadding: padding,
+      leading: const Icon(Icons.badge_outlined),
+      title: Text(app.cardChange),
+      subtitle: Text(
+        n == 1
+            ? 'Your contact has the old one.'
+            : 'Your $n contacts have the old one; one message each.',
+      ),
+      trailing: FilledButton(
+        onPressed: () async {
+          try {
+            await app.messenger.sendCardToAll();
+            if (context.mounted) say(context, 'Your card is queued');
+          } catch (e) {
+            if (context.mounted) say(context, 'Sending the card failed: $e');
+          }
+        },
+        child: const Text('Send my card'),
+      ),
+    );
+  }
+}
+
 /// Asks for one line of text; null if the person cancels.
 Future<String?> askText(BuildContext context, String label, String initial) {
   final c = TextEditingController(text: initial);
@@ -141,4 +205,26 @@ Future<String?> askText(BuildContext context, String label, String initial) {
       ],
     ),
   );
+}
+
+/// The search for the paired node, while it scans or waits for
+/// Bluetooth; null when there is none.
+String? lookingLine(AppModel app) {
+  final n = app.searchFor;
+  if (n == null || app.connecting) return null;
+  if (!app.bluetoothOn) return 'Bluetooth is off: turn it on to reach $n.';
+  return app.scanning ? null : 'Looking for $n…';
+}
+
+/// The phone's pairing as a person reads it while not connected (spec
+/// "Phone link", Pairing).
+String pairedLine(Session s) {
+  final n = s.pairedWith;
+  if (n == null) {
+    return 'Not paired with a node yet: the first connection pairs, by a '
+        'code on the node\'s screen.';
+  }
+  return s.pairingLost
+      ? '$n is no longer yours: another phone has paired with it.'
+      : 'Paired with $n.';
 }

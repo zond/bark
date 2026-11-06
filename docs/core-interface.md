@@ -115,7 +115,7 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::Power` and
+`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
 `Action::Store` and `Config::stored`, and the GPS: the request `Action::Locate` and
@@ -150,6 +150,19 @@ A `Send` while `accepts_send` is false, or with a longer payload, breaks the con
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
 panic or never offer it.
 
+The firmware's driver too offers the application's message after every `handle`, before
+it waits again, so a message that waits goes whatever woke the loop. While it waits it
+also waits for its application with `bark_driver::App::ready`, which resolves only for
+something new for the driver since it last resolved: a request, a change of power, or,
+while the core accepts one, a message. A signal with nothing behind it, such as a power
+event that changed nothing, the application takes and keeps waiting; a message that
+arrives while the core accepts none it holds for a later offer or refuses. A readiness
+that gives the driver nothing breaks this: the driver counts it, does not wait on the
+application again until its clock or its radio wakes it, and logs it at most once a
+minute. An application that kept saying it is ready and giving nothing would otherwise
+keep the loop from ever waiting: on a board that starves every other task of the
+processor and drains the battery.
+
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
 over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMapPoint`
 clears it: the node stays where it is and its next accepted fix is its place (roadmap
@@ -164,6 +177,11 @@ sleepy node with an anchor takes none and keeps the flag it had: its position is
 anchor's, which it beats and rebuilds the short positions it hears near, and
 `Node::address` gives it (roadmap D70, D72, D91). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
+
+`AppCommand::NoFix` says the GPS runs but gives no fix the driver hands: the receiver
+lost its fix, its satellites failed the C/N0 check, or the fix was beyond reach. The
+driver sends it at the change from handing fixes to not, and the time until the next fix
+does not count towards a run of far fixes (spec "Position", roadmap D136).
 
 `Config::placed` says whether `Config::position` is the node's place: a board built
 with one, or the simulator's nodes. Without it and without a stored place the node has

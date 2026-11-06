@@ -45,6 +45,7 @@ dependencies = [
  "embassy-boot",
  "embassy-embedded-hal",
  "embassy-sync",
+ "embedded-hal 1.0.0",
  "embedded-storage",
  "sha2",
 ]

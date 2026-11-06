@@ -468,12 +468,12 @@ A node's position is its GPS fix, unless the app sets a map point, which
 wins. A rooftop relay with no sky view uses one.
 
 **A node's place.** A node has a place when it was given one where it
-was built, has one stored ([implementation notes](#implementation-notes)),
-or the app sets a map point. One with none takes its first accepted fix
-as its place, fixed, at once, and sends no heartbeat before it; it
-rebuilds the positions it heard near its place then, and a relay
-heartbeats its first rotation's burst ([heartbeat](#heartbeat)) from
-then, as at boot (roadmap D83).
+was built, has one stored as a fixed node
+([implementation notes](#implementation-notes)), or the app sets a map
+point. One with none takes its first accepted fix as its place, fixed,
+at once, and sends no heartbeat before it; it rebuilds the positions it
+heard near its place then, and a relay heartbeats its first rotation's
+burst ([heartbeat](#heartbeat)) from then, as at boot (roadmap D83).
 
 *Why no heartbeat before.* A heartbeat says where the node is, and
 carries only the short position ([positions on the wire](#positions-on-the-wire)):
@@ -481,6 +481,13 @@ a node with no place can rebuild neither its neighbours' positions nor
 its own beyond the short form's period, so any position or address it
 gave would send its neighbours elsewhere. For the same reason its driver
 checks its first fix against no neighbour.
+
+*Why a carried node's stored place is none.* It is where the node
+stood when last fixed, not where it is, and a node that boots there
+rebuilds every neighbour's short position near it: a period off, every
+true fix is beyond them all and dropped, and the node heartbeats a
+position its neighbours rebuild as far from them, so their fixes are
+dropped too (roadmap D133).
 
 *Why the first fix and not the fixed rule.* Measured from a position it
 never had, the first fix is a far fix, and the node would be carried
@@ -506,7 +513,9 @@ A fix is dropped as unreliable, a sign of spoofing, when:
 A jammed receiver gives no fix, and the node keeps the position it has.
 
 Two fixes of a still node may differ by 50 m. That is the **allowance**
-the [owner](#owner) rule uses.
+the [owner](#owner) rule uses. Indoors at a window they wander farther:
+a fix of a still node may lie up to 250 m from another of its fixes
+for minutes. That is the **carried radius**.
 
 **Fixed and carried.** Every node measures from its fixes whether it
 moves, but a sleepy node with an anchor, which takes none and keeps the
@@ -515,9 +524,9 @@ flag it has ([beats](#beats)):
 | | |
 |---|---|
 | the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
-| far fix | an accepted fix more than the allowance from that place |
-| carried | after 72 s of far fixes with none near between |
-| fixed again | after four hours of fixes within the allowance of one place; it keeps the fix it has then |
+| far fix | an accepted fix more than the carried radius from that place |
+| carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes |
+| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then |
 | map point | fixed at once; cleared, the next accepted fix is the place |
 | power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has (roadmap D85) |
 
@@ -527,11 +536,31 @@ new one ([node identity](#node-identity)). At its first far fix a relay
 that holds mail flushes its delivery queue ([delivery](#delivery)), since
 once it has left it will hear none of its sleepy nodes' beats.
 
-*Why 72 s.* A walker at 1.4 m/s, a common walking pace, crosses the
-allowance's whole width, 2 × 50 m, in 72 of the L76K's one-a-second
-fixes. A still node's stray fix comes back inside; a walker's keeps
-going. A sleepy node without an anchor fixes once a delivery TTL
-([beats](#beats)), so for it 72 s is two far fixes at least 72 s apart.
+*Why 250 m.* The place is one fix, which may itself lie at the edge of
+the wander, so the radius must hold the wander's whole width. On the
+bench of 2026-11-06 three still boards at a window had fixes up to
+199 m from one of their own fixes for 72 s, and no two of their fixes
+lay more than 218 m apart; measured against the allowance's 50 m, the
+three turned carried ten times in three and a half hours (roadmap
+D136). 250 m, five allowances, clears both. A walker at 1.4 m/s, a
+common walking pace, is past it after 179 s and carried after 251 s,
+351 m away; at a brisk 1.5 m/s after 239 s. Until then it heartbeats
+the place it left, and the [owner](#owner) rule sends mail for that
+place to it as if it were still there.
+
+*Why 72 s.* A walker crosses the allowance's whole width, 2 × 50 m, in
+72 of the L76K's one-a-second fixes, so it is carried an owner area
+beyond the radius. A still node's stray fix comes back inside; a
+walker's keeps going. A sleepy node without an anchor fixes once a
+delivery TTL ([beats](#beats)), so for it 72 s is two far fixes at least
+72 s apart.
+
+*Why only time with fixes.* While the GPS runs and gives no fix, the
+node may be anywhere; two far fixes with a minute without a fix between
+are not a minute far. The driver says when the GPS, running, stops
+giving fixes that pass the checks, and that time until the next fix
+does not count. Its searches end at a fix, so a sleepy node's time
+between them counts.
 
 *Why four hours.* A node that stopped for less would take mail for new
 sleepy nodes and strand it when it moved on. A node carried by mistake
@@ -2813,7 +2842,7 @@ windows, after the deliveries above and one at a time.
 *Why the flush.* The node is leaving: once it has gone its sleepy nodes'
 beats no longer reach it, and the long preamble reaches them now,
 whatever their windows. Each message is flushed once, so a still node
-whose fixes stray past the allowance again pays no more. The cost is
+whose fixes stray past the carried radius again pays no more. The cost is
 bounded: a full queue, 41 messages of 372.8 ms, is 15.3 s of airtime,
 two and a half buckets, paced by the bucket.
 
@@ -2950,13 +2979,52 @@ currents, for the bench to measure).
 *Why one connection.* One person's phone owns the node: two phones
 would share one inbox and one message slot.
 
-**Security.** The link is open for the prototype: no pairing, no
-bonding (roadmap D121). The payloads the link carries are encrypted by
-the app, and their addresses and the node's ID, position and flags are
-on the 433 MHz air in the clear anyway, so a listener learns little
-more. But anyone within Bluetooth range can connect while the owner's
-phone is not connected, empty the inbox and move the node with a map
-point: open item O23, before nodes leave the bench.
+**Pairing.** A node is one phone's: the phone paired with it (roadmap
+D135). Every characteristic of the service needs a link encrypted with
+an authenticated key; a read, write or subscription on any other link
+is answered with the ATT error 0x05, insufficient authentication (Vol 3
+Part F §3.4.1.1), which is the phone's cue to pair. The node's name and
+appearance stay open, as the advertisement says them anyway.
+
+The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
+§2.3.5.6.3). The node can display and cannot take input, so the method
+is that the node shows a six-digit passkey and the person types it into
+the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
+screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
+same line says `PHONE PAIRED` or `PHONE NONE` otherwise. The node keeps
+one bond in flash across reboots: the phone's identity address, the
+identity resolving key by which it knows the phone's changing address
+(Vol 6 Part B §1.3.2.2), and the long-term key. A new pairing replaces
+the bond. A pairing that is not authenticated, as with a phone that has
+no keyboard (Just Works), or that does not bond, changes nothing, and
+the node closes its link.
+
+*Why the bond is the ownership.* A node has one inbox and one mailbox
+key, so it serves one person (why one connection, above). The passkey
+shows only on the node's screen, so a phone can pair only while its
+person is at the node: being there is what a person can show without
+accounts or a server, and it is also what lets the rightful owner take
+the node back from anyone. Every characteristic needs the bond, Home
+among them, so only the owner's phone sets or clears the mailbox key
+([mailbox](#mailbox)); there is no second check.
+
+**The replaced phone.** A phone whose bond the node replaced learns it
+at its next connection. The phone encrypts the link with its old key as
+soon as it connects; the node holds no such key and ends the link,
+authentication failure (error code 0x05, Vol 1 Part F), before the app
+has read anything. So a link that a phone holding a bond for the node
+loses before its first read tells the app that the node is no longer
+the person's; the app says so and offers to pair again, which takes the
+code on the node's screen.
+
+*Why end the link.* The node could instead refuse the key and keep the
+link unencrypted (LE Long Term Key Request Negative Reply, Vol 4 Part E
+§7.8.26), and the phone's first read would fail with insufficient
+authentication. But a phone refused its key may start pairing by itself
+and ask its person for a code before the app can say why. The BLE host
+ends the link, and the node keeps that. A new pairing leaves the mailbox key as
+it was: the node goes on answering the former owner's fetches until the
+new owner writes their own key or clears it.
 
 **MTU.** The node offers an ATT MTU of 247, the longest link-layer
 payload with the data length extension, 251 bytes (Vol 6 Part B §2.4),
@@ -3089,6 +3157,12 @@ last the phone confirmed, with the ID it arrived with, the written ID
 confirms it, and Status's count is the items not yet confirmed; the
 ring keeps them for fetches either way. From link version 3.
 
+*Why the ID it arrived with, kept.* An ID is a hash of the node's
+address ([packet formats](#packet-formats)), which changes whenever the
+node's position does, at every fix while it is carried
+([position](#position)); worked out again at each read, an item's ID
+would change between the phone's read and its confirmation.
+
 *Why the offset from the phone.* Turning a position into a time zone
 takes the zones' boundaries and rules, which the node has no room for
 and which change by law; the phone has them, set by its person.
@@ -3134,10 +3208,13 @@ Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
 reply. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
-unverified until a boxed payload from that identity opens, and it is
-used until the sender has received a boxed payload from the receiver.
-An introduction naming an identity the receiver has verified is
-dropped. Payloads are not padded.
+unverified until a boxed payload from that identity opens. It is used
+until a payload from the receiver, of either form, has opened at the
+sender: sealed to the sender's identity, it shows that the receiver
+holds the sender's card. Waiting for a boxed one instead would leave two
+people who hold each other's cards sending introductions for ever, as
+only a box verifies. An introduction naming an identity the receiver
+has verified is dropped. Payloads are not padded.
 
 *Plaintext.* Forms 0 and 1 hold a header, then records:
 
@@ -3150,6 +3227,7 @@ dropped. Payloads are not padded.
 | record | bytes | |
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
+| text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
 | card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
 
@@ -3161,6 +3239,15 @@ message that carried it and whenever it changes; a message without one
 says it has not changed. The app sends nothing
 by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
+
+*Long texts.* A text longer than one message holds is split into
+parts, each a message of its own with its own `sent`, delivered and
+acknowledged as a text is. The parts take consecutive `sent`, so a
+part's `sent` less its number and one is the first part's, which names
+the text: the receiver puts parts together in any order of arrival,
+knows from the count which have not come, and needs no byte more for
+it. A part costs one byte over a whole text, 159 bytes of text in a box
+without an address; 16 parts hold about 2.5 KB (roadmap D137).
 
 *The card*, what people exchange, shown as a QR code: version (1), 2;
 flags (1), bit 0 set when a home address follows, the others zero; the
@@ -3250,10 +3337,10 @@ the nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes.
 An item's place is its number less the first number of the round, plus
 one, and its plaintext is its number (3) and the item; the reply that
 says nothing is new has place 0 and an empty plaintext, 17 bytes. A
-round has at most 256 replies, every item of the board's ring (16 pages
-of 16 slots), so the requester tries places 1 to 256 on a reply that
-carries an item and learns its number from inside; a ring that held
-more would send its newest 256.
+round has at most 256 replies, so the requester tries places 1 to 256 on
+a reply that carries an item and learns its number from inside; a ring
+that holds more, as the board's of 1024 items does, sends its newest
+256.
 
 *Why nothing new is an answer.* A person pressed a button and waits:
 without it they cannot tell "no mail" from a fetch or a reply lost on
@@ -3598,10 +3685,9 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
-| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
+| O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)). Bench 2026-11-06, three boards at a window by day: up to 199 m, no two fixes more than 218 m apart, so the carried radius is 250 m (roadmap D136); a night's logs are to confirm it (`docs/gps-bench-2026-11-06.md`) | step 2 bench, roadmap D70, D136 |
+| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)); until then the mailbox key crosses the open link ([mailbox](#mailbox)) | before step 7 |
 
 ---
 

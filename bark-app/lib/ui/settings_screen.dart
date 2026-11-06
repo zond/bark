@@ -1,5 +1,7 @@
-// Settings: the node to connect to, the person's name, their home node,
-// their backup words, the node's map point, and the fake node.
+// Settings: the node to connect to and the phone paired with it, the
+// fake node, the battery exemption
+// that keeps the link with the screen off, the person's name, their home
+// node, their backup words, and the node's map point.
 
 import 'package:flutter/material.dart';
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
@@ -9,6 +11,7 @@ import '../app.dart';
 import '../app_layer.dart';
 import '../ble_link.dart';
 import '../link.dart';
+import '../node_link.dart';
 import 'common.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -25,8 +28,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   AppModel get app => widget.app;
 
+  /// Whether Android exempts the app from battery optimisation, read again
+  /// when the person comes back from the system's dialog.
+  bool? _exempt;
+  late final AppLifecycleListener _life;
+
+  @override
+  void initState() {
+    super.initState();
+    _readExempt();
+    _life = AppLifecycleListener(onResume: _readExempt);
+  }
+
+  Future<void> _readExempt() async {
+    final e = await app.notifier.batteryExempt();
+    if (mounted) setState(() => _exempt = e);
+  }
+
   @override
   void dispose() {
+    _life.dispose();
     lat.dispose();
     lon.dispose();
     if (app.scanning) app.stopScan();
@@ -39,6 +60,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) say(context, '$failed: $e');
     }
+  }
+
+  /// A connection asked for here has not ended: a second tap meanwhile
+  /// does nothing, as it would close the link the first is making.
+  bool _connectAsked = false;
+
+  /// Connects by `f`, at the first connection after asking to notify.
+  Future<void> _connect(Future<void> Function() f) async {
+    if (_connectAsked) return;
+    _connectAsked = true;
+    try {
+      await _connectOnce(f);
+    } finally {
+      _connectAsked = false;
+    }
+  }
+
+  Future<void> _connectOnce(Future<void> Function() f) async {
+    await app.askToNotify(
+      () async =>
+          await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Notifications'),
+              content: const Text(
+                'bark tells you when a text comes, and shows that it keeps '
+                'the link to the node while the screen is off. Android asks '
+                'you next.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Not now'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Continue'),
+                ),
+              ],
+            ),
+          ) ??
+          false,
+    );
+    try {
+      await f();
+    } on NotOurs catch (e) {
+      if (mounted) await _notOurs(e);
+    } catch (e) {
+      if (mounted) say(context, 'Connecting failed: $e');
+    }
+  }
+
+  /// The node no longer holds this phone's bond: pair again, by the code
+  /// on its screen, or leave it.
+  Future<void> _notOurs(NotOurs e) async {
+    final again = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('This node is no longer yours'),
+        content: Text(
+          'Another phone has paired with ${e.node} since, and the node '
+          'keeps one phone. To make it yours again, pair again at the '
+          'node: it shows a six-digit code on its screen, and the phone '
+          'asks for it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Pair again'),
+          ),
+        ],
+      ),
+    );
+    final pair = app.pairAgain;
+    if (again != true || pair == null) return;
+    await _connectOnce(pair);
   }
 
   Future<void> _phoneLocation() async {
@@ -81,6 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             NoticeCard(app),
             ..._connection(),
+            ..._battery(),
             _heading('My name'),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -109,6 +211,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     child: Text(s, style: Theme.of(context).textTheme.titleLarge),
   );
 
+  /// What a connection being made is doing, for the line under the
+  /// node.
+  static String _linking(Linking l) => switch (l) {
+    Linking.none => '',
+    Linking.connecting => 'Connecting…',
+    Linking.pairing =>
+      'Pairing: type the six-digit code the node\'s screen shows into the '
+          'phone\'s dialog. After it, the phone takes some seconds to '
+          'finish.',
+    Linking.paired || Linking.attaching => 'Paired, connecting…',
+  };
+
   List<Widget> _connection() {
     final s = app.session;
     return [
@@ -126,21 +240,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(nodeName(s.node!.id)),
-          subtitle: Text('Connected, MTU ${app.mtu ?? '?'}'),
+          subtitle: Text('Connected and paired, MTU ${app.mtu ?? '?'}'),
           trailing: OutlinedButton(
-            onPressed: s.disconnect,
+            onPressed: app.disconnect,
             child: const Text('Disconnect'),
           ),
         )
-      else if (app.fake)
+      else ...[
+        Text(app.connecting ? _linking(app.linking) : pairedLine(s)),
+        const SizedBox(height: 8),
+      ],
+      if (app.fake && !s.connected)
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton(
-            onPressed: () => _try(app.connectFake, 'Connecting failed'),
+            onPressed: () => _connect(app.connectFake),
             child: const Text('Connect'),
           ),
         )
-      else ...[
+      else if (!app.fake) ...[
         Row(
           children: [
             FilledButton(
@@ -157,15 +275,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
           ],
         ),
+        // The connected node's row does nothing; another's connects to
+        // it, closing the link to this one first.
         for (final FoundNode n in app.found.values)
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(n.name),
-            subtitle: Text('${n.deviceId}, ${n.rssi ?? '?'} dBm'),
-            onTap: app.connecting
+            subtitle: Text(
+              app.connectedTo(n.deviceId)
+                  ? 'Connected'
+                  : '${n.deviceId}, ${n.rssi ?? '?'} dBm',
+            ),
+            onTap: app.connecting || app.connectedTo(n.deviceId)
                 ? null
-                : () => _try(() => app.connect(n), 'Connecting failed'),
+                : () => _connect(() => app.connect(n)),
           ),
+        ..._looking(),
+      ],
+    ];
+  }
+
+  /// The search for the paired node, which the person can stop until
+  /// they connect.
+  List<Widget> _looking() {
+    final l = lookingLine(app);
+    if (l == null) return [];
+    return [
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(child: Text(l)),
+          TextButton(
+            onPressed: app.stopLooking,
+            child: const Text('Stop looking'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _battery() {
+    final e = _exempt;
+    if (e == null) return [];
+    return [
+      _heading('Battery'),
+      Text(
+        e
+            ? 'bark is exempt from battery optimisation: Android lets it '
+                  'keep the link to the node while the screen is off.'
+            : 'bark is not exempt from battery optimisation: with the '
+                  'screen off, some phones close its link to the node after '
+                  'some hours.',
+      ),
+      if (!e) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: app.notifier.askBatteryExempt,
+            child: const Text('Exempt bark'),
+          ),
+        ),
       ],
     ];
   }
@@ -176,13 +346,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final here = s.address;
     final st = s.status;
     final atHome = app.atHome;
-    final moved = here != null && home?.toString() != here.toString();
     return [
       _heading('Home node'),
       Text(
         home == null
-            ? 'No home node: your card carries the address of the node you '
-                  'are connected to, which changes when it moves.'
+            ? 'No home node: your card carries no address, so people can '
+                  'answer you only after you write to them.'
             : 'Your home node is at $home. Your card carries its address, '
                   'and it holds your mailbox key. "Fetch my mail", the '
                   'inbox button on the first screen, brings your mail from '
@@ -208,7 +377,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Wrap(
         spacing: 8,
         children: [
-          if (moved)
+          if (here != null && !atHome)
             FilledButton(
               onPressed: () => _setHome(here),
               child: const Text('Make this node my home'),
@@ -228,6 +397,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
         ],
       ),
+      SendCardLine(app, padding: EdgeInsets.zero),
     ];
   }
 

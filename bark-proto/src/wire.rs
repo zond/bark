@@ -411,6 +411,18 @@ impl Packet<'_> {
     }
 }
 
+impl Packet<'_> {
+    /// The node that sent the frame: every packet names it, a heartbeat
+    /// its sender, an ACK the answering node and a DATA `src_hop`.
+    pub fn sender(&self) -> NodeId {
+        match self {
+            Packet::Heartbeat(h) => h.id,
+            Packet::Ack(a) => a.from,
+            Packet::Data(d) => d.src_hop,
+        }
+    }
+}
+
 impl<'a> Packet<'a> {
     /// Decode a received frame. Never panics, whatever the bytes.
     pub fn decode(b: &'a [u8]) -> Result<Packet<'a>, DecodeError> {
@@ -526,6 +538,7 @@ mod tests {
             // Every heartbeat is read, whatever format its sender speaks.
             let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
+            prop_assert_eq!(Packet::Heartbeat(hb).sender(), id);
             prop_assert_eq!(hb.position(position), position);
         }
 
@@ -541,6 +554,7 @@ mod tests {
             let wait = if refused { step } else { 0 };
             let ack = Ack { msg_id, from, to, refused, wait, seen };
             round_trip(&Packet::Ack(ack));
+            prop_assert_eq!(Packet::Ack(ack).sender(), from);
             let flipped = Ack { refused: !refused, seen: false, ..ack };
             prop_assert!(ack.answers(&flipped));
             // A seen ACK with a wait is of no kind.
@@ -566,6 +580,7 @@ mod tests {
         ) {
             let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, payload: &payload };
             round_trip(&Packet::Data(d));
+            prop_assert_eq!(Packet::Data(d).sender(), src_hop);
             // The ID survives the trip: it depends only on fields every hop keeps.
             let mut buf = [0; MAX_FRAME];
             let len = Packet::Data(d).encode(&mut buf).unwrap();

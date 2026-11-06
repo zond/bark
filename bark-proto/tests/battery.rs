@@ -123,7 +123,7 @@ fn a_carried_relay_keeps_its_grace() {
     h.run_for(secs(GRACE + 60));
     assert!(!h.nodes[r].core.sleepy());
     for k in 0..=8 {
-        let east = 100.0 + 10.0 * k as f64;
+        let east = 300.0 + 10.0 * k as f64;
         h.command(
             r,
             AppCommand::Fix {

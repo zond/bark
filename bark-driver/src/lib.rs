@@ -33,7 +33,7 @@ use core::future::pending;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
-use bark_proto::wire::MAX_PAYLOAD;
+use bark_proto::wire::{Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
     Stored, MAX_FRAME,
@@ -64,6 +64,11 @@ pub const FAILED_RSSI_DBM: i16 = 0;
 /// converter for microseconds, so it costs nothing measurable either.
 pub const BATTERY_EVERY: Duration = Duration::from_secs(60);
 
+/// How often the driver logs that the application said it was ready and
+/// gave nothing. Once a minute shows a fault on the bench without filling
+/// the log, as the fault can recur at every timer or radio event.
+pub const EMPTY_READY_LOG_EVERY: Duration = Duration::from_secs(60);
+
 /// What the radio found after [`Radio::wait`] returned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Heard {
@@ -85,10 +90,47 @@ pub enum Heard {
     Nothing,
 }
 
+/// The node a bench build's radio is deaf to, from `BARK_IGNORE` at build
+/// time: twelve hex digits, as the banner and the USB serial number give a
+/// node ID. Boards on one desk all hear each other, and two of them deaf to
+/// each other make a line with a third between them
+/// (`docs/bringup-2026-11-06.md`). `None`, hearing every node, in every
+/// other build.
+pub const BENCH_DEAF_TO: Option<NodeId> = match option_env!("BARK_IGNORE") {
+    None => None,
+    Some(hex) => Some(node_id_of_hex(hex)),
+};
+
+/// A node ID from its twelve hex digits; any other text fails the build
+/// when it is a constant's.
+pub const fn node_id_of_hex(hex: &str) -> NodeId {
+    let b = hex.as_bytes();
+    assert!(b.len() == 2 * NodeId::LEN, "a node ID is twelve hex digits");
+    let mut id = [0u8; NodeId::LEN];
+    let mut i = 0;
+    while i < b.len() {
+        let digit = match b[i] {
+            b'0'..=b'9' => b[i] - b'0',
+            b'a'..=b'f' => b[i] - b'a' + 10,
+            b'A'..=b'F' => b[i] - b'A' + 10,
+            _ => panic!("a node ID is twelve hex digits"),
+        };
+        id[i / 2] = id[i / 2] << 4 | digit;
+        i += 1;
+    }
+    NodeId(id)
+}
+
 /// The half-duplex LoRa radio at bark's modulation (spec "Physical layer").
 pub trait Radio {
     /// A failure of the radio or its bus.
     type Error: Debug;
+
+    /// A node whose frames the driver drops as if this radio never heard
+    /// them; only a bench build has one ([`BENCH_DEAF_TO`]). The radio
+    /// still receives them, so they still keep it busy and its
+    /// listen-before-talk still sees them.
+    const DEAF_TO: Option<NodeId> = None;
 
     /// Listen on `channel` from whatever state the radio is in.
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error>;
@@ -159,6 +201,10 @@ pub enum Request {
     /// `AppCommand::Fix` if it passes the core's
     /// ([`Core::fix_in_reach`]) too.
     Fix(Position),
+    /// The GPS runs and gave no fix that passed the receiver's checks,
+    /// since the last fix: the driver tells the core
+    /// (`AppCommand::NoFix`). Sent at the change from fixes to none.
+    NoFix,
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -175,9 +221,13 @@ pub enum Gps {
 
 /// The application side of the node (core-interface §4).
 pub trait App {
-    /// Resolves when a message waits to be sent, at once if one already
-    /// does, if `offer`; when a [`Request`] waits; and when the power may
-    /// have changed since [`App::power`] last answered. Cancel-safe.
+    /// Resolves when something new arrived for the driver since it last
+    /// resolved: a [`Request`], a change of power since [`App::power`]
+    /// last answered, or, if `offer`, a message. It resolves only when the
+    /// driver will get something, never for what already waited when it
+    /// began. `offer` is whether the core accepts a message now; one that
+    /// arrives while it does not, the application holds or refuses.
+    /// Cancel-safe (core-interface §4).
     async fn ready(&mut self, offer: bool);
 
     /// The next request waiting, if any. The driver takes every one each
@@ -185,8 +235,9 @@ pub trait App {
     fn request(&mut self) -> Option<Request>;
 
     /// Hand over the waiting message: its payload into `payload`, the rest
-    /// returned. The driver calls this only while the core accepts a
-    /// message, and the core then takes it.
+    /// returned. The driver calls this before every wait and each time
+    /// [`App::ready`] resolves, but only while the core accepts a message,
+    /// and the core then takes it.
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing>;
 
     /// What the core tells the application: a message for it, or its own
@@ -237,6 +288,9 @@ pub struct Stats {
     /// Longest stretch the loop spent away from the radio while the radio
     /// kept listening: a frame that ends in it waits in the radio.
     pub longest_away: Duration,
+    /// Times [`App::ready`] resolved and the application gave nothing,
+    /// against its contract.
+    pub empty_readies: u32,
 }
 
 /// The loop: one core, one radio, one clock, one application.
@@ -258,6 +312,12 @@ pub struct Driver<C, R, K, A> {
     /// The last fix was dropped as out of reach: the next is logged only
     /// once one is taken again.
     fix_dropped: bool,
+    /// [`App::ready`] last resolved and the application gave nothing,
+    /// against its contract: it is not waited on until the clock or the
+    /// radio wakes the loop.
+    app_empty: bool,
+    /// When an empty readiness was last logged.
+    empty_logged: Option<Instant>,
     /// Where the core wants the radio to listen.
     resting: Option<Channel>,
     /// Until when the core lets the radio receive duty-cycled
@@ -295,6 +355,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             search_until: None,
             gps: None,
             fix_dropped: false,
+            app_empty: false,
+            empty_logged: None,
             resting: None,
             sniff_until: None,
             listening: None,
@@ -341,7 +403,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if !self.booted {
             self.booted = true;
             self.deliver(Event::Wakeup).await?;
-            return self.report_power().await;
+            return self.report_power().await.map(drop);
         }
         self.listen_resting().await?;
         let now = self.clock.now();
@@ -358,6 +420,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if self.battery_at.is_some_and(|t| now >= t) {
             return self.read_battery(now).await;
         }
+        // A message that waits goes now, whatever woke the loop, as
+        // `ready` resolves only for what is new.
+        let offer = self.core.accepts_send(now);
+        if offer && self.hand_over().await? {
+            return Ok(());
+        }
 
         let wake = self.core.next_wakeup();
         let hold_end = self.held_since.map(|t| t + MAX_AIRTIME);
@@ -365,7 +433,6 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             earlier(earlier(wake, hold_end), self.radio_due()),
             self.battery_at,
         );
-        let offer = self.core.accepts_send(now);
         let clock = &self.clock;
         let timer = async {
             match deadline {
@@ -373,7 +440,20 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 None => pending().await,
             }
         };
-        let woke = select3(timer, self.radio.wait(), self.app.ready(offer)).await;
+        // An application whose readiness gave nothing may resolve at once
+        // again and keep the loop, and the executor's other tasks, from
+        // ever waiting. So it is not asked again until something else
+        // wakes the loop, and until then it is as if it were idle.
+        let app_empty = self.app_empty;
+        let app = &mut self.app;
+        let ready = async {
+            match app_empty {
+                true => pending().await,
+                false => app.ready(offer).await,
+            }
+        };
+        let woke = select3(timer, self.radio.wait(), ready).await;
+        self.app_empty = false;
 
         let start = self.clock.now();
         let listening = self.listening;
@@ -385,13 +465,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             },
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
-            Either3::Third(()) => match self.report_power().await {
-                Ok(()) => match self.requests().await {
-                    Ok(()) => self.offer().await,
-                    e => e,
-                },
-                e => e,
-            },
+            Either3::Third(()) => self.serve_app(start).await,
         };
         if listening.is_some() && self.listening == listening {
             let away = self.clock.now().since(start);
@@ -448,6 +522,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 rssi_dbm,
                 snr_db,
             } => {
+                if let Some(id) = R::DEAF_TO {
+                    let bytes = &self.rx[..len as usize];
+                    if Packet::decode(bytes).is_ok_and(|p| p.sender() == id) {
+                        return Ok(());
+                    }
+                }
                 self.stats.frames += 1;
                 if let Some(channel) = listening {
                     // A copy, so the core can borrow it while the driver
@@ -466,19 +546,39 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         Ok(())
     }
 
+    /// Take what the application is ready with: the power, its requests,
+    /// then its message. If it gave nothing, note it (`app_empty`).
+    async fn serve_app(&mut self, now: Instant) -> Result<(), R::Error> {
+        // `|`, not `||`: each is taken whatever the ones before gave.
+        let gave = self.report_power().await? | self.requests().await? | self.offer().await?;
+        if !gave {
+            self.app_empty = true;
+            self.stats.empty_readies += 1;
+            if self
+                .empty_logged
+                .is_none_or(|t| now >= t + EMPTY_READY_LOG_EVERY)
+            {
+                self.empty_logged = Some(now);
+                log::warn!("app said ready but offered nothing");
+            }
+        }
+        Ok(())
+    }
+
     /// Report the power to the core if the application can tell it and it
-    /// is not what the core was last told.
-    async fn report_power(&mut self) -> Result<(), R::Error> {
+    /// is not what the core was last told; whether it was reported.
+    async fn report_power(&mut self) -> Result<bool, R::Error> {
         let power = self.app.power();
         if power.is_none() || power == self.power {
-            return Ok(());
+            return Ok(false);
         }
         self.power = power;
         let external = power.unwrap_or_default();
         // On battery the first reading comes at the next step.
         self.battery_at = (!external).then(|| self.clock.now());
         self.deliver(Event::App(AppCommand::Power { external }))
-            .await
+            .await?;
+        Ok(true)
     }
 
     /// Read the battery and report the reading to the core.
@@ -493,9 +593,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         }
     }
 
-    /// Carry out the application's requests.
-    async fn requests(&mut self) -> Result<(), R::Error> {
+    /// Carry out the application's requests; whether there were any.
+    async fn requests(&mut self) -> Result<bool, R::Error> {
+        let mut any = false;
         while let Some(request) = self.app.request() {
+            any = true;
             match request {
                 Request::Confirm(msg_id) => {
                     self.core.confirm(msg_id);
@@ -508,9 +610,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                     self.deliver(Event::App(AppCommand::ClearMapPoint)).await?
                 }
                 Request::Fix(position) => self.fix(position).await?,
+                Request::NoFix => self.deliver(Event::App(AppCommand::NoFix)).await?,
             }
         }
-        Ok(())
+        Ok(any)
     }
 
     /// Hand the core a fix if it is in reach of the relays the core knows
@@ -521,8 +624,13 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if !in_reach && !self.fix_dropped {
             log::warn!("gps: fix {} beyond every known relay; dropped", position);
         }
+        let was = self.fix_dropped;
         self.fix_dropped = !in_reach;
         if !in_reach {
+            // A dropped fix is no fix (spec "Position").
+            if !was {
+                self.deliver(Event::App(AppCommand::NoFix)).await?;
+            }
             return Ok(());
         }
         self.search_until = None;
@@ -543,12 +651,20 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         }
     }
 
-    async fn offer(&mut self) -> Result<(), R::Error> {
+    /// Hand the core the application's message if it accepts one; whether
+    /// one was handed.
+    async fn offer(&mut self) -> Result<bool, R::Error> {
         if !self.core.accepts_send(self.clock.now()) {
-            return Ok(());
+            return Ok(false);
         }
+        self.hand_over().await
+    }
+
+    /// Hand the core the application's message, if it has one; whether
+    /// it had. Only while the core accepts one.
+    async fn hand_over(&mut self) -> Result<bool, R::Error> {
         let Some(out) = self.app.take(&mut self.payload) else {
-            return Ok(());
+            return Ok(false);
         };
         let payload = self.payload;
         let send = AppCommand::Send {
@@ -556,7 +672,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             dst_id: out.dst_id,
             payload: &payload[..out.len.min(MAX_PAYLOAD)],
         };
-        self.deliver(Event::App(send)).await
+        self.deliver(Event::App(send)).await?;
+        Ok(true)
     }
 
     /// Hand `event` to the core, keep what it asks for, and follow a change

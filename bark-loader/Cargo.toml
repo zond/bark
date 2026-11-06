@@ -19,6 +19,10 @@ embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "unstable-pac"] }
 embassy-sync = "=0.8.0"
 cortex-m = { version = "=0.7.9", features = ["critical-section-single-core"] }
 cortex-m-rt = "=0.7.7"
+# The flash traits the swap runs on, and the clock the external flash's
+# driver waits by.
+embedded-storage = "=0.3.2"
+embedded-hal = "=1.0.0"
 
 [build-dependencies]
 bark-image = { path = "../bark-image", default-features = false }

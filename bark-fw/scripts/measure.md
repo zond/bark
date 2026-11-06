@@ -247,6 +247,9 @@ hour after the cable goes (spec "Sleepy nodes").
 
 ### 5.1 Every long preamble is caught
 
+On the three-board desk the run is part of `docs/bringup-2026-11-06.md`,
+and `scripts/bench.py catch` counts it from the logs.
+
 On A, a bench frame of a DATA's length (36 bytes: the 29-byte DATA header
 before roadmap D113, 28 bytes since, and a short text) with the long preamble, 100 times, 5 s apart: 261.4 ms
 on air, 5.2 % of the period, under the console's 10 % cap. 5 s is not a
@@ -316,7 +319,13 @@ From the trace of duty-cycled receive:
   long preamble.
 - The level between pulses: everything on the board but the radio. The
   GPS is powered and dominates it (README); the rest is the MCU asleep,
-  the battery divider's 12 µA and the parts not driven. A level well
+  the battery divider's 12 µA, the external flash in deep power-down
+  (0.5 µA typical, `src/ext_flash.rs`) and the parts not driven.
+- The external flash's part: the same level from an image whose
+  `node_radio` skips `ext_flash::init`, same board, same battery.
+  About 11.5 µA higher if the command works (12 µA standby against
+  0.5 µA, ZD25WQ16B datasheet Table 4-2); the same level means the chip
+  did not take it, or its rail is not what the schematic shows. A level well
   above their sum points at a clock kept running, the 32 MHz crystal or
   a TIMER (README); a 1 Hz square wave, the LED.
 - The average over whole cycles, between beats, against the README's

@@ -68,6 +68,7 @@ class ConversationsScreen extends StatelessWidget {
               ),
             ),
           _connection(context),
+          SendCardLine(app),
           if (list.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
@@ -89,9 +90,13 @@ class ConversationsScreen extends StatelessWidget {
 
   Widget _connection(BuildContext context) {
     final s = app.session;
+    final looking = lookingLine(app);
     final text = s.connected
-        ? 'Connected to ${nodeName(s.node!.id)}'
-        : 'Not connected to a node: texts wait on the phone';
+        ? 'Connected to ${nodeName(s.node!.id)}, paired'
+        : looking != null
+        ? '$looking Texts wait on the phone until it is in reach.'
+        : 'Not connected to a node: texts wait on the phone. '
+              '${pairedLine(s)}';
     return ListTile(
       dense: true,
       leading: Icon(
@@ -104,16 +109,15 @@ class ConversationsScreen extends StatelessWidget {
 
   Widget _row(BuildContext context, Conversation c) {
     final last = c.last!;
-    final o = last.sent;
     return ListTile(
       leading: CircleAvatar(
         child: Icon(c.contact == null ? Icons.person_outline : Icons.person),
       ),
       title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        o == null
-            ? last.text
-            : 'You: ${last.text}, ${stateLabel(app.session, o)}',
+        last.mine
+            ? 'You: ${last.text}, ${textLabel(app.session, last.outs)}'
+            : last.text,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),

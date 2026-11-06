@@ -1,13 +1,15 @@
 // The app's side of the link against the fake node: the queue, the
 // inbox, given back and the version check; and what is sealed and
 // opened on top of them: texts, acknowledgements, first messages and
-// the mailbox's replies.
+// the mailbox's replies; and the node paired with, and whether the person
+// stopped looking for it, kept across a restart.
 
 import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/conversations.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
@@ -205,20 +207,23 @@ void main() {
     });
   });
 
-  test('the first texts go as first messages, then boxed', () {
+  test('a text to someone who has written is boxed from the first', () {
     run((async, p, node) {
+      // The fake friend's first messages show they hold the person's card.
       final f = friendOf(p, node);
+      expect(f.verified, isFalse);
+      expect(f.hasMine, isTrue);
       p.messenger.sendText(f, 'first');
       async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
       p.messenger.sendText(friendOf(p, node), 'second');
       async.flushMicrotasks();
       final [first, second] = p.session.outbox;
-      expect(formOf(first.payload), Form.introduction);
+      expect(formOf(first.payload), Form.boxed);
       expect(formOf(second.payload), Form.boxed);
       expect(second.sent, greaterThan(first.sent));
       // The first names the node the person writes from; the echo answered
       // it, so the second does not.
-      final (h1, _) = readPlain(openIntro(sodium, node.friend, first.payload));
+      final (h1, _) = readPlain(openBox(friendPair(p, node), first.payload));
       expect(h1.address.toString(), p.me.nodeAddress.toString());
       final (h2, _) = readPlain(openBox(friendPair(p, node), second.payload));
       expect(h2.address, isNull);
@@ -371,6 +376,129 @@ void main() {
     });
   });
 
+  group('long texts', () {
+    /// The records of a payload from the phone to the fake friend.
+    (Header, List<Record>) opened(Phone p, FakeNode node, Uint8List payload) =>
+        readPlain(switch (formOf(payload)) {
+          Form.introduction => openIntro(sodium, node.friend, payload),
+          _ => openBox(friendPair(p, node), payload),
+        });
+
+    test('go as parts of consecutive sent, queued in order', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        final text = List.filled(60, 'word').join(' ');
+        final parts = p.messenger.partsOf(f, text);
+        expect(parts.length, greaterThan(1));
+        p.messenger.sendText(f, text);
+        async.flushMicrotasks();
+        final out = p.session.outbox;
+        expect(out.length, parts.length);
+        final n = parts.length;
+        for (final (i, o) in out.indexed) {
+          expect((o.part, o.of, o.sent), (i + 1, n, out.first.sent + i));
+          final (h, rs) = opened(p, node, o.payload);
+          expect(h.sent, o.sent);
+          final t = rs.whereType<TextRecord>().single;
+          expect((t.text, t.part, t.of), (parts[i], i + 1, n));
+          expect(o.payload.length, lessThanOrEqualTo(maxAppPayload));
+        }
+        expect(out.map((o) => o.body).join(), text);
+        // The next message's sent is past the last part's.
+        p.messenger.sendText(f, 'after');
+        async.flushMicrotasks();
+        expect(p.session.outbox.last.sent, out[n - 1].sent + 1);
+      });
+    });
+
+    test('over 16 parts is refused, and nothing is queued', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        Object? error;
+        p.messenger.sendText(f, 'x' * 3000).catchError((e) => error = e);
+        async.flushMicrotasks();
+        expect(error, isA<BadPayload>());
+        expect('$error', contains('16 at most'));
+        expect(p.session.outbox, isEmpty);
+      });
+    });
+
+    test('come together in any order; a tap acknowledges what has come', () {
+      run((async, p, node) {
+        void part(int id, int sent, String t, int n) => p.messenger.receive(
+          InboxMessage(id, fromFriend(node, p, sent, [TextRecord(t, n, 3)])),
+        );
+        part(11, 5002, 'three', 3);
+        part(12, 5000, 'one ', 1);
+        async.flushMicrotasks();
+        final s = p.session;
+        final last = s.received.last;
+        expect(s.partsOf(last).map((r) => r?.body), ['one ', null, 'three']);
+        Entry entry() => thread(
+          hex(node.friend.identity),
+          p.contacts.list,
+          s.outbox,
+          s.received,
+        ).entries.last;
+        expect(entry().text, 'one \npart 2 of 3 not yet here\nthree');
+        expect(entry().pieces.map((x) => x.missing), [false, true, false]);
+
+        // One tap: one message naming both parts that came.
+        p.messenger.acknowledge(last);
+        async.flushMicrotasks();
+        final ack = s.outbox.last;
+        expect(ack.kind, OutKind.ack);
+        expect(
+          opened(p, node, ack.payload).$2.map((r) => (r as AckRecord).sent),
+          [5000, 5002],
+        );
+        expect(entry().arrived.every((r) => r.acked), isTrue);
+
+        // The part that comes later is the next tap's, alone.
+        part(13, 5001, 'two ', 2);
+        async.flushMicrotasks();
+        expect(entry().text, 'one two three');
+        expect(entry().arrived.every((r) => r.acked), isFalse);
+        p.messenger.acknowledge(s.received.last);
+        async.flushMicrotasks();
+        expect(
+          opened(
+            p,
+            node,
+            s.outbox.last.payload,
+          ).$2.map((r) => (r as AckRecord).sent),
+          [5001],
+        );
+        // Its copy, read again, is not kept twice.
+        part(14, 5001, 'two ', 2);
+        async.flushMicrotasks();
+        expect(s.received.where((r) => r.sent == 5001).length, 1);
+      });
+    });
+
+    test('a sent text is acknowledged when every part is', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        p.messenger.sendText(f, List.filled(60, 'word').join(' '));
+        async.flushMicrotasks();
+        final out = [...p.session.outbox];
+        p.messenger.receive(
+          InboxMessage(
+            21,
+            fromFriend(node, p, 9000, [
+              for (final o in out.skip(1)) AckRecord(o.sent),
+            ]),
+          ),
+        );
+        async.flushMicrotasks();
+        expect(out.map((o) => o.acked), [
+          false,
+          ...out.skip(1).map((_) => true),
+        ]);
+      });
+    });
+  });
+
   test('a message of one\'s own sent back does not open as the other\'s', () {
     run((async, p, node) {
       final f = friendOf(p, node);
@@ -387,7 +515,7 @@ void main() {
     });
   });
 
-  test('a first message naming a verified contact is dropped', () {
+  test('a first message naming a verified contact is marked as one', () {
     run((async, p, node) {
       final f = friendOf(p, node);
       p.messenger.sendText(f, 'x');
@@ -401,10 +529,12 @@ void main() {
           const TextRecord('I am your friend, honest'),
         ]),
       );
-      final before = p.session.received.length;
       p.messenger.receive(InboxMessage(3, forged));
       async.flushMicrotasks();
-      expect(p.session.received.length, before);
+      final r = p.session.received.last;
+      expect(r.body, 'I am your friend, honest');
+      expect(r.intro, isTrue);
+      expect(friendOf(p, node).verified, isTrue);
     });
   });
 
@@ -553,6 +683,28 @@ void main() {
       expect(again.session.received.first.from, hex(node.friend.identity));
       expect(again.session.outbox.single.text, 'kept');
       expect(again.session.outbox.single.id, p.session.outbox.single.id);
+    });
+  });
+
+  test('the node paired with, its loss and a stop survive a restart', () {
+    run((async, p, node) {
+      p.session.setPaired('bark-fa4e00000001');
+      async.flushMicrotasks();
+      var again = p.again(sodium, () => start);
+      async.flushMicrotasks();
+      expect(again.session.pairedWith, 'bark-fa4e00000001');
+      expect(again.session.pairingLost, isFalse);
+      again.session.setPaired('bark-fa4e00000001', lost: true);
+      async.flushMicrotasks();
+      again = again.again(sodium, () => start);
+      async.flushMicrotasks();
+      expect(again.session.pairingLost, isTrue);
+      expect(again.session.stopped, isFalse);
+      again.session.setStopped(true);
+      async.flushMicrotasks();
+      again = again.again(sodium, () => start);
+      async.flushMicrotasks();
+      expect(again.session.stopped, isTrue);
     });
   });
 

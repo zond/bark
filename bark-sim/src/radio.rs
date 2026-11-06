@@ -597,7 +597,10 @@ impl Sim {
                             }
                             st.sniff = Some((self.now, until));
                         }
-                        got.push((b, r.mw, r.max_i_mw));
+                        // A bench build's driver drops it (`TableLink::deaf`).
+                        if !self.links.deaf(tx.src, b) {
+                            got.push((b, r.mw, r.max_i_mw));
+                        }
                     }
                 }
             }

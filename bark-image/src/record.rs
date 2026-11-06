@@ -1,5 +1,5 @@
 //! The page [`crate::layout::RECORD`]: the header of the image staged in
-//! [`crate::layout::DFU`], which the application writes before it asks
+//! [`crate::layout::external::DFU`], which the application writes before it asks
 //! for the swap, and a word the loader writes once the image matches it.
 //!
 //! The word lets the loader tell a swap it has yet to start, whose image

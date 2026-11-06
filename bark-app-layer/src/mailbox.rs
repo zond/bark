@@ -20,15 +20,18 @@ use crate::{be, Address, MAX_PAYLOAD};
 
 /// Bytes of a slot: an erase page of 4096 holds 16.
 pub const SLOT_LEN: usize = 256;
-/// Slots in an erase page (nRF52840 Product Specification, NVMC: a page
-/// is 4096 bytes).
+/// Slots in an erase page of 4096 bytes (`flash_ring::PAGE_LEN`).
 pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 
 /// Where a slot's check sits: the last four bytes, over all before them.
 const CHECK_AT: usize = SLOT_LEN - 4;
 /// Where a slot's payload starts: after its number (3) and length (1).
 const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
-const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= CHECK_AT);
+/// Where a slot's message ID sits: the four bytes before the check, so
+/// that the payload's place is the same in a slot written before it was
+/// kept, whose ID reads as `0xFFFF_FFFF`, the erased flash.
+const ID_AT: usize = CHECK_AT - 4;
+const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= ID_AT);
 
 /// Bytes of the mailbox's kept state.
 pub const STATE_LEN: usize = 64;
@@ -137,8 +140,13 @@ impl<R: Ring> Mailbox<R> {
             newest: 0,
             read: 0,
         };
-        m.newest = (0..m.slots())
-            .filter_map(|s| m.slot(s).map(|(n, _)| n))
+        // A whole slot counts only in its own place: one that is not, left
+        // by a ring laid out otherwise before, would set the newest number
+        // past slots that are not erased, and the next item written over
+        // one of them would fail its check.
+        let slots = m.slots();
+        m.newest = (0..slots)
+            .filter_map(|s| m.slot(s).map(|(n, _)| n).filter(|&n| (n - 1) % slots == s))
             .max()
             .unwrap_or(0);
         if let Some(s) = m.ring.state() {
@@ -153,17 +161,18 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// The ring, for a driver that writes it later than it is asked to
-    /// (`flash::FlashRing`).
+    /// (`flash_ring::FlashRing`).
     pub fn ring_mut(&mut self) -> &mut R {
         &mut self.ring
     }
 
-    /// The oldest item the phone at the node has not confirmed: its number
-    /// and its length in `out`. The phone reads the ring from where it
-    /// last confirmed; the ring keeps every item for fetches either way.
-    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, usize)> {
+    /// The oldest item the phone at the node has not confirmed: its number,
+    /// the message ID it arrived with and its length in `out`. The phone
+    /// reads the ring from where it last confirmed; the ring keeps every
+    /// item for fetches either way.
+    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
         let from = (self.read + 1).max(self.oldest());
-        (from..=self.newest).find_map(|n| self.item(n, out).map(|l| (n, l)))
+        (from..=self.newest).find_map(|n| self.read_item(n, out).map(|(id, l)| (n, id, l)))
     }
 
     /// Items the phone at the node has not confirmed.
@@ -231,6 +240,11 @@ impl<R: Ring> Mailbox<R> {
 
     /// Item `n` into `out`, its length; `None` once it is overwritten.
     pub fn item(&self, n: u32, out: &mut [u8; MAX_PAYLOAD]) -> Option<usize> {
+        self.read_item(n, out).map(|(_, len)| len)
+    }
+
+    /// Item `n` into `out`: the message ID it arrived with, and its length.
+    fn read_item(&self, n: u32, out: &mut [u8; MAX_PAYLOAD]) -> Option<(MsgId, usize)> {
         if n == 0 || n > self.newest {
             return None;
         }
@@ -242,11 +256,14 @@ impl<R: Ring> Mailbox<R> {
             return None;
         }
         out[..len].copy_from_slice(&b[PAYLOAD_AT..PAYLOAD_AT + len]);
-        Some(len)
+        Some((MsgId(be(&b[ID_AT..CHECK_AT])), len))
     }
 
-    /// A payload the core delivered to this node's application.
-    pub fn arrive(&mut self, payload: &[u8]) -> Arrival {
+    /// A payload the core delivered to this node's application, with its
+    /// message ID. The ID is kept with the item: the phone confirms an
+    /// item by it, and computed again from the node's address it would
+    /// change whenever the address does.
+    pub fn arrive(&mut self, msg_id: MsgId, payload: &[u8]) -> Arrival {
         let Some(key) = self.key else {
             return Arrival::NotHome;
         };
@@ -271,6 +288,7 @@ impl<R: Ring> Mailbox<R> {
         b[..seal::NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
         b[seal::NUMBER_LEN] = payload.len() as u8;
         b[PAYLOAD_AT..PAYLOAD_AT + payload.len()].copy_from_slice(payload);
+        b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
         let check = fnv1a(&b[..CHECK_AT]);
         b[CHECK_AT..].copy_from_slice(&check.to_be_bytes());
         self.ring.write(s, &b);
@@ -298,7 +316,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
-    /// skips past items no longer in the ring.
+    /// skips past items no longer in the ring or too long to seal, after
+    /// which none is due.
     pub fn reply_due(&self) -> bool {
         self.key.is_some() && self.reply.is_some_and(|r| r.next <= r.last || !r.answered)
     }
@@ -328,9 +347,10 @@ impl<R: Ring> Mailbox<R> {
             out[..nothing.len()].copy_from_slice(&nothing);
             sealed = Some((0, nothing.len()));
         }
-        let (number, len) = sealed?;
-        r.answered = true;
+        // Kept with nothing to send too, so that no reply is due after.
+        r.answered |= sealed.is_some();
         self.reply = Some(r);
+        let (number, len) = sealed?;
         let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
         self.in_flight = Some(InFlight { msg_id, number });
         Some(Outgoing {

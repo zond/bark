@@ -5,7 +5,7 @@
 mod common;
 
 use bark_proto::wire::Packet;
-use bark_proto::{AppCommand, Config, Instant, Position, Relay};
+use bark_proto::{AppCommand, Channel, Config, Instant, Position, Relay, Stored};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -153,4 +153,58 @@ fn a_fix_is_in_reach_near_a_known_relay() {
     assert!(relay.fix_in_reach(pos(3_200.0)));
     assert!(!relay.fix_in_reach(pos(3_400.0)));
     assert!(!relay.fix_in_reach(pos(-2_800.0)));
+}
+
+/// The bench case of roadmap D133: a board built without a place whose
+/// stored state says it was carried has no place, since a carried node's
+/// stored place is where it stood when last fixed. It hears its
+/// neighbour before it has a place, sends no heartbeat, checks its first
+/// fix against no neighbour, and takes it as its place, fixed; the
+/// neighbour it heard is rebuilt near it, so the next fix is in reach.
+#[test]
+fn a_node_stored_as_carried_has_no_place() {
+    let stored = Stored {
+        home: Channel::all().next().expect("a channel"),
+        place: Position::from_degrees(59.2, 18.2),
+        carried: true,
+        map_point: false,
+        anchor: None,
+        relay: true,
+        battery_scale: None,
+    };
+    let unplaced = Config {
+        placed: false,
+        stored: Some(stored),
+        ..Config::default()
+    };
+    let placed = Config {
+        position: pos(0.0),
+        ..Config::default()
+    };
+    let mut h = Harness::powered(vec![
+        (Relay::new(placed, 1), true),
+        (Relay::new(unplaced, 2), true),
+    ]);
+    h.link(0, 1);
+    h.run_until(at(600), |_| false);
+    assert!(!h.nodes[1].core.placed());
+    assert!(h.nodes[1].core.neighbours().next().is_some());
+    assert!(heartbeats(&h, 1, Instant::ZERO, pos(0.0)).is_empty());
+    assert!(h.nodes[1].core.fix_in_reach(pos(300.0)));
+    h.command(
+        1,
+        AppCommand::Fix {
+            position: pos(300.0),
+        },
+    );
+    let node = &h.nodes[1].core;
+    assert!(node.placed() && !node.carried());
+    assert_eq!(node.config().position, pos(300.0));
+    assert_eq!(node.neighbours().next().map(|n| n.position), Some(pos(0.0)));
+    assert!(node.fix_in_reach(pos(350.0)));
+    h.run_until(at(620), |_| false);
+    let sent = heartbeats(&h, 1, at(600), pos(0.0));
+    assert!(!sent.is_empty() && sent.iter().all(|&p| p == pos(300.0)));
+    let kept = h.nodes[1].stored.expect("a place to keep");
+    assert_eq!((kept.place, kept.carried), (pos(300.0), false));
 }

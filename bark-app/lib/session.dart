@@ -49,13 +49,7 @@ enum Toward {
   there,
 
   /// Their home's mailbox, the address on their card.
-  home;
-
-  /// For the sent row.
-  String get label => switch (this) {
-    there => 'to where they were',
-    home => 'to their home',
-  };
+  home,
 }
 
 class Outgoing {
@@ -79,6 +73,11 @@ class Outgoing {
   /// Which of the contact's addresses it went to; null for a fetch.
   final Toward? toward;
 
+  /// Its number and the count of parts, for a part of a split text; 1 of
+  /// 1 otherwise.
+  final int part;
+  final int of;
+
   /// The other side acknowledged it; a fetch, the home node answered.
   bool acked;
   OutState state;
@@ -94,9 +93,14 @@ class Outgoing {
     this.to,
     this.body,
     this.toward,
+    this.part = 1,
+    this.of = 1,
     this.acked = false,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
+
+  /// The `sent` of its text's first part, which names the text.
+  int get first => sent - part + 1;
 
   String get text => switch (kind) {
     OutKind.text => body ?? '',
@@ -114,6 +118,8 @@ class Outgoing {
     'sent': sent,
     'body': body,
     'toward': toward?.name,
+    'part': part,
+    'of': of,
     'acked': acked,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
@@ -134,6 +140,8 @@ class Outgoing {
           toward: j['toward'] == null
               ? null
               : Toward.values.byName(j['toward'] as String),
+          part: j['part'] as int? ?? 1,
+          of: j['of'] as int? ?? 1,
           acked: j['acked'] as bool,
           state: OutState.values.byName(j['state'] as String),
         )
@@ -162,6 +170,15 @@ class Received {
   /// It came out of the person's mailbox.
   final bool mailbox;
 
+  /// Its number and the count of parts, for a part of a split text; 1 of
+  /// 1 otherwise.
+  final int part;
+  final int of;
+
+  /// It came as a first message, which anyone holding the person's card
+  /// and its sender's could have made.
+  final bool intro;
+
   /// The person acknowledged it.
   bool acked;
 
@@ -173,10 +190,23 @@ class Received {
     this.sent,
     this.body,
     this.mailbox = false,
+    this.part = 1,
+    this.of = 1,
+    this.intro = false,
     this.acked = false,
   }) : payload = Uint8List.fromList(payload);
 
   String get text => body ?? '(did not open) ${hex(payload)}';
+
+  /// The `sent` of its text's first part, which names the text.
+  int? get first => switch (sent) {
+    final s? => s - part + 1,
+    null => null,
+  };
+
+  /// Whether `o` is a part of the same text from the same sender.
+  bool sameText(Received o) =>
+      from != null && o.from == from && o.first == first && o.of == of;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -186,6 +216,9 @@ class Received {
     'sent': sent,
     'body': body,
     'mailbox': mailbox,
+    'part': part,
+    'of': of,
+    'intro': intro,
     'acked': acked,
   };
 
@@ -197,12 +230,18 @@ class Received {
     sent: j['sent'] as int?,
     body: j['body'] as String?,
     mailbox: j['mailbox'] as bool,
+    part: j['part'] as int? ?? 1,
+    of: j['of'] as int? ?? 1,
+    intro: j['intro'] as bool? ?? false,
     acked: j['acked'] as bool,
   );
 }
 
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
+
+/// A log line's local time of day, to the millisecond.
+String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
 
 class Session extends ChangeNotifier {
   final Store store;
@@ -213,6 +252,9 @@ class Session extends ChangeNotifier {
   /// Reads a message from the inbox and keeps what it says; without one
   /// the payload is kept as it came.
   Future<void> Function(InboxMessage)? reader;
+
+  /// Told of each message kept, once.
+  void Function(Received)? kept;
 
   /// The mailbox key a node should hold, if it is the person's home.
   Uint8List? Function(NodeInfo)? homeKey;
@@ -225,6 +267,9 @@ class Session extends ChangeNotifier {
   /// scrolls back through.
   final List<LogLine> log = [];
   static const logLines = 500;
+
+  /// Told of each log line as it is added.
+  void Function(LogLine)? noted;
 
   NodeLink? _link;
   NodeInfo? node;
@@ -242,6 +287,18 @@ class Session extends ChangeNotifier {
 
   final List<Outgoing> outbox = [];
   final List<Received> received = [];
+
+  /// The node this phone is paired with, by name; null before the first.
+  String? pairedWith;
+
+  /// That node no longer holds this phone's bond: another phone has
+  /// paired with it since (spec "Phone link", the replaced phone).
+  bool pairingLost = false;
+
+  /// The person closed the link or stopped looking for the paired node:
+  /// the app does not look for it until they connect. Kept, so that the
+  /// app started with the phone does not look either.
+  bool stopped = false;
 
   bool _writing = false;
   bool _draining = false;
@@ -289,18 +346,46 @@ class Session extends ChangeNotifier {
           for (final e in j['received'] as List)
             Received.fromJson(e as Map<String, dynamic>),
         ],
+        // Added after the format's first version: absent means none.
+        pairedWith: j['pairedWith'] as String?,
+        pairingLost: j['pairingLost'] as bool? ?? false,
+        stopped: j['stopped'] as bool? ?? false,
       ),
     );
     if (j == null) return;
     outbox.addAll(j.outbox);
     received.addAll(j.received);
+    pairedWith = j.pairedWith;
+    pairingLost = j.pairingLost;
+    stopped = j.stopped;
     notifyListeners();
   }
 
   Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
+    'pairedWith': pairedWith,
+    'pairingLost': pairingLost,
+    'stopped': stopped,
   });
+
+  /// The node `name` holds this phone's bond, or no longer does.
+  Future<void> setPaired(String name, {bool lost = false}) async {
+    if (pairedWith == name && pairingLost == lost) return;
+    pairedWith = name;
+    pairingLost = lost;
+    note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
+    notifyListeners();
+    await save();
+  }
+
+  /// The person stopped looking for the paired node, or connected.
+  Future<void> setStopped(bool s) async {
+    if (stopped == s) return;
+    stopped = s;
+    notifyListeners();
+    await save();
+  }
 
   void _badValue(Object e) =>
       _tell('The node sent a value this app cannot read: $e');
@@ -318,7 +403,9 @@ class Session extends ChangeNotifier {
 
   /// Adds a line to the log.
   void note(String s) {
-    log.add((at: now(), text: s));
+    final l = (at: now(), text: s);
+    log.add(l);
+    noted?.call(l);
     if (log.length > logLines) log.removeAt(0);
     notifyListeners();
   }
@@ -527,10 +614,23 @@ class Session extends ChangeNotifier {
     await save();
   }
 
+  /// The parts of `r`'s text that have come, by number from 1, null
+  /// where one has not.
+  List<Received?> partsOf(Received r) {
+    final parts = List<Received?>.filled(r.of, null);
+    for (final x in received) {
+      if (x.body != null && (identical(x, r) || x.sameText(r))) {
+        parts[x.part - 1] = x;
+      }
+    }
+    return parts;
+  }
+
   /// Keeps a received message.
   Future<void> addReceived(Received r) async {
     received.add(r);
     notifyListeners();
+    kept?.call(r);
     await save();
   }
 

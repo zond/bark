@@ -64,6 +64,7 @@ fn text_record<'a>(s: &str, buf: &'a mut [u8; MAX_PAYLOAD]) -> Record<'a> {
     let (encoding, n) = text::encode(s, buf).unwrap();
     Record::Text {
         encoding,
+        part: None,
         bytes: &buf[..n],
     }
 }
@@ -213,6 +214,52 @@ pub fn json() -> String {
             ("payload", h(&boxed(&f.bob, &f.alice, nonce, &p))),
         ],
     ));
+
+    // A text too long for one box, Alice to Bob, in two parts of
+    // consecutive `sent`: cut after the last space that leaves the first
+    // in a part's room, which it fills in windows-1251; the second, with
+    // a character the page lacks, in UTF-8.
+    let words = "Привіт! Ми на місці біля старої школи, вода є, світла немає з \
+                 ранку. Генератор працює дві години ввечері, тож заряджаємо \
+                 телефони по черзі. Приходьте до сьомої, візьміть ковдри й \
+                 ліхтарик. Дорогою обходьте міст — там ями 🙏";
+    let room = seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2;
+    let head: String = words.chars().take(room).collect();
+    let cut = head.rfind(' ').unwrap() + 1;
+    let mut fields = std::vec![("text", q(words))];
+    let mut items = Vec::new();
+    for (i, piece) in [&words[..cut], &words[cut..]].into_iter().enumerate() {
+        let header = Header {
+            greater: plain::greater(&f.alice.identity, &f.bob.identity),
+            sent: 1_000_200 + i as u32,
+            address: None,
+        };
+        let (encoding, n) = text::encode(piece, &mut tb).unwrap();
+        let record = Record::Text {
+            encoding,
+            part: Some(plain::Part {
+                number: i as u8 + 1,
+                of: 2,
+            }),
+            bytes: &tb[..n],
+        };
+        let p = plaintext(&header, &[record]);
+        let nonce = core::array::from_fn(|j| 0x20 + (i * 24 + j) as u8);
+        items.push(format!(
+            "{{\"text\": {}, \"sent\": {}, \"plaintext\": {}, \"nonce\": {}, \"payload\": {}}}",
+            q(piece),
+            header.sent,
+            h(&p),
+            h(&nonce),
+            h(&boxed(&f.alice, &f.bob, nonce, &p))
+        ));
+    }
+    fields.push(("room", format!("{room}")));
+    fields.push((
+        "parts",
+        format!("[\n      {}\n    ]", items.join(",\n      ")),
+    ));
+    parts.push(entry("box_parts", &fields));
 
     // A first message, Alice to Bob, with her card.
     let words = "Hello, it is Alice.";

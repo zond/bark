@@ -1,12 +1,13 @@
-//! Where everything sits in the T-Echo's flash and RAM, the one table the
-//! firmware, its loader, their linker scripts and `bark-fw/scripts/uf2.py`
-//! (through the symbols the linker scripts define) all take it from.
+//! Where everything sits in the T-Echo's flash, its external flash and
+//! its RAM, the one table the firmware, its loader, their linker scripts
+//! and `bark-fw/scripts/uf2.py` (through the symbols the linker scripts
+//! define) all take it from.
 //!
-//! Flash, 1 MiB in 4 KiB pages (nRF52840 Product Specification, Memory and
-//! NVMC: a page is the erase unit). What the board's bootloader fixes
-//! comes from its own source (roadmap D6, D129); what lies between is
-//! ours, laid out in `docs/mesh-update-2026-10-25.md`, "Flash layout", and
-//! `docs/softdevice-2026-11-05.md`:
+//! The internal flash, 1 MiB in 4 KiB pages (nRF52840 Product
+//! Specification, Memory and NVMC: a page is the erase unit). What the
+//! board's bootloader fixes comes from its own source (roadmap D6, D129);
+//! what lies between is ours, laid out in `docs/flash-plan-2026-11-06.md`,
+//! section 1 (roadmap D139):
 //!
 //! | Region | Holds |
 //! |---|---|
@@ -14,12 +15,16 @@
 //! | [`LOADER`] | our loader, where the bootloader jumps |
 //! | [`STATE`] | the loader's state: swap requested, progress, confirmed |
 //! | [`ACTIVE`] | the running image |
-//! | [`DFU`] | the staged image, one page larger than [`ACTIVE`] |
 //! | [`RECORD`] | the staged image's header, which the loader checks |
-//! | [`PIECES`] | coded pieces of an update arriving over the mesh |
-//! | [`MAILBOX`] | the mailbox's state and its ring (`docs/app-layer-2026-11-05.md`, section 5) |
+//! | [`SPARE`] | nothing yet: room for secrets to come |
+//! | [`MAILBOX_STATE`] | the mailbox's state, its key among it (`docs/app-layer-2026-11-05.md`, section 5) |
 //! | [`STORE`] | the node's stored state (roadmap D73) |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
+//!
+//! What is large and not secret lies on the external flash
+//! ([`external`]): the staged image, the coded pieces of an update and
+//! the mailbox's ring. What runs, boots or is secret stays inside, the
+//! secrets above [`DRIVE_END`].
 
 /// The erase unit (nRF52840 Product Specification, NVMC).
 pub const PAGE: u32 = 4096;
@@ -63,6 +68,12 @@ pub const SOFTDEVICE_MAGIC_AT: u32 = 0x3004;
 /// The magic number the bootloader looks for there.
 pub const SOFTDEVICE_MAGIC: u32 = 0x51B1_E5DB;
 
+/// The end of the flash the board's bootloader serves on its drive, as
+/// `CURRENT.UF2`, and writes from a UF2 (`docs/softdevice-2026-11-05.md`,
+/// "How the drive places a UF2"): anyone with the board and a double tap
+/// reads every byte below it, so secrets lie above it.
+pub const DRIVE_END: u32 = 0xEA000;
+
 /// The first page of the board's bootloader, above everything of ours.
 pub const BOOTLOADER_START: u32 = 0xF4000;
 
@@ -75,26 +86,10 @@ pub const FLASH_END: u32 = 0x10_0000;
 /// boards are in the field.
 const LOADER_PAGES: u32 = 4;
 
-/// Pages for update staging: one for [`RECORD`] and 22 for coded pieces,
-/// 352 pieces of 256 bytes, five and a half blocks of 64, more than a
-/// node gathers at once (the note, "The code").
-const STAGING_PAGES: u32 = 23;
-
-/// Pages for the mailbox: one for its state, 16 for its ring, 256 items
-/// of 256 bytes, eleven days at 23 a day (`docs/app-layer-2026-11-05.md`,
-/// section 5; `docs/softdevice-2026-11-05.md`, "The layout").
-const MAILBOX_PAGES: u32 = 17;
-
-/// The pages between the loader and the stored state's page.
-const SHARED_PAGES: u32 = (STORE_START - APPLICATION_START) / PAGE;
-
-/// The image's pages: what is left once the loader, its state and the
-/// staging have theirs, split between the running image and the staged
-/// one, which needs a page more (embassy-boot, `BootLoader::new`: "The
-/// dfu partition must be at least PAGE_SIZE bigger than the active
-/// partition"). 98 pages, 392 KiB: 40 KiB more than the 351 368 bytes of
-/// the node image of 2026-11-05.
-const ACTIVE_PAGES: u32 = (SHARED_PAGES - LOADER_PAGES - 1 - STAGING_PAGES - MAILBOX_PAGES - 1) / 2;
+/// The image's pages: everything between the loader's state and the
+/// record, which takes the last page the bootloader's drive writes, so
+/// that every UF2 writes it erased. 227 pages, 908 KiB.
+const ACTIVE_PAGES: u32 = (DRIVE_END - PAGE - STATE.end()) / PAGE;
 
 const STORE_START: u32 = BOOTLOADER_START - PAGE;
 
@@ -104,18 +99,72 @@ pub const LOADER: Region = Region::pages_from(APPLICATION_START, LOADER_PAGES);
 pub const STATE: Region = Region::pages_from(LOADER.end(), 1);
 /// The running image (embassy-boot's ACTIVE partition).
 pub const ACTIVE: Region = Region::pages_from(STATE.end(), ACTIVE_PAGES);
-/// The staged image (embassy-boot's DFU partition).
-pub const DFU: Region = Region::pages_from(ACTIVE.end(), ACTIVE_PAGES + 1);
 /// The staged image's record: its [`crate::Header`], then the word the
-/// loader writes once it has checked the image against it.
-pub const RECORD: Region = Region::pages_from(DFU.end(), 1);
-/// Coded pieces of an update arriving over the mesh; unused until the
-/// transport exists.
-pub const PIECES: Region = Region::pages_from(RECORD.end(), STAGING_PAGES - 1);
-/// The mailbox: its state page, then its ring.
-pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_PAGES);
+/// loader writes once it has checked the image against it. Inside, where
+/// no clip on the external flash reaches it: it holds the hash the
+/// running firmware checked before it staged.
+pub const RECORD: Region = Region::pages_from(ACTIVE.end(), 1);
+/// The mailbox's state page: it holds the mailbox key.
+pub const MAILBOX_STATE: Region = Region::pages_from(STORE_START - PAGE, 1);
+/// Between the record and the mailbox's state, above [`DRIVE_END`]:
+/// unused, for secrets to come, such as an update's given-up versions.
+pub const SPARE: Region = Region {
+    start: RECORD.end(),
+    len: MAILBOX_STATE.start - RECORD.end(),
+};
 /// The node's stored state, one page (roadmap D73).
 pub const STORE: Region = Region::pages_from(STORE_START, 1);
+
+/// The external flash, a ZD25WQ16B of 2 MiB in sectors of 4 KiB
+/// (`docs/external-flash-2026-11-06.md`; `crate::ext_flash`). Addresses
+/// are the chip's, from 0; nothing here is in the processor's address
+/// space.
+///
+/// | Region | Holds |
+/// |---|---|
+/// | [`external::DFU`] | the staged image, one sector larger than [`ACTIVE`] |
+/// | [`external::PIECES`] | coded pieces of an update arriving over the mesh |
+/// | [`external::MAILBOX`] | the mailbox's ring |
+/// | the rest | free |
+pub mod external {
+    use super::{Region, ACTIVE_PAGES};
+
+    /// The erase unit, a sector (ZD25WQ16B datasheet, "Sector Erase"),
+    /// the size of an internal page, so that the swap copies one into
+    /// the other.
+    pub const SECTOR: u32 = super::PAGE;
+
+    /// The chip's end, 16 Mbit (datasheet, "Features").
+    pub const END: u32 = 2 * 1024 * 1024;
+
+    /// Sectors for coded pieces: 352 pieces of 256 bytes, five and a half
+    /// blocks of 64, more than a node gathers at once
+    /// (`docs/mesh-update-2026-10-25.md`, "The code").
+    const PIECES_SECTORS: u32 = 22;
+
+    /// Sectors for the mailbox's ring: 64 of 16 items of 256 bytes, 1024
+    /// items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`,
+    /// section 5).
+    const MAILBOX_SECTORS: u32 = 64;
+
+    /// The staged image (embassy-boot's DFU partition), one sector more
+    /// than the running one (embassy-boot, `BootLoader::new`: "The dfu
+    /// partition must be at least PAGE_SIZE bigger than the active
+    /// partition"). After a swap it holds the previous image, for the
+    /// swap back.
+    pub const DFU: Region = Region::pages_from(0, ACTIVE_PAGES + 1);
+    /// Coded pieces of an update arriving over the mesh; unused until the
+    /// transport exists.
+    pub const PIECES: Region = Region::pages_from(DFU.end(), PIECES_SECTORS);
+    /// The mailbox's ring. Its items are sealed to the phone, so whoever
+    /// reads the chip learns nothing from them.
+    pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_SECTORS);
+    /// Free.
+    pub const FREE: Region = Region {
+        start: MAILBOX.end(),
+        len: END - MAILBOX.end(),
+    };
+}
 
 /// What the loader write-protects before it jumps (nRF52840 Product
 /// Specification, ACL): the MBR and itself, from the bottom of flash, so
@@ -160,17 +209,21 @@ pub const RAM: Region = Region {
     len: RAM_END - PANIC_DUMP.end(),
 };
 
-// The layout fills the shared pages exactly, the stored state's page is
-// where D73 put it, and each protected region is within what the ACL takes:
-// page-aligned, and at most half the flash (Product Specification, ACL).
+// The internal regions fill the flash between the loader and the
+// bootloader, the stored state's page is where D73 put it, and each
+// protected region is within what the ACL takes: page-aligned, and at most
+// half the flash (Product Specification, ACL).
 const _: () = {
-    assert!(MAILBOX.end() == STORE.start);
-    // Every UF2 writes the record erased, and the bootloader's drive writes
-    // only below 0xEA000 (`docs/softdevice-2026-11-05.md`).
-    assert!(RECORD.end() <= 0xEA000);
+    // Every UF2 writes the running slot and the record, and the
+    // bootloader's drive writes only below its end.
+    assert!(RECORD.end() == DRIVE_END);
+    // The secrets lie where the drive neither reads nor writes.
+    assert!(MAILBOX_STATE.start >= DRIVE_END && STORE.start >= DRIVE_END);
+    assert!(MAILBOX_STATE.end() == STORE.start);
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
-    assert!(DFU.len == ACTIVE.len + PAGE);
+    assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
+    assert!(external::MAILBOX.end() <= external::END);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
     // embassy-boot keeps two progress words a page for the swap and two for
@@ -190,7 +243,7 @@ pub enum Image {
 }
 
 /// Write `memory.x` for `image`: cortex-m-rt's `FLASH` and `RAM`, and
-/// symbols for every region, which embassy-boot and `scripts/uf2.py` read.
+/// symbols for every internal region, which `scripts/uf2.py` reads.
 pub fn write_memory_x(out: &mut impl core::fmt::Write, image: Image) -> core::fmt::Result {
     let flash = match image {
         Image::Firmware => ACTIVE,
@@ -219,10 +272,9 @@ pub fn write_memory_x(out: &mut impl core::fmt::Write, image: Image) -> core::fm
         ("__bark_loader", LOADER),
         ("__bootloader_state", STATE),
         ("__bootloader_active", ACTIVE),
-        ("__bootloader_dfu", DFU),
         ("__bark_record", RECORD),
-        ("__bark_pieces", PIECES),
-        ("__bark_mailbox", MAILBOX),
+        ("__bark_spare", SPARE),
+        ("__bark_mailbox_state", MAILBOX_STATE),
         ("__bark_store", STORE),
     ];
     for (name, r) in symbols {
@@ -242,7 +294,7 @@ mod tests {
     use std::string::String;
 
     #[test]
-    fn the_regions_are_the_notes() {
+    fn the_regions_are_the_plans() {
         assert_eq!(
             LOADER,
             Region {
@@ -255,53 +307,78 @@ mod tests {
             ACTIVE,
             Region {
                 start: 0x6000,
-                len: 98 * PAGE
+                len: 227 * PAGE
+            }
+        );
+        assert_eq!(RECORD.start, 0xE9000);
+        assert_eq!(
+            SPARE,
+            Region {
+                start: 0xEA000,
+                len: 8 * PAGE
+            }
+        );
+        assert_eq!(MAILBOX_STATE.start, 0xF2000);
+        assert_eq!(STORE.start, 0xF3000);
+        assert_eq!(
+            external::DFU,
+            Region {
+                start: 0,
+                len: 228 * PAGE
             }
         );
         assert_eq!(
-            DFU,
+            external::PIECES,
             Region {
-                start: 0x68000,
-                len: 99 * PAGE
-            }
-        );
-        assert_eq!(RECORD.start, 0xCB000);
-        assert_eq!(
-            PIECES,
-            Region {
-                start: 0xCC000,
+                start: 0xE4000,
                 len: 22 * PAGE
             }
         );
         assert_eq!(
-            MAILBOX,
+            external::MAILBOX,
             Region {
-                start: 0xE2000,
-                len: 17 * PAGE
+                start: 0xFA000,
+                len: 64 * PAGE
             }
         );
-        assert_eq!(STORE.start, 0xF3000);
+        assert_eq!(
+            external::FREE,
+            Region {
+                start: 0x13A000,
+                len: 198 * PAGE
+            }
+        );
     }
 
     #[test]
     fn the_regions_follow_each_other() {
-        let order = [LOADER, STATE, ACTIVE, DFU, RECORD, PIECES, MAILBOX, STORE];
-        for pair in order.windows(2) {
-            assert_eq!(pair[0].end(), pair[1].start);
+        let inside = [LOADER, STATE, ACTIVE, RECORD, SPARE, MAILBOX_STATE, STORE];
+        let outside = [
+            external::DFU,
+            external::PIECES,
+            external::MAILBOX,
+            external::FREE,
+        ];
+        for order in [&inside[..], &outside[..]] {
+            for pair in order.windows(2) {
+                assert_eq!(pair[0].end(), pair[1].start);
+            }
+            for r in order {
+                assert_eq!(r.start % PAGE, 0);
+                assert_eq!(r.len % PAGE, 0);
+            }
         }
-        assert_eq!(order[0].start, APPLICATION_START);
-        assert_eq!(order[7].end(), BOOTLOADER_START);
-        for r in order {
-            assert_eq!(r.start % PAGE, 0);
-            assert_eq!(r.len % PAGE, 0);
-        }
+        assert_eq!(inside[0].start, APPLICATION_START);
+        assert_eq!(inside[6].end(), BOOTLOADER_START);
+        assert_eq!(outside[0].start, 0);
+        assert_eq!(outside[3].end(), external::END);
     }
 
     #[test]
     fn the_firmware_script_names_its_slot() {
         let mut s = String::new();
         write_memory_x(&mut s, Image::Firmware).unwrap();
-        assert!(s.contains("FLASH   : ORIGIN = 0x00006000, LENGTH = 0x62000"));
+        assert!(s.contains("FLASH   : ORIGIN = 0x00006000, LENGTH = 0xe3000"));
         assert!(s.contains("__bootloader_state_start = 0x00005000;"));
         assert!(s.contains("_panic_dump_start"));
         let mut l = String::new();

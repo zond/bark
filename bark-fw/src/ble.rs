@@ -14,14 +14,22 @@
 //! publishes what the phone reads after every step of its driver, and
 //! takes what the phone writes as requests, one at a time, each answered
 //! before the phone's write is (roadmap D117).
+//!
+//! The link is the paired phone's alone (spec "Phone link", Pairing;
+//! roadmap D135): every characteristic of the service needs a link
+//! encrypted with an authenticated key, the node shows the passkey of a
+//! pairing on its screen, and it keeps one bond, in flash (`store.rs`),
+//! which a new pairing replaces.
 
 use core::cell::RefCell;
 
+use bark_link::bond::Bond;
 use bark_link::{
     le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
 };
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
+use bark_screen::Phone;
 use embassy_futures::join::join;
 use embassy_futures::select::{select, Either};
 use embassy_nrf::{peripherals, rng, Peri};
@@ -38,6 +46,11 @@ use trouble_host::prelude::*;
 const CONNECTIONS: usize = 1;
 /// L2CAP channels: the signalling channel and the ATT channel.
 const CHANNELS: usize = 2;
+/// Advertising sets: the one advertisement.
+const ADV_SETS: usize = 1;
+/// Bonds the host holds: the one kept, and the one a pairing adds before
+/// [`settle`] takes the other away.
+const BONDS: usize = 2;
 /// Link-layer buffers each way: the controller's default for transmit,
 /// three (`SDC_DEFAULT_TX_PACKET_COUNT`, `sdc.h`), and as many to receive.
 const LL_BUFFERS: u8 = 3;
@@ -100,24 +113,28 @@ pub struct Server {
 }
 
 /// The service and its characteristics, each with room for its value's
-/// longest form (spec "Phone link").
+/// longest form (spec "Phone link"), and each open only to a link
+/// encrypted with an authenticated key, which only a pairing by the code
+/// on the node's screen makes: any other read, write or subscription is
+/// answered with ATT's insufficient authentication (Vol 3 Part F
+/// §3.4.1.1), the phone's cue to pair.
 #[gatt_service(uuid = le_bytes(uuid::SERVICE))]
 pub struct Link {
-    #[characteristic(uuid = le_bytes(uuid::NODE), read)]
+    #[characteristic(uuid = le_bytes(uuid::NODE), read, permissions(authenticated))]
     pub node: [u8; Node::LEN],
-    #[characteristic(uuid = le_bytes(uuid::STATUS), read, notify)]
+    #[characteristic(uuid = le_bytes(uuid::STATUS), read, notify, permissions(authenticated))]
     pub status: [u8; Status::LEN],
-    #[characteristic(uuid = le_bytes(uuid::SEND), write)]
+    #[characteristic(uuid = le_bytes(uuid::SEND), write, permissions(authenticated))]
     pub send: (),
-    #[characteristic(uuid = le_bytes(uuid::INBOX), read, write)]
+    #[characteristic(uuid = le_bytes(uuid::INBOX), read, write, permissions(authenticated))]
     pub inbox: heapless::Vec<u8, { bark_link::Message::MAX_LEN }>,
-    #[characteristic(uuid = le_bytes(uuid::GIVEN_BACK), read, notify)]
+    #[characteristic(uuid = le_bytes(uuid::GIVEN_BACK), read, notify, permissions(authenticated))]
     pub given_back: heapless::Vec<u8, { bark_link::GivenBack::LEN }>,
-    #[characteristic(uuid = le_bytes(uuid::MAP_POINT), write)]
+    #[characteristic(uuid = le_bytes(uuid::MAP_POINT), write, permissions(authenticated))]
     pub map_point: (),
-    #[characteristic(uuid = le_bytes(uuid::CLOCK), read, write)]
+    #[characteristic(uuid = le_bytes(uuid::CLOCK), read, write, permissions(authenticated))]
     pub clock: [u8; bark_link::NodeTime::LEN],
-    #[characteristic(uuid = le_bytes(uuid::HOME), read, write)]
+    #[characteristic(uuid = le_bytes(uuid::HOME), read, write, permissions(authenticated))]
     pub home: [u8; bark_link::home::Home::LEN],
 }
 
@@ -170,7 +187,8 @@ pub fn mpsl(
         lfclk,
         SESSIONS.init(nrf_mpsl::SessionMem::new()),
     )
-    .expect("the MPSL starts once, with its peripherals");
+    // The errno as a number: the error's `Debug` names every errno.
+    .unwrap_or_else(|e| panic!("the MPSL did not start: {}", i32::from(e)));
     MPSL.init(mpsl)
 }
 
@@ -183,21 +201,66 @@ pub fn controller(
 ) -> Result<SoftdeviceController<'static>, sdc::Error> {
     static RNG: StaticCell<rng::Rng<'static, embassy_nrf::mode::Blocking>> = StaticCell::new();
     static MEM: StaticCell<sdc::Mem<SDC_MEM>> = StaticCell::new();
+    // Privacy: once a phone bonds, the host puts its identity key in the
+    // controller's resolving list, and its run ends if a command of the
+    // list fails; the controller takes them only with privacy (`sdc.h`,
+    // `sdc_support_le_privacy`).
     let builder = sdc::Builder::new()?
         .support_adv()
         .support_peripheral()
         .support_dle_peripheral()
+        .support_le_privacy()
         .peripheral_count(CONNECTIONS as u8)?
         .buffer_cfg(LL_PAYLOAD, LL_PAYLOAD, LL_BUFFERS, LL_BUFFERS)?;
     let need = builder.required_memory()?;
     log::info!("ble: controller memory {} of {} bytes", need, SDC_MEM);
     crate::boot::note(|f| f.controller = Some((need, SDC_MEM)));
-    builder.build(
-        p,
-        RNG.init(rng::Rng::new_blocking(rng)),
-        mpsl,
-        MEM.init(sdc::Mem::new()),
-    )
+    // Bias correction makes the generator's bits uniform (nRF52840 Product
+    // Specification, RNG); it is off at reset. The host's keys and nonces
+    // come from it through LE Rand, with no generator of the host's own
+    // between.
+    let rng = rng::Rng::new_blocking(rng);
+    rng.set_bias_correction(true);
+    builder.build(p, RNG.init(rng), mpsl, MEM.init(sdc::Mem::new()))
+}
+
+/// The BLE host's AES-128 (`vendor/README.md`), on the chip's AES block.
+/// While the controller is enabled, the block is reached only through the
+/// MPSL's function, which shares it with the controller (`sdc_soc.h`).
+#[no_mangle]
+fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]) {
+    let clear = *block;
+    // SAFETY: the MPSL is started in `main` before the host exists, and the
+    // three buffers are 16 bytes each, as the function reads and writes.
+    // `clear` is on the stack, in the RAM the block reads directly.
+    unsafe {
+        mpsl_raw::mpsl_ecb_block_encrypt_extended(
+            key.as_ptr(),
+            clear.as_ptr(),
+            block.as_mut_ptr(),
+            mpsl_raw::MPSL_ECB_CLEARTEXT_IN_LOCAL_RAM,
+        )
+    }
+}
+
+/// The BLE host's random numbers (`vendor/README.md`), from the
+/// controller's LE Rand (Bluetooth Core Vol 4 Part E §7.8.23), which draws
+/// on the chip's generator given to the controller in [`controller`] and is
+/// specified fit for keys (Vol 2 Part H §2). The host draws them in its
+/// pairing's synchronous steps, so the controller's command is called
+/// directly, not through the host's asynchronous HCI path.
+#[no_mangle]
+fn trouble_host_random(dest: &mut [u8]) {
+    for chunk in dest.chunks_mut(8) {
+        let mut out = sdc::raw::sdc_hci_cmd_le_rand_return_t { random_number: 0 };
+        // SAFETY: the controller is built before the host exists, and its
+        // commands are synchronous calls from thread mode, so none is in
+        // progress when this one starts.
+        let status = unsafe { sdc::raw::sdc_hci_cmd_le_rand(&mut out) };
+        // A key from a failed draw would be guessable.
+        assert!(status == 0, "LE Rand failed: {status:#x}");
+        chunk.copy_from_slice(&out.random_number.to_le_bytes()[..chunk.len()]);
+    }
 }
 
 /// What the phone asks of the node, one at a time: the link answers the
@@ -496,14 +559,32 @@ fn inbox_now() -> heapless::Vec<u8, { Message::MAX_LEN }> {
     })
 }
 
+/// The bond kept in flash, handed once at boot when the store has opened
+/// (`store.rs`).
+pub static STORED_BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::new();
+
+type Stack = trouble_host::Stack<'static, SoftdeviceController<'static>, DefaultPacketPool>;
+
 /// Run the host and the advertising, for ever.
 pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u32) {
-    static RESOURCES: StaticCell<HostResources<DefaultPacketPool, CONNECTIONS, CHANNELS>> =
-        StaticCell::new();
+    static RESOURCES: StaticCell<
+        HostResources<DefaultPacketPool, CONNECTIONS, CHANNELS, ADV_SETS, BONDS>,
+    > = StaticCell::new();
     let resources = RESOURCES.init(HostResources::new());
+    // The node shows a passkey and takes none: passkey entry, the phone
+    // typing what the node displays (Vol 3 Part H §2.3.5.1, Table 2.8).
     let stack = trouble_host::new(controller, resources)
         .set_random_address(address())
+        .set_io_capabilities(IoCapabilities::DisplayOnly)
         .build();
+    if let Some(b) = STORED_BOND.wait().await {
+        let b = information(&b);
+        KEPT.lock(|k| k.replace(Some(b.clone())));
+        match stack.add_bond_information(b) {
+            Ok(()) => log::info!("ble: bond kept"),
+            Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
+        }
+    }
     let mut peripheral = stack.peripheral();
     let mut runner = stack.runner();
     let name = bark_link::name(id);
@@ -512,7 +593,9 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         name,
         appearance: &appearance::UNKNOWN,
     }))
-    .expect("the attribute table fits");
+    // Displayed, not `expect`ed: a `&str` error's `Debug` escapes it,
+    // which brings in Unicode tables, 6.7 KB of flash.
+    .unwrap_or_else(|e| panic!("the attribute table: {e}"));
     let node = Node {
         version: bark_link::VERSION,
         id,
@@ -523,16 +606,16 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
     let host = async {
         loop {
             if let Err(e) = runner.run().await {
-                log::error!("ble: host {:?}", e);
+                log::error!("ble: host {}", StackError(&e));
             }
         }
     };
     let link = async {
         loop {
             match advertise(&mut peripheral, &server, name).await {
-                Ok(conn) => serve(&server, &conn).await,
+                Ok(conn) => serve(&stack, &server, &conn).await,
                 Err(e) => {
-                    log::error!("ble: advertising {:?}", e);
+                    log::error!("ble: advertising {}", StackError(&e));
                     embassy_time::Timer::after(ADV_RETRY).await;
                 }
             }
@@ -608,9 +691,18 @@ async fn advertise<'v, 's>(
     Ok(conn.with_attribute_server(server)?)
 }
 
-/// Serve one connection until it ends: answer its reads and writes, and
-/// notify what changes.
-async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+/// Serve one connection until it ends: answer its reads and writes,
+/// notify what changes, and pair.
+async fn serve(
+    stack: &Stack,
+    server: &Server<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+) {
+    // A pairing that does not bond is refused ([`settle`]); the phone asks
+    // to bond, and so the node offers it.
+    if let Err(e) = conn.raw().set_bondable(true) {
+        log::error!("ble: bondable {}", HostError(&e));
+    }
     // What changed while no phone was connected is read, not notified.
     NOTIFY.reset();
     let link = &server.link;
@@ -631,8 +723,35 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
         };
         let event = match event {
             GattConnectionEvent::Disconnected { reason } => {
-                log::info!("ble: disconnected {:?}", reason);
+                log::info!("ble: disconnected 0x{:02x}", u8::from(reason));
+                // A pairing cut short leaves no code on the screen.
+                crate::display::phone(phone_now(stack));
                 return;
+            }
+            GattConnectionEvent::PassKeyDisplay(key) => {
+                log::info!("ble: pairing, the code shown");
+                crate::display::phone(Phone::Code(key.value()));
+                continue;
+            }
+            GattConnectionEvent::PairingComplete {
+                security_level,
+                bond,
+            } => {
+                settle(stack, conn, security_level, bond);
+                continue;
+            }
+            GattConnectionEvent::PairingFailed(e) => {
+                log::info!("ble: pairing failed {}", HostError(&e));
+                settle(stack, conn, SecurityLevel::NoEncryption, None);
+                continue;
+            }
+            GattConnectionEvent::Encrypted { security_level, .. } => {
+                log::info!("ble: encrypted {:?}", security_level);
+                continue;
+            }
+            GattConnectionEvent::BondLost => {
+                log::info!("ble: a phone the node holds a bond with pairs again");
+                continue;
             }
             GattConnectionEvent::Gatt { event } => event,
             GattConnectionEvent::ConnectionParamsUpdated {
@@ -710,6 +829,91 @@ async fn serve(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketP
     }
 }
 
+/// After a pairing: keep its bond if it is the paired phone's from now
+/// on, an authenticated pairing that bonds, in place of the one kept
+/// before, since its code was on the node's screen and so someone was at
+/// the node. The host then holds the kept bond and no other, so that a
+/// Just Works pairing, or one that does not bond, leaves the kept bond as
+/// it was, even one that replaced it in the host as the same phone's; and
+/// its link is closed.
+fn settle(
+    stack: &Stack,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    level: SecurityLevel,
+    bond: Option<BondInformation>,
+) {
+    let new = bond.filter(|b| level == SecurityLevel::EncryptedAuthenticated && b.is_bonded);
+    if let Some(b) = &new {
+        log::info!("ble: paired; the bond replaces any before it");
+        KEPT.lock(|k| k.replace(Some(b.clone())));
+        crate::store::keep_bond(bond_of(b));
+    } else if level != SecurityLevel::NoEncryption {
+        log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
+        conn.raw().disconnect();
+    }
+    let keep = KEPT.lock(|k| k.borrow().clone());
+    let mut other: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
+    let mut held = false;
+    stack.with_bond_information(|bonds| {
+        for b in bonds {
+            match Some(b) == keep.as_ref() {
+                true => held = true,
+                false => {
+                    let _ = other.push(b.identity);
+                }
+            }
+        }
+    });
+    for i in other {
+        if let Err(e) = stack.remove_bond_information(i) {
+            log::error!("ble: removing a bond {}", HostError(&e));
+        }
+    }
+    if let Some(b) = keep.filter(|_| !held) {
+        if let Err(e) = stack.add_bond_information(b) {
+            log::error!("ble: the kept bond {}", HostError(&e));
+        }
+    }
+    crate::display::phone(phone_now(stack));
+}
+
+/// The bond kept, which the host is to hold alone ([`settle`]).
+static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<BondInformation>>> =
+    Mutex::new(RefCell::new(None));
+
+/// The screen's phone line when no pairing runs.
+fn phone_now(stack: &Stack) -> Phone {
+    match stack.with_bond_information(|b| b.is_empty()) {
+        true => Phone::None,
+        false => Phone::Paired,
+    }
+}
+
+/// The host's bond of a kept one.
+fn information(b: &Bond) -> BondInformation {
+    BondInformation::new(
+        Identity {
+            addr: Address::new(AddrKind::new(b.kind), BdAddr::new(b.addr)),
+            irk: b.irk.and_then(IdentityResolvingKey::from_le_bytes),
+        },
+        LongTermKey::from_le_bytes(b.ltk),
+        SecurityLevel::EncryptedAuthenticated,
+        true,
+    )
+}
+
+/// The bond to keep of the host's.
+fn bond_of(b: &BondInformation) -> Bond {
+    let mut addr = [0u8; 6];
+    addr.copy_from_slice(b.identity.addr.addr.raw());
+    Bond {
+        kind: b.identity.addr.kind.into_inner(),
+        addr,
+        irk: b.identity.irk.map(|k| k.to_le_bytes()),
+        ltk: b.ltk.to_le_bytes(),
+    }
+}
+
 /// Log an ATT request from the phone, the written bytes only by count, so
 /// that the bench sees each step of a connection.
 fn log_request(att: &AttClient<'_>) {
@@ -746,7 +950,7 @@ fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>
     .into_iter()
     .flatten()
     {
-        log::error!("ble: setting a value {:?}", e);
+        log::error!("ble: setting a value {}", HostError(&e));
     }
 }
 
@@ -812,7 +1016,8 @@ fn home_now() -> bark_link::home::Home {
 }
 
 /// Home, written: the mailbox takes the key, or forgets it, at once
-/// (`mailbox.rs`); the node's loop sees it at its next step.
+/// (`mailbox.rs`), and the node publishes its inbox as a home's or not
+/// (`node.rs`, `follow_home`).
 fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     use bark_link::home::SetHome;
     let set = w.with_data(|offset, data| match offset {
@@ -839,4 +1044,67 @@ async fn write_clock(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), At
     })?;
     ask(Request::Clock(c)).await;
     Ok(())
+}
+
+/// A host error as its variant's name and, where it carries one, the
+/// code a specification gives it. The derived `Debug` would bring in the
+/// controller's status names and every nested error's `Debug`, kilobytes
+/// of flash for lines that rarely print.
+struct HostError<'a>(&'a trouble_host::Error);
+
+/// [`HostError`], or the controller's error: an nRF errno, negated
+/// (`nrf_mpsl::Error`).
+struct StackError<'a>(&'a BleHostError<sdc::Error>);
+
+impl core::fmt::Display for StackError<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            BleHostError::Controller(c) => write!(f, "controller {}", i32::from(*c)),
+            BleHostError::BleHost(e) => HostError(e).fmt(f),
+        }
+    }
+}
+
+impl core::fmt::Display for HostError<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use trouble_host::Error as H;
+        let name = match self.0 {
+            // Bluetooth Core, Vol 1, Part F: controller error codes.
+            H::Hci(s) => return write!(f, "hci 0x{:02x}", u8::from(*s)),
+            // Bluetooth Core, Vol 3, Part F, 3.4.1.1: ATT error codes.
+            H::Att(c) => return write!(f, "att 0x{:02x}", c.to_u8()),
+            H::Security(r) => return write!(f, "security {r:?}"),
+            H::HciDecode(_) => "HciDecode",
+            H::InsufficientSpace => "InsufficientSpace",
+            H::InvalidValue => "InvalidValue",
+            H::UnexpectedDataLength { .. } => "UnexpectedDataLength",
+            H::CannotConstructGattValue(_) => "CannotConstructGattValue",
+            H::ConfigFilterAcceptListIsEmpty => "ConfigFilterAcceptListIsEmpty",
+            H::UnexpectedGattResponse => "UnexpectedGattResponse",
+            H::MalformedCharacteristicDeclaration { .. } => "MalformedCharacteristicDeclaration",
+            H::InvalidCharacteristicDeclarationData => "InvalidCharacteristicDeclarationData",
+            H::FailedToFinalize { .. } => "FailedToFinalize",
+            H::CodecError(_) => "CodecError",
+            H::ExtendedAdvertisingNotSupported => "ExtendedAdvertisingNotSupported",
+            H::InvalidUuidLength(_) => "InvalidUuidLength",
+            H::Advertisement(_) => "Advertisement",
+            H::L2capConnectError(_) => "L2capConnectError",
+            H::InvalidChannelId => "InvalidChannelId",
+            H::NoChannelAvailable => "NoChannelAvailable",
+            H::NotFound => "NotFound",
+            H::InvalidState => "InvalidState",
+            H::OutOfMemory => "OutOfMemory",
+            H::NotSupported => "NotSupported",
+            H::ChannelClosed => "ChannelClosed",
+            H::Timeout => "Timeout",
+            H::Busy => "Busy",
+            H::NoPermits => "NoPermits",
+            H::Disconnected => "Disconnected",
+            H::ConnectionLimitReached => "ConnectionLimitReached",
+            H::GattSubscriberLimitReached => "GattSubscriberLimitReached",
+            H::AlreadyInUse => "AlreadyInUse",
+            H::Other => "Other",
+        };
+        f.write_str(name)
+    }
 }

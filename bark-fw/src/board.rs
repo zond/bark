@@ -7,8 +7,10 @@
 //! against the board's back label, read on the bench 2026-10-30, which
 //! corrected two things: P1.11 is the display's front light, not a panel
 //! enable, and the green LED is on P1.01, not P0.15, which the label shows
-//! as an expansion-header pin. Polarities and what the label does not say
-//! (the rail switches' logic, the LEDs' wiring) are still unverified.
+//! as an expansion-header pin. The rail switches' logic and the external
+//! flash's pins are from the maker's schematic
+//! (`docs/external-flash-2026-11-06.md`). Polarities and the LEDs' wiring
+//! are still unverified.
 //!
 //! [`take_board!`] moves the pins out of [`Peripherals`] so each driver takes
 //! exactly the pins it owns, by name, and the compiler rejects two drivers
@@ -24,9 +26,10 @@
 #![allow(dead_code)]
 
 use embassy_nrf::peripherals::{
-    P0_02, P0_03, P0_04, P0_11, P0_12, P0_13, P0_14, P0_16, P0_17, P0_18, P0_19, P0_20, P0_21,
-    P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_01, P1_02, P1_03,
-    P1_04, P1_05, P1_06, P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15, USBD,
+    P0_02, P0_03, P0_04, P0_05, P0_07, P0_11, P0_12, P0_13, P0_14, P0_16, P0_17, P0_18, P0_19,
+    P0_20, P0_21, P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_01,
+    P1_02, P1_03, P1_04, P1_05, P1_06, P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15,
+    USBD,
 };
 use embassy_nrf::Peri;
 #[cfg(doc)]
@@ -155,9 +158,10 @@ pub struct I2c {
     pub rtc_int: Peri<'static, P0_16>,
 }
 
-/// External QSPI flash, MX25R1635F (16 Mbit). Only IO0 and IO1 are listed in
-/// the research doc; IO2/IO3 are unconfirmed, so this is single/dual-SPI
-/// until someone reads the schematic.
+/// External SPI NOR flash, 16 Mbit, on the switched rail. The schematic
+/// names an MX25R1635F; the chip fitted reads JEDEC ID `BA 60 15`, a Zetta
+/// ZD25WQ16B (`docs/external-flash-2026-11-06.md`). No pull-ups: CS#, WP#
+/// and HOLD# float unless driven.
 pub struct Flash {
     /// Clock, P1.14.
     pub sck: Peri<'static, P1_14>,
@@ -167,6 +171,10 @@ pub struct Flash {
     pub io0: Peri<'static, P1_12>,
     /// IO1 (MISO in single SPI), P1.13.
     pub io1: Peri<'static, P1_13>,
+    /// IO2, WP# in single SPI, active low, P0.07.
+    pub io2: Peri<'static, P0_07>,
+    /// IO3, HOLD# in single SPI, active low, P0.05.
+    pub io3: Peri<'static, P0_05>,
 }
 
 /// The whole board.
@@ -254,6 +262,8 @@ macro_rules! take_board {
                 cs: $p.P1_15,
                 io0: $p.P1_12,
                 io1: $p.P1_13,
+                io2: $p.P0_07,
+                io3: $p.P0_05,
             },
             usbd: $p.USBD,
         }

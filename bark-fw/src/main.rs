@@ -23,6 +23,7 @@ mod clock;
 #[cfg(feature = "console")]
 mod console;
 mod display;
+mod ext_flash;
 #[cfg(not(feature = "console"))]
 mod gps;
 #[cfg(not(feature = "console"))]
@@ -32,6 +33,7 @@ mod mailbox;
 #[cfg(not(feature = "console"))]
 mod node;
 mod power;
+mod protect;
 mod radio;
 #[cfg(not(feature = "console"))]
 mod stack;
@@ -188,12 +190,16 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // First, before any secret is read; a reset here keeps the panic below.
+    let protection = protect::apply();
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
     stack::paint();
 
     let mut config = Config::default();
+    // The debug port is `protect`'s.
+    config.debug = embassy_nrf::config::Debug::NotConfigured;
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
     // Specification, USBD chapter). The console starts it at boot, for its
     // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
@@ -297,10 +303,10 @@ async fn main(spawner: Spawner) {
 
     // The global logger, installed now; its task drains it to the host
     // once the host asserts DTR (opens the port), and feeds what the host
-    // sends to the console.
-    static LOGGER: static_cell::ConstStaticCell<Logger> =
-        static_cell::ConstStaticCell::new(Logger::with_custom_style(log_line));
-    let logger = LOGGER.take();
+    // sends to the console. Built here rather than as a constant so that
+    // flash holds no copy of its initial value.
+    static LOGGER: static_cell::StaticCell<Logger> = static_cell::StaticCell::new();
+    let logger = LOGGER.init(Logger::with_custom_style(log_line));
     logger.with_handler(Input::new());
     let logger: &'static Logger = logger;
     if log::set_logger(logger).is_ok() {
@@ -324,6 +330,9 @@ async fn main(spawner: Spawner) {
         bark_proto::radio::SYMBOL_TIME.as_micros(),
         HEARTBEAT_AIRTIME_US,
     );
+    log::info!("{}", protection);
+    #[cfg(not(feature = "console"))]
+    boot::note(|f| f.protection = Some(protection));
     #[cfg(not(feature = "console"))]
     match lf_source {
         lfclk::Source::Crystal { started_ms } => {
@@ -348,9 +357,11 @@ async fn main(spawner: Spawner) {
         // The console keeps its one-shot structure in this task: it holds
         // no relay, and its frame is small.
         let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+        let external = update::external();
         let clock = clock::Clock::new(p.TIMER1);
         let mut lines = console::Lines::new();
         let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
+        let flash = board.flash;
         let radio_task = async {
             let t0 = clock.now();
             match radio::boot(
@@ -366,8 +377,9 @@ async fn main(spawner: Spawner) {
             {
                 Ok(radio) => {
                     radio_up(&radio, &clock, t0);
+                    ext_flash::init(flash);
                     update::started(shared);
-                    console::Console::new(radio, &clock, battery, shared)
+                    console::Console::new(radio, &clock, battery, shared, external)
                         .run(&mut lines)
                         .await;
                 }
@@ -407,9 +419,18 @@ async fn main(spawner: Spawner) {
             embassy_nrf::peripherals::NVMC::steal()
         }));
         let mpsl_flash = store::shared(mpsl_flash);
-        let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
-        // The mailbox, beside the store on the same flash (`mailbox.rs`).
-        mailbox::open();
+        let (flash, kept) = store::Flash::open(mpsl_flash);
+        let (stored, offset_min) = (kept.stored, kept.offset_min);
+        // The bond with the paired phone, to the phone link, and its line
+        // on the first picture.
+        display::phone_at_boot(match kept.bond {
+            Some(_) => bark_screen::Phone::Paired,
+            None => bark_screen::Phone::None,
+        });
+        ble::STORED_BOND.signal(kept.bond);
+        // The mailbox's writes, its state beside the store on the same
+        // flash (`mailbox.rs`); the mailbox opens once the radio has
+        // raised the rail its ring's flash is on (`node_radio`).
         spawner.spawn(mailbox::run(mpsl_flash).expect("spawned once"));
         utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
@@ -431,6 +452,7 @@ async fn main(spawner: Spawner) {
             node_radio(NodeRadio {
                 radio: board.radio,
                 power: board.power,
+                flash: board.flash,
                 spi: p.SPI2,
                 mpsl,
                 shared,
@@ -550,7 +572,8 @@ async fn phone(
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
-        Err(e) => log::error!("ble: controller {:?}", e),
+        // An nRF errno, negated (`nrf_mpsl::Error`).
+        Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }
 }
 
@@ -559,6 +582,7 @@ async fn phone(
 struct NodeRadio {
     radio: board::Radio,
     power: board::Power,
+    flash: board::Flash,
     spi: embassy_nrf::Peri<'static, peripherals::SPI2>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
     shared: &'static update::Flash,
@@ -567,8 +591,10 @@ struct NodeRadio {
     config: bark_proto::Config,
 }
 
-/// The radio and the core on it: the radio up, the image confirmed, the
-/// phone link let start, and the driver's loop (`node.rs`).
+/// The radio and the core on it: the radio up, the external flash found
+/// and in deep power-down (`ext_flash.rs`), the mailbox opened on it
+/// (`mailbox.rs`), the image confirmed, the phone link let start, and the
+/// driver's loop (`node.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn node_radio(n: NodeRadio) {
@@ -595,14 +621,18 @@ async fn node_radio(n: NodeRadio) {
     {
         Ok(radio) => {
             radio_up(&radio, &clock, t0);
+            ext_flash::init(n.flash);
+            mailbox::open();
             update::started(n.shared);
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
         // Without a radio USB and the log keep running so the error can be
-        // read, and the phone link still comes up, so the node can be found.
+        // read, and the phone link still comes up, so the node can be found,
+        // with the mailbox's state but without its ring.
         Err(e) => {
             log::error!("radio init failed: {:?}", e);
+            mailbox::open();
             ble::START.signal(());
         }
     }
