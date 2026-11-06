@@ -300,6 +300,18 @@ static CHANGED: embassy_sync::signal::Signal<
     (),
 > = embassy_sync::signal::Signal::new();
 
+#[cfg(not(feature = "console"))]
+static PRESSED: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+/// The button's side (`button.rs`): redraw now, outside the gaps.
+#[cfg(not(feature = "console"))]
+pub fn redraw() {
+    PRESSED.signal(());
+}
+
 /// The node's side, after a step: its state as the screen says it.
 #[cfg(not(feature = "console"))]
 pub fn publish(state: State) {
@@ -325,7 +337,8 @@ const FIRST_STATE: Duration = Duration::from_secs(5);
 /// Draw the node's screen at boot, and again when what it shows has
 /// changed, at most once a [`BATTERY_GAP`] on battery and a [`USB_GAP`]
 /// on USB, and at least once a [`BATTERY_STALE`] or [`USB_STALE`], so
-/// that the uptime it shows says the node still runs.
+/// that the uptime it shows says the node still runs. A press of the
+/// button ([`redraw`]) draws at once and leaves that schedule as it was.
 #[cfg(not(feature = "console"))]
 pub async fn run(
     pins: board::Eink,
@@ -333,7 +346,7 @@ pub async fn run(
     irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
     fixed: bark_screen::Fixed<'static>,
 ) -> ! {
-    use embassy_futures::select::select;
+    use embassy_futures::select::{select3, Either3};
     // In a static, so that no 5000-byte value is built or moved through a
     // stack frame: the stack beside the relay is tight (`main.rs`,
     // `screen`).
@@ -345,6 +358,7 @@ pub async fn run(
     // The first picture shows what the node knows once its loop has run,
     // which is within a second of the radio coming up.
     let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
+    let mut pressed = false;
     loop {
         let state = STATE.lock(core::cell::Cell::get);
         let usb = state.battery == bark_screen::Battery::Usb;
@@ -358,10 +372,16 @@ pub async fn run(
             Some((s, at)) if s != state => at + gap,
             Some((_, at)) => at + stale,
         };
-        if now < due {
-            let _ = select(CHANGED.wait(), Timer::at(due)).await;
+        let scheduled = now >= due;
+        if !scheduled && !pressed {
+            if let Either3::Second(()) =
+                select3(CHANGED.wait(), PRESSED.wait(), Timer::at(due)).await
+            {
+                pressed = true;
+            }
             continue;
         }
+        pressed = false;
         let up_min = (now.as_secs() / 60) as u32;
         picture.clear();
         let t = crate::utc::time();
@@ -380,6 +400,11 @@ pub async fn run(
         if shown.is_none() {
             OUTCOME.lock(|o| o.set(Some(outcome)));
         }
-        shown = Some((state, Instant::now()));
+        // A press's picture keeps the last scheduled one's time.
+        let at = match shown {
+            Some((_, at)) if !scheduled => at,
+            _ => Instant::now(),
+        };
+        shown = Some((state, at));
     }
 }
