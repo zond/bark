@@ -1,7 +1,7 @@
 //! The mailbox (spec "Mailbox"; `bark_app_layer::mailbox`): an
 //! application on the node beside the phone link, kept in the flash
-//! region `bark_image::layout::MAILBOX`, its first page the state, the
-//! rest the ring (`bark_app_layer::flash_ring`).
+//! region `bark_image::layout::MAILBOX`, the ring and then a page of state
+//! (`bark_app_layer::flash_ring`).
 //!
 //! The mailbox lives in a static, used in a few microseconds by the
 //! node's loop (`node.rs`: what the core delivers, the replies it sends)
