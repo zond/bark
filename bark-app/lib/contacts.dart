@@ -17,6 +17,11 @@ class Contact {
   /// holder could make one. A first message's sender is not verified.
   final bool verified;
 
+  /// A message of theirs, in either form, has opened here: it was sealed
+  /// to the person's identity, so they hold the person's card, and a box
+  /// to them opens. Until then a message to them carries the card.
+  bool get hasMine => verified || heardSent != null;
+
   /// The address the person writes from that this contact has been seen
   /// to know, and the one last sent to it.
   final String? knowsMine;

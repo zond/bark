@@ -46,10 +46,11 @@ class Messenger {
     ),
   );
 
-  /// Seals `records` to `c`: boxed once `c` is verified, else a first
-  /// message with the person's card. The header names the node the
-  /// person writes from, the one connected or the last, until `c` has
-  /// answered a message that named it. Returns the payload and its `sent`.
+  /// Seals `records` to `c`: boxed once `c` holds the person's card, else
+  /// a first message with it. Being verified cannot choose: only a box
+  /// verifies, so two people waiting for it would never send one. The
+  /// header names the node the person writes from, the one connected or
+  /// the last, until `c` has answered a message that named it. Returns the payload and its `sent`.
   Future<(Uint8List, int)> _seal(
     Contact c,
     List<Record> records, {
@@ -57,7 +58,7 @@ class Messenger {
   }) async {
     final card = me.card;
     final here = me.nodeAddress;
-    if (!c.verified && card.home == null && here == null) {
+    if (!c.hasMine && card.home == null && here == null) {
       throw const BadPayload('no address to answer to yet');
     }
     sent ??= await me.nextSent();
@@ -70,7 +71,7 @@ class Messenger {
     if (withAddress) {
       await contacts.put(c.copyWith(sentMine: here.toString()));
     }
-    if (!c.verified) {
+    if (!c.hasMine) {
       final plain = writePlain(header, [CardRecord(card.encode()), ...records]);
       return (sealIntro(sodium, c.card.identity, plain), sent);
     }
@@ -95,7 +96,7 @@ class Messenger {
   /// message also carries the person's card.
   int _recordRoom(Contact c) =>
       maxAppPayload -
-      (c.verified ? boxOverhead : introOverhead + 2 + me.card.encode().length) -
+      (c.hasMine ? boxOverhead : introOverhead + 2 + me.card.encode().length) -
       5 -
       (_withAddress(c) ? Address.len : 0);
 

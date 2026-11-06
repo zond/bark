@@ -244,8 +244,14 @@ finds it no longer yours, as with a node.
 What the app sends is sealed with libsodium (the `sodium` package,
 which builds libsodium itself into the app), in the forms of spec
 "Phone link": a first message to someone in a sealed box with your
-card, every later one boxed to their identity, which names no sender:
-the app tries its contacts' keys on each message that arrives. A
+card until a message of theirs has opened here, which shows they hold
+your card, and from then on boxed to their identity, which names no
+sender: the app tries its contacts' keys on each message that arrives.
+A contact is verified once a boxed message of theirs opens, as only
+they can make one. So whoever writes first introduces themselves, the
+answer is boxed and verifies the one who answered, and the next message
+back verifies the first; if both write before either reads, both
+introduce themselves, and both verify on their next. A
 message names the node you write from while the contact may not know
 it, carries
 the time it was written as its `sent`, and holds a text or a part of
@@ -347,7 +353,9 @@ messages, acknowledgements, a reflected message, a forged first message,
 the header's written-from address kept apart from the card's, and the
 mailbox's replies, and long texts sent as parts, put together in any
 order and acknowledged, against the fake node, which answers a fetch
-as a home does; the fetch button's wait, ended by a reply, a give-back
+as a home does; pass messages between two phones by hand, in every
+order of who scans and who writes first, until both are verified; the
+fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
@@ -445,9 +453,11 @@ choice of where a text goes, and a long text's parts.
    phone to the one with the home: it shows as taken, and the other phone shows
    it in the sender's conversation within the time the network takes.
    Status's inbox count on the receiving node, in Debug, rises to 1
-   and falls to 0 as the app reads it. Answer it: the first phone's
-   contact turns verified. Press **Acknowledge** on the answer: the
-   other phone shows a check mark on its text.
+   and falls to 0 as the app reads it. Answer it: the answer is boxed,
+   and the phone that wrote first shows the other as verified. Write
+   again from that phone: the phone with the home shows it as verified
+   too. Press **Acknowledge** on the answer: the other phone shows a
+   check mark on its text.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the
    inbox count goes back to 0.
