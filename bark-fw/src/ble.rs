@@ -187,7 +187,8 @@ pub fn mpsl(
         lfclk,
         SESSIONS.init(nrf_mpsl::SessionMem::new()),
     )
-    .expect("the MPSL starts once, with its peripherals");
+    // The errno as a number: the error's `Debug` names every errno.
+    .unwrap_or_else(|e| panic!("the MPSL did not start: {}", i32::from(e)));
     MPSL.init(mpsl)
 }
 
@@ -541,7 +542,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         KEPT.lock(|k| k.replace(Some(b.clone())));
         match stack.add_bond_information(b) {
             Ok(()) => log::info!("ble: bond kept"),
-            Err(e) => log::error!("ble: the kept bond {:?}", e),
+            Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
         }
     }
     let mut peripheral = stack.peripheral();
@@ -565,7 +566,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
     let host = async {
         loop {
             if let Err(e) = runner.run().await {
-                log::error!("ble: host {:?}", e);
+                log::error!("ble: host {}", StackError(&e));
             }
         }
     };
@@ -574,7 +575,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
             match advertise(&mut peripheral, &server, name).await {
                 Ok(conn) => serve(&stack, &server, &conn).await,
                 Err(e) => {
-                    log::error!("ble: advertising {:?}", e);
+                    log::error!("ble: advertising {}", StackError(&e));
                     embassy_time::Timer::after(ADV_RETRY).await;
                 }
             }
@@ -660,7 +661,7 @@ async fn serve(
     // A pairing that does not bond is refused ([`settle`]); the phone asks
     // to bond, and so the node offers it.
     if let Err(e) = conn.raw().set_bondable(true) {
-        log::error!("ble: bondable {:?}", e);
+        log::error!("ble: bondable {}", HostError(&e));
     }
     // What changed while no phone was connected is read, not notified.
     NOTIFY.reset();
@@ -682,7 +683,7 @@ async fn serve(
         };
         let event = match event {
             GattConnectionEvent::Disconnected { reason } => {
-                log::info!("ble: disconnected {:?}", reason);
+                log::info!("ble: disconnected 0x{:02x}", u8::from(reason));
                 // A pairing cut short leaves no code on the screen.
                 crate::display::phone(phone_now(stack));
                 return;
@@ -700,7 +701,7 @@ async fn serve(
                 continue;
             }
             GattConnectionEvent::PairingFailed(e) => {
-                log::info!("ble: pairing failed {:?}", e);
+                log::info!("ble: pairing failed {}", HostError(&e));
                 settle(stack, conn, SecurityLevel::NoEncryption, None);
                 continue;
             }
@@ -825,12 +826,12 @@ fn settle(
     });
     for i in other {
         if let Err(e) = stack.remove_bond_information(i) {
-            log::error!("ble: removing a bond {:?}", e);
+            log::error!("ble: removing a bond {}", HostError(&e));
         }
     }
     if let Some(b) = keep.filter(|_| !held) {
         if let Err(e) = stack.add_bond_information(b) {
-            log::error!("ble: the kept bond {:?}", e);
+            log::error!("ble: the kept bond {}", HostError(&e));
         }
     }
     crate::display::phone(phone_now(stack));
@@ -909,7 +910,7 @@ fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>
     .into_iter()
     .flatten()
     {
-        log::error!("ble: setting a value {:?}", e);
+        log::error!("ble: setting a value {}", HostError(&e));
     }
 }
 
@@ -1003,4 +1004,67 @@ async fn write_clock(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), At
     })?;
     ask(Request::Clock(c)).await;
     Ok(())
+}
+
+/// A host error as its variant's name and, where it carries one, the
+/// code a specification gives it. The derived `Debug` would bring in the
+/// controller's status names and every nested error's `Debug`, kilobytes
+/// of flash for lines that rarely print.
+struct HostError<'a>(&'a trouble_host::Error);
+
+/// [`HostError`], or the controller's error: an nRF errno, negated
+/// (`nrf_mpsl::Error`).
+struct StackError<'a>(&'a BleHostError<sdc::Error>);
+
+impl core::fmt::Display for StackError<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            BleHostError::Controller(c) => write!(f, "controller {}", i32::from(*c)),
+            BleHostError::BleHost(e) => HostError(e).fmt(f),
+        }
+    }
+}
+
+impl core::fmt::Display for HostError<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use trouble_host::Error as H;
+        let name = match self.0 {
+            // Bluetooth Core, Vol 1, Part F: controller error codes.
+            H::Hci(s) => return write!(f, "hci 0x{:02x}", u8::from(*s)),
+            // Bluetooth Core, Vol 3, Part F, 3.4.1.1: ATT error codes.
+            H::Att(c) => return write!(f, "att 0x{:02x}", c.to_u8()),
+            H::Security(r) => return write!(f, "security {r:?}"),
+            H::HciDecode(_) => "HciDecode",
+            H::InsufficientSpace => "InsufficientSpace",
+            H::InvalidValue => "InvalidValue",
+            H::UnexpectedDataLength { .. } => "UnexpectedDataLength",
+            H::CannotConstructGattValue(_) => "CannotConstructGattValue",
+            H::ConfigFilterAcceptListIsEmpty => "ConfigFilterAcceptListIsEmpty",
+            H::UnexpectedGattResponse => "UnexpectedGattResponse",
+            H::MalformedCharacteristicDeclaration { .. } => "MalformedCharacteristicDeclaration",
+            H::InvalidCharacteristicDeclarationData => "InvalidCharacteristicDeclarationData",
+            H::FailedToFinalize { .. } => "FailedToFinalize",
+            H::CodecError(_) => "CodecError",
+            H::ExtendedAdvertisingNotSupported => "ExtendedAdvertisingNotSupported",
+            H::InvalidUuidLength(_) => "InvalidUuidLength",
+            H::Advertisement(_) => "Advertisement",
+            H::L2capConnectError(_) => "L2capConnectError",
+            H::InvalidChannelId => "InvalidChannelId",
+            H::NoChannelAvailable => "NoChannelAvailable",
+            H::NotFound => "NotFound",
+            H::InvalidState => "InvalidState",
+            H::OutOfMemory => "OutOfMemory",
+            H::NotSupported => "NotSupported",
+            H::ChannelClosed => "ChannelClosed",
+            H::Timeout => "Timeout",
+            H::Busy => "Busy",
+            H::NoPermits => "NoPermits",
+            H::Disconnected => "Disconnected",
+            H::ConnectionLimitReached => "ConnectionLimitReached",
+            H::GattSubscriberLimitReached => "GattSubscriberLimitReached",
+            H::AlreadyInUse => "AlreadyInUse",
+            H::Other => "Other",
+        };
+        f.write_str(name)
+    }
 }

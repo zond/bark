@@ -297,10 +297,10 @@ async fn main(spawner: Spawner) {
 
     // The global logger, installed now; its task drains it to the host
     // once the host asserts DTR (opens the port), and feeds what the host
-    // sends to the console.
-    static LOGGER: static_cell::ConstStaticCell<Logger> =
-        static_cell::ConstStaticCell::new(Logger::with_custom_style(log_line));
-    let logger = LOGGER.take();
+    // sends to the console. Built here rather than as a constant so that
+    // flash holds no copy of its initial value.
+    static LOGGER: static_cell::StaticCell<Logger> = static_cell::StaticCell::new();
+    let logger = LOGGER.init(Logger::with_custom_style(log_line));
     logger.with_handler(Input::new());
     let logger: &'static Logger = logger;
     if log::set_logger(logger).is_ok() {
@@ -558,7 +558,8 @@ async fn phone(
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
-        Err(e) => log::error!("ble: controller {:?}", e),
+        // An nRF errno, negated (`nrf_mpsl::Error`).
+        Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }
 }
 

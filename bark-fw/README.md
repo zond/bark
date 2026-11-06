@@ -580,10 +580,14 @@ phone in its resolving list.
 
 The log says `ble: pairing, the code shown`, then `ble: paired; the bond
 replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
-bond kept` for a node with one. A phone whose bond the node replaced
+bond kept` for a node with one. A disconnect's reason, and a host error
+that carries an HCI or ATT error, is logged as that code in hex
+(Bluetooth Core, Vol 1, Part F, and Vol 3, Part F, 3.4.1.1): `ble:
+disconnected 0x13` when the phone ends the link, `0x16` when the node
+does; other host errors by name. A phone whose bond the node replaced
 asks to encrypt with its old key as soon as it connects; the node has no
 such key, and the host ends the link, authentication failure (bench,
-2026-11-06: `ble: disconnected Connection Terminated By Local Host` half a
+2026-11-06: `ble: disconnected 0x16`, terminated by the node, half a
 second after `ble: connected`); the app says the node is no longer the
 person's.
 
