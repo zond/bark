@@ -23,9 +23,8 @@
 //! then.
 //!
 //! Outside its window a heard node's oldest message goes at once with the
-//! long preamble when the bucket and the node's channel spare it, and not
-//! again once one has gone unanswered, until the node beats (spec
-//! "Delivery", roadmap D112, D134).
+//! long preamble when the bucket spares it, and not again once one has
+//! gone unanswered, until the node beats (spec "Delivery", roadmap D112).
 //!
 //! With [`Config::sleepy_listens`], a research switch, a node heard is
 //! taken to listen all the time: its messages go at once, and after an
@@ -123,7 +122,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let (msg_id, frame) = (q.msg_id, mac::frame(&Packet::Data(data), home, preamble));
         let airtime = mac::airtime(&frame);
         if early {
-            if self.spares_long(airtime, home, Some(msg_id), now) {
+            if self.spares_long(airtime, Some(msg_id), now) {
                 let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
             }
             return Ok(());
@@ -141,16 +140,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether this node spares a frame of `airtime` with the long
-    /// preamble on `channel` now, to a sleepy node outside its window
-    /// (spec "Next hop", "Delivery"): its bucket holds the frame beyond
-    /// everything else it has to send, its send queue, every message of
-    /// its delivery queue but `except` at the ordinary preamble in its
-    /// window, and the reply reserve; and the frame leaves `channel` one
-    /// the move rule would not leave ([`Self::channel_spares`]).
+    /// preamble now, to a sleepy node outside its window (spec "Next hop",
+    /// "Delivery"): its bucket holds the frame beyond everything else it
+    /// has to send, its send queue, every message of its delivery queue but
+    /// `except` at the ordinary preamble in its window, and the reply
+    /// reserve.
     pub(super) fn spares_long(
         &self,
         airtime: Duration,
-        channel: Channel,
         except: Option<MsgId>,
         now: Instant,
     ) -> bool {
@@ -165,7 +162,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 )
             })
             .fold(Duration::ZERO, |a, b| a + b);
-        self.no_room(airtime, held, now).is_none() && self.channel_spares(channel, airtime)
+        self.no_room(airtime, held, now).is_none()
     }
 
     /// Offer the send queue the oldest queued message of each node, oldest

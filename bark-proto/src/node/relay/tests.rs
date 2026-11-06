@@ -2850,20 +2850,19 @@ fn the_addressed_node_goes_first() {
 }
 
 /// A sleepy addressed node with an anchor is sent the message at once with
-/// the long preamble while the relay's bucket and the node's channel spare
-/// it, here a quiet channel and a full bucket, though D is nearer its
-/// position (spec "Next hop").
+/// the long preamble while the relay's bucket spares it, though D is
+/// nearer its position (spec "Next hop").
 #[test]
 fn an_addressed_sleepy_node_is_sent_long_at_once() {
     let (_, _, _, _, e, sent) = handing_between_with(Peer::Sleepy, true, |_, _| {});
     assert_eq!(data_preambles(&sent), [(e, LONG_PREAMBLE_SYMBOLS)]);
 }
 
-/// With the sleepy node's channel busier than the quietest by more than
-/// the move threshold, the message goes on toward its anchor's position
-/// instead, to the nearer D (spec "Next hop", "Channel moves").
+/// The node's channel being busier than the others does not hold the
+/// message back: the long frame needs only the relay's bucket (spec
+/// "Next hop").
 #[test]
-fn a_busy_channel_leaves_a_sleepy_node_to_its_anchor() {
+fn a_busy_channel_does_not_hold_a_sleepy_node_back() {
     let busy_7 = |r: &mut Relay, _: Instant| {
         // Channel 7, E's, busy one sweep in ten; the others quiet.
         for i in 0..20 {
@@ -2873,8 +2872,8 @@ fn a_busy_channel_leaves_a_sleepy_node_to_its_anchor() {
             }
         }
     };
-    let (_, _, _, d, _, sent) = handing_between_with(Peer::Sleepy, true, busy_7);
-    assert_eq!(data_preambles(&sent), [(d, MIN_PREAMBLE_SYMBOLS)]);
+    let (_, _, _, _, e, sent) = handing_between_with(Peer::Sleepy, true, busy_7);
+    assert_eq!(data_preambles(&sent), [(e, LONG_PREAMBLE_SYMBOLS)]);
 }
 
 /// With a bucket that holds a short DATA beyond the reply reserve but not

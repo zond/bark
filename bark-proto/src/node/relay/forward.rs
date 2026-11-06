@@ -803,11 +803,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// destination, is sent the message now with the long preamble
     /// rather than reached through its anchor (spec "Next hop"): it has
     /// not left such a hand-over unanswered since it was last heard, and
-    /// this relay's bucket and the node's channel spare a full long frame
-    /// ([`Self::spares_long`]). A sleepy node does not sweep, so it knows
-    /// no channel's load.
+    /// this node's bucket spares a full long frame ([`Self::spares_long`]).
     fn reach_now(&self, n: &Neighbour, now: Instant) -> bool {
-        !self.sleepy() && !n.unanswered && self.spares_long(LONG_FRAME, n.home, None, now)
+        !n.unanswered && self.spares_long(LONG_FRAME, None, now)
     }
 
     /// Whether `n` is among the neighbours to choose from, `others_open`
@@ -875,8 +873,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Only a carried node itself can end the search for it, and a
         // frame to it costs little against a search through the city:
         // first even when stale (roadmap D116a). A sleepy node with an
-        // anchor is first only while this relay and its channel spare the
-        // long frame; otherwise its anchor delivers it (roadmap D134).
+        // anchor is first only while this relay spares the long frame;
+        // otherwise its anchor delivers it (roadmap D134).
         let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.

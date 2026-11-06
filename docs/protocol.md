@@ -1649,16 +1649,10 @@ it is first all the same. A sleepy neighbour with an anchor is first for
 a message addressed to it while the relay **spares the long frame**,
 and it is sent the message at once with the long preamble:
 
-- the relay is not sleepy;
-- its bucket holds a full DATA frame with the long preamble, 372.8 ms,
-  beyond everything else it has to send: its send queue, the messages
-  of its delivery queue at the ordinary preamble, and the reply reserve
-  ([duty cycle cap](#duty-cycle-cap));
-- the node's home channel stays within the move threshold of the
-  quietest channel, 0.05 ([channel moves](#channel-moves)), in the
-  relay's busy estimate with that frame added as its share of the
-  estimate's window ([busy estimate](#busy-estimate)), 372.8 ms of
-  30 minutes, 0.0002;
+- the relay's bucket holds a full DATA frame with the long preamble,
+  372.8 ms, beyond everything else it has to send: its send queue, the
+  messages of its delivery queue at the ordinary preamble, and the
+  reply reserve ([duty cycle cap](#duty-cycle-cap));
 - no such hand-over to the node has gone unanswered since it was last
   heard.
 
@@ -1742,16 +1736,20 @@ is its anchor's position, and the anchor, which owns that position,
 sends it the message ([delivery](#delivery)). The relay that hears it
 saves the hops to the anchor and, where the anchor cannot spare the
 long frame, the wait for the node's beat, a mean of 225 s
-([beats](#beats)). The long frame costs 2.7 times a full frame's air on
-the node's channel, where its anchor's other nodes beat and take their
-mail, so a relay sends it only from air it has spare and onto a channel
-that its relays would not leave; the move threshold is the load at
-which they would. One unanswered hand-over says the node is out of
-that relay's reach, and its anchor, which hears its beats, is left to
-deliver. The rule holds at the owner of the position too, which would
-otherwise queue the message for the node's beat on its own channel, up
-to a rotation away, but for a sleepy node with an anchor: the owner
-delivers to it from its delivery queue, with the same condition
+([beats](#beats)). Where relays hear one another's sleepy nodes it
+also saves the texts that a search through them lost. The long frame
+costs 2.7 times a full frame's air, so a relay sends it only from air
+it has spare, as the anchor does. A condition on the node's channel as
+well, the move threshold of [channel moves](#channel-moves), was
+measured and is not used: it refused mostly on the channel where an
+anchor serves its own nodes, and held their texts for the beat (roadmap
+D134). One unanswered hand-over says the node is out of that relay's
+reach, and its anchor, which hears its beats, is left to deliver.
+
+The rule holds at the owner of the position too, which would otherwise
+queue the message for the node's beat on its own channel, up to a
+rotation away, but for a sleepy node with an anchor: the owner delivers
+to it from its delivery queue, with the same bucket condition
 ([delivery](#delivery); roadmap D116a, D134).
 
 A candidate may already have the message by another path; the relay
@@ -2765,9 +2763,10 @@ The DATA carries the hop count as any hand-over ([hop count](#hop-count)).
 the holder hears, outside the node's window, goes at once as DATA with
 the long preamble
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-the node's oldest first and one at a time, if the holder spares the
-long frame as a relay must to send it a message at once
-([next hop](#next-hop)), with that frame in place of a full one. Once the node has
+the node's oldest first and one at a time, if the holder's bucket holds
+that frame beyond everything else it has to send: its send queue, every
+other message in its delivery queue at the ordinary preamble, and the
+reply reserve ([duty cycle cap](#duty-cycle-cap)). Once the node has
 taken one, it listens a hand-over more, as after any delivery, and
 what follows goes with the ordinary preamble. A delivery outside the
 window that goes unanswered marks the node out of reach, and its
@@ -2775,12 +2774,11 @@ messages wait for its next beat.
 
 *Why outside the window.* A person waiting for a text feels the wait
 for the node's beat, minutes. A long frame costs the holder airtime,
-which the bucket condition keeps to what it has spare, the node's
-channel air, which the channel condition keeps off a channel its relays
-would leave, and the node the hand-over it listens after taking it. One unanswered frame says the node is
+which the bucket condition keeps to what it has spare, and the node the
+hand-over it listens after taking it. One unanswered frame says the node is
 dark or gone, so no more go to it before it beats (roadmap D112).
 
-So a message for a node in reach usually goes at once. One the holder
+So a message for a node in reach usually goes at once. One the bucket
 cannot spare, or for a node whose last delivery went unanswered, waits
 for the node's next beat: a mean of about two minutes, at most a beat
 period. A node listens 3.39 s after each beat, 54 s an hour, 3.15 s
