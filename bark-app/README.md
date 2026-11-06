@@ -15,8 +15,9 @@ is a prototype for the bench, not the app people will carry.
   start from 12 words the person writes down, and can restore it from
   them on another phone. Texts are sealed to an identity.
 - **Card**: what two people exchange so that each can reach the other:
-  an identity, an address and the name its owner chose. Its address is
-  the home node's when the person has set one, else their node's now.
+  an identity, the name its owner chose and, when the person has set
+  one, their home node's address; without a home it carries no
+  address, and they can be written to only once they have written.
 - **Contact**: a card with the name this phone gives it, known by its
   identity.
 - **Home node**: a node on USB that stays where it is, set in Settings;
@@ -43,9 +44,13 @@ is a prototype for the bench, not the app people will carry.
   shows as queued, taken by the node, or given back with its wait
   counting down; a given-back text can be sent again once the wait is
   over, or dropped; and "acknowledged" once the other person presses
-  **Acknowledge** on it. A received text has that button; nothing is
+  **Acknowledge** on it. Each says in small text where it went: "to
+  where they were" or "to their home". The top line says when the contact last wrote, and, when their card names
+  a home, whether from it. A received text has that button; nothing is
   acknowledged by itself. A contact whose first message has come but no
-  sealed reply is marked not verified. The menu renames the contact,
+  sealed reply is marked not verified. A contact without a home who
+  has not written yet cannot be written to: a line says so where the
+  field would be. The menu renames the contact,
   sends them your card, or removes them. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
@@ -54,12 +59,12 @@ is a prototype for the bench, not the app people will carry.
   enough: a text is sealed to the identity on the card.
 - **My card**, the QR button. Your identity, the card as a QR code for
   another phone to scan, **Scan their card** to add theirs as in
-  Contacts, and the address and the card as text to copy and send. Without a home node it needs the node's address, kept from
-  the last connection.
+  Contacts, and the home's address and the card as text to copy and
+  send. Without a home it says that people can answer you only after
+  you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
-  connected node your home, or none; if your card's address changes,
-  the dialog says so and your new card goes to every contact; clear the
+  connected node your home, or none; the dialog says and your new card goes to every contact; clear the
   mailbox key of a node that holds one and is not your home), your 12
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
@@ -107,7 +112,10 @@ relays; every third message it takes is given back with a wait of
 1.58 s. Behind it is one person, the **fake friend**, with an identity
 of their own: they start with two first messages to you in the inbox,
 with their card, and answer each text you send them with a sealed
-"Echo: " of it 5 s later. It runs on while the app is disconnected, as
+"Echo: " of it 5 s later. Their card names a home, `bark-fa4e00000002`,
+and they write from a node of their own away from it,
+`bark-fa4e00000003`, which moves about 110 m north between their
+messages. It runs on while the app is disconnected, as
 a node does.
 
 ## The payload
@@ -117,7 +125,8 @@ which builds libsodium itself into the app), in the forms of spec
 "Phone link": a first message to someone in a sealed box with your
 card, every later one boxed to their identity, which names no sender:
 the app tries its contacts' keys on each message that arrives. A
-message names your address while the contact may not know it, carries
+message names the node you write from while the contact may not know
+it, carries
 the time it was written as its `sent`, and holds a text, an
 acknowledgement or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
@@ -138,6 +147,25 @@ happens to the old home when another node is made the home. Settings
 shows that button on any node that holds a key and is not the person's
 home, with a line saying it is someone's home, perhaps a former one of
 theirs.
+
+## Where a text goes
+
+A message names the node its sender writes from, while the other side
+may not know it, so the app knows two addresses for a contact: the
+home on their card, if they have one, and the one they last wrote from, with
+the age of their newest message, counted from the time it was written,
+or from when it arrived if that is earlier. While that age is under a
+minute, a text goes where they wrote from without asking, straight to
+where they are, with no fetch from their mailbox: in a minute a person
+on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
+relay hears a handheld in the street (`docs/protocol.md`, "Physical
+layer"), while a driver has already left that reach, so no longer wait
+makes the guess better. Older, the send
+button asks, for that text only: "Where <name> was <age> ago" or "Their
+home mailbox". Without a home it goes where they were, without asking;
+with a home and nothing written from yet, to the home. A contact with
+neither cannot be written to until they write. Acknowledgements and
+cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins
 
@@ -193,15 +221,18 @@ The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
-messages, acknowledgements, a reflected message, a forged first message
-and the mailbox's replies against the fake node, which answers a fetch
+messages, acknowledgements, a reflected message, a forged first message,
+the header's written-from address kept apart from the card's, and the
+mailbox's replies against the fake node, which answers a fetch
 as a home does; the fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
-conversations; and drive the screens: a text to the fake friend, its
+conversations; choose where a text goes; and drive the screens: a text
+to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted or a
-scanned card, my card, the debug screen and the fetch button.
+scanned card, my card, the debug screen, the fetch button, and the
+choice of where a text goes.
 
 ## Trying it
 
@@ -220,33 +251,41 @@ scanned card, my card, the debug screen and the fetch button.
    external power, placed, first rotation running with about 3:15 to go,
    the relays known rising from 0 to 3. The log shows the two inbox
    messages read and confirmed.
-4. Open the conversation: it says not verified. Write a text and send
-   it. It shows as taken by the node; 5 s later "Echo: " and your text
-   appears, and the note goes: the echo was sealed by the fake friend.
+4. Open the conversation: it says not verified, and the top line "Last
+   wrote just now, away from home". Write a text and send it. It shows
+   as taken by the node, "to where they were"; 5 s later "Echo: " and
+   your text appears, and the note goes: the echo was sealed by the
+   fake friend.
 5. Press **Acknowledge** under the echo: it shows "you acknowledged
    it", and Debug lists an `ack` sent.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
    queued for about two seconds, then it is taken.
-7. The QR button, **My card**: set a name. Your identity, a QR code,
-   the address and the card as text, `BARK:` and capitals, appear.
-8. Menu, **Settings**, under **Map point**: press **Phone location**
-   (allow location), then **Set**: the address on My card changes.
-   **Clear** brings back the fake's own fix.
-9. **Settings**, under **Home node**: **Make this node my home**. The
-   dialog says your card's address stays as it is, since it is already
-   this node's. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
-   mailbox empty". Go back: the bar has the inbox button, **Fetch my
-   mail**. Press it: it says you are connected to your home node, and
-   sends nothing. Disconnect and press it: it says no node is
-   connected.
-10. Connect again. **Settings**, **No home node**, **Go ahead**: the
+7. Wait a minute after the last echo, then send a text: the send
+   button asks "Where Fake friend was 1 min ago" or
+   "Their home mailbox". Pick the mailbox: the text says "to their
+   home". Its echo makes where they were fresh again, and the next text
+   goes there without asking.
+8. The QR button, **My card**: set a name. Your identity, a QR code
+   and the card as text, `BARK:` and capitals, appear, with a line that
+   without a home people can answer you only after you write to them.
+9. Menu, **Settings**, under **Map point**: press **Phone location**
+   (allow location), then **Set**: Debug's address changes, and the
+   next text to the fake friend names it. **Clear** brings back the
+   fake's own fix.
+10. **Settings**, under **Home node**: **Make this node my home**. The
+    dialog says your card changes and goes to your contact. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
+    mailbox empty". Go back: the bar has the inbox button, **Fetch my
+    mail**. Press it: it says you are connected to your home node, and
+    sends nothing. Disconnect and press it: it says no node is
+    connected.
+11. Connect again. **Settings**, **No home node**, **Go ahead**: the
     node forgets the key, and Home reads "not a home". Make it your home
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-11. Disconnect, close the app, open it again: the conversations, the
+12. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
 
 ### With a node
@@ -264,12 +303,14 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
-   address, and My card shows the QR code. Without one, set a map
-   point in Settings: Status changes to placed and map point, and the
-   card appears.
-5. With a second node and a second phone, each phone scans the other's
-   card from **My card**, **Scan their card** (allow the camera).
-   Send a text from one: it shows as taken, and the other phone shows
+   address. Without one, set a map point in Settings: Status changes to
+   placed and map point. A text names the node's address only once it
+   has one.
+5. With a second node and a second phone, make one phone's node its
+   home (step 8 below; a card without a home cannot be written to
+   first), then each phone scans the other's card from **My card**,
+   **Scan their card** (allow the camera). Send a text from the other
+   phone to the one with the home: it shows as taken, and the other phone shows
    it in the sender's conversation within the time the network takes.
    Status's inbox count on the receiving node, in Debug, rises to 1
    and falls to 0 as the app reads it. Answer it: the first phone's

@@ -43,6 +43,21 @@ enum OutKind {
   fetch,
 }
 
+/// Which of a contact's addresses a message went to.
+enum Toward {
+  /// Where they last wrote from.
+  there,
+
+  /// Their home's mailbox, the address on their card.
+  home;
+
+  /// For the sent row.
+  String get label => switch (this) {
+    there => 'to where they were',
+    home => 'to their home',
+  };
+}
+
 class Outgoing {
   final Address dst;
   final Uint8List payload;
@@ -61,6 +76,9 @@ class Outgoing {
   /// A text's words.
   final String? body;
 
+  /// Which of the contact's addresses it went to; null for a fetch.
+  final Toward? toward;
+
   /// The other side acknowledged it; a fetch, the home node answered.
   bool acked;
   OutState state;
@@ -75,6 +93,7 @@ class Outgoing {
     required this.sent,
     this.to,
     this.body,
+    this.toward,
     this.acked = false,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
@@ -94,6 +113,7 @@ class Outgoing {
     'to': to,
     'sent': sent,
     'body': body,
+    'toward': toward?.name,
     'acked': acked,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
@@ -111,6 +131,9 @@ class Outgoing {
           to: j['to'] as String?,
           sent: j['sent'] as int,
           body: j['body'] as String?,
+          toward: j['toward'] == null
+              ? null
+              : Toward.values.byName(j['toward'] as String),
           acked: j['acked'] as bool,
           state: OutState.values.byName(j['state'] as String),
         )

@@ -47,16 +47,21 @@ void main() {
     expect(seedOfPhrase(p.sublist(1).join(' ')), isNull);
   });
 
-  test('the card, its bytes and its text', () {
-    final m = at('card');
-    final c = PersonCard.parse(m['text'] as String);
-    expect(hex(c.identity), m['identity']);
-    expect(c.address.toString(), m['address']);
-    expect(c.time, m['time']);
-    expect(c.name, m['name']);
-    expect(hex(c.encode()), m['bytes']);
-    expect(c.toText(), m['text']);
-    expect(PersonCard.parse((m['text'] as String).toLowerCase()).name, c.name);
+  test('the card, its bytes and its text, with a home and without', () {
+    for (final name in ['card', 'card_no_home']) {
+      final m = at(name);
+      final c = PersonCard.parse(m['text'] as String);
+      expect(hex(c.identity), m['identity']);
+      expect(c.home?.toString(), m['home']);
+      expect(c.time, m['time']);
+      expect(c.name, m['name']);
+      expect(hex(c.encode()), m['bytes']);
+      expect(c.toText(), m['text']);
+      expect(
+        PersonCard.parse((m['text'] as String).toLowerCase()).name,
+        c.name,
+      );
+    }
   });
 
   test('boxed: made and opened as the Rust side does', () {

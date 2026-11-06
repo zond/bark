@@ -13,7 +13,9 @@ import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -101,16 +103,14 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
+    expect(find.textContaining('only after you write to them'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Scan their card'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
-    final mine = app.me.card!;
-    expect(
-      mine.address.toString(),
-      Address(FakeNode.gps, FakeNode.id).toString(),
-    );
+    final mine = app.me.card;
+    expect(mine.home, isNull);
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
@@ -183,6 +183,51 @@ void main() {
     await t.tap(find.text('Save'));
     await t.pumpAndSettle();
     expect(app.contacts.list.single.key, card.key);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a stale address and a home: the send button asks where', (
+    t,
+  ) async {
+    final app = await model(t);
+    final home = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final there = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final an = DateTime.now().subtract(const Duration(hours: 1));
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), home, 1, 'Olena'),
+      'Olena',
+      verified: true,
+    ).heard(sentOf(an), there, an);
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    expect(find.text('Last wrote 1 h ago, away from home'), findsOneWidget);
+
+    Future<void> send(String words, String choice) async {
+      await t.enterText(find.byType(TextField), words);
+      await t.tap(find.byTooltip('Send'));
+      await t.pumpAndSettle();
+      expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
+      expect(find.text('Their home mailbox'), findsOneWidget);
+      await t.tap(find.text(choice));
+      await t.pumpAndSettle();
+    }
+
+    await send('to the mailbox', 'Their home mailbox');
+    var o = app.session.outbox.last;
+    expect(o.body, 'to the mailbox');
+    expect(o.dst.toString(), home.toString());
+    expect(o.toward, Toward.home);
+    expect(find.textContaining('to their home'), findsOneWidget);
+
+    // Per text: the next asks again.
+    await send('to where she was', 'Where Olena was 1 h ago');
+    o = app.session.outbox.last;
+    expect(o.body, 'to where she was');
+    expect(o.dst.toString(), there.toString());
+    expect(o.toward, Toward.there);
+    expect(find.textContaining('to where they were'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();
@@ -267,7 +312,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('the home dialog says a card is sent only when one is', (
+  testWidgets('the home dialog says the new card goes to the contacts', (
     t,
   ) async {
     final app = await model(t);
@@ -290,18 +335,11 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    // The card already carries this node's address.
-    await press('Make this node my home', 'stays as it is, so no card');
-    expect(app.atHome, isTrue);
-    await press('No home node', 'stays as it is, so no card');
-    expect(app.me.home, isNull);
-
-    // A home elsewhere: making this node the home moves the card.
-    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
-    await app.me.setHome(away);
-    await t.pump();
+    // Setting and clearing the home both change the card.
     await press('Make this node my home', 'goes to your contact.');
     expect(app.atHome, isTrue);
+    await press('No home node', 'goes to your contact.');
+    expect(app.me.home, isNull);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

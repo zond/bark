@@ -5,13 +5,13 @@
 //! |---|---|---|
 //! | flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two |
 //! | sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC |
-//! | address | 0 or 13 | the address to answer to |
+//! | address | 0 or 13 | the address of the node the sender writes from |
 //!
 //! | record | bytes | |
 //! |---|---|---|
 //! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
 //! | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-//! | card | 1 + 1 + 50 to 82 | type 4, the card's length, its bytes |
+//! | card | 1 + 1 + 38 to 83 | type 4, the card's length, its bytes |
 
 use crate::card::{self, Card};
 use crate::text::Encoding;
@@ -34,7 +34,9 @@ pub struct Header {
     pub greater: bool,
     /// The sender's clock: orders, names a text, stops a replay.
     pub sent: u32,
-    /// The address to answer to, when the receiver may not have it.
+    /// The address of the node the sender writes from, when the receiver
+    /// may not have it; not the card's, which may be a home's mailbox, so
+    /// that a reply can go straight to where the sender is.
     pub address: Option<Address>,
 }
 

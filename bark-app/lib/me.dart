@@ -23,13 +23,14 @@ class Me extends ChangeNotifier {
   /// The name on the person's card.
   String name = '';
 
-  /// The node the person set as home, whose address their card carries.
+  /// The node the person set as home, whose address their card carries;
+  /// without one the card carries no address.
   Address? home;
 
   /// The address of the node the phone is connected to, as last read.
   Address? nodeAddress;
 
-  /// When the card's address became the person's, as `sent`.
+  /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
   /// The last `sent` this phone gave a message.
@@ -53,13 +54,7 @@ class Me extends ChangeNotifier {
   String get key => hex(identity);
   List<String> get phrase => phraseOf(keys.seed);
 
-  /// Where others reach the person: their home, or their node now.
-  Address? get cardAddress => home ?? nodeAddress;
-
-  PersonCard? get card {
-    final a = cardAddress;
-    return a == null ? null : PersonCard(identity, a, cardTime, name);
-  }
+  PersonCard get card => PersonCard(identity, home, cardTime, name);
 
   /// The version of `me.json`'s format.
   static const version = 1;
@@ -147,26 +142,20 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Sets or clears the home node; true if the card's address changed.
+  /// Sets or clears the home node; true if the card changed.
   Future<bool> setHome(Address? a) async {
-    final before = cardAddress?.toString();
+    final changed = a?.toString() != home?.toString();
     home = a;
-    return _addressChanged(before);
-  }
-
-  /// The connected node's address; true if the card's address changed.
-  Future<bool> setNodeAddress(Address a) async {
-    if (a.toString() == nodeAddress?.toString()) return false;
-    final before = cardAddress?.toString();
-    nodeAddress = a;
-    return _addressChanged(before);
-  }
-
-  Future<bool> _addressChanged(String? before) async {
-    final changed = cardAddress?.toString() != before;
     if (changed) cardTime = sentOf(now());
     await _changed();
     return changed;
+  }
+
+  /// The connected node's address: where the person writes from.
+  Future<void> setNodeAddress(Address a) async {
+    if (a.toString() == nodeAddress?.toString()) return;
+    nodeAddress = a;
+    await _changed();
   }
 
   /// A fetch of round `round` was sent.

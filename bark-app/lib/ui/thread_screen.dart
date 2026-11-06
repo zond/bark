@@ -31,14 +31,53 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
+  /// Sends the text where the contact is, or, when that may be stale,
+  /// where the person chooses, this once.
   Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
+    final options = to.towards(app.now());
+    final toward = options.length == 1
+        ? options.single
+        : await showDialog<Toward>(
+            context: context,
+            builder: (context) => SimpleDialog(
+              title: const Text('Send to'),
+              children: [
+                for (final t in options)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, t),
+                    child: Text(_option(to, t)),
+                  ),
+              ],
+            ),
+          );
+    if (toward == null) return;
     try {
-      await app.messenger.sendText(to, text.text);
+      await app.messenger.sendText(to, text.text, toward: toward);
       text.clear();
     } on BadPayload catch (e) {
       if (mounted) say(context, 'Not sent: $e');
     }
+  }
+
+  String _option(Contact c, Toward t) => switch (t) {
+    Toward.there =>
+      'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
+    Toward.home => 'Their home mailbox',
+  };
+
+  /// When they last wrote, and whether from their home.
+  String _heard(Contact c) {
+    final at = c.heardAt;
+    if (at == null) return 'Has not written yet';
+    final from = c.wroteFrom;
+    final home = c.card.home;
+    final where = home == null || from == null
+        ? ''
+        : from.toString() == home.toString()
+        ? ', from their home'
+        : ', away from home';
+    return 'Last wrote ${ago(app.now().difference(at))}$where';
   }
 
   @override
@@ -48,7 +87,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final contact = c.contact;
     return Scaffold(
       appBar: AppBar(
-        title: Text(c.title, overflow: TextOverflow.ellipsis),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(c.title, overflow: TextOverflow.ellipsis),
+            if (contact != null)
+              Text(
+                _heard(contact),
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
         actions: [
           FetchButton(app),
           if (contact != null)
@@ -97,6 +147,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text('This contact was removed.'),
+              )
+            else if (contact.towards(app.now()).isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '${contact.name} has no home node and has not written yet: '
+                  'you can answer once they write to you.',
+                ),
               )
             else
               _compose(contact),
@@ -159,6 +217,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Text(
                   mine
                       ? '${when(e.at)}, ${stateLabel(app.session, o)}'
+                            '${o.toward == null ? '' : ', ${o.toward!.label}'}'
                             '${o.acked ? ', acknowledged ✓' : ''}'
                       : '${when(e.at)}'
                             '${e.received!.mailbox ? ', from your mailbox' : ''}'

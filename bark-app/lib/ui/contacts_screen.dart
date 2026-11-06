@@ -30,7 +30,9 @@ class ContactsScreen extends StatelessWidget {
               leading: const CircleAvatar(child: Icon(Icons.person)),
               title: Text(c.name),
               subtitle: Text(
-                c.verified ? c.address.toString() : 'not verified yet',
+                !c.verified
+                    ? 'not verified yet'
+                    : c.card.home?.toString() ?? 'no home node',
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
               onTap: () => Navigator.of(context).pushReplacement(
@@ -150,9 +152,11 @@ class _AddContactScreenState extends State<AddContactScreen> {
           if (card != null)
             ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Address'),
+              title: const Text('Home node'),
               subtitle: Text(
-                card!.address.toString(),
+                card!.home?.toString() ??
+                    'none: you can write to them once they have written to '
+                        'you',
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),

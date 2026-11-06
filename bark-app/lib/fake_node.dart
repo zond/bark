@@ -2,10 +2,13 @@
 // app can be tried on a phone with no board. Its network is invented:
 // it hears relays, gives some messages back, and behind it is one
 // person, the fake friend, who writes first and echoes every text sent
-// to them, sealed as a real phone would. Somewhere away is the person's
-// home node, whose mailbox answers a fetch as the spec's "Mailbox" says.
+// to them, sealed as a real phone would. The fake friend has a home and
+// writes from a node away from it, which moves between their messages.
+// Somewhere away is the person's home node, whose mailbox answers a
+// fetch as the spec's "Mailbox" says.
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:sodium/sodium.dart';
@@ -40,9 +43,25 @@ class FakeNode implements NodeLink {
     List.generate(seedLen, (i) => 0xa0 + i),
   );
 
-  /// The fake friend's card: their address is the fake node's.
-  PersonCard get friendCard =>
-      PersonCard(friend.identity, _own, 0, 'Fake friend');
+  /// The fake friend's card, with their home.
+  late final PersonCard friendCard = PersonCard(
+    friend.identity,
+    friendHome,
+    0,
+    'Fake friend',
+  );
+
+  /// The fake friend's home node, `bark-fa4e00000002`.
+  static final friendHome = Address(Position.fromDegrees(50.47, 30.50), [
+    0xfa, 0x4e, 0, 0, 0, 2, //
+  ]);
+
+  /// The node the fake friend carries, `bark-fa4e00000003`, a block
+  /// further north, about 110 m, at each of their messages.
+  Address get friendAway => Address(
+    Position.fromDegrees(50.40 + 0.001 * _friendWrote, 30.60),
+    [0xfa, 0x4e, 0, 0, 0, 3],
+  );
 
   /// `bark-fa4e00000001`.
   static final id = Uint8List.fromList([0xfa, 0x4e, 0, 0, 0, 1]);
@@ -93,7 +112,10 @@ class FakeNode implements NodeLink {
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
+
+  /// The fake friend's last `sent`, and how many messages they wrote.
   int _friendSent = 0;
+  int _friendWrote = 0;
   (int, DateTime)? _givenBack;
   int _writes = 0;
   int _taken = 0;
@@ -126,7 +148,14 @@ class FakeNode implements NodeLink {
     secretKey: friend.pair.secretKey,
   );
 
-  Header _header() => Header(greater(friend.identity, app), ++_friendSent);
+  /// A header of the fake friend's next message: their clock, as a phone's
+  /// `sent`, and the node they write from, which has moved since the
+  /// last, so it is always named.
+  Header _header() {
+    _friendSent = max(sentOf(now()), _friendSent + 1);
+    _friendWrote++;
+    return Header(greater(friend.identity, app), _friendSent, friendAway);
+  }
 
   InboxMessage _message(Uint8List p) => InboxMessage(msgId(_own, p), p);
 

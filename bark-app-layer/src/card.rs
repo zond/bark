@@ -1,13 +1,15 @@
 //! The card: what people exchange so that each can reach the other
-//! (spec "Phone link"). Its address is the home node's when
-//! the person has one, else the carried node's current one.
+//! (spec "Phone link"). It carries the person's home node's address when
+//! they have one, and no address otherwise: any other node's address is
+//! only where they were.
 //!
 //! | field | bytes |
 //! |---|---|
-//! | version | 1 |
+//! | version, 2 | 1 |
+//! | flags | 1: bit 0, a home address follows; the others zero |
 //! | identity | 32 |
-//! | address | 13 |
-//! | the address's time, as `sent` | 4 |
+//! | when the home was set or cleared, as `sent` | 4 |
+//! | home address | 0 or 13 |
 //! | display name, UTF-8 | 0 to 32 |
 //!
 //! As text, in a QR code or pasted: `BARK:` and the bytes in base32
@@ -20,28 +22,30 @@ use crate::{be, Address, Error, Identity};
 pub struct Card<'a> {
     /// Whose card.
     pub identity: Identity,
-    /// Where to reach them.
-    pub address: Address,
-    /// When that address became theirs, as `sent`: a later card replaces
-    /// an earlier one's address.
+    /// Their home node's address, whose mailbox keeps their mail.
+    pub home: Option<Address>,
+    /// When the home was set or cleared, as `sent`: a later card replaces
+    /// an earlier one, also one that drops the home.
     pub time: u32,
     /// The name they chose.
     pub name: &'a str,
 }
 
 /// The card layout's version.
-pub const CARD_VERSION: u8 = 1;
+pub const CARD_VERSION: u8 = 2;
 /// The longest name, in UTF-8 bytes.
 pub const MAX_NAME: usize = 32;
-/// Bytes before the name.
-pub const FIXED_LEN: usize = 1 + Identity::LEN + Address::LEN + 4;
-/// The longest card.
-pub const MAX_LEN: usize = FIXED_LEN + MAX_NAME;
+/// Bytes before the home address: the shortest card.
+pub const FIXED_LEN: usize = 1 + 1 + Identity::LEN + 4;
+/// The longest card, with a home.
+pub const MAX_LEN: usize = FIXED_LEN + Address::LEN + MAX_NAME;
 
 /// What a card's text begins with.
 pub const PREFIX: &str = "BARK:";
 /// The longest text: the prefix and 5 bits a character.
 pub const MAX_TEXT_LEN: usize = PREFIX.len() + (MAX_LEN * 8).div_ceil(5);
+
+const FLAG_HOME: u8 = 1;
 
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -49,30 +53,45 @@ impl<'a> Card<'a> {
     /// The card's bytes into `out`; their length.
     pub fn encode(&self, out: &mut [u8]) -> Result<usize, Error> {
         let name = self.name.as_bytes();
-        let len = FIXED_LEN + name.len();
+        let at = FIXED_LEN + if self.home.is_some() { Address::LEN } else { 0 };
+        let len = at + name.len();
         if name.len() > MAX_NAME || out.len() < len {
             return Err(Error::TooLong);
         }
         out[0] = CARD_VERSION;
-        out[1..33].copy_from_slice(&self.identity.0);
-        out[33..33 + Address::LEN].copy_from_slice(&self.address.encode());
-        out[46..50].copy_from_slice(&self.time.to_be_bytes());
-        out[FIXED_LEN..len].copy_from_slice(name);
+        out[1] = if self.home.is_some() { FLAG_HOME } else { 0 };
+        out[2..34].copy_from_slice(&self.identity.0);
+        out[34..FIXED_LEN].copy_from_slice(&self.time.to_be_bytes());
+        if let Some(h) = self.home {
+            out[FIXED_LEN..at].copy_from_slice(&h.encode());
+        }
+        out[at..len].copy_from_slice(name);
         Ok(len)
     }
 
     /// The card in `b`, all of it.
     pub fn decode(b: &'a [u8]) -> Result<Card<'a>, Error> {
-        if b.len() < FIXED_LEN || b.len() > MAX_LEN || b[0] != CARD_VERSION {
+        if b.len() < FIXED_LEN || b[0] != CARD_VERSION || b[1] & !FLAG_HOME != 0 {
+            return Err(Error::Malformed);
+        }
+        let (home, at) = if b[1] & FLAG_HOME != 0 {
+            (
+                Some(Address::decode(&b[FIXED_LEN..])?),
+                FIXED_LEN + Address::LEN,
+            )
+        } else {
+            (None, FIXED_LEN)
+        };
+        if b.len() > at + MAX_NAME {
             return Err(Error::Malformed);
         }
         let mut identity = [0u8; Identity::LEN];
-        identity.copy_from_slice(&b[1..33]);
+        identity.copy_from_slice(&b[2..34]);
         Ok(Card {
             identity: Identity(identity),
-            address: Address::decode(&b[33..])?,
-            time: be(&b[46..50]),
-            name: core::str::from_utf8(&b[FIXED_LEN..]).map_err(|_| Error::Malformed)?,
+            home,
+            time: be(&b[34..FIXED_LEN]),
+            name: core::str::from_utf8(&b[at..]).map_err(|_| Error::Malformed)?,
         })
     }
 
