@@ -3285,10 +3285,10 @@ the nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes.
 An item's place is its number less the first number of the round, plus
 one, and its plaintext is its number (3) and the item; the reply that
 says nothing is new has place 0 and an empty plaintext, 17 bytes. A
-round has at most 256 replies, every item of the board's ring (16 pages
-of 16 slots), so the requester tries places 1 to 256 on a reply that
-carries an item and learns its number from inside; a ring that held
-more would send its newest 256.
+round has at most 256 replies, so the requester tries places 1 to 256 on
+a reply that carries an item and learns its number from inside; a ring
+that holds more, as the board's of 1024 items does, sends its newest
+256.
 
 *Why nothing new is an answer.* A person pressed a button and waits:
 without it they cannot tell "no mail" from a fetch or a reply lost on

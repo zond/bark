@@ -233,6 +233,11 @@ by the NVMC times above, so 34 s for ACTIVE, and as long again to swap
 back. At three erases a page per update, the 10 000 erase cycles of the
 flash allow over 3000 updates.
 
+*2026-11-06:* the layout has changed twice since (roadmap D131, D139):
+the staged image and the coded pieces now lie on the board's external
+flash, and the running image takes 227 pages; `bark-fw/README.md`,
+"Flash layout", has the regions as built.
+
 ## The transport
 
 ### Where it lives

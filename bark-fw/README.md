@@ -193,8 +193,9 @@ Unverified, in the order they will fail if wrong:
   shows as `Busy` or `DIO1` errors when the radio starts or on its first
   transmit or receive.
 - 8 MHz SPI works on the board's traces.
-- The external flash takes `B9h` at boot and drops from standby to deep
-  power-down, 12 µA to 0.5 µA typical (`src/ext_flash.rs`,
+- The external flash answers its ID, `ext flash: id ba 60 15` in the
+  boot log, takes `B9h` and drops from standby to deep power-down, 12 µA
+  to 0.5 µA typical (`src/ext_flash.rs`,
   `docs/external-flash-2026-11-06.md`); `scripts/measure.md` step 5 sees
   it or not.
 - The chip's behaviour beyond what the datasheet says: CRC-failed frames
@@ -252,8 +253,9 @@ which starts the firmware from the slot above it and can swap in a
 staged image (Updates, below; roadmap D79). One table,
 `bark-image/src/layout.rs`, gives every region; the build scripts of the
 firmware and of the loader write each one's `memory.x` from it, with a
-symbol for each region, which `scripts/uf2.py` reads from the ELF.
-Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
+symbol for each internal region, which `scripts/uf2.py` reads from the
+ELF. Pages are 4 KiB, the erase unit (nRF52840 Product Specification,
+NVMC).
 The bootloader's drive writes a UF2 into `0x1000..0xEA000` and, after a
 double tap, serves every byte of that range as `CURRENT.UF2`
 (`docs/softdevice-2026-11-05.md`, "How the drive places a UF2"): anyone
@@ -261,16 +263,20 @@ holding the board can copy it off. So the secrets, the mailbox's state
 and the stored state, lie in `0xEA000..0xF4000`, which no UF2 writes or
 reads.
 
+What is large and not secret, the staged image, the update's coded
+pieces and the mailbox's ring, lies on the board's 2 MiB external flash
+(`docs/external-flash-2026-11-06.md`), and what runs, boots or is secret
+stays inside (roadmap D139, `docs/flash-plan-2026-11-06.md`, section 1).
+Inside:
+
 | Region | Start | Size | Why |
 |---|---|---|---|
 | MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
-| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
-| loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 394 of its 1024) |
-| firmware, running | `0x06000` | 392 KiB, 98 pages | what is left once the loader, its state, the staging and the mailbox have theirs, halved: 40 KiB more than the 351 368 B node image of 2026-11-05 |
-| firmware, staged | `0x68000` | 396 KiB, 99 pages | one page larger than the running slot, which embassy-boot's swap needs |
-| staged image's record | `0xCB000` | 4 KiB | its header, and the loader's word that it matched it; below `0xEA000`, where the bootloader's drive stops writing |
-| coded pieces | `0xCC000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
-| mailbox ring | `0xE2000` | 64 KiB, 16 pages | 256 items (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
+| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.6 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
+| loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 910 of its 1024); a UF2 writes it erased |
+| firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
+| staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
+| spare | `0xEA000` | 32 KiB, 8 pages | unused, outside every UF2: for secrets to come |
 | mailbox state | `0xF2000` | 4 KiB | the mailbox key, the last fetch and the phone's last confirmed item; secret, so above `0xEA000` |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond's keys with the paired phone; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
@@ -278,10 +284,14 @@ reads.
 | MBR parameters | `0xFE000` | 4 KiB | |
 | bootloader settings | `0xFF000` | 4 KiB | |
 
-The staging the update note sets aside, the record and the 22 pages of
-pieces, does not depend on the image's size: it holds what the mesh
-decoder gathers, so it stays at the note's 23 pages, and the image's two
-slots take the rest.
+On the external flash, in sectors of 4 KiB:
+
+| Region | Start | Size | Why |
+|---|---|---|---|
+| firmware, staged | `0x000000` | 912 KiB, 228 sectors | one sector larger than the running slot, which embassy-boot's swap needs; after a swap it holds the previous image |
+| coded pieces | `0x0E4000` | 88 KiB, 22 sectors | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| mailbox ring | `0x0FA000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
+| free | `0x13A000` | 792 KiB, 198 sectors | |
 
 RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
 `0x20000008..0x20000400` holds a panic message for the next boot
@@ -313,8 +323,9 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 387 244 B of the 401 408 B slot,
-14 164 B free; the pairing of roadmap D135 took 55.8 KB of it
+and one codegen unit: the node image is 378 784 B of the 929 792 B slot,
+551 008 B free (2026-11-06, without a place; 387 244 B of a 401 408 B
+slot before the staged image moved out); the pairing of roadmap D135 took 55.8 KB of it
 (`docs/flash-2026-11-06.md` measures the options,
 `docs/pairing-2026-11-06.md` the pairing's). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
@@ -377,6 +388,12 @@ in place, so the bootloader still jumps to `0x26000`, where the new
 firmware's bytes now lie, and the board does not start; a double tap
 and `bark.uf2` put it right.
 
+A board with the loader of the layout before roadmap D139, whose staged
+image lay inside, takes `bark.uf2` once too: an old loader with a new
+firmware would swap the wrong regions. The mailbox's state, key
+included, stays where it was; its ring starts empty on the external
+flash, and the items of the old one, inside, are gone.
+
 ## Read-out protection
 
 A probe on the SWD pads reads the whole internal flash, keys and all,
@@ -407,9 +424,9 @@ who copies an image of their own to the board's drive.
 
 ## Updates
 
-A new image is staged in the second slot by the running firmware, swapped
-in by the loader at the next boot, and kept only if it confirms itself
-(roadmap D79, `docs/mesh-update-2026-10-25.md`). The firmware's side is
+A new image is staged on the external flash by the running firmware,
+swapped in by the loader at the next boot, and kept only if it confirms
+itself (roadmap D79, D139, `docs/mesh-update-2026-10-25.md`). The firmware's side is
 `src/update.rs`; both sides of the swap are in `bark-image/src/boot.rs`,
 where the host tests run them.
 
@@ -440,31 +457,43 @@ swap.
 
 **The loader**, at every boot:
 
-1. With no swap asked for, it changes nothing.
-2. With one asked for, it first checks the staged slot's first `length`
-   bytes against the record's SHA-256. If they differ, or the record holds
-   no header, it cancels the swap and the running firmware boots, which
-   logs `update: the loader refused the staged image`. If they match, it
-   notes it in the record, so that a swap a power cut stopped half way,
-   whose slot no longer matches anything, goes on without the check.
-3. It runs embassy-boot's `prepare_boot`, which swaps the slots, goes on
+1. With no swap asked for, it changes nothing, and leaves the external
+   flash unpowered.
+2. With one asked for, it raises the switched rail, waits 10 ms for it
+   and 70 µs for the chip (tVSL), and reads the chip's ID
+   (`bark-image/src/ext_flash.rs`). A chip that does not answer `BA 60 15`
+   cancels a swap not yet started; one under way waits for a boot that
+   finds the chip.
+3. It checks the staged slot's first `length` bytes against the record's
+   SHA-256. If they differ, or the record holds no header, it cancels the
+   swap and the running firmware boots, which logs `update: the loader
+   refused the staged image`. If they match, it notes it in the record,
+   so that a swap a power cut stopped half way, whose slot no longer
+   matches anything, goes on without the check.
+4. It runs embassy-boot's `prepare_boot`, which swaps the slots, goes on
    with a swap that was stopped, or swaps them back if the new image did
-   not mark itself booted. It copies a page at a time into a page whose
-   content is held in another, and writes a progress word in the state
-   page once each copy is whole, so a power cut anywhere is taken up from
-   the copy it stopped (embassy-boot's documentation of `prepare_boot`,
-   "SWAPPING" and "REVERTING", read at version 0.7.0). A swap is two
-   copies of each of the 98 pages, an erase of 85 ms and 1024 word writes
-   of 41 µs each (nRF52840 Product Specification, NVMC), 25 s; a swap back
-   as long.
-4. On those boots it starts the watchdog first, with a period of
+   not mark itself booted. It copies a page at a time into a page or
+   sector whose content is held in another, and writes a progress word in
+   the state page once each copy is whole, so a power cut anywhere is
+   taken up from the copy it stopped (embassy-boot's documentation of
+   `prepare_boot`, "SWAPPING" and "REVERTING", read at version 0.7.0).
+   The previous image ends on the external flash, ready for the swap
+   back. Each of the 227 pages costs an internal erase of 85 ms and 1024
+   word writes of 41 µs (nRF52840 Product Specification, NVMC), an
+   external erase of 10 ms and 16 page programs of 1.3 ms (ZD25WQ16B
+   datasheet, Table 4-3), and 8 KiB over the external flash's bus, about
+   30 ms at the 2 to 3 Mbit/s its software clock makes by its
+   instructions: about 190 ms a page, 44 s, and 3 s more for the hash; a
+   swap back as long without the hash. Unmeasured; the mailbox's open
+   logs the bus's speed (Mailbox, below). Then the rail falls again.
+5. On those boots it starts the watchdog first, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
-5. It write-protects `0x00000..0x05000` (the MBR and itself) and `0xF4000..0x100000` (the bootloader, its settings and the
+6. It write-protects `0x00000..0x05000` (the MBR and itself) and `0xF4000..0x100000` (the bootloader, its settings and the
    MBR's parameters) through two ACL regions, until the next reset
    (Product Specification, ACL).
-6. It jumps to the firmware at `0x06000`.
+7. It jumps to the firmware at `0x06000`.
 
 **The firmware** confirms itself once its core is set up and its radio
 is up (`update::started`), and from then on feeds the watchdog twice a
@@ -477,9 +506,12 @@ back, which logs `update: the new image did not confirm itself`. The
 confirmation will also ask for a neighbour heard, within the same 600 s,
 once the mesh carries updates.
 
-Each update erases each page of the slots at most twice, once in staging
-and once in the swap, and the state page twice: the 10 000 erase cycles
-of the flash (Product Specification, NVMC) last 5000 updates.
+Each update erases each page of the running slot once, twice if it is
+swapped back, and the state page twice: the internal flash's 10 000
+erase cycles (Product Specification, NVMC) last 5 000 updates. Each
+sector of the staged slot is erased twice, in staging and in the swap,
+three times with a swap back: the external flash's 100 000 (datasheet,
+"Features") last 33 000.
 
 **Staging is a bench tool** until the update has a transport (BLE, then
 the mesh). A console build takes an image over its serial port:
@@ -665,18 +697,27 @@ bench's `stack_used` to show (`docs/pairing-2026-11-06.md`).
 ## Mailbox
 
 A node set as a person's home (spec "Mailbox"; Home on the phone link)
-keeps every message for its application in a ring in flash, the region
-`MAILBOX` (`bark-image/src/layout.rs`): 16 pages of 16 slots of 256
-bytes, then a page of state, the oldest page erased when the ring is full
-(`bark_app_layer::flash_ring`, `src/mailbox.rs`). Its phone's Inbox reads
+keeps every message for its application in a ring on the external flash,
+64 sectors of 16 slots of 256 bytes, the oldest sector erased when the
+ring is full, and its state in a page inside, since it holds the mailbox
+key (`bark-image/src/layout.rs`; `bark_app_layer::flash_ring`,
+`src/mailbox.rs`). Its phone's Inbox reads
 from the ring, and a fetch from the person's phone elsewhere is answered
 with the items, sealed again, through the core's one application send
 slot, the phone's own message first (`src/node.rs`, `LinkApp::take`).
 
-The mailbox runs in microseconds and never waits on the flash: its
-writes and erases are queued and done by a task of their own through
-the MPSL's flash timeslots, the flash shared with the store, each op a
-timeslot (an erase 85 ms, a slot 2.6 ms). A message the core delivered
+The mailbox reads a slot when asked, about a millisecond on the
+external flash's bus, and never waits on a write: its writes and erases
+are queued and done by a task of their own, the ring's on the external
+flash with the executor free while the chip erases (10 ms) or programs
+a slot (1.3 ms), the state's through the MPSL's flash timeslots, the
+flash shared with the store, each op a timeslot (an erase 85 ms, a
+record 1.3 ms). A read that meets an erase under way waits for it, up
+to 12 ms; the mailbox's users all run in thread mode, so that wait
+masks no interrupt. At boot the mailbox opens once the radio has raised
+the rail: it reads all 1024 slots, 256 KiB, and logs how long that
+took, `mailbox: ... 1024 slots read in N ms`, which gives the bus's
+speed; about a second by its instructions. A message the core delivered
 is confirmed to the core only once its slot is written, so that a
 reboot meanwhile loses none: the core keeps it and delivers it again. A
 cut write leaves a slot that fails its check, and a cut state record
@@ -1001,7 +1042,8 @@ What stays, and is not this firmware's to fix without a board:
 
 The external flash sits in standby at 12 µA unless told otherwise, so
 the node puts it in deep power-down, 0.5 µA typical, once the radio has
-raised the rail that feeds it (`src/ext_flash.rs`).
+raised the rail that feeds it, and wakes it only for a read or a write
+(`src/ext_flash.rs`).
 
 The radio's part is the cycle above, 0.11 to 0.14 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a

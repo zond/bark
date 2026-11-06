@@ -82,6 +82,7 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "embassy-usb-logger",
+ "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-storage",
  "heapless 0.9.3",
@@ -101,6 +102,7 @@ dependencies = [
  "embassy-boot",
  "embassy-embedded-hal",
  "embassy-sync",
+ "embedded-hal 1.0.0",
  "embedded-storage",
  "sha2",
 ]

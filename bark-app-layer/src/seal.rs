@@ -285,9 +285,9 @@ fn secretbox(key: &[u8; KEY_LEN]) -> XSalsa20Poly1305 {
     XSalsa20Poly1305::new(key.into())
 }
 
-/// The most replies a round has, so the most places a requester tries:
-/// every item of the board's ring, 16 pages of 16 (`bark-image` layout,
-/// `MAILBOX`). A ring that held more would send the newest this many.
+/// The most replies a round has, so the most places a requester tries.
+/// A ring that holds more, as the board's of 1024 items does
+/// (`bark-image` layout, `external::MAILBOX`), sends the newest this many.
 pub const MAX_REPLIES: u32 = 256;
 
 /// A reply's nonce: the fetch's `sent` (the round), the reply's place in

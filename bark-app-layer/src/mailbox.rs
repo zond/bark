@@ -20,8 +20,7 @@ use crate::{be, Address, MAX_PAYLOAD};
 
 /// Bytes of a slot: an erase page of 4096 holds 16.
 pub const SLOT_LEN: usize = 256;
-/// Slots in an erase page (nRF52840 Product Specification, NVMC: a page
-/// is 4096 bytes).
+/// Slots in an erase page of 4096 bytes (`flash_ring::PAGE_LEN`).
 pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 
 /// Where a slot's check sits: the last four bytes, over all before them.
@@ -162,7 +161,7 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// The ring, for a driver that writes it later than it is asked to
-    /// (`flash::FlashRing`).
+    /// (`flash_ring::FlashRing`).
     pub fn ring_mut(&mut self) -> &mut R {
         &mut self.ring
     }

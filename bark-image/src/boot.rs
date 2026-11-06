@@ -1,6 +1,8 @@
-//! Both sides of a swap, on any flash: what the loader does at each boot
-//! ([`prepare`]), and what the application does to stage an image
-//! ([`Stager`]) and to keep the one it runs ([`confirm`]).
+//! Both sides of a swap, on any two flashes: what the loader does at each
+//! boot ([`prepare`]), and what the application does to stage an image
+//! ([`Stager`]) and to keep the one it runs ([`confirm`]). The internal
+//! flash holds the running image, the loader's state and the record; the
+//! external one the staged image (`crate::layout`).
 //!
 //! The swap is embassy-boot's (`embassy_boot::BootLoader::prepare_boot`):
 //! it swaps [`ACTIVE`] and [`DFU`] a page at a time, each copy into a page
@@ -9,9 +11,10 @@
 //! again from the copy it stopped, and the swap ends with each image whole
 //! in the other's slot. If the new image has not marked itself booted by
 //! the next boot, the same steps run backwards (its documentation of
-//! `prepare_boot`, "SWAPPING" and "REVERTING"). This module adds the check
-//! of the staged image against the header in [`RECORD`] before the swap
-//! starts.
+//! `prepare_boot`, "SWAPPING" and "REVERTING"). Its partitions may lie on
+//! different flashes, each page of one copied into a sector of the other.
+//! This module adds the check of the staged image against the header in
+//! [`RECORD`] before the swap starts.
 
 use core::cell::RefCell;
 
@@ -25,7 +28,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind, ReadNorFlash};
 use sha2::{Digest, Sha256};
 
-use crate::layout::{Region, ACTIVE, DFU, PAGE, RECORD, STATE};
+use crate::layout::external::DFU;
+use crate::layout::{Region, ACTIVE, PAGE, RECORD, STATE};
 use crate::record::{CHECKED, CHECKED_AT, HEADER_AT};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
@@ -92,6 +96,9 @@ pub enum Boot {
 /// Why the loader refused a staged image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
+    /// The external flash did not answer, so the staged image cannot be
+    /// read.
+    Chip,
     /// The record holds no header the loader can read.
     Header(HeaderError),
     /// The staged image does not hash to the record's hash.
@@ -100,51 +107,74 @@ pub enum Refusal {
 
 /// The loader's work at a boot: check a staged image against its record,
 /// then let embassy-boot swap, go on with a swap a power cut stopped, or
-/// swap back. `page` is the copy buffer, one page.
-pub fn prepare<F: NorFlash>(
-    flash: &Shared<F>,
+/// swap back. `external` is the external flash, `None` if it failed its
+/// presence check: a swap not yet started is then cancelled, one under
+/// way fails, to go on at a boot that finds the chip. `page` is the copy
+/// buffer, one page.
+pub fn prepare<I: NorFlash, E: NorFlash>(
+    internal: &Shared<I>,
+    external: Option<&Shared<E>>,
     page: &mut [u8; PAGE as usize],
 ) -> Result<Boot, FlashError> {
-    let before = state(flash)?;
-    if before == State::Swap {
-        if let Err(why) = check(flash, page)? {
-            let mut word = AlignedBuffer([0u8; 4]);
-            BlockingFirmwareState::new(part(flash, STATE), &mut word.0).mark_booted()?;
-            return Ok(Boot::Refused(why));
-        }
+    let before = state(internal)?;
+    if before != State::Swap {
+        return Ok(Boot::Normal);
+    }
+    let external = match external {
+        Some(external) => external,
+        None if was_checked(internal)? => return Err(FlashError(NorFlashErrorKind::Other)),
+        None => return refuse(internal, Refusal::Chip),
+    };
+    if let Err(why) = check(internal, external, page)? {
+        return refuse(internal, why);
     }
     let config = BootLoaderConfig {
-        active: part(flash, ACTIVE),
-        dfu: part(flash, DFU),
-        state: part(flash, STATE),
+        active: part(internal, ACTIVE),
+        dfu: part(external, DFU),
+        state: part(internal, STATE),
     };
     BootLoader::new(config).prepare_boot(page)?;
-    Ok(match (before, state(flash)?) {
-        (State::Swap, State::Swap) => Boot::Trial,
-        (State::Swap, _) => Boot::Reverted,
-        _ => Boot::Normal,
+    Ok(match state(internal)? {
+        State::Swap => Boot::Trial,
+        _ => Boot::Reverted,
     })
+}
+
+/// Cancel the swap: the running image boots, and finds the record it
+/// left unchecked (`confirm`).
+fn refuse<I: NorFlash>(internal: &Shared<I>, why: Refusal) -> Result<Boot, FlashError> {
+    let mut word = AlignedBuffer([0u8; 4]);
+    BlockingFirmwareState::new(part(internal, STATE), &mut word.0).mark_booted()?;
+    Ok(Boot::Refused(why))
+}
+
+/// Whether the record notes its image checked: a swap has started.
+fn was_checked<I: NorFlash>(internal: &Shared<I>) -> Result<bool, FlashError> {
+    let mut word = [0u8; 4];
+    part(internal, RECORD)
+        .read(CHECKED_AT, &mut word)
+        .map_err(flash_error)?;
+    Ok(u32::from_le_bytes(word) == CHECKED)
 }
 
 /// Whether the staged image may be swapped in: it was checked before, or
 /// it hashes to its record's hash now, which is then noted.
-fn check<F: NorFlash>(
-    flash: &Shared<F>,
+fn check<I: NorFlash, E: NorFlash>(
+    internal: &Shared<I>,
+    external: &Shared<E>,
     page: &mut [u8; PAGE as usize],
 ) -> Result<Result<(), Refusal>, FlashError> {
-    let mut record = part(flash, RECORD);
-    let mut word = [0u8; 4];
-    record.read(CHECKED_AT, &mut word).map_err(flash_error)?;
-    if u32::from_le_bytes(word) == CHECKED {
+    if was_checked(internal)? {
         return Ok(Ok(()));
     }
+    let mut record = part(internal, RECORD);
     let mut bytes = [0u8; HEADER_LEN];
     record.read(HEADER_AT, &mut bytes).map_err(flash_error)?;
     let header = match Header::decode(&bytes) {
         Ok(h) => h,
         Err(e) => return Ok(Err(Refusal::Header(e))),
     };
-    if hash(flash, DFU, header.length, page)? != header.hash {
+    if hash(external, DFU, header.length, page)? != header.hash {
         return Ok(Err(Refusal::Hash));
     }
     record
@@ -188,7 +218,8 @@ pub enum Started {
 }
 
 /// Mark the running image as the one to keep. Called once the node has
-/// started; until then a reset swaps the previous image back.
+/// started; until then a reset swaps the previous image back. Only the
+/// internal flash takes part.
 pub fn confirm<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     let found = state(flash)?;
     if found == State::Boot {
@@ -238,7 +269,8 @@ pub enum StageError {
         /// Where the next chunk must start.
         expected: u32,
     },
-    /// A chunk longer than [`CHUNK`], or not whole words before the end.
+    /// A chunk longer than [`CHUNK`], or, before the end, not whole
+    /// writes of the external flash.
     Chunk,
     /// Asked to finish before every byte came.
     Incomplete {
@@ -257,18 +289,21 @@ impl From<FlashError> for StageError {
     }
 }
 
-/// An image being written into [`DFU`], in order, a chunk at a time.
-pub struct Stager<'a, F: NorFlash> {
-    flash: &'a Shared<F>,
+/// An image being written into [`DFU`] on the external flash, in order,
+/// a chunk at a time.
+pub struct Stager<'a, I: NorFlash, E: NorFlash> {
+    internal: &'a Shared<I>,
+    external: &'a Shared<E>,
     header: Header,
     next: u32,
 }
 
-impl<'a, F: NorFlash> Stager<'a, F> {
+impl<'a, I: NorFlash, E: NorFlash> Stager<'a, I, E> {
     /// Start staging the image `header` describes, above the running
     /// image's `running` version. Forgets any image staged before.
     pub fn begin(
-        flash: &'a Shared<F>,
+        internal: &'a Shared<I>,
+        external: &'a Shared<E>,
         header: &[u8; HEADER_LEN],
         running: u32,
     ) -> Result<Self, StageError> {
@@ -279,14 +314,15 @@ impl<'a, F: NorFlash> Stager<'a, F> {
                 staged: header.version,
             });
         }
-        if state(flash)? == State::Swap {
+        if state(internal)? == State::Swap {
             return Err(StageError::Busy);
         }
-        part(flash, RECORD)
+        part(internal, RECORD)
             .erase(0, RECORD.len)
             .map_err(flash_error)?;
         Ok(Stager {
-            flash,
+            internal,
+            external,
             header,
             next: 0,
         })
@@ -302,8 +338,8 @@ impl<'a, F: NorFlash> Stager<'a, F> {
         &self.header
     }
 
-    /// Write the chunk at `offset`, erasing each page as the image enters
-    /// it. Every chunk but the last is whole words.
+    /// Write the chunk at `offset`, erasing each sector as the image
+    /// enters it.
     pub fn write(&mut self, offset: u32, data: &[u8]) -> Result<u32, StageError> {
         if offset != self.next || offset + data.len() as u32 > self.header.length {
             return Err(StageError::Offset {
@@ -312,20 +348,21 @@ impl<'a, F: NorFlash> Stager<'a, F> {
         }
         let end = offset + data.len() as u32;
         let last = end == self.header.length;
-        if data.len() > CHUNK || (!last && !data.len().is_multiple_of(4)) {
+        if data.len() > CHUNK || (!last && !data.len().is_multiple_of(E::WRITE_SIZE)) {
             return Err(StageError::Chunk);
         }
-        let mut dfu = part(self.flash, DFU);
+        let mut dfu = part(self.external, DFU);
         let first_new_page = offset.div_ceil(PAGE) * PAGE;
         for page in (first_new_page..end).step_by(PAGE as usize) {
             dfu.erase(page, page + PAGE).map_err(flash_error)?;
         }
-        // The NVMC writes whole words; the image's last word is padded
-        // with the erased value, as the UF2 pads the flash.
-        let mut words = [0xffu8; CHUNK];
-        words[..data.len()].copy_from_slice(data);
-        let padded = data.len().next_multiple_of(4);
-        dfu.write(offset, &words[..padded]).map_err(flash_error)?;
+        // A flash that writes more than a byte at once has the image's
+        // last write padded with the erased value, as the UF2 pads the
+        // internal flash.
+        let mut padded = [0xffu8; CHUNK];
+        padded[..data.len()].copy_from_slice(data);
+        let len = data.len().next_multiple_of(E::WRITE_SIZE);
+        dfu.write(offset, &padded[..len]).map_err(flash_error)?;
         self.next = end;
         Ok(end)
     }
@@ -337,14 +374,14 @@ impl<'a, F: NorFlash> Stager<'a, F> {
             return Err(StageError::Incomplete { got: self.next });
         }
         let mut buf = [0u8; CHUNK];
-        if hash(self.flash, DFU, self.header.length, &mut buf)? != self.header.hash {
+        if hash(self.external, DFU, self.header.length, &mut buf)? != self.header.hash {
             return Err(StageError::Hash);
         }
-        part(self.flash, RECORD)
+        part(self.internal, RECORD)
             .write(HEADER_AT, &self.header.encode())
             .map_err(flash_error)?;
         let mut word = AlignedBuffer([0u8; 4]);
-        BlockingFirmwareState::new(part(self.flash, STATE), &mut word.0)
+        BlockingFirmwareState::new(part(self.internal, STATE), &mut word.0)
             .mark_updated()
             .map_err(FlashError::from)?;
         Ok(self.header)

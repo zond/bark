@@ -3,8 +3,8 @@
 //! has started, so that the loader keeps it, and it feeds the watchdog
 //! the loader started for its trial, which runs on until the next reset
 //! (nRF52840 Product Specification, WDT: once started it cannot be
-//! stopped). The console build can also stage an image
-//! (`console.rs`, `stage`).
+//! stopped). The console build can also stage an image on the external
+//! flash (`console.rs`, `stage`).
 
 use core::cell::RefCell;
 
@@ -89,6 +89,17 @@ pub type Flash = Shared<Nvmc<'static>>;
 pub fn flash(nvmc: Nvmc<'static>) -> &'static Flash {
     static FLASH: static_cell::StaticCell<Flash> = static_cell::StaticCell::new();
     FLASH.init(Mutex::new(RefCell::new(nvmc)))
+}
+
+/// The external flash, where an image is staged.
+#[cfg(feature = "console")]
+pub type External = Shared<crate::ext_flash::Kept>;
+
+/// The external flash, once.
+#[cfg(feature = "console")]
+pub fn external() -> &'static External {
+    static EXTERNAL: static_cell::StaticCell<External> = static_cell::StaticCell::new();
+    EXTERNAL.init(Mutex::new(RefCell::new(crate::ext_flash::Kept)))
 }
 
 /// Set once the image has confirmed itself, for [`watchdog`].

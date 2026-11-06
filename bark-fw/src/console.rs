@@ -67,8 +67,9 @@ use embassy_time::{Duration, Instant, Timer};
 use embassy_usb_logger::ReceiverHandler;
 
 use crate::clock::Clock;
+use crate::ext_flash::Kept;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
-use crate::update::{decimal, Flash, BARK_IMAGE_VERSION};
+use crate::update::{decimal, External, Flash, BARK_IMAGE_VERSION};
 use bark_image::boot::{Stager, CHUNK};
 use bark_image::HEADER_LEN;
 use embassy_nrf::nvmc::Nvmc;
@@ -575,8 +576,9 @@ pub struct Console<'a> {
     rx: [u8; MAX_LEN],
     tx: [u8; MAX_LEN],
     flash: &'static Flash,
+    external: &'static External,
     /// The image being staged, between `stage` and `commit`.
-    staging: Option<Stager<'static, Nvmc<'static>>>,
+    staging: Option<Stager<'static, Nvmc<'static>, Kept>>,
     /// The survey, in a survey build.
     survey: Option<Survey>,
 }
@@ -589,9 +591,11 @@ impl<'a> Console<'a> {
         clock: &'a Clock,
         battery: Battery<'a>,
         flash: &'static Flash,
+        external: &'static External,
     ) -> Console<'a> {
         Console {
             flash,
+            external,
             staging: None,
             radio,
             clock,
@@ -952,7 +956,7 @@ impl<'a> Console<'a> {
                 let mut header = [0u8; HEADER_LEN];
                 decode_hex(hex, &mut header);
                 self.staging = None;
-                match Stager::begin(self.flash, &header, BARK_IMAGE_VERSION) {
+                match Stager::begin(self.flash, self.external, &header, BARK_IMAGE_VERSION) {
                     Ok(s) => {
                         let h = s.header();
                         log::info!(

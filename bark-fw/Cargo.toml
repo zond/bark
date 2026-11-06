@@ -82,6 +82,8 @@ bark-app-layer = { path = "../bark-app-layer" }
 bark-screen = { path = "../bark-screen" }
 # The GATT values' storage, the version trouble-host uses.
 heapless = "=0.9.3"
+# The clock the external flash's driver waits by (src/ext_flash.rs).
+embedded-hal = "=1.0.0"
 # The SpiDevice trait lora-phy takes, implemented over the SPIM bus driven blocking (src/radio.rs).
 embedded-hal-async = "=1.0.0"
 

@@ -12,3 +12,12 @@ repository = "https://github.com/zond/bark"
 
 [profile.release]
 debug = 1
+
+# The swap's power-cut tests (bark-image, boot::tests) copy the 908 KiB
+# slot over a thousand times: optimised, they take seconds, not a minute.
+[profile.dev.package.bark-image]
+opt-level = 2
+[profile.dev.package.embassy-boot]
+opt-level = 2
+[profile.dev.package.sha2]
+opt-level = 2

@@ -834,14 +834,14 @@ mod flash_ring {
 
     use bark_proto::MsgId;
 
-    use crate::flash_ring::{FlashRing, Op, Region, PAGE_LEN};
+    use crate::flash_ring::{Area, FlashRing, Op, Region, PAGE_LEN};
     use crate::mailbox::{Arrival, Mailbox};
     use crate::seal::Fetch;
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
 
-    /// The region's pages: four of the ring and the state's.
-    const PAGES: u32 = 5;
+    /// The ring's pages.
+    const PAGES: u32 = 4;
 
     /// Flash in RAM, as NOR flash behaves: a write clears bits, an erase
     /// sets a page's.
@@ -849,15 +849,15 @@ mod flash_ring {
     struct Ram(Vec<u8>);
 
     impl Ram {
-        fn erased() -> Ram {
-            Ram(std::vec![0xff; (PAGES * PAGE_LEN) as usize])
+        fn erased(pages: u32) -> Ram {
+            Ram(std::vec![0xff; (pages * PAGE_LEN) as usize])
         }
 
         /// Do `op`, or as a power cut leaves it: of a write its first
         /// `cut` bytes, of an erase nothing.
         fn apply(&mut self, op: &Op, cut: Option<usize>) {
             match *op {
-                Op::Erase { offset } => {
+                Op::Erase { offset, .. } => {
                     if cut.is_none() {
                         let o = offset as usize;
                         self.0[o..o + PAGE_LEN as usize].fill(0xff);
@@ -876,11 +876,41 @@ mod flash_ring {
 
     impl Region for &Ram {
         fn pages(&self) -> u32 {
-            PAGES
+            self.0.len() as u32 / PAGE_LEN
         }
         fn read(&self, offset: u32, out: &mut [u8]) {
             let o = offset as usize;
             out.copy_from_slice(&self.0[o..o + out.len()]);
+        }
+    }
+
+    /// The ring's pages and the state's page.
+    #[derive(Clone)]
+    struct Flash {
+        ring: Ram,
+        state: Ram,
+    }
+
+    impl Flash {
+        fn erased() -> Flash {
+            Flash {
+                ring: Ram::erased(PAGES),
+                state: Ram::erased(1),
+            }
+        }
+
+        fn apply(&mut self, op: &Op, cut: Option<usize>) {
+            let area = match *op {
+                Op::Erase { area, .. } | Op::Write { area, .. } => area,
+            };
+            match area {
+                Area::Ring => self.ring.apply(op, cut),
+                Area::State => self.state.apply(op, cut),
+            }
+        }
+
+        fn open(&self) -> Home<'_> {
+            Mailbox::new(FlashRing::open(&self.ring, &&self.state))
         }
     }
 
@@ -916,9 +946,9 @@ mod flash_ring {
     }
 
     /// Boot a mailbox from `flash`, do `f`, and do every op it queued.
-    fn step(flash: &mut Ram, f: impl FnOnce(&mut Home<'_>)) {
+    fn step(flash: &mut Flash, f: impl FnOnce(&mut Home<'_>)) {
         let view = flash.clone();
-        let mut m = Mailbox::new(FlashRing::open(&view));
+        let mut m = view.open();
         f(&mut m);
         for op in take_ops(&mut m) {
             flash.apply(&op, None);
@@ -927,7 +957,7 @@ mod flash_ring {
 
     #[test]
     fn items_and_state_survive_a_reboot() {
-        let mut flash = Ram::erased();
+        let mut flash = Flash::erased();
         step(&mut flash, home);
         for i in 1..=70 {
             step(&mut flash, |m| {
@@ -938,7 +968,7 @@ mod flash_ring {
             assert_eq!(m.arrive(MsgId(0), &fetch(100, 0)), Arrival::Fetch)
         });
         step(&mut flash, |m| m.confirm_read(60));
-        let mut m = Mailbox::new(FlashRing::open(&flash));
+        let mut m = flash.open();
         assert!(m.is_home());
         assert_eq!(m.newest(), 70);
         // Four pages of 16: item 65 erased the page of 1 to 16.
@@ -959,7 +989,7 @@ mod flash_ring {
     /// read back is always the last kept.
     #[test]
     fn the_state_log_wraps() {
-        let mut flash = Ram::erased();
+        let mut flash = Flash::erased();
         step(&mut flash, home);
         for i in 1..=100u32 {
             step(&mut flash, |m| {
@@ -967,28 +997,29 @@ mod flash_ring {
                 m.confirm_read(i);
             });
         }
-        let m = Mailbox::new(FlashRing::open(&flash));
+        let m = flash.open();
         assert!(m.is_home());
         assert_eq!(m.unread_count(), 0);
         assert_eq!(m.newest(), 100);
     }
 
-    /// Items a page away from their place, as a ring laid out with its
-    /// state page first leaves them, are not taken for items, and new
-    /// ones are kept whole from the first slot.
+    /// Items a page away from their place, as a ring laid out otherwise
+    /// before leaves them, are not taken for items, and new ones are kept
+    /// whole from the first slot.
     #[test]
     fn items_out_of_place_are_ignored() {
-        let mut flash = Ram::erased();
+        let mut flash = Flash::erased();
         step(&mut flash, home);
         for i in 1..=20 {
             step(&mut flash, |m| {
                 m.arrive(MsgId(i), &item(i));
             });
         }
-        // The state page to the front, the ring a page up.
-        let page = PAGE_LEN as usize;
-        flash.0.rotate_right(page);
-        let mut m = Mailbox::new(FlashRing::open(&flash));
+        // The ring a page up and no state, as a ring laid out otherwise
+        // before leaves them.
+        flash.ring.0.rotate_right(PAGE_LEN as usize);
+        flash.state = Ram::erased(1);
+        let mut m = flash.open();
         assert_eq!(m.newest(), 0);
         assert!(!m.is_home());
         home(&mut m);
@@ -1001,7 +1032,7 @@ mod flash_ring {
                 assert_eq!(m.arrive(MsgId(i), &item(i)), Arrival::Kept(i))
             });
         }
-        let m = Mailbox::new(FlashRing::open(&kept));
+        let m = kept.open();
         assert_eq!((m.oldest(), m.newest()), (1, 3));
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(3, &mut b), Some(item(3).len()));
@@ -1016,8 +1047,8 @@ mod flash_ring {
         // throughout, its ops collected in order.
         let mut all: Vec<Op> = Vec::new();
         {
-            let view = Ram::erased();
-            let mut m = Mailbox::new(FlashRing::open(&view));
+            let view = Flash::erased();
+            let mut m = view.open();
             home(&mut m);
             all.extend(take_ops(&mut m));
             for i in 1..=40 {
@@ -1029,7 +1060,7 @@ mod flash_ring {
             m.confirm_read(30);
             all.extend(take_ops(&mut m));
         }
-        let mut flash = Ram::erased();
+        let mut flash = Flash::erased();
         let mut cuts = 0;
         for (k, op) in all.iter().enumerate() {
             let points: Vec<usize> = match op {
@@ -1039,7 +1070,7 @@ mod flash_ring {
             for cut in points {
                 let mut f = flash.clone();
                 f.apply(op, Some(cut));
-                let m = Mailbox::new(FlashRing::open(&f));
+                let m = f.open();
                 cuts += 1;
                 let mut b = [0u8; MAX_PAYLOAD];
                 for n in 1..=m.newest() {
@@ -1056,14 +1087,14 @@ mod flash_ring {
             flash.apply(op, None);
         }
         assert!(cuts > 1000, "{cuts}");
-        let m = Mailbox::new(FlashRing::open(&flash));
+        let m = flash.open();
         assert_eq!((m.newest(), m.unread_count()), (40, 10));
     }
 
     #[test]
     fn reads_see_what_is_queued() {
-        let flash = Ram::erased();
-        let mut m = Mailbox::new(FlashRing::open(&flash));
+        let flash = Flash::erased();
+        let mut m = flash.open();
         home(&mut m);
         m.arrive(MsgId(1), &item(1));
         assert!(!m.ring().idle());
