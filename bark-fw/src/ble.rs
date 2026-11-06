@@ -975,7 +975,8 @@ fn home_now() -> bark_link::home::Home {
 }
 
 /// Home, written: the mailbox takes the key, or forgets it, at once
-/// (`mailbox.rs`); the node's loop sees it at its next step.
+/// (`mailbox.rs`), and the node publishes its inbox as a home's or not
+/// (`node.rs`, `follow_home`).
 fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     use bark_link::home::SetHome;
     let set = w.with_data(|offset, data| match offset {

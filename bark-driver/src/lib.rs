@@ -180,14 +180,13 @@ pub enum Gps {
 
 /// The application side of the node (core-interface §4).
 pub trait App {
-    /// Resolves when a message waits to be sent, at once if one already
-    /// does, if `offer`; when a [`Request`] waits; and when the power may
-    /// have changed since [`App::power`] last answered. Cancel-safe.
-    ///
-    /// Once it resolved and the driver then got nothing from the
-    /// application, no request, no message and no change of power, the
-    /// driver does not wait on it again until its clock or its radio woke
-    /// it (core-interface §4).
+    /// Resolves when something new arrived for the driver since it last
+    /// resolved: a [`Request`], a change of power since [`App::power`]
+    /// last answered, or, if `offer`, a message. It resolves only when the
+    /// driver will get something, never for what already waited when it
+    /// began. `offer` is whether the core accepts a message now; one that
+    /// arrives while it does not, the application holds or refuses.
+    /// Cancel-safe (core-interface §4).
     async fn ready(&mut self, offer: bool);
 
     /// The next request waiting, if any. The driver takes every one each
@@ -195,8 +194,9 @@ pub trait App {
     fn request(&mut self) -> Option<Request>;
 
     /// Hand over the waiting message: its payload into `payload`, the rest
-    /// returned. The driver calls this only while the core accepts a
-    /// message, and the core then takes it.
+    /// returned. The driver calls this before every wait and each time
+    /// [`App::ready`] resolves, but only while the core accepts a message,
+    /// and the core then takes it.
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing>;
 
     /// What the core tells the application: a message for it, or its own
@@ -247,6 +247,9 @@ pub struct Stats {
     /// Longest stretch the loop spent away from the radio while the radio
     /// kept listening: a frame that ends in it waits in the radio.
     pub longest_away: Duration,
+    /// Times [`App::ready`] resolved and the application gave nothing,
+    /// against its contract.
+    pub empty_readies: u32,
 }
 
 /// The loop: one core, one radio, one clock, one application.
@@ -268,8 +271,9 @@ pub struct Driver<C, R, K, A> {
     /// The last fix was dropped as out of reach: the next is logged only
     /// once one is taken again.
     fix_dropped: bool,
-    /// [`App::ready`] last resolved and the application gave nothing: it
-    /// is not waited on until the clock or the radio wakes the loop.
+    /// [`App::ready`] last resolved and the application gave nothing,
+    /// against its contract: it is not waited on until the clock or the
+    /// radio wakes the loop.
     app_empty: bool,
     /// When an empty readiness was last logged.
     empty_logged: Option<Instant>,
@@ -375,6 +379,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if self.battery_at.is_some_and(|t| now >= t) {
             return self.read_battery(now).await;
         }
+        // A message that waits goes now, whatever woke the loop, as
+        // `ready` resolves only for what is new.
+        let offer = self.core.accepts_send(now);
+        if offer && self.hand_over().await? {
+            return Ok(());
+        }
 
         let wake = self.core.next_wakeup();
         let hold_end = self.held_since.map(|t| t + MAX_AIRTIME);
@@ -382,7 +392,6 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             earlier(earlier(wake, hold_end), self.radio_due()),
             self.battery_at,
         );
-        let offer = self.core.accepts_send(now);
         let clock = &self.clock;
         let timer = async {
             match deadline {
@@ -390,10 +399,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 None => pending().await,
             }
         };
-        // An application whose readiness gave nothing would resolve at
-        // once again and keep the loop, and the executor's other tasks,
-        // from ever waiting. So it is not asked again until something
-        // else wakes the loop, and until then it is as if it were idle.
+        // An application whose readiness gave nothing may resolve at once
+        // again and keep the loop, and the executor's other tasks, from
+        // ever waiting. So it is not asked again until something else
+        // wakes the loop, and until then it is as if it were idle.
         let app_empty = self.app_empty;
         let app = &mut self.app;
         let ready = async {
@@ -497,6 +506,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let gave = self.report_power().await? | self.requests().await? | self.offer().await?;
         if !gave {
             self.app_empty = true;
+            self.stats.empty_readies += 1;
             if self
                 .empty_logged
                 .is_none_or(|t| now >= t + EMPTY_READY_LOG_EVERY)
@@ -594,6 +604,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         if !self.core.accepts_send(self.clock.now()) {
             return Ok(false);
         }
+        self.hand_over().await
+    }
+
+    /// Hand the core the application's message, if it has one; whether
+    /// it had. Only while the core accepts one.
+    async fn hand_over(&mut self) -> Result<bool, R::Error> {
         let Some(out) = self.app.take(&mut self.payload) else {
             return Ok(false);
         };
