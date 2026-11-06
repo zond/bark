@@ -26,7 +26,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
   AppModel get app => widget.app;
 
   @override
+  void initState() {
+    super.initState();
+    app.alerts.opened(widget.keyHex);
+  }
+
+  @override
   void dispose() {
+    app.alerts.closed(widget.keyHex);
     text.dispose();
     super.dispose();
   }

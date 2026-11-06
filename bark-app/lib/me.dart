@@ -39,6 +39,9 @@ class Me extends ChangeNotifier {
   /// The person has seen their backup words.
   bool backedUp = false;
 
+  /// The app has asked the person to let it notify.
+  bool askedToNotify = false;
+
   /// The mailbox: the number up to which this phone has every item, the
   /// numbers it has above that, and the rounds of its latest fetches,
   /// newest first.
@@ -68,6 +71,8 @@ class Me extends ChangeNotifier {
       final cardTime = j['cardTime'] as int;
       final lastSent = j['lastSent'] as int;
       final backedUp = j['backedUp'] as bool;
+      // Added after the format's first version: absent means not asked.
+      final askedToNotify = j['askedToNotify'] as bool? ?? false;
       final since = j['since'] as int;
       final above = (j['above'] as List).cast<int>().toList();
       final rounds = (j['rounds'] as List).cast<int>().toList();
@@ -79,6 +84,7 @@ class Me extends ChangeNotifier {
         this.cardTime = cardTime;
         this.lastSent = lastSent;
         this.backedUp = backedUp;
+        this.askedToNotify = askedToNotify;
         this.since = since;
         this.above.addAll(above);
         this.rounds.addAll(rounds);
@@ -104,6 +110,7 @@ class Me extends ChangeNotifier {
     'cardTime': cardTime,
     'lastSent': lastSent,
     'backedUp': backedUp,
+    'askedToNotify': askedToNotify,
     'since': since,
     'above': above.toList(),
     'rounds': rounds,
@@ -129,6 +136,11 @@ class Me extends ChangeNotifier {
 
   Future<void> setBackedUp() async {
     backedUp = true;
+    await _changed();
+  }
+
+  Future<void> setAskedToNotify() async {
+    askedToNotify = true;
     await _changed();
   }
 
