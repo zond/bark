@@ -1,16 +1,20 @@
 //! The mailbox (spec "Mailbox"; `bark_app_layer::mailbox`): an
-//! application on the node beside the phone link, kept in the flash
-//! region `bark_image::layout::MAILBOX`, the ring and then a page of state
-//! (`bark_app_layer::flash_ring`).
+//! application on the node beside the phone link, its ring on the
+//! external flash (`bark_image::layout::external::MAILBOX`) and its state,
+//! which holds the mailbox key, in a page inside
+//! (`bark_image::layout::MAILBOX_STATE`; `bark_app_layer::flash_ring`).
 //!
-//! The mailbox lives in a static, used in a few microseconds by the
-//! node's loop (`node.rs`: what the core delivers, the replies it sends)
-//! and by the phone link (`ble.rs`: Home, the Inbox read from the ring),
-//! and never waits on the flash: what it writes is queued, and [`run`]
-//! does it through the MPSL's flash timeslots, as the store does, between
-//! the BLE controller's radio events. A message the core delivered is
-//! confirmed to the core only once its slot is written, so that one taken
-//! is not lost to a reboot meanwhile (`node.rs`).
+//! The mailbox lives in a static, used by the node's loop (`node.rs`:
+//! what the core delivers, the replies it sends) and by the phone link
+//! (`ble.rs`: Home, the Inbox read from the ring). It reads the ring when
+//! asked, about a millisecond a slot on the external flash's bus, and
+//! never waits on a write: what it writes is queued, and [`run`] does it,
+//! the ring's ops on the external flash with the executor free while the
+//! chip writes (`ext_flash.rs`), the state's through the MPSL's flash
+//! timeslots, as the store does, between the BLE controller's radio
+//! events. A message the core delivered is confirmed to the core only
+//! once its slot is written, so that one taken is not lost to a reboot
+//! meanwhile (`node.rs`).
 //!
 //! While the node is nobody's home nothing changes: the core's inbox is
 //! the phone's, as without the mailbox.
@@ -18,18 +22,21 @@
 use core::cell::RefCell;
 
 use bark_app_layer::flash_ring::{Area, FlashRing, Op, Region};
-use bark_app_layer::mailbox::{Arrival, Mailbox};
-use bark_image::layout::{self, MAILBOX, MAILBOX_STATE, PAGE};
+use bark_app_layer::mailbox::{Arrival, Mailbox, SLOTS_PER_PAGE};
+use bark_image::layout::{self, external, MAILBOX_STATE, PAGE};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::MsgId;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
+use embassy_time::Instant;
+use embedded_storage::nor_flash::ReadNorFlash;
 
+use crate::ext_flash;
 use crate::store::SharedFlash;
 
 /// A region of the internal flash, read where it lies in the chip's
-/// address space.
+/// address space: the state's page.
 pub struct Mapped(layout::Region);
 
 impl Region for Mapped {
@@ -47,17 +54,30 @@ impl Region for Mapped {
     }
 }
 
-/// The ring: the region but its last page, the state's.
-const RING: layout::Region = layout::Region {
-    start: MAILBOX.start,
-    len: MAILBOX.len - PAGE,
-};
+/// The ring, on the external flash.
+pub struct Ring;
 
-type Home = Mailbox<FlashRing<Mapped>>;
+impl Region for Ring {
+    fn pages(&self) -> u32 {
+        external::MAILBOX.len / PAGE
+    }
+
+    fn read(&self, offset: u32, out: &mut [u8]) {
+        let read = ext_flash::with(|c| c.read(external::MAILBOX.start + offset, out));
+        if read != Some(Ok(())) {
+            // As erased: no item.
+            out.fill(0xff);
+        }
+    }
+}
+
+type Home = Mailbox<FlashRing<Ring>>;
 
 // The mailbox is built at boot into a cell in zeroed RAM: a static with a
-// non-zero initial value would keep a copy of it in flash.
-static HOME: Mutex<CriticalSectionRawMutex, RefCell<Option<&'static mut Home>>> =
+// non-zero initial value would keep a copy of it in flash. Its users all
+// run in thread mode, and a read of the ring holds it for a millisecond,
+// or until an erase under way ends: so it masks no interrupt.
+static HOME: Mutex<ThreadModeRawMutex, RefCell<Option<&'static mut Home>>> =
     Mutex::new(RefCell::new(None));
 static HOME_CELL: static_cell::StaticCell<Home> = static_cell::StaticCell::new();
 
@@ -70,15 +90,20 @@ static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// wait.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Open the mailbox as it was before the reboot, once at boot.
+/// Open the mailbox as it was before the reboot, once at boot, after
+/// `ext_flash::init`: every slot of the ring is read, and the time it
+/// takes is logged, the external flash's bus speed on the board.
 pub fn open() {
-    let m = Mailbox::new(FlashRing::open(Mapped(RING), &Mapped(MAILBOX_STATE)));
+    let t0 = Instant::now();
+    let m = Mailbox::new(FlashRing::open(Ring, &Mapped(MAILBOX_STATE)));
     log::info!(
-        "mailbox: home={} oldest={} newest={} unread={}",
+        "mailbox: home={} oldest={} newest={} unread={}, {} slots read in {} ms",
         m.is_home(),
         m.oldest(),
         m.newest(),
-        m.unread_count()
+        m.unread_count(),
+        Ring.pages() * SLOTS_PER_PAGE,
+        t0.elapsed().as_millis()
     );
     let m = HOME_CELL.init(m);
     HOME.lock(|c| *c.borrow_mut() = Some(m));
@@ -125,30 +150,44 @@ pub fn unread(out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
     with(|m| m.unread(out)).flatten()
 }
 
-/// Write what the mailbox queues, for ever: one op at a time, each in an
-/// MPSL flash timeslot, the flash shared with the store.
+/// Write what the mailbox queues, for ever, one op at a time: the ring's
+/// on the external flash, the state's each in an MPSL flash timeslot, the
+/// flash shared with the store.
 #[embassy_executor::task]
 pub async fn run(flash: &'static SharedFlash) -> ! {
     loop {
         WRITE.wait().await;
         while let Some(op) = with(|m| m.ring().op()).flatten() {
-            {
-                let mut f = flash.lock().await;
-                let start = |area| match area {
-                    Area::Ring => RING.start,
-                    Area::State => MAILBOX_STATE.start,
-                };
-                let done = match op {
-                    Op::Erase { area, offset } => {
-                        let at = start(area) + offset;
-                        f.erase(at, at + PAGE).await
+            match op {
+                Op::Erase {
+                    area: Area::Ring,
+                    offset,
+                } => {
+                    if let Err(e) = ext_flash::erase(external::MAILBOX.start + offset).await {
+                        log::error!("mailbox: ring {:?}", e);
                     }
-                    Op::Write { area, offset, .. } => {
-                        f.write(start(area) + offset, op.data()).await
+                }
+                Op::Write {
+                    area: Area::Ring,
+                    offset,
+                    ..
+                } => {
+                    let at = external::MAILBOX.start + offset;
+                    if let Err(e) = ext_flash::program(at, op.data()).await {
+                        log::error!("mailbox: ring {:?}", e);
                     }
-                };
-                if let Err(e) = done {
-                    log::error!("mailbox: flash {:?}", e);
+                }
+                Op::Erase { offset, .. } => {
+                    let at = MAILBOX_STATE.start + offset;
+                    if let Err(e) = flash.lock().await.erase(at, at + PAGE).await {
+                        log::error!("mailbox: state {:?}", e);
+                    }
+                }
+                Op::Write { offset, .. } => {
+                    let at = MAILBOX_STATE.start + offset;
+                    if let Err(e) = flash.lock().await.write(at, op.data()).await {
+                        log::error!("mailbox: state {:?}", e);
+                    }
                 }
             }
             with(|m| m.ring_mut().op_done());

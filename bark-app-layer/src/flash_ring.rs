@@ -21,7 +21,9 @@
 
 use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN, STATE_LEN};
 
-/// Bytes of an erase page (nRF52840 Product Specification, NVMC).
+/// Bytes of an erase page: the nRF52840's (Product Specification, NVMC)
+/// and the external flash's sector (ZD25WQ16B datasheet, "Sector Erase")
+/// alike.
 pub const PAGE_LEN: u32 = 4096;
 
 /// Bytes of a state record: the state, its check, and erased bytes to a

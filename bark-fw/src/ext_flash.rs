@@ -40,7 +40,7 @@ pub type Chip =
 static CHIP: Mutex<ThreadModeRawMutex, RefCell<Option<Chip>>> = Mutex::new(RefCell::new(None));
 
 /// Take the chip's pins, check the chip is there, put it in deep
-/// power-down and keep it; log what it answered.
+/// power-down and keep it for [`with`]; log what it answered.
 ///
 /// Call only while the switched rail that feeds the chip is up (after
 /// `radio::boot` succeeds): a pin driven high into an unpowered chip
@@ -78,6 +78,105 @@ pub fn init(pins: board::Flash) {
             // Not used, but its pins held where its current needs them,
             // should it be there after all.
             core::mem::forget(chip);
+        }
+    }
+}
+
+/// Use the chip, if [`init`] found it.
+pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> Option<R> {
+    CHIP.lock(|c| c.borrow_mut().as_mut().map(f))
+}
+
+/// What a use of a chip [`init`] did not find fails with.
+const NO_CHIP: Error = Error::Absent([0; 3]);
+
+#[cfg(not(feature = "console"))]
+pub use mailbox::{erase, program};
+
+/// What the mailbox's ring writes with.
+#[cfg(not(feature = "console"))]
+mod mailbox {
+    use bark_image::ext_flash::{
+        Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, PROGRAM_TYP_US,
+    };
+    use embassy_time::Timer;
+
+    use super::{with, NO_CHIP};
+
+    /// Erase the sector at `address`, the executor free while the chip
+    /// erases.
+    pub async fn erase(address: u32) -> Result<(), Error> {
+        let started = with(|c| c.start_erase(address));
+        wait(started, ERASE_TYP_US, ERASE_MAX_US).await
+    }
+
+    /// Program `data` at `address`, within one page of the chip, the
+    /// executor free while the chip programs.
+    pub async fn program(address: u32, data: &[u8]) -> Result<(), Error> {
+        let started = with(|c| c.start_program(address, data));
+        wait(started, PROGRAM_TYP_US, PROGRAM_MAX_US).await
+    }
+
+    /// Wait out a program or an erase that `started`: its typical time, then
+    /// a poll every [`POLL_US`] up to its maximum, then the driver's own
+    /// bounded wait. A read meanwhile waits for it in the driver.
+    async fn wait(
+        started: Option<Result<(), Error>>,
+        typ_us: u32,
+        max_us: u32,
+    ) -> Result<(), Error> {
+        started.unwrap_or(Err(NO_CHIP))?;
+        Timer::after_micros(typ_us.into()).await;
+        let mut waited = typ_us;
+        while waited < max_us && !with(|c| c.done()).unwrap_or(true) {
+            Timer::after_micros(POLL_US.into()).await;
+            waited += POLL_US;
+        }
+        with(|c| c.finish()).unwrap_or(Ok(()))
+    }
+}
+
+#[cfg(feature = "console")]
+pub use staging::Kept;
+
+/// What the console's staging writes with.
+#[cfg(feature = "console")]
+mod staging {
+    use bark_image::ext_flash::{Error, CAPACITY, SECTOR};
+    use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
+
+    use super::{with, NO_CHIP};
+
+    /// The chip kept here, as a flash the update's staging writes
+    /// (`bark_image::boot::Stager`), blocking.
+    pub struct Kept;
+
+    impl ErrorType for Kept {
+        type Error = Error;
+    }
+
+    impl ReadNorFlash for Kept {
+        const READ_SIZE: usize = 1;
+
+        fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
+            with(|c| c.read(offset, bytes)).unwrap_or(Err(NO_CHIP))
+        }
+
+        fn capacity(&self) -> usize {
+            CAPACITY as usize
+        }
+    }
+
+    impl NorFlash for Kept {
+        const WRITE_SIZE: usize = 1;
+        const ERASE_SIZE: usize = SECTOR as usize;
+
+        fn erase(&mut self, from: u32, to: u32) -> Result<(), Error> {
+            with(|c| c.erase(from, to)).unwrap_or(Err(NO_CHIP))
+        }
+
+        fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Error> {
+            with(|c| c.write(offset, bytes)).unwrap_or(Err(NO_CHIP))
         }
     }
 }

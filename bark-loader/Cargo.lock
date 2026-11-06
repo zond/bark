@@ -45,6 +45,8 @@ dependencies = [
  "embassy-boot-nrf",
  "embassy-nrf",
  "embassy-sync",
+ "embedded-hal 1.0.0",
+ "embedded-storage",
 ]
 
 [[package]]

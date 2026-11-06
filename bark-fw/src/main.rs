@@ -349,6 +349,7 @@ async fn main(spawner: Spawner) {
         // The console keeps its one-shot structure in this task: it holds
         // no relay, and its frame is small.
         let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(p.NVMC));
+        let external = update::external();
         let clock = clock::Clock::new(p.TIMER1);
         let mut lines = console::Lines::new();
         let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
@@ -370,7 +371,7 @@ async fn main(spawner: Spawner) {
                     radio_up(&radio, &clock, t0);
                     ext_flash::init(flash);
                     update::started(shared);
-                    console::Console::new(radio, &clock, battery, shared)
+                    console::Console::new(radio, &clock, battery, shared, external)
                         .run(&mut lines)
                         .await;
                 }
@@ -419,8 +420,9 @@ async fn main(spawner: Spawner) {
             None => bark_screen::Phone::None,
         });
         ble::STORED_BOND.signal(kept.bond);
-        // The mailbox, beside the store on the same flash (`mailbox.rs`).
-        mailbox::open();
+        // The mailbox's writes, its state beside the store on the same
+        // flash (`mailbox.rs`); the mailbox opens once the radio has
+        // raised the rail its ring's flash is on (`node_radio`).
         spawner.spawn(mailbox::run(mpsl_flash).expect("spawned once"));
         utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
@@ -582,8 +584,9 @@ struct NodeRadio {
 }
 
 /// The radio and the core on it: the radio up, the external flash found
-/// and in deep power-down (`ext_flash.rs`), the image confirmed, the phone link let
-/// start, and the driver's loop (`node.rs`).
+/// and in deep power-down (`ext_flash.rs`), the mailbox opened on it
+/// (`mailbox.rs`), the image confirmed, the phone link let start, and the
+/// driver's loop (`node.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn node_radio(n: NodeRadio) {
@@ -611,14 +614,17 @@ async fn node_radio(n: NodeRadio) {
         Ok(radio) => {
             radio_up(&radio, &clock, t0);
             ext_flash::init(n.flash);
+            mailbox::open();
             update::started(n.shared);
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
         // Without a radio USB and the log keep running so the error can be
-        // read, and the phone link still comes up, so the node can be found.
+        // read, and the phone link still comes up, so the node can be found,
+        // with the mailbox's state but without its ring.
         Err(e) => {
             log::error!("radio init failed: {:?}", e);
+            mailbox::open();
             ble::START.signal(());
         }
     }

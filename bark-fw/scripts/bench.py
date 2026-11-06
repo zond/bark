@@ -35,6 +35,8 @@ import tty
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import uf2  # the ELF's symbols, beside this script
+
 FW = Path(__file__).resolve().parent.parent
 ELF = FW / "target/thumbv7em-none-eabihf/release/bark-fw"
 OUT = FW / "target/bench"
@@ -91,7 +93,8 @@ def cargo(env: dict[str, str], console: bool, out: Path) -> None:
     subprocess.run([sys.executable, FW / "scripts/uf2.py", ELF, out], cwd=FW, check=True)
     size = subprocess.run(["size", ELF], capture_output=True, text=True)
     text, data = size.stdout.splitlines()[-1].split()[:2]
-    print(f"{out.name}: image {int(text) + int(data)} B of the 401 408 B slot\n", flush=True)
+    start, end = uf2.region(uf2.symbols(ELF.read_bytes()), "__bootloader_active")
+    print(f"{out.name}: image {int(text) + int(data)} B of the {end - start} B slot\n", flush=True)
 
 
 def build(a: argparse.Namespace) -> None:
