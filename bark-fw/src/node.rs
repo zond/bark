@@ -371,6 +371,18 @@ pub fn config(stored: Option<Stored>) -> Config {
     }
     let position = built.unwrap_or_default();
     log::info!("stored {:?}", stored);
+    // A place given at build time is where the bench says the board
+    // stands: it wins over the place stored, and the board is fixed there,
+    // so that boards built in a line are a line at every boot.
+    let stored = match built {
+        Some(place) => stored.map(|s| Stored {
+            place,
+            carried: false,
+            map_point: false,
+            ..s
+        }),
+        None => stored,
+    };
     Config {
         position,
         placed: built.is_some(),
