@@ -86,10 +86,7 @@ fn a_sleepy_carried_node_on_battery() {
             "BAE6E6CBF4F5    ",
             "NODE         V12",
             "SLEEPY ANCHORED ",
-            "CARRIED         ",
-            "HEARD          5",
-            "STRONG         4",
-            "BOTH WAYS      2",
+            "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
         ]
@@ -108,16 +105,65 @@ fn a_relay_starting_without_a_place() {
         [
             "BAE6E6CBF4F5    ",
             "NODE         V12",
-            "RELAY           ",
-            "NO PLACE YET    ",
+            "RELAY NO PLACE  ",
             "STARTING        ",
-            "HEARD          0",
-            "STRONG         0",
-            "BOTH WAYS      0",
+            "KNOWN      0/0/0",
             "POWER        USB",
             "UP         0 MIN",
         ]
     );
+}
+
+#[test]
+fn a_fixed_relay_on_usb() {
+    let state = State {
+        placed: true,
+        battery: Battery::Usb,
+        heard: 12,
+        strong: 9,
+        both_ways: 3,
+        ..State::default()
+    };
+    let shown = lines(&FIXED, &state, 90, CLOCKS[1]);
+    let shown: Vec<String> = shown
+        .iter()
+        .flatten()
+        .map(|(t, _)| String::from_utf8(t.bytes().to_vec()).unwrap())
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            "BAE6E6CBF4F5    ",
+            "NODE         V12",
+            "FIXED RELAY     ",
+            "KNOWN     12/9/3",
+            "POWER        USB",
+            "UP        90 MIN",
+            "TIME   14:35 +02",
+        ]
+    );
+}
+
+/// The role line of each role, a sleepy node's place not shown.
+#[test]
+fn the_role_and_the_place() {
+    let role = |sleepy, anchored, placed, carried| {
+        let state = State {
+            sleepy,
+            anchored,
+            placed,
+            carried,
+            ..State::default()
+        };
+        String::from(texts(&state, 0)[2].trim_end())
+    };
+    assert_eq!(role(false, false, true, false), "FIXED RELAY");
+    assert_eq!(role(false, false, true, true), "CARRIED RELAY");
+    assert_eq!(role(false, false, false, false), "RELAY NO PLACE");
+    for (placed, carried) in [(false, false), (true, false), (true, true)] {
+        assert_eq!(role(true, true, placed, carried), "SLEEPY ANCHORED");
+        assert_eq!(role(true, false, placed, carried), "SLEEPY NO ANCHOR");
+    }
 }
 
 #[test]
@@ -133,6 +179,8 @@ fn uptime_in_minutes_hours_and_days() {
 /// it is in the font, and the lines stay on the panel.
 #[test]
 fn every_line_fits_and_is_drawable() {
+    // The counts at the neighbour table's size, 64
+    // (`bark_proto::tables::neighbours::NEIGHBOURS`), and the longest role.
     let widest = State {
         starting: true,
         sleepy: true,
@@ -142,7 +190,12 @@ fn every_line_fits_and_is_drawable() {
         both_ways: 64,
         ..State::default()
     };
-    for state in [widest, State::default()] {
+    let relay = State {
+        sleepy: false,
+        ..widest
+    };
+    assert_eq!(texts(&widest, 0)[4], "KNOWN   64/64/64");
+    for state in [widest, relay, State::default()] {
         for (up, clock) in [0, 119, 47 * 60, u32::MAX].into_iter().zip(CLOCKS) {
             for (t, y) in lines(&FIXED, &state, up, clock).iter().flatten() {
                 assert_eq!(t.bytes().len(), LINE, "{:?}", t.bytes());
