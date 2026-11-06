@@ -275,7 +275,7 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 347 840 B of the 401 408 B slot
+and one codegen unit: the node image is 341 136 B of the 401 408 B slot
 (`docs/flash-2026-11-06.md` measures the options). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
 
