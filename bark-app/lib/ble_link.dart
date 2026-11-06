@@ -27,11 +27,59 @@ Future<void> startScan(void Function(FoundNode) found) async {
     final name = d.name ?? '';
     found(FoundNode(d.deviceId, name.isEmpty ? d.deviceId : name, d.rssi));
   };
-  await UniversalBle.startScan(
-    scanFilter: ScanFilter(withServices: [Uuids.service]),
-    // The node advertises with legacy advertising PDUs (spec "Phone link").
-    platformConfig: PlatformConfig(android: AndroidOptions(legacy: true)),
-  );
+  await _scanForNodes();
+}
+
+Future<void> _scanForNodes() => UniversalBle.startScan(
+  scanFilter: ScanFilter(withServices: [Uuids.service]),
+  // The node advertises with legacy advertising PDUs (spec "Phone link").
+  platformConfig: PlatformConfig(android: AndroidOptions(legacy: true)),
+);
+
+/// How long a scan looks for one node: ten of its advertising intervals
+/// of 1022.5 ms (spec "Phone link", Finding the node), so that a phone
+/// that misses some of its advertisements still sees it.
+const Duration seenWait = Duration(milliseconds: 10 * 1022 + 5);
+
+/// Scans until the node `deviceId` is seen, at most `wait`; whether it
+/// was.
+///
+/// Android connects to an address as public unless a scan result or a
+/// bond has told it the address is random, and the node's is random
+/// static (spec "Phone link"; roadmap D135): with neither, Android looks
+/// for the wrong address and its connect times out after 30 s (bench,
+/// 2026-11-06, Pair again). The Bluetooth plugin has no connect that
+/// takes the address's type, so a node is seen in a scan before a
+/// connect that has no bond to go by.
+Future<bool> seen(String deviceId, {Duration wait = seenWait}) async {
+  final found = Completer<bool>();
+  final id = deviceId.toUpperCase();
+  final sub = UniversalBle.scanStream.listen((d) {
+    if (d.deviceId.toUpperCase() == id && !found.isCompleted) {
+      found.complete(true);
+    }
+  });
+  final timer = Timer(wait, () {
+    if (!found.isCompleted) found.complete(false);
+  });
+  try {
+    await _scanForNodes();
+    return await found.future;
+  } finally {
+    timer.cancel();
+    await sub.cancel();
+    await UniversalBle.stopScan();
+  }
+}
+
+/// The node `node` was not seen in a scan.
+class NotSeen implements Exception {
+  final String node;
+  const NotSeen(this.node);
+  @override
+  String toString() =>
+      '$node was not seen: move nearer to it and connect again from the '
+      'scan';
 }
 
 Future<void> stopBleScan() async {
@@ -126,7 +174,9 @@ class BleLink implements NodeLink {
 
   /// Forgets the phone's bond with the node, so that the next connect
   /// pairs anew. Android removes a bond a moment after it is asked to;
-  /// this waits for that, by [_forgetStep], at most [_forgetWait].
+  /// this waits for that, by [_forgetStep], at most [_forgetWait]. With
+  /// the bond goes what Android knew of the address's type: the node is
+  /// to be [seen] again before the connect.
   static Future<void> forget(String deviceId) async {
     await UniversalBle.unpair(deviceId);
     final end = DateTime.now().add(_forgetWait);

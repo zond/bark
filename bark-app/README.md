@@ -106,7 +106,12 @@ a refused first read, or a bond Android has dropped after such a
 failure, count the same. A link that never comes up is a plain failure
 to connect. The app then says "This node is
 no longer yours", with **Not now** and **Pair again**, which forgets the
-phone's old bond and pairs anew, at the node. The node paired with, and
+phone's old bond, scans until it sees the node again (about ten seconds
+at most, else it says the node was not seen), and pairs anew, at the
+node. The scan is needed because the node's address is random static,
+and Android, with neither a bond nor a scan result to tell it so,
+connects to it as a public address and times out after 30 s; the
+Bluetooth plugin has no connect that takes the address's type. The node paired with, and
 whether it was lost, are kept with the queue and shown on the first
 screen and in Settings. A pairing cancelled or with a wrong code says
 so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's

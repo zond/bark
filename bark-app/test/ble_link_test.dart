@@ -1,11 +1,14 @@
 // The Bluetooth link's set-up against a platform that plays the node:
 // a node that ends the link before the app has read it is no longer
 // this phone's when the phone holds a bond for it, and a plain failure
-// when it does not.
+// when it does not; and a node Android can reach only once a scan has
+// seen it.
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:bark_app/ble_link.dart';
+import 'package:bark_app/link.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -66,6 +69,70 @@ class RefusingNode extends UniversalBlePlatform {
       throw UnimplementedError('${invocation.memberName}');
 }
 
+/// A node Android connects to only once a scan has seen it, as with a
+/// random static address and no bond; `advertises` false for one out of
+/// range.
+class HiddenNode extends UniversalBlePlatform {
+  final String id;
+  final bool advertises;
+  bool scanned = false;
+  HiddenNode(this.id, {this.advertises = true});
+
+  @override
+  Future<void> startScan({
+    ScanFilter? scanFilter,
+    PlatformConfig? platformConfig,
+  }) async {
+    if (!advertises) return;
+    Timer(const Duration(milliseconds: 10), () {
+      scanned = true;
+      updateScanResult(BleDevice(deviceId: id, name: 'bark-7572482fc367'));
+    });
+  }
+
+  @override
+  Future<void> stopScan() async {}
+
+  @override
+  Future<void> connect(
+    String deviceId, {
+    Duration? connectionTimeout,
+    bool autoConnect = false,
+    ConnectionPlatformConfig? platformConfig,
+  }) async {
+    if (!scanned) throw ConnectionException('timed out after 30 seconds');
+    updateConnection(deviceId, true);
+  }
+
+  @override
+  Future<void> disconnect(String deviceId) async =>
+      updateConnection(deviceId, false);
+
+  @override
+  Future<BleConnectionState> getConnectionState(String deviceId) async =>
+      BleConnectionState.connected;
+
+  @override
+  Future<List<BleService>> discoverServices(
+    String deviceId,
+    bool withDescriptors, {
+    DiscoverServicesPlatformConfig? platformConfig,
+  }) async => [];
+
+  @override
+  Future<int> requestMtu(String deviceId, int expectedMtu) async => expectedMtu;
+
+  @override
+  Future<bool> isPaired(String deviceId) async => false;
+
+  @override
+  Future<bool> pair(String deviceId) async => true;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
 void main() {
   const device = '00:11:22:33:44:55';
 
@@ -93,5 +160,26 @@ void main() {
       BleLink.connect(device, name: 'bark-7572482fc367', hadBond: true),
       throwsA(isA<NotOurs>()),
     );
+  });
+
+  test('without a scan the connect fails; once seen, it pairs', () async {
+    final node = HiddenNode(device);
+    UniversalBle.setInstance(node);
+    await expectLater(
+      BleLink.connect(device, name: 'bark-7572482fc367'),
+      throwsA(isA<ConnectionException>()),
+    );
+    expect(await seen(device.toLowerCase()), isTrue);
+    final (link, mtu) = await BleLink.connect(
+      device,
+      name: 'bark-7572482fc367',
+    );
+    expect(mtu, attMtu);
+    await link.close();
+  });
+
+  test('a node not seen within the wait', () async {
+    UniversalBle.setInstance(HiddenNode(device, advertises: false));
+    expect(await seen(device, wait: const Duration(milliseconds: 50)), isFalse);
   });
 }

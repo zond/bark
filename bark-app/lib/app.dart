@@ -281,35 +281,33 @@ class AppModel extends ChangeNotifier {
   bool connectedTo(String device) => session.connected && linkDevice == device;
 
   /// Connects to `n`, after closing the link to another node; `again`
-  /// after the person chose to pair again. Nothing while a connection is
+  /// after the person chose to pair again, which forgets the phone's old
+  /// bond and finds the node in a scan first ([seen]). Nothing while a connection is
   /// being made or `n` is connected already: a second connect to the
   /// same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
     if (connecting || connectedTo(n.deviceId)) return;
     final s = session;
-    await _open(
-      n.deviceId,
-      () async {
-        await stopScan();
-        return BleLink.connect(
-          n.deviceId,
-          name: n.name,
-          hadBond: !again && s.pairedWith == n.name && !s.pairingLost,
-          pairing: () {
-            _phase(Linking.pairing);
-            session.note('Pairing with ${n.name}');
-          },
-          paired: () {
-            _phase(Linking.paired);
-            session.note('Paired with ${n.name}');
-          },
-        );
-      },
-      again: () async {
+    await _open(n.deviceId, () async {
+      await stopScan();
+      if (again) {
         await BleLink.forget(n.deviceId);
-        await connect(n, again: true);
-      },
-    );
+        if (!await seen(n.deviceId)) throw NotSeen(n.name);
+      }
+      return BleLink.connect(
+        n.deviceId,
+        name: n.name,
+        hadBond: !again && s.pairedWith == n.name && !s.pairingLost,
+        pairing: () {
+          _phase(Linking.pairing);
+          session.note('Pairing with ${n.name}');
+        },
+        paired: () {
+          _phase(Linking.paired);
+          session.note('Paired with ${n.name}');
+        },
+      );
+    }, again: () => connect(n, again: true));
   }
 
   Future<void> connectFake() async {
