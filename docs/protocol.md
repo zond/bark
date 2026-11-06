@@ -3172,6 +3172,7 @@ dropped. Payloads are not padded.
 | record | bytes | |
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
+| text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
 | card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
 
@@ -3183,6 +3184,15 @@ message that carried it and whenever it changes; a message without one
 says it has not changed. The app sends nothing
 by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
+
+*Long texts.* A text longer than one message holds is split into
+parts, each a message of its own with its own `sent`, delivered and
+acknowledged as a text is. The parts take consecutive `sent`, so a
+part's `sent` less its number and one is the first part's, which names
+the text: the receiver puts parts together in any order of arrival,
+knows from the count which have not come, and needs no byte more for
+it. A part costs one byte over a whole text, 159 bytes of text in a box
+without an address; 16 parts hold about 2.5 KB (roadmap D137).
 
 *The card*, what people exchange, shown as a QR code: version (1), 2;
 flags (1), bit 0 set when a home address follows, the others zero; the

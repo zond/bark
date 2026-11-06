@@ -193,4 +193,108 @@ void main() {
     expect(encode1251('Їжак 🦔'), isNull);
     expect(decode1251([0x98]), isNull);
   });
+
+  test('a split text: the parts and their bytes are the Rust ones', () {
+    final m = at('box_parts');
+    final room = m['room'] as int;
+    final parts = (m['parts'] as List).cast<Map<String, dynamic>>();
+    // The room of a whole text in a box without an address, as the Rust
+    // side has it: one byte more than a part's.
+    expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
+    expect(splitText(m['text'] as String, room + 1), [
+      for (final p in parts) p['text'],
+    ]);
+    final ab = s.crypto.box.precalculate(
+      publicKey: bob.identity,
+      secretKey: alice.pair.secretKey,
+    );
+    final ba = s.crypto.box.precalculate(
+      publicKey: alice.identity,
+      secretKey: bob.pair.secretKey,
+    );
+    for (final (i, p) in parts.indexed) {
+      final hd = Header(
+        greater(alice.identity, bob.identity),
+        p['sent'] as int,
+      );
+      final plain = writePlain(hd, [
+        TextRecord(p['text'] as String, i + 1, parts.length),
+      ]);
+      expect(hex(plain), p['plaintext']);
+      expect(hex(sealBox(ab, h(p, 'nonce'), plain)), p['payload']);
+      final (got, rs) = readPlain(openBox(ba, h(p, 'payload')));
+      final t = rs.single as TextRecord;
+      expect(
+        (got.sent, t.text, t.part, t.of),
+        (p['sent'], p['text'], i + 1, parts.length),
+      );
+    }
+    // A part of no count, or past it, does not read.
+    for (final rec in [
+      [5, 0x00, 0x78],
+      [6, 0x21, 0x78],
+      [5],
+    ]) {
+      expect(
+        () => readPlain([0, 0, 0, 0, 7, ...rec]),
+        throwsA(isA<BadPayload>()),
+      );
+    }
+    expect(
+      () => writePlain(const Header(false, 7), [const TextRecord('x', 3, 2)]),
+      throwsA(isA<BadPayload>()),
+    );
+  });
+
+  group('splitting a text', () {
+    test('one that fits is one, in either encoding', () {
+      expect(splitText('a' * 160, 160), ['a' * 160]);
+      // 160 Cyrillic letters are 320 bytes of UTF-8, 160 of the page.
+      expect(splitText('ж' * 160, 160), ['ж' * 160]);
+    });
+
+    test('ASCII: after the last space near the limit, words whole', () {
+      final words = List.filled(40, 'word').join(' ');
+      final parts = splitText(words, 160);
+      expect(parts.join(), words);
+      expect(parts.length, 2);
+      expect(parts.first.endsWith('word '), isTrue);
+      expect(parts.first.length, lessThanOrEqualTo(159));
+      expect(parts.first.length, greaterThan(159 - 5));
+    });
+
+    test('no space near the limit: cut at the limit', () {
+      final parts = splitText('${'a' * 100} ${'b' * 200}', 160);
+      expect(parts.map((p) => p.length), [159, 142]);
+      expect(parts.join(), '${'a' * 100} ${'b' * 200}');
+    });
+
+    test('Cyrillic: one byte a letter under the page, so 159 a part', () {
+      final text = 'ї' * 400;
+      final parts = splitText(text, 160);
+      expect(parts.map((p) => p.length), [159, 159, 82]);
+      expect(parts.every((p) => encode1251(p) != null), isTrue);
+    });
+
+    test('Cyrillic with an emoji: the parts before it keep the page', () {
+      final text = '${'ї' * 200}🦔';
+      final parts = splitText(text, 160);
+      expect(parts.join(), text);
+      expect(parts.map(textLength), [159, 41 * 2 + 4]);
+      expect(encode1251(parts.first), isNotNull);
+    });
+
+    test('emoji: never inside one, nor between a flag\'s two halves', () {
+      // A flag is two code points of four bytes; 159 is not a multiple
+      // of 8, so a cut by bytes alone would split one.
+      final text = '🇺🇦' * 30;
+      final parts = splitText(text, 160);
+      expect(parts.join(), text);
+      for (final p in parts) {
+        expect(textLength(p), lessThanOrEqualTo(159));
+        expect(p.length % 4, 0, reason: 'whole flags only');
+      }
+      expect(parts.first.length ~/ 4, 19);
+    });
+  });
 }
