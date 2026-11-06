@@ -56,6 +56,9 @@ class AppModel extends ChangeNotifier {
 
   Future<void> load() async {
     await Future.wait([me.load(), session.load(), contacts.load()]);
+    for (final s in [me.store, session.store, contacts.store]) {
+      if (s.fault != null) session.note(s.fault!);
+    }
   }
 
   /// Whether to connect to the fake node instead of Bluetooth.

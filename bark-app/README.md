@@ -71,7 +71,11 @@ The queue and the received texts, the contacts, and the person (seed,
 name, home, the last `sent`, the mailbox's state) are kept in three
 files in the app's private storage, so they survive a restart. The
 seed is kept there in the clear: anyone who can read the app's storage
-has the identity.
+has the identity. Each file names the version of its format, 1 if it
+names none; a file of another version, or one with any part that does
+not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, the
+debug screen's log says so, and the app starts that file empty (for the
+person, with a new identity).
 
 ## The fake node
 

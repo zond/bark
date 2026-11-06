@@ -245,23 +245,30 @@ class Session extends ChangeNotifier {
     return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
   }
 
+  /// The version of `bark.json`'s format.
+  static const version = 1;
+
   Future<void> load() async {
-    final j = await store.load();
+    final j = await store.load(
+      version,
+      (j) => (
+        outbox: [
+          for (final e in j['outbox'] as List)
+            Outgoing.fromJson(e as Map<String, dynamic>),
+        ],
+        received: [
+          for (final e in j['received'] as List)
+            Received.fromJson(e as Map<String, dynamic>),
+        ],
+      ),
+    );
     if (j == null) return;
-    outbox.addAll(
-      (j['outbox'] as List).map(
-        (e) => Outgoing.fromJson(e as Map<String, dynamic>),
-      ),
-    );
-    received.addAll(
-      (j['received'] as List).map(
-        (e) => Received.fromJson(e as Map<String, dynamic>),
-      ),
-    );
+    outbox.addAll(j.outbox);
+    received.addAll(j.received);
     notifyListeners();
   }
 
-  Future<void> save() => store.save({
+  Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
   });

@@ -65,31 +65,47 @@ class Me extends ChangeNotifier {
     return a == null ? null : PersonCard(identity, a, cardTime, name);
   }
 
+  /// The version of `me.json`'s format.
+  static const version = 1;
+
   Future<void> load() async {
-    final j = await store.load();
-    if (j == null) {
+    final apply = await store.load(version, (j) {
+      final keys = Keys.fromSeed(sodium, parseHex(j['seed'] as String)!);
+      final name = j['name'] as String;
+      final home = _address(j['home']);
+      final nodeAddress = _address(j['nodeAddress']);
+      final cardTime = j['cardTime'] as int;
+      final lastSent = j['lastSent'] as int;
+      final backedUp = j['backedUp'] as bool;
+      final since = j['since'] as int;
+      final above = (j['above'] as List).cast<int>().toList();
+      final rounds = (j['rounds'] as List).cast<int>().toList();
+      return () {
+        this.keys = keys;
+        this.name = name;
+        this.home = home;
+        this.nodeAddress = nodeAddress;
+        this.cardTime = cardTime;
+        this.lastSent = lastSent;
+        this.backedUp = backedUp;
+        this.since = since;
+        this.above.addAll(above);
+        this.rounds.addAll(rounds);
+      };
+    });
+    if (apply == null) {
       keys = Keys.fromSeed(sodium, sodium.randombytes.buf(seedLen));
       await _save();
-      notifyListeners();
-      return;
+    } else {
+      apply();
     }
-    keys = Keys.fromSeed(sodium, parseHex(j['seed'] as String)!);
-    name = j['name'] as String;
-    home = _address(j['home']);
-    nodeAddress = _address(j['nodeAddress']);
-    cardTime = j['cardTime'] as int;
-    lastSent = j['lastSent'] as int;
-    backedUp = j['backedUp'] as bool;
-    since = j['since'] as int;
-    above.addAll((j['above'] as List).cast<int>());
-    rounds.addAll((j['rounds'] as List).cast<int>());
     notifyListeners();
   }
 
   static Address? _address(Object? s) =>
       s == null ? null : Address.parse(s as String);
 
-  Future<void> _save() => store.save({
+  Future<void> _save() => store.save(version, {
     'seed': hex(keys.seed),
     'name': name,
     'home': home?.toString(),

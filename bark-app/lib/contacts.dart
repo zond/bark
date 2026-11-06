@@ -71,18 +71,23 @@ class Contacts extends ChangeNotifier {
 
   Contact? byKey(String? key) => list.where((c) => c.key == key).firstOrNull;
 
+  /// The version of `contacts.json`'s format.
+  static const version = 1;
+
   Future<void> load() async {
-    final j = await store.load();
-    if (j == null) return;
-    list.addAll(
-      (j['contacts'] as List).map(
-        (e) => Contact.fromJson(e as Map<String, dynamic>),
-      ),
+    final l = await store.load(
+      version,
+      (j) => [
+        for (final e in j['contacts'] as List)
+          Contact.fromJson(e as Map<String, dynamic>),
+      ],
     );
+    if (l == null) return;
+    list.addAll(l);
     notifyListeners();
   }
 
-  Future<void> _save() => store.save({
+  Future<void> _save() => store.save(version, {
     'contacts': [for (final c in list) c.toJson()],
   });
 
