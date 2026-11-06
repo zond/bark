@@ -30,7 +30,7 @@ class ContactsScreen extends StatelessWidget {
               leading: const CircleAvatar(child: Icon(Icons.person)),
               title: Text(c.name),
               subtitle: Text(
-                c.verified ? c.address.toString() : 'not verified yet',
+                c.verified ? c.card.address.toString() : 'not verified yet',
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
               onTap: () => Navigator.of(context).pushReplacement(

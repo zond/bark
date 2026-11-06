@@ -16,7 +16,8 @@ is a prototype for the bench, not the app people will carry.
   them on another phone. Texts are sealed to an identity.
 - **Card**: what two people exchange so that each can reach the other:
   an identity, an address and the name its owner chose. Its address is
-  the home node's when the person has set one, else their node's now.
+  the home node's when the person has set one, and says so, else their
+  node's now.
 - **Contact**: a card with the name this phone gives it, known by its
   identity.
 - **Home node**: a node on USB that stays where it is, set in Settings;
@@ -43,7 +44,10 @@ is a prototype for the bench, not the app people will carry.
   shows as queued, taken by the node, or given back with its wait
   counting down; a given-back text can be sent again once the wait is
   over, or dropped; and "acknowledged" once the other person presses
-  **Acknowledge** on it. A received text has that button; nothing is
+  **Acknowledge** on it. Each says in small text where it went: "to
+  where they were", "to their home" or "to their card's address". The
+  top line says when the contact last wrote, and, when their card names
+  a home, whether from it. A received text has that button; nothing is
   acknowledged by itself. A contact whose first message has come but no
   sealed reply is marked not verified. The menu renames the contact,
   sends them your card, or removes them. The bar has **Fetch my mail**
@@ -117,7 +121,8 @@ which builds libsodium itself into the app), in the forms of spec
 "Phone link": a first message to someone in a sealed box with your
 card, every later one boxed to their identity, which names no sender:
 the app tries its contacts' keys on each message that arrives. A
-message names your address while the contact may not know it, carries
+message names the node you write from while the contact may not know
+it, carries
 the time it was written as its `sent`, and holds a text, an
 acknowledgement or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
@@ -138,6 +143,23 @@ happens to the old home when another node is made the home. Settings
 shows that button on any node that holds a key and is not the person's
 home, with a line saying it is someone's home, perhaps a former one of
 theirs.
+
+## Where a text goes
+
+A message names the node its sender writes from, while the other side
+may not know it, so the app knows two addresses for a contact: their
+card's, which may be their home, and the one they last wrote from, with
+the age of their newest message, counted from the time it was written,
+or from when it arrived if that is earlier. While that age is under
+10 minutes, the delivery TTL, a text goes where they wrote from without
+asking: in that time the network keeps mail for a node at the address it
+last used (`docs/protocol.md`, "Delivery queue"), so it goes straight to
+where they are and needs no fetch from their mailbox. Older, the send
+button asks, for that text only: "Where <name> was <age> ago" or "Their
+home mailbox". Without a home on their card, the card's address is also
+only where they were, and the newer of the two goes without asking;
+with nothing written from yet, the card's address. Acknowledgements and
+cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins
 
@@ -193,15 +215,18 @@ The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
-messages, acknowledgements, a reflected message, a forged first message
-and the mailbox's replies against the fake node, which answers a fetch
+messages, acknowledgements, a reflected message, a forged first message,
+the header's written-from address kept apart from the card's, and the
+mailbox's replies against the fake node, which answers a fetch
 as a home does; the fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
-conversations; and drive the screens: a text to the fake friend, its
+conversations; choose where a text goes; and drive the screens: a text
+to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted or a
-scanned card, my card, the debug screen and the fetch button.
+scanned card, my card, the debug screen, the fetch button, and the
+choice of where a text goes.
 
 ## Trying it
 

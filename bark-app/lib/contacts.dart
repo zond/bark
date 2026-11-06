@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'app_layer.dart';
 import 'card.dart';
 import 'link.dart';
+import 'session.dart';
 import 'store.dart';
 
 /// A card with the name this phone gives it.
@@ -41,7 +42,30 @@ class Contact {
     this.heardAt,
   });
 
-  Address get address => card.address;
+  /// The delivery TTL, the age at which the spec's "Delivery queue" calls
+  /// a message stale: until then the network keeps mail for a node at the
+  /// address it last used.
+  static const fresh = Duration(seconds: 600);
+
+  /// Where a text to them may go at `now`: where they last wrote from
+  /// while that is fresh. Past it, that or a home's mailbox, for the
+  /// person to choose; without a home the card's address is only where
+  /// their node was too, and the newer of the two stands alone.
+  List<Toward> towards(DateTime now) {
+    final cards = card.home ? Toward.home : Toward.card;
+    final from = wroteFrom, at = heardAt, sent = heardSent;
+    if (from == null || at == null || sent == null) return [cards];
+    if (from.toString() == card.address.toString()) return [cards];
+    if (now.difference(at) < fresh) return [Toward.there];
+    if (card.home) return [Toward.there, Toward.home];
+    return [sent >= card.time ? Toward.there : Toward.card];
+  }
+
+  /// Where a message the person does not place goes: the only choice, or
+  /// the home's mailbox, which keeps it.
+  Toward unasked(DateTime now) => towards(now).last;
+
+  Address addressOf(Toward t) => t == Toward.there ? wroteFrom! : card.address;
 
   String get key => card.key;
 

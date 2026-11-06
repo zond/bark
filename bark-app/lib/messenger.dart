@@ -82,17 +82,21 @@ class Messenger {
     );
   }
 
-  Future<void> sendText(Contact c, String text) async {
+  /// Sends a text to `c`, to the address `toward` names, by default the
+  /// one the person need not choose.
+  Future<void> sendText(Contact c, String text, {Toward? toward}) async {
+    final t = toward ?? c.unasked(now());
     final (p, sent) = await _seal(c, [TextRecord(text)]);
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.text,
         to: c.key,
         sent: sent,
         body: text,
+        toward: t,
       ),
     );
   }
@@ -104,14 +108,16 @@ class Messenger {
     if (c == null || named == null || r.acked) return;
     final (p, sent) = await _seal(c, [AckRecord(named)]);
     r.acked = true;
+    final t = c.unasked(now());
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.ack,
         to: c.key,
         sent: sent,
+        toward: t,
       ),
     );
   }
@@ -121,14 +127,16 @@ class Messenger {
     final card = me.card;
     if (card == null) return;
     final (p, sent) = await _seal(c, [CardRecord(card.encode())]);
+    final t = c.unasked(now());
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.card,
         to: c.key,
         sent: sent,
+        toward: t,
       ),
     );
   }

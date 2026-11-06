@@ -20,6 +20,14 @@ String when(DateTime t) {
   return '${l.year}-${two(l.month)}-${two(l.day)} $hm';
 }
 
+/// How long ago, in a few words.
+String ago(Duration d) {
+  if (d.inMinutes < 1) return 'just now';
+  if (d.inHours < 1) return '${d.inMinutes} min ago';
+  if (d.inDays < 2) return '${d.inHours} h ago';
+  return '${d.inDays} days ago';
+}
+
 /// What a sent text's state means to the person.
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.queued => 'queued',
