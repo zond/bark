@@ -48,6 +48,9 @@ pub struct LinkApp<'a> {
     /// A message the core delivered and the mailbox took, to confirm to
     /// the core once its slot is written (`mailbox.rs`).
     kept: Option<bark_proto::MsgId>,
+    /// The core's inbox at the last step, its length and oldest message,
+    /// to publish at once when the phone clears the home.
+    core_inbox: (u8, Option<(bark_proto::MsgId, u8, [u8; MAX_PAYLOAD])>),
     /// The mailbox's reply the core holds, to tell its given back from
     /// the phone's.
     replying: Option<bark_proto::MsgId>,
@@ -75,7 +78,10 @@ impl App for LinkApp<'_> {
                     self.serving
                 }
                 Either4::Third(()) => crate::gps::waiting(),
-                Either4::Fourth(()) => self.kept.is_some() && crate::mailbox::idle(),
+                Either4::Fourth(()) => {
+                    self.follow_home();
+                    self.kept.is_some() && crate::mailbox::idle()
+                }
             };
             if new {
                 return;
@@ -190,6 +196,33 @@ impl App for LinkApp<'_> {
 }
 
 impl LinkApp<'_> {
+    /// Publish a home set or cleared since the last step at once, so that
+    /// what the phone reads after its write shows it: the ring, or the
+    /// core's inbox as the last step left it.
+    fn follow_home(&self) {
+        let (status, ring) = crate::ble::LINK.lock(|l| {
+            let l = l.borrow();
+            (l.status, l.ring_head.is_some())
+        });
+        let home = crate::mailbox::is_home();
+        if home == ring {
+            return;
+        }
+        if home {
+            publish_home(status);
+        } else {
+            let (len, head) = &self.core_inbox;
+            let status = Status {
+                inbox: *len,
+                ..status
+            };
+            crate::ble::publish(
+                status,
+                head.as_ref().map(|(id, n, p)| (*id, &p[..*n as usize])),
+            );
+        }
+    }
+
     /// Serve the phone's request waiting if the driver gets nothing of it,
     /// and answer it at once: the clock; a home's confirmation, which
     /// moves the ring's mark; a confirmation of a message the inbox does
@@ -395,6 +428,7 @@ pub async fn run<'a>(
         power: None,
         kept: None,
         replying: None,
+        core_inbox: (0, None),
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
@@ -429,6 +463,14 @@ pub async fn run<'a>(
         } else {
             crate::ble::publish(status, core.inbox());
         }
+        let head = core.inbox().map(|(id, p)| {
+            let mut payload = [0; MAX_PAYLOAD];
+            payload[..p.len()].copy_from_slice(p);
+            (id, p.len() as u8, payload)
+        });
+        let core_inbox = (status.inbox, head);
+        driver.app_mut().core_inbox = core_inbox;
+        let core = &driver.core().0;
         crate::display::publish(screen(core, now, driver.app().battery_mv));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
