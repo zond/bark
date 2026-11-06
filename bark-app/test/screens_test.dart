@@ -1,8 +1,9 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
-// the echo is acknowledged; the card, the backup words, adding a contact
-// from a pasted or a scanned card, and the debug screen; the fetch button,
-// on the first screen and in a thread, and why it sends nothing; the home
+// the echo is acknowledged, its button no taller than the small text;
+// the card, the backup words, adding a contact from a pasted or a scanned
+// card, and the debug screen; the fetch button, on the first screen and
+// in a thread, and why it sends nothing; the home
 // buttons, the home known by its node ID wherever it is, and its card
 // sent after a move only by "Send my card"; and a node that another
 // phone has paired with since, and pairing with it again.
@@ -90,32 +91,45 @@ void main() {
     await t.pump();
     await t.pump();
     expect(find.text('hello'), findsOneWidget);
-    expect(find.textContaining('taken by the node'), findsOneWidget);
+    expect(find.byTooltip('Taken by the node'), findsOneWidget);
     await t.pump(FakeNode.echoAfter + const Duration(seconds: 1));
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Acknowledge the echo: its button becomes the mark. The friend's
-    // acknowledgement of "hello" shows the same mark on the sent text.
+    // Acknowledge the echo: its button becomes one plain check. The
+    // friend's acknowledgement of "hello" shows two marks on the sent
+    // text, in place of the node's one mark.
     Finder inBubble(String text, Finder f) => find.descendant(
       of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
       matching: f,
     );
     final mark = find.byWidgetPredicate(
-      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
+      (w) => w is Icon && w.icon == Icons.done_all && w.semanticLabel != null,
     );
+    final taken = find.byTooltip('Taken by the node');
     final button = find.byTooltip('Acknowledge');
     expect(inBubble('Echo: hello', button), findsOneWidget);
     expect(inBubble('Echo: hello', mark), findsNothing);
     expect(inBubble('hello', mark), findsNothing);
+    expect(inBubble('hello', taken), findsOneWidget);
+    // The button keeps the small line one line of small text tall.
+    Finder line(Finder f) =>
+        find.ancestor(of: f, matching: find.byType(Row)).first;
+    final withButton = t.getSize(line(inBubble('Echo: hello', button))).height;
     app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
     await t.tap(inBubble('Echo: hello', button));
     await t.pump();
     await t.pump();
-    for (final text in ['hello', 'Echo: hello']) {
-      expect(inBubble(text, button), findsNothing);
-      expect(inBubble(text, mark), findsOneWidget);
-    }
+    expect(inBubble('Echo: hello', button), findsNothing);
+    expect(inBubble('Echo: hello', mark), findsNothing);
+    expect(inBubble('hello', mark), findsOneWidget);
+    expect(inBubble('hello', taken), findsNothing);
+    final check = find.byWidgetPredicate(
+      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
+    );
+    expect(inBubble('Echo: hello', check), findsOneWidget);
+    final withCheck = t.getSize(line(inBubble('Echo: hello', check))).height;
+    expect(withButton, closeTo(withCheck, 1));
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -238,7 +252,7 @@ void main() {
     expect(o.body, 'to the mailbox');
     expect(o.dst.toString(), home.toString());
     expect(o.toward, Toward.home);
-    expect(find.textContaining('to their home'), findsOneWidget);
+    expect(find.byTooltip('To their home'), findsOneWidget);
 
     // Per text: the next asks again.
     await send('to where she was', 'Where Olena was 1 h ago');
@@ -246,7 +260,7 @@ void main() {
     expect(o.body, 'to where she was');
     expect(o.dst.toString(), there.toString());
     expect(o.toward, Toward.there);
-    expect(find.textContaining('to where they were'), findsOneWidget);
+    expect(find.byTooltip('To where they were'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();
