@@ -28,7 +28,11 @@ pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 const CHECK_AT: usize = SLOT_LEN - 4;
 /// Where a slot's payload starts: after its number (3) and length (1).
 const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
-const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= CHECK_AT);
+/// Where a slot's message ID sits: the four bytes before the check, so
+/// that the payload's place is the same in a slot written before it was
+/// kept, whose ID reads as `0xFFFF_FFFF`, the erased flash.
+const ID_AT: usize = CHECK_AT - 4;
+const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= ID_AT);
 
 /// Bytes of the mailbox's kept state.
 pub const STATE_LEN: usize = 64;
@@ -158,12 +162,13 @@ impl<R: Ring> Mailbox<R> {
         &mut self.ring
     }
 
-    /// The oldest item the phone at the node has not confirmed: its number
-    /// and its length in `out`. The phone reads the ring from where it
-    /// last confirmed; the ring keeps every item for fetches either way.
-    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, usize)> {
+    /// The oldest item the phone at the node has not confirmed: its number,
+    /// the message ID it arrived with and its length in `out`. The phone
+    /// reads the ring from where it last confirmed; the ring keeps every
+    /// item for fetches either way.
+    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
         let from = (self.read + 1).max(self.oldest());
-        (from..=self.newest).find_map(|n| self.item(n, out).map(|l| (n, l)))
+        (from..=self.newest).find_map(|n| self.read_item(n, out).map(|(id, l)| (n, id, l)))
     }
 
     /// Items the phone at the node has not confirmed.
@@ -231,6 +236,11 @@ impl<R: Ring> Mailbox<R> {
 
     /// Item `n` into `out`, its length; `None` once it is overwritten.
     pub fn item(&self, n: u32, out: &mut [u8; MAX_PAYLOAD]) -> Option<usize> {
+        self.read_item(n, out).map(|(_, len)| len)
+    }
+
+    /// Item `n` into `out`: the message ID it arrived with, and its length.
+    fn read_item(&self, n: u32, out: &mut [u8; MAX_PAYLOAD]) -> Option<(MsgId, usize)> {
         if n == 0 || n > self.newest {
             return None;
         }
@@ -242,11 +252,14 @@ impl<R: Ring> Mailbox<R> {
             return None;
         }
         out[..len].copy_from_slice(&b[PAYLOAD_AT..PAYLOAD_AT + len]);
-        Some(len)
+        Some((MsgId(be(&b[ID_AT..CHECK_AT])), len))
     }
 
-    /// A payload the core delivered to this node's application.
-    pub fn arrive(&mut self, payload: &[u8]) -> Arrival {
+    /// A payload the core delivered to this node's application, with its
+    /// message ID. The ID is kept with the item: the phone confirms an
+    /// item by it, and computed again from the node's address it would
+    /// change whenever the address does.
+    pub fn arrive(&mut self, msg_id: MsgId, payload: &[u8]) -> Arrival {
         let Some(key) = self.key else {
             return Arrival::NotHome;
         };
@@ -271,6 +284,7 @@ impl<R: Ring> Mailbox<R> {
         b[..seal::NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
         b[seal::NUMBER_LEN] = payload.len() as u8;
         b[PAYLOAD_AT..PAYLOAD_AT + payload.len()].copy_from_slice(payload);
+        b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
         let check = fnv1a(&b[..CHECK_AT]);
         b[CHECK_AT..].copy_from_slice(&check.to_be_bytes());
         self.ring.write(s, &b);

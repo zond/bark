@@ -372,7 +372,7 @@ pub async fn run<'a>(
         let core = &driver.core().0;
         if home {
             let mut item = [0u8; MAX_PAYLOAD];
-            let unread = crate::mailbox::unread(core.address(), core.id(), &mut item);
+            let unread = crate::mailbox::unread(&mut item);
             status.inbox = crate::mailbox::with(|m| m.unread_count())
                 .unwrap_or(0)
                 .min(u32::from(u8::MAX)) as u8;

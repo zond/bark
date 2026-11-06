@@ -3066,6 +3066,12 @@ last the phone confirmed, with the ID it arrived with, the written ID
 confirms it, and Status's count is the items not yet confirmed; the
 ring keeps them for fetches either way. From link version 3.
 
+*Why the ID it arrived with, kept.* An ID is a hash of the node's
+address ([packet formats](#packet-formats)), which changes whenever the
+node's position does, at every fix while it is carried
+([position](#position)); worked out again at each read, an item's ID
+would change between the phone's read and its confirmation.
+
 *Why the offset from the phone.* Turning a position into a time zone
 takes the zones' boundaries and rules, which the node has no room for
 and which change by law; the phone has them, set by its person.

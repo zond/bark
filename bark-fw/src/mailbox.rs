@@ -96,7 +96,7 @@ pub fn idle() -> bool {
 
 /// A payload the core delivered, into the mailbox.
 pub fn arrive(msg_id: MsgId, payload: &[u8]) {
-    match with(|m| m.arrive(payload)) {
+    match with(|m| m.arrive(msg_id, payload)) {
         Some(Arrival::Kept(n)) => log::info!("mailbox: id={:08x} kept as {}", msg_id.0, n),
         Some(Arrival::Fetch) => log::info!("mailbox: fetch id={:08x} taken", msg_id.0),
         Some(a) => log::info!("mailbox: id={:08x} {:?}", msg_id.0, a),
@@ -104,20 +104,11 @@ pub fn arrive(msg_id: MsgId, payload: &[u8]) {
     }
 }
 
-/// The oldest item the phone at the node has not confirmed, with the
-/// message ID it arrived with, the hash of this node's address and the
-/// payload (spec "Packet formats"): the phone's Inbox when the node is a
-/// home. Its number, ID and length in `out`.
-pub fn unread(
-    address: bark_proto::Position,
-    me: bark_proto::NodeId,
-    out: &mut [u8; MAX_PAYLOAD],
-) -> Option<(u32, MsgId, usize)> {
-    with(|m| {
-        let (n, len) = m.unread(out)?;
-        Some((n, MsgId::of(address, me, &out[..len]), len))
-    })
-    .flatten()
+/// The oldest item the phone at the node has not confirmed: the phone's
+/// Inbox when the node is a home. Its number, the message ID it arrived
+/// with, and its length in `out`.
+pub fn unread(out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
+    with(|m| m.unread(out)).flatten()
 }
 
 /// Write what the mailbox queues, for ever: one op at a time, each in an
