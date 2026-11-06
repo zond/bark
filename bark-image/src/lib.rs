@@ -1,6 +1,7 @@
 //! What the T-Echo firmware and its loader must agree on: the flash
-//! layout ([`layout`]), the header a staged image travels with
-//! ([`Header`]) and the record of it the loader checks ([`record`]).
+//! layout ([`layout`]), the external flash's driver (`ext_flash`), the
+//! header a staged image travels with ([`Header`]) and the record of it
+//! the loader checks ([`record`]).
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -13,6 +14,8 @@ extern crate std;
 
 #[cfg(feature = "boot")]
 pub mod boot;
+#[cfg(feature = "boot")]
+pub mod ext_flash;
 pub mod layout;
 pub mod record;
 
