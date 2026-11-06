@@ -265,6 +265,19 @@ pub struct State {
     pub strong: u8,
     /// Of them, those that have taken a message from it: proven to hear it.
     pub both_ways: u8,
+    pub phone: Phone,
+}
+
+/// The phone link as the screen says it (spec "Phone link", Pairing).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Phone {
+    /// No phone is paired.
+    #[default]
+    None,
+    /// One phone is paired.
+    Paired,
+    /// A phone is pairing: the six-digit code to type into it.
+    Code(u32),
 }
 
 /// The time of day when the picture is drawn, if the node knows it
@@ -291,8 +304,8 @@ const TOP: usize = 6;
 const GAP: usize = 8;
 
 /// The most lines the screen takes: the role and `STARTING` as the
-/// header, the ID, the image, the state's three, and the time.
-pub const LINES: usize = 8;
+/// header, the ID, the image, the phone, the state's three, and the time.
+pub const LINES: usize = 9;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
@@ -335,6 +348,14 @@ pub fn lines(
     }
     put(row("ID", format_args!("{}", Hex(fixed.id))), 0);
     put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
+    put(
+        match state.phone {
+            Phone::None => row("PHONE", format_args!("NONE")),
+            Phone::Paired => row("PHONE", format_args!("PAIRED")),
+            Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
+        },
+        0,
+    );
     put(
         row(
             "KNOWN",

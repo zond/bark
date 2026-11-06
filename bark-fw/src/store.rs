@@ -32,16 +32,21 @@
 //! its complement in the second, the rest left erased. The core's records
 //! start with their layout's version, counted from 1, and a cut record
 //! leaves the second word erased, which is no complement of the first.
+//!
+//! And it keeps the bond with the paired phone (`ble.rs`), a record of
+//! two slots (`bark_link::bond`).
 
 use bark_image::layout::STORE;
+use bark_link::bond::Bond;
 use bark_proto::store::{Stored, RECORD_LEN};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 
-/// The state and the offset to keep next, the latest of each.
+/// The state, the offset and the bond to keep next, the latest of each.
 static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
 static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
+static BOND: Signal<CriticalSectionRawMutex, Bond> = Signal::new();
 
 /// The node's side: keep `stored`, in place of the state kept before.
 pub fn keep(stored: Stored) {
@@ -53,13 +58,19 @@ pub fn keep_offset(offset_min: i16) {
     OFFSET.signal(offset_min);
 }
 
-/// Write what the node hands, for ever.
+/// The phone link's side: keep `bond`, in place of the bond kept before.
+pub fn keep_bond(bond: Bond) {
+    BOND.signal(bond);
+}
+
+/// Write what the node and the phone link hand, for ever.
 #[embassy_executor::task]
 pub async fn run(mut flash: Flash) -> ! {
     loop {
-        match select(STORED.wait(), OFFSET.wait()).await {
-            Either::First(stored) => flash.keep(&stored).await,
-            Either::Second(offset_min) => flash.keep_offset(offset_min).await,
+        match select3(STORED.wait(), OFFSET.wait(), BOND.wait()).await {
+            Either3::First(stored) => flash.keep(&stored).await,
+            Either3::Second(offset_min) => flash.keep_offset(offset_min).await,
+            Either3::Third(bond) => flash.keep_bond(&bond).await,
         }
     }
 }
@@ -94,67 +105,92 @@ fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
     whole.then(|| i16::from_be_bytes([r[1], r[2]]))
 }
 
+/// Slots a bond's record takes.
+const BOND_SLOTS: u32 = (Bond::LEN / RECORD_LEN) as u32;
+const _: () = assert!(Bond::LEN == 2 * RECORD_LEN);
+
+/// What the page holds last of each kind.
+#[derive(Clone, Copy, Default)]
+pub struct Kept {
+    pub stored: Option<Stored>,
+    pub offset_min: Option<i16>,
+    pub bond: Option<Bond>,
+}
+
 /// The page of flash and the next erased slot in it.
 pub struct Flash {
     flash: &'static SharedFlash,
     next: u32,
     /// What the page holds last, written again after an erase.
-    stored: Option<Stored>,
-    offset_min: Option<i16>,
+    kept: Kept,
 }
 
 impl Flash {
-    /// The page, the state its last whole record holds, and the UTC
-    /// offset its last offset's record holds.
-    pub fn open(flash: &'static SharedFlash) -> (Flash, Option<Stored>, Option<i16>) {
-        let mut last = None;
+    /// The page, and the last whole record of each kind it holds.
+    pub fn open(flash: &'static SharedFlash) -> (Flash, Kept) {
+        let mut kept = Kept::default();
         let mut f = flash
             .try_lock()
             .expect("nothing writes before the store opens");
-        let mut offset_min = None;
         let mut next = SLOTS;
-        for slot in 0..SLOTS {
-            let mut r = [0u8; RECORD_LEN];
-            if f.read(STORE.start + slot * RECORD_LEN as u32, &mut r)
-                .is_err()
-            {
+        let mut slot = 0;
+        while slot < SLOTS {
+            let mut r = [0u8; Bond::LEN];
+            let at = STORE.start + slot * RECORD_LEN as u32;
+            let both = slot + BOND_SLOTS <= SLOTS;
+            let len = if both { Bond::LEN } else { RECORD_LEN };
+            if f.read(at, &mut r[..len]).is_err() {
                 break;
             }
-            if r.iter().all(|&b| b == 0xff) {
+            let (first, second) = r.split_at(RECORD_LEN);
+            if first.iter().all(|&b| b == 0xff) {
                 next = slot;
                 break;
             }
-            if let Some(s) = Stored::from_record(&r) {
-                last = Some(s);
+            let first: &[u8; RECORD_LEN] = first.try_into().expect("a slot");
+            if first[0] == Bond::TAG {
+                kept.bond = Bond::from_record(&r).or(kept.bond);
+                // A bond cut short in its second slot leaves it erased:
+                // the next record goes there.
+                if !both || second.iter().all(|&b| b == 0xff) {
+                    next = slot + 1;
+                    break;
+                }
+                slot += BOND_SLOTS;
+                continue;
             }
-            offset_min = zone(&r).or(offset_min);
+            kept.stored = Stored::from_record(first).or(kept.stored);
+            kept.offset_min = zone(first).or(kept.offset_min);
+            slot += 1;
         }
         drop(f);
-        let page = Flash {
-            flash,
-            next,
-            stored: last,
-            offset_min,
-        };
-        (page, last, offset_min)
+        (Flash { flash, next, kept }, kept)
     }
 
     /// Keep `stored`, in place of the state kept before.
     async fn keep(&mut self, stored: &Stored) {
-        self.stored = Some(*stored);
+        self.kept.stored = Some(*stored);
         self.write(&stored.record()).await;
     }
 
     /// Keep the UTC offset, in place of the one kept before.
     async fn keep_offset(&mut self, offset_min: i16) {
-        self.offset_min = Some(offset_min);
+        self.kept.offset_min = Some(offset_min);
         self.write(&zone_record(offset_min)).await;
     }
 
-    /// Write `record` into the next slot. A full page is erased first,
-    /// and the other kind of record written again, so that each survives.
-    async fn write(&mut self, record: &[u8; RECORD_LEN]) {
-        if self.next >= SLOTS {
+    /// Keep the bond, in place of the one kept before.
+    async fn keep_bond(&mut self, bond: &Bond) {
+        self.kept.bond = Some(*bond);
+        self.write(&bond.record()).await;
+    }
+
+    /// Write `record`, of one slot or more, into the next slots. A page
+    /// without room is erased first, and the other kinds' records
+    /// written again, so that each survives.
+    async fn write(&mut self, record: &[u8]) {
+        let slots = (record.len() / RECORD_LEN) as u32;
+        if self.next + slots > SLOTS {
             let erased = self
                 .flash
                 .lock()
@@ -166,20 +202,30 @@ impl Flash {
                 return;
             }
             self.next = 0;
-            let other = match zone(record) {
-                Some(_) => self.stored.map(|s| s.record()),
-                None => self.offset_min.map(zone_record),
-            };
-            if let Some(r) = other {
-                self.put(&r).await;
+            let kind = record[0];
+            let core = kind != ZONE && kind != Bond::TAG;
+            if !core {
+                if let Some(s) = self.kept.stored {
+                    self.put(&s.record()).await;
+                }
+            }
+            if kind != ZONE {
+                if let Some(o) = self.kept.offset_min {
+                    self.put(&zone_record(o)).await;
+                }
+            }
+            if kind != Bond::TAG {
+                if let Some(b) = self.kept.bond {
+                    self.put(&b.record()).await;
+                }
             }
         }
         self.put(record).await;
     }
 
-    async fn put(&mut self, record: &[u8; RECORD_LEN]) {
+    async fn put(&mut self, record: &[u8]) {
         let at = STORE.start + self.next * RECORD_LEN as u32;
-        self.next += 1;
+        self.next += (record.len() / RECORD_LEN) as u32;
         let written = self.flash.lock().await.write(at, record).await;
         if let Err(e) = written {
             log::error!("store write failed: {:?}", e);

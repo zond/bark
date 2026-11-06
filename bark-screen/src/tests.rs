@@ -79,6 +79,7 @@ fn a_sleepy_carried_node_on_battery() {
         heard: 5,
         strong: 4,
         both_ways: 2,
+        phone: Phone::Paired,
     };
     assert_eq!(
         texts(&state, 12),
@@ -86,6 +87,7 @@ fn a_sleepy_carried_node_on_battery() {
             "SLEEPY ANCHORED ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
+            "PHONE     PAIRED",
             "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
@@ -107,6 +109,7 @@ fn a_relay_starting_without_a_place() {
             "STARTING        ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
+            "PHONE       NONE",
             "KNOWN      0/0/0",
             "POWER        USB",
             "UP         0 MIN",
@@ -136,6 +139,7 @@ fn a_fixed_relay_on_usb() {
             "FIXED RELAY     ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
+            "PHONE       NONE",
             "KNOWN     12/9/3",
             "POWER        USB",
             "UP        90 MIN",
@@ -194,8 +198,12 @@ fn every_line_fits_and_is_drawable() {
         sleepy: false,
         ..widest
     };
-    assert_eq!(texts(&widest, 0)[4], "KNOWN   64/64/64");
-    for state in [widest, relay, State::default()] {
+    assert_eq!(texts(&widest, 0)[5], "KNOWN   64/64/64");
+    let pairing = State {
+        phone: Phone::Code(999_999),
+        ..widest
+    };
+    for state in [widest, relay, pairing, State::default()] {
         for (up, clock) in [0, 119, 47 * 60, u32::MAX].into_iter().zip(CLOCKS) {
             for (t, y) in lines(&FIXED, &state, up, clock).iter().flatten() {
                 assert_eq!(t.bytes().len(), LINE, "{:?}", t.bytes());
@@ -296,4 +304,24 @@ fn the_header_stands_apart() {
         assert!(shown[header].0.bytes().starts_with(b"ID  "));
         assert_eq!(ys[0], TOP);
     }
+}
+
+/// The phone's line: none, paired, or the code to type while one pairs,
+/// six digits with its leading zeros.
+#[test]
+fn the_phone_paired_or_its_code() {
+    let phone = |phone| {
+        texts(
+            &State {
+                phone,
+                ..State::default()
+            },
+            0,
+        )[3]
+        .clone()
+    };
+    assert_eq!(phone(Phone::None), "PHONE       NONE");
+    assert_eq!(phone(Phone::Paired), "PHONE     PAIRED");
+    assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
+    assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");
 }

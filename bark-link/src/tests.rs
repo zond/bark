@@ -278,3 +278,29 @@ fn every_value_fits_its_pdu() {
 fn the_empty_status_is_the_default() {
     assert_eq!(Status::EMPTY, Status::default());
 }
+
+proptest! {
+    #[test]
+    fn a_bond_round_trips(kind in 0u8..2, addr: [u8; 6], irk: Option<[u8; 16]>, ltk: [u8; 16]) {
+        let b = bond::Bond { kind, addr, irk, ltk };
+        prop_assert_eq!(bond::Bond::from_record(&b.record()), Some(b));
+    }
+
+    #[test]
+    fn a_bond_cut_short_is_none(addr: [u8; 6], ltk: [u8; 16], words in 0usize..16) {
+        let b = bond::Bond { kind: 1, addr, irk: None, ltk };
+        let mut r = b.record();
+        // Flash erased to ones past the last word written.
+        r[words * 4..].fill(0xff);
+        prop_assert_eq!(bond::Bond::from_record(&r), None);
+    }
+}
+
+#[test]
+fn other_records_are_no_bond() {
+    let mut r = [0xffu8; bond::Bond::LEN];
+    assert_eq!(bond::Bond::from_record(&r), None);
+    // The UTC offset's record (`bark-fw/src/store.rs`).
+    r[..8].copy_from_slice(&[0x80, 0, 60, 0, 0x7f, 0xff, 0xc3, 0xff]);
+    assert_eq!(bond::Bond::from_record(&r), None);
+}
