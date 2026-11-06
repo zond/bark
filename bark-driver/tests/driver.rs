@@ -1059,7 +1059,8 @@ fn a_relay_reset_in_zeroed_memory_is_a_new_one() {
 /// The GPS follows the core (core-interface §4): a search from a
 /// `Locate` until its end, ended by the first fix in reach and by a
 /// `Locate` at or before now, and running all the time while the core
-/// says it tracks; a fix beyond reach of every known relay is not handed.
+/// says it tracks; a fix beyond reach of every known relay is not handed,
+/// and the core is told once that it has no fix.
 #[test]
 fn the_gps_follows_the_core() {
     let world = World::default();
@@ -1077,7 +1078,14 @@ fn the_gps_follows_the_core() {
         d.core()
             .seen
             .iter()
-            .filter(|(_, s)| s.contains("Fix"))
+            .filter(|(_, s)| s.contains("Fix {"))
+            .count()
+    };
+    let none = |d: &TestDriver<Scripted>| {
+        d.core()
+            .seen
+            .iter()
+            .filter(|(_, s)| s.contains("NoFix"))
             .count()
     };
     run_until(&mut d, &world, at_ms(1));
@@ -1085,6 +1093,10 @@ fn the_gps_follows_the_core() {
     d.app_mut().requests.push_back(Request::Fix(far));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 0, "beyond reach");
+    assert_eq!(none(&d), 1, "no fix");
+    d.app_mut().requests.push_back(Request::Fix(far));
+    step(&mut d, &world);
+    assert_eq!(none(&d), 1, "once, at the change");
     assert_eq!(d.app().gps.last(), Some(&Gps::Search(at_ms(500))));
     d.app_mut().requests.push_back(Request::Fix(here));
     step(&mut d, &world);

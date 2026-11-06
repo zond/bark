@@ -115,7 +115,7 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::Power` and
+`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
 `Action::Store` and `Config::stored`, and the GPS: the request `Action::Locate` and
@@ -164,6 +164,11 @@ sleepy node with an anchor takes none and keeps the flag it had: its position is
 anchor's, which it beats and rebuilds the short positions it hears near, and
 `Node::address` gives it (roadmap D70, D72, D91). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
+
+`AppCommand::NoFix` says the GPS runs but gives no fix the driver hands: the receiver
+lost its fix, its satellites failed the C/N0 check, or the fix was beyond reach. The
+driver sends it at the change from handing fixes to not, and the time until the next fix
+does not count towards a run of far fixes (spec "Position", roadmap D136).
 
 `Config::placed` says whether `Config::position` is the node's place: a board built
 with one, or the simulator's nodes. Without it and without a stored place the node has

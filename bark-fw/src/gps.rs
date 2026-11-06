@@ -46,7 +46,10 @@ const READ: usize = 1024;
 static WANT: Signal<CriticalSectionRawMutex, Gps> = Signal::new();
 /// The last fix that passed the receiver's checks, until the node takes it.
 static FIX: Mutex<CriticalSectionRawMutex, Cell<Option<Position>>> = Mutex::new(Cell::new(None));
-/// Raised when a fix waits for the node.
+/// The receiver lost its fix since the node last took one, until the
+/// node takes this.
+static LOST: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(false));
+/// Raised when a fix, or its loss, waits for the node.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The node's side: run the GPS as `gps` says.
@@ -57,6 +60,12 @@ pub fn want(gps: Gps) {
 /// The node's side: the fix waiting, if any.
 pub fn take_fix() -> Option<Position> {
     FIX.lock(Cell::take)
+}
+
+/// The node's side: whether the receiver lost its fix since it last
+/// asked. It hands this before the fix waiting, which came after.
+pub fn take_lost() -> bool {
+    LOST.lock(|l| l.replace(false))
 }
 
 /// What the task takes.
@@ -178,6 +187,15 @@ pub async fn run(mut p: Parts) -> ! {
     }
 }
 
+/// A fix is lost: the core counts no time without one towards a run of
+/// far fixes (spec "Position").
+fn lose(state: State) {
+    if state == State::Fixed {
+        LOST.lock(|l| l.set(true));
+        FOR_CORE.signal(());
+    }
+}
+
 /// Lines of text, each after a space.
 struct Lines<I>(I);
 
@@ -205,6 +223,7 @@ fn fixed(f: Fix, state: State) -> State {
             log::info!("gps: no fix, searching");
             note("searching");
         }
+        lose(state);
         return State::Searching;
     };
     if let Some(s) = f.utc_s {
@@ -219,6 +238,7 @@ fn fixed(f: Fix, state: State) -> State {
                 c.max
             );
         }
+        lose(state);
         return State::Dropped;
     }
     // Every fix, for the bench: how a still board's fixes wander, and

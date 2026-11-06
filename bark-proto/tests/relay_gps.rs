@@ -116,7 +116,7 @@ fn a_far_fix_keeps_it_on() {
     h.command(
         0,
         AppCommand::Fix {
-            position: pos(100.0),
+            position: pos(300.0),
         },
     );
     assert!(h.nodes[0].core.gps_tracks());
@@ -132,7 +132,7 @@ fn a_far_fix_keeps_it_on() {
         h.command(
             0,
             AppCommand::Fix {
-                position: pos(100.0 + s as f64),
+                position: pos(300.0 + s as f64),
             },
         );
         assert!(h.nodes[0].core.gps_tracks() || h.nodes[0].core.carried());
