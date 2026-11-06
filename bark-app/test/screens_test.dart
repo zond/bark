@@ -93,11 +93,27 @@ void main() {
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Acknowledge the echo.
-    await t.tap(find.text('Acknowledge').first);
+    // Acknowledge the echo: its button becomes the mark. The friend's
+    // acknowledgement of "hello" shows the same mark on the sent text.
+    Finder inBubble(String text, Finder f) => find.descendant(
+      of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
+      matching: f,
+    );
+    final mark = find.byWidgetPredicate(
+      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
+    );
+    final button = find.byTooltip('Acknowledge');
+    expect(inBubble('Echo: hello', button), findsOneWidget);
+    expect(inBubble('Echo: hello', mark), findsNothing);
+    expect(inBubble('hello', mark), findsNothing);
+    app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
+    await t.tap(inBubble('Echo: hello', button));
     await t.pump();
     await t.pump();
-    expect(find.textContaining('you acknowledged it'), findsOneWidget);
+    for (final text in ['hello', 'Echo: hello']) {
+      expect(inBubble(text, button), findsNothing);
+      expect(inBubble(text, mark), findsOneWidget);
+    }
     await t.pageBack();
     await t.pumpAndSettle();
 
