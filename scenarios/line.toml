@@ -2,10 +2,13 @@
 # relays on one desk, A and C built deaf to each other (BARK_IGNORE), so
 # that a text between them goes through B.
 #
-#   A ---400 m--- B ---400 m--- C      (places built in; one desk)
+#   A ---150 m--- B ---150 m--- C      (places built in; one desk)
 #
-# The places are the ones the boards are built with; every pair hears the
-# others at a desk's level, and A and C drop each other's frames in their
+# The places are the ones the boards are built with: B at the desk's own
+# position, where the boards' fixes lie (docs/gps-bench-2026-11-06.md),
+# and A and C 150 m west and east of it, so that every board's true fixes
+# stay within the carried radius of 250 m (roadmap D136) and none turns
+# carried. Every pair hears the others at a desk's level, and A and C drop each other's frames in their
 # drivers, though their radios receive them (`deaf`). A writes to C and C
 # to A, as the two phones do. C is switched off at 20 minutes: B, which
 # cannot reach it, returns A's texts to A, which drops them
@@ -21,8 +24,8 @@ duration_s = 2400.0
 settle_s = 390.0
 
 [origin]
-lat = 50.45
-lon = 30.52
+lat = 59.2148
+lon = 18.2130
 
 [links]
 model = "table"
@@ -37,21 +40,21 @@ table = [
 place = "point"
 name = "A"
 role = "relay"
-x = 0.0
+x = -150.0
 y = 0.0
 
 [[nodes]]
 place = "point"
 name = "B"
 role = "relay"
-x = 400.0
+x = 0.0
 y = 0.0
 
 [[nodes]]
 place = "point"
 name = "C"
 role = "relay"
-x = 800.0
+x = 150.0
 y = 0.0
 
 # A text of the app's, sealed: about 100 bytes (docs/app-layer-2026-11-05.md).

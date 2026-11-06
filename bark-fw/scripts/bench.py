@@ -40,11 +40,12 @@ ELF = FW / "target/thumbv7em-none-eabihf/release/bark-fw"
 OUT = FW / "target/bench"
 PORTS = "/dev/serial/by-id/usb-bark_bark_T-Echo_*-if00"
 
-# The places of scenarios/line.toml: 400 m apart east of its origin, on the
-# simulator's projection (bark-sim/src/geo.rs). Far from any bench, so that
-# a true fix there is beyond every relay a board knows and is dropped
-# (bark-fw/README.md).
-ORIGIN = (50.45, 30.52)
+# The places of scenarios/line.toml, metres east of the desk on the
+# simulator's projection (bark-sim/src/geo.rs): B at the desk, where the
+# boards' fixes lie (docs/gps-bench-2026-11-06.md), A and C 150 m west and
+# east, within the carried radius of 250 m (roadmap D136) of every fix.
+ORIGIN = (59.2148, 18.2130)
+LINE_M = (-150.0, 0.0, 150.0)
 EARTH_RADIUS_M = 6_371_000.0
 
 
@@ -103,7 +104,7 @@ def build(a: argparse.Namespace) -> None:
             sys.exit("build line: A B C")
         ends = {0: ids[2], 2: ids[0]}
         for k, (name, i) in enumerate(zip("ABC", ids)):
-            lat, lon = place(400.0 * k)
+            lat, lon = place(LINE_M[k])
             env = {"BARK_LAT": lat, "BARK_LON": lon}
             if k in ends:
                 env["BARK_IGNORE"] = ends[k]
@@ -111,9 +112,9 @@ def build(a: argparse.Namespace) -> None:
     else:
         if len(ids) != 2:
             sys.exit("build sleepy: R S")
+        # Both at the desk.
         lat, lon = place(0.0)
         cargo({"BARK_LAT": lat, "BARK_LON": lon}, False, OUT / f"sleepy-R-{ids[0]}.uf2")
-        lat, lon = place(400.0)
         env = {"BARK_LAT": lat, "BARK_LON": lon, "BARK_ON_BATTERY": "1"}
         cargo(env, False, OUT / f"sleepy-S-{ids[1]}.uf2")
         cargo({}, True, OUT / "console.uf2")
