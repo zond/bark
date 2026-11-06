@@ -1,8 +1,11 @@
 // The byte vectors of bark-link/src/tests.rs, test `vectors` and its
-// neighbours, so that the app reads and writes what the node does.
+// neighbours, so that the app reads and writes what the node does; and
+// how a bonded phone tells that the node no longer holds its bond.
 
+import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/link.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:universal_ble/universal_ble.dart';
 
 void main() {
   final kyiv = Position.fromDegrees(50.45, 30.52);
@@ -173,5 +176,22 @@ void main() {
       throwsA(isA<Malformed>()),
     );
     expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
+  });
+
+  test('a bonded phone\'s read the node refuses for want of its bond', () {
+    UniversalBleException read(int status) => UniversalBleException(
+      code: UniversalBleErrorCode.failed,
+      message: 'Failed to read',
+      details: '$status',
+    );
+    // Insufficient authentication, insufficient encryption, Android's
+    // authentication failure.
+    for (final status in [0x05, 0x0F, 0x89]) {
+      expect(bondRefused(read(status), closed: false), isTrue);
+    }
+    // Any other failure is not the bond's, unless the link closed under it.
+    expect(bondRefused(read(0x85), closed: false), isFalse);
+    expect(bondRefused(StateError('timeout'), closed: false), isFalse);
+    expect(bondRefused(StateError('timeout'), closed: true), isTrue);
   });
 }

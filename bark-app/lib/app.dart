@@ -14,6 +14,7 @@ import 'fake_node.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
+import 'node_link.dart';
 import 'phone_notifier.dart';
 import 'session.dart';
 import 'store.dart';
@@ -77,6 +78,13 @@ class AppModel extends ChangeNotifier {
   bool scanning = false;
   bool connecting = false;
   int? mtu;
+
+  /// Android asks the person for the code on the node's screen now.
+  bool pairing = false;
+
+  /// After a connect found the node no longer this phone's: forgets the
+  /// old bond and connects again, which pairs.
+  Future<void> Function()? pairAgain;
 
   /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
@@ -242,19 +250,26 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connect(FoundNode n) async {
+  /// Connects to `n`; `again` after the person chose to pair again.
+  Future<void> connect(FoundNode n, {bool again = false}) async {
     await stopScan();
-    connecting = true;
-    notifyListeners();
-    try {
-      final (link, m) = await BleLink.connect(n.deviceId);
-      mtu = m;
-      session.note('Connected to ${n.name}, MTU $m');
-      await session.attach(link);
-    } finally {
-      connecting = false;
-      notifyListeners();
-    }
+    final s = session;
+    await _open(
+      () => BleLink.connect(
+        n.deviceId,
+        name: n.name,
+        hadBond: !again && s.pairedWith == n.name && !s.pairingLost,
+        pairing: () {
+          pairing = true;
+          session.note('Pairing with ${n.name}');
+          notifyListeners();
+        },
+      ),
+      again: () async {
+        await BleLink.forget(n.deviceId);
+        await connect(n, again: true);
+      },
+    );
   }
 
   Future<void> connectFake() async {
@@ -264,9 +279,41 @@ class AppModel extends ChangeNotifier {
       app: me.identity,
       mailbox: me.keys.mailbox,
     );
-    mtu = attMtu;
-    session.note('Connected to the fake node');
-    await session.attach(f.connect());
+    await _open(
+      () async => (f.connect(), attMtu),
+      again: () async {
+        f.pair();
+        await connectFake();
+      },
+    );
+  }
+
+  /// Connects by `open` and attaches the link; the node holds this
+  /// phone's bond then. A node that no longer does is kept as lost, with
+  /// `again` to pair with it anew, and [NotOurs] goes on to the caller.
+  Future<void> _open(
+    Future<(NodeLink, int)> Function() open, {
+    required Future<void> Function() again,
+  }) async {
+    connecting = true;
+    pairAgain = null;
+    notifyListeners();
+    try {
+      final (link, m) = await open();
+      mtu = m;
+      session.note('Connected, MTU $m');
+      if (await session.attach(link)) {
+        await session.setPaired(nodeName(session.node!.id));
+      }
+    } on NotOurs catch (e) {
+      await session.setPaired(e.node, lost: true);
+      pairAgain = again;
+      rethrow;
+    } finally {
+      connecting = false;
+      pairing = false;
+      notifyListeners();
+    }
   }
 
   @override

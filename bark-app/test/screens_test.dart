@@ -4,7 +4,8 @@
 // from a pasted or a scanned card, and the debug screen; the fetch button,
 // on the first screen and in a thread, and why it sends nothing; the home
 // buttons, the home known by its node ID wherever it is, and its card
-// sent after a move only by "Send my card".
+// sent after a move only by "Send my card"; and a node that another
+// phone has paired with since, and pairing with it again.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -402,6 +403,57 @@ void main() {
     expect(app.me.home, isNull);
     expect(app.session.outbox.length, before + app.contacts.list.length);
     expect(find.text('Send my card'), findsNothing);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('another phone paired: no longer yours, then paired again', (
+    t,
+  ) async {
+    final app = await model(t);
+    app.setFake(true);
+    await t.pumpWidget(BarkApp(app));
+    expect(find.textContaining('Not paired with a node yet'), findsOneWidget);
+    await app.connectFake();
+    await t.pump();
+    expect(find.text('Connected to bark-fa4e00000001, paired'), findsOneWidget);
+    await app.session.disconnect();
+    await t.pump();
+    expect(
+      find.textContaining('Paired with bark-fa4e00000001.'),
+      findsOneWidget,
+    );
+
+    // The node takes another phone's pairing; this one learns at its next
+    // connection, and may leave it so.
+    app.fakeNode!.pairElsewhere();
+    await t.tap(find.textContaining('Not connected'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Connect'));
+    await t.pumpAndSettle();
+    expect(find.text('This node is no longer yours'), findsOneWidget);
+    await t.tap(find.text('Not now'));
+    await t.pumpAndSettle();
+    expect(app.session.connected, isFalse);
+    expect(
+      find.text(
+        'bark-fa4e00000001 is no longer yours: another phone has paired '
+        'with it.',
+      ),
+      findsOneWidget,
+    );
+
+    // Or pair again, at the node.
+    await t.tap(find.text('Connect'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Pair again'));
+    await t.pumpAndSettle();
+    expect(app.session.connected, isTrue);
+    expect(app.session.pairingLost, isFalse);
+    expect(find.textContaining('Connected and paired'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

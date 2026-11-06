@@ -43,6 +43,19 @@ Future<void> stopBleScan() async {
 int? _attCode(Object e) =>
     e is UniversalBleException ? int.tryParse('${e.details}') : null;
 
+/// How a bonded phone's read fails when the node holds no bond for it:
+/// insufficient authentication 0x05 or insufficient encryption 0x0F
+/// (Bluetooth Core Specification 5.0, Vol 3 Part F §3.4.1.1), or Android's
+/// own 0x89, its encryption with the phone's key failed.
+const _notBonded = {0x05, 0x0F, 0x89};
+
+/// Whether a bonded phone's first read failed because the node no longer
+/// holds its bond: an error of [_notBonded], or the link closed under it.
+bool bondRefused(Object e, {required bool closed}) {
+  final code = _attCode(e);
+  return closed || (code != null && _notBonded.contains(code));
+}
+
 class BleLink implements NodeLink {
   final String deviceId;
   final _closed = Completer<void>();
@@ -50,8 +63,19 @@ class BleLink implements NodeLink {
 
   BleLink._(this.deviceId);
 
-  /// Connects and asks for the MTU of [attMtu]; returns the MTU agreed.
-  static Future<(BleLink, int)> connect(String deviceId) async {
+  /// Connects, asks for the MTU of [attMtu], and pairs if the phone has
+  /// no bond with the node, telling `pairing` first, as Android then asks
+  /// the person for the code on the node's screen; returns the MTU
+  /// agreed. Throws [NotOurs] for a node, `name`, that no longer holds
+  /// the phone's bond, or whose bond the phone no longer has though it
+  /// `hadBond`, as Android may drop a bond whose key the node refused;
+  /// and [NotPaired] for a pairing that did not complete.
+  static Future<(BleLink, int)> connect(
+    String deviceId, {
+    required String name,
+    bool hadBond = false,
+    void Function()? pairing,
+  }) async {
     final link = BleLink._(deviceId);
     await UniversalBle.connect(
       deviceId,
@@ -66,7 +90,51 @@ class BleLink implements NodeLink {
     });
     await UniversalBle.discoverServices(deviceId);
     final mtu = await UniversalBle.requestMtu(deviceId, attMtu);
+    try {
+      if (await UniversalBle.isPaired(deviceId) ?? false) {
+        await link._probe(name);
+      } else if (hadBond) {
+        throw NotOurs(name);
+      } else {
+        pairing?.call();
+        await UniversalBle.pair(deviceId);
+      }
+    } on PairingException {
+      await link.close();
+      throw const NotPaired();
+    } catch (_) {
+      await link.close();
+      rethrow;
+    }
     return (link, mtu);
+  }
+
+  /// Forgets the phone's bond with the node, so that the next connect
+  /// pairs anew. Android removes a bond a moment after it is asked to;
+  /// this waits for that, by [_forgetStep], at most [_forgetWait].
+  static Future<void> forget(String deviceId) async {
+    await UniversalBle.unpair(deviceId);
+    final end = DateTime.now().add(_forgetWait);
+    while (await UniversalBle.isPaired(deviceId) ?? false) {
+      if (DateTime.now().isAfter(end)) break;
+      await Future<void>.delayed(_forgetStep);
+    }
+  }
+
+  /// Far longer than the bond's removal takes, and short beside the
+  /// person's wait for the pairing dialog.
+  static const _forgetWait = Duration(seconds: 2);
+  static const _forgetStep = Duration(milliseconds: 100);
+
+  /// A bonded phone's first read, which shows whether the node still
+  /// holds its bond.
+  Future<void> _probe(String name) async {
+    try {
+      await _read(Uuids.node);
+    } catch (e) {
+      if (bondRefused(e, closed: _closed.isCompleted)) throw NotOurs(name);
+      rethrow;
+    }
   }
 
   Future<Uint8List> _read(String c) =>

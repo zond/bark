@@ -28,7 +28,9 @@ is a prototype for the bench, not the app people will carry.
 
 - **Conversations**, the first screen. One row a conversation, newest
   first, with the last text and, for a sent one, its state. A line at
-  the top says whether a node is connected; tapping it opens Settings.
+  the top says whether a node is connected, and, when none is, which
+  node the phone is paired with or that it is no longer yours (next
+  section); tapping it opens Settings.
   The pen button starts a conversation from the contacts. With a home
   node, the inbox button in the bar, **Fetch my mail**, sends a fetch to
   it, which the app does only when asked, and says "Fetching your
@@ -69,7 +71,7 @@ is a prototype for the bench, not the app people will carry.
   send. Without a home it says that people can answer you only after
   you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one), the fake node switch, whether the app is exempt from battery
+  one) and the node the phone is paired with, the fake node switch, whether the app is exempt from battery
   optimisation (next section), your name, the home node (make the
   connected node your home if it is not, or none; the dialog says so,
   and on **Go ahead** your new card goes to every contact; **Send my
@@ -83,6 +85,21 @@ is a prototype for the bench, not the app people will carry.
   Given back value, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
   started.
+
+A node is the paired phone's alone (spec "Phone link", Pairing; roadmap
+D135). The first time the phone connects to a node it pairs: Settings
+says to type the six-digit code the node's screen shows, and Android
+asks for it in its own dialog. The bond is the phone's from then on and
+every later connection is encrypted without a code. When another phone
+has paired with the node since, the node holds no key for this one and
+the first read after connecting fails, or Android has dropped the bond
+after such a failure; the app then says "This node is
+no longer yours", with **Not now** and **Pair again**, which forgets the
+phone's old bond and pairs anew, at the node. The node paired with, and
+whether it was lost, are kept with the queue and shown on the first
+screen and in Settings. A pairing cancelled or with a wrong code says
+so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
+bond), which needs no code of the app's own on the Android side.
 
 The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
@@ -155,7 +172,9 @@ with their card, and answer each text you send them with a sealed
 and they write from a node of their own away from it,
 `bark-fa4e00000003`, which moves about 110 m north between their
 messages. It runs on while the app is disconnected, as
-a node does.
+a node does. It counts as paired with the phone; a test can have it
+pair with another phone (`FakeNode.pairElsewhere`), and the app then
+finds it no longer yours, as with a node.
 
 ## The payload
 
@@ -333,13 +352,13 @@ choice of where a text goes.
 
 ### With a node
 
-The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.md`,
-"What comes next"). Once a node serves it:
-
 1. Switch the node on and read the twelve hex digits on its display.
 2. In **Settings**, with **Fake node** off, press **Scan** and allow
    Bluetooth. The node shows within about a second as `bark-` and those
-   digits. Tap it: "Connected, MTU 247".
+   digits. Tap it. The first time, Android asks for a code and the
+   node's screen shows `PAIR CODE` and six digits within a few seconds:
+   type them. Settings then says "Connected and paired, MTU 247", and
+   the node's screen `PHONE PAIRED`.
 3. **Debug** shows link version 3, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
@@ -375,3 +394,10 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    screen says "Fetching your mail" and brings them there, or "No new
    mail"; the home's log shows `mailbox: fetch … taken` and a
    `mailbox: reply …` line for each reply.
+10. Pairing with a second phone: disconnect the first, and connect the
+    second to the same node. It asks for the code, and the node's screen
+    shows a new one; once typed, the node is the second phone's. Connect
+    the first again: it says "This node is no longer yours". **Not
+    now** leaves it so, and the first screen says so too; **Pair
+    again**, at the node, makes it the first phone's again, and the
+    second then finds it no longer its own.

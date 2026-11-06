@@ -1,4 +1,5 @@
-// Settings: the node to connect to, the fake node, the battery exemption
+// Settings: the node to connect to and the phone paired with it, the
+// fake node, the battery exemption
 // that keeps the link with the screen off, the person's name, their home
 // node, their backup words, and the node's map point.
 
@@ -10,6 +11,7 @@ import '../app.dart';
 import '../app_layer.dart';
 import '../ble_link.dart';
 import '../link.dart';
+import '../node_link.dart';
 import 'common.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -87,7 +89,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ) ??
           false,
     );
-    await _try(f, 'Connecting failed');
+    try {
+      await f();
+    } on NotOurs catch (e) {
+      if (mounted) await _notOurs(e);
+    } catch (e) {
+      if (mounted) say(context, 'Connecting failed: $e');
+    }
+  }
+
+  /// The node no longer holds this phone's bond: pair again, by the code
+  /// on its screen, or leave it.
+  Future<void> _notOurs(NotOurs e) async {
+    final again = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('This node is no longer yours'),
+        content: Text(
+          'Another phone has paired with ${e.node} since, and the node '
+          'keeps one phone. To make it yours again, pair again at the '
+          'node: it shows a six-digit code on its screen, and the phone '
+          'asks for it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Pair again'),
+          ),
+        ],
+      ),
+    );
+    final pair = app.pairAgain;
+    if (again != true || pair == null) return;
+    await _connect(pair);
   }
 
   Future<void> _phoneLocation() async {
@@ -159,6 +197,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     child: Text(s, style: Theme.of(context).textTheme.titleLarge),
   );
 
+  static const _pairingNow =
+      'Pairing: type the six-digit code the node\'s screen shows into the '
+      'phone\'s dialog.';
+
   List<Widget> _connection() {
     final s = app.session;
     return [
@@ -176,13 +218,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(nodeName(s.node!.id)),
-          subtitle: Text('Connected, MTU ${app.mtu ?? '?'}'),
+          subtitle: Text('Connected and paired, MTU ${app.mtu ?? '?'}'),
           trailing: OutlinedButton(
             onPressed: s.disconnect,
             child: const Text('Disconnect'),
           ),
         )
-      else if (app.fake)
+      else ...[
+        Text(app.pairing ? _pairingNow : pairedLine(s)),
+        const SizedBox(height: 8),
+      ],
+      if (!s.connected && app.fake)
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton(
@@ -190,7 +236,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Connect'),
           ),
         )
-      else ...[
+      else if (!s.connected) ...[
         Row(
           children: [
             FilledButton(

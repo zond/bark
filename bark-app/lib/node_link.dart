@@ -14,6 +14,26 @@ class AttException implements Exception {
   String toString() => 'ATT error 0x${code.toRadixString(16)}';
 }
 
+/// The phone's bond no longer opens the node `node`: another phone has
+/// paired with it since (spec "Phone link", the replaced phone).
+class NotOurs implements Exception {
+  final String node;
+  const NotOurs(this.node);
+  @override
+  String toString() =>
+      '$node is no longer yours: another phone has paired with it';
+}
+
+/// The pairing did not complete: it was cancelled, or the code typed was
+/// not the one on the node's screen.
+class NotPaired implements Exception {
+  const NotPaired();
+  @override
+  String toString() =>
+      'Pairing did not complete: it was cancelled, or the code typed was '
+      'not the one on the node\'s screen';
+}
+
 abstract class NodeLink {
   Future<NodeInfo> readNode();
 

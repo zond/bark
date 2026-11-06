@@ -398,9 +398,20 @@ class FakeNode implements NodeLink {
   @override
   Stream<GivenBack?> get givenBackNotified => _given.stream;
 
+  /// The phone the app runs on holds the fake's bond; false once
+  /// [pairElsewhere] has it pair with another (spec "Phone link").
+  bool paired = true;
+
+  /// Another phone pairs with the fake, which then refuses this one.
+  void pairElsewhere() => paired = false;
+
+  /// This phone pairs again, by the code on the fake's screen.
+  void pair() => paired = true;
+
   /// The fake runs on while the app is away, as a node does, so a
   /// message can be given back or arrive while it is.
   NodeLink connect() {
+    if (!paired) throw NotOurs(nodeName(id));
     _connected = true;
     _closed = Completer<void>();
     return this;
