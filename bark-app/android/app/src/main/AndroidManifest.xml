@@ -15,6 +15,16 @@
     <!-- Camera: scanning another phone's card. A phone without one
          can still paste the card. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Notifications: each new text, and the one that a foreground
+         service must show; the service keeps the app running with the
+         screen off while it holds the link to a node, a connected
+         device. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Asking to be exempt from battery optimisation, which some phones
+         need to keep the service running for hours. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.bluetooth_le"
         android:required="true" />
     <uses-feature android:name="android.hardware.camera"
@@ -22,7 +32,7 @@
     <application
         android:label="bark"
         android:name="${applicationName}"
-        android:icon="@drawable/ic_launcher">
+        android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -45,6 +55,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- The plugin's service, started and stopped with the link; it
+             goes on when the person closes the app's window. -->
+        <service
+            android:name="com.dexterous.flutterlocalnotifications.ForegroundService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

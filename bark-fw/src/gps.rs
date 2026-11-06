@@ -197,7 +197,8 @@ fn note(state: &'static str) {
 }
 
 /// Take a second's [`Fix`]: keep its time, hand its position to the node
-/// if its satellites look like a real sky's, and log a change of state.
+/// if its satellites look like a real sky's, and log it and a change of
+/// state.
 fn fixed(f: Fix, state: State) -> State {
     let Some(position) = f.position else {
         if state != State::Searching {
@@ -220,17 +221,21 @@ fn fixed(f: Fix, state: State) -> State {
         }
         return State::Dropped;
     }
-    if state != State::Fixed {
-        log::info!(
-            "gps: fix at {} sats={} c/n0 n={} min={} mean={} max={} dB-Hz",
-            position,
-            f.satellites,
-            c.count,
-            c.min,
-            c.mean,
-            c.max
-        );
-    }
+    // Every fix, for the bench: how a still board's fixes wander, and
+    // with what quality, decides the carried rule (spec "Open items", O16,
+    // O18; `docs/gps-bench-2026-11-06.md`).
+    log::info!(
+        "gps: fix at {} sats={} hdop={}.{} mode={} c/n0 n={} min={} mean={} max={} dB-Hz",
+        position,
+        f.satellites,
+        f.hdop_tenths / 10,
+        f.hdop_tenths % 10,
+        if f.mode.is_ascii_graphic() { f.mode as char } else { '-' },
+        c.count,
+        c.min,
+        c.mean,
+        c.max
+    );
     if state != State::Fixed {
         note("fix");
     }

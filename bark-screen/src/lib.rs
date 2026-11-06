@@ -166,6 +166,7 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b':' => [0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00],
         b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
+        b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
         _ => return None,
     })
 }
@@ -249,7 +250,8 @@ pub enum Battery {
 pub struct State {
     /// The first rotation after boot runs.
     pub starting: bool,
-    /// It knows where it is.
+    /// It knows where it is. Shown for a relay only: a sleepy node is
+    /// reached through its anchor.
     pub placed: bool,
     pub sleepy: bool,
     /// Sleepy, with a relay that holds its mail.
@@ -284,14 +286,13 @@ pub struct Fixed<'a> {
     pub version: u32,
 }
 
-/// The top of the first line, and the gap between the fixed lines and the
-/// state.
+/// The top of the first line, and the gap below the header.
 const TOP: usize = 6;
 const GAP: usize = 8;
 
-/// The most lines the screen takes: the ID and the image, the state's
-/// eight, and the time.
-pub const LINES: usize = 11;
+/// The most lines the screen takes: the role and `STARTING` as the
+/// header, the ID, the image, the state's three, and the time.
+pub const LINES: usize = 8;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
@@ -299,9 +300,10 @@ const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 /// with the node up `up_min` minutes and the time `clock`; `None` past
 /// the last.
 ///
-/// Every line is a full line wide, so that it starts at the left margin:
-/// a state is a word or two at the left, a quantity its label at the left
-/// and its value flush right.
+/// The header says what the node is, a state as a word or two at the
+/// left; every line below it is a label at the left and its value flush
+/// right. Every line is a full line wide, so that it starts at the left
+/// margin.
 pub fn lines(
     fixed: &Fixed<'_>,
     state: &State,
@@ -316,30 +318,30 @@ pub fn lines(
         n += 1;
         y += line_height(SCALE) + gap;
     };
-    put(plain(format_args!("{}", Hex(fixed.id))), 0);
-    put(row(fixed.image, format_args!("V{}", fixed.version)), GAP);
     put(
-        plain(match (state.sleepy, state.anchored) {
-            (false, _) => format_args!("RELAY"),
-            (true, true) => format_args!("SLEEPY ANCHORED"),
-            (true, false) => format_args!("SLEEPY NO ANCHOR"),
-        }),
-        0,
-    );
-    put(
-        plain(match (state.placed, state.carried) {
-            (false, _) => format_args!("NO PLACE YET"),
-            (true, true) => format_args!("CARRIED"),
-            (true, false) => format_args!("FIXED"),
-        }),
-        0,
+        plain(
+            match (state.sleepy, state.anchored, state.placed, state.carried) {
+                (true, true, _, _) => format_args!("SLEEPY ANCHORED"),
+                (true, false, _, _) => format_args!("SLEEPY NO ANCHOR"),
+                (false, _, false, _) => format_args!("RELAY NO PLACE"),
+                (false, _, true, true) => format_args!("CARRIED RELAY"),
+                (false, _, true, false) => format_args!("FIXED RELAY"),
+            },
+        ),
+        if state.starting { 0 } else { GAP },
     );
     if state.starting {
-        put(plain(format_args!("STARTING")), 0);
+        put(plain(format_args!("STARTING")), GAP);
     }
-    put(row("HEARD", format_args!("{}", state.heard)), 0);
-    put(row("STRONG", format_args!("{}", state.strong)), 0);
-    put(row("BOTH WAYS", format_args!("{}", state.both_ways)), 0);
+    put(row("ID", format_args!("{}", Hex(fixed.id))), 0);
+    put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
+    put(
+        row(
+            "KNOWN",
+            format_args!("{}/{}/{}", state.heard, state.strong, state.both_ways),
+        ),
+        0,
+    );
     put(
         match state.battery {
             Battery::Usb => row("POWER", format_args!("USB")),

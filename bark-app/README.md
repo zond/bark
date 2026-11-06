@@ -43,11 +43,12 @@ is a prototype for the bench, not the app people will carry.
   order, and a field at the bottom to write the next. A sent text
   shows as queued, taken by the node, or given back with its wait
   counting down; a given-back text can be sent again once the wait is
-  over, or dropped; and "acknowledged" once the other person presses
-  **Acknowledge** on it. Each says in small text where it went: "to
+  over, or dropped. Each says in small text where it went: "to
   where they were" or "to their home". The top line says when the contact last wrote, and, when their card names
-  a home, whether from it. A received text has that button; nothing is
-  acknowledged by itself. A contact whose first message has come but no
+  a home, whether from it. A received text has a check-mark button,
+  **Acknowledge**; nothing is acknowledged by itself. Once pressed, the
+  button turns into a plain check mark at the end of the small text,
+  and the same mark appears on the sender's copy. A contact whose first message has come but no
   sealed reply is marked not verified. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,
@@ -63,8 +64,9 @@ is a prototype for the bench, not the app people will carry.
   send. Without a home it says that people can answer you only after
   you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one), the fake node switch, your name, the home node (make the
-  connected node your home, or none; the dialog says and your new card goes to every contact; clear the
+  one), the fake node switch, whether the app is exempt from battery
+  optimisation (next section), your name, the home node (make the
+  connected node your home if it is not, or none; the dialog says and your new card goes to every contact; clear the
   mailbox key of a node that holds one and is not your home), your 12
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
@@ -89,7 +91,13 @@ On every connection to a node of link version 3 or later the app reads
 Home. To the person's home, known by its node ID, it first writes the
 key, silently, with a line in the log: the node may have been reflashed,
 or the identity restored from its words, and a node that holds that key
-already changes nothing.
+already changes nothing. When a fixed, awake home's position is not
+the one the person has for it, the app takes the new one, which changes
+the card and sends it to every contact: such a node takes a new place
+at boot or when it turns fixed, and the home is the node, not the spot.
+A carried or sleepy home keeps the position the person has for it: a
+carried node's position follows its GPS fix every second, and a sleepy
+node's is its anchor's.
 
 The queue and the received texts, the contacts, and the person (seed,
 name, home, the last `sent`, the mailbox's state) are kept in three
@@ -101,6 +109,29 @@ not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 `-2`, `-3` and on added if that name is taken, so no file set aside is
 ever overwritten; the debug screen's log says so, and the app starts that
 file empty (for the person, with a new identity).
+
+## Notifications and the background link
+
+While a node is connected over Bluetooth, the app keeps running with the
+screen off or its window closed, under a notification that names the
+node, "Connected to bark-…"; tapping it opens the app. The link is the
+same one as in the foreground: the app's engine outlives its window
+(`MainActivity.kt`), and an Android foreground service of the connected
+device type keeps the process running, so there is one implementation of
+the link, in Dart. When the link ends, from either side, the service
+stops and its notification goes. The fake node runs inside the app and
+starts no service.
+
+Each new text notifies, with the system's sound and vibration, under the
+contact's name. Texts from one contact collect in one notification until
+their thread is opened; tapping it opens the thread. Acknowledgements and
+cards do not notify, nor a text in a thread open in front of the person.
+
+At the first connection the app says why it notifies, and Android asks
+for the permission; the app does not ask again. Settings says whether the
+app is exempt from battery optimisation and, if not, opens Android's
+dialog to exempt it: without that, some phones stop the service after
+some hours with the screen off.
 
 ## The fake node
 
@@ -170,8 +201,8 @@ cards go without asking, to the home's mailbox when there is a choice.
 ## Plugins
 
 Besides those for Bluetooth, location and storage, pinned packages
-handle the QR code and the cryptography, all under licences compatible
-with the repository's GPL-3:
+handle the QR code, the cryptography and the notifications, all under
+licences compatible with the repository's GPL-3:
 
 | package | does | licence |
 |---|---|---|
@@ -179,6 +210,7 @@ with the repository's GPL-3:
 | `crypto` 3.0.8 | SHA-256, for the backup words' checksum | BSD-3-Clause |
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
+| `flutter_local_notifications` 22.3.3 | the notifications, and the foreground service that holds the link's | BSD-3-Clause |
 
 The common `mobile_scanner` is not used: on Android it decodes with
 Google's ML Kit, which is not free software.
@@ -228,7 +260,8 @@ as a home does; the fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
-conversations; choose where a text goes; and drive the screens: a text
+conversations; choose where a text goes; decide what notifies, against a
+notifier that writes down what it is asked; and drive the screens: a text
 to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted or a
 scanned card, my card, the debug screen, the fetch button, and the
@@ -240,10 +273,12 @@ choice of where a text goes.
 
 1. Open the app. The first screen says no conversations and asks you
    to write down your 12 backup words. Tap the line "Not connected",
-   turn on **Fake node**, press **Connect**: it shows
+   turn on **Fake node**, press **Connect**. The first time, the app
+   says why it notifies: **Continue**, and allow it. It shows
    `bark-fa4e00000001`, connected, MTU 247. Further down, **Show my
    words**, write them down, **I wrote them down**.
-2. Go back. A conversation with **Fake friend** holds their two
+2. Go back. A notification of the fake friend's two messages has come.
+   A conversation with **Fake friend** holds their two
    messages.
 3. Menu, **Debug**: your identity and card address; link version 3,
    the node ID `fa4e00000001`, the clock from the phone with the
@@ -256,8 +291,8 @@ choice of where a text goes.
    as taken by the node, "to where they were"; 5 s later "Echo: " and
    your text appears, and the note goes: the echo was sealed by the
    fake friend.
-5. Press **Acknowledge** under the echo: it shows "you acknowledged
-   it", and Debug lists an `ack` sent.
+5. Press the check-mark button **Acknowledge** on the echo: it becomes
+   a plain check mark, and Debug lists an `ack` sent.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
@@ -307,7 +342,7 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    placed and map point. A text names the node's address only once it
    has one.
 5. With a second node and a second phone, make one phone's node its
-   home (step 8 below; a card without a home cannot be written to
+   home (step 9 below; a card without a home cannot be written to
    first), then each phone scans the other's card from **My card**,
    **Scan their card** (allow the camera). Send a text from the other
    phone to the one with the home: it shows as taken, and the other phone shows
@@ -315,13 +350,17 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    Status's inbox count on the receiving node, in Debug, rises to 1
    and falls to 0 as the app reads it. Answer it: the first phone's
    contact turns verified. Press **Acknowledge** on the answer: the
-   other phone marks its text acknowledged.
+   other phone shows a check mark on its text.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the
    inbox count goes back to 0.
-7. Given back and not ready happen only when the network refuses; they
+7. With the receiving phone connected, its screen off for ten minutes,
+   send it a text: it sounds and shows the text under the sender's
+   name. A second text joins the same notification. Tapping it opens
+   the thread, and the notification goes.
+8. Given back and not ready happen only when the network refuses; they
    show as in step 6 with the fake node.
-8. On a node on USB that stays where it is, **Settings**, **Make this
+9. On a node on USB that stays where it is, **Settings**, **Make this
    node my home**: Debug's Home reads a home, and the node's log shows
    `ble: home set`. Texts to your card now go to it and wait in its
    mailbox. Connected to another node, **Fetch my mail** on the first

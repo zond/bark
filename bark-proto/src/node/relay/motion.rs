@@ -75,9 +75,15 @@ impl Motion {
 
 impl Motion {
     /// Fixed where `config` puts it after a boot, on the map point it
-    /// stood on before, if it did.
+    /// stood on before, if it did. A carried node's stored place is where
+    /// it stood when last fixed, not where it is, so it is no place
+    /// (roadmap D133).
     pub(super) const fn at_boot(config: &Config) -> Motion {
-        let placed = config.placed || config.stored.is_some();
+        let placed = config.placed
+            || match config.stored {
+                Some(s) => !s.carried,
+                None => false,
+            };
         Motion {
             map_point: match config.stored {
                 Some(s) => s.map_point && !s.carried,

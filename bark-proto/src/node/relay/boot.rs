@@ -28,7 +28,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.stage = Stage::Booting;
         self.timers.boot_ends = Some(ends);
         self.radio.sweep.next_at = now;
-        if self.config.stored.is_some_and(|s| s.carried) {
+        // One with no place is carried at none: its first fix is its
+        // place, fixed (`relay/motion.rs`).
+        if self.motion.placed && self.config.stored.is_some_and(|s| s.carried) {
             // Still since now: no clock ran while it was off.
             self.motion = Motion::carried(self.config.position, now);
         }

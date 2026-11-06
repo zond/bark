@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web of the launcher icon for the status bar: Android draws a
+     notification's small icon from its alpha alone, at 24 dp, so the
+     web is cut to the 72 units it spans and its threads are thickened
+     to stay visible. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <group android:translateX="-18" android:translateY="-18">
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeWidth="2.4"
+            android:pathData="M54,54L52.95,20.02M54,54L67.94,22.99M54,54L82.48,35.43M54,54L87.35,47.4M54,54L85.71,66.26M54,54L77.14,78.91M54,54L64.66,86.29M54,54L45.82,87M54,54L33.58,81.18M54,54L22.35,66.42M54,54L20.04,52.44M54,54L24.71,36.73M54,54L37.8,24.11" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeWidth="3"
+            android:pathData="M53.81,47.77 Q54.91,49.19 56.35,48.77 Q57.03,50.47 58.86,50.83 Q58.55,52.17 59.98,52.82 Q58.99,54.46 59.9,56.28 Q58.21,56.82 58.12,58.44 Q56.51,58.23 55.86,59.63 Q54.14,58.95 52.47,60.16 Q51.93,58.49 50.59,58.54 Q50.12,56.87 48.17,56.29 Q49.1,54.85 48.16,53.73 Q49.47,52.66 49.05,51.08 Q50.78,50.66 51.27,48.97 Q52.77,49.27 53.81,47.77 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeWidth="3"
+            android:pathData="M53.64,42.42 Q55.68,45.06 58.36,44.29 Q59.63,47.45 63.03,48.11 Q62.46,50.6 65.1,51.8 Q63.27,54.86 64.96,58.23 Q61.82,59.24 61.66,62.25 Q58.67,61.86 57.45,64.46 Q54.26,63.2 51.16,65.44 Q50.15,62.35 47.67,62.43 Q46.79,59.33 43.17,58.25 Q44.89,55.58 43.14,53.5 Q45.58,51.51 44.81,48.58 Q48.01,47.79 48.93,44.65 Q51.72,45.21 53.64,42.42 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeWidth="3"
+            android:pathData="M53.47,36.76 Q56.51,40.69 60.5,39.54 Q62.38,44.25 67.44,45.23 Q66.59,48.94 70.53,50.73 Q67.8,55.27 70.32,60.3 Q65.64,61.8 65.4,66.28 Q60.95,65.69 59.14,69.57 Q54.39,67.69 49.78,71.03 Q48.27,66.43 44.57,66.55 Q43.27,61.93 37.88,60.33 Q40.44,56.35 37.84,53.26 Q41.46,50.3 40.31,45.93 Q45.08,44.76 46.46,40.07 Q50.61,40.91 53.47,36.76 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeWidth="3"
+            android:pathData="M53.29,30.78 Q57.37,36.07 62.75,34.53 Q65.28,40.87 72.1,42.2 Q70.95,47.19 76.26,49.59 Q72.58,55.71 75.97,62.49 Q69.67,64.51 69.35,70.53 Q63.35,69.75 60.92,74.96 Q54.52,72.44 48.32,76.93 Q46.28,70.73 41.31,70.9 Q39.56,64.67 32.3,62.52 Q35.75,57.16 32.24,53 Q37.12,49.02 35.57,43.13 Q41.99,41.56 43.84,35.25 Q49.43,36.37 53.29,30.78 Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeLineCap="round" android:strokeLineJoin="round" android:strokeWidth="3"
+            android:pathData="M53.09,24.5 Q58.29,31.22 65.12,29.27 Q68.33,37.31 77,39 Q75.54,45.35 82.29,48.4 Q77.6,56.18 81.91,64.79 Q73.92,67.35 73.5,75 Q65.88,74.01 62.79,80.63 Q54.66,77.43 46.78,83.14 Q44.19,75.26 37.87,75.47 Q35.64,67.56 26.43,64.82 Q30.8,58.01 26.35,52.73 Q32.55,47.67 30.58,40.19 Q38.74,38.19 41.09,30.17 Q48.2,31.6 53.09,24.5 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M50.92,54a3.08,3.08 0,1 0,6.16,0a3.08,3.08 0,1 0,-6.16,0z" />
+    </group>
+</vector>

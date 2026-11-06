@@ -433,7 +433,7 @@ and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 The 1.54" e-paper (200 × 200, SSD1681 controller, `src/display.rs`)
 says what a person needs to tell boards apart and to see how a node is
 doing without a phone. The text comes from a 5 × 7 bitmap font of the
-digits, the capital letters and `%`, scaled by whole pixels.
+digits, the capital letters and a few signs, scaled by whole pixels.
 
 The console and survey images draw one picture at boot: the node ID as
 twelve hex digits, then the image's name, `CONSOLE` or `SURVEY`, and its
@@ -443,30 +443,34 @@ version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
 The node image draws its state, built from what its core says after
 each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
 the host. Sixteen characters to a line, every line from the left
-margin: a state as a word or two at the left, a quantity as its label
-at the left and its value flush right. Top to bottom:
+margin. A header says what the node is, as a word or two at the left,
+and a gap sets it apart; every line below it is a label at the left and
+its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
-| the ID | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
+| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy, anchorless, placed and carried flags |
+| `STARTING` | while the first rotation runs, under the role in the header | booting |
+| `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| role | `RELAY`, `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy and anchorless flags |
-| place | `FIXED`, `CARRIED` or `NO PLACE YET` | placed, carried |
-| `STARTING` | while the first rotation runs | booting |
-| `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
-| `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
-| `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
+| `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
 | `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
+*Why a sleepy node's place is not shown.* A sleepy node is reached
+through its anchor: its address is its anchor's position, and while it
+has one it takes no fix of its own (spec "Sleepy nodes"). So its place
+matters little to a reader, and the line has no room for it beside
+`SLEEPY NO ANCHOR`.
+
 *Why three neighbour counts.* A heartbeat is one way: a node that hears
 a neighbour does not know the neighbour hears it. Only an answer to its
 own frame proves that, and the table keeps one sign of it, when the
-neighbour last took a hand-over of this node's. `STRONG` is a good
-guess, labelled as one: links on one channel are mostly symmetric, and
-a neighbour heard with margin will likely hear a frame at the same
-power. A refusal or an ACK that has seen the packet also prove the
+neighbour last took a hand-over of this node's: the third count. The
+second is a good guess, shown apart from the third for that reason:
+links on one channel are mostly symmetric, and a neighbour heard with
+margin will likely hear a frame at the same power. A refusal or an ACK that has seen the packet also prove the
 neighbour hears this node; the table keeps neither per neighbour. A
 bit for "answered" would cost no RAM, since it fits the padding of the
 104-byte entry (measured), and would count those two as well; it is

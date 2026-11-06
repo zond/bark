@@ -4,10 +4,11 @@
 //!
 //! Its application is the phone link (`ble.rs`). The node's place comes
 //! from `BARK_LAT` and `BARK_LON` (degrees) at build time, or from a map
-//! point the phone sets (spec "Node identity", "Position"). Built without them, and with no
-//! stored place, the node has none: it sends no heartbeat until its first
-//! accepted fix or a map point (roadmap D83). Its seed comes from the
-//! chip's random number generator (`docs/core-interface.md` §5).
+//! point the phone sets (spec "Node identity", "Position"). Built without
+//! them, and with no place stored as a fixed node, the node has none: it
+//! sends no heartbeat until its first accepted fix or a map point (roadmap
+//! D83, D133). Its seed comes from the chip's random number generator
+//! (`docs/core-interface.md` §5).
 
 use core::mem::MaybeUninit;
 
