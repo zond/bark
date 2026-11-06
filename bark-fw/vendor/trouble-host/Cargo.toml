@@ -162,8 +162,6 @@ prepare-write-buffer-size-64 = []
 scan = ["central"]
 security = [
     "dep:p256",
-    "dep:aes",
-    "dep:cmac",
     "dep:rand_core",
     "dep:rand_chacha",
     "dep:rand",
@@ -203,17 +201,9 @@ path = "tests/l2cap.rs"
 name = "service_attribute_macro"
 path = "tests/service_attribute_macro.rs"
 
-[dependencies.aes]
-version = "0.8.2"
-optional = true
-
 [dependencies.bt-hci]
 version = "0.10"
 features = ["uuid"]
-
-[dependencies.cmac]
-version = "0.7.2"
-optional = true
 
 [dependencies.defmt]
 version = "1.0.1"
@@ -285,6 +275,9 @@ optional = true
 
 [dependencies.zerocopy]
 version = "0.8.21"
+
+[dev-dependencies.aes]
+version = "0.8.2"
 
 [dev-dependencies.bt-hci-serial]
 version = "0.1"

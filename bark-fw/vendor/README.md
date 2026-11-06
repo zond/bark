@@ -50,9 +50,24 @@ without the `central` feature, 6 KB the image has no room for
   `initiate_central`, `handle_central`) only with the `central` feature. Without
   it, an SMP command on a link where the node is central, or a pairing the node
   would start as central, is `Error::InvalidState`; the node is never central.
+- `src/security_manager/crypto.rs` and `Cargo.toml`: AES-128, the security
+  function `e` (Bluetooth Core Vol 3 Part H §2.2.1), is a function the
+  application defines, `trouble_host_aes128`; the firmware's runs on the
+  chip's AES block (`src/ble.rs`). AES-CMAC, on which f4, f5, f6 and g2
+  (§2.2.5 to §2.2.9) and the GATT database hash are built, is written out
+  over it as RFC 4493 gives it. The `aes` and `cmac` crates leave the
+  dependencies; `aes` stays for the tests, which define the function in
+  software and check the CMAC against RFC 4493's examples (§4) and the
+  pairing functions against the specification's sample data. 5 616 B of
+  flash less.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
-  central's side, so they run only with `central`; with the default features
-  all 61 of the library's tests pass, and without `central` the other 47.
+  central's side, so they run only with `central`.
+
+The tests: `cargo test --lib --features security` runs all 62, and
+`cargo test --lib --no-default-features --features
+peripheral,gatt,derive,default-packet-pool,security` the 48 without
+`central`. The integration tests in `tests/` do not build with
+`security`, as published.
 
 To move to a newer version: replace the directory with that version's published
 crate, reapply the changes listed here, and run its tests both ways.

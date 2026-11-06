@@ -13,17 +13,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aes"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
-dependencies = [
- "cfg-if",
- "cipher",
- "cpufeatures",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,17 +299,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmac"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8543454e3c3f5126effff9cd44d562af4e31fb8ce1cc0d3dcd8f084515dbc1aa"
-dependencies = [
- "cipher",
- "dbl",
- "digest",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -522,15 +500,6 @@ dependencies = [
  "darling_core",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "dbl"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd2735a791158376708f9347fe8faba9667589d82427ef3aed6794a8981de3d9"
-dependencies = [
- "generic-array",
 ]
 
 [[package]]
@@ -1871,9 +1840,7 @@ dependencies = [
 name = "trouble-host"
 version = "0.8.0"
 dependencies = [
- "aes",
  "bt-hci",
- "cmac",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",

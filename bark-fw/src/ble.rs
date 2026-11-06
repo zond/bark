@@ -223,6 +223,25 @@ pub fn controller(
     )
 }
 
+/// The BLE host's AES-128 (`vendor/README.md`), on the chip's AES block.
+/// While the controller is enabled, the block is reached only through the
+/// MPSL's function, which shares it with the controller (`sdc_soc.h`).
+#[no_mangle]
+fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]) {
+    let clear = *block;
+    // SAFETY: the MPSL is started in `main` before the host exists, and the
+    // three buffers are 16 bytes each, as the function reads and writes.
+    // `clear` is on the stack, in the RAM the block reads directly.
+    unsafe {
+        mpsl_raw::mpsl_ecb_block_encrypt_extended(
+            key.as_ptr(),
+            clear.as_ptr(),
+            block.as_mut_ptr(),
+            mpsl_raw::MPSL_ECB_CLEARTEXT_IN_LOCAL_RAM,
+        )
+    }
+}
+
 /// What the phone asks of the node, one at a time: the link answers the
 /// phone's write once the node has answered it.
 // One request at a time lives in [`LINK`]; the small ones costing a
