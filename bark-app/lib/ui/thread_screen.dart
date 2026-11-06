@@ -9,6 +9,10 @@ import '../conversations.dart';
 import '../session.dart';
 import 'common.dart';
 
+/// The mark on a received text that came as a first message: only a box
+/// proves its sender, so a verified thread may still hold such a text.
+const unverifiedText = 'Came as a first message, which anyone could have made';
+
 class ThreadScreen extends StatefulWidget {
   final AppModel app;
 
@@ -146,7 +150,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 reverse: true,
                 padding: const EdgeInsets.all(8),
                 children: [
-                  for (final e in c.entries.reversed) _bubble(context, e),
+                  for (final e in c.entries.reversed)
+                    _bubble(context, e, contact?.verified ?? true),
                 ],
               ),
             ),
@@ -218,7 +223,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ),
   );
 
-  Widget _bubble(BuildContext context, Entry e) {
+  /// `verified`: the line above the thread does not already say that any
+  /// text in it may be anyone's.
+  Widget _bubble(BuildContext context, Entry e, bool verified) {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
@@ -261,7 +268,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   children: [
                     Text(when(e.at), style: small),
                     if (mine) ..._sentMarks(e.outs, small, scheme),
-                    if (!mine) ..._receivedMarks(e, small, color),
+                    if (!mine) ..._receivedMarks(e, verified, small, color),
                   ],
                 ),
                 if (mine) _actions(e.outs),
@@ -294,11 +301,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ];
   }
 
-  /// Whether a received text came from the mailbox, and its
+  /// Whether a received text came as a first message, where the thread
+  /// is verified; whether it came from the mailbox; and its
   /// acknowledgement: a plain check once every part that has come is
   /// acknowledged, else the button, which a part that comes later brings
   /// back.
-  List<Widget> _receivedMarks(Entry e, TextStyle small, Color color) => [
+  List<Widget> _receivedMarks(
+    Entry e,
+    bool verified,
+    TextStyle small,
+    Color color,
+  ) => [
+    if (verified && e.arrived.any((r) => r.intro))
+      _mark(Icons.gpp_maybe, unverifiedText, small, color),
     if (e.arrived.any((r) => r.mailbox))
       _mark(Icons.markunread_mailbox, 'From your mailbox', small, color),
     if (e.arrived.every((r) => r.acked))

@@ -75,7 +75,9 @@ is a prototype for the bench, not the app people will carry.
   has come; a part that comes after the tap brings the button back and
   is acknowledged with the next tap.
   A contact whose first message has come but no
-  sealed reply is marked not verified. A contact without a home who
+  sealed reply is marked not verified; once it is verified, a text
+  that came in a first message has a mark of its own, as anyone could
+  have made it. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,
   sends them your card, or removes them. The bar has **Fetch my mail**
@@ -283,7 +285,9 @@ A contact is verified once a boxed message of theirs opens, as only
 they can make one. So whoever writes first introduces themselves, the
 answer is boxed and verifies the one who answered, and the next message
 back verifies the first; if both write before either reads, both
-introduce themselves, and both verify on their next. A
+introduce themselves, and both verify on their next. A first message
+from a verified contact, perhaps one a later box overtook, adds only
+its text, marked. A
 message names the node you write from while the contact may not know
 it, carries
 the time it was written as its `sent`, and holds a text or a part of
@@ -386,7 +390,8 @@ the header's written-from address kept apart from the card's, and the
 mailbox's replies, and long texts sent as parts, put together in any
 order and acknowledged, against the fake node, which answers a fetch
 as a home does; pass messages between two phones by hand, in every
-order of who scans and who writes first, until both are verified; the
+order of who scans and who writes first, until both are verified,
+and with a first message read after a box, delayed or forged; the
 fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
