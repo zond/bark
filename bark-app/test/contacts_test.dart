@@ -1,5 +1,6 @@
 // Where a text to a contact may go: where they last wrote from while that
-// is fresh, else the person chooses, or the one address that stands.
+// is fresh, else the person chooses between that and their home's
+// mailbox, or the one address there is.
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
@@ -10,13 +11,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final now = DateTime.utc(2026, 11, 6, 12);
-  final cardAt = Address(Position.fromDegrees(50.45, 30.52), List.filled(6, 1));
+  final home = Address(Position.fromDegrees(50.45, 30.52), List.filled(6, 1));
   final there = Address(Position.fromDegrees(50.40, 30.60), List.filled(6, 2));
 
-  Contact contact({required bool home, int cardTime = 0}) => Contact(
-    PersonCard(List.filled(32, 5), cardAt, cardTime, 'Olena', home: home),
-    'Olena',
-  );
+  Contact contact(Address? home) =>
+      Contact(PersonCard(List.filled(32, 5), home, 0, 'Olena'), 'Olena');
 
   /// Heard from at `there`, `age` ago.
   Contact wrote(Contact c, Duration age) {
@@ -24,41 +23,35 @@ void main() {
     return c.heard(sentOf(at), there, at);
   }
 
-  test('nothing known: the card\'s address, no choice', () {
-    expect(contact(home: false).towards(now), [Toward.card]);
-    expect(contact(home: true).towards(now), [Toward.home]);
+  test('nothing written from: the home, or no way to write', () {
+    expect(contact(home).towards(now), [Toward.home]);
+    expect(contact(home).addressOf(Toward.home).toString(), home.toString());
+    expect(contact(null).towards(now), isEmpty);
+    expect(contact(null).unasked(now), isNull);
   });
 
   test('where they wrote from, while fresh, wins', () {
-    for (final home in [true, false]) {
-      final c = wrote(contact(home: home), const Duration(seconds: 599));
+    for (final h in [home, null]) {
+      final c = wrote(contact(h), const Duration(seconds: 59));
       expect(c.towards(now), [Toward.there]);
       expect(c.addressOf(Toward.there).toString(), there.toString());
     }
   });
 
   test('stale, with a home: both, for the person to choose', () {
-    final c = wrote(contact(home: true), Contact.fresh);
+    final c = wrote(contact(home), Contact.fresh);
     expect(c.towards(now), [Toward.there, Toward.home]);
     expect(c.unasked(now), Toward.home);
-    expect(c.addressOf(Toward.home).toString(), cardAt.toString());
   });
 
-  test('stale, without a home: the newer of the two, no choice', () {
-    final c = wrote(contact(home: false), const Duration(hours: 2));
+  test('stale, without a home: where they were, no choice', () {
+    final c = wrote(contact(null), const Duration(hours: 2));
     expect(c.towards(now), [Toward.there]);
-    // A card whose address became theirs after they last wrote.
-    final later = sentOf(now.subtract(const Duration(hours: 1)));
-    final d = wrote(
-      contact(home: false, cardTime: later),
-      const Duration(hours: 2),
-    );
-    expect(d.towards(now), [Toward.card]);
   });
 
-  test('written from the card\'s own address: the card\'s', () {
-    final at = now.subtract(const Duration(minutes: 1));
-    final c = contact(home: true).heard(sentOf(at), cardAt, at);
+  test('written from their home: the home', () {
+    final at = now.subtract(const Duration(hours: 1));
+    final c = contact(home).heard(sentOf(at), home, at);
     expect(c.towards(now), [Toward.home]);
   });
 }

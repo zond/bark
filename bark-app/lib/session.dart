@@ -48,17 +48,13 @@ enum Toward {
   /// Where they last wrote from.
   there,
 
-  /// Their card's address, their home's mailbox.
-  home,
-
-  /// Their card's address, where their node was.
-  card;
+  /// Their home's mailbox, the address on their card.
+  home;
 
   /// For the sent row.
   String get label => switch (this) {
     there => 'to where they were',
     home => 'to their home',
-    card => 'to their card\'s address',
   };
 }
 

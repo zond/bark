@@ -47,18 +47,7 @@ class CardScreen extends StatelessWidget {
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),
-            if (card == null)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Text(
-                  'No address yet. Connect to your node: its address is its '
-                  'position and node ID, and it has a position once it has a '
-                  'GPS fix or a map point. Set it as your home in Settings '
-                  'if it stays where it is.',
-                ),
-              )
-            else
-              ..._card(card),
+            ..._card(card),
             const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerLeft,
@@ -68,56 +57,48 @@ class CardScreen extends StatelessWidget {
                 onPressed: () => _scan(context),
               ),
             ),
-            if (card != null) ..._copy(context, card),
+            ..._copy(context, card),
           ],
         ),
       ),
     );
   });
 
-  List<Widget> _card(PersonCard card) {
-    final home = app.me.home != null;
-    final connected = app.session.address != null;
-    return [
-      Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Text(
-          home
-              ? 'The address is your home node\'s.'
-              : 'The address is your node\'s now; it changes when the node '
-                    'moves. Set a home node in Settings for one that stays.',
-        ),
+  List<Widget> _card(PersonCard card) => [
+    Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        card.home != null
+            ? 'It carries your home node\'s address, whose mailbox keeps '
+                  'your mail.'
+            : 'No home node: people can answer you only after you write to '
+                  'them. Set a node that stays where it is as your home in '
+                  'Settings.',
       ),
-      if (!home && !connected)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'The address as last read from your node; connect to bring '
-            'it up to date.',
-          ),
-        ),
-      const SizedBox(height: 16),
-      Center(child: _qr(card.toText())),
-    ];
-  }
+    ),
+    const SizedBox(height: 16),
+    Center(child: _qr(card.toText())),
+  ];
 
   List<Widget> _copy(BuildContext context, PersonCard card) {
     final mono = const TextStyle(fontFamily: 'monospace');
+    final home = card.home;
     return [
       const SizedBox(height: 8),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Address'),
-        subtitle: SelectableText(card.address.toString(), style: mono),
-        trailing: IconButton(
-          tooltip: 'Copy the address',
-          icon: const Icon(Icons.copy),
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: card.address.toString()));
-            say(context, 'Address copied');
-          },
+      if (home != null)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Home address'),
+          subtitle: SelectableText(home.toString(), style: mono),
+          trailing: IconButton(
+            tooltip: 'Copy the address',
+            icon: const Icon(Icons.copy),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: home.toString()));
+              say(context, 'Address copied');
+            },
+          ),
         ),
-      ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Card'),

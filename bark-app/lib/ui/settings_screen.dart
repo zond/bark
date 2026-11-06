@@ -233,23 +233,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _setHome(Address? a) async {
     final n = app.contacts.list.length;
-    // The card carries the home, else the node last connected to; the
-    // new card goes out only if that address changes.
-    final after = a ?? app.me.nodeAddress;
-    final changes = after?.toString() != app.me.cardAddress?.toString();
+    // The card carries the home; the new card goes out only if it
+    // changes.
+    final changes = a?.toString() != app.me.home?.toString();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(a == null ? 'No home node' : 'Make this node my home'),
         content: Text(
           !changes
-              ? 'Your card\'s address stays as it is, so no card is sent.'
+              ? 'Your card stays as it is, so no card is sent.'
               : n == 0
-              ? 'Your card\'s address changes.'
+              ? 'Your card changes.'
               : n == 1
-              ? 'Your card\'s address changes, and your new card goes to '
+              ? 'Your card changes, and your new card goes to '
                     'your contact.'
-              : 'Your card\'s address changes, and your new card goes to '
+              : 'Your card changes, and your new card goes to '
                     'your $n contacts, one message each.',
         ),
         actions: [

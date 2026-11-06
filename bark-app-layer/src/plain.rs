@@ -11,7 +11,7 @@
 //! |---|---|---|
 //! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
 //! | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-//! | card | 1 + 1 + 51 to 83 | type 4, the card's length, its bytes |
+//! | card | 1 + 1 + 38 to 83 | type 4, the card's length, its bytes |
 
 use crate::card::{self, Card};
 use crate::text::Encoding;

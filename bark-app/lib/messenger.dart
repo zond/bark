@@ -52,10 +52,10 @@ class Messenger {
   Future<(Uint8List, int)> _seal(Contact c, List<Record> records) async {
     final sent = await me.nextSent();
     final card = me.card;
-    if (!c.verified && card == null) {
+    final here = me.nodeAddress;
+    if (!c.verified && card.home == null && here == null) {
       throw const BadPayload('no address to answer to yet');
     }
-    final here = me.nodeAddress;
     final withAddress = here != null && c.knowsMine != here.toString();
     final header = Header(
       greater(me.identity, c.card.identity),
@@ -66,10 +66,7 @@ class Messenger {
       await contacts.put(c.copyWith(sentMine: here.toString()));
     }
     if (!c.verified) {
-      final plain = writePlain(header, [
-        CardRecord(card!.encode()),
-        ...records,
-      ]);
+      final plain = writePlain(header, [CardRecord(card.encode()), ...records]);
       return (sealIntro(sodium, c.card.identity, plain), sent);
     }
     return (
@@ -86,6 +83,7 @@ class Messenger {
   /// one the person need not choose.
   Future<void> sendText(Contact c, String text, {Toward? toward}) async {
     final t = toward ?? c.unasked(now());
+    if (t == null) throw BadPayload('${c.name} has no address yet');
     final (p, sent) = await _seal(c, [TextRecord(text)]);
     await session.queue(
       Outgoing(
@@ -105,10 +103,10 @@ class Messenger {
   Future<void> acknowledge(Received r) async {
     final c = contacts.byKey(r.from);
     final named = r.sent;
-    if (c == null || named == null || r.acked) return;
+    final t = c?.unasked(now());
+    if (c == null || t == null || named == null || r.acked) return;
     final (p, sent) = await _seal(c, [AckRecord(named)]);
     r.acked = true;
-    final t = c.unasked(now());
     await session.queue(
       Outgoing(
         c.addressOf(t),
@@ -124,10 +122,9 @@ class Messenger {
 
   /// Sends the person's card to `c`.
   Future<void> sendCard(Contact c) async {
-    final card = me.card;
-    if (card == null) return;
-    final (p, sent) = await _seal(c, [CardRecord(card.encode())]);
     final t = c.unasked(now());
+    if (t == null) return;
+    final (p, sent) = await _seal(c, [CardRecord(me.card.encode())]);
     await session.queue(
       Outgoing(
         c.addressOf(t),

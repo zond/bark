@@ -113,27 +113,33 @@ pub fn json() -> String {
 
     let alice_card = Card {
         identity: f.alice.identity,
-        address: f.home,
-        home: true,
+        home: Some(f.home),
         time: 86_400,
         name: "Аліса",
     };
-    let mut cb = [0u8; card::MAX_LEN];
-    let n = alice_card.encode(&mut cb).unwrap();
-    let mut ct = [0u8; card::MAX_TEXT_LEN];
-    let tn = alice_card.to_text(&mut ct).unwrap();
-    parts.push(entry(
-        "card",
-        &[
-            ("identity", h(&alice_card.identity.0)),
-            ("address", h(&alice_card.address.encode())),
-            ("home", format!("{}", alice_card.home)),
-            ("time", format!("{}", alice_card.time)),
-            ("name", q(alice_card.name)),
-            ("bytes", h(&cb[..n])),
-            ("text", q(core::str::from_utf8(&ct[..tn]).unwrap())),
-        ],
-    ));
+    let bob_card = Card {
+        identity: f.bob.identity,
+        home: None,
+        time: 0,
+        name: "Bob",
+    };
+    for (name, c) in [("card", &alice_card), ("card_no_home", &bob_card)] {
+        let mut cb = [0u8; card::MAX_LEN];
+        let n = c.encode(&mut cb).unwrap();
+        let mut ct = [0u8; card::MAX_TEXT_LEN];
+        let tn = c.to_text(&mut ct).unwrap();
+        parts.push(entry(
+            name,
+            &[
+                ("identity", h(&c.identity.0)),
+                ("home", c.home.map_or("null".into(), |a| h(&a.encode()))),
+                ("time", format!("{}", c.time)),
+                ("name", q(c.name)),
+                ("bytes", h(&cb[..n])),
+                ("text", q(core::str::from_utf8(&ct[..tn]).unwrap())),
+            ],
+        ));
+    }
 
     // A text in windows-1251, from Alice to Bob, written from a node away
     // from the home on her card, and naming it.

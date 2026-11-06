@@ -43,13 +43,12 @@ class FakeNode implements NodeLink {
     List.generate(seedLen, (i) => 0xa0 + i),
   );
 
-  /// The fake friend's card: their address is their home's.
+  /// The fake friend's card, with their home.
   late final PersonCard friendCard = PersonCard(
     friend.identity,
     friendHome,
     0,
     'Fake friend',
-    home: true,
   );
 
   /// The fake friend's home node, `bark-fa4e00000002`.

@@ -103,16 +103,14 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
+    expect(find.textContaining('only after you write to them'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Scan their card'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
-    final mine = app.me.card!;
-    expect(
-      mine.address.toString(),
-      Address(FakeNode.gps, FakeNode.id).toString(),
-    );
+    final mine = app.me.card;
+    expect(mine.home, isNull);
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
@@ -148,7 +146,7 @@ void main() {
   testWidgets('a contact from a pasted card', (t) async {
     final app = await model(t);
     final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena', home: false);
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
     await t.pumpWidget(BarkApp(app));
     await t.tap(find.byTooltip('New conversation'));
     await t.pumpAndSettle();
@@ -177,7 +175,7 @@ void main() {
   testWidgets('a contact from a scanned card', (t) async {
     final app = await model(t);
     final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena', home: false);
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
     // What My card and Add contact open once the camera has read a card.
     await t.pumpWidget(MaterialApp(home: AddContactScreen(app, card: card)));
     expect(find.text(card.toText()), findsOneWidget);
@@ -198,7 +196,7 @@ void main() {
     final there = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
     final an = DateTime.now().subtract(const Duration(hours: 1));
     final olena = Contact(
-      PersonCard(List.filled(32, 5), home, 1, 'Olena', home: true),
+      PersonCard(List.filled(32, 5), home, 1, 'Olena'),
       'Olena',
       verified: true,
     ).heard(sentOf(an), there, an);
@@ -314,7 +312,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('the home dialog says a card is sent only when one is', (
+  testWidgets('the home dialog says the new card goes to the contacts', (
     t,
   ) async {
     final app = await model(t);
@@ -337,18 +335,11 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    // The card already carries this node's address.
-    await press('Make this node my home', 'stays as it is, so no card');
-    expect(app.atHome, isTrue);
-    await press('No home node', 'stays as it is, so no card');
-    expect(app.me.home, isNull);
-
-    // A home elsewhere: making this node the home moves the card.
-    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
-    await app.me.setHome(away);
-    await t.pump();
+    // Setting and clearing the home both change the card.
     await press('Make this node my home', 'goes to your contact.');
     expect(app.atHome, isTrue);
+    await press('No home node', 'goes to your contact.');
+    expect(app.me.home, isNull);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

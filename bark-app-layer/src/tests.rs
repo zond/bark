@@ -34,7 +34,7 @@ fn the_sizes_are_the_notes() {
     assert_eq!(seal::REPLY_OVERHEAD, 20);
     assert_eq!(seal::NOTHING_NEW_LEN, 17);
     assert_eq!(Fetch::LEN, 61);
-    assert_eq!(card::FIXED_LEN, 51);
+    assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 83);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 133);
     // The longest text: 207 less the box, the header and the record's type.
@@ -311,23 +311,20 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     let f = fixture();
     let c = Card {
         identity: f.alice.identity,
-        address: f.home,
-        home: true,
+        home: Some(f.home),
         time: 42,
         name: "Ім'я",
     };
     let mut b = [0u8; card::MAX_LEN];
     let n = c.encode(&mut b).unwrap();
+    assert_eq!(n, 51 + 7);
     assert_eq!(&b[..2], &[2, 1]);
     assert_eq!(Card::decode(&b[..n]), Ok(c));
-    let away = Card {
-        address: f.away,
-        home: false,
-        ..c
-    };
-    let n = away.encode(&mut b).unwrap();
+    let homeless = Card { home: None, ..c };
+    let n = homeless.encode(&mut b).unwrap();
+    assert_eq!(n, 38 + 7);
     assert_eq!(b[1], 0);
-    assert_eq!(Card::decode(&b[..n]), Ok(away));
+    assert_eq!(Card::decode(&b[..n]), Ok(homeless));
     let mut t = [0u8; card::MAX_TEXT_LEN];
     let tn = c.to_text(&mut t).unwrap();
     let s = core::str::from_utf8(&t[..tn]).unwrap();
@@ -348,8 +345,7 @@ fn a_card_that_is_not_one_is_refused() {
     let f = fixture();
     let long = Card {
         identity: f.alice.identity,
-        address: f.home,
-        home: true,
+        home: Some(f.home),
         time: 0,
         name: "a name of more than thirty-two bytes",
     };
@@ -364,6 +360,16 @@ fn a_card_that_is_not_one_is_refused() {
         bad[at] = v;
         assert_eq!(Card::decode(&bad[..n]), Err(Error::Malformed), "{at}");
     }
+    // A home flag with no room for the address, and a name too long for
+    // a card without one.
+    assert_eq!(
+        Card::decode(&b[..card::FIXED_LEN + 12]),
+        Err(Error::Malformed)
+    );
+    let mut too_long = [b'a'; card::FIXED_LEN + card::MAX_NAME + 1];
+    too_long[..card::FIXED_LEN].copy_from_slice(&b[..card::FIXED_LEN]);
+    too_long[1] = 0;
+    assert_eq!(Card::decode(&too_long), Err(Error::Malformed));
 }
 
 #[test]
@@ -391,8 +397,7 @@ fn records_read_back_in_order() {
     let f = fixture();
     let c = Card {
         identity: f.bob.identity,
-        address: f.away,
-        home: false,
+        home: None,
         time: 1,
         name: "",
     };
@@ -412,7 +417,7 @@ fn records_read_back_in_order() {
     w.push(&t).unwrap();
     assert_eq!(w.push(&t), Err(Error::Malformed));
     let n = w.finish();
-    assert_eq!(n, 5 + 13 + 5 + 2 + 51 + 4);
+    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 4);
     let (got, r) = plain::read(&b[..n]).unwrap();
     assert_eq!(got, h);
     let rs: Vec<_> = r.collect();

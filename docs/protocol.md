@@ -3098,7 +3098,7 @@ dropped. Payloads are not padded.
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 51 to 83 | type 4, the card's length, then the card |
+| card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
@@ -3110,31 +3110,39 @@ by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
 
 *The card*, what people exchange, shown as a QR code: version (1), 2;
-flags (1), bit 0 set when the address is a home node's, the others
-zero; the identity (32), an address (13), the address's time as `sent`
-(4) and a display name in UTF-8 (0 to 32), 51 to 83 bytes; as text,
-`BARK:` and the bytes in base32 (RFC 4648, its base32 alphabet) without
-padding. Its address is the person's home node's when they have one,
-else their node's current one. A card with a later time replaces a
-contact's card; the person sends their card to their contacts when it
-changes.
+flags (1), bit 0 set when a home address follows, the others zero; the
+identity (32); when the home was set or cleared, as `sent` (4); the
+home node's address (0 or 13); and a display name in UTF-8 (0 to 32):
+38 to 70 bytes without a home, 51 to 83 with one. As text, `BARK:` and
+the bytes in base32 (RFC 4648, its base32 alphabet) without padding. A
+card with a later time replaces a contact's card; the person sends
+their card to their contacts when it changes.
 
-**Where a text goes.** The app keeps both addresses of a contact: their
-card's, and the one their messages were last written from, with the
+*Why only a home.* A home's [mailbox](#mailbox) keeps a person's mail
+until they fetch it. Any other node's address is only where they were
+when the card was made, and where they write from reaches the other
+side in every message's header. A person without a home can be written
+to once they have written.
+
+*Why the time without a home.* Clearing the home changes the card too,
+and a card that drops it must replace an older one only if it is later.
+
+**Where a text goes.** The app keeps a contact's home, from their card,
+apart from the address their messages were last written from, with the
 age of the newest message from them, counted from its `sent`, or from
 its arrival when `sent` is ahead of the phone's clock. While that age
 is under the delivery TTL, a text goes to where they write from; past
-it, the person chooses between that address and the card's, for each
-text (roadmap D132).
+it, with a home, the person chooses between where they were and the
+home's mailbox, for each text, and without one it goes to where they
+were. With a home and nothing written from, it goes to the home; with
+neither, the contact cannot be written to yet (roadmap D132).
 
 *Why where they write from.* A reply goes straight to where the person
 is, rather than to their home's mailbox to wait for a fetch, at
 13 bytes on a message after a change. Within the delivery TTL the
 network keeps mail for a node at the address it last used
 ([delivery queue](#delivery-queue)); past it the app cannot tell
-whether they are still there, and the home flag tells the person
-whether the other choice is a mailbox that keeps the mail or only
-where a node once was.
+whether they are still there, and the person may know.
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it: a DATA with hop

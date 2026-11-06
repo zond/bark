@@ -15,13 +15,10 @@ void main() {
   final where = Address(Position.fromDegrees(50, 30), [0, 0, 0, 0, 0, 1]);
   String id(int n) => hex(List.filled(32, n));
   final olena = Contact(
-    PersonCard(List.filled(32, 1), where, 0, 'O.', home: false),
+    PersonCard(List.filled(32, 1), where, 0, 'O.'),
     'Olena',
   );
-  final petro = Contact(
-    PersonCard(List.filled(32, 2), where, 0, '', home: false),
-    'Petro',
-  );
+  final petro = Contact(PersonCard(List.filled(32, 2), where, 0, ''), 'Petro');
   var sent = 0;
   Outgoing out(String to, String t, int min, {OutKind kind = OutKind.text}) =>
       Outgoing(

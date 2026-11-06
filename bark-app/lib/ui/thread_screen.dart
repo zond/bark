@@ -64,7 +64,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
     Toward.there =>
       'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
     Toward.home => 'Their home mailbox',
-    Toward.card => 'Their card\'s address',
   };
 
   /// When they last wrote, and whether from their home.
@@ -72,9 +71,10 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final at = c.heardAt;
     if (at == null) return 'Has not written yet';
     final from = c.wroteFrom;
-    final where = !c.card.home || from == null
+    final home = c.card.home;
+    final where = home == null || from == null
         ? ''
-        : from.toString() == c.card.address.toString()
+        : from.toString() == home.toString()
         ? ', from their home'
         : ', away from home';
     return 'Last wrote ${ago(app.now().difference(at))}$where';
@@ -147,6 +147,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text('This contact was removed.'),
+              )
+            else if (contact.towards(app.now()).isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '${contact.name} has no home node and has not written yet: '
+                  'you can answer once they write to you.',
+                ),
               )
             else
               _compose(contact),

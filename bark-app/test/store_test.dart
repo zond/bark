@@ -28,7 +28,7 @@ const oldBark =
 
 /// `contacts.json` and `me.json` as that build wrote them, the seed made
 /// up: without a version, and read as version 1. Contacts are at version
-/// 2 since their cards carry the home flag.
+/// 2 since their cards are of card version 2.
 const oldContacts =
     '{"contacts":[],"myName":"Martin","myAddress":"47c0520ada4ec0bae6e6cbf4f5"}';
 const oldMe =

@@ -48,24 +48,22 @@ class Contact {
   static const fresh = Duration(seconds: 600);
 
   /// Where a text to them may go at `now`: where they last wrote from
-  /// while that is fresh. Past it, that or a home's mailbox, for the
-  /// person to choose; without a home the card's address is only where
-  /// their node was too, and the newer of the two stands alone.
+  /// while that is fresh; past it, that or their home's mailbox, for the
+  /// person to choose. None when they have no home and have not written.
   List<Toward> towards(DateTime now) {
-    final cards = card.home ? Toward.home : Toward.card;
-    final from = wroteFrom, at = heardAt, sent = heardSent;
-    if (from == null || at == null || sent == null) return [cards];
-    if (from.toString() == card.address.toString()) return [cards];
+    final from = wroteFrom, at = heardAt, home = card.home;
+    if (from == null || at == null) return [if (home != null) Toward.home];
+    if (home == null) return [Toward.there];
+    if (from.toString() == home.toString()) return [Toward.home];
     if (now.difference(at) < fresh) return [Toward.there];
-    if (card.home) return [Toward.there, Toward.home];
-    return [sent >= card.time ? Toward.there : Toward.card];
+    return [Toward.there, Toward.home];
   }
 
   /// Where a message the person does not place goes: the only choice, or
-  /// the home's mailbox, which keeps it.
-  Toward unasked(DateTime now) => towards(now).last;
+  /// the home's mailbox, which keeps it; null when there is none.
+  Toward? unasked(DateTime now) => towards(now).lastOrNull;
 
-  Address addressOf(Toward t) => t == Toward.there ? wroteFrom! : card.address;
+  Address addressOf(Toward t) => t == Toward.there ? wroteFrom! : card.home!;
 
   String get key => card.key;
 
@@ -139,7 +137,7 @@ class Contacts extends ChangeNotifier {
   Contact? byKey(String? key) => list.where((c) => c.key == key).firstOrNull;
 
   /// The version of `contacts.json`'s format: 2 since the cards it holds
-  /// carry the home flag, card version 2.
+  /// are of card version 2.
   static const version = 2;
 
   Future<void> load() async {

@@ -234,8 +234,7 @@ void main() {
       p.me.setHome(home);
       p.me.setNodeAddress(elsewhere);
       async.flushMicrotasks();
-      expect(p.me.card!.address.toString(), home.toString());
-      expect(p.me.card!.home, isTrue);
+      expect(p.me.card.home.toString(), home.toString());
       p.messenger.sendText(friendOf(p, node), 'moved');
       async.flushMicrotasks();
       final (h, _) = readPlain(
@@ -256,7 +255,7 @@ void main() {
     'a contact\'s two addresses are kept apart, the newest message wins',
     () {
       run((async, p, node) {
-        final card = friendOf(p, node).card.address.toString();
+        final card = friendOf(p, node).card.home.toString();
         final there = Address(Position.fromDegrees(50.3, 30.4), [
           7,
           7,
@@ -278,7 +277,7 @@ void main() {
 
         from(s0, there);
         var f = friendOf(p, node);
-        expect(f.card.address.toString(), card);
+        expect(f.card.home.toString(), card);
         expect(f.wroteFrom.toString(), there.toString());
         expect(f.heardSent, s0);
         // Without an address: unchanged, and heard later.
@@ -291,7 +290,7 @@ void main() {
         f = friendOf(p, node);
         expect(f.wroteFrom.toString(), there.toString());
         expect(f.heardSent, s0 + 5);
-        expect(f.card.address.toString(), card);
+        expect(f.card.home.toString(), card);
       });
     },
   );
@@ -299,8 +298,7 @@ void main() {
   test('the fake friend: a reply goes where they were, then they choose', () {
     run((async, p, node) {
       var f = friendOf(p, node);
-      expect(f.card.home, isTrue);
-      expect(f.card.address.toString(), FakeNode.friendHome.toString());
+      expect(f.card.home.toString(), FakeNode.friendHome.toString());
       final first = f.wroteFrom.toString();
       expect(first, isNot(FakeNode.friendHome.toString()));
       expect(f.towards(start.add(async.elapsed)), [Toward.there]);
@@ -650,21 +648,23 @@ void main() {
   test('a card read from its text, and what is not one', () {
     final k = Keys.fromSeed(sodium, List.filled(16, 1));
     for (final (name, home) in [
-      ('', true),
-      ('Olena', false),
-      ('Олена Ш.', true),
-      ('🐕 bark', false),
+      ('', elsewhere),
+      ('Olena', null),
+      ('Олена Ш.', elsewhere),
+      ('🐕 bark', null),
     ]) {
-      final c = PersonCard(k.identity, elsewhere, 7, name, home: home);
+      final c = PersonCard(k.identity, home, 7, name);
       final back = PersonCard.parse(c.toText());
       expect(back.name, name);
       expect(back.key, c.key);
-      expect(back.address.toString(), elsewhere.toString());
-      expect(back.home, home);
+      expect(back.home?.toString(), home?.toString());
       expect(back.time, 7);
     }
-    // A card of version 1, before the home flag, and an unknown flag.
-    final b = PersonCard(k.identity, elsewhere, 7, '', home: true).encode();
+    // A home flag without room for the address.
+    final short = PersonCard(k.identity, null, 7, 'abc').encode()..[1] = 1;
+    expect(() => PersonCard.decode(short), throwsA(isA<BadCard>()));
+    // A card of version 1, before the flags, and an unknown flag.
+    final b = PersonCard(k.identity, elsewhere, 7, '').encode();
     for (final (at, v, why) in [(0, 1, 'older'), (1, 2, 'Not a card')]) {
       final bad = Uint8List.fromList(b)..[at] = v;
       expect(
@@ -676,8 +676,7 @@ void main() {
       expect(() => PersonCard.parse(t), throwsA(isA<BadCard>()), reason: t);
     }
     expect(
-      () =>
-          PersonCard(k.identity, elsewhere, 0, 'x' * 33, home: false).encode(),
+      () => PersonCard(k.identity, null, 0, 'x' * 33).encode(),
       throwsA(isA<BadCard>()),
     );
   });
