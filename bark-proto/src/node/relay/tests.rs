@@ -5,6 +5,7 @@ extern crate std;
 use super::*;
 use crate::event::{Frame, Trace};
 use crate::node::mac;
+use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::BAN;
 use crate::tables::send_queue::HOP_WAIT;
 use crate::wire::Heartbeat;
@@ -2673,6 +2674,21 @@ enum Peer {
 /// `to_e`. The relay, the time, the message, D and E, and the
 /// neighbour the forward was first handed to (spec "Next hop").
 fn handing_between(peer: Peer, to_e: bool) -> (Relay, Instant, MsgId, NodeId, NodeId, NodeId) {
+    let (r, now, id, d, e, sent) = handing_between_with(peer, to_e, |_, _| {});
+    let [(first, 2)] = data_to(&sent)[..] else {
+        panic!("{:?}", data_to(&sent));
+    };
+    (r, now, id, d, e, first)
+}
+
+/// [`handing_between`] with `prep` done to the relay before the forward is
+/// queued; the frames it sent up to the first DATA in place of its
+/// receiver.
+fn handing_between_with(
+    peer: Peer,
+    to_e: bool,
+    prep: impl FnOnce(&mut Relay, Instant),
+) -> (Relay, Instant, MsgId, NodeId, NodeId, Vec<(Instant, Frame)>) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;
@@ -2728,13 +2744,21 @@ fn handing_between(peer: Peer, to_e: bool) -> (Relay, Instant, MsgId, NodeId, No
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let place = r.record_place().unwrap();
     r.records.put(place, Record::new(id, parent, 1, now));
+    prep(&mut r, now);
     let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
     r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
-    let [(first, 2)] = data_to(&sent)[..] else {
-        panic!("{:?}", data_to(&sent));
-    };
-    (r, now, id, id_of(d_pos), id_of(e_pos), first)
+    (r, now, id, id_of(d_pos), id_of(e_pos), sent)
+}
+
+/// The receiver and preamble of each DATA frame in `sent`.
+fn data_preambles(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u16)> {
+    sent.iter()
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some((d.dst_hop, f.preamble_symbols)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// `from` answers the hand-over of `id` under way, taking it or, if
@@ -2825,17 +2849,66 @@ fn the_addressed_node_goes_first() {
     }
 }
 
-/// A sleepy addressed node with an anchor stays a last resort: its mail
-/// goes through its anchor's queue and window (spec "Next hop",
-/// "Delivery"). It is handed the message once the nearer D has answered
-/// seen.
+/// A sleepy addressed node with an anchor is sent the message at once with
+/// the long preamble while the relay's bucket and the node's channel spare
+/// it, here a quiet channel and a full bucket, though D is nearer its
+/// position (spec "Next hop").
 #[test]
-fn the_addressed_sleepy_node_stays_a_last_resort() {
-    let (mut r, mut now, id, d, e, first) = handing_between(Peer::Sleepy, true);
-    assert_eq!(first, d);
-    let a = answered(&mut r, &mut now, id, d, true);
-    let (to, drops) = settle(&mut r, &mut now, a);
-    assert_eq!((to, drops), (Some(e), std::vec![]));
+fn an_addressed_sleepy_node_is_sent_long_at_once() {
+    let (_, _, _, _, e, sent) = handing_between_with(Peer::Sleepy, true, |_, _| {});
+    assert_eq!(data_preambles(&sent), [(e, LONG_PREAMBLE_SYMBOLS)]);
+}
+
+/// With the sleepy node's channel busier than the quietest by more than
+/// the move threshold, the message goes on toward its anchor's position
+/// instead, to the nearer D (spec "Next hop", "Channel moves").
+#[test]
+fn a_busy_channel_leaves_a_sleepy_node_to_its_anchor() {
+    let busy_7 = |r: &mut Relay, _: Instant| {
+        // Channel 7, E's, busy one sweep in ten; the others quiet.
+        for i in 0..20 {
+            for c in Channel::all() {
+                let loud = c.index() == 7 && i % 10 == 0;
+                r.radio.busy.sample(c, if loud { -60 } else { -125 });
+            }
+        }
+    };
+    let (_, _, _, d, _, sent) = handing_between_with(Peer::Sleepy, true, busy_7);
+    assert_eq!(data_preambles(&sent), [(d, MIN_PREAMBLE_SYMBOLS)]);
+}
+
+/// With a bucket that holds a short DATA beyond the reply reserve but not
+/// a full long one, the message goes on toward its anchor's position
+/// instead (spec "Next hop", "Duty cycle cap").
+#[test]
+fn a_spent_bucket_leaves_a_sleepy_node_to_its_anchor() {
+    let spend = |r: &mut Relay, now: Instant| {
+        let spend = r.radio.budget.available(now) - Duration::from_millis(1_000);
+        r.radio.budget.record(spend, now);
+    };
+    let (_, _, _, d, _, sent) = handing_between_with(Peer::Sleepy, true, spend);
+    assert_eq!(data_preambles(&sent), [(d, MIN_PREAMBLE_SYMBOLS)]);
+}
+
+/// A hand-over to the sleepy node with the long preamble, unanswered in all
+/// its attempts, leaves the message to its anchor: the next DATA goes to
+/// the nearer D, and none to the node before it is heard again (spec
+/// "Next hop").
+#[test]
+fn an_unanswered_sleepy_node_is_left_to_its_anchor() {
+    let (mut r, mut now, _, d, e, mut sent) = handing_between_with(Peer::Sleepy, true, |_, _| {});
+    let end = now + Duration::from_secs(30);
+    while !data_to(&sent).iter().any(|&(to, _)| to == d) {
+        let until = now + Duration::from_millis(10);
+        sent.extend(drive(&mut r, &mut now, until));
+        now = now.max(until);
+        assert!(now < end, "{:?}", data_preambles(&sent));
+    }
+    let attempts = usize::from(r.config.hop_attempts);
+    let mut want = std::vec![(e, LONG_PREAMBLE_SYMBOLS); attempts];
+    want.push((d, MIN_PREAMBLE_SYMBOLS));
+    assert_eq!(data_preambles(&sent), want);
+    assert!(r.neighbours.get(e).is_some_and(|n| n.unanswered));
 }
 
 /// A relay that owns the position of a forward addressed to relay C,

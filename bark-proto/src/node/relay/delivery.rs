@@ -23,8 +23,9 @@
 //! then.
 //!
 //! Outside its window a heard node's oldest message goes at once with the
-//! long preamble when the bucket spares it, and not again once one has
-//! gone unanswered, until the node beats (spec "Delivery", roadmap D112).
+//! long preamble when the bucket and the node's channel spare it, and not
+//! again once one has gone unanswered, until the node beats (spec
+//! "Delivery", roadmap D112, D134).
 //!
 //! With [`Config::sleepy_listens`], a research switch, a node heard is
 //! taken to listen all the time: its messages go at once, and after an
@@ -74,10 +75,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// room.
     ///
     /// Outside its window, the node receiving duty-cycled, the message goes
-    /// with the long preamble if the bucket holds it beyond everything this
-    /// node has to send: the send queue, the other messages of the delivery
-    /// queue in their windows, and the reply reserve. Otherwise, or once a
-    /// delivery to the node has gone unanswered, it waits for its beat.
+    /// with the long preamble if this node spares it ([`Self::spares_long`]).
+    /// Otherwise, or once a delivery to the node has gone unanswered, it
+    /// waits for its beat.
     pub(super) fn try_deliver(
         &mut self,
         node: NodeId,
@@ -123,19 +123,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let (msg_id, frame) = (q.msg_id, mac::frame(&Packet::Data(data), home, preamble));
         let airtime = mac::airtime(&frame);
         if early {
-            // The other messages it holds for sleepy nodes, in their windows.
-            let held = self
-                .delivery
-                .iter()
-                .filter(|o| o.msg_id != msg_id)
-                .map(|o| {
-                    time_on_air(
-                        (DATA_HEADER_LEN + o.payload().len()) as u8,
-                        MIN_PREAMBLE_SYMBOLS,
-                    )
-                })
-                .fold(Duration::ZERO, |a, b| a + b);
-            if self.no_room(airtime, held, now).is_none() {
+            if self.spares_long(airtime, home, Some(msg_id), now) {
                 let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
             }
             return Ok(());
@@ -150,6 +138,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
         Ok(())
+    }
+
+    /// Whether this node spares a frame of `airtime` with the long
+    /// preamble on `channel` now, to a sleepy node outside its window
+    /// (spec "Next hop", "Delivery"): its bucket holds the frame beyond
+    /// everything else it has to send, its send queue, every message of
+    /// its delivery queue but `except` at the ordinary preamble in its
+    /// window, and the reply reserve; and the frame leaves `channel` one
+    /// the move rule would not leave ([`Self::channel_spares`]).
+    pub(super) fn spares_long(
+        &self,
+        airtime: Duration,
+        channel: Channel,
+        except: Option<MsgId>,
+        now: Instant,
+    ) -> bool {
+        let held = self
+            .delivery
+            .iter()
+            .filter(|o| Some(o.msg_id) != except)
+            .map(|o| {
+                time_on_air(
+                    (DATA_HEADER_LEN + o.payload().len()) as u8,
+                    MIN_PREAMBLE_SYMBOLS,
+                )
+            })
+            .fold(Duration::ZERO, |a, b| a + b);
+        self.no_room(airtime, held, now).is_none() && self.channel_spares(channel, airtime)
     }
 
     /// Offer the send queue the oldest queued message of each node, oldest

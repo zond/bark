@@ -8,7 +8,7 @@
 use super::{Job, Node, Stage};
 use crate::event::Action;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
-use crate::tables::busy::percent;
+use crate::tables::busy::{percent, ONE};
 use crate::time::{Duration, Instant};
 use crate::wire::Packet;
 
@@ -137,6 +137,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .unwrap_or(0);
         self.radio.busy.fraction(self.home).saturating_sub(min)
             > percent(self.config.move_threshold_percent)
+    }
+
+    /// Whether `c`, with a frame of `airtime` more, stays within the move
+    /// threshold of the quietest channel, so that no relay there would
+    /// leave it for that frame (spec "Channel moves"). The frame counts as
+    /// its share of the estimate's window, a sample every sweep for
+    /// `busy_ema_inverse` sweeps (spec "Busy estimate").
+    pub(super) fn channel_spares(&self, c: Channel, airtime: Duration) -> bool {
+        let busy = &self.radio.busy;
+        let min = Channel::all().map(|c| busy.fraction(c)).min().unwrap_or(0);
+        let window = self.config.sweep_interval.as_micros() * self.config.busy_ema_inverse as u64;
+        let added = (ONE as u64 * airtime.as_micros() / window.max(1)) as u32;
+        busy.fraction(c).saturating_add(added)
+            <= min.saturating_add(percent(self.config.move_threshold_percent))
     }
 
     pub(super) fn move_rule(&mut self, now: Instant) {
