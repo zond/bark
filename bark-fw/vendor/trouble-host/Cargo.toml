@@ -163,7 +163,6 @@ scan = ["central"]
 security = [
     "dep:p256",
     "dep:rand_core",
-    "dep:rand_chacha",
     "dep:rand",
 ]
 security-p256-cortex-m4 = [
@@ -251,11 +250,6 @@ version = "0.8"
 optional = true
 default-features = false
 
-[dependencies.rand_chacha]
-version = "0.3"
-optional = true
-default-features = false
-
 [dependencies.rand_core]
 version = "0.6"
 optional = true
@@ -315,6 +309,10 @@ version = "0.9"
 
 [dev-dependencies.rand]
 version = "0.8.5"
+
+[dev-dependencies.rand_chacha]
+version = "0.3"
+default-features = false
 
 [dev-dependencies.rand_core]
 version = "0.6"

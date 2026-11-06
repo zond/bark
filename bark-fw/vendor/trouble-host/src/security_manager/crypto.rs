@@ -198,6 +198,42 @@ pub(super) fn aes128(key: &[u8; 16], block: &mut [u8; 16]) {
     unsafe { trouble_host_aes128(key, block) }
 }
 
+extern "Rust" {
+    /// Fills `dest` with random bytes fit for keys and nonces: generated as
+    /// [Vol 2] Part H, Section 2 requires. The application provides it, so
+    /// that the controller's generator serves the host too.
+    fn trouble_host_random(dest: &mut [u8]);
+}
+
+/// The application's random source as a generator.
+pub(crate) struct Random;
+
+impl RngCore for Random {
+    fn next_u32(&mut self) -> u32 {
+        let mut b = [0; 4];
+        self.fill_bytes(&mut b);
+        u32::from_le_bytes(b)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut b = [0; 8];
+        self.fill_bytes(&mut b);
+        u64::from_le_bytes(b)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        // SAFETY: the application defines the function with this signature.
+        unsafe { trouble_host_random(dest) }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for Random {}
+
 /// RFC 4493 AES-CMAC ([Vol 3] Part H, Section 2.2.5), on which f4, f5, f6
 /// and g2 (Sections 2.2.6 to 2.2.9) and the GATT database hash are built.
 pub struct AesCmac {
@@ -822,6 +858,11 @@ mod tests {
     fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]) {
         use aes::cipher::{BlockEncrypt, KeyInit};
         aes::Aes128::new_from_slice(key).unwrap().encrypt_block(block.into());
+    }
+
+    #[no_mangle]
+    fn trouble_host_random(dest: &mut [u8]) {
+        OsRng.fill_bytes(dest);
     }
 
     /// The examples of RFC 4493 Section 4, each message also fed in pieces

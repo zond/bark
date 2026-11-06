@@ -215,12 +215,13 @@ pub fn controller(
     let need = builder.required_memory()?;
     log::info!("ble: controller memory {} of {} bytes", need, SDC_MEM);
     crate::boot::note(|f| f.controller = Some((need, SDC_MEM)));
-    builder.build(
-        p,
-        RNG.init(rng::Rng::new_blocking(rng)),
-        mpsl,
-        MEM.init(sdc::Mem::new()),
-    )
+    // Bias correction makes the generator's bits uniform (nRF52840 Product
+    // Specification, RNG); it is off at reset. The host's keys and nonces
+    // come from it through LE Rand, with no generator of the host's own
+    // between.
+    let rng = rng::Rng::new_blocking(rng);
+    rng.set_bias_correction(true);
+    builder.build(p, RNG.init(rng), mpsl, MEM.init(sdc::Mem::new()))
 }
 
 /// The BLE host's AES-128 (`vendor/README.md`), on the chip's AES block.
@@ -239,6 +240,26 @@ fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]) {
             block.as_mut_ptr(),
             mpsl_raw::MPSL_ECB_CLEARTEXT_IN_LOCAL_RAM,
         )
+    }
+}
+
+/// The BLE host's random numbers (`vendor/README.md`), from the
+/// controller's LE Rand (Bluetooth Core Vol 4 Part E §7.8.23), which draws
+/// on the chip's generator given to the controller in [`controller`] and is
+/// specified fit for keys (Vol 2 Part H §2). The host draws them in its
+/// pairing's synchronous steps, so the controller's command is called
+/// directly, not through the host's asynchronous HCI path.
+#[no_mangle]
+fn trouble_host_random(dest: &mut [u8]) {
+    for chunk in dest.chunks_mut(8) {
+        let mut out = sdc::raw::sdc_hci_cmd_le_rand_return_t { random_number: 0 };
+        // SAFETY: the controller is built before the host exists, and its
+        // commands are synchronous calls from thread mode, so none is in
+        // progress when this one starts.
+        let status = unsafe { sdc::raw::sdc_hci_cmd_le_rand(&mut out) };
+        // A key from a failed draw would be guessable.
+        assert!(status == 0, "LE Rand failed: {status:#x}");
+        chunk.copy_from_slice(&out.random_number.to_le_bytes()[..chunk.len()]);
     }
 }
 

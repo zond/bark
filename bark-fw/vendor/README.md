@@ -60,6 +60,18 @@ without the `central` feature, 6 KB the image has no room for
   software and check the CMAC against RFC 4493's examples (§4) and the
   pairing functions against the specification's sample data. 5 616 B of
   flash less.
+- `src/security_manager/mod.rs`, `crypto.rs`, `src/host.rs`, `src/lib.rs` and
+  `Cargo.toml`: the random numbers for pairing's keys, nonces and passkey
+  come from a function the application defines, `trouble_host_random`, in
+  place of a ChaCha12 generator the host seeded from the controller's LE
+  Rand at each start. The firmware's calls LE Rand itself (Vol 4 Part E
+  §7.8.23), whose numbers are specified fit for keys (Vol 2 Part H §2). It
+  is a function, not the host's HCI path, because pairing draws them in
+  synchronous steps and that path is asynchronous. The key pair is made
+  once, when the host is created, not again at each start; the host no
+  longer sends LE Rand, so a controller need not support it. The
+  `rand_chacha` crate stays for the tests, which define the function over
+  the operating system's generator. 6 372 B of flash less.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 
