@@ -18,43 +18,46 @@ class CardScreen extends StatelessWidget {
     final card = me.card;
     return Scaffold(
       appBar: AppBar(title: const Text('My card')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('My name'),
-            subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
-            trailing: IconButton(
-              tooltip: 'Change',
-              icon: const Icon(Icons.edit),
-              onPressed: () async {
-                final n = await askText(context, 'My name', me.name);
-                if (n != null) await me.setName(n);
-              },
-            ),
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('My identity'),
-            subtitle: SelectableText(
-              me.key,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
-          ),
-          if (card == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                'No address yet. Connect to your node: its address is its '
-                'position and node ID, and it has a position once it has a '
-                'GPS fix or a map point. Set it as your home in Settings '
-                'if it stays where it is.',
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('My name'),
+              subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
+              trailing: IconButton(
+                tooltip: 'Change',
+                icon: const Icon(Icons.edit),
+                onPressed: () async {
+                  final n = await askText(context, 'My name', me.name);
+                  if (n != null) await me.setName(n);
+                },
               ),
-            )
-          else
-            ..._card(context, card),
-        ],
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('My identity'),
+              subtitle: SelectableText(
+                me.key,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+            if (card == null)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  'No address yet. Connect to your node: its address is its '
+                  'position and node ID, and it has a position once it has a '
+                  'GPS fix or a map point. Set it as your home in Settings '
+                  'if it stays where it is.',
+                ),
+              )
+            else
+              ..._card(context, card),
+          ],
+        ),
       ),
     );
   });

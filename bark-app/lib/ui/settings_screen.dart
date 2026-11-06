@@ -74,29 +74,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     app,
     (context) => Scaffold(
       appBar: AppBar(title: const Text('Settings')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          NoticeCard(app),
-          ..._connection(),
-          _heading('My name'),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
-            subtitle: const Text('On your card, for others to see'),
-            trailing: IconButton(
-              tooltip: 'Change',
-              icon: const Icon(Icons.edit),
-              onPressed: () async {
-                final n = await askText(context, 'My name', app.me.name);
-                if (n != null) await app.me.setName(n);
-              },
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            NoticeCard(app),
+            ..._connection(),
+            _heading('My name'),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
+              subtitle: const Text('On your card, for others to see'),
+              trailing: IconButton(
+                tooltip: 'Change',
+                icon: const Icon(Icons.edit),
+                onPressed: () async {
+                  final n = await askText(context, 'My name', app.me.name);
+                  if (n != null) await app.me.setName(n);
+                },
+              ),
             ),
-          ),
-          ..._home(),
-          ..._backup(),
-          ..._mapPoint(),
-        ],
+            ..._home(),
+            ..._backup(),
+            ..._mapPoint(),
+          ],
+        ),
       ),
     ),
   );

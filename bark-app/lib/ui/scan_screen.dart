@@ -47,35 +47,38 @@ class _ScanScreenState extends State<ScanScreen> {
     final side = MediaQuery.of(context).size.shortestSide * 0.7;
     return Scaffold(
       appBar: AppBar(title: const Text('Scan a card')),
-      body: Column(
-        children: [
-          Expanded(
-            child: QRView(
-              key: _view,
-              formatsAllowed: const [BarcodeFormat.qrcode],
-              onQRViewCreated: _created,
-              onPermissionSet: (_, granted) {
-                if (!granted) {
-                  setState(
-                    () => _problem =
-                        'The camera is not allowed. Allow it in the phone\'s '
-                        'settings, or paste the card instead.',
-                  );
-                }
-              },
-              overlay: QrScannerOverlayShape(
-                borderColor: Theme.of(context).colorScheme.primary,
-                cutOutSize: side,
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: QRView(
+                key: _view,
+                formatsAllowed: const [BarcodeFormat.qrcode],
+                onQRViewCreated: _created,
+                onPermissionSet: (_, granted) {
+                  if (!granted) {
+                    setState(
+                      () => _problem =
+                          'The camera is not allowed. Allow it in the phone\'s '
+                          'settings, or paste the card instead.',
+                    );
+                  }
+                },
+                overlay: QrScannerOverlayShape(
+                  borderColor: Theme.of(context).colorScheme.primary,
+                  cutOutSize: side,
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              _problem ?? 'Point the camera at the card on the other phone',
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                _problem ?? 'Point the camera at the card on the other phone',
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

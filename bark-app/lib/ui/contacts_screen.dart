@@ -115,54 +115,59 @@ class _AddContactScreenState extends State<AddContactScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Add contact')),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Scan their card'),
-            onPressed: _scan,
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: pasted,
-          onChanged: _read,
-          maxLines: null,
-          decoration: InputDecoration(
-            labelText: 'Card',
-            helperText: 'Or paste the card they sent you',
-            errorText: error,
-            errorMaxLines: 3,
-          ),
-        ),
-        if (card != null)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Address'),
-            subtitle: Text(
-              card!.address.toString(),
-              style: const TextStyle(fontFamily: 'monospace'),
+    body: SafeArea(
+      top: false,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Scan their card'),
+              onPressed: _scan,
             ),
           ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: name,
-          onChanged: (_) => setState(() {}),
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: card == null || name.text.trim().isEmpty ? null : _save,
-            child: const Text('Save'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: pasted,
+            onChanged: _read,
+            maxLines: null,
+            decoration: InputDecoration(
+              labelText: 'Card',
+              helperText: 'Or paste the card they sent you',
+              errorText: error,
+              errorMaxLines: 3,
+            ),
           ),
-        ),
-      ],
+          if (card != null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Address'),
+              subtitle: Text(
+                card!.address.toString(),
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: name,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Name'),
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: card == null || name.text.trim().isEmpty
+                  ? null
+                  : _save,
+              child: const Text('Save'),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }
