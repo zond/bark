@@ -584,6 +584,95 @@ fn on_the_desk_a_text_reaches_its_node_at_once() {
     }
 }
 
+/// The bench line of bring-up step 4 (`scenarios/line.toml`,
+/// `docs/bringup-2026-11-06.md`): three relays on one desk, A and C deaf
+/// to each other. Settled, every text between A and C goes through B, two
+/// hand-overs, in under a second. With C off, B demotes it on the first
+/// text within the bound of a message held on one neighbour, 14.2 s (spec
+/// "Bounds"), and returns each text to A, which drops it; with B off too,
+/// A demotes B within the same bound and drops its texts at once, as long
+/// as B's entry lasts (spec "Neighbour table").
+#[test]
+fn on_the_bench_line_a_text_goes_through_the_middle() {
+    for seed in 1..=5 {
+        let mut sc = scenario("line.toml");
+        sc.seed = seed;
+        bench_line(&sc);
+    }
+}
+
+fn bench_line(sc: &Scenario) {
+    let seed = sc.seed;
+    let (a, b, c) = (0u32, 1u32, 2u32);
+    let at = |s: u64| bark_proto::Instant::ZERO + bark_proto::Duration::from_secs(s);
+    let file = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("line-{seed}.trace"));
+    let mut sim = Sim::new(sc).expect("builds");
+    sim.trace_to(Box::new(std::fs::File::create(&file).unwrap()));
+    sim.run_until(at(1100));
+    let ids = |n: u32| -> Vec<_> { sim.relay(n).neighbours().map(|x| x.id).collect() };
+    assert_eq!(ids(a), [sim.relay(b).id()], "A hears B alone");
+    assert_eq!(ids(c), [sim.relay(b).id()], "C hears B alone");
+    assert_eq!(ids(b).len(), 2, "B hears both");
+    sim.run();
+    let rows = sim.message_rows();
+    let (c_off, b_off) = (1200.0, 1800.0);
+    let settled: Vec<_> = rows
+        .iter()
+        .filter(|r| r.t_s >= sc.settle_s && r.t_s < c_off)
+        .collect();
+    assert_eq!(settled.len(), 27, "a text a minute each way, 13.5 minutes");
+    for r in &settled {
+        assert_eq!(r.fate, Fate::Delivered, "seed {seed}: text {}", r.tag);
+        assert_eq!(r.hops, 2, "seed {seed}: text {} went through B", r.tag);
+        let l = r.latency_s.expect("delivered");
+        assert!(l < 1.0, "seed {seed}: text {} took {l} s", r.tag);
+    }
+    let a_no_route = Fate::Dropped {
+        node: a,
+        reason: DropReason::NoRoute,
+    };
+    let trace = std::fs::read_to_string(&file).unwrap();
+    let time = |line: &str| -> f64 { line.split(' ').next().unwrap().parse().unwrap() };
+    let first = |what: &str, from: f64| -> f64 {
+        trace
+            .lines()
+            .filter(|l| l.contains(what) && time(l) >= from)
+            .map(time)
+            .next()
+            .unwrap_or_else(|| panic!("no {what:?} after {from} s"))
+    };
+    let bound = 14.2;
+    for (off, demoter, demoted) in [
+        (c_off, "relay 1 (B)", "relay 2 (C)"),
+        (b_off, "relay 0 (A)", "relay 1 (B)"),
+    ] {
+        let demotion = first(&format!("{demoter}: demoted {demoted}"), off);
+        assert!(
+            demotion - off < bound,
+            "{demoted} demoted {} s after it went",
+            demotion - off
+        );
+    }
+    // Before B's entry at A can expire: 390 s after its last heartbeat,
+    // at most a heartbeat interval, 15 s, before it went.
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|r| r.src == a && r.t_s >= c_off && r.t_s < b_off + 330.0)
+        .collect();
+    assert_eq!(off.len(), 16, "a text a minute from A for 15.5 minutes");
+    for r in &off {
+        assert_eq!(r.fate, a_no_route, "seed {seed}: text {}", r.tag);
+        let returned = format!("relay 1 (B): returned #{} to relay 0 (A)", r.tag);
+        assert_eq!(
+            r.t_s < b_off,
+            trace.contains(&returned),
+            "seed {seed}: text {} returned by B while C is off and B on",
+            r.tag
+        );
+    }
+    accounted(&sim, &format!("line seed {seed}"));
+}
+
 /// A restarted relay keeps its position, loses its neighbours and boots
 /// again, on the home channel it stored (spec "Channel at boot",
 /// "Implementation notes"), and its neighbours are heard again within its

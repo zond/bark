@@ -890,6 +890,7 @@ impl Scenario {
             dbm,
             dbm_back: None,
             channel_offsets_db: None,
+            deaf: false,
         });
         self
     }
