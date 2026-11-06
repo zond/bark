@@ -275,7 +275,7 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 341 136 B of the 401 408 B slot
+and one codegen unit: the node image is 340 992 B of the 401 408 B slot
 (`docs/flash-2026-11-06.md` measures the options). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
 
@@ -285,7 +285,8 @@ would make its size depend on the checkout's path: a build from a path
 18 characters longer once took 168 B more flash. So Cargo runs rustc
 through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
 `.cargo/config.toml`, the loader's too), which maps the checkout's root
-to `/bark` and Cargo's home to `/cargo`; the build commands above need
+to `/bark`, Cargo's home to `/cargo` and the standard library's source
+to `/rustc/<commit>`, where the toolchain's compiled library has it; the build commands above need
 nothing more, here and in the workflows. A wrapper changed after a
 build does not rebuild by itself: `cargo clean` first.
 
