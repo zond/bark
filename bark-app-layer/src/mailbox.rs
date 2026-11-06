@@ -141,8 +141,13 @@ impl<R: Ring> Mailbox<R> {
             newest: 0,
             read: 0,
         };
-        m.newest = (0..m.slots())
-            .filter_map(|s| m.slot(s).map(|(n, _)| n))
+        // A whole slot counts only in its own place: one that is not, left
+        // by a ring laid out otherwise before, would set the newest number
+        // past slots that are not erased, and the next item written over
+        // one of them would fail its check.
+        let slots = m.slots();
+        m.newest = (0..slots)
+            .filter_map(|s| m.slot(s).map(|(n, _)| n).filter(|&n| (n - 1) % slots == s))
             .max()
             .unwrap_or(0);
         if let Some(s) = m.ring.state() {
