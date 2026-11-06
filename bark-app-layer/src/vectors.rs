@@ -241,7 +241,6 @@ pub fn json() -> String {
         sent: 1_000_500,
         address: f.away,
         since: 5,
-        most: 23,
     };
     let nonce = core::array::from_fn(|i| 0x10 + i as u8);
     let payload = fetch.seal(&f.alice.mailbox, &nonce).unwrap();
@@ -251,23 +250,38 @@ pub fn json() -> String {
             ("sent", format!("{}", fetch.sent)),
             ("address", h(&fetch.address.encode())),
             ("since", format!("{}", fetch.since)),
-            ("most", format!("{}", fetch.most)),
             ("nonce", h(&nonce)),
             ("payload", h(&payload)),
         ],
     ));
 
-    // Her home node sends her item 6, the first text above, in reply.
+    // Her home node sends her item 6, the first text above, the first of
+    // the round.
     let mut out = [0u8; MAX_PAYLOAD];
-    let n = seal::seal_reply(&f.alice.mailbox, fetch.sent, 6, &box_payload, &mut out).unwrap();
+    let n = seal::seal_reply(&f.alice.mailbox, fetch.sent, 1, 6, &box_payload, &mut out).unwrap();
     parts.push(entry(
         "reply",
         &[
             ("round", format!("{}", fetch.sent)),
+            ("place", "1".into()),
             ("number", "6".into()),
-            ("nonce", h(&seal::reply_nonce(fetch.sent, 6))),
+            ("nonce", h(&seal::reply_nonce(fetch.sent, 1))),
             ("item", h(&box_payload)),
             ("payload", h(&out[..n])),
+        ],
+    ));
+
+    // Her next fetch finds nothing new.
+    let round = fetch.sent + 60;
+    parts.push(entry(
+        "nothing_new",
+        &[
+            ("round", format!("{round}")),
+            ("nonce", h(&seal::reply_nonce(round, 0))),
+            (
+                "payload",
+                h(&seal::seal_nothing_new(&f.alice.mailbox, round)),
+            ),
         ],
     ));
 

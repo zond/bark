@@ -140,11 +140,20 @@ impl App for LinkApp<'_> {
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         self.phone_message(payload).or_else(|| {
             let out = crate::mailbox::with(|m| m.next(payload)).flatten()?;
-            log::info!(
-                "mailbox: reply id={:08x} len={} taken",
-                out.msg_id.0,
-                out.len
-            );
+            if out.number == 0 {
+                log::info!(
+                    "mailbox: reply id={:08x} len={} nothing new, taken",
+                    out.msg_id.0,
+                    out.len
+                );
+            } else {
+                log::info!(
+                    "mailbox: reply id={:08x} len={} item {} taken",
+                    out.msg_id.0,
+                    out.len,
+                    out.number
+                );
+            }
             self.replying = Some(out.msg_id);
             Some(Outgoing {
                 dst_pos: out.address.position,

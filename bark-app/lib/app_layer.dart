@@ -24,7 +24,10 @@ const int tagLen = 16;
 const int keyLen = 32;
 const int boxOverhead = 1 + nonceLen + tagLen;
 const int introOverhead = 1 + keyLen + tagLen;
-const int replyOverhead = 1 + tagLen;
+const int replyOverhead = 1 + tagLen + numberLen;
+
+/// The reply that says nothing is new: the format byte and the tag.
+const int nothingNewLen = 1 + tagLen;
 
 /// `sent` counts seconds from 2026-01-01 00:00 UTC.
 final DateTime sentEpoch = DateTime.utc(2026);
@@ -176,15 +179,14 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
 const int numberLen = 3;
 const int maxNumber = (1 << 24) - 1;
 
-/// A fetch: send the items after [since], at most [most], to [address].
+/// A fetch: send every item after [since] to [address].
 class Fetch {
   final int sent;
   final Address address;
   final int since;
-  final int most;
-  const Fetch(this.sent, this.address, this.since, this.most);
+  const Fetch(this.sent, this.address, this.since);
 
-  static const plainLen = 4 + Address.len + numberLen + 1;
+  static const plainLen = 4 + Address.len + numberLen;
   static const len = boxOverhead + plainLen;
 
   Uint8List seal(Sodium s, SecureKey key, Uint8List nonce) =>
@@ -196,7 +198,6 @@ class Fetch {
             ...be(sent, 4),
             ...address.encode(),
             ...be(since, numberLen),
-            most,
           ]),
           nonce: nonce,
           key: key,
@@ -221,55 +222,95 @@ class Fetch {
     return Fetch(
       fromBe(b.sublist(0, 4)),
       Address(Position.decode(a), a.sublist(Position.wireLen)),
-      fromBe(b.sublist(4 + Address.len, 4 + Address.len + numberLen)),
-      b[plainLen - 1],
+      fromBe(b.sublist(4 + Address.len)),
     );
   }
 }
 
-/// A reply's nonce, never sent: the fetch's `sent`, the item's number,
-/// zeros.
-Uint8List replyNonce(int round, int number) => Uint8List.fromList([
+/// The most replies a round has, so the most places tried: every item
+/// of the board's ring (spec "Mailbox").
+const int maxReplies = 256;
+
+/// A reply's nonce, never sent: the fetch's `sent`, the reply's place in
+/// the round (0 for nothing new), zeros.
+Uint8List replyNonce(int round, int place) => Uint8List.fromList([
   ...be(round, 4),
-  ...be(number, numberLen),
+  ...be(place, numberLen),
   ...List.filled(17, 0),
 ]);
 
-Uint8List sealReply(
+Uint8List _sealReply(
   Sodium s,
   SecureKey key,
   int round,
-  int number,
-  List<int> item,
+  int place,
+  List<int> plain,
 ) => Uint8List.fromList([
   formatByte(Form.reply),
   ...s.crypto.secretBox.easy(
-    message: Uint8List.fromList(item),
-    nonce: replyNonce(round, number),
+    message: Uint8List.fromList(plain),
+    nonce: replyNonce(round, place),
     key: key,
   ),
 ]);
 
-/// The item in a reply if it is number [number] of [round], else null.
-Uint8List? openReply(
+/// Item [number] at [place] in [round], as the home node sends it.
+Uint8List sealReply(
   Sodium s,
   SecureKey key,
   int round,
+  int place,
   int number,
-  List<int> payload,
-) {
-  if (formOf(payload) != Form.reply || payload.length < replyOverhead) {
+  List<int> item,
+) => _sealReply(s, key, round, place, [...be(number, numberLen), ...item]);
+
+/// The reply that says the mailbox holds nothing the fetch of [round]
+/// asks for.
+Uint8List sealNothingNew(Sodium s, SecureKey key, int round) =>
+    _sealReply(s, key, round, 0, const []);
+
+/// What a reply says: an item, its number and its place in the round,
+/// or nothing new when [item] is null.
+class Opened {
+  final int number;
+  final int place;
+  final Uint8List? item;
+  const Opened(this.number, this.place, this.item);
+  bool get nothingNew => item == null;
+}
+
+/// A reply to the fetch of [round], or null if it is not one of its.
+Opened? openReply(Sodium s, SecureKey key, int round, List<int> payload) {
+  if (formOf(payload) != Form.reply || payload.length > maxPayload) {
     return null;
   }
-  try {
-    return s.crypto.secretBox.openEasy(
-      cipherText: Uint8List.fromList(payload.sublist(1)),
-      nonce: replyNonce(round, number),
-      key: key,
-    );
-  } on SodiumException {
-    return null;
+  Uint8List? at(int place) {
+    try {
+      return s.crypto.secretBox.openEasy(
+        cipherText: Uint8List.fromList(payload.sublist(1)),
+        nonce: replyNonce(round, place),
+        key: key,
+      );
+    } on SodiumException {
+      return null;
+    }
   }
+
+  if (payload.length == nothingNewLen) {
+    return at(0) == null ? null : const Opened(0, 0, null);
+  }
+  if (payload.length < replyOverhead) return null;
+  for (var place = 1; place <= maxReplies; place++) {
+    final p = at(place);
+    if (p != null) {
+      return Opened(
+        fromBe(p.sublist(0, numberLen)),
+        place,
+        p.sublist(numberLen),
+      );
+    }
+  }
+  return null;
 }
 
 List<int> be(int v, int n) => [

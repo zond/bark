@@ -49,10 +49,6 @@ class Me extends ChangeNotifier {
   /// before may still be on its way.
   static const keptRounds = 2;
 
-  /// The most items a fetch asks for: the node's inbox, so that a reply
-  /// never overruns it (spec "Mailbox").
-  static const fetchMost = 23;
-
   Uint8List get identity => keys.identity;
   String get key => hex(identity);
   List<String> get phrase => phraseOf(keys.seed);
@@ -180,8 +176,14 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Item `n` of the mailbox has arrived.
-  Future<void> gotItem(int n) async {
+  /// Item `n` of the mailbox has arrived, in a round whose first item was
+  /// `first`: the ring held nothing after the fetch's `since` below that,
+  /// and never will.
+  Future<void> gotItem(int n, {required int first}) async {
+    if (first - 1 > since) {
+      since = first - 1;
+      above.removeWhere((a) => a <= since);
+    }
     if (n > since) above.add(n);
     while (above.remove(since + 1)) {
       since++;
