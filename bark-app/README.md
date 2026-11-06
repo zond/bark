@@ -39,6 +39,11 @@ is a prototype for the bench, not the app people will carry.
   sends nothing, and says why, when no node is connected or the
   connected node is the home: a fetch goes from another node to the
   home, and the home's own inbox already holds the mail.
+  When the person's card has changed and has not gone to their
+  contacts, a line says why, "Your card changed: your home node has a
+  new address" or "…: you have no home now", with **Send my card**,
+  which sends it to every contact, one message each; the line then
+  goes. The app sends no card by itself (roadmap D126).
 - **A thread.** The texts sent to and received from one identity, in
   order, and a field at the bottom to write the next. A sent text
   shows as queued, taken by the node, or given back with its wait
@@ -66,8 +71,10 @@ is a prototype for the bench, not the app people will carry.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, whether the app is exempt from battery
   optimisation (next section), your name, the home node (make the
-  connected node your home if it is not, or none; the dialog says and your new card goes to every contact; clear the
-  mailbox key of a node that holds one and is not your home), your 12
+  connected node your home if it is not, or none; the dialog says so,
+  and on **Go ahead** your new card goes to every contact; **Send my
+  card**, as on the first screen; clear the mailbox key of a node that
+  holds one and is not your home), your 12
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
   cleared.
@@ -93,8 +100,9 @@ key, silently, with a line in the log: the node may have been reflashed,
 or the identity restored from its words, and a node that holds that key
 already changes nothing. When a fixed, awake home's position is not
 the one the person has for it, the app takes the new one, which changes
-the card and sends it to every contact: such a node takes a new place
-at boot or when it turns fixed, and the home is the node, not the spot.
+the card: such a node takes a new place at boot or when it turns fixed,
+and the home is the node, not the spot. The app does not send the
+changed card; the person sends it with **Send my card** (Screens).
 A carried or sleepy home keeps the position the person has for it: a
 carried node's position follows its GPS fix every second, and a sleepy
 node's is its anchor's.

@@ -86,17 +86,23 @@ class AppModel extends ChangeNotifier {
     // The home is the node, not the spot: a fixed, awake node's address is
     // its stored place, which moves only at boot or when it turns fixed,
     // and the card and texts to the old one would miss it. A carried
-    // node's address is its live fix, which moves every second, and a card
-    // to every contact on each fix would flood the mesh; a sleepy node's is
-    // its anchor's, which changes as it picks anchors.
+    // node's address is its live fix, which moves every second, and would
+    // change the card as often; a sleepy node's is its anchor's, which
+    // changes as it picks anchors. The changed card waits for the person to
+    // send it.
     final s = session.status;
     if (s == null || s.carried || s.sleepy) return;
-    if (atHome && a.toString() != me.home.toString()) unawaited(_homeMoved(a));
+    if (atHome && a.toString() != me.home.toString()) unawaited(me.setHome(a));
   }
 
-  Future<void> _homeMoved(Address a) async {
-    if (await me.setHome(a)) await messenger.sendCardToAll();
-  }
+  /// The card changed and has not gone to the contacts. Without contacts
+  /// there is no one to send it to.
+  bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
+
+  /// Why the card changed, for the line that offers to send it.
+  String get cardChange => me.home == null
+      ? 'Your card changed: you have no home now'
+      : 'Your card changed: your home node has a new address';
 
   /// Keeps the app running while a node is connected by Bluetooth, so
   /// that it reads the inbox with the screen off. The fake node runs in

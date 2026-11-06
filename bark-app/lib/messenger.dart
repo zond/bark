@@ -138,10 +138,15 @@ class Messenger {
     );
   }
 
+  /// Sends the person's card to every contact. Only the person's word
+  /// sends it, as a card to every contact on each change of the home's
+  /// position flooded the mesh (roadmap D126).
   Future<void> sendCardToAll() async {
+    final t = me.cardTime;
     for (final c in [...contacts.list]) {
       await sendCard(c);
     }
+    await me.setCardSent(t);
   }
 
   /// Asks the home node for every item after this phone's `since`, to be

@@ -301,6 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
         ],
       ),
+      SendCardLine(app, padding: EdgeInsets.zero),
     ];
   }
 
