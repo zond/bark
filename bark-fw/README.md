@@ -43,6 +43,11 @@ listen-before-talk wait, which a line's ends would not. The node logs
 `bench build: deaf to ..` after its `node id=` line. Neither flag is for
 a board that leaves the bench; off, each costs nothing (`size`).
 
+`BARK_OPEN=1` at build time leaves the chip's debug port open, for the
+bench. Without it the image closes the port at its first boot, for good
+(Read-out protection, below), so that no image leaves the bench open by
+mistake; any other value fails the build. `scripts/bench.py` sets it.
+
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
 describes it. A node's place can be set when it is built, from `BARK_LAT`
@@ -364,7 +369,8 @@ build does not rebuild by itself: `cargo clean` first.
    it is harmless.)
 4. Expected: the green LED blinks, 500 ms on and 500 ms off. A serial port
    appears on the host, and once it is opened the log shows a banner
-   with the image, its version and the board's node ID (`id=`), then
+   with the image, its version and the board's node ID (`id=`), its
+   `protection=` line (Read-out protection, below), then
    `radio up in N us`, then `node id=... at ... usb=true`, or
    `console ready: id=...` from a console build.
 
@@ -387,6 +393,34 @@ image lay inside, takes `bark.uf2` once too: an old loader with a new
 firmware would swap the wrong regions. The mailbox's state, key
 included, stays where it was; its ring starts empty on the external
 flash, and the items of the old one, inside, are gone.
+
+## Read-out protection
+
+A probe on the SWD pads reads the whole internal flash, keys and all,
+unless the chip's access port protection is on (roadmap D138;
+`docs/approtect-2026-11-06.md` has the facts and their sources). First
+thing at every boot, the firmware (`src/protect.rs`) reads the chip's
+build code from `FICR.INFO.VARIANT` and does what the build asks:
+
+| Build | Build code D and earlier | Build code F (revision 3) and later |
+|---|---|---|
+| protected, the default | UICR.APPROTECT `Enabled` | UICR.APPROTECT `Enabled`; `APPROTECT.FORCEPROTECT` at every boot |
+| `BARK_OPEN=1` | nothing: erased UICR is open | UICR.APPROTECT `HwDisabled`; `APPROTECT.DISABLE` at every boot |
+
+A UICR value takes effect at the next reset, so after writing one the
+firmware resets the chip at once. A write only clears bits, so `Enabled`
+can never be written back: a board a protected image has run on stays
+closed under any image, and only a probe's erase of the whole chip opens
+it, which also erases the board's bootloader and every key
+(`docs/approtect-2026-11-06.md`, "Recovery"). The log's line after the
+banner, and the `boot:` line, say `protection=on` or `off`, the build
+code and what UICR.APPROTECT holds.
+
+The bench loses only the pads, which it has no probe for: a closed board
+takes UF2s as before, since the board's bootloader runs on the chip and
+writes its flash through the NVMC, which the protection does not touch.
+For the same reason the protection does not keep the keys from someone
+who copies an image of their own to the board's drive.
 
 ## Updates
 
