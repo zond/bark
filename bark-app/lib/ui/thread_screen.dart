@@ -204,6 +204,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   Widget _bubble(BuildContext context, Entry e) {
     final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall!;
     final o = e.sent;
     final mine = o != null;
     return Align(
@@ -231,15 +232,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
                                   '${o.toward == null ? '' : ', ${o.toward!.label}'}'
                             : '${when(e.at)}'
                                   '${e.received!.mailbox ? ', from your mailbox' : ''}',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        style: small,
                       ),
                     ),
                     if (mine ? o.acked : e.received!.acked)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
                         child: Icon(
                           Icons.check,
-                          size: _mark,
+                          size: small.fontSize,
+                          color: scheme.onSurfaceVariant,
                           semanticLabel: 'Acknowledged',
                         ),
                       )
@@ -256,13 +258,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  /// The acknowledgement mark's size: the same on both sides, so sender
-  /// and recipient see one mark for one fact.
-  static const double _mark = 18;
-
-  Widget _acknowledge(Received r) => IconButton(
+  /// A filled button, unlike the plain acknowledged mark, so "tap to
+  /// acknowledge" cannot be mistaken for "acknowledged".
+  Widget _acknowledge(Received r) => IconButton.filled(
     tooltip: 'Acknowledge',
-    icon: const Icon(Icons.check, size: _mark),
+    icon: const Icon(Icons.check),
     visualDensity: VisualDensity.compact,
     onPressed: () async {
       try {
