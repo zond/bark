@@ -166,6 +166,7 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b':' => [0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00],
         b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
+        b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
         _ => return None,
     })
 }
@@ -291,8 +292,8 @@ const TOP: usize = 6;
 const GAP: usize = 8;
 
 /// The most lines the screen takes: the ID and the image, the state's
-/// seven, and the time.
-pub const LINES: usize = 10;
+/// five, and the time.
+pub const LINES: usize = 8;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
@@ -334,9 +335,13 @@ pub fn lines(
     if state.starting {
         put(plain(format_args!("STARTING")), 0);
     }
-    put(row("HEARD", format_args!("{}", state.heard)), 0);
-    put(row("STRONG", format_args!("{}", state.strong)), 0);
-    put(row("BOTH WAYS", format_args!("{}", state.both_ways)), 0);
+    put(
+        row(
+            "KNOWN",
+            format_args!("{}/{}/{}", state.heard, state.strong, state.both_ways),
+        ),
+        0,
+    );
     put(
         match state.battery {
             Battery::Usb => row("POWER", format_args!("USB")),

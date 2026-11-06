@@ -86,9 +86,7 @@ fn a_sleepy_carried_node_on_battery() {
             "BAE6E6CBF4F5    ",
             "NODE         V12",
             "SLEEPY ANCHORED ",
-            "HEARD          5",
-            "STRONG         4",
-            "BOTH WAYS      2",
+            "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
         ]
@@ -109,9 +107,7 @@ fn a_relay_starting_without_a_place() {
             "NODE         V12",
             "RELAY NO PLACE  ",
             "STARTING        ",
-            "HEARD          0",
-            "STRONG         0",
-            "BOTH WAYS      0",
+            "KNOWN      0/0/0",
             "POWER        USB",
             "UP         0 MIN",
         ]
@@ -140,9 +136,7 @@ fn a_fixed_relay_on_usb() {
             "BAE6E6CBF4F5    ",
             "NODE         V12",
             "FIXED RELAY     ",
-            "HEARD         12",
-            "STRONG         9",
-            "BOTH WAYS      3",
+            "KNOWN     12/9/3",
             "POWER        USB",
             "UP        90 MIN",
             "TIME   14:35 +02",
@@ -185,7 +179,8 @@ fn uptime_in_minutes_hours_and_days() {
 /// it is in the font, and the lines stay on the panel.
 #[test]
 fn every_line_fits_and_is_drawable() {
-    // The longest role.
+    // The counts at the neighbour table's size, 64
+    // (`bark_proto::tables::neighbours::NEIGHBOURS`), and the longest role.
     let widest = State {
         starting: true,
         sleepy: true,
@@ -199,6 +194,7 @@ fn every_line_fits_and_is_drawable() {
         sleepy: false,
         ..widest
     };
+    assert_eq!(texts(&widest, 0)[4], "KNOWN   64/64/64");
     for state in [widest, relay, State::default()] {
         for (up, clock) in [0, 119, 47 * 60, u32::MAX].into_iter().zip(CLOCKS) {
             for (t, y) in lines(&FIXED, &state, up, clock).iter().flatten() {
