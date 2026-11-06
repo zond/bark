@@ -111,7 +111,10 @@ relays; every third message it takes is given back with a wait of
 1.58 s. Behind it is one person, the **fake friend**, with an identity
 of their own: they start with two first messages to you in the inbox,
 with their card, and answer each text you send them with a sealed
-"Echo: " of it 5 s later. It runs on while the app is disconnected, as
+"Echo: " of it 5 s later. Their card names a home, `bark-fa4e00000002`,
+and they write from a node of their own away from it,
+`bark-fa4e00000003`, which moves about 110 m north between their
+messages. It runs on while the app is disconnected, as
 a node does.
 
 ## The payload
@@ -245,33 +248,40 @@ choice of where a text goes.
    external power, placed, first rotation running with about 3:15 to go,
    the relays known rising from 0 to 3. The log shows the two inbox
    messages read and confirmed.
-4. Open the conversation: it says not verified. Write a text and send
-   it. It shows as taken by the node; 5 s later "Echo: " and your text
-   appears, and the note goes: the echo was sealed by the fake friend.
+4. Open the conversation: it says not verified, and the top line "Last
+   wrote just now, away from home". Write a text and send it. It shows
+   as taken by the node, "to where they were"; 5 s later "Echo: " and
+   your text appears, and the note goes: the echo was sealed by the
+   fake friend.
 5. Press **Acknowledge** under the echo: it shows "you acknowledged
    it", and Debug lists an `ack` sent.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
    queued for about two seconds, then it is taken.
-7. The QR button, **My card**: set a name. Your identity, a QR code,
+7. Leave the thread open for ten minutes, the delivery TTL, then send
+   a text: the send button asks "Where Fake friend was 10 min ago" or
+   "Their home mailbox". Pick the mailbox: the text says "to their
+   home". Its echo makes where they were fresh again, and the next text
+   goes there without asking.
+8. The QR button, **My card**: set a name. Your identity, a QR code,
    the address and the card as text, `BARK:` and capitals, appear.
-8. Menu, **Settings**, under **Map point**: press **Phone location**
+9. Menu, **Settings**, under **Map point**: press **Phone location**
    (allow location), then **Set**: the address on My card changes.
    **Clear** brings back the fake's own fix.
-9. **Settings**, under **Home node**: **Make this node my home**. The
-   dialog says your card's address stays as it is, since it is already
-   this node's. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
-   mailbox empty". Go back: the bar has the inbox button, **Fetch my
-   mail**. Press it: it says you are connected to your home node, and
-   sends nothing. Disconnect and press it: it says no node is
-   connected.
-10. Connect again. **Settings**, **No home node**, **Go ahead**: the
+10. **Settings**, under **Home node**: **Make this node my home**. The
+    dialog says your card's address stays as it is, since it is already
+    this node's. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
+    mailbox empty". Go back: the bar has the inbox button, **Fetch my
+    mail**. Press it: it says you are connected to your home node, and
+    sends nothing. Disconnect and press it: it says no node is
+    connected.
+11. Connect again. **Settings**, **No home node**, **Go ahead**: the
     node forgets the key, and Home reads "not a home". Make it your home
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-11. Disconnect, close the app, open it again: the conversations, the
+12. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
 
 ### With a node

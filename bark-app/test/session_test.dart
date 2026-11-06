@@ -296,6 +296,38 @@ void main() {
     },
   );
 
+  test('the fake friend: a reply goes where they were, then they choose', () {
+    run((async, p, node) {
+      var f = friendOf(p, node);
+      expect(f.card.home, isTrue);
+      expect(f.card.address.toString(), FakeNode.friendHome.toString());
+      final first = f.wroteFrom.toString();
+      expect(first, isNot(FakeNode.friendHome.toString()));
+      expect(f.towards(start.add(async.elapsed)), [Toward.there]);
+
+      p.messenger.sendText(f, 'hi');
+      async.flushMicrotasks();
+      final o = p.session.outbox.last;
+      expect(o.toward, Toward.there);
+      expect(o.dst.toString(), first);
+      // The echo comes from a node that has moved on.
+      async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
+      f = friendOf(p, node);
+      expect(f.wroteFrom.toString(), isNot(first));
+      expect(f.wroteFrom.toString(), node.friendAway.toString());
+
+      async.elapse(Contact.fresh);
+      f = friendOf(p, node);
+      expect(f.towards(start.add(async.elapsed)), [Toward.there, Toward.home]);
+      p.messenger.sendText(f, 'home', toward: Toward.home);
+      async.flushMicrotasks();
+      expect(
+        p.session.outbox.last.dst.toString(),
+        FakeNode.friendHome.toString(),
+      );
+    });
+  });
+
   test('a contact is heard at its sent, or on arrival if that is ahead', () {
     run((async, p, node) {
       async.elapse(const Duration(hours: 1));
