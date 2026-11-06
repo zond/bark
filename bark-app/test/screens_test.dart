@@ -96,9 +96,9 @@ void main() {
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Acknowledge the echo: its button becomes the two marks. The
-    // friend's acknowledgement of "hello" shows the same on the sent text,
-    // in place of the node's one mark.
+    // Acknowledge the echo: its button becomes one plain check. The
+    // friend's acknowledgement of "hello" shows two marks on the sent
+    // text, in place of the node's one mark.
     Finder inBubble(String text, Finder f) => find.descendant(
       of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
       matching: f,
@@ -120,13 +120,16 @@ void main() {
     await t.tap(inBubble('Echo: hello', button));
     await t.pump();
     await t.pump();
-    for (final text in ['hello', 'Echo: hello']) {
-      expect(inBubble(text, button), findsNothing);
-      expect(inBubble(text, mark), findsOneWidget);
-    }
+    expect(inBubble('Echo: hello', button), findsNothing);
+    expect(inBubble('Echo: hello', mark), findsNothing);
+    expect(inBubble('hello', mark), findsOneWidget);
     expect(inBubble('hello', taken), findsNothing);
-    final withMark = t.getSize(line(inBubble('Echo: hello', mark))).height;
-    expect(withButton, closeTo(withMark, 1));
+    final check = find.byWidgetPredicate(
+      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
+    );
+    expect(inBubble('Echo: hello', check), findsOneWidget);
+    final withCheck = t.getSize(line(inBubble('Echo: hello', check))).height;
+    expect(withButton, closeTo(withCheck, 1));
     await t.pageBack();
     await t.pumpAndSettle();
 

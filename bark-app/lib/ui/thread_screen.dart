@@ -235,15 +235,24 @@ class _ThreadScreenState extends State<ThreadScreen> {
                         small,
                         scheme.onSurfaceVariant,
                       ),
-                    if (mine ? o.acked : e.received!.acked)
+                    if (!mine)
+                      e.received!.acked
+                          // One plain check: the person knows they have
+                          // it, so the two coloured ones would say nothing.
+                          ? _mark(
+                              Icons.check,
+                              'Acknowledged',
+                              small,
+                              scheme.onSurfaceVariant,
+                            )
+                          : _acknowledge(e.received!, small)
+                    else if (o.acked)
                       _mark(
                         Icons.done_all,
                         'Acknowledged',
                         small,
                         scheme.primary,
                       )
-                    else if (!mine)
-                      _acknowledge(e.received!, small)
                     else
                       ..._state(o, small, scheme.onSurfaceVariant),
                   ],
@@ -298,7 +307,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ],
       };
 
-  /// A filled button, unlike the plain acknowledged marks, so "tap to
+  /// A filled button, unlike the plain check it turns into, so "tap to
   /// acknowledge" cannot be mistaken for "acknowledged".
   ///
   /// One line of small text tall, so the line keeps its height with the
