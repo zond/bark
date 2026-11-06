@@ -7,7 +7,7 @@
 //! | 0, boxed | nonce (24), `crypto_box_easy`: tag (16), ciphertext |
 //! | 1, introduction | `crypto_box_seal`: ephemeral key (32), tag (16), ciphertext |
 //! | 2, fetch | nonce (24), `crypto_secretbox_easy`: tag (16), ciphertext |
-//! | 3, from the mailbox | `crypto_secretbox_easy`: tag (16), ciphertext of the item's number (3) and the item, or of nothing; nonce derived, not sent |
+//! | 3, from the mailbox | `crypto_secretbox_easy`: tag (16), ciphertext of the item's number (3), the items still unsent (2) and the item, or of nothing; nonce derived, not sent |
 
 use blake2::digest::consts::U24;
 use blake2::{Blake2b, Digest};
@@ -64,9 +64,11 @@ pub const TAG_LEN: usize = 16;
 pub const BOX_OVERHEAD: usize = 1 + NONCE_LEN + TAG_LEN;
 /// Bytes an introduction adds to its plaintext.
 pub const INTRO_OVERHEAD: usize = 1 + KEY_LEN + TAG_LEN;
-/// Bytes a reply adds to the item it carries: the format byte, the tag
-/// and the item's number.
-pub const REPLY_OVERHEAD: usize = 1 + TAG_LEN + NUMBER_LEN;
+/// Bytes of a reply's count of the items still unsent after its batch.
+pub const REMAINING_LEN: usize = 2;
+/// Bytes a reply adds to the item it carries: the format byte, the tag,
+/// the item's number and the items remaining.
+pub const REPLY_OVERHEAD: usize = 1 + TAG_LEN + NUMBER_LEN + REMAINING_LEN;
 /// Bytes of the reply that says nothing is new.
 pub const NOTHING_NEW_LEN: usize = 1 + TAG_LEN;
 
@@ -210,8 +212,8 @@ pub fn open_intro(me: &SecretKey, payload: &[u8], out: &mut [u8]) -> Result<usiz
     )
 }
 
-/// A fetch (spec "Mailbox"): the requester asks its home node for every
-/// item after `since`, to be sent to `address`.
+/// A fetch (spec "Mailbox"): the requester asks its home node for the
+/// newest batch of the items it has not sent, to be sent to `address`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fetch {
     /// The requester's clock, as a text's `sent`; a fetch is taken only
@@ -219,22 +221,18 @@ pub struct Fetch {
     pub sent: u32,
     /// The requester's current address.
     pub address: Address,
-    /// The number up to which it has every item; 0 asks for all the
-    /// ring holds.
-    pub since: u32,
 }
 
 impl Fetch {
     /// Bytes of its plaintext.
-    pub const PLAIN_LEN: usize = 4 + Address::LEN + NUMBER_LEN;
+    pub const PLAIN_LEN: usize = 4 + Address::LEN;
     /// Bytes of its payload.
     pub const LEN: usize = BOX_OVERHEAD + Self::PLAIN_LEN;
 
     fn plain(&self) -> [u8; Self::PLAIN_LEN] {
         let mut b = [0u8; Self::PLAIN_LEN];
         b[..4].copy_from_slice(&self.sent.to_be_bytes());
-        b[4..4 + Address::LEN].copy_from_slice(&self.address.encode());
-        b[4 + Address::LEN..].copy_from_slice(&self.since.to_be_bytes()[1..]);
+        b[4..].copy_from_slice(&self.address.encode());
         b
     }
 
@@ -245,9 +243,6 @@ impl Fetch {
         key: &[u8; KEY_LEN],
         nonce: &[u8; NONCE_LEN],
     ) -> Result<[u8; Self::LEN], Error> {
-        if self.since > MAX_NUMBER {
-            return Err(Error::TooLong);
-        }
         let mut head = [0u8; 1 + NONCE_LEN];
         head[0] = Form::Fetch.format();
         head[1..].copy_from_slice(nonce);
@@ -271,12 +266,11 @@ impl Fetch {
         Ok(Fetch {
             sent: be(&b[..4]),
             address: Address::decode(&b[4..])?,
-            since: be(&b[4 + Address::LEN..]),
         })
     }
 }
 
-/// Bytes of an item's number in a fetch and in a reply's nonce.
+/// Bytes of an item's number in a reply.
 pub const NUMBER_LEN: usize = 3;
 /// The largest number an item takes.
 pub const MAX_NUMBER: u32 = (1 << (8 * NUMBER_LEN)) - 1;
@@ -285,17 +279,19 @@ fn secretbox(key: &[u8; KEY_LEN]) -> XSalsa20Poly1305 {
     XSalsa20Poly1305::new(key.into())
 }
 
-/// The most replies a round has, so the most places a requester tries.
-/// A ring that holds more, as the board's of 1024 items does
-/// (`bark-image` layout, `external::MAILBOX`), sends the newest this many.
-pub const MAX_REPLIES: u32 = 256;
+/// The most items a fetch is answered with, its batch, so the most places
+/// a requester tries: within the 33 full frames a relay's full bucket
+/// sends with the reply reserve left (spec "Send queue", What sets the
+/// 39), so that a batch passes each relay on its way without waiting for
+/// its bucket to refill (spec "Mailbox", Why a batch with a count).
+pub const MAX_REPLIES: u32 = 32;
 
 /// A reply's nonce: the fetch's `sent` (the round), the reply's place in
 /// it, then zeros. Never sent; unique under the mailbox key as long as
 /// rounds rise, and apart from the phones' random fetch nonces. Place 0
-/// says nothing is new; an item's place is its number less the round's
-/// first number, plus one, so the same item has the same place whenever
-/// it is sent again in its round.
+/// says nothing is new; an item's place is its rank in the order the
+/// round sends them, from 1, so the same item has the same place
+/// whenever it is sent again in its round.
 pub fn reply_nonce(round: u32, place: u32) -> [u8; NONCE_LEN] {
     let mut n = [0u8; NONCE_LEN];
     n[..4].copy_from_slice(&round.to_be_bytes());
@@ -303,28 +299,31 @@ pub fn reply_nonce(round: u32, place: u32) -> [u8; NONCE_LEN] {
     n
 }
 
-/// A reply (form 3) carrying item `number` at `place` in the round, sealed
-/// under the mailbox `key` for the fetch of `round`, into `out`; its
-/// length.
+/// A reply (form 3) carrying item `number` at `place` in the round, with
+/// `remaining` items still unsent after the round's batch, sealed under
+/// the mailbox `key` for the fetch of `round`, into `out`; its length.
 pub fn seal_reply(
     key: &[u8; KEY_LEN],
     round: u32,
     place: u32,
     number: u32,
+    remaining: u16,
     item: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Error> {
     if item.len() > MAX_APP_PAYLOAD || number > MAX_NUMBER || !(1..=MAX_REPLIES).contains(&place) {
         return Err(Error::TooLong);
     }
-    let mut plain = [0u8; NUMBER_LEN + MAX_APP_PAYLOAD];
+    const HEAD: usize = NUMBER_LEN + REMAINING_LEN;
+    let mut plain = [0u8; HEAD + MAX_APP_PAYLOAD];
     plain[..NUMBER_LEN].copy_from_slice(&number.to_be_bytes()[1..]);
-    plain[NUMBER_LEN..NUMBER_LEN + item.len()].copy_from_slice(item);
+    plain[NUMBER_LEN..HEAD].copy_from_slice(&remaining.to_be_bytes());
+    plain[HEAD..HEAD + item.len()].copy_from_slice(item);
     seal_into(
         &secretbox(key),
         &reply_nonce(round, place),
         &[Form::Reply.format()],
-        &plain[..NUMBER_LEN + item.len()],
+        &plain[..HEAD + item.len()],
         out,
     )
 }
@@ -351,14 +350,15 @@ pub enum Opened {
     Item {
         /// The item's number in the ring.
         number: u32,
-        /// Its place in the round: the round's first item is
-        /// `number - place + 1`, and the ring held none after the fetch's
-        /// `since` below it.
+        /// Its place in the round.
         place: u32,
+        /// Items still unsent after the round's batch, when the fetch was
+        /// taken.
+        remaining: u16,
         /// Its length.
         len: usize,
     },
-    /// The mailbox holds nothing the fetch asked for.
+    /// The mailbox holds no item it has not sent, so none remains.
     NothingNew,
 }
 
@@ -396,10 +396,12 @@ pub fn open_reply(
         )
         .is_ok()
         {
-            out[..len].copy_from_slice(&plain[NUMBER_LEN..NUMBER_LEN + len]);
+            const HEAD: usize = NUMBER_LEN + REMAINING_LEN;
+            out[..len].copy_from_slice(&plain[HEAD..HEAD + len]);
             return Ok(Opened::Item {
                 number: be(&plain[..NUMBER_LEN]),
                 place,
+                remaining: u16::from_be_bytes([plain[NUMBER_LEN], plain[NUMBER_LEN + 1]]),
                 len,
             });
         }

@@ -97,11 +97,12 @@ pub fn open() {
     let t0 = Instant::now();
     let m = Mailbox::new(FlashRing::open(Ring, &Mapped(MAILBOX_STATE)));
     log::info!(
-        "mailbox: home={} oldest={} newest={} unread={}, {} slots read in {} ms",
+        "mailbox: home={} oldest={} newest={} unread={} unsent={}, {} slots read in {} ms",
         m.is_home(),
         m.oldest(),
         m.newest(),
         m.unread_count(),
+        m.unsent(),
         Ring.pages() * SLOTS_PER_PAGE,
         t0.elapsed().as_millis()
     );
