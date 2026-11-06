@@ -3097,10 +3097,10 @@ a version or form it does not know.
 | 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 41 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 49 |
 | 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 41 |
-| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key; the nonce is not sent | 17 |
+| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3) and the item; the nonce is not sent | 20 |
 
 Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-227 − 17 = 210 bytes, so that its mailbox can send any payload on as a
+227 − 20 = 207 bytes, so that its mailbox can send any payload on as a
 reply. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
@@ -3115,28 +3115,61 @@ dropped. Payloads are not padded.
 |---|---|---|
 | flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two, byte by byte; the others zero |
 | sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC, on each phone later than any it sent before |
-| address | 0 or 13 | the address to answer to |
+| address | 0 or 13 | the address of the node the sender writes from |
 
 | record | bytes | |
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 50 to 82 | type 4, the card's length, then the card |
+| card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
-the one on the sender's card, included until the contact has answered a
-message that carried it and whenever it changes. The app sends nothing
+that of the node the sender writes from, the one their phone is
+connected to or was last, included until the contact has answered a
+message that carried it and whenever it changes; a message without one
+says it has not changed. The app sends nothing
 by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
 
-*The card*, what people exchange, shown as a QR code: version (1), the
-identity (32), an address (13), the address's time as `sent` (4) and a
-display name in UTF-8 (0 to 32), 50 to 82 bytes; as text, `BARK:` and
-the bytes in base32 (RFC 4648, its base32 alphabet) without padding. Its address is the
-person's home node's when they have one, else their node's current one.
-A card with a later time replaces a contact's address; the person sends
+*The card*, what people exchange, shown as a QR code: version (1), 2;
+flags (1), bit 0 set when a home address follows, the others zero; the
+identity (32); when the home was set or cleared, as `sent` (4); the
+home node's address (0 or 13); and a display name in UTF-8 (0 to 32):
+38 to 70 bytes without a home, 51 to 83 with one. As text, `BARK:` and
+the bytes in base32 (RFC 4648, its base32 alphabet) without padding. A
+card with a later time replaces a contact's card; the person sends
 their card to their contacts when it changes.
+
+*Why only a home.* A home's [mailbox](#mailbox) keeps a person's mail
+until they fetch it. Any other node's address is only where they were
+when the card was made, and where they write from reaches the other
+side in every message's header. A person without a home can be written
+to once they have written.
+
+*Why the time without a home.* Clearing the home changes the card too,
+and a card that drops it must replace an older one only if it is later.
+
+**Where a text goes.** The app keeps a contact's home, from their card,
+apart from the address their messages were last written from, with the
+age of the newest message from them, counted from its `sent`, or from
+its arrival when `sent` is ahead of the phone's clock. While that age
+is under a minute, a text goes to where they write from; past
+it, with a home, the person chooses between where they were and the
+home's mailbox, for each text, and without one it goes to where they
+were. With a home and nothing written from, it goes to the home; with
+neither, the contact cannot be written to yet (roadmap D132).
+
+*Why where they write from.* A reply goes straight to where the person
+is, rather than to their home's mailbox to wait for a fetch, at
+13 bytes on a message after a change.
+
+*Why a minute.* In a minute a person on foot, at a brisk 1.5 m/s, moves
+about 90 m, well within the ≈750 m a relay hears a handheld in the
+street ([physical layer](#physical-layer)); a person driving has left
+that reach by then, so a longer wait would not make the guess better.
+Past it the app cannot tell whether they are still there, and the
+person may know.
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it: a DATA with hop
@@ -3172,23 +3205,46 @@ but a fetch in a ring of slots in flash, numbered from 1, and erases the
 oldest page when the ring is full. Its phone link's inbox reads from it.
 
 **The fetch** is a form 2 payload to the home address whose plaintext
-is `sent` (4), the requester's current address (13), `since` (3), the
-number up to which it has every item, and `most` (1), the most items to
-send. The node takes it only if it opens under the mailbox key and its
-`sent` is later than the last fetch's it took, which it keeps. `since`
-0 asks for the newest `most`.
+is `sent` (4), the requester's current address (13) and `since` (3),
+the number up to which it has every item. The node takes it only if it
+opens under the mailbox key and its `sent` is later than the last
+fetch's it took, which it keeps. `since` 0 asks for everything the ring
+holds.
 
-**The reply.** The node sends the items after `since`, oldest first, at
-most `most`, to the fetch's address, then each new item as it arrives,
-until `since` + `most` is reached or the next fetch is taken. Each goes
-as a form 3 payload, the item sealed under the mailbox key with the
-nonce: the fetch's `sent` (4), the item's number (3), 17 zero bytes. The
-requester tries the numbers `since` + 1 to `since` + `most` and so
-learns each item's number.
+**The answer.** The node answers a fetch once, to the fetch's address:
+one reply for each item it holds after `since`, oldest first, one at a
+time through its send slot, or, when it holds none, one reply that says
+nothing is new. An item that arrives after the fetch waits for the next
+one. Each reply is a form 3 payload sealed under the mailbox key with
+the nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes.
+An item's place is its number less the first number of the round, plus
+one, and its plaintext is its number (3) and the item; the reply that
+says nothing is new has place 0 and an empty plaintext, 17 bytes. A
+round has at most 256 replies, every item of the board's ring (16 pages
+of 16 slots), so the requester tries places 1 to 256 on a reply that
+carries an item and learns its number from inside; a ring that held
+more would send its newest 256.
+
+*Why nothing new is an answer.* A person pressed a button and waits:
+without it they cannot tell "no mail" from a fetch or a reply lost on
+the way. It costs one short frame, and the node keeps nothing open, so
+mail moves only when the person asks (roadmap D128).
+
+*Why no cap.* A cap only spreads the same replies over more fetches,
+each with its frame across the city, and makes people fetch early. The
+home node sends one reply at a time through its send slot, and the
+network's back-pressure paces a burst: a reply the requester's node has
+no room for is refused and waits at its sender
+([phone link](#phone-link), Receiving), and one the home node's
+neighbours refuse is given back to the mailbox and goes again.
+
+*Why the number inside.* A requester restored from its words, or away
+longer than the ring lasts, does not know which numbers the ring holds;
+places start at 1 in every round, so it finds each reply in at most 256
+tries, and the number, which only it learns, sets its `since`.
 
 **When to fetch.** Only when the person asks, so that a mailbox costs
-air only when a person wants it (roadmap D128). The app asks for 23 at
-most, the inbox's size ([phone link](#phone-link)).
+air only when a person wants it (roadmap D128).
 
 The mailbox is an application on the node, beside the phone link: it
 uses the core's application interface (`core-interface.md`, Application) and

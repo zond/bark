@@ -22,6 +22,15 @@ class Messenger {
 
   Messenger(this.sodium, this.me, this.contacts, this.session, this.now) {
     session.reader = receive;
+    session.homeKey = (n) =>
+        isHome(n.id) ? me.keys.mailbox.extractBytes() : null;
+  }
+
+  /// Whether the node of `id` is the person's home: a home is known by its
+  /// node ID, as its position may be corrected.
+  bool isHome(List<int> id) {
+    final h = me.home;
+    return h != null && hex(h.id) == hex(id);
   }
 
   /// `crypto_box_beforenm` of each contact, made once; keyed by both
@@ -37,46 +46,55 @@ class Messenger {
   );
 
   /// Seals `records` to `c`: boxed once `c` is verified, else a first
-  /// message with the person's card. Returns the payload and its `sent`.
+  /// message with the person's card. The header names the node the
+  /// person writes from, the one connected or the last, until `c` has
+  /// answered a message that named it. Returns the payload and its `sent`.
   Future<(Uint8List, int)> _seal(Contact c, List<Record> records) async {
     final sent = await me.nextSent();
     final card = me.card;
-    final mine = card?.address.toString();
+    final here = me.nodeAddress;
+    if (!c.verified && card.home == null && here == null) {
+      throw const BadPayload('no address to answer to yet');
+    }
+    final withAddress = here != null && c.knowsMine != here.toString();
+    final header = Header(
+      greater(me.identity, c.card.identity),
+      sent,
+      withAddress ? here : null,
+    );
+    if (withAddress) {
+      await contacts.put(c.copyWith(sentMine: here.toString()));
+    }
     if (!c.verified) {
-      if (card == null) throw const BadPayload('no address to answer to yet');
-      final plain = writePlain(
-        Header(greater(me.identity, c.card.identity), sent),
-        [CardRecord(card.encode()), ...records],
-      );
+      final plain = writePlain(header, [CardRecord(card.encode()), ...records]);
       return (sealIntro(sodium, c.card.identity, plain), sent);
     }
-    final withAddress = mine != null && c.knowsMine != mine;
-    final plain = writePlain(
-      Header(
-        greater(me.identity, c.card.identity),
-        sent,
-        withAddress ? card!.address : null,
-      ),
-      records,
-    );
-    if (withAddress) await contacts.put(c.copyWith(sentMine: mine));
     return (
-      sealBox(_pair(c.card.identity), sodium.randombytes.buf(nonceLen), plain),
+      sealBox(
+        _pair(c.card.identity),
+        sodium.randombytes.buf(nonceLen),
+        writePlain(header, records),
+      ),
       sent,
     );
   }
 
-  Future<void> sendText(Contact c, String text) async {
+  /// Sends a text to `c`, to the address `toward` names, by default the
+  /// one the person need not choose.
+  Future<void> sendText(Contact c, String text, {Toward? toward}) async {
+    final t = toward ?? c.unasked(now());
+    if (t == null) throw BadPayload('${c.name} has no address yet');
     final (p, sent) = await _seal(c, [TextRecord(text)]);
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.text,
         to: c.key,
         sent: sent,
         body: text,
+        toward: t,
       ),
     );
   }
@@ -85,34 +103,37 @@ class Messenger {
   Future<void> acknowledge(Received r) async {
     final c = contacts.byKey(r.from);
     final named = r.sent;
-    if (c == null || named == null || r.acked) return;
+    final t = c?.unasked(now());
+    if (c == null || t == null || named == null || r.acked) return;
     final (p, sent) = await _seal(c, [AckRecord(named)]);
     r.acked = true;
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.ack,
         to: c.key,
         sent: sent,
+        toward: t,
       ),
     );
   }
 
   /// Sends the person's card to `c`.
   Future<void> sendCard(Contact c) async {
-    final card = me.card;
-    if (card == null) return;
-    final (p, sent) = await _seal(c, [CardRecord(card.encode())]);
+    final t = c.unasked(now());
+    if (t == null) return;
+    final (p, sent) = await _seal(c, [CardRecord(me.card.encode())]);
     await session.queue(
       Outgoing(
-        c.address,
+        c.addressOf(t),
         p,
         at: now(),
         kind: OutKind.card,
         to: c.key,
         sent: sent,
+        toward: t,
       ),
     );
   }
@@ -123,13 +144,13 @@ class Messenger {
     }
   }
 
-  /// Asks the home node for what it holds after this phone's `since`,
-  /// to be sent to `here`.
+  /// Asks the home node for every item after this phone's `since`, to be
+  /// sent to `here`.
   Future<void> fetch(Address here) async {
     final home = me.home;
     if (home == null) return;
     final sent = await me.nextSent();
-    final f = Fetch(sent, here, me.since, Me.fetchMost);
+    final f = Fetch(sent, here, me.since);
     final p = f.seal(sodium, me.keys.mailbox, sodium.randombytes.buf(nonceLen));
     await me.fetched(sent);
     await session.queue(
@@ -181,19 +202,20 @@ class Messenger {
 
   Future<bool> _reply(InboxMessage m, List<int> p) async {
     for (final round in me.rounds) {
-      for (var n = me.since + 1; n <= me.since + Me.fetchMost; n++) {
-        final item = openReply(sodium, me.keys.mailbox, round, n, p);
-        if (item == null) continue;
-        await me.gotItem(n);
-        // An item that opens for nobody here is still one the mailbox
-        // has delivered: it is kept as received.
-        if (!await _open(m, item, mailbox: true)) {
-          await session.addReceived(
-            Received(m.msgId, item, now(), mailbox: true),
-          );
-        }
-        return true;
+      final o = openReply(sodium, me.keys.mailbox, round, p);
+      if (o == null) continue;
+      await session.fetchAnswered(round, nothingNew: o.nothingNew);
+      final item = o.item;
+      if (item == null) return true;
+      await me.gotItem(o.number, first: o.number - o.place + 1);
+      // An item that opens for nobody here is still one the mailbox has
+      // delivered: it is kept as received.
+      if (!await _open(m, item, mailbox: true)) {
+        await session.addReceived(
+          Received(m.msgId, item, now(), mailbox: true),
+        );
       }
+      return true;
     }
     return false;
   }
@@ -215,14 +237,11 @@ class Messenger {
     // A message of the person's own, sent back to them.
     if (h.greater != greater(them, me.identity)) return false;
     if (c != null) {
-      var u = c.copyWith(verified: true, knowsMine: c.sentMine);
-      final a = h.address;
-      if (a != null) {
-        u = u.copyWith(
-          card: PersonCard(u.card.identity, a, u.card.time, u.card.name),
-        );
-      }
-      await contacts.put(u);
+      await contacts.put(
+        c
+            .copyWith(verified: true, knowsMine: c.sentMine)
+            .heard(h.sent, h.address, now()),
+      );
     }
     await _records(m, hex(them), h, rs, mailbox);
     return true;
@@ -244,8 +263,9 @@ class Messenger {
     // naming it may be anyone's.
     if (known != null && known.verified) return true;
     await contacts.put(
-      known?.copyWith(card: card) ??
-          Contact(card, card.name.isEmpty ? 'Unnamed' : card.name),
+      (known?.copyWith(card: card) ??
+              Contact(card, card.name.isEmpty ? 'Unnamed' : card.name))
+          .heard(h.sent, h.address, now()),
     );
     await _records(m, card.key, h, rs.sublist(1), mailbox);
     return true;

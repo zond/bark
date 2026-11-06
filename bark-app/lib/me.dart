@@ -23,13 +23,14 @@ class Me extends ChangeNotifier {
   /// The name on the person's card.
   String name = '';
 
-  /// The node the person set as home, whose address their card carries.
+  /// The node the person set as home, whose address their card carries;
+  /// without one the card carries no address.
   Address? home;
 
   /// The address of the node the phone is connected to, as last read.
   Address? nodeAddress;
 
-  /// When the card's address became the person's, as `sent`.
+  /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
   /// The last `sent` this phone gave a message.
@@ -49,47 +50,53 @@ class Me extends ChangeNotifier {
   /// before may still be on its way.
   static const keptRounds = 2;
 
-  /// The most items a fetch asks for: the node's inbox, so that a reply
-  /// never overruns it (spec "Mailbox").
-  static const fetchMost = 23;
-
   Uint8List get identity => keys.identity;
   String get key => hex(identity);
   List<String> get phrase => phraseOf(keys.seed);
 
-  /// Where others reach the person: their home, or their node now.
-  Address? get cardAddress => home ?? nodeAddress;
+  PersonCard get card => PersonCard(identity, home, cardTime, name);
 
-  PersonCard? get card {
-    final a = cardAddress;
-    return a == null ? null : PersonCard(identity, a, cardTime, name);
-  }
+  /// The version of `me.json`'s format.
+  static const version = 1;
 
   Future<void> load() async {
-    final j = await store.load();
-    if (j == null) {
+    final apply = await store.load(version, (j) {
+      final keys = Keys.fromSeed(sodium, parseHex(j['seed'] as String)!);
+      final name = j['name'] as String;
+      final home = _address(j['home']);
+      final nodeAddress = _address(j['nodeAddress']);
+      final cardTime = j['cardTime'] as int;
+      final lastSent = j['lastSent'] as int;
+      final backedUp = j['backedUp'] as bool;
+      final since = j['since'] as int;
+      final above = (j['above'] as List).cast<int>().toList();
+      final rounds = (j['rounds'] as List).cast<int>().toList();
+      return () {
+        this.keys = keys;
+        this.name = name;
+        this.home = home;
+        this.nodeAddress = nodeAddress;
+        this.cardTime = cardTime;
+        this.lastSent = lastSent;
+        this.backedUp = backedUp;
+        this.since = since;
+        this.above.addAll(above);
+        this.rounds.addAll(rounds);
+      };
+    });
+    if (apply == null) {
       keys = Keys.fromSeed(sodium, sodium.randombytes.buf(seedLen));
       await _save();
-      notifyListeners();
-      return;
+    } else {
+      apply();
     }
-    keys = Keys.fromSeed(sodium, parseHex(j['seed'] as String)!);
-    name = j['name'] as String;
-    home = _address(j['home']);
-    nodeAddress = _address(j['nodeAddress']);
-    cardTime = j['cardTime'] as int;
-    lastSent = j['lastSent'] as int;
-    backedUp = j['backedUp'] as bool;
-    since = j['since'] as int;
-    above.addAll((j['above'] as List).cast<int>());
-    rounds.addAll((j['rounds'] as List).cast<int>());
     notifyListeners();
   }
 
   static Address? _address(Object? s) =>
       s == null ? null : Address.parse(s as String);
 
-  Future<void> _save() => store.save({
+  Future<void> _save() => store.save(version, {
     'seed': hex(keys.seed),
     'name': name,
     'home': home?.toString(),
@@ -135,26 +142,20 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Sets or clears the home node; true if the card's address changed.
+  /// Sets or clears the home node; true if the card changed.
   Future<bool> setHome(Address? a) async {
-    final before = cardAddress?.toString();
+    final changed = a?.toString() != home?.toString();
     home = a;
-    return _addressChanged(before);
-  }
-
-  /// The connected node's address; true if the card's address changed.
-  Future<bool> setNodeAddress(Address a) async {
-    if (a.toString() == nodeAddress?.toString()) return false;
-    final before = cardAddress?.toString();
-    nodeAddress = a;
-    return _addressChanged(before);
-  }
-
-  Future<bool> _addressChanged(String? before) async {
-    final changed = cardAddress?.toString() != before;
     if (changed) cardTime = sentOf(now());
     await _changed();
     return changed;
+  }
+
+  /// The connected node's address: where the person writes from.
+  Future<void> setNodeAddress(Address a) async {
+    if (a.toString() == nodeAddress?.toString()) return;
+    nodeAddress = a;
+    await _changed();
   }
 
   /// A fetch of round `round` was sent.
@@ -164,8 +165,14 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Item `n` of the mailbox has arrived.
-  Future<void> gotItem(int n) async {
+  /// Item `n` of the mailbox has arrived, in a round whose first item was
+  /// `first`: the ring held nothing after the fetch's `since` below that,
+  /// and never will.
+  Future<void> gotItem(int n, {required int first}) async {
+    if (first - 1 > since) {
+      since = first - 1;
+      above.removeWhere((a) => a <= since);
+    }
     if (n > since) above.add(n);
     while (above.remove(since + 1)) {
       since++;

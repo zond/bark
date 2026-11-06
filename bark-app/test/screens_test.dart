@@ -1,7 +1,8 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged; the card, the backup words, adding a contact
-// and the debug screen.
+// from a pasted or a scanned card, and the debug screen; the fetch button,
+// on the first screen and in a thread, and why it sends nothing.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -12,6 +13,9 @@ import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -99,11 +103,14 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
-    final mine = app.me.card!;
-    expect(
-      mine.address.toString(),
-      Address(FakeNode.gps, FakeNode.id).toString(),
+    expect(find.textContaining('only after you write to them'), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text('Scan their card'),
+      100,
+      scrollable: find.byType(Scrollable).first,
     );
+    final mine = app.me.card;
+    expect(mine.home, isNull);
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
@@ -162,6 +169,236 @@ void main() {
     expect(app.contacts.list.single.verified, isFalse);
 
     await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a contact from a scanned card', (t) async {
+    final app = await model(t);
+    final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
+    // What My card and Add contact open once the camera has read a card.
+    await t.pumpWidget(MaterialApp(home: AddContactScreen(app, card: card)));
+    expect(find.text(card.toText()), findsOneWidget);
+    expect(find.text('Olena'), findsOneWidget);
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    expect(app.contacts.list.single.key, card.key);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a stale address and a home: the send button asks where', (
+    t,
+  ) async {
+    final app = await model(t);
+    final home = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final there = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final an = DateTime.now().subtract(const Duration(hours: 1));
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), home, 1, 'Olena'),
+      'Olena',
+      verified: true,
+    ).heard(sentOf(an), there, an);
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    expect(find.text('Last wrote 1 h ago, away from home'), findsOneWidget);
+
+    Future<void> send(String words, String choice) async {
+      await t.enterText(find.byType(TextField), words);
+      await t.tap(find.byTooltip('Send'));
+      await t.pumpAndSettle();
+      expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
+      expect(find.text('Their home mailbox'), findsOneWidget);
+      await t.tap(find.text(choice));
+      await t.pumpAndSettle();
+    }
+
+    await send('to the mailbox', 'Their home mailbox');
+    var o = app.session.outbox.last;
+    expect(o.body, 'to the mailbox');
+    expect(o.dst.toString(), home.toString());
+    expect(o.toward, Toward.home);
+    expect(find.textContaining('to their home'), findsOneWidget);
+
+    // Per text: the next asks again.
+    await send('to where she was', 'Where Olena was 1 h ago');
+    o = app.session.outbox.last;
+    expect(o.body, 'to where she was');
+    expect(o.dst.toString(), there.toString());
+    expect(o.toward, Toward.there);
+    expect(find.textContaining('to where they were'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('the fetch button: with a home only, and why nothing is sent', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    expect(find.byTooltip('Fetch my mail'), findsNothing);
+
+    Future<void> fetch(String told) async {
+      await t.tap(find.byTooltip('Fetch my mail'));
+      await t.pump();
+      await t.pump();
+      expect(find.textContaining(told), findsOneWidget);
+      // In, past its four seconds, and out.
+      await t.pumpAndSettle();
+      await t.pump(const Duration(seconds: 5));
+      await t.pumpAndSettle();
+    }
+
+    // A home elsewhere, and no node.
+    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
+    await app.me.setHome(away);
+    await t.pump();
+    await fetch('Not connected to a node: a fetch is sent from another node');
+    expect(app.session.outbox, isEmpty);
+
+    // Another node: the fetch goes to the home.
+    await app.connectFake();
+    await t.pump();
+    await t.tap(find.byTooltip('Fetch my mail'));
+    await t.pump();
+    await t.pump();
+    expect(find.text('Fetching your mail'), findsOneWidget);
+    final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+    expect(f.single.dst.toString(), away.toString());
+
+    // It waits for the home's answer, which brings the one item there.
+    final waiting = find.byTooltip(
+      RegExp('^Waiting for your home node to answer'),
+    );
+    expect(waiting, findsOneWidget);
+    await t.pumpAndSettle();
+    await t.pump(FakeNode.fetchAnswerAfter);
+    await t.pumpAndSettle();
+    expect(f.single.acked, isTrue);
+    expect(find.byTooltip('Fetch my mail'), findsOneWidget);
+    expect(find.textContaining('Left at your home node'), findsOneWidget);
+
+    // The same button in a thread; now nothing is new, and it says so.
+    await t.tap(find.text('Fake friend'));
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Fetch my mail'));
+    await t.pump();
+    expect(f.length, 2);
+    expect(waiting, findsOneWidget);
+    await t.pumpAndSettle();
+    await t.pump(FakeNode.fetchAnswerAfter);
+    await t.pump();
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsOneWidget);
+    expect(find.byTooltip('Fetch my mail'), findsOneWidget);
+    await t.pumpAndSettle();
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
+    await t.pageBack();
+    await t.pumpAndSettle();
+
+    // The home itself: its mail is in its inbox, nothing is sent.
+    await app.makeHome(app.session.address!);
+    await t.pump();
+    final before = app.session.outbox.length;
+    await fetch('Connected to your home node');
+    expect(app.session.outbox.length, before);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the home dialog says the new card goes to the contacts', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    await app.connectFake();
+    await t.pump();
+    await t.tap(find.textContaining('Connected to'));
+    await t.pumpAndSettle();
+
+    Future<void> press(String button, String told) async {
+      await t.scrollUntilVisible(
+        find.text(button),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.tap(find.text(button));
+      await t.pumpAndSettle();
+      expect(find.textContaining(told), findsOneWidget);
+      await t.tap(find.text('Go ahead'));
+      await t.pumpAndSettle();
+    }
+
+    // Setting and clearing the home both change the card.
+    await press('Make this node my home', 'goes to your contact.');
+    expect(app.atHome, isTrue);
+    await press('No home node', 'goes to your contact.');
+    expect(app.me.home, isNull);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the fetch button waits until a timeout or a give-back', (
+    t,
+  ) async {
+    var clock = DateTime.utc(2026, 11, 6);
+    final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, () => clock),
+      session: Session(store: MemoryStore(), now: () => clock),
+      contacts: Contacts(MemoryStore()),
+      now: () => clock,
+    );
+    await t.runAsync(app.load);
+    // A home whose answers never come back: the fake holds no key.
+    app.fakeNode = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
+    await t.pumpWidget(BarkApp(app));
+    await app.me.setHome(
+      Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+    );
+    await app.connectFake();
+    await t.pump();
+    final idle = find.byTooltip('Fetch my mail');
+    final waiting = find.byTooltip(
+      RegExp('^Waiting for your home node to answer'),
+    );
+
+    // Taken, and never answered: the wait ends at its bound.
+    await t.tap(idle);
+    await t.pump();
+    await t.pump(const Duration(seconds: 1));
+    expect(waiting, findsOneWidget);
+    expect(find.byTooltip(RegExp(r'31:5\d at most$')), findsOneWidget);
+    clock = clock.add(Session.fetchAnswerWait);
+    await t.pump(const Duration(seconds: 1));
+    expect(idle, findsOneWidget);
+
+    // The fake gives every third message it takes back.
+    await t.tap(idle);
+    await t.pump();
+    clock = clock.add(Session.fetchAnswerWait);
+    await t.pump(const Duration(seconds: 1));
+    await t.tap(idle);
+    await t.pump();
+    expect(waiting, findsOneWidget);
+    await t.pump(FakeNode.handOver);
+    await t.pump();
+    final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+    expect(fetches.last.state, OutState.givenBack);
+    expect(idle, findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
     app.dispose();
   });
 }

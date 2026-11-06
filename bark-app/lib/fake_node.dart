@@ -2,9 +2,13 @@
 // app can be tried on a phone with no board. Its network is invented:
 // it hears relays, gives some messages back, and behind it is one
 // person, the fake friend, who writes first and echoes every text sent
-// to them, sealed as a real phone would.
+// to them, sealed as a real phone would. The fake friend has a home and
+// writes from a node away from it, which moves between their messages.
+// Somewhere away is the person's home node, whose mailbox answers a
+// fetch as the spec's "Mailbox" says.
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:sodium/sodium.dart';
@@ -21,15 +25,43 @@ class FakeNode implements NodeLink {
   /// The identity of the app it serves, whom the fake friend writes to.
   final Uint8List app;
 
+  /// The mailbox key of the person's home away, if they have one.
+  final SecureKey? mailbox;
+
+  /// What the home away holds, item n at n − 1: one message the fake
+  /// friend left there.
+  late final List<Uint8List> homeRing = [
+    _intro('Left at your home node while you were away.').payload,
+  ];
+
+  /// How long after taking a fetch its answer arrives.
+  static const fetchAnswerAfter = Duration(seconds: 5);
+
   /// The fake friend's keys, the same at every start.
   late final Keys friend = Keys.fromSeed(
     sodium,
     List.generate(seedLen, (i) => 0xa0 + i),
   );
 
-  /// The fake friend's card: their address is the fake node's.
-  PersonCard get friendCard =>
-      PersonCard(friend.identity, _own, 0, 'Fake friend');
+  /// The fake friend's card, with their home.
+  late final PersonCard friendCard = PersonCard(
+    friend.identity,
+    friendHome,
+    0,
+    'Fake friend',
+  );
+
+  /// The fake friend's home node, `bark-fa4e00000002`.
+  static final friendHome = Address(Position.fromDegrees(50.47, 30.50), [
+    0xfa, 0x4e, 0, 0, 0, 2, //
+  ]);
+
+  /// The node the fake friend carries, `bark-fa4e00000003`, a block
+  /// further north, about 110 m, at each of their messages.
+  Address get friendAway => Address(
+    Position.fromDegrees(50.40 + 0.001 * _friendWrote, 30.60),
+    [0xfa, 0x4e, 0, 0, 0, 3],
+  );
 
   /// `bark-fa4e00000001`.
   static final id = Uint8List.fromList([0xfa, 0x4e, 0, 0, 0, 1]);
@@ -70,10 +102,20 @@ class FakeNode implements NodeLink {
   /// offset; the fake has no GPS time.
   (int, DateTime)? _time;
   int _offsetMin = 0;
+
+  /// The mailbox key it was given, kept across connections as in flash.
+  Uint8List? homeKey;
+
+  /// How often a write changed the key; the same key again changes
+  /// nothing, as on the node.
+  int homeKeyChanges = 0;
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
+
+  /// The fake friend's last `sent`, and how many messages they wrote.
   int _friendSent = 0;
+  int _friendWrote = 0;
   (int, DateTime)? _givenBack;
   int _writes = 0;
   int _taken = 0;
@@ -83,8 +125,12 @@ class FakeNode implements NodeLink {
   var _closed = Completer<void>();
   final List<Timer> _timers = [];
 
-  FakeNode({required this.now, required this.sodium, required List<int> app})
-    : app = Uint8List.fromList(app) {
+  FakeNode({
+    required this.now,
+    required this.sodium,
+    required List<int> app,
+    this.mailbox,
+  }) : app = Uint8List.fromList(app) {
     _boot = now();
     final step = firstRotation ~/ (relaysHeard + 1);
     for (var i = 1; i <= relaysHeard; i++) {
@@ -102,7 +148,14 @@ class FakeNode implements NodeLink {
     secretKey: friend.pair.secretKey,
   );
 
-  Header _header() => Header(greater(friend.identity, app), ++_friendSent);
+  /// A header of the fake friend's next message: their clock, as a phone's
+  /// `sent`, and the node they write from, which has moved since the
+  /// last, so it is always named.
+  Header _header() {
+    _friendSent = max(sentOf(now()), _friendSent + 1);
+    _friendWrote++;
+    return Header(greater(friend.identity, app), _friendSent, friendAway);
+  }
 
   InboxMessage _message(Uint8List p) => InboxMessage(msgId(_own, p), p);
 
@@ -132,6 +185,30 @@ class FakeNode implements NodeLink {
     } on BadPayload {
       return null;
     }
+  }
+
+  /// The home away's answer to a fetch, as its mailbox gives it: every
+  /// item after `since`, or one reply that says nothing is new.
+  void _answerFetch(Uint8List payload) {
+    final key = mailbox;
+    if (key == null || formOf(payload) != Form.fetch) return;
+    final Fetch f;
+    try {
+      f = Fetch.open(sodium, key, payload);
+    } on BadPayload {
+      return;
+    }
+    final first = f.since + 1;
+    final replies = [
+      for (var n = first; n <= homeRing.length; n++)
+        sealReply(sodium, key, f.sent, n - first + 1, n, homeRing[n - 1]),
+    ];
+    if (replies.isEmpty) replies.add(sealNothingNew(sodium, key, f.sent));
+    _after(fetchAnswerAfter, () {
+      for (final r in replies) {
+        _inbox.add(_message(r));
+      }
+    });
   }
 
   /// Runs `f` after `d`, then notifies the status.
@@ -241,6 +318,7 @@ class FakeNode implements NodeLink {
       _after(handOver + givenBackWait, () => _ready = true);
     } else {
       _after(handOver, () => _ready = true);
+      _answerFetch(payload);
       final text = _textTo(payload);
       if (text != null) {
         _after(
@@ -282,6 +360,23 @@ class FakeNode implements NodeLink {
       TimeSource.phone,
     );
   });
+
+  /// Home as the node serves it; the fake has no ring, so its numbers
+  /// are 0.
+  @override
+  Future<void> setHome(List<int>? key) => _answer(() {
+    if (key != null && key.length != mailboxKeyLen) {
+      throw const AttException(AttError.invalidLength);
+    }
+    String? held(List<int>? k) => k == null ? null : hex(k);
+    if (held(key) != held(homeKey)) {
+      homeKey = key == null ? null : Uint8List.fromList(key);
+      homeKeyChanges++;
+    }
+  });
+
+  @override
+  Future<NodeHome> readHome() => _answer(() => NodeHome(homeKey != null, 0, 0));
 
   @override
   Stream<Status> get statusNotified => _status.stream;

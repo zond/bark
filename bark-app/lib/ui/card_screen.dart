@@ -1,4 +1,5 @@
-// The person's own card, for another phone to scan or paste.
+// The person's own card, for another phone to scan or paste, and theirs
+// to scan back.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../app.dart';
 import '../card.dart';
 import 'common.dart';
+import 'contacts_screen.dart';
+import 'scan_screen.dart';
 
 class CardScreen extends StatelessWidget {
   final AppModel app;
@@ -18,85 +21,84 @@ class CardScreen extends StatelessWidget {
     final card = me.card;
     return Scaffold(
       appBar: AppBar(title: const Text('My card')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('My name'),
-            subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
-            trailing: IconButton(
-              tooltip: 'Change',
-              icon: const Icon(Icons.edit),
-              onPressed: () async {
-                final n = await askText(context, 'My name', me.name);
-                if (n != null) await me.setName(n);
-              },
-            ),
-          ),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('My identity'),
-            subtitle: SelectableText(
-              me.key,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
-          ),
-          if (card == null)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                'No address yet. Connect to your node: its address is its '
-                'position and node ID, and it has a position once it has a '
-                'GPS fix or a map point. Set it as your home in Settings '
-                'if it stays where it is.',
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('My name'),
+              subtitle: Text(me.name.isEmpty ? 'not set' : me.name),
+              trailing: IconButton(
+                tooltip: 'Change',
+                icon: const Icon(Icons.edit),
+                onPressed: () async {
+                  final n = await askText(context, 'My name', me.name);
+                  if (n != null) await me.setName(n);
+                },
               ),
-            )
-          else
-            ..._card(context, card),
-        ],
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('My identity'),
+              subtitle: SelectableText(
+                me.key,
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+            ..._card(card),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan their card'),
+                onPressed: () => _scan(context),
+              ),
+            ),
+            ..._copy(context, card),
+          ],
+        ),
       ),
     );
   });
 
-  List<Widget> _card(BuildContext context, PersonCard card) {
-    final home = app.me.home != null;
-    final connected = app.session.address != null;
-    final mono = const TextStyle(fontFamily: 'monospace');
-    return [
-      Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Text(
-          home
-              ? 'The address is your home node\'s.'
-              : 'The address is your node\'s now; it changes when the node '
-                    'moves. Set a home node in Settings for one that stays.',
-        ),
+  List<Widget> _card(PersonCard card) => [
+    Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Text(
+        card.home != null
+            ? 'It carries your home node\'s address, whose mailbox keeps '
+                  'your mail.'
+            : 'No home node: people can answer you only after you write to '
+                  'them. Set a node that stays where it is as your home in '
+                  'Settings.',
       ),
-      if (!home && !connected)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'The address as last read from your node; connect to bring '
-            'it up to date.',
+    ),
+    const SizedBox(height: 16),
+    Center(child: _qr(card.toText())),
+  ];
+
+  List<Widget> _copy(BuildContext context, PersonCard card) {
+    final mono = const TextStyle(fontFamily: 'monospace');
+    final home = card.home;
+    return [
+      const SizedBox(height: 8),
+      if (home != null)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Home address'),
+          subtitle: SelectableText(home.toString(), style: mono),
+          trailing: IconButton(
+            tooltip: 'Copy the address',
+            icon: const Icon(Icons.copy),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: home.toString()));
+              say(context, 'Address copied');
+            },
           ),
         ),
-      const SizedBox(height: 16),
-      Center(child: _qr(card.toText())),
-      const SizedBox(height: 16),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Address'),
-        subtitle: SelectableText(card.address.toString(), style: mono),
-        trailing: IconButton(
-          tooltip: 'Copy the address',
-          icon: const Icon(Icons.copy),
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: card.address.toString()));
-            say(context, 'Address copied');
-          },
-        ),
-      ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Card'),
@@ -111,6 +113,14 @@ class CardScreen extends StatelessWidget {
         ),
       ),
     ];
+  }
+
+  Future<void> _scan(BuildContext context) async {
+    final c = await scanCard(context);
+    if (c == null || !context.mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => AddContactScreen(app, card: c)));
   }
 
   /// Dark on white whatever the theme, as scanners expect, with the

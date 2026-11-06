@@ -6,13 +6,16 @@
 //! core, and the simulator can run it on a [`Ring`] in RAM.
 //!
 //! The node holds the mailbox key and cannot open the person's mail: it
-//! keeps every payload but a fetch, numbered, and sends items on sealed
-//! again under the key (`seal::seal_reply`).
+//! keeps every payload but a fetch, numbered, and answers a fetch once:
+//! the items it holds after the fetch's number, each sealed again under
+//! the key (`seal::seal_reply`), or one reply that says nothing is new
+//! (`seal::seal_nothing_new`). An item that arrives later waits for the
+//! next fetch.
 
 use bark_proto::MsgId;
 
 use crate::keys::KEY_LEN;
-use crate::seal::{self, Fetch, Form, MAX_NUMBER};
+use crate::seal::{self, Fetch, Form, MAX_NUMBER, MAX_REPLIES};
 use crate::{be, Address, MAX_PAYLOAD};
 
 /// Bytes of a slot: an erase page of 4096 holds 16.
@@ -60,7 +63,7 @@ fn fnv1a(bytes: &[u8]) -> u32 {
 pub enum Arrival {
     /// Kept as this item.
     Kept(u32),
-    /// A fetch, taken: replies follow.
+    /// A fetch, taken: its answer follows.
     Fetch,
     /// A fetch that does not open under the key, or is not later than the
     /// last taken: dropped.
@@ -76,16 +79,21 @@ struct Reply {
     round: u32,
     /// Where they go.
     address: Address,
+    /// The round's first item, at place 1.
+    first: u32,
     /// The next item to send.
     next: u32,
-    /// The last item this fetch asks for.
-    until: u32,
+    /// The newest item when the fetch was taken, the round's last.
+    last: u32,
+    /// A reply of the round has been handed to the core.
+    answered: bool,
 }
 
 /// A reply handed to the core and not yet past its first hop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct InFlight {
     msg_id: MsgId,
+    /// The item, or 0 for the reply that says nothing is new.
     number: u32,
 }
 
@@ -94,6 +102,8 @@ struct InFlight {
 pub struct Outgoing {
     /// The fetch's address.
     pub address: Address,
+    /// The item it carries, or 0 when it says nothing is new.
+    pub number: u32,
     /// Its length in the buffer handed in.
     pub len: usize,
     /// The message's ID, as the core will compute it.
@@ -269,21 +279,19 @@ impl<R: Ring> Mailbox<R> {
     }
 
     fn take(&mut self, f: Fetch) {
-        let oldest = self.oldest().max(1);
-        let start = if f.since == 0 {
-            (self.newest + 1).saturating_sub(u32::from(f.most))
-        } else {
-            f.since + 1
-        }
-        .max(oldest);
+        let last = self.newest;
+        // A ring larger than a round sends its newest MAX_REPLIES.
+        let first = (f.since + 1)
+            .max(self.oldest())
+            .max((last + 1).saturating_sub(MAX_REPLIES));
         self.last_fetch = f.sent;
         self.reply = Some(Reply {
             round: f.sent,
             address: f.address,
-            next: start,
-            until: (start + u32::from(f.most))
-                .saturating_sub(1)
-                .min(MAX_NUMBER),
+            first,
+            next: first,
+            last,
+            answered: false,
         });
         self.in_flight = None;
         self.keep();
@@ -292,41 +300,45 @@ impl<R: Ring> Mailbox<R> {
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
     /// skips past items no longer in the ring.
     pub fn reply_due(&self) -> bool {
-        self.key.is_some()
-            && self
-                .reply
-                .is_some_and(|r| r.next <= r.until && r.next <= self.newest)
+        self.key.is_some() && self.reply.is_some_and(|r| r.next <= r.last || !r.answered)
     }
 
     /// The next reply to hand the core, sealed into `out`, if one is due;
-    /// call it while `accepts_send` holds, and send what it gives.
+    /// call it while `accepts_send` holds, and send what it gives. A round
+    /// with no item to send gets one reply that says nothing is new.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         let key = self.key?;
         let mut r = self.reply?;
         let mut item = [0u8; MAX_PAYLOAD];
-        while r.next <= r.until && r.next <= self.newest {
+        let mut sealed = None;
+        while sealed.is_none() && r.next <= r.last {
             let n = r.next;
             r.next += 1;
             let Some(len) = self.item(n, &mut item) else {
                 continue;
             };
-            match seal::seal_reply(&key, r.round, n, &item[..len], out) {
-                Ok(m) => {
-                    self.reply = Some(r);
-                    let msg_id = MsgId::of(r.address.position, r.address.node, &out[..m]);
-                    self.in_flight = Some(InFlight { msg_id, number: n });
-                    return Some(Outgoing {
-                        address: r.address,
-                        len: m,
-                        msg_id,
-                    });
-                }
-                // An item longer than the app writes cannot come out.
-                Err(_) => continue,
-            }
+            let place = n - r.first + 1;
+            // An item longer than the app writes cannot come out.
+            sealed = seal::seal_reply(&key, r.round, place, n, &item[..len], out)
+                .ok()
+                .map(|m| (n, m));
         }
+        if sealed.is_none() && !r.answered {
+            let nothing = seal::seal_nothing_new(&key, r.round);
+            out[..nothing.len()].copy_from_slice(&nothing);
+            sealed = Some((0, nothing.len()));
+        }
+        let (number, len) = sealed?;
+        r.answered = true;
         self.reply = Some(r);
-        None
+        let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
+        self.in_flight = Some(InFlight { msg_id, number });
+        Some(Outgoing {
+            address: r.address,
+            number,
+            len,
+            msg_id,
+        })
     }
 
     /// The core gave the message back: if it is the last reply, it goes
@@ -334,7 +346,11 @@ impl<R: Ring> Mailbox<R> {
     pub fn given_back(&mut self, msg_id: MsgId) {
         if let (Some(f), Some(r)) = (self.in_flight, self.reply.as_mut()) {
             if f.msg_id == msg_id {
-                r.next = r.next.min(f.number);
+                if f.number == 0 {
+                    r.answered = false;
+                } else {
+                    r.next = r.next.min(f.number);
+                }
                 self.in_flight = None;
             }
         }
@@ -342,8 +358,8 @@ impl<R: Ring> Mailbox<R> {
 
     /// The state: the key, the last fetch and where its replies go. The
     /// next reply is not kept, to spare a write a reply: after a reboot
-    /// the replies start again from the fetch's first, and the requester
-    /// drops what it has.
+    /// the round starts again from its first, and the requester drops
+    /// what it has.
     fn keep(&mut self) {
         let mut s = [0u8; STATE_LEN];
         if let Some(k) = self.key {
@@ -354,8 +370,8 @@ impl<R: Ring> Mailbox<R> {
         if let Some(r) = self.reply {
             s[37] = 1;
             s[38..38 + Address::LEN].copy_from_slice(&r.address.encode());
-            s[51..54].copy_from_slice(&r.next.to_be_bytes()[1..]);
-            s[54..57].copy_from_slice(&r.until.to_be_bytes()[1..]);
+            s[51..54].copy_from_slice(&r.first.to_be_bytes()[1..]);
+            s[54..57].copy_from_slice(&r.last.to_be_bytes()[1..]);
         }
         s[57..60].copy_from_slice(&self.read.to_be_bytes()[1..]);
         let check = fnv1a(&s[..STATE_LEN - 4]);
@@ -376,11 +392,14 @@ impl<R: Ring> Mailbox<R> {
         self.read = be(&s[57..60]).min(self.newest);
         if s[37] == 1 {
             if let Ok(address) = Address::decode(&s[38..]) {
+                let first = be(&s[51..54]);
                 self.reply = Some(Reply {
                     round: self.last_fetch,
                     address,
-                    next: be(&s[51..54]),
-                    until: be(&s[54..57]),
+                    first,
+                    next: first,
+                    last: be(&s[54..57]),
+                    answered: false,
                 });
             }
         }

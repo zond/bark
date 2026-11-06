@@ -27,6 +27,7 @@ class ConversationsScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('bark'),
         actions: [
+          FetchButton(app),
           IconButton(
             tooltip: 'My card',
             icon: const Icon(Icons.qr_code),

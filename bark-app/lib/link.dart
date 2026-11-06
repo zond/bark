@@ -29,7 +29,7 @@ class Uuids {
   /// From link version 2.
   static const clock = '28bc0008-a1b8-4893-9537-2ee3559d7644';
 
-  /// From link version 3 (spec "Mailbox"); the app does not use it yet.
+  /// From link version 3 (spec "Mailbox").
   static const home = '28bc0009-a1b8-4893-9537-2ee3559d7644';
 }
 
@@ -396,3 +396,46 @@ class NodeTime {
 Uint8List encodeMapPoint(Position? p) => p == null
     ? Uint8List.fromList([0])
     : Uint8List.fromList([1, ...p.encode()]);
+
+/// The link version that has Home.
+const int homeVersion = 3;
+
+/// Bytes of the mailbox key.
+const int mailboxKeyLen = 32;
+
+/// Home, write: 0, the node is nobody's home; 1 and the mailbox key, the
+/// person's.
+Uint8List encodeHome(List<int>? key) {
+  if (key == null) return Uint8List.fromList([0]);
+  if (key.length != mailboxKeyLen) throw const Malformed('mailbox key');
+  return Uint8List.fromList([1, ...key]);
+}
+
+/// Home, read: whether the node holds a mailbox key, and the numbers of
+/// the oldest and newest items its ring holds, 0 when none.
+class NodeHome {
+  static const len = 1 + 3 + 3;
+  final bool set;
+  final int oldest;
+  final int newest;
+  const NodeHome(this.set, this.oldest, this.newest);
+
+  Uint8List encode() => Uint8List.fromList([
+    set ? 1 : 0,
+    ..._be32(oldest).sublist(1),
+    ..._be32(newest).sublist(1),
+  ]);
+
+  static NodeHome decode(List<int> b) {
+    if (b.length < len || b[0] > 1) throw const Malformed('Home');
+    int n(int at) => (b[at] << 16) | (b[at + 1] << 8) | b[at + 2];
+    return NodeHome(b[0] == 1, n(1), n(4));
+  }
+
+  @override
+  String toString() => !set
+      ? 'not a home'
+      : oldest == 0
+      ? 'a home, its mailbox empty'
+      : 'a home, items $oldest to $newest';
+}

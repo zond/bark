@@ -30,7 +30,9 @@ class ContactsScreen extends StatelessWidget {
               leading: const CircleAvatar(child: Icon(Icons.person)),
               title: Text(c.name),
               subtitle: Text(
-                c.verified ? c.address.toString() : 'not verified yet',
+                !c.verified
+                    ? 'not verified yet'
+                    : c.card.home?.toString() ?? 'no home node',
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
               onTap: () => Navigator.of(context).pushReplacement(
@@ -52,7 +54,10 @@ class ContactsScreen extends StatelessWidget {
 
 class AddContactScreen extends StatefulWidget {
   final AppModel app;
-  const AddContactScreen(this.app, {super.key});
+
+  /// A card already scanned, to name and save.
+  final PersonCard? card;
+  const AddContactScreen(this.app, {this.card, super.key});
 
   @override
   State<AddContactScreen> createState() => _AddContactScreenState();
@@ -65,6 +70,13 @@ class _AddContactScreenState extends State<AddContactScreen> {
   String? error;
 
   @override
+  void initState() {
+    super.initState();
+    final c = widget.card;
+    if (c != null) _read(c.toText());
+  }
+
+  @override
   void dispose() {
     pasted.dispose();
     name.dispose();
@@ -74,6 +86,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
   /// A pasted card: its identity is what the app seals texts to, so an
   /// address alone is not enough.
   void _read(String s) {
+    if (pasted.text != s) pasted.text = s;
     setState(() {
       card = null;
       error = null;
@@ -88,12 +101,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
   }
 
   Future<void> _scan() async {
-    final c = await Navigator.of(
-      context,
-    ).push<PersonCard>(MaterialPageRoute(builder: (_) => const ScanScreen()));
-    if (c == null) return;
-    pasted.text = c.toText();
-    _read(pasted.text);
+    final c = await scanCard(context);
+    if (c != null) _read(c.toText());
   }
 
   Future<void> _save() async {
@@ -115,54 +124,61 @@ class _AddContactScreenState extends State<AddContactScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Add contact')),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton.icon(
-            icon: const Icon(Icons.qr_code_scanner),
-            label: const Text('Scan their card'),
-            onPressed: _scan,
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: pasted,
-          onChanged: _read,
-          maxLines: null,
-          decoration: InputDecoration(
-            labelText: 'Card',
-            helperText: 'Or paste the card they sent you',
-            errorText: error,
-            errorMaxLines: 3,
-          ),
-        ),
-        if (card != null)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Address'),
-            subtitle: Text(
-              card!.address.toString(),
-              style: const TextStyle(fontFamily: 'monospace'),
+    body: SafeArea(
+      top: false,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Scan their card'),
+              onPressed: _scan,
             ),
           ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: name,
-          onChanged: (_) => setState(() {}),
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: card == null || name.text.trim().isEmpty ? null : _save,
-            child: const Text('Save'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: pasted,
+            onChanged: _read,
+            maxLines: null,
+            decoration: InputDecoration(
+              labelText: 'Card',
+              helperText: 'Or paste the card they sent you',
+              errorText: error,
+              errorMaxLines: 3,
+            ),
           ),
-        ),
-      ],
+          if (card != null)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Home node'),
+              subtitle: Text(
+                card!.home?.toString() ??
+                    'none: you can write to them once they have written to '
+                        'you',
+                style: const TextStyle(fontFamily: 'monospace'),
+              ),
+            ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: name,
+            onChanged: (_) => setState(() {}),
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'Name'),
+          ),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: card == null || name.text.trim().isEmpty
+                  ? null
+                  : _save,
+              child: const Text('Save'),
+            ),
+          ),
+        ],
+      ),
     ),
   );
 }

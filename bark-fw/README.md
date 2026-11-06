@@ -489,7 +489,9 @@ after that long means the node is not running.
 *When it redraws.* At boot, once the node's loop has run (at most 5 s),
 then when a fact it shows changes, but not within 5 minutes of the
 last refresh on battery or a minute on USB, and at least once an hour on
-battery and every ten minutes on USB. The cost on battery: a full
+battery and every ten minutes on USB. A press of the user button
+(P1.10, `src/button.rs`) redraws it at once, a bench aid that leaves
+that schedule as it was. The cost on battery: a full
 refresh holds BUSY high for 2 s (the board's label). The panel's
 current during a refresh is not in the repository's notes, nor its
 datasheet; taking 10 mA, an assumption to be replaced by a measurement
@@ -572,7 +574,7 @@ task of its own, spawned by the main task, which sets up the chip, the
 board, USB and the log, spawns, and ends: the USB device, the log, the
 bootloader touch, the watchdog, the LED and crystal, the MPSL, the
 phone link, the radio and the core on it, the store, the mailbox's
-flash writes, the GPS and the screen. A task's future lies in its own static storage, and the
+flash writes, the GPS, the screen and the user button. A task's future lies in its own static storage, and the
 executor polls one task at a time, so the stack needs only the deepest
 task's poll and the interrupts above it, not the sum of everything
 joined into one future. Futures stay what a task waits on for a while,

@@ -36,6 +36,10 @@ abstract class NodeLink {
   Future<void> setClock(int utcS, int offsetMin);
   Future<NodeTime> readClock();
 
+  /// Link version 3 and later: the mailbox key, or none.
+  Future<void> setHome(List<int>? key);
+  Future<NodeHome> readHome();
+
   Stream<Status> get statusNotified;
   Stream<GivenBack?> get givenBackNotified;
 

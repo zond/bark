@@ -43,6 +43,21 @@ enum OutKind {
   fetch,
 }
 
+/// Which of a contact's addresses a message went to.
+enum Toward {
+  /// Where they last wrote from.
+  there,
+
+  /// Their home's mailbox, the address on their card.
+  home;
+
+  /// For the sent row.
+  String get label => switch (this) {
+    there => 'to where they were',
+    home => 'to their home',
+  };
+}
+
 class Outgoing {
   final Address dst;
   final Uint8List payload;
@@ -61,7 +76,10 @@ class Outgoing {
   /// A text's words.
   final String? body;
 
-  /// The other side acknowledged it.
+  /// Which of the contact's addresses it went to; null for a fetch.
+  final Toward? toward;
+
+  /// The other side acknowledged it; a fetch, the home node answered.
   bool acked;
   OutState state;
   DateTime? retryAt;
@@ -75,6 +93,7 @@ class Outgoing {
     required this.sent,
     this.to,
     this.body,
+    this.toward,
     this.acked = false,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
@@ -94,6 +113,7 @@ class Outgoing {
     'to': to,
     'sent': sent,
     'body': body,
+    'toward': toward?.name,
     'acked': acked,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
@@ -111,6 +131,9 @@ class Outgoing {
           to: j['to'] as String?,
           sent: j['sent'] as int,
           body: j['body'] as String?,
+          toward: j['toward'] == null
+              ? null
+              : Toward.values.byName(j['toward'] as String),
           acked: j['acked'] as bool,
           state: OutState.values.byName(j['state'] as String),
         )
@@ -191,6 +214,9 @@ class Session extends ChangeNotifier {
   /// the payload is kept as it came.
   Future<void> Function(InboxMessage)? reader;
 
+  /// The mailbox key a node should hold, if it is the person's home.
+  Uint8List? Function(NodeInfo)? homeKey;
+
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
 
@@ -206,6 +232,9 @@ class Session extends ChangeNotifier {
 
   /// The node's time as last read, after the app wrote its own.
   NodeTime? nodeTime;
+
+  /// The node's Home as last read, from link version 3.
+  NodeHome? nodeHome;
   DateTime? _statusAt;
 
   /// The last thing worth telling the person.
@@ -245,23 +274,30 @@ class Session extends ChangeNotifier {
     return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
   }
 
+  /// The version of `bark.json`'s format.
+  static const version = 1;
+
   Future<void> load() async {
-    final j = await store.load();
+    final j = await store.load(
+      version,
+      (j) => (
+        outbox: [
+          for (final e in j['outbox'] as List)
+            Outgoing.fromJson(e as Map<String, dynamic>),
+        ],
+        received: [
+          for (final e in j['received'] as List)
+            Received.fromJson(e as Map<String, dynamic>),
+        ],
+      ),
+    );
     if (j == null) return;
-    outbox.addAll(
-      (j['outbox'] as List).map(
-        (e) => Outgoing.fromJson(e as Map<String, dynamic>),
-      ),
-    );
-    received.addAll(
-      (j['received'] as List).map(
-        (e) => Received.fromJson(e as Map<String, dynamic>),
-      ),
-    );
+    outbox.addAll(j.outbox);
+    received.addAll(j.received);
     notifyListeners();
   }
 
-  Future<void> save() => store.save({
+  Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
   });
@@ -324,7 +360,42 @@ class Session extends ChangeNotifier {
       _tell('Reading the node failed: $e');
     }
     if (n.version >= clockVersion) await _setClock(link);
+    if (n.version >= homeVersion) await _keepHome(link, n);
     return true;
+  }
+
+  /// Gives the person's home its key, silently, and reads Home. A home
+  /// may have been reflashed, or the identity restored from its words;
+  /// the node changes nothing when it holds that key already.
+  Future<void> _keepHome(NodeLink link, NodeInfo n) async {
+    try {
+      final key = homeKey?.call(n);
+      if (key != null) await link.setHome(key);
+      nodeHome = await link.readHome();
+      note(
+        key != null
+            ? 'Home: the key written to the person\'s home; $nodeHome'
+            : 'Home: $nodeHome',
+      );
+    } catch (e) {
+      note('Home: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Writes Home, the mailbox key or none, and reads it back.
+  Future<NodeHome> writeHome(List<int>? key) async {
+    final link = _link;
+    final n = node;
+    if (link == null || n == null) throw StateError('not connected');
+    if (n.version < homeVersion) {
+      throw StateError('no Home before link version $homeVersion');
+    }
+    await link.setHome(key);
+    nodeHome = await link.readHome();
+    note('Home: wrote ${key == null ? 'no key' : 'the key'}, reads $nodeHome');
+    notifyListeners();
+    return nodeHome!;
   }
 
   /// Gives the node the phone's time and UTC offset, silently: a node
@@ -356,6 +427,7 @@ class Session extends ChangeNotifier {
     node = null;
     givenBack = null;
     nodeTime = null;
+    nodeHome = null;
     note('Disconnected');
   }
 
@@ -402,6 +474,57 @@ class Session extends ChangeNotifier {
     notifyListeners();
     await save();
     _pump();
+  }
+
+  /// The longest a fetch waits for its home node's first reply, by the
+  /// spec's bounds on a free channel: each way at most 256 hand-overs
+  /// that succeed ("Hop count", "Bounds"), each at most 3.15 s with its
+  /// attempts and retry waits ("Retry wait", "Delivery"), and at a sleepy
+  /// requester's end its holder waits for its beat, at most the beat
+  /// period of 300 s ("Beats", "Delivery"): 2 × 256 × 3.15 s + 300 s =
+  /// 1912.8 s. Past it the fetch or its answer is taken as lost.
+  static const fetchAnswerWait = Duration(
+    milliseconds: 2 * 256 * 3150 + 300000,
+  );
+
+  /// The newest fetch while it waits for its answer: the node has not
+  /// given it back or refused it, no reply of its round has come, and
+  /// [fetchAnswerWait] has not passed since it was queued. Stored with
+  /// the queue, so it is still waited for after a restart.
+  Outgoing? get fetchWaiting {
+    final o = outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
+    if (o == null || o.acked) return null;
+    if (o.state == OutState.givenBack || o.state == OutState.refused) {
+      return null;
+    }
+    return now().difference(o.at) < fetchAnswerWait ? o : null;
+  }
+
+  /// Seconds left of the wait for [fetchWaiting]'s answer.
+  int fetchWaitLeftS(Outgoing o) {
+    final left = fetchAnswerWait - now().difference(o.at);
+    return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
+  }
+
+  /// What the home node's answer said, to tell the person once.
+  String? fetchNews;
+
+  /// A reply of the fetch of `round` came: the fetch is answered.
+  Future<void> fetchAnswered(int round, {required bool nothingNew}) async {
+    final o = outbox
+        .where((o) => o.kind == OutKind.fetch && o.sent == round)
+        .firstOrNull;
+    if (nothingNew) {
+      note('Fetch $round: no new mail');
+      fetchNews = 'No new mail';
+    }
+    if (o == null || o.acked) {
+      notifyListeners();
+      return;
+    }
+    o.acked = true;
+    notifyListeners();
+    await save();
   }
 
   /// Keeps a received message.

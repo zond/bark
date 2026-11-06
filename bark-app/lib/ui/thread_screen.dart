@@ -31,14 +31,53 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
+  /// Sends the text where the contact is, or, when that may be stale,
+  /// where the person chooses, this once.
   Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
+    final options = to.towards(app.now());
+    final toward = options.length == 1
+        ? options.single
+        : await showDialog<Toward>(
+            context: context,
+            builder: (context) => SimpleDialog(
+              title: const Text('Send to'),
+              children: [
+                for (final t in options)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, t),
+                    child: Text(_option(to, t)),
+                  ),
+              ],
+            ),
+          );
+    if (toward == null) return;
     try {
-      await app.messenger.sendText(to, text.text);
+      await app.messenger.sendText(to, text.text, toward: toward);
       text.clear();
     } on BadPayload catch (e) {
       if (mounted) say(context, 'Not sent: $e');
     }
+  }
+
+  String _option(Contact c, Toward t) => switch (t) {
+    Toward.there =>
+      'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
+    Toward.home => 'Their home mailbox',
+  };
+
+  /// When they last wrote, and whether from their home.
+  String _heard(Contact c) {
+    final at = c.heardAt;
+    if (at == null) return 'Has not written yet';
+    final from = c.wroteFrom;
+    final home = c.card.home;
+    final where = home == null || from == null
+        ? ''
+        : from.toString() == home.toString()
+        ? ', from their home'
+        : ', away from home';
+    return 'Last wrote ${ago(app.now().difference(at))}$where';
   }
 
   @override
@@ -48,8 +87,20 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final contact = c.contact;
     return Scaffold(
       appBar: AppBar(
-        title: Text(c.title, overflow: TextOverflow.ellipsis),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(c.title, overflow: TextOverflow.ellipsis),
+            if (contact != null)
+              Text(
+                _heard(contact),
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
         actions: [
+          FetchButton(app),
           if (contact != null)
             PopupMenuButton<void Function()>(
               onSelected: (f) => f(),
@@ -70,34 +121,45 @@ class _ThreadScreenState extends State<ThreadScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          NoticeCard(app),
-          if (contact != null && !contact.verified)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: Text(
-                'Not verified yet: a first message can come from anyone. '
-                'Once a reply of theirs opens here, it is theirs.',
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            NoticeCard(app),
+            if (contact != null && !contact.verified)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text(
+                  'Not verified yet: a first message can come from anyone. '
+                  'Once a reply of theirs opens here, it is theirs.',
+                ),
+              ),
+            Expanded(
+              child: ListView(
+                reverse: true,
+                padding: const EdgeInsets.all(8),
+                children: [
+                  for (final e in c.entries.reversed) _bubble(context, e),
+                ],
               ),
             ),
-          Expanded(
-            child: ListView(
-              reverse: true,
-              padding: const EdgeInsets.all(8),
-              children: [
-                for (final e in c.entries.reversed) _bubble(context, e),
-              ],
-            ),
-          ),
-          if (contact == null)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('This contact was removed.'),
-            )
-          else
-            _compose(contact),
-        ],
+            if (contact == null)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('This contact was removed.'),
+              )
+            else if (contact.towards(app.now()).isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  '${contact.name} has no home node and has not written yet: '
+                  'you can answer once they write to you.',
+                ),
+              )
+            else
+              _compose(contact),
+          ],
+        ),
       ),
     );
   });
@@ -108,30 +170,28 @@ class _ThreadScreenState extends State<ThreadScreen> {
     await app.contacts.put(c.copyWith(name: name));
   }
 
-  Widget _compose(Contact to) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: text,
-              minLines: 1,
-              maxLines: 5,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                hintText: 'Text',
-                border: OutlineInputBorder(),
-              ),
+  Widget _compose(Contact to) => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: text,
+            minLines: 1,
+            maxLines: 5,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              hintText: 'Text',
+              border: OutlineInputBorder(),
             ),
           ),
-          IconButton(
-            tooltip: 'Send',
-            icon: const Icon(Icons.send),
-            onPressed: () => _send(to),
-          ),
-        ],
-      ),
+        ),
+        IconButton(
+          tooltip: 'Send',
+          icon: const Icon(Icons.send),
+          onPressed: () => _send(to),
+        ),
+      ],
     ),
   );
 
@@ -157,6 +217,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Text(
                   mine
                       ? '${when(e.at)}, ${stateLabel(app.session, o)}'
+                            '${o.toward == null ? '' : ', ${o.toward!.label}'}'
                             '${o.acked ? ', acknowledged ✓' : ''}'
                       : '${when(e.at)}'
                             '${e.received!.mailbox ? ', from your mailbox' : ''}'

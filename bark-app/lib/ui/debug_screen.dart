@@ -22,52 +22,55 @@ class DebugScreen extends StatelessWidget {
     );
     return Scaffold(
       appBar: AppBar(title: const Text('Debug')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          NoticeCard(app),
-          heading('Me'),
-          ..._me(),
-          heading('Node'),
-          ..._node(context),
-          heading('Status'),
-          ..._status(),
-          heading('Given back'),
-          _row(
-            'Value',
-            !s.connected
-                ? 'not connected'
-                : switch (s.givenBack) {
-                    null => 'empty',
-                    final g => '${msgIdHex(g.msgId)}, wait ${g.waitS} s',
-                  },
-          ),
-          heading('Sent'),
-          if (s.outbox.isEmpty) const Text('None'),
-          for (final o in s.outbox.reversed)
-            _raw(
-              '${msgIdHex(o.id)} to ${o.dst}',
-              '${o.kind.name} ${o.sent} to ${_who(o.to)}, '
-                  '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
-                  '${hex(o.payload)}',
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            NoticeCard(app),
+            heading('Me'),
+            ..._me(),
+            heading('Node'),
+            ..._node(context),
+            heading('Status'),
+            ..._status(),
+            heading('Given back'),
+            _row(
+              'Value',
+              !s.connected
+                  ? 'not connected'
+                  : switch (s.givenBack) {
+                      null => 'empty',
+                      final g => '${msgIdHex(g.msgId)}, wait ${g.waitS} s',
+                    },
             ),
-          heading('Received'),
-          if (s.received.isEmpty) const Text('None'),
-          for (final r in s.received.reversed)
-            _raw(
-              '${msgIdHex(r.id)} from ${r.from == null ? 'nobody: did not open' : _who(r.from)}',
-              'sent ${r.sent}${r.mailbox ? ', from the mailbox' : ''}, '
-                  '${r.at.toLocal()}\n${hex(r.payload)}',
-            ),
-          heading('Log'),
-          if (s.log.isEmpty) const Text('Nothing yet'),
-          for (final l in s.log.reversed)
-            Text(
-              '${l.at.toLocal().toIso8601String().substring(11, 23)} '
-              '${l.text}',
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-        ],
+            heading('Sent'),
+            if (s.outbox.isEmpty) const Text('None'),
+            for (final o in s.outbox.reversed)
+              _raw(
+                '${msgIdHex(o.id)} to ${o.dst}',
+                '${o.kind.name} ${o.sent} to ${_who(o.to)}, '
+                    '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
+                    '${hex(o.payload)}',
+              ),
+            heading('Received'),
+            if (s.received.isEmpty) const Text('None'),
+            for (final r in s.received.reversed)
+              _raw(
+                '${msgIdHex(r.id)} from ${r.from == null ? 'nobody: did not open' : _who(r.from)}',
+                'sent ${r.sent}${r.mailbox ? ', from the mailbox' : ''}, '
+                    '${r.at.toLocal()}\n${hex(r.payload)}',
+              ),
+            heading('Log'),
+            if (s.log.isEmpty) const Text('Nothing yet'),
+            for (final l in s.log.reversed)
+              Text(
+                '${l.at.toLocal().toIso8601String().substring(11, 23)} '
+                '${l.text}',
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+          ],
+        ),
       ),
     );
   });
@@ -83,7 +86,7 @@ class DebugScreen extends StatelessWidget {
     final me = app.me;
     return [
       _row('Identity', '${me.key.substring(0, 16)}…'),
-      _row('Card address', '${me.cardAddress ?? 'none yet'}'),
+      _row('Card address', '${me.home ?? 'none: no home'}'),
       _row('Home node', '${me.home ?? 'none'}'),
       _row('Mailbox: have every item up to', '${me.since}'),
       _row('Mailbox: items above that', '${me.above.toList()..sort()}'),
@@ -141,6 +144,12 @@ class DebugScreen extends StatelessWidget {
                 null => 'not read',
                 final t => describeTime(t),
               },
+      ),
+      _row(
+        'Home',
+        n.version < homeVersion
+            ? 'none before link version $homeVersion'
+            : '${s.nodeHome ?? 'not read'}',
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,

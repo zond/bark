@@ -103,19 +103,28 @@ void main() {
   Contact friendOf(Phone p, FakeNode node) =>
       p.contacts.byKey(hex(node.friend.identity))!;
 
-  /// A boxed message from the fake friend to the phone.
-  Uint8List fromFriend(FakeNode node, Phone p, int sent, List<Record> rs) =>
-      sealBox(
-        sodium.crypto.box.precalculate(
-          publicKey: p.me.identity,
-          secretKey: node.friend.pair.secretKey,
-        ),
-        sodium.randombytes.buf(nonceLen),
-        writePlain(
-          Header(greater(node.friend.identity, p.me.identity), sent),
-          rs,
-        ),
+  /// The box key between the phone and the fake friend.
+  PrecalculatedBox friendPair(Phone p, FakeNode node) =>
+      sodium.crypto.box.precalculate(
+        publicKey: p.me.identity,
+        secretKey: node.friend.pair.secretKey,
       );
+
+  /// A boxed message from the fake friend to the phone.
+  Uint8List fromFriend(
+    FakeNode node,
+    Phone p,
+    int sent,
+    List<Record> rs, [
+    Address? from,
+  ]) => sealBox(
+    friendPair(p, node),
+    sodium.randombytes.buf(nonceLen),
+    writePlain(
+      Header(greater(node.friend.identity, p.me.identity), sent, from),
+      rs,
+    ),
+  );
 
   test('attach drains the inbox: two first messages from the fake friend', () {
     run((async, p, node) {
@@ -206,18 +215,137 @@ void main() {
       final [first, second] = p.session.outbox;
       expect(formOf(first.payload), Form.introduction);
       expect(formOf(second.payload), Form.boxed);
-      // The boxed one carries the person's address until it is answered.
-      final plain = openBox(
-        sodium.crypto.box.precalculate(
-          publicKey: p.me.identity,
-          secretKey: node.friend.pair.secretKey,
-        ),
-        second.payload,
-      );
-      final (h, _) = readPlain(plain);
-      expect(h.address.toString(), p.me.cardAddress.toString());
-      expect(h.greater, greater(p.me.identity, node.friend.identity));
       expect(second.sent, greaterThan(first.sent));
+      // The first names the node the person writes from; the echo answered
+      // it, so the second does not.
+      final (h1, _) = readPlain(openIntro(sodium, node.friend, first.payload));
+      expect(h1.address.toString(), p.me.nodeAddress.toString());
+      final (h2, _) = readPlain(openBox(friendPair(p, node), second.payload));
+      expect(h2.address, isNull);
+      expect(h2.greater, greater(p.me.identity, node.friend.identity));
+    });
+  });
+
+  test('the header names the node written from, not the home on the card', () {
+    run((async, p, node) {
+      p.messenger.sendText(friendOf(p, node), 'first');
+      async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
+      final home = Address(Position.fromDegrees(50.5, 30.5), List.filled(6, 9));
+      p.me.setHome(home);
+      p.me.setNodeAddress(elsewhere);
+      async.flushMicrotasks();
+      expect(p.me.card.home.toString(), home.toString());
+      p.messenger.sendText(friendOf(p, node), 'moved');
+      async.flushMicrotasks();
+      final (h, _) = readPlain(
+        openBox(friendPair(p, node), p.session.outbox.last.payload),
+      );
+      expect(h.address.toString(), elsewhere.toString());
+      // Until it is answered, it is named again.
+      p.messenger.sendText(friendOf(p, node), 'again');
+      async.flushMicrotasks();
+      final (h2, _) = readPlain(
+        openBox(friendPair(p, node), p.session.outbox.last.payload),
+      );
+      expect(h2.address.toString(), elsewhere.toString());
+    });
+  });
+
+  test(
+    'a contact\'s two addresses are kept apart, the newest message wins',
+    () {
+      run((async, p, node) {
+        final card = friendOf(p, node).card.home.toString();
+        final there = Address(Position.fromDegrees(50.3, 30.4), [
+          7,
+          7,
+          7,
+          7,
+          7,
+          7,
+        ]);
+        final s0 = sentOf(start.add(async.elapsed)) + 10;
+        void from(int sent, Address? a) {
+          p.messenger.receive(
+            InboxMessage(
+              sent,
+              fromFriend(node, p, sent, [const TextRecord('x')], a),
+            ),
+          );
+          async.flushMicrotasks();
+        }
+
+        from(s0, there);
+        var f = friendOf(p, node);
+        expect(f.card.home.toString(), card);
+        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.heardSent, s0);
+        // Without an address: unchanged, and heard later.
+        from(s0 + 5, null);
+        f = friendOf(p, node);
+        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.heardSent, s0 + 5);
+        // An older message, as out of a mailbox, changes nothing.
+        from(s0 + 1, elsewhere);
+        f = friendOf(p, node);
+        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.heardSent, s0 + 5);
+        expect(f.card.home.toString(), card);
+      });
+    },
+  );
+
+  test('the fake friend: a reply goes where they were, then they choose', () {
+    run((async, p, node) {
+      var f = friendOf(p, node);
+      expect(f.card.home.toString(), FakeNode.friendHome.toString());
+      final first = f.wroteFrom.toString();
+      expect(first, isNot(FakeNode.friendHome.toString()));
+      expect(f.towards(start.add(async.elapsed)), [Toward.there]);
+
+      p.messenger.sendText(f, 'hi');
+      async.flushMicrotasks();
+      final o = p.session.outbox.last;
+      expect(o.toward, Toward.there);
+      expect(o.dst.toString(), first);
+      // The echo comes from a node that has moved on.
+      async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
+      f = friendOf(p, node);
+      expect(f.wroteFrom.toString(), isNot(first));
+      expect(f.wroteFrom.toString(), node.friendAway.toString());
+
+      async.elapse(Contact.fresh);
+      f = friendOf(p, node);
+      expect(f.towards(start.add(async.elapsed)), [Toward.there, Toward.home]);
+      p.messenger.sendText(f, 'home', toward: Toward.home);
+      async.flushMicrotasks();
+      expect(
+        p.session.outbox.last.dst.toString(),
+        FakeNode.friendHome.toString(),
+      );
+    });
+  });
+
+  test('a contact is heard at its sent, or on arrival if that is ahead', () {
+    run((async, p, node) {
+      async.elapse(const Duration(hours: 1));
+      final now = start.add(async.elapsed);
+      // Written ten minutes ago, fetched only now.
+      final past = sentOf(now) - 600;
+      p.messenger.receive(
+        InboxMessage(1, fromFriend(node, p, past, [const TextRecord('a')])),
+      );
+      async.flushMicrotasks();
+      expect(friendOf(p, node).heardAt, timeOfSent(past));
+      // Their clock is a minute ahead of this phone's.
+      p.messenger.receive(
+        InboxMessage(
+          2,
+          fromFriend(node, p, sentOf(now) + 60, [const TextRecord('b')]),
+        ),
+      );
+      async.flushMicrotasks();
+      expect(friendOf(p, node).heardAt, now);
     });
   });
 
@@ -298,22 +426,30 @@ void main() {
       expect(o.dst.toString(), home.toString());
       final f = Fetch.open(sodium, p.me.keys.mailbox, o.payload);
       expect(f.since, 0);
-      expect(f.most, Me.fetchMost);
       expect(f.address.toString(), elsewhere.toString());
 
+      // Since 0: the ring's first item here is 41, at place 1.
       void item(int n, String text) {
         final inner = fromFriend(node, p, 1000 + n, [TextRecord(text)]);
-        final reply = sealReply(sodium, p.me.keys.mailbox, f.sent, n, inner);
+        final reply = sealReply(
+          sodium,
+          p.me.keys.mailbox,
+          f.sent,
+          n,
+          40 + n,
+          inner,
+        );
         p.messenger.receive(InboxMessage(100 + n, reply));
         async.flushMicrotasks();
       }
 
       item(1, 'one');
+      expect(o.acked, isTrue);
+      expect(p.me.since, 41);
       item(3, 'three');
-      expect(p.me.since, 1);
-      expect(p.me.above, {3});
+      expect(p.me.above, {43});
       item(2, 'two');
-      expect(p.me.since, 3);
+      expect(p.me.since, 43);
       final got = p.session.received.where((r) => r.mailbox).toList();
       expect(got.map((r) => r.text), ['one', 'three', 'two']);
       // The same item again, as after a lost reply, is not kept twice.
@@ -321,7 +457,7 @@ void main() {
       expect(p.session.received.where((r) => r.mailbox).length, 3);
       // A reply under another key opens for nobody.
       final other = Keys.fromSeed(sodium, List.filled(16, 7));
-      final stray = sealReply(sodium, other.mailbox, f.sent, 4, [1, 2, 3]);
+      final stray = sealReply(sodium, other.mailbox, f.sent, 4, 44, [1, 2, 3]);
       p.messenger.receive(InboxMessage(200, stray));
       async.flushMicrotasks();
       expect(p.session.received.last.from, isNull);
@@ -420,6 +556,61 @@ void main() {
     });
   });
 
+  test('a fetch in flight is still waited for after a restart', () {
+    run((async, p, node) {
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      p.messenger.fetch(elsewhere);
+      async.flushMicrotasks();
+      final o = p.session.fetchWaiting!;
+      final again = p.again(sodium, () => start.add(async.elapsed));
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting?.id, o.id);
+      // Its answer, nothing new, ends the wait there too.
+      again.messenger.receive(
+        InboxMessage(1, sealNothingNew(sodium, again.me.keys.mailbox, o.sent)),
+      );
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting, isNull);
+      expect(again.session.fetchNews, 'No new mail');
+    });
+  });
+
+  test('the fake home answers a fetch with its item, then nothing new', () {
+    fakeAsync((async) {
+      DateTime now() => start.add(async.elapsed);
+      final p = Phone(sodium, now);
+      async.flushMicrotasks();
+      final node = FakeNode(
+        now: now,
+        sodium: sodium,
+        app: p.me.identity,
+        mailbox: p.me.keys.mailbox,
+      );
+      p.session.attach(node.connect());
+      async.flushMicrotasks();
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      for (final (since, waited) in [(0, true), (1, false)]) {
+        p.messenger.fetch(elsewhere);
+        async.elapse(FakeNode.fetchAnswerAfter + FakeNode.handOver);
+        expect(p.session.fetchWaiting, isNull);
+        expect(p.me.since, 1, reason: 'after since $since');
+        expect(p.session.fetchNews, waited ? isNull : 'No new mail');
+      }
+      expect(
+        p.session.received
+            .where((r) => r.mailbox || r.body != null)
+            .map((r) => r.body),
+        contains('Left at your home node while you were away.'),
+      );
+      node.dispose();
+      p.session.dispose();
+    });
+  });
+
   test('sent numbers rise even when the clock goes back', () {
     fakeAsync((async) {
       var t = start;
@@ -456,19 +647,36 @@ void main() {
 
   test('a card read from its text, and what is not one', () {
     final k = Keys.fromSeed(sodium, List.filled(16, 1));
-    for (final name in ['', 'Olena', 'Олена Ш.', '🐕 bark']) {
-      final c = PersonCard(k.identity, elsewhere, 7, name);
+    for (final (name, home) in [
+      ('', elsewhere),
+      ('Olena', null),
+      ('Олена Ш.', elsewhere),
+      ('🐕 bark', null),
+    ]) {
+      final c = PersonCard(k.identity, home, 7, name);
       final back = PersonCard.parse(c.toText());
       expect(back.name, name);
       expect(back.key, c.key);
-      expect(back.address.toString(), elsewhere.toString());
+      expect(back.home?.toString(), home?.toString());
       expect(back.time, 7);
+    }
+    // A home flag without room for the address.
+    final short = PersonCard(k.identity, null, 7, 'abc').encode()..[1] = 1;
+    expect(() => PersonCard.decode(short), throwsA(isA<BadCard>()));
+    // A card of version 1, before the flags, and an unknown flag.
+    final b = PersonCard(k.identity, elsewhere, 7, '').encode();
+    for (final (at, v, why) in [(0, 1, 'older'), (1, 2, 'Not a card')]) {
+      final bad = Uint8List.fromList(b)..[at] = v;
+      expect(
+        () => PersonCard.decode(bad),
+        throwsA(predicate((e) => e is BadCard && '$e'.contains(why))),
+      );
     }
     for (final t in ['', 'BARK:', 'hello', 'BARK:A1', elsewhere.toString()]) {
       expect(() => PersonCard.parse(t), throwsA(isA<BadCard>()), reason: t);
     }
     expect(
-      () => PersonCard(k.identity, elsewhere, 0, 'x' * 33).encode(),
+      () => PersonCard(k.identity, null, 0, 'x' * 33).encode(),
       throwsA(isA<BadCard>()),
     );
   });
