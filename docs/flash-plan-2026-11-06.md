@@ -37,11 +37,8 @@ and the chip is on the switched rail, which the firmware holds up on
 battery too (`docs/external-flash-2026-11-06.md`). Single-line reads and
 writes need only IO0 and IO1, but WP# and HOLD# must be driven high.
 
-The firmware never touches the chip, so it sits in standby: 12 µA on
-battery, if its supply is on whenever the board is (the schematic says;
-the board's switched rail is `PWR_EN AND (PWR_ON OR VBUS)`). One `B9h`
-at boot cuts that to 0.5 µA whatever else is done here. It is a few
-dozen bytes of code and the first thing worth taking from this note.
+Untouched, the chip sits in standby at 12 µA. The firmware now sends
+`B9h` once the rail is up, 0.5 µA (item b, `bark-fw/src/ext_flash.rs`).
 
 ### The idea
 
@@ -482,7 +479,7 @@ other `#[track_caller]` functions carry one too. Their file names are
 | | Room | Effort | Why now |
 |---|---|---|---|
 | a. The mailbox's state page to `0xF2000`, its ring below it | 0 | an hour, one UF2 per board | the mailbox key is readable from the board's drive today (section 1) |
-| b. `B9h` to the external chip at boot | 0, and 11.5 µA less on battery if its supply is on | an hour, after the schematic | the chip idles in standby otherwise |
+| b. `B9h` to the external chip at boot | −152 B, and 11.5 µA less on battery | done, `bark-fw/src/ext_flash.rs` | the chip idles in standby otherwise |
 | c. The path remap | −3 120 B | an hour | measured, free |
 | d. The external chip (section 1) | +528 384 B | 2–3 days and the bench's swap rows | the layout must be settled before the field; it ends the question |
 | e. The host's AES and random numbers in hardware (section 4) | −11 404 B | a day and a bench pairing | worth having once (d) is in; the first choice if (d) waits |

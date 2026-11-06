@@ -88,3 +88,13 @@ From the datasheet, Table 4-2 (DC) and Table 4-3 (AC):
 | deep power-down, IDPD | 0.5 µA typical, 1.5 µA max., CS# at VCC and the other inputs at a rail |
 | enter deep power-down | `B9h`; down tDP = 3 µs after CS# rises |
 | leave it | `ABh`; ready tRES1 = 8 µs after CS# rises |
+
+## What the firmware does with it
+
+`bark-fw/src/ext_flash.rs` sends `B9h` once the radio has raised the
+rail, bit by bit on the pins above with WP# and HOLD# driven high, and
+then keeps CS#, WP# and HOLD# high and the clock and data line low for
+the rest of the run, since IDPD holds only with the inputs at a rail.
+Whatever uses the chip later sends `ABh` and waits tRES1 first.
+`bark-fw/scripts/measure.md` step 5.3 says how the bench sees the
+saving.
