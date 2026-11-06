@@ -3,7 +3,8 @@
 // the echo is acknowledged; the card, the backup words, adding a contact
 // from a pasted or a scanned card, and the debug screen; the fetch button,
 // on the first screen and in a thread, and why it sends nothing; the home
-// buttons, the home known by its node ID wherever it is.
+// buttons, the home known by its node ID wherever it is, and its card
+// sent after a move only by "Send my card".
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -93,11 +94,27 @@ void main() {
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Acknowledge the echo.
-    await t.tap(find.text('Acknowledge').first);
+    // Acknowledge the echo: its button becomes the mark. The friend's
+    // acknowledgement of "hello" shows the same mark on the sent text.
+    Finder inBubble(String text, Finder f) => find.descendant(
+      of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
+      matching: f,
+    );
+    final mark = find.byWidgetPredicate(
+      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
+    );
+    final button = find.byTooltip('Acknowledge');
+    expect(inBubble('Echo: hello', button), findsOneWidget);
+    expect(inBubble('Echo: hello', mark), findsNothing);
+    expect(inBubble('hello', mark), findsNothing);
+    app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
+    await t.tap(inBubble('Echo: hello', button));
     await t.pump();
     await t.pump();
-    expect(find.textContaining('you acknowledged it'), findsOneWidget);
+    for (final text in ['hello', 'Echo: hello']) {
+      expect(inBubble(text, button), findsNothing);
+      expect(inBubble(text, mark), findsOneWidget);
+    }
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -313,7 +330,7 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('the home dialog says the new card goes to the contacts', (
+  testWidgets('the home dialog sends the new card; a move waits for a tap', (
     t,
   ) async {
     final app = await model(t);
@@ -345,6 +362,25 @@ void main() {
     expect(app.me.home.toString(), app.session.address.toString());
     expect(find.text('No home node'), findsOneWidget);
     expect(find.text('Make this node my home'), findsNothing);
+    // The changed card waits for the person.
+    final sent = app.session.outbox.length;
+    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    await t.pageBack();
+    await t.pumpAndSettle();
+    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    expect(app.session.outbox.length, sent);
+    await t.tap(find.text('Send my card'));
+    await t.pumpAndSettle();
+    expect(app.session.outbox.length, sent + app.contacts.list.length);
+    expect(find.text('Send my card'), findsNothing);
+    await t.tap(find.textContaining('Connected to'));
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('No home node'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Send my card'), findsNothing);
     // With the home elsewhere, the connected node is another node.
     final home = app.me.home!;
     await app.me.setHome(Address(home.pos, [1, 2, 3, 4, 5, 6]));
@@ -353,8 +389,19 @@ void main() {
     expect(find.text('Make this node my home'), findsOneWidget);
     await app.me.setHome(home);
     await t.pumpAndSettle();
+    // A move, then the dialog: the dialog sends the card, and the line goes.
+    await app.session.setMapPoint(Position.fromDegrees(50.47, 30.54));
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('Send my card'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final before = app.session.outbox.length;
     await press('No home node', 'goes to your contact.');
     expect(app.me.home, isNull);
+    expect(app.session.outbox.length, before + app.contacts.list.length);
+    expect(find.text('Send my card'), findsNothing);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

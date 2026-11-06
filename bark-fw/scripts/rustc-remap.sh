@@ -11,7 +11,15 @@
 # Cargo cannot remap these itself on the stable toolchain (its
 # `trim-paths` profile option is unstable in 1.98), and a rustflag in the
 # config cannot name the root, which is known only where the build runs.
+#
+# The standard library's source, which generic code from it compiled
+# here names, is mapped to where the toolchain's own compiled library
+# names it, `/rustc/<commit>`, so the toolchain's install path drops out
+# as well.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 home=${CARGO_HOME:-$HOME/.cargo}
-exec "$@" --remap-path-prefix="$root=/bark" --remap-path-prefix="$home=/cargo"
+std="$("$1" --print sysroot)/lib/rustlib/src/rust"
+commit=$("$1" -vV | sed -n 's/^commit-hash: //p')
+exec "$@" --remap-path-prefix="$root=/bark" --remap-path-prefix="$home=/cargo" \
+    --remap-path-prefix="$std=/rustc/$commit"

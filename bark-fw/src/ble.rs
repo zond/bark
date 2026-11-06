@@ -512,7 +512,9 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         name,
         appearance: &appearance::UNKNOWN,
     }))
-    .expect("the attribute table fits");
+    // Displayed, not `expect`ed: a `&str` error's `Debug` escapes it,
+    // which brings in Unicode tables, 6.7 KB of flash.
+    .unwrap_or_else(|e| panic!("the attribute table: {e}"));
     let node = Node {
         version: bark_link::VERSION,
         id,

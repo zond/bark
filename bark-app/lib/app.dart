@@ -7,12 +7,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:sodium/sodium.dart';
 
+import 'alerts.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
 import 'fake_node.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
+import 'phone_notifier.dart';
 import 'session.dart';
 import 'store.dart';
 
@@ -23,6 +25,8 @@ class AppModel extends ChangeNotifier {
   final Contacts contacts;
   late final Messenger messenger;
   final DateTime Function() now;
+  final Notifier notifier;
+  late final Alerts alerts;
 
   AppModel({
     required this.sodium,
@@ -30,22 +34,27 @@ class AppModel extends ChangeNotifier {
     required this.session,
     required this.contacts,
     required this.now,
+    this.notifier = const NoNotifier(),
   }) {
     messenger = Messenger(sodium, me, contacts, session, now);
+    alerts = Alerts(notifier, contacts);
+    session.kept = (r) => alerts.kept(r).catchError(_unnotified);
     session.addListener(_nodeAddress);
+    session.addListener(_link);
     // The countdowns move without a word from the node.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       notifyListeners();
     });
   }
 
-  factory AppModel.onPhone(Sodium s) {
+  static Future<AppModel> onPhone(Sodium s) async {
     return AppModel(
       sodium: s,
       me: Me(FileStore('me.json'), s, DateTime.now),
       session: Session(store: FileStore('bark.json'), now: DateTime.now),
       contacts: Contacts(FileStore('contacts.json')),
       now: DateTime.now,
+      notifier: await PhoneNotifier.start(),
     );
   }
 
@@ -74,13 +83,48 @@ class AppModel extends ChangeNotifier {
     final a = session.address;
     if (a == null) return;
     if (a.toString() != me.nodeAddress?.toString()) me.setNodeAddress(a);
-    // The home is the node, not the spot: its position moves when it takes
-    // a new place, and the card and texts to the old one would miss it.
-    if (atHome && a.toString() != me.home.toString()) unawaited(_homeMoved(a));
+    // The home is the node, not the spot: a fixed, awake node's address is
+    // its stored place, which moves only at boot or when it turns fixed,
+    // and the card and texts to the old one would miss it. A carried
+    // node's address is its live fix, which moves every second, and would
+    // change the card as often; a sleepy node's is its anchor's, which
+    // changes as it picks anchors. The changed card waits for the person to
+    // send it.
+    final s = session.status;
+    if (s == null || s.carried || s.sleepy) return;
+    if (atHome && a.toString() != me.home.toString()) unawaited(me.setHome(a));
   }
 
-  Future<void> _homeMoved(Address a) async {
-    if (await me.setHome(a)) await messenger.sendCardToAll();
+  /// The card changed and has not gone to the contacts. Without contacts
+  /// there is no one to send it to.
+  bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
+
+  /// Why the card changed, for the line that offers to send it.
+  String get cardChange => me.home == null
+      ? 'Your card changed: you have no home now'
+      : 'Your card changed: your home node has a new address';
+
+  /// Keeps the app running while a node is connected by Bluetooth, so
+  /// that it reads the inbox with the screen off. The fake node runs in
+  /// the app and is not a connected device.
+  void _link() {
+    final n = session.node;
+    unawaited(
+      alerts
+          .link(n != null && !fake ? nodeName(n.id) : null)
+          .catchError(_unnotified),
+    );
+  }
+
+  void _unnotified(Object e) => session.note('Notifying failed: $e');
+
+  /// Asks, once, to notify; `why` shows the person why first and says
+  /// whether to go on.
+  Future<void> askToNotify(Future<bool> Function() why) async {
+    if (me.askedToNotify) return;
+    await me.setAskedToNotify();
+    if (await notifier.allowed()) return;
+    if (await why()) await notifier.ask();
   }
 
   /// The connected node is the person's home.
@@ -229,6 +273,7 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     _ticker.cancel();
     session.removeListener(_nodeAddress);
+    session.removeListener(_link);
     fakeNode?.dispose();
     session.dispose();
     contacts.dispose();

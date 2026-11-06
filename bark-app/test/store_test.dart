@@ -65,6 +65,18 @@ void main() {
     expect(me.fault, isNull);
   });
 
+  test(
+    'a me.json from before the card was sent by hand reads as sent',
+    () async {
+      final me = MemoryStore('me.json')
+        ..text = oldMe.replaceFirst('"cardTime":0', '"cardTime":5');
+      final m = Me(me, sodium, () => at);
+      await m.load();
+      expect(m.cardSentTime, 5);
+      expect(m.cardUnsent, isFalse);
+    },
+  );
+
   test('a current bark.json round-trips', () async {
     final store = MemoryStore('bark.json');
     final s = Session(store: store, now: () => at);

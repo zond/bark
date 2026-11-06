@@ -88,8 +88,13 @@ bark-image = { path = "../bark-image", default-features = false }
 # The built place is converted to counts by the core's conversion.
 bark-proto = { path = "../bark-proto" }
 
+# Debug info is not in the flash image; it names the functions for the
+# stack measurement (README, Tasks and the stack). "z" over "s": 30 KB
+# less of the 392 KiB slot (docs/flash-2026-11-06.md). With fat LTO it is
+# this crate's level that counts; a dependency's own level only shapes its
+# code before LTO.
 [profile.release]
 debug = 2
 lto = "fat"
 codegen-units = 1
-opt-level = "s"
+opt-level = "z"

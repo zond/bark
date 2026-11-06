@@ -1,0 +1,123 @@
+# The bench: four relays on one desk with one position, A, B, C and D, and
+# a person F two relay hops away.
+#
+#   A B C D (one desk) --- R1 --- R2   F
+#
+# The boards on the desk took the same place, so each of A, B and C owns
+# D's position (spec "Owner") and all four hear each other. A's
+# application writes to D, F writes to D through R1, which hears A, B
+# and C but not D, and D writes to F. Whichever of A, B, C holds a text
+# for D is its owner by position while D is a live neighbour.
+
+name = "desk"
+seed = 1
+duration_s = 3600.0
+# As S1: the relays know each other within their first rotation, and
+# choose their homes at its end, 195 s; 390 s leaves a rotation more
+# (spec "Channel at boot", "Heartbeat").
+settle_s = 390.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "table"
+table = [
+  # On one desk.
+  { a = "A", b = "B", dbm = -50.0 },
+  { a = "A", b = "C", dbm = -50.0 },
+  { a = "A", b = "D", dbm = -50.0 },
+  { a = "B", b = "C", dbm = -50.0 },
+  { a = "B", b = "D", dbm = -50.0 },
+  { a = "C", b = "D", dbm = -50.0 },
+  # 400 m hops, about -106 dBm as in the corridor; D farther inside, below
+  # sensitivity (-119 dBm) at R1, audible only as interference.
+  { a = "A", b = "R1", dbm = -106.0 },
+  { a = "B", b = "R1", dbm = -106.0 },
+  { a = "C", b = "R1", dbm = -106.0 },
+  { a = "D", b = "R1", dbm = -125.0 },
+  { a = "R1", b = "R2", dbm = -106.0 },
+  { a = "A", b = "R2", dbm = -130.0 },
+  { a = "B", b = "R2", dbm = -130.0 },
+  { a = "C", b = "R2", dbm = -130.0 },
+  { a = "D", b = "R2", dbm = -130.0 },
+  # F 50 m from R2; R1 only as interference.
+  { a = "F", b = "R2", dbm = -80.0 },
+  { a = "F", b = "R1", dbm = -125.0 },
+]
+
+[[nodes]]
+place = "point"
+name = "A"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "B"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "D"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "R1"
+role = "relay"
+x = 400.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "R2"
+role = "relay"
+x = 800.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "F"
+role = "leaf"
+x = 850.0
+y = 0.0
+
+[[traffic]]
+kind = "periodic"
+from = "A"
+to = "D"
+interval_s = 60.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "F"
+to = "D"
+interval_s = 60.0
+start_s = 20.0
+payload_bytes = 40
+
+[[traffic]]
+kind = "periodic"
+from = "D"
+to = "F"
+interval_s = 60.0
+start_s = 40.0
+payload_bytes = 40
+
+[metrics]
+cadence_s = 10.0

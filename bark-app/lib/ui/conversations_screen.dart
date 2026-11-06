@@ -68,6 +68,7 @@ class ConversationsScreen extends StatelessWidget {
               ),
             ),
           _connection(context),
+          SendCardLine(app),
           if (list.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
