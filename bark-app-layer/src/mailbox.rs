@@ -312,7 +312,9 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
-    /// skips past items no longer in the ring.
+    /// skips past items no longer in the ring or too long to seal, after
+    /// which none is due. The node offers while one is (`bark-fw`,
+    /// `node.rs`), so a reply due that never comes would keep it busy.
     pub fn reply_due(&self) -> bool {
         self.key.is_some() && self.reply.is_some_and(|r| r.next <= r.last || !r.answered)
     }
@@ -342,9 +344,10 @@ impl<R: Ring> Mailbox<R> {
             out[..nothing.len()].copy_from_slice(&nothing);
             sealed = Some((0, nothing.len()));
         }
-        let (number, len) = sealed?;
-        r.answered = true;
+        // Kept with nothing to send too, so that no reply is due after.
+        r.answered |= sealed.is_some();
         self.reply = Some(r);
+        let (number, len) = sealed?;
         let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
         self.in_flight = Some(InFlight { msg_id, number });
         Some(Outgoing {
