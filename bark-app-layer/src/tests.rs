@@ -585,6 +585,20 @@ mod mailbox {
     }
 
     #[test]
+    fn an_item_that_cannot_be_sealed_ends_the_round_without_a_reply() {
+        let mut m = home();
+        m.arrive(MsgId(1), &item(1));
+        m.arrive(MsgId(2), &[0x42; MAX_PAYLOAD]);
+        let k = fixture().alice.mailbox;
+        m.arrive(MsgId(0), &fetch(&k, 100, 0));
+        // `drain` checks that no reply is due once `next` gives none.
+        assert_eq!(numbers(&drain(&mut m, 100)), [1]);
+        // Alone in its round, the round says nothing is new.
+        m.arrive(MsgId(0), &fetch(&k, 101, 1));
+        assert_eq!(drain(&mut m, 101), [Got::NothingNew]);
+    }
+
+    #[test]
     fn since_0_gets_all_the_ring_holds() {
         let mut m = Mailbox::new(Box::new(RamRing::<512>::new()));
         m.set_key(Some(fixture().alice.mailbox));
