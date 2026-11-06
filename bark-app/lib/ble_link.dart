@@ -138,6 +138,12 @@ class BleLink implements NodeLink {
       NodeTime.decode(await _read(Uuids.clock));
 
   @override
+  Future<void> setHome(List<int>? key) => _write(Uuids.home, encodeHome(key));
+
+  @override
+  Future<NodeHome> readHome() async => NodeHome.decode(await _read(Uuids.home));
+
+  @override
   Stream<Status> get statusNotified =>
       _notified(Uuids.status).map(Status.decode);
 

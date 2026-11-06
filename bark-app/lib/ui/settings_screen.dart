@@ -172,7 +172,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final home = app.me.home;
     final here = s.address;
     final st = s.status;
-    final isHome = here != null && home?.toString() == here.toString();
+    final atHome = app.atHome;
+    final moved = here != null && home?.toString() != here.toString();
     return [
       _heading('Home node'),
       Text(
@@ -180,10 +181,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? 'No home node: your card carries the address of the node you '
                   'are connected to, which changes when it moves.'
             : 'Your home node is at $home. Your card carries its address, '
-                  'and "Fetch my mail" brings your mail from it to the '
-                  'node you are connected to.',
+                  'and it holds your mailbox key. "Fetch my mail" brings '
+                  'your mail from it to the node you are connected to.',
       ),
-      if (here != null && !isHome && st != null && (st.sleepy || st.carried))
+      if (here != null && !atHome && st != null && (st.sleepy || st.carried))
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
@@ -191,11 +192,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'should be a node on USB power that stays where it is.',
           ),
         ),
+      if (app.holdsOtherKey)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text(
+            'This node holds a mailbox key: it is someone\'s home, perhaps '
+            'a former one of yours.',
+          ),
+        ),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         children: [
-          if (here != null && !isHome)
+          if (moved)
             FilledButton(
               onPressed: () => _setHome(here),
               child: const Text('Make this node my home'),
@@ -205,7 +214,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () => _setHome(null),
               child: const Text('No home node'),
             ),
-          if (home != null && here != null && !isHome)
+          if (app.holdsOtherKey)
+            OutlinedButton(
+              onPressed: () => _try(() async {
+                final r = await app.clearKey();
+                if (mounted) say(context, r);
+              }, 'Clearing the key failed'),
+              child: const Text('Clear its mailbox key'),
+            ),
+          if (home != null && here != null && !atHome)
             OutlinedButton(
               onPressed: () async {
                 if (await app.fetchNow() && mounted) {
@@ -241,7 +258,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (ok == true) await app.setHome(a);
+    if (ok != true) return;
+    await _try(() async {
+      final r = await (a == null ? app.noHome() : app.makeHome(a));
+      if (mounted) say(context, r);
+    }, 'Setting the home failed');
   }
 
   List<Widget> _backup() => [

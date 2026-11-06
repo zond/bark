@@ -76,6 +76,16 @@ class AppModel extends ChangeNotifier {
     me.setNodeAddress(a);
   }
 
+  /// The connected node is the person's home.
+  bool get atHome {
+    final n = session.node;
+    return n != null && messenger.isHome(n.id);
+  }
+
+  /// The connected node holds a mailbox key and is not the person's home:
+  /// a former home of theirs, or someone else's.
+  bool get holdsOtherKey => !atHome && (session.nodeHome?.set ?? false);
+
   /// Fetches to the node's address. Only the person's word fetches, as
   /// fetched mail crosses the city twice (roadmap D128).
   Future<bool> fetchNow() async {
@@ -85,10 +95,52 @@ class AppModel extends ChangeNotifier {
     return true;
   }
 
-  /// Makes the connected node the person's home, or clears it, and
-  /// sends the new card to every contact if its address changed.
-  Future<void> setHome(Address? a) async {
+  static const _oldHomeKeeps =
+      'Your old home node still holds your mailbox key until you connect '
+      'to it and press "Clear its mailbox key" there.';
+
+  /// Makes the connected node, at `a`, the person's home: it is given the
+  /// mailbox key and is the home only if it then says it holds one. The
+  /// new card goes to every contact if its address changed. Returns what
+  /// to tell the person.
+  Future<String> makeHome(Address a) async {
+    final n = session.node;
+    if (n == null) return 'Not connected to a node';
+    if (n.version < homeVersion) {
+      return 'This node\'s firmware has no mailbox (link version '
+          '${n.version}): update it to make it a home. Nothing changed.';
+    }
+    final h = await session.writeHome(me.keys.mailbox.extractBytes());
+    if (!h.set) {
+      return 'The node did not keep your mailbox key, so it cannot be your '
+          'home. Nothing changed.';
+    }
+    final away = me.home != null && !atHome;
     if (await me.setHome(a)) await messenger.sendCardToAll();
+    return away
+        ? 'This node is your home. $_oldHomeKeeps'
+        : 'This node is your home';
+  }
+
+  /// No home node. Connected to the home, it forgets the mailbox key;
+  /// elsewhere the home keeps it, and the person is told.
+  Future<String> noHome() async {
+    if (me.home == null) return 'No home node';
+    final at = atHome;
+    if (at && (await session.writeHome(null)).set) {
+      return 'The node still says it holds a mailbox key, so it is still '
+          'your home. Nothing changed.';
+    }
+    if (await me.setHome(null)) await messenger.sendCardToAll();
+    return at ? 'No home node' : 'No home node. $_oldHomeKeeps';
+  }
+
+  /// Takes the mailbox key from a connected node that is not the home.
+  Future<String> clearKey() async {
+    final h = await session.writeHome(null);
+    return h.set
+        ? 'The node still says it holds a mailbox key'
+        : 'The node no longer holds a mailbox key';
   }
 
   void setFake(bool v) {
