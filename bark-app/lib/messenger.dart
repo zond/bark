@@ -46,31 +46,38 @@ class Messenger {
   );
 
   /// Seals `records` to `c`: boxed once `c` is verified, else a first
-  /// message with the person's card. Returns the payload and its `sent`.
+  /// message with the person's card. The header names the node the
+  /// person writes from, the one connected or the last, until `c` has
+  /// answered a message that named it. Returns the payload and its `sent`.
   Future<(Uint8List, int)> _seal(Contact c, List<Record> records) async {
     final sent = await me.nextSent();
     final card = me.card;
-    final mine = card?.address.toString();
+    if (!c.verified && card == null) {
+      throw const BadPayload('no address to answer to yet');
+    }
+    final here = me.nodeAddress;
+    final withAddress = here != null && c.knowsMine != here.toString();
+    final header = Header(
+      greater(me.identity, c.card.identity),
+      sent,
+      withAddress ? here : null,
+    );
+    if (withAddress) {
+      await contacts.put(c.copyWith(sentMine: here.toString()));
+    }
     if (!c.verified) {
-      if (card == null) throw const BadPayload('no address to answer to yet');
-      final plain = writePlain(
-        Header(greater(me.identity, c.card.identity), sent),
-        [CardRecord(card.encode()), ...records],
-      );
+      final plain = writePlain(header, [
+        CardRecord(card!.encode()),
+        ...records,
+      ]);
       return (sealIntro(sodium, c.card.identity, plain), sent);
     }
-    final withAddress = mine != null && c.knowsMine != mine;
-    final plain = writePlain(
-      Header(
-        greater(me.identity, c.card.identity),
-        sent,
-        withAddress ? card!.address : null,
-      ),
-      records,
-    );
-    if (withAddress) await contacts.put(c.copyWith(sentMine: mine));
     return (
-      sealBox(_pair(c.card.identity), sodium.randombytes.buf(nonceLen), plain),
+      sealBox(
+        _pair(c.card.identity),
+        sodium.randombytes.buf(nonceLen),
+        writePlain(header, records),
+      ),
       sent,
     );
   }
@@ -225,20 +232,11 @@ class Messenger {
     // A message of the person's own, sent back to them.
     if (h.greater != greater(them, me.identity)) return false;
     if (c != null) {
-      var u = c.copyWith(verified: true, knowsMine: c.sentMine);
-      final a = h.address;
-      if (a != null) {
-        u = u.copyWith(
-          card: PersonCard(
-            u.card.identity,
-            a,
-            u.card.time,
-            u.card.name,
-            home: u.card.home,
-          ),
-        );
-      }
-      await contacts.put(u);
+      await contacts.put(
+        c
+            .copyWith(verified: true, knowsMine: c.sentMine)
+            .heard(h.sent, h.address, now()),
+      );
     }
     await _records(m, hex(them), h, rs, mailbox);
     return true;
@@ -260,8 +258,9 @@ class Messenger {
     // naming it may be anyone's.
     if (known != null && known.verified) return true;
     await contacts.put(
-      known?.copyWith(card: card) ??
-          Contact(card, card.name.isEmpty ? 'Unnamed' : card.name),
+      (known?.copyWith(card: card) ??
+              Contact(card, card.name.isEmpty ? 'Unnamed' : card.name))
+          .heard(h.sent, h.address, now()),
     );
     await _records(m, card.key, h, rs.sublist(1), mailbox);
     return true;

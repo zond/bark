@@ -3092,7 +3092,7 @@ dropped. Payloads are not padded.
 |---|---|---|
 | flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two, byte by byte; the others zero |
 | sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC, on each phone later than any it sent before |
-| address | 0 or 13 | the address to answer to |
+| address | 0 or 13 | the address of the node the sender writes from |
 
 | record | bytes | |
 |---|---|---|
@@ -3102,8 +3102,10 @@ dropped. Payloads are not padded.
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
-the one on the sender's card, included until the contact has answered a
-message that carried it and whenever it changes. The app sends nothing
+that of the node the sender writes from, the one their phone is
+connected to or was last, included until the contact has answered a
+message that carried it and whenever it changes; a message without one
+says it has not changed. The app sends nothing
 by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
 
@@ -3117,10 +3119,22 @@ else their node's current one. A card with a later time replaces a
 contact's card; the person sends their card to their contacts when it
 changes.
 
-*Why the home flag.* A home's [mailbox](#mailbox) keeps a person's mail
-until they fetch it; a node's address that is not a home is only where
-they were. The sender's app chooses between them and the address a
-message was last written from (below).
+**Where a text goes.** The app keeps both addresses of a contact: their
+card's, and the one their messages were last written from, with the
+age of the newest message from them, counted from its `sent`, or from
+its arrival when `sent` is ahead of the phone's clock. While that age
+is under the delivery TTL, a text goes to where they write from; past
+it, the person chooses between that address and the card's, for each
+text (roadmap D132).
+
+*Why where they write from.* A reply goes straight to where the person
+is, rather than to their home's mailbox to wait for a fetch, at
+13 bytes on a message after a change. Within the delivery TTL the
+network keeps mail for a node at the address it last used
+([delivery queue](#delivery-queue)); past it the app cannot tell
+whether they are still there, and the home flag tells the person
+whether the other choice is a mailbox that keeps the mail or only
+where a node once was.
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it: a DATA with hop

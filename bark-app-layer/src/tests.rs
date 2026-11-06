@@ -9,7 +9,7 @@ use crate::keys::{self, Keys};
 use crate::plain::{self, Header, Record, Writer};
 use crate::seal::{self, Fetch, Form, Opened};
 use crate::text::{self, Encoding};
-use crate::vectors::{self, fixture};
+use crate::vectors::{self, fixture, hex};
 use crate::{Error, MAX_APP_PAYLOAD, MAX_PAYLOAD};
 
 #[test]
@@ -139,6 +139,26 @@ fn a_box_opens_for_its_pair_only() {
         seal::open_box(&bob_from_carol, &payload, &mut out),
         Err(Error::Open)
     );
+}
+
+#[test]
+fn a_header_names_where_its_sender_writes_from_not_their_cards_home() {
+    let f = fixture();
+    let mut b = [0u8; MAX_PAYLOAD];
+    let h = Header {
+        greater: false,
+        sent: 9,
+        address: Some(f.away),
+    };
+    let w = Writer::new(&mut b, &h).unwrap();
+    let n = w.finish();
+    assert_eq!(n, plain::HEADER_LEN + 13);
+    assert_eq!(b[0], 1);
+    assert_eq!(&b[5..n], &f.away.encode());
+    assert_eq!(plain::read(&b[..n]).unwrap().0, h);
+    // The vectors' text is written from away from the home on the card.
+    let v = vectors::json();
+    assert!(v.contains(&format!("\"address\": \"{}\"", hex(&f.away.encode()))));
 }
 
 #[test]

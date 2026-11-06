@@ -17,7 +17,7 @@ use crate::seal::{self, Fetch};
 use crate::text;
 use crate::{Address, MAX_PAYLOAD};
 
-fn hex(b: &[u8]) -> String {
+pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
@@ -135,13 +135,14 @@ pub fn json() -> String {
         ],
     ));
 
-    // A text in windows-1251, from Alice to Bob, with her address.
+    // A text in windows-1251, from Alice to Bob, written from a node away
+    // from the home on her card, and naming it.
     let mut tb = [0u8; MAX_PAYLOAD];
     let words = "Привіт, Боб! Ґанок їжака — «є».";
     let header = Header {
         greater: plain::greater(&f.alice.identity, &f.bob.identity),
         sent: 1_000_000,
-        address: Some(f.home),
+        address: Some(f.away),
     };
     let p = plaintext(&header, &[text_record(words, &mut tb)]);
     let nonce = core::array::from_fn(|i| 0x40 + i as u8);
@@ -152,7 +153,7 @@ pub fn json() -> String {
             ("text", q(words)),
             ("sent", format!("{}", header.sent)),
             ("greater", format!("{}", header.greater)),
-            ("address", h(&f.home.encode())),
+            ("address", h(&f.away.encode())),
             ("plaintext", h(&p)),
             ("nonce", h(&nonce)),
             ("payload", h(&payload)),

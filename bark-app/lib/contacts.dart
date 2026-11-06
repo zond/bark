@@ -2,6 +2,7 @@
 
 import 'package:flutter/foundation.dart';
 
+import 'app_layer.dart';
 import 'card.dart';
 import 'link.dart';
 import 'store.dart';
@@ -15,10 +16,19 @@ class Contact {
   /// holder could make one. A first message's sender is not verified.
   final bool verified;
 
-  /// The address of the person's own card this contact has been seen to
-  /// know, and the one last sent to it.
+  /// The address the person writes from that this contact has been seen
+  /// to know, and the one last sent to it.
   final String? knowsMine;
   final String? sentMine;
+
+  /// The address this contact's messages were last written from, from
+  /// their headers; kept apart from the card's, which may be a home's.
+  final Address? wroteFrom;
+
+  /// The `sent` of the newest message from them, and when it was written
+  /// by this phone's clock: no later than it arrived.
+  final int? heardSent;
+  final DateTime? heardAt;
 
   Contact(
     this.card,
@@ -26,6 +36,9 @@ class Contact {
     this.verified = false,
     this.knowsMine,
     this.sentMine,
+    this.wroteFrom,
+    this.heardSent,
+    this.heardAt,
   });
 
   Address get address => card.address;
@@ -38,13 +51,33 @@ class Contact {
     bool? verified,
     String? knowsMine,
     String? sentMine,
+    Address? wroteFrom,
+    int? heardSent,
+    DateTime? heardAt,
   }) => Contact(
     card ?? this.card,
     name ?? this.name,
     verified: verified ?? this.verified,
     knowsMine: knowsMine ?? this.knowsMine,
     sentMine: sentMine ?? this.sentMine,
+    wroteFrom: wroteFrom ?? this.wroteFrom,
+    heardSent: heardSent ?? this.heardSent,
+    heardAt: heardAt ?? this.heardAt,
   );
+
+  /// After a message from them, written at `sent` with `address` in its
+  /// header, that arrived at `arrived`: only the newest counts, and one
+  /// without an address says it has not changed.
+  Contact heard(int sent, Address? address, DateTime arrived) {
+    final last = heardSent;
+    if (last != null && sent <= last) return this;
+    final written = timeOfSent(sent);
+    return copyWith(
+      wroteFrom: address,
+      heardSent: sent,
+      heardAt: written.isAfter(arrived) ? arrived : written,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'card': card.toText(),
@@ -52,6 +85,9 @@ class Contact {
     'verified': verified,
     'knowsMine': knowsMine,
     'sentMine': sentMine,
+    'wroteFrom': wroteFrom?.toString(),
+    'heardSent': heardSent,
+    'heardAt': heardAt?.toIso8601String(),
   };
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -60,6 +96,13 @@ class Contact {
     verified: j['verified'] as bool,
     knowsMine: j['knowsMine'] as String?,
     sentMine: j['sentMine'] as String?,
+    wroteFrom: j['wroteFrom'] == null
+        ? null
+        : Address.parse(j['wroteFrom'] as String),
+    heardSent: j['heardSent'] as int?,
+    heardAt: j['heardAt'] == null
+        ? null
+        : DateTime.parse(j['heardAt'] as String),
   );
 }
 
