@@ -33,3 +33,26 @@ library does not offer (roadmap D20). Changes from the upstream revision:
 To move to a newer upstream revision: replace the directory with that revision's
 `lora-phy`, reapply the changes listed here, and review the upstream diff as for
 any driver update.
+
+## trouble-host
+
+The BLE host, version 0.8.0 as published on crates.io, which is
+https://github.com/embassy-rs/trouble, directory `host`, at revision
+`42e3e04de00db3951b126741e1f3602bfdf5df47`. Licensed MIT or Apache-2.0, at the
+user's choice; both licence texts, from that repository, are in the directory.
+
+It is a copy because its pairing compiles the central's side even in a build
+without the `central` feature, 6 KB the image has no room for
+(`docs/pairing-2026-11-06.md`; roadmap D135). Changes from the published crate:
+
+- `src/security_manager/pairing/mod.rs` and `src/security_manager/mod.rs`: the
+  central's pairing (`pairing::central`, `State::Central`, `new_central`,
+  `initiate_central`, `handle_central`) only with the `central` feature. Without
+  it, an SMP command on a link where the node is central, or a pairing the node
+  would start as central, is `Error::InvalidState`; the node is never central.
+- The unit tests of `pairing` and `pairing::peripheral` pair against the
+  central's side, so they run only with `central`; with the default features
+  all 61 of the library's tests pass, and without `central` the other 47.
+
+To move to a newer version: replace the directory with that version's published
+crate, reapply the changes listed here, and run its tests both ways.
