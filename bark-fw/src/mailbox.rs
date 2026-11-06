@@ -17,9 +17,9 @@
 
 use core::cell::RefCell;
 
-use bark_app_layer::flash_ring::{FlashRing, Op, Region};
+use bark_app_layer::flash_ring::{Area, FlashRing, Op, Region};
 use bark_app_layer::mailbox::{Arrival, Mailbox};
-use bark_image::layout::{MAILBOX, PAGE};
+use bark_image::layout::{self, MAILBOX, MAILBOX_STATE, PAGE};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::MsgId;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -28,16 +28,17 @@ use embassy_sync::signal::Signal;
 
 use crate::store::SharedFlash;
 
-/// The region, read where it lies in the chip's address space.
-pub struct Mapped;
+/// A region of the internal flash, read where it lies in the chip's
+/// address space.
+pub struct Mapped(layout::Region);
 
 impl Region for Mapped {
     fn pages(&self) -> u32 {
-        MAILBOX.len / PAGE
+        self.0.len / PAGE
     }
 
     fn read(&self, offset: u32, out: &mut [u8]) {
-        let at = (MAILBOX.start + offset) as *const u8;
+        let at = (self.0.start + offset) as *const u8;
         // SAFETY: flash is mapped from address 0 (nRF52840 Product
         // Specification, Memory), and the region lies in it; `Ring`'s
         // callers keep to its pages.
@@ -45,6 +46,12 @@ impl Region for Mapped {
         out.copy_from_slice(bytes);
     }
 }
+
+/// The ring: the region but its last page, the state's.
+const RING: layout::Region = layout::Region {
+    start: MAILBOX.start,
+    len: MAILBOX.len - PAGE,
+};
 
 type Home = Mailbox<FlashRing<Mapped>>;
 
@@ -65,7 +72,7 @@ pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Open the mailbox as it was before the reboot, once at boot.
 pub fn open() {
-    let m = Mailbox::new(FlashRing::open(Mapped));
+    let m = Mailbox::new(FlashRing::open(Mapped(RING), &Mapped(MAILBOX_STATE)));
     log::info!(
         "mailbox: home={} oldest={} newest={} unread={}",
         m.is_home(),
@@ -127,12 +134,18 @@ pub async fn run(flash: &'static SharedFlash) -> ! {
         while let Some(op) = with(|m| m.ring().op()).flatten() {
             {
                 let mut f = flash.lock().await;
+                let start = |area| match area {
+                    Area::Ring => RING.start,
+                    Area::State => MAILBOX_STATE.start,
+                };
                 let done = match op {
-                    Op::Erase { offset } => {
-                        let at = MAILBOX.start + offset;
+                    Op::Erase { area, offset } => {
+                        let at = start(area) + offset;
                         f.erase(at, at + PAGE).await
                     }
-                    Op::Write { offset, .. } => f.write(MAILBOX.start + offset, op.data()).await,
+                    Op::Write { area, offset, .. } => {
+                        f.write(start(area) + offset, op.data()).await
+                    }
                 };
                 if let Err(e) = done {
                     log::error!("mailbox: flash {:?}", e);
