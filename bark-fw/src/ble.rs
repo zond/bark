@@ -987,7 +987,6 @@ fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorC
         SetHome::Clear => None,
     };
     crate::mailbox::with(|m| m.set_key(key));
-    crate::mailbox::FOR_CORE.signal(());
     log::info!(
         "ble: home {}",
         if key.is_some() { "set" } else { "cleared" }
