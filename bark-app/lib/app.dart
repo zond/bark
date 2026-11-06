@@ -148,6 +148,11 @@ class AppModel extends ChangeNotifier {
   /// for the paired node, so that the texts waiting go out as soon as it
   /// is in reach. The fake node runs in the app and is not a connected
   /// device.
+  ///
+  /// The app also starts with the phone and looks for the paired node,
+  /// unless it is no longer this phone's or the person stopped looking:
+  /// a phone that held a link when it was switched off takes it up again
+  /// without anyone opening the app.
   void _link() {
     final n = session.node;
     final paired = searchFor;
@@ -157,15 +162,22 @@ class AppModel extends ChangeNotifier {
             body: 'Texts arrive while the screen is off',
           )
         : paired != null
-        ? (
-            title: 'Looking for $paired',
-            body: bluetoothOn
-                ? 'Texts waiting go out once it is in reach'
-                : 'Bluetooth is off',
-          )
+        ? _looking(paired, bluetooth: bluetoothOn)
         : null;
     unawaited(alerts.hold(h).catchError(_unnotified));
+    final p = session.pairedWith;
+    final boot = p == null || session.pairingLost || session.stopped
+        ? null
+        : _looking(p, bluetooth: true);
+    unawaited(alerts.atBoot(boot).catchError(_unnotified));
   }
+
+  static Held _looking(String node, {required bool bluetooth}) => (
+    title: 'Looking for $node',
+    body: bluetooth
+        ? 'Texts waiting go out once it is in reach'
+        : 'Bluetooth is off',
+  );
 
   void _unnotified(Object e) => session.note('Notifying failed: $e');
 
@@ -305,7 +317,6 @@ class AppModel extends ChangeNotifier {
   /// same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
     if (connecting || connectedTo(n.deviceId)) return;
-    _stayOff = false;
     await _connect(n, again: again);
   }
 
@@ -336,7 +347,6 @@ class AppModel extends ChangeNotifier {
 
   Future<void> connectFake() async {
     if (connecting || connectedTo(fakeDevice)) return;
-    _stayOff = false;
     final f = fakeNode ??= FakeNode(
       now: now,
       sodium: sodium,
@@ -353,9 +363,10 @@ class AppModel extends ChangeNotifier {
     );
   }
 
-  /// Connects by `open` and attaches the link; the node holds this
-  /// phone's bond then. A node that no longer does is kept as lost, with
-  /// `again` to pair with it anew, and [NotOurs] goes on to the caller.
+  /// Connects by `open` and attaches the link, which ends a stop of the
+  /// search the person made; the node holds this phone's bond then. A
+  /// node that no longer does is kept as lost, with `again` to pair with
+  /// it anew, and [NotOurs] goes on to the caller.
   Future<void> _open(
     String device,
     Future<(NodeLink, int)> Function() open, {
@@ -364,6 +375,7 @@ class AppModel extends ChangeNotifier {
     _phase(Linking.connecting);
     pairAgain = null;
     try {
+      await session.setStopped(false);
       if (session.connected) await session.disconnect();
       linkDevice = device;
       final (link, m) = await open();
@@ -388,25 +400,19 @@ class AppModel extends ChangeNotifier {
   }
 
   /// The person closes the link: the app does not look for the node
-  /// again until they connect or restart it.
+  /// again until they connect.
   Future<void> disconnect() async {
-    stopLooking();
+    final stop = stopLooking();
     await session.disconnect();
+    await stop;
   }
 
-  /// The person stops the search for the paired node, until they connect
-  /// or restart the app.
-  void stopLooking() {
-    _stayOff = true;
-    notifyListeners();
-  }
+  /// The person stops the search for the paired node, until they connect.
+  Future<void> stopLooking() => session.setStopped(true);
 
   /// Whether the search has started, which only the app on a phone does:
   /// a test starts it to drive it.
   bool _searchStarted = false;
-
-  /// The person closed the link or stopped the search on purpose.
-  bool _stayOff = false;
 
   /// Bluetooth is on, by Android's word.
   bool bluetoothOn = false;
@@ -431,7 +437,9 @@ class AppModel extends ChangeNotifier {
   /// is in use.
   String? get searchFor {
     final p = session.pairedWith;
-    if (!_searchStarted || fake || _stayOff || session.connected) return null;
+    if (!_searchStarted || fake || session.stopped || session.connected) {
+      return null;
+    }
     if (p == null || session.pairingLost) return null;
     return p;
   }
@@ -540,7 +548,7 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     _ticker.cancel();
     _availability?.cancel();
-    _stayOff = true;
+    _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
     session.removeListener(_nodeAddress);
     session.removeListener(_link);

@@ -253,6 +253,11 @@ class Session extends ChangeNotifier {
   /// paired with it since (spec "Phone link", the replaced phone).
   bool pairingLost = false;
 
+  /// The person closed the link or stopped looking for the paired node:
+  /// the app does not look for it until they connect. Kept, so that the
+  /// app started with the phone does not look either.
+  bool stopped = false;
+
   bool _writing = false;
   bool _draining = false;
   final List<StreamSubscription<dynamic>> _subs = [];
@@ -302,6 +307,7 @@ class Session extends ChangeNotifier {
         // Added after the format's first version: absent means none.
         pairedWith: j['pairedWith'] as String?,
         pairingLost: j['pairingLost'] as bool? ?? false,
+        stopped: j['stopped'] as bool? ?? false,
       ),
     );
     if (j == null) return;
@@ -309,6 +315,7 @@ class Session extends ChangeNotifier {
     received.addAll(j.received);
     pairedWith = j.pairedWith;
     pairingLost = j.pairingLost;
+    stopped = j.stopped;
     notifyListeners();
   }
 
@@ -317,6 +324,7 @@ class Session extends ChangeNotifier {
     'received': [for (final r in received) r.toJson()],
     'pairedWith': pairedWith,
     'pairingLost': pairingLost,
+    'stopped': stopped,
   });
 
   /// The node `name` holds this phone's bond, or no longer does.
@@ -325,6 +333,15 @@ class Session extends ChangeNotifier {
     pairedWith = name;
     pairingLost = lost;
     note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
+    notifyListeners();
+    await save();
+  }
+
+  /// The person stopped looking for the paired node, or connected.
+  Future<void> setStopped(bool s) async {
+    if (stopped == s) return;
+    stopped = s;
+    notifyListeners();
     await save();
   }
 

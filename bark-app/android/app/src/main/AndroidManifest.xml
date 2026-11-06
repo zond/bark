@@ -22,6 +22,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Starting with the phone, to take up the link to the paired node
+         again without anyone opening the app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Asking to be exempt from battery optimisation, which some phones
          need to keep the service running for hours. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -55,14 +58,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- The plugin's service, running while the app holds the link
-             or looks for the paired node; it goes on when the person
-             closes the app's window. -->
+        <!-- Running while the app holds the link or looks for the paired
+             node; it goes on when the person closes the app's window. -->
         <service
-            android:name="com.dexterous.flutterlocalnotifications.ForegroundService"
+            android:name=".LinkService"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="connectedDevice" />
+        <!-- Not exported: the system still delivers its own broadcasts. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

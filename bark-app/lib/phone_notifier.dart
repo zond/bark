@@ -1,9 +1,9 @@
 // Notifying on Android. With the screen off the link to the node runs in
-// this Dart session, as in the foreground: a foreground service only keeps
-// the process running under its notification, and the activity keeps its
-// engine when it goes (MainActivity.kt), so closing the app's window
-// leaves the session running too. A service that read the inbox itself
-// would be a second implementation of the link.
+// this Dart session, as in the foreground: the app's own foreground
+// service (LinkService.kt) keeps the process running under its
+// notification, and the engine outlives the window (Engine.kt), so
+// closing the app's window leaves the session running too. A service that
+// read the inbox itself would be a second implementation of the link.
 
 import 'dart:async';
 
@@ -25,24 +25,12 @@ class PhoneNotifier implements Notifier {
   /// (MainActivity.kt).
   static const _power = MethodChannel('org.bark.bark_app/power');
 
-  /// IDs among the app's notifications; each contact's texts are told
-  /// apart by a tag, their identity.
-  static const _linkId = 1, _textsId = 2;
+  /// The link's foreground service and its notification (LinkService.kt).
+  static const _link = MethodChannel('org.bark.bark_app/link');
 
-  /// The link's notification makes no sound: it is there as long as the
-  /// link or the search for the node, and Android requires it of a
-  /// foreground service.
-  static const _linkChannel = AndroidNotificationDetails(
-    'link',
-    'Connection to the node',
-    channelDescription:
-        'Shown while the app keeps the link to a node or looks for it',
-    importance: Importance.low,
-    priority: Priority.low,
-    ongoing: true,
-    showWhen: false,
-    icon: _icon,
-  );
+  /// The texts' notification ID; the link's, 1, is LinkService.kt's. Each
+  /// contact's texts are told apart by a tag, their identity.
+  static const _textsId = 2;
 
   static const _icon = 'ic_notification';
 
@@ -66,7 +54,13 @@ class PhoneNotifier implements Notifier {
         n._launched();
       },
     );
-    await n._launched();
+    // Started with the phone, or with a window not yet in front, the app
+    // reads how the window was opened once it is.
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      await n._launched();
+    } else {
+      n._newWindow = true;
+    }
     return n;
   }
 
@@ -93,43 +87,20 @@ class PhoneNotifier implements Notifier {
   Future<bool> ask() async =>
       await _plugin.requestNotificationsPermission() ?? false;
 
-  /// Whether the foreground service runs.
-  bool _held = false;
+  @override
+  Future<void> hold(Held held) => _link.invokeMethod<void>('hold', _args(held));
 
   @override
-  Future<void> hold(Held held) async {
-    if (_held) {
-      // The service runs: its notification changes in place, with no
-      // start of the service, which Android 12 and later restrict in the
-      // background.
-      await _plugin.show(
-        id: _linkId,
-        title: held.title,
-        body: held.body,
-        notificationDetails: _linkChannel,
-      );
-      return;
-    }
-    await _plugin.startForegroundService(
-      id: _linkId,
-      title: held.title,
-      body: held.body,
-      notificationDetails: _linkChannel,
-      // Started again by Android after it killed the process, the service
-      // would claim a link that the process took with it.
-      startType: AndroidServiceStartType.startNotSticky,
-      foregroundServiceTypes: {
-        AndroidServiceForegroundType.foregroundServiceTypeConnectedDevice,
-      },
-    );
-    _held = true;
-  }
+  Future<void> letGo() => _link.invokeMethod<void>('letGo');
 
   @override
-  Future<void> letGo() async {
-    _held = false;
-    await _plugin.stopForegroundService();
-  }
+  Future<void> atBoot(Held? held) =>
+      _link.invokeMethod<void>('atBoot', held == null ? null : _args(held));
+
+  static Map<String, String> _args(Held h) => {
+    'title': h.title,
+    'body': h.body,
+  };
 
   @override
   Future<void> texts(String key, String name, List<Received> texts) {

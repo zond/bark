@@ -22,6 +22,10 @@ abstract interface class Notifier {
   /// The app need not run in the background: it may be suspended again.
   Future<void> letGo();
 
+  /// The app starts with the phone, without a window, under a
+  /// notification of `held` until it runs; for null it does not.
+  Future<void> atBoot(Held? held);
+
   /// Shows the unread `texts` from the contact of identity `key`, called
   /// `name`, as one notification in place of the last.
   Future<void> texts(String key, String name, List<Received> texts);
@@ -56,6 +60,8 @@ class NoNotifier implements Notifier {
   @override
   Future<void> letGo() async {}
   @override
+  Future<void> atBoot(Held? held) async {}
+  @override
   Future<void> texts(String key, String name, List<Received> texts) async {}
   @override
   Future<void> clear(String key) async {}
@@ -83,14 +89,30 @@ class Alerts {
   /// The texts each contact's notification shows.
   final Map<String, List<Received>> _unread = {};
 
-  /// What the notification of the app kept running says.
+  /// What the notification of the app kept running says, once told.
   Held? _held;
+  bool _heldTold = false;
 
-  /// Keeps the app running under `held`, or lets it go for null.
+  /// Keeps the app running under `held`, or lets it go for null. The
+  /// first call is passed on even for null: the app may have been started
+  /// with the phone (`atBoot`) for a node it no longer looks for.
   Future<void> hold(Held? held) async {
-    if (held == _held) return;
+    if (_heldTold && held == _held) return;
+    _heldTold = true;
     _held = held;
     await (held == null ? notifier.letGo() : notifier.hold(held));
+  }
+
+  /// What the app starts with the phone under, once told.
+  Held? _boot;
+  bool _bootTold = false;
+
+  /// Starts the app with the phone under `held`, or not for null.
+  Future<void> atBoot(Held? held) async {
+    if (_bootTold && held == _boot) return;
+    _bootTold = true;
+    _boot = held;
+    await notifier.atBoot(held);
   }
 
   /// A message was kept: a text notifies, anything else does not.

@@ -1,8 +1,10 @@
 // What notifies: each new text, collected per contact until its thread is
 // opened, and nothing for a thread in front of the person, an
 // acknowledgement or a card; the link's notification with a Bluetooth
-// link only; the permission asked once, at the first connection; the
-// battery exemption in Settings; and a tapped notification's thread.
+// link only; starting with the phone while the paired node is this
+// phone's and the person has not stopped looking; the permission asked
+// once, at the first connection; the battery exemption in Settings; and a
+// tapped notification's thread.
 
 import 'dart:async';
 
@@ -25,6 +27,9 @@ import 'package:sodium/sodium.dart';
 /// Writes down what the app asks of the phone.
 class FakeNotifier implements Notifier {
   final List<String> log = [];
+
+  /// What the app is to start with the phone under, each time it changed.
+  final List<String?> boot = [];
   bool notify;
   bool exempt;
   int asked = 0;
@@ -43,6 +48,8 @@ class FakeNotifier implements Notifier {
   Future<void> hold(Held held) async => log.add('hold ${held.title}');
   @override
   Future<void> letGo() async => log.add('let go');
+  @override
+  Future<void> atBoot(Held? held) async => boot.add(held?.title);
   @override
   Future<void> texts(String key, String name, List<Received> texts) async =>
       log.add('$name: ${texts.map((t) => t.body).join(' | ')}');
@@ -107,6 +114,9 @@ void main() {
   test('texts collect per contact until their thread is opened', () {
     run((async, app, n) {
       expect(n.log, [
+        // The first state goes out even when nothing is held: the app
+        // may have started with the phone, under the link's notification.
+        'let go',
         'Fake friend: Hello from the fake node.',
         'Fake friend: Hello from the fake node. | '
             'A second message, waiting in the inbox.',
@@ -188,6 +198,52 @@ void main() {
     });
   });
 
+  test('the app starts with the phone while the paired node is its own '
+      'and the person has not stopped looking', () {
+    run((async, app, n) {
+      const looking = 'Looking for bark-fa4e00000001';
+      expect(n.boot, [null, looking]);
+      app.disconnect();
+      async.flushMicrotasks();
+      expect(n.boot.last, isNull);
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(n.boot.last, looking);
+
+      // The stop is kept: the app started again does not look, nor
+      // start with the phone, and lets go of a service started with it.
+      app.disconnect();
+      async.flushMicrotasks();
+      final n2 = FakeNotifier();
+      final again = AppModel(
+        sodium: sodium,
+        me: Me(MemoryStore(), sodium, app.now),
+        session: Session(store: app.session.store, now: app.now),
+        contacts: Contacts(MemoryStore()),
+        now: app.now,
+        notifier: n2,
+      );
+      again.load();
+      async.flushMicrotasks();
+      expect(again.session.stopped, isTrue);
+      expect(n2.boot, [null]);
+      expect(n2.log, ['let go']);
+      again.dispose();
+
+      // Nor once the node is another phone's.
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(n.boot.last, looking);
+      app.session.disconnect();
+      app.fakeNode!.pairElsewhere();
+      async.flushMicrotasks();
+      app.connectFake().catchError((_) {});
+      async.flushMicrotasks();
+      expect(app.session.pairingLost, isTrue);
+      expect(n.boot.last, isNull);
+    });
+  });
+
   Future<void> connectFake(WidgetTester t) async {
     await t.tap(find.text('Connect'));
     await t.pumpAndSettle();
@@ -206,7 +262,7 @@ void main() {
     // The battery exemption.
     expect(find.textContaining('not exempt'), findsOneWidget);
     await t.tap(find.text('Exempt bark'));
-    expect(n.log, ['ask exempt']);
+    expect(n.log.last, 'ask exempt');
 
     await connectFake(t);
     expect(find.text('Notifications'), findsOneWidget);
