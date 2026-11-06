@@ -314,7 +314,9 @@ impl<R: Ring> Mailbox<R> {
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
     /// skips past items no longer in the ring or too long to seal, after
     /// which none is due. The node offers while one is (`bark-fw`,
-    /// `node.rs`), so a reply due that never comes would keep it busy.
+    /// `node.rs`), so a reply due that never comes would leave the node's
+    /// application unheard until the radio or the clock wakes its loop
+    /// (`bark-driver`, `App::ready`).
     pub fn reply_due(&self) -> bool {
         self.key.is_some() && self.reply.is_some_and(|r| r.next <= r.last || !r.answered)
     }

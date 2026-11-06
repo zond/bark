@@ -12,7 +12,6 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'alerts.dart';
-import 'session.dart';
 
 class PhoneNotifier implements Notifier {
   final _plugin = AndroidFlutterLocalNotificationsPlugin();
@@ -103,12 +102,17 @@ class PhoneNotifier implements Notifier {
   };
 
   @override
-  Future<void> texts(String key, String name, List<Received> texts) {
+  Future<void> texts(
+    String key,
+    String name,
+    List<Unread> texts, {
+    bool quiet = false,
+  }) {
     final last = texts.last;
     return _plugin.show(
       id: _textsId,
       title: name,
-      body: last.body,
+      body: last.text,
       payload: key,
       notificationDetails: AndroidNotificationDetails(
         'texts',
@@ -121,11 +125,12 @@ class PhoneNotifier implements Notifier {
         tag: key,
         number: texts.length,
         when: last.at.millisecondsSinceEpoch,
+        onlyAlertOnce: quiet,
         styleInformation: MessagingStyleInformation(
           const Person(name: 'You'),
           messages: [
             for (final t in texts)
-              Message(t.body ?? '', t.at, Person(name: name, key: key)),
+              Message(t.text, t.at, Person(name: name, key: key)),
           ],
         ),
       ),

@@ -6,6 +6,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:characters/characters.dart';
 import 'package:crypto/crypto.dart' as hash;
 import 'package:sodium/sodium.dart';
 
@@ -337,9 +338,12 @@ sealed class Record {
   const Record();
 }
 
+/// A text, or part [part] of [of] of one too long for a message.
 class TextRecord extends Record {
   final String text;
-  const TextRecord(this.text);
+  final int part;
+  final int of;
+  const TextRecord(this.text, [this.part = 1, this.of = 1]);
 }
 
 class AckRecord extends Record {
@@ -357,6 +361,12 @@ const int _typeUtf8 = 1;
 const int _type1251 = 2;
 const int _typeAck = 3;
 const int _typeCard = 4;
+const int _typeUtf8Part = 5;
+const int _type1251Part = 6;
+
+/// The most parts a text is split into: a part's number and the count
+/// share one byte, four bits each.
+const int maxParts = 16;
 
 /// A plaintext: the header, then the records, a text last.
 Uint8List writePlain(Header h, List<Record> records) {
@@ -367,13 +377,20 @@ Uint8List writePlain(Header h, List<Record> records) {
   ];
   for (final (i, r) in records.indexed) {
     switch (r) {
-      case TextRecord(:final text):
+      case TextRecord(:final text, :final part, :final of):
         if (i != records.length - 1) throw const BadPayload('text not last');
         final w = encode1251(text);
-        b.addAll([
-          w == null ? _typeUtf8 : _type1251,
-          ...(w ?? utf8.encode(text)),
-        ]);
+        if (of == 1) {
+          b.add(w == null ? _typeUtf8 : _type1251);
+        } else if (of <= maxParts && part >= 1 && part <= of) {
+          b.addAll([
+            w == null ? _typeUtf8Part : _type1251Part,
+            (part - 1) << 4 | (of - 1),
+          ]);
+        } else {
+          throw const BadPayload('no such part');
+        }
+        b.addAll(w ?? utf8.encode(text));
       case AckRecord(:final sent):
         b.addAll([_typeAck, ...be(sent, 4)]);
       case CardRecord(:final card):
@@ -398,10 +415,17 @@ Uint8List writePlain(Header h, List<Record> records) {
   while (at < p.length) {
     final t = p[at++];
     switch (t) {
-      case _typeUtf8 || _type1251:
+      case _typeUtf8 || _type1251 || _typeUtf8Part || _type1251Part:
+        var (part, of) = (1, 1);
+        if (t == _typeUtf8Part || t == _type1251Part) {
+          if (at == p.length) throw const BadPayload('no part');
+          (part, of) = ((p[at] >> 4) + 1, (p[at] & 15) + 1);
+          if (of < 2 || part > of) throw const BadPayload('no such part');
+          at++;
+        }
         final body = p.sublist(at);
         final String text;
-        if (t == _typeUtf8) {
+        if (t == _typeUtf8 || t == _typeUtf8Part) {
           try {
             text = utf8.decode(body);
           } on FormatException {
@@ -411,7 +435,7 @@ Uint8List writePlain(Header h, List<Record> records) {
           text =
               decode1251(body) ?? (throw const BadPayload('not windows-1251'));
         }
-        records.add(TextRecord(text));
+        records.add(TextRecord(text, part, of));
         at = p.length;
       case _typeAck when at + 4 <= p.length:
         records.add(AckRecord(fromBe(p.sublist(at, at + 4))));
@@ -557,6 +581,51 @@ const List<int> _high = [
   0x044E,
   0x044F,
 ];
+
+/// A text's bytes in a record: windows-1251 if the page holds it, else
+/// UTF-8, as [writePlain] chooses.
+int textLength(String text) =>
+    encode1251(text)?.length ?? utf8.encode(text).length;
+
+/// `text` as one text, if its bytes fit `room`, else as parts whose bytes
+/// fit `room` less the byte that numbers them; the caller refuses more
+/// than [maxParts]. A part ends between two characters as a person sees
+/// them, after the last space in its last quarter if there is one, so that
+/// words of ordinary length stay whole and no part is much short of the
+/// room. Each part takes the encoding that holds it, so a Cyrillic part
+/// before an emoji keeps one byte a letter.
+List<String> splitText(String text, int room) {
+  if (textLength(text) <= room) return [text];
+  final cs = text.characters.toList();
+  final parts = <String>[];
+  var i = 0;
+  while (i < cs.length) {
+    // The longest run that fits: windows-1251's bytes while the page
+    // holds every character, else UTF-8's, which only grow.
+    var (page, n1251, nUtf8, end) = (true, 0, 0, i);
+    while (end < cs.length) {
+      final w = encode1251(cs[end]);
+      page = page && w != null;
+      final b1251 = n1251 + (w?.length ?? 0);
+      final bUtf8 = nUtf8 + utf8.encode(cs[end]).length;
+      if ((page ? b1251 : bUtf8) > room - 1) break;
+      (n1251, nUtf8) = (b1251, bUtf8);
+      end++;
+    }
+    if (end == i) throw const BadPayload('a character too long to send');
+    if (end < cs.length) {
+      for (var j = end - 1; j >= end - (end - i) ~/ 4 && j > i; j--) {
+        if (cs[j].trim().isEmpty) {
+          end = j + 1;
+          break;
+        }
+      }
+    }
+    parts.add(cs.sublist(i, end).join());
+    i = end;
+  }
+  return parts;
+}
 
 /// The text in windows-1251, or null if the page lacks a character.
 Uint8List? encode1251(String text) {

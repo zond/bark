@@ -3,6 +3,7 @@
 // were not looking.
 
 import 'contacts.dart';
+import 'conversations.dart';
 import 'session.dart';
 
 /// The phone's side of notifying, so that the decision in [Alerts] can be
@@ -27,8 +28,14 @@ abstract interface class Notifier {
   Future<void> atBoot(Held? held);
 
   /// Shows the unread `texts` from the contact of identity `key`, called
-  /// `name`, as one notification in place of the last.
-  Future<void> texts(String key, String name, List<Received> texts);
+  /// `name`, as one notification in place of the last; `quiet` changes
+  /// what one still showing shows, without sounding again.
+  Future<void> texts(
+    String key,
+    String name,
+    List<Unread> texts, {
+    bool quiet = false,
+  });
 
   /// Removes the notification of the contact of identity `key`.
   Future<void> clear(String key);
@@ -43,6 +50,10 @@ abstract interface class Notifier {
   /// Opens the system's dialog to exempt the app.
   Future<void> askBatteryExempt();
 }
+
+/// A text a notification shows: as far as it has come, and when its first
+/// part came.
+typedef Unread = ({String text, DateTime at});
 
 /// What the notification of an app kept running says: what it holds the
 /// link for.
@@ -62,7 +73,12 @@ class NoNotifier implements Notifier {
   @override
   Future<void> atBoot(Held? held) async {}
   @override
-  Future<void> texts(String key, String name, List<Received> texts) async {}
+  Future<void> texts(
+    String key,
+    String name,
+    List<Unread> texts, {
+    bool quiet = false,
+  }) async {}
   @override
   Future<void> clear(String key) async {}
   @override
@@ -74,7 +90,9 @@ class NoNotifier implements Notifier {
 }
 
 /// Decides what to notify: each new text, unless its thread is in front
-/// of the person, collected per contact until they open the thread.
+/// of the person, collected per contact until they open the thread. A
+/// text in parts notifies once, at its first part; a later one changes
+/// what the notification shows.
 class Alerts {
   final Notifier notifier;
   final Contacts contacts;
@@ -86,8 +104,12 @@ class Alerts {
   /// The identity of the contact whose thread is open.
   String? _open;
 
-  /// The texts each contact's notification shows.
-  final Map<String, List<Received>> _unread = {};
+  /// The texts each contact's notification shows, each by the parts of
+  /// it that have come.
+  final Map<String, List<List<Received?>>> _unread = {};
+
+  /// The texts in parts that have notified, by sender and first `sent`.
+  final Set<String> _told = {};
 
   /// What the notification of the app kept running says, once told.
   Held? _held;
@@ -116,16 +138,29 @@ class Alerts {
   }
 
   /// A message was kept: a text notifies, anything else does not.
-  Future<void> kept(Received r) async {
+  /// `parts` are those of its text that have come, by number.
+  Future<void> kept(Received r, List<Received?> parts) async {
     final from = r.from;
     if (from == null || r.body == null) return;
     if (_front && _open == from) return;
     final unread = _unread[from] ??= [];
-    unread.add(r);
+    final i = unread.indexWhere(
+      (u) => u.nonNulls.any((x) => identical(x, r) || x.sameText(r)),
+    );
+    if (i < 0) {
+      unread.add(parts);
+    } else {
+      unread[i] = parts;
+    }
+    final quiet = r.of > 1 && !_told.add('$from/${r.first}');
     await notifier.texts(
       from,
       contacts.byKey(from)?.name ?? 'Unnamed',
-      List.unmodifiable(unread),
+      List.unmodifiable([
+        for (final u in unread)
+          (text: Entry.received(u).text, at: Entry.received(u).at),
+      ]),
+      quiet: quiet,
     );
   }
 

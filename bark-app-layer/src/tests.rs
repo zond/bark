@@ -6,7 +6,7 @@ use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
-use crate::plain::{self, Header, Record, Writer};
+use crate::plain::{self, Header, Part, Record, Writer};
 use crate::seal::{self, Fetch, Form, Opened};
 use crate::text::{self, Encoding};
 use crate::vectors::{self, fixture, hex};
@@ -39,6 +39,8 @@ fn the_sizes_are_the_notes() {
     assert_eq!(card::MAX_TEXT_LEN, 5 + 133);
     // The longest text: 207 less the box, the header and the record's type.
     assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 160);
+    // A part's: one byte more, its number and the count.
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 159);
 }
 
 #[test]
@@ -104,6 +106,7 @@ fn boxed_text(from: &Keys, to: &Keys, s: &str) -> Vec<u8> {
     .unwrap();
     w.push(&Record::Text {
         encoding,
+        part: None,
         bytes: &t[..n],
     })
     .unwrap();
@@ -131,6 +134,7 @@ fn a_box_opens_for_its_pair_only() {
         r.next(),
         Some(Ok(Record::Text {
             encoding: Encoding::Windows1251,
+            part: None,
             bytes: b"hi"
         }))
     );
@@ -412,6 +416,7 @@ fn records_read_back_in_order() {
     w.push(&Record::Card(c)).unwrap();
     let t = Record::Text {
         encoding: Encoding::Utf8,
+        part: None,
         bytes: b"end",
     };
     w.push(&t).unwrap();
@@ -433,6 +438,95 @@ fn records_read_back_in_order() {
     let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 9]).unwrap();
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
     assert_eq!(r.next(), None);
+}
+
+#[test]
+fn a_text_part_carries_its_number_and_count_in_one_byte() {
+    let h = Header {
+        greater: false,
+        sent: 7,
+        address: None,
+    };
+    for (number, of, byte) in [(1, 2, 0x01), (2, 3, 0x12), (16, 16, 0xff), (1, 16, 0x0f)] {
+        let t = Record::Text {
+            encoding: Encoding::Windows1251,
+            part: Some(Part { number, of }),
+            bytes: b"ab",
+        };
+        let mut b = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut b, &h).unwrap();
+        w.push(&t).unwrap();
+        let n = w.finish();
+        assert_eq!(&b[plain::HEADER_LEN..n], &[6, byte, b'a', b'b']);
+        let (_, mut r) = plain::read(&b[..n]).unwrap();
+        assert_eq!(r.next(), Some(Ok(t)));
+        assert_eq!(r.next(), None);
+    }
+    // A UTF-8 part is type 5, and a whole text keeps types 1 and 2.
+    let mut b = [0u8; MAX_PAYLOAD];
+    let mut w = Writer::new(&mut b, &h).unwrap();
+    w.push(&Record::Text {
+        encoding: Encoding::Utf8,
+        part: Some(Part { number: 1, of: 2 }),
+        bytes: b"x",
+    })
+    .unwrap();
+    let n = w.finish();
+    assert_eq!(&b[plain::HEADER_LEN..n], &[5, 0x01, b'x']);
+}
+
+#[test]
+fn a_part_out_of_its_count_is_refused() {
+    let h = Header {
+        greater: false,
+        sent: 7,
+        address: None,
+    };
+    for (number, of) in [(1, 1), (0, 2), (3, 2), (1, 17)] {
+        let mut b = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut b, &h).unwrap();
+        let t = Record::Text {
+            encoding: Encoding::Utf8,
+            part: Some(Part { number, of }),
+            bytes: b"x",
+        };
+        assert_eq!(w.push(&t), Err(Error::Malformed), "{number} of {of}");
+    }
+    // Read: one of one, a number past the count, no part byte.
+    for rec in [&[5u8, 0x00, b'x'][..], &[6, 0x21, b'x'], &[5]] {
+        let mut p = std::vec![0, 0, 0, 0, 7];
+        p.extend_from_slice(rec);
+        let (_, mut r) = plain::read(&p).unwrap();
+        assert_eq!(r.next(), Some(Err(Error::Malformed)), "{rec:?}");
+    }
+}
+
+#[test]
+fn the_longest_parts_fill_a_box() {
+    let f = fixture();
+    let pair = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key());
+    let h = Header {
+        greater: true,
+        sent: 1,
+        address: None,
+    };
+    for (len, fits) in [(159, true), (160, false)] {
+        let mut b = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut b, &h).unwrap();
+        w.push(&Record::Text {
+            encoding: Encoding::Utf8,
+            part: Some(Part { number: 1, of: 2 }),
+            bytes: &[b'a'; 160][..len],
+        })
+        .unwrap();
+        let n = w.finish();
+        let mut out = [0u8; MAX_PAYLOAD];
+        let r = seal::seal_box(&pair, &[0; 24], &b[..n], &mut out);
+        assert_eq!(
+            r.map(|m| m == MAX_APP_PAYLOAD),
+            if fits { Ok(true) } else { Err(Error::TooLong) }
+        );
+    }
 }
 
 mod mailbox {

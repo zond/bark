@@ -40,6 +40,35 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.refused => 'refused: ${o.error}',
 };
 
+/// Whether a sent text's parts are all in one state, so that one part's
+/// marks stand for them all.
+bool partsAgree(List<Outgoing> outs) => outs.every(
+  (o) => o.state == outs.first.state && o.acked == outs.first.acked,
+);
+
+/// A sent text's parts' states in words when they differ: how many the
+/// node has taken, how many are acknowledged, and the first problem.
+String partsLabel(Session s, List<Outgoing> outs) {
+  final taken = outs.where((o) => o.acked || o.state == OutState.taken);
+  final acked = outs.where((o) => o.acked);
+  final problem = outs
+      .where(
+        (o) =>
+            !o.acked &&
+            (o.state == OutState.givenBack || o.state == OutState.refused),
+      )
+      .firstOrNull;
+  return [
+    '${taken.length} of ${outs.length} taken',
+    if (acked.isNotEmpty) '${acked.length} acknowledged',
+    if (problem != null) 'part ${problem.part} ${stateLabel(s, problem)}',
+  ].join(', ');
+}
+
+/// A sent text's state in words, one part's or the parts'.
+String textLabel(Session s, List<Outgoing> outs) =>
+    partsAgree(outs) ? stateLabel(s, outs.first) : partsLabel(s, outs);
+
 /// Rebuilds on every change of the model, the session and the contacts.
 class Watch extends StatelessWidget {
   final AppModel app;

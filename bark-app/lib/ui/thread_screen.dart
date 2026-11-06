@@ -177,19 +177,35 @@ class _ThreadScreenState extends State<ThreadScreen> {
     await app.contacts.put(c.copyWith(name: name));
   }
 
+  /// How many messages the text takes, once it takes more than one.
+  String? _parts(Contact to, String t) {
+    final int n;
+    try {
+      n = app.messenger.partsOf(to, t).length;
+    } on BadPayload catch (e) {
+      return e.why;
+    }
+    if (n <= 1) return null;
+    return n > maxParts ? '$n parts, $maxParts at most' : '$n parts';
+  }
+
   Widget _compose(Contact to) => Padding(
     padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
     child: Row(
       children: [
         Expanded(
-          child: TextField(
-            controller: text,
-            minLines: 1,
-            maxLines: 5,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              hintText: 'Text',
-              border: OutlineInputBorder(),
+          child: ValueListenableBuilder(
+            valueListenable: text,
+            builder: (context, v, _) => TextField(
+              controller: text,
+              minLines: 1,
+              maxLines: 5,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(
+                hintText: 'Text',
+                border: const OutlineInputBorder(),
+                helperText: _parts(to, v.text),
+              ),
             ),
           ),
         ),
@@ -205,8 +221,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Widget _bubble(BuildContext context, Entry e) {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall!;
-    final o = e.sent;
-    final mine = o != null;
+    final mine = e.mine;
+    final color = scheme.onSurfaceVariant;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -220,44 +236,35 @@ class _ThreadScreenState extends State<ThreadScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SelectableText(e.text),
+                if (mine)
+                  SelectableText(e.text)
+                else
+                  SelectableText.rich(
+                    TextSpan(
+                      children: [
+                        for (final p in e.pieces)
+                          TextSpan(
+                            text: p.text,
+                            style: p.missing
+                                ? TextStyle(
+                                    fontStyle: FontStyle.italic,
+                                    color: color,
+                                  )
+                                : null,
+                          ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 4),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(when(e.at), style: small),
-                    if (mine && o.toward != null)
-                      _where(o.toward!, small, scheme.onSurfaceVariant)
-                    else if (!mine && e.received!.mailbox)
-                      _mark(
-                        Icons.markunread_mailbox,
-                        'From your mailbox',
-                        small,
-                        scheme.onSurfaceVariant,
-                      ),
-                    if (!mine)
-                      e.received!.acked
-                          // One plain check: the person knows they have
-                          // it, so the two coloured ones would say nothing.
-                          ? _mark(
-                              Icons.check,
-                              'Acknowledged',
-                              small,
-                              scheme.onSurfaceVariant,
-                            )
-                          : _acknowledge(e.received!, small)
-                    else if (o.acked)
-                      _mark(
-                        Icons.done_all,
-                        'Acknowledged',
-                        small,
-                        scheme.primary,
-                      )
-                    else
-                      ..._state(o, small, scheme.onSurfaceVariant),
+                    if (mine) ..._sentMarks(e.outs, small, scheme),
+                    if (!mine) ..._receivedMarks(e, small, color),
                   ],
                 ),
-                if (mine) _actions(o),
+                if (mine) _actions(e.outs),
               ],
             ),
           ),
@@ -265,6 +272,42 @@ class _ThreadScreenState extends State<ThreadScreen> {
       ),
     );
   }
+
+  /// Where a sent text went and how far it got: one part's marks when the
+  /// parts agree, else their states in words.
+  List<Widget> _sentMarks(
+    List<Outgoing> outs,
+    TextStyle small,
+    ColorScheme scheme,
+  ) {
+    final o = outs.first;
+    final color = scheme.onSurfaceVariant;
+    return [
+      if (o.toward != null) _where(o.toward!, small, color),
+      if (!partsAgree(outs)) ...[
+        const SizedBox(width: 4),
+        Flexible(child: Text(partsLabel(app.session, outs), style: small)),
+      ] else if (o.acked)
+        _mark(Icons.done_all, 'Acknowledged', small, scheme.primary)
+      else
+        ..._state(o, small, color),
+    ];
+  }
+
+  /// Whether a received text came from the mailbox, and its
+  /// acknowledgement: a plain check once every part that has come is
+  /// acknowledged, else the button, which a part that comes later brings
+  /// back.
+  List<Widget> _receivedMarks(Entry e, TextStyle small, Color color) => [
+    if (e.arrived.any((r) => r.mailbox))
+      _mark(Icons.markunread_mailbox, 'From your mailbox', small, color),
+    if (e.arrived.every((r) => r.acked))
+      // One plain check: the person knows they have it, so the two
+      // coloured ones would say nothing.
+      _mark(Icons.check, 'Acknowledged', small, color)
+    else
+      _acknowledge(e.arrived.first, small),
+  ];
 
   /// An icon the small text's size, with the words it stands for as its
   /// tooltip and semantic label, so nothing is lost to someone who does
@@ -339,21 +382,41 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  Widget _actions(Outgoing o) {
+  /// Send again and Drop, for the parts each applies to.
+  Widget _actions(List<Outgoing> outs) {
     final s = app.session;
-    final again = o.state == OutState.givenBack;
-    final drop = o.state != OutState.writing && o.state != OutState.taken;
-    if (!again && !drop) return const SizedBox.shrink();
+    final back = [
+      for (final o in outs)
+        if (o.state == OutState.givenBack) o,
+    ];
+    final droppable = [
+      for (final o in outs)
+        if (o.state != OutState.writing && o.state != OutState.taken) o,
+    ];
+    if (back.isEmpty && droppable.isEmpty) return const SizedBox.shrink();
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (again)
+        if (back.isNotEmpty)
           TextButton(
-            onPressed: s.waitLeftS(o) > 0 ? null : () => s.offerAgain(o),
+            onPressed: back.any((o) => s.waitLeftS(o) > 0)
+                ? null
+                : () async {
+                    for (final o in back) {
+                      await s.offerAgain(o);
+                    }
+                  },
             child: const Text('Send again'),
           ),
-        if (drop)
-          TextButton(onPressed: () => s.drop(o), child: const Text('Drop')),
+        if (droppable.isNotEmpty)
+          TextButton(
+            onPressed: () async {
+              for (final o in droppable) {
+                await s.drop(o);
+              }
+            },
+            child: const Text('Drop'),
+          ),
       ],
     );
   }

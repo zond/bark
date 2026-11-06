@@ -183,8 +183,9 @@ class FakeNode implements NodeLink {
     ),
   );
 
-  /// The text of a message from the app to the fake friend, if it is one.
-  String? _textTo(Uint8List payload) {
+  /// The text of a message from the app to the fake friend, if it is one,
+  /// with its `sent`.
+  (int, TextRecord)? _textTo(Uint8List payload) {
     try {
       final plain = switch (formOf(payload)) {
         Form.boxed => openBox(_pair, payload),
@@ -192,12 +193,55 @@ class FakeNode implements NodeLink {
         _ => null,
       };
       if (plain == null) return null;
-      final (_, rs) = readPlain(plain);
-      return rs.whereType<TextRecord>().firstOrNull?.text;
+      final (h, rs) = readPlain(plain);
+      final t = rs.whereType<TextRecord>().firstOrNull;
+      return t == null ? null : (h.sent, t);
     } on BadPayload {
       return null;
     }
   }
+
+  /// The parts of the app's split texts the fake friend has, by the first
+  /// part's `sent`.
+  final Map<int, List<String?>> _partsIn = {};
+
+  /// The whole text once the fake friend has every part of it.
+  String? _whole(int sent, TextRecord t) {
+    if (t.of == 1) return t.text;
+    final parts = _partsIn[sent - t.part + 1] ??= List.filled(t.of, null);
+    parts[t.part - 1] = t.text;
+    if (parts.contains(null)) return null;
+    _partsIn.remove(sent - t.part + 1);
+    return parts.join();
+  }
+
+  /// The fake friend's echo of `text`, in parts if it needs them, as the
+  /// app splits: the last part first and the rest an [echoAfter] later,
+  /// so that a missing part shows.
+  void _echo(String text) => _after(echoAfter, () {
+    final room = maxAppPayload - boxOverhead - 5 - Address.len - 1;
+    final parts = splitText(text, room);
+    final n = parts.length;
+    if (n > maxParts) return;
+    final first = max(sentOf(now()), _friendSent + 1);
+    _friendSent = first + n - 1;
+    _friendWrote++;
+    final sealed = [
+      for (final (i, p) in parts.indexed)
+        _message(
+          sealBox(
+            _pair,
+            sodium.randombytes.buf(nonceLen),
+            writePlain(
+              Header(greater(friend.identity, app), first + i, friendAway),
+              [TextRecord(p, i + 1, n)],
+            ),
+          ),
+        ),
+    ];
+    _inbox.add(sealed.last);
+    if (n > 1) _after(echoAfter, () => _inbox.addAll(sealed.sublist(0, n - 1)));
+  });
 
   /// The home away's answer to a fetch, as its mailbox gives it: every
   /// item after `since`, or one reply that says nothing is new.
@@ -333,21 +377,9 @@ class FakeNode implements NodeLink {
     } else {
       _after(handOver, () => _ready = true);
       _answerFetch(payload);
-      final text = _textTo(payload);
-      if (text != null) {
-        _after(
-          echoAfter,
-          () => _inbox.add(
-            _message(
-              sealBox(
-                _pair,
-                sodium.randombytes.buf(nonceLen),
-                writePlain(_header(), [TextRecord('Echo: $text')]),
-              ),
-            ),
-          ),
-        );
-      }
+      final got = _textTo(payload);
+      final text = got == null ? null : _whole(got.$1, got.$2);
+      if (text != null) _echo('Echo: $text');
     }
   });
 

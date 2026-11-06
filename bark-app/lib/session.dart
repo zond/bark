@@ -73,6 +73,11 @@ class Outgoing {
   /// Which of the contact's addresses it went to; null for a fetch.
   final Toward? toward;
 
+  /// Its number and the count of parts, for a part of a split text; 1 of
+  /// 1 otherwise.
+  final int part;
+  final int of;
+
   /// The other side acknowledged it; a fetch, the home node answered.
   bool acked;
   OutState state;
@@ -88,9 +93,14 @@ class Outgoing {
     this.to,
     this.body,
     this.toward,
+    this.part = 1,
+    this.of = 1,
     this.acked = false,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
+
+  /// The `sent` of its text's first part, which names the text.
+  int get first => sent - part + 1;
 
   String get text => switch (kind) {
     OutKind.text => body ?? '',
@@ -108,6 +118,8 @@ class Outgoing {
     'sent': sent,
     'body': body,
     'toward': toward?.name,
+    'part': part,
+    'of': of,
     'acked': acked,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
@@ -128,6 +140,8 @@ class Outgoing {
           toward: j['toward'] == null
               ? null
               : Toward.values.byName(j['toward'] as String),
+          part: j['part'] as int? ?? 1,
+          of: j['of'] as int? ?? 1,
           acked: j['acked'] as bool,
           state: OutState.values.byName(j['state'] as String),
         )
@@ -156,6 +170,11 @@ class Received {
   /// It came out of the person's mailbox.
   final bool mailbox;
 
+  /// Its number and the count of parts, for a part of a split text; 1 of
+  /// 1 otherwise.
+  final int part;
+  final int of;
+
   /// The person acknowledged it.
   bool acked;
 
@@ -167,10 +186,22 @@ class Received {
     this.sent,
     this.body,
     this.mailbox = false,
+    this.part = 1,
+    this.of = 1,
     this.acked = false,
   }) : payload = Uint8List.fromList(payload);
 
   String get text => body ?? '(did not open) ${hex(payload)}';
+
+  /// The `sent` of its text's first part, which names the text.
+  int? get first => switch (sent) {
+    final s? => s - part + 1,
+    null => null,
+  };
+
+  /// Whether `o` is a part of the same text from the same sender.
+  bool sameText(Received o) =>
+      from != null && o.from == from && o.first == first && o.of == of;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -180,6 +211,8 @@ class Received {
     'sent': sent,
     'body': body,
     'mailbox': mailbox,
+    'part': part,
+    'of': of,
     'acked': acked,
   };
 
@@ -191,6 +224,8 @@ class Received {
     sent: j['sent'] as int?,
     body: j['body'] as String?,
     mailbox: j['mailbox'] as bool,
+    part: j['part'] as int? ?? 1,
+    of: j['of'] as int? ?? 1,
     acked: j['acked'] as bool,
   );
 }
@@ -570,6 +605,18 @@ class Session extends ChangeNotifier {
     o.acked = true;
     notifyListeners();
     await save();
+  }
+
+  /// The parts of `r`'s text that have come, by number from 1, null
+  /// where one has not.
+  List<Received?> partsOf(Received r) {
+    final parts = List<Received?>.filled(r.of, null);
+    for (final x in received) {
+      if (x.body != null && (identical(x, r) || x.sameText(r))) {
+        parts[x.part - 1] = x;
+      }
+    }
+    return parts;
   }
 
   /// Keeps a received message.

@@ -10,6 +10,7 @@
 //! | record | bytes | |
 //! |---|---|---|
 //! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
+//! | text part | 1 + 1 + rest | type 5 (UTF-8) or 6 (windows-1251), the part's number and the parts' count less one in the high and low four bits; last |
 //! | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
 //! | card | 1 + 1 + 38 to 83 | type 4, the card's length, its bytes |
 
@@ -24,6 +25,40 @@ const TYPE_UTF8: u8 = 1;
 const TYPE_1251: u8 = 2;
 const TYPE_ACK: u8 = 3;
 const TYPE_CARD: u8 = 4;
+const TYPE_UTF8_PART: u8 = 5;
+const TYPE_1251_PART: u8 = 6;
+
+/// The most parts a text is split into: a part's number and the count
+/// share one byte, four bits each.
+pub const MAX_PARTS: u8 = 16;
+
+/// Where a text too long for one message stands among its parts. The
+/// parts' `sent` are consecutive, so the first's is a part's `sent` less
+/// its number and one, and names the text without a byte more.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Part {
+    /// From 1.
+    pub number: u8,
+    /// From 2 to [`MAX_PARTS`].
+    pub of: u8,
+}
+
+impl Part {
+    fn encode(self) -> Result<u8, Error> {
+        if self.of < 2 || self.of > MAX_PARTS || self.number < 1 || self.number > self.of {
+            return Err(Error::Malformed);
+        }
+        Ok((self.number - 1) << 4 | (self.of - 1))
+    }
+
+    fn decode(b: u8) -> Result<Part, Error> {
+        let p = Part {
+            number: (b >> 4) + 1,
+            of: (b & 0x0f) + 1,
+        };
+        p.encode().map(|_| p)
+    }
+}
 
 /// What every boxed plaintext begins with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,10 +87,12 @@ pub fn greater(sender: &Identity, receiver: &Identity) -> bool {
 /// A record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Record<'a> {
-    /// A text, in its encoding's bytes.
+    /// A text, or a part of one, in its encoding's bytes.
     Text {
         /// Its encoding.
         encoding: Encoding,
+        /// Which part, for a text split over several messages.
+        part: Option<Part>,
         /// Its bytes.
         bytes: &'a [u8],
     },
@@ -112,11 +149,21 @@ impl<'a> Writer<'a> {
             return Err(Error::Malformed);
         }
         match record {
-            Record::Text { encoding, bytes } => {
-                self.put(&[match encoding {
-                    Encoding::Utf8 => TYPE_UTF8,
-                    Encoding::Windows1251 => TYPE_1251,
-                }])?;
+            Record::Text {
+                encoding,
+                part,
+                bytes,
+            } => {
+                let kind = match (encoding, part) {
+                    (Encoding::Utf8, None) => TYPE_UTF8,
+                    (Encoding::Windows1251, None) => TYPE_1251,
+                    (Encoding::Utf8, Some(_)) => TYPE_UTF8_PART,
+                    (Encoding::Windows1251, Some(_)) => TYPE_1251_PART,
+                };
+                self.put(&[kind])?;
+                if let Some(p) = part {
+                    self.put(&[p.encode()?])?;
+                }
                 self.put(bytes)?;
                 self.ended = true;
             }
@@ -175,16 +222,25 @@ impl<'a> Iterator for Records<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let (&kind, body) = self.rest.split_first()?;
         let (record, rest) = match kind {
-            TYPE_UTF8 | TYPE_1251 => {
-                let encoding = if kind == TYPE_UTF8 {
+            TYPE_UTF8 | TYPE_1251 | TYPE_UTF8_PART | TYPE_1251_PART => {
+                let encoding = if kind == TYPE_UTF8 || kind == TYPE_UTF8_PART {
                     Encoding::Utf8
                 } else {
                     Encoding::Windows1251
                 };
+                let text = if kind == TYPE_UTF8 || kind == TYPE_1251 {
+                    Ok((None, body))
+                } else {
+                    match body.split_first() {
+                        Some((&b, bytes)) => Part::decode(b).map(|p| (Some(p), bytes)),
+                        None => Err(Error::Malformed),
+                    }
+                };
                 (
-                    Ok(Record::Text {
+                    text.map(|(part, bytes)| Record::Text {
                         encoding,
-                        bytes: body,
+                        part,
+                        bytes,
                     }),
                     &[][..],
                 )

@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/conversations.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
@@ -369,6 +370,129 @@ void main() {
       final sent = p.session.outbox.last;
       expect(sent.kind, OutKind.ack);
       expect(formOf(sent.payload), Form.boxed);
+    });
+  });
+
+  group('long texts', () {
+    /// The records of a payload from the phone to the fake friend.
+    (Header, List<Record>) opened(Phone p, FakeNode node, Uint8List payload) =>
+        readPlain(switch (formOf(payload)) {
+          Form.introduction => openIntro(sodium, node.friend, payload),
+          _ => openBox(friendPair(p, node), payload),
+        });
+
+    test('go as parts of consecutive sent, queued in order', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        final text = List.filled(60, 'word').join(' ');
+        final parts = p.messenger.partsOf(f, text);
+        expect(parts.length, greaterThan(1));
+        p.messenger.sendText(f, text);
+        async.flushMicrotasks();
+        final out = p.session.outbox;
+        expect(out.length, parts.length);
+        final n = parts.length;
+        for (final (i, o) in out.indexed) {
+          expect((o.part, o.of, o.sent), (i + 1, n, out.first.sent + i));
+          final (h, rs) = opened(p, node, o.payload);
+          expect(h.sent, o.sent);
+          final t = rs.whereType<TextRecord>().single;
+          expect((t.text, t.part, t.of), (parts[i], i + 1, n));
+          expect(o.payload.length, lessThanOrEqualTo(maxAppPayload));
+        }
+        expect(out.map((o) => o.body).join(), text);
+        // The next message's sent is past the last part's.
+        p.messenger.sendText(f, 'after');
+        async.flushMicrotasks();
+        expect(p.session.outbox.last.sent, out[n - 1].sent + 1);
+      });
+    });
+
+    test('over 16 parts is refused, and nothing is queued', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        Object? error;
+        p.messenger.sendText(f, 'x' * 3000).catchError((e) => error = e);
+        async.flushMicrotasks();
+        expect(error, isA<BadPayload>());
+        expect('$error', contains('16 at most'));
+        expect(p.session.outbox, isEmpty);
+      });
+    });
+
+    test('come together in any order; a tap acknowledges what has come', () {
+      run((async, p, node) {
+        void part(int id, int sent, String t, int n) => p.messenger.receive(
+          InboxMessage(id, fromFriend(node, p, sent, [TextRecord(t, n, 3)])),
+        );
+        part(11, 5002, 'three', 3);
+        part(12, 5000, 'one ', 1);
+        async.flushMicrotasks();
+        final s = p.session;
+        final last = s.received.last;
+        expect(s.partsOf(last).map((r) => r?.body), ['one ', null, 'three']);
+        Entry entry() => thread(
+          hex(node.friend.identity),
+          p.contacts.list,
+          s.outbox,
+          s.received,
+        ).entries.last;
+        expect(entry().text, 'one \npart 2 of 3 not yet here\nthree');
+        expect(entry().pieces.map((x) => x.missing), [false, true, false]);
+
+        // One tap: one message naming both parts that came.
+        p.messenger.acknowledge(last);
+        async.flushMicrotasks();
+        final ack = s.outbox.last;
+        expect(ack.kind, OutKind.ack);
+        expect(
+          opened(p, node, ack.payload).$2.map((r) => (r as AckRecord).sent),
+          [5000, 5002],
+        );
+        expect(entry().arrived.every((r) => r.acked), isTrue);
+
+        // The part that comes later is the next tap's, alone.
+        part(13, 5001, 'two ', 2);
+        async.flushMicrotasks();
+        expect(entry().text, 'one two three');
+        expect(entry().arrived.every((r) => r.acked), isFalse);
+        p.messenger.acknowledge(s.received.last);
+        async.flushMicrotasks();
+        expect(
+          opened(
+            p,
+            node,
+            s.outbox.last.payload,
+          ).$2.map((r) => (r as AckRecord).sent),
+          [5001],
+        );
+        // Its copy, read again, is not kept twice.
+        part(14, 5001, 'two ', 2);
+        async.flushMicrotasks();
+        expect(s.received.where((r) => r.sent == 5001).length, 1);
+      });
+    });
+
+    test('a sent text is acknowledged when every part is', () {
+      run((async, p, node) {
+        final f = friendOf(p, node);
+        p.messenger.sendText(f, List.filled(60, 'word').join(' '));
+        async.flushMicrotasks();
+        final out = [...p.session.outbox];
+        p.messenger.receive(
+          InboxMessage(
+            21,
+            fromFriend(node, p, 9000, [
+              for (final o in out.skip(1)) AckRecord(o.sent),
+            ]),
+          ),
+        );
+        async.flushMicrotasks();
+        expect(out.map((o) => o.acked), [
+          false,
+          ...out.skip(1).map((_) => true),
+        ]);
+      });
     });
   });
 

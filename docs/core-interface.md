@@ -150,6 +150,15 @@ A `Send` while `accepts_send` is false, or with a longer payload, breaks the con
 a second outstanding excursion: the core ignores it, and the test and simulator drivers
 panic or never offer it.
 
+The firmware's driver waits for its application with `bark_driver::App::ready`, which
+resolves at once while a message waits and the core accepts one. If it resolves and the
+driver then gets nothing from the application, no request, no message and no change of
+power, the driver does not wait on it again until its clock or its radio wakes it, and
+logs that at most once a minute. An application that kept saying it is ready and giving
+nothing would otherwise keep the loop from ever waiting: on a board that starves every
+other task of the processor and drains the battery. What the application then has waits
+for the core's next wakeup or the radio's next event.
+
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
 over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMapPoint`
 clears it: the node stays where it is and its next accepted fix is its place (roadmap

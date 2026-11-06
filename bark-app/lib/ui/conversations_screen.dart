@@ -109,16 +109,15 @@ class ConversationsScreen extends StatelessWidget {
 
   Widget _row(BuildContext context, Conversation c) {
     final last = c.last!;
-    final o = last.sent;
     return ListTile(
       leading: CircleAvatar(
         child: Icon(c.contact == null ? Icons.person_outline : Icons.person),
       ),
       title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
-        o == null
-            ? last.text
-            : 'You: ${last.text}, ${stateLabel(app.session, o)}',
+        last.mine
+            ? 'You: ${last.text}, ${textLabel(app.session, last.outs)}'
+            : last.text,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),

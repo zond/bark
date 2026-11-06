@@ -54,6 +54,14 @@
     "nonce": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
     "payload": "10c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d79a3f8da8f3e6208d4b674895e09496f418533a636ea47f95710f"
   },
+  "box_parts": {
+    "text": "Привіт! Ми на місці біля старої школи, вода є, світла немає з ранку. Генератор працює дві години ввечері, тож заряджаємо телефони по черзі. Приходьте до сьомої, візьміть ковдри й ліхтарик. Дорогою обходьте міст — там ями 🙏",
+    "room": 159,
+    "parts": [
+      {"text": "Привіт! Ми на місці біля старої школи, вода є, світла немає з ранку. Генератор працює дві години ввечері, тож заряджаємо телефони по черзі. Приходьте до ", "sent": 1000200, "plaintext": "00000f43080601cff0e8e2b3f22120cce820ede020ecb3f1f6b320e1b3ebff20f1f2e0f0eebf20f8eaeeebe82c20e2eee4e020ba2c20f1e2b3f2ebe020ede5ece0ba20e720f0e0edeaf32e20c3e5ede5f0e0f2eef020eff0e0f6feba20e4e2b320e3eee4e8ede820e2e2e5f7e5f0b32c20f2eee620e7e0f0ffe4e6e0baecee20f2e5ebe5f4eeede820efee20f7e5f0e7b32e20cff0e8f5eee4fcf2e520e4ee20", "nonce": "202122232425262728292a2b2c2d2e2f3031323334353637", "payload": "10202122232425262728292a2b2c2d2e2f303132333435363701b945f1fda95c1731863f119e2fca8ce3447ceea80c191c0fc83c8a63400a0fb877268766e580ba4901ede240d5880e0fbb4477741911c812ab0d81b68739139de5607be65243fa1141e82c5fa13dc799666cc0486b404ec683c309433fe36f9e1f831beeab895d80c37b2126e6dca2b491860f278dc67059895296dde98384a2390a1851860be3a8f4a7d0cbe1e6082f1f17e0ecb5b1b7466ab44996551da00f96b30c8f3cd7103bc66089a2447d25"},
+      {"text": "сьомої, візьміть ковдри й ліхтарик. Дорогою обходьте міст — там ями 🙏", "sent": 1000201, "plaintext": "00000f43090511d181d18cd0bed0bcd0bed1972c20d0b2d196d0b7d18cd0bcd196d182d18c20d0bad0bed0b2d0b4d180d0b820d0b920d0bbd196d185d182d0b0d180d0b8d0ba2e20d094d0bed180d0bed0b3d0bed18e20d0bed0b1d185d0bed0b4d18cd182d0b520d0bcd196d181d18220e2809420d182d0b0d0bc20d18fd0bcd0b820f09f998f", "nonce": "38393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f", "payload": "1038393a3b3c3d3e3f404142434445464748494a4b4c4d4e4ffdb33482f8166f60b457ac3501ee6950347a6214a5be35cdb1ce07d7eeaa15a2ff622abb46084b0548202ac0859b3ace45b02b3a84ccd7115f09ea23b71bd1eb6713f385febbe007fc13bce627fd07607e068af329971307b1b7c8808554df360f46b1853f392295ba184e76108a1ddb365e1b56a0cdcf01afb2e863462036fe60fa21f5583175b29c4a08f09de69dff97b97f09c70bbf"}
+    ]
+  },
   "intro": {
     "text": "Hello, it is Alice.",
     "sent": 999000,
