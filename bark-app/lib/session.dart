@@ -252,6 +252,13 @@ class Session extends ChangeNotifier {
   final List<Outgoing> outbox = [];
   final List<Received> received = [];
 
+  /// The node this phone is paired with, by name; null before the first.
+  String? pairedWith;
+
+  /// That node no longer holds this phone's bond: another phone has
+  /// paired with it since (spec "Phone link", the replaced phone).
+  bool pairingLost = false;
+
   bool _writing = false;
   bool _draining = false;
   final List<StreamSubscription<dynamic>> _subs = [];
@@ -298,18 +305,34 @@ class Session extends ChangeNotifier {
           for (final e in j['received'] as List)
             Received.fromJson(e as Map<String, dynamic>),
         ],
+        // Added after the format's first version: absent means none.
+        pairedWith: j['pairedWith'] as String?,
+        pairingLost: j['pairingLost'] as bool? ?? false,
       ),
     );
     if (j == null) return;
     outbox.addAll(j.outbox);
     received.addAll(j.received);
+    pairedWith = j.pairedWith;
+    pairingLost = j.pairingLost;
     notifyListeners();
   }
 
   Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
+    'pairedWith': pairedWith,
+    'pairingLost': pairingLost,
   });
+
+  /// The node `name` holds this phone's bond, or no longer does.
+  Future<void> setPaired(String name, {bool lost = false}) async {
+    if (pairedWith == name && pairingLost == lost) return;
+    pairedWith = name;
+    pairingLost = lost;
+    note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
+    await save();
+  }
 
   void _badValue(Object e) =>
       _tell('The node sent a value this app cannot read: $e');

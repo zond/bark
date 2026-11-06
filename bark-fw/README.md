@@ -62,7 +62,9 @@ loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times and `stack_used`, the call stack's high-water mark.
 Its application is the phone link over BLE (`src/ble.rs`;
 spec "Phone link"), whose bench procedure in nRF Connect is in
-`docs/phone-link-2026-11-05.md`, "On the bench". Its GPS runs as the
+`docs/phone-link-2026-11-05.md`, "On the bench"; since roadmap D135 the
+link needs a pairing first, with the code the screen shows (Phone
+link, below). Its GPS runs as the
 core says, in its own task (`src/gps.rs`; `docs/gps-time-2026-11-05.md`):
 on USB all the time, on battery in standby but for the searches the core
 asks for. Once a fix or the phone has given the time, the 10 s line ends
@@ -137,6 +139,11 @@ Unverified, in the order they will fail if wrong:
   keeps it, and the node asks it of the MPSL while on USB (`src/main.rs`,
   `src/ble.rs`) and lets it go on battery; whether USB enumerates
   when the cable comes after a boot on battery is not known.
+- Pairing (Phone link, below; roadmap D135): that a phone pairing
+  with the code on the screen bonds, that the bond survives a reboot and
+  encrypts the next connection without a code, that a second phone's
+  pairing replaces it and the first phone's reads then fail, and that
+  the controller takes the host's resolving-list commands. Only built.
 - The 32.768 kHz clock: whether the board has the crystal is not known.
   The node tries it at boot, giving it 1 s, and falls back to the
   calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
@@ -234,7 +241,7 @@ Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
 | staged image's record | `0xCB000` | 4 KiB | its header, and the loader's word that it matched it; below `0xEA000`, where the bootloader's drive stops writing |
 | coded pieces | `0xCC000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
 | mailbox | `0xE2000` | 68 KiB, 17 pages | its state, then a ring of 16 pages, 256 items (`docs/app-layer-2026-11-05.md`, section 5); unused until the mailbox is built |
-| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was |
+| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond with the paired phone |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
 | MBR parameters | `0xFE000` | 4 KiB | |
@@ -275,8 +282,10 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 340 992 B of the 401 408 B slot
-(`docs/flash-2026-11-06.md` measures the options). The core's slowest
+and one codegen unit: the node image is 396 864 B of the 401 408 B slot,
+4 544 B free; the pairing of roadmap D135 took 55.8 KB of it
+(`docs/flash-2026-11-06.md` measures the options,
+`docs/pairing-2026-11-06.md` the pairing's). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
 
 The image is the same wherever the repository is checked out. Source
@@ -459,6 +468,7 @@ its value flush right. Top to bottom:
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
+| phone | `PHONE NONE` or `PHONE PAIRED`; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -547,6 +557,42 @@ sequence is the controller's: hardware reset, software reset, the
 driver output, data entry, RAM window, border and temperature
 settings, the picture into both RAM planes, one full refresh, then deep
 sleep mode 1. The front light (P1.11) stays off.
+
+## Phone link
+
+The link (`src/ble.rs`, spec "Phone link") is open only to the paired
+phone (roadmap D135). Every characteristic of the service needs a link
+encrypted with an authenticated key; any other connection's read, write
+or subscription gets ATT's insufficient authentication, and an Android
+phone then pairs: it shows a dialog for a code, and the node draws a
+random six-digit one on its screen at once, as `PAIR CODE`. The host,
+TrouBLE (a copy, `vendor/README.md`), runs LE Secure Connections with
+the node displaying and the phone typing. When the pairing completes and
+bonds, the node keeps the bond, the phone's identity address, its
+identity resolving key and the long-term key, as a 64-byte record of two
+slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
+forgets any other: one phone at a time, and a new pairing replaces the
+last. A pairing that is not authenticated or does not bond leaves the
+bond as it was and its link is closed. The screen says `PHONE PAIRED`
+from then on, at boot too, and `PHONE NONE` on a node that never paired.
+The controller is built with LE privacy, as the host puts the bonded
+phone in its resolving list.
+
+The log says `ble: pairing, the code shown`, then `ble: paired; the bond
+replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
+bond kept` for a node with one. A phone whose bond the node replaced
+asks to encrypt with its old key as soon as it connects; the node has no
+such key, and the host ends the link, authentication failure (bench,
+2026-11-06: `ble: disconnected Connection Terminated By Local Host` half a
+second after `ble: connected`); the app says the node is no longer the
+person's.
+
+Pairing costs 55.8 KB of flash, about 52 KB of it the host's pairing
+with its P-256 and AES in software and 4 KB the node's own code, the
+host's central pairing, which the node never uses, left out of the
+copy; and 1.8 KB of static RAM, which leaves the stack 35 KB. How much
+of it the P-256 arithmetic takes in the phone link's task is for the
+bench's `stack_used` to show (`docs/pairing-2026-11-06.md`).
 
 ## Mailbox
 
