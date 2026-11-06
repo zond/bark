@@ -78,11 +78,18 @@ class AppModel extends ChangeNotifier {
   bool connecting = false;
   int? mtu;
 
-  /// Keeps the node's address for the card.
+  /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
     final a = session.address;
-    if (a == null || a.toString() == me.nodeAddress?.toString()) return;
-    me.setNodeAddress(a);
+    if (a == null) return;
+    if (a.toString() != me.nodeAddress?.toString()) me.setNodeAddress(a);
+    // The home is the node, not the spot: its position moves when it takes
+    // a new place, and the card and texts to the old one would miss it.
+    if (atHome && a.toString() != me.home.toString()) unawaited(_homeMoved(a));
+  }
+
+  Future<void> _homeMoved(Address a) async {
+    if (await me.setHome(a)) await messenger.sendCardToAll();
   }
 
   /// Keeps the app running while a node is connected by Bluetooth, so

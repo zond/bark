@@ -221,17 +221,33 @@ class _ThreadScreenState extends State<ThreadScreen> {
               children: [
                 SelectableText(e.text),
                 const SizedBox(height: 4),
-                Text(
-                  mine
-                      ? '${when(e.at)}, ${stateLabel(app.session, o)}'
-                            '${o.toward == null ? '' : ', ${o.toward!.label}'}'
-                            '${o.acked ? ', acknowledged ✓' : ''}'
-                      : '${when(e.at)}'
-                            '${e.received!.mailbox ? ', from your mailbox' : ''}'
-                            '${e.received!.acked ? ', you acknowledged it' : ''}',
-                  style: Theme.of(context).textTheme.bodySmall,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        mine
+                            ? '${when(e.at)}, ${stateLabel(app.session, o)}'
+                                  '${o.toward == null ? '' : ', ${o.toward!.label}'}'
+                            : '${when(e.at)}'
+                                  '${e.received!.mailbox ? ', from your mailbox' : ''}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (mine ? o.acked : e.received!.acked)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(
+                          Icons.check,
+                          size: _mark,
+                          semanticLabel: 'Acknowledged',
+                        ),
+                      )
+                    else if (!mine)
+                      _acknowledge(e.received!),
+                  ],
                 ),
-                if (mine) _actions(o) else _acknowledge(e.received!),
+                if (mine) _actions(o),
               ],
             ),
           ),
@@ -240,19 +256,22 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  Widget _acknowledge(Received r) {
-    if (r.acked) return const SizedBox.shrink();
-    return TextButton(
-      onPressed: () async {
-        try {
-          await app.messenger.acknowledge(r);
-        } on BadPayload catch (e) {
-          if (mounted) say(context, 'Not sent: $e');
-        }
-      },
-      child: const Text('Acknowledge'),
-    );
-  }
+  /// The acknowledgement mark's size: the same on both sides, so sender
+  /// and recipient see one mark for one fact.
+  static const double _mark = 18;
+
+  Widget _acknowledge(Received r) => IconButton(
+    tooltip: 'Acknowledge',
+    icon: const Icon(Icons.check, size: _mark),
+    visualDensity: VisualDensity.compact,
+    onPressed: () async {
+      try {
+        await app.messenger.acknowledge(r);
+      } on BadPayload catch (e) {
+        if (mounted) say(context, 'Not sent: $e');
+      }
+    },
+  );
 
   Widget _actions(Outgoing o) {
     final s = app.session;
