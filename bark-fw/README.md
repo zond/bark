@@ -274,6 +274,11 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 --check target/bark.uf2` validates a UF2 and prints its block count and
 address ranges.
 
+The release profile optimises for size, `opt-level = "z"`, with fat LTO
+and one codegen unit: the node image is 347 840 B of the 401 408 B slot
+(`docs/flash-2026-11-06.md` measures the options). The core's slowest
+step shows on the board as `longest_handle_us` in the 10 s line.
+
 The image is the same wherever the repository is checked out. Source
 paths end up in it, a panic's location among them, and absolute ones
 would make its size depend on the checkout's path: a build from a path
