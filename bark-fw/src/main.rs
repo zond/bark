@@ -558,7 +558,8 @@ async fn phone(
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
-        Err(e) => log::error!("ble: controller {:?}", e),
+        // An nRF errno, negated (`nrf_mpsl::Error`).
+        Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }
 }
 
