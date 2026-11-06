@@ -1,6 +1,7 @@
 # Plans for more room in the image slot (2026-11-06)
 
-**Status:** plans, none built. Follows `docs/flash-2026-11-06.md` (the
+**Status:** plans; section 1 built 2026-11-06 (roadmap D139, its last
+subsection). Follows `docs/flash-2026-11-06.md` (the
 study), whose numbers this note uses where it says so. Measured on the
 node image of `09a1895`: 390 324 B of the 401 408 B slot, 11 084 B free.
 
@@ -203,6 +204,42 @@ From the study's "Recommended next" and "How much room":
 - the host's packet pool built at boot, 4 036 B of `.data`: still a
   small, safe saving, but no longer needed;
 - the nightly flags (−28 312 B and more) stay unneeded.
+
+### What was built (2026-11-06)
+
+As above (roadmap D139), with these differences:
+
+- **The bus.** SPI mode 0 driven by software on the four pins
+  (`bark-image/src/ext_flash.rs`), not the QSPI peripheral, in the
+  loader and the firmware alike. The pins then stay at the levels deep
+  power-down's current needs between uses (CS#, WP#, HOLD# high, the
+  clock and DI low, DO pulled down), the same code runs in both, and no
+  peripheral, interrupt or memory map is shared. Its speed is 2 to 3
+  Mbit/s by the loop's instructions, unmeasured: the firmware logs the
+  time its mailbox takes to read its 1024 slots at boot, 256 KiB, about
+  a second by that speed.
+- **The firmware's writes** to the chip wait out the typical time, then
+  poll every 50 µs up to the datasheet's maximum, with the executor free
+  (`bark-fw/src/ext_flash.rs`). A read that meets a write under way
+  waits for it, up to 12 ms for an erase; the mailbox's lock becomes a
+  thread-mode one, so that wait masks no interrupt.
+- **The loader** powers the rail only on the boots with a swap or a swap
+  back to do, waits 10 ms and tVSL, and checks the chip's ID; without
+  the chip a swap not yet started is cancelled (the firmware logs the
+  refusal), and one under way waits for a boot that finds the chip. It
+  lets the rail fall before the jump.
+- **Sizes.** The loader is 8 820 B, not the 9 248 B measured with the
+  QSPI: the driver is small, and the loader now prepares only the boots
+  with a swap. The node image is 378 784 B of the 929 792 B slot,
+  551 008 B free; the driver, the chip's init and the mailbox's backend
+  cost 3 064 B.
+- **Times**, unmeasured: per page, the internal 127 ms, the external
+  erase and programs 31 ms, and 8 KiB over the bus about 30 ms: 190 ms,
+  44 s for 227 pages, and 3 s for the hash before a swap; a swap back
+  as long without the hash.
+- **The mailbox's replies** stay at 256 a round (spec "Mailbox"): a ring
+  of 1024 sends a fetch its newest 256. Whether a round should carry
+  more is a protocol question left open.
 
 ## 2. Binary logging
 
@@ -481,7 +518,7 @@ other `#[track_caller]` functions carry one too. Their file names are
 | a. The mailbox's state page to `0xF2000`, its ring below it | 0 | an hour, one UF2 per board | the mailbox key is readable from the board's drive today (section 1) |
 | b. `B9h` to the external chip at boot | −152 B, and 11.5 µA less on battery | done, `bark-fw/src/ext_flash.rs` | the chip idles in standby otherwise |
 | c. The path remap | −3 120 B | an hour | measured, free |
-| d. The external chip (section 1) | +528 384 B | 2–3 days and the bench's swap rows | the layout must be settled before the field; it ends the question |
+| d. The external chip (section 1) | +528 384 B | built 2026-11-06 (D139); the bench's swap rows to redo | the layout must be settled before the field; it ends the question |
 | e. The host's AES and random numbers in hardware (section 4) | −11 404 B | a day and a bench pairing | worth having once (d) is in; the first choice if (d) waits |
 | f. The host's packet pool built at boot (the study) | −4 036 B | half a day | small and safe |
 | g. Warnings and errors only, or binary logging (section 2) | −14.6 KB, or about −19 KB | an hour, or two days | only if (d) is not done |
