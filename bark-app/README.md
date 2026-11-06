@@ -64,7 +64,7 @@ is a prototype for the bench, not the app people will carry.
   you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
-  connected node your home, or none; the dialog says and your new card goes to every contact; clear the
+  connected node your home if it is not, or none; the dialog says and your new card goes to every contact; clear the
   mailbox key of a node that holds one and is not your home), your 12
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
@@ -89,7 +89,10 @@ On every connection to a node of link version 3 or later the app reads
 Home. To the person's home, known by its node ID, it first writes the
 key, silently, with a line in the log: the node may have been reflashed,
 or the identity restored from its words, and a node that holds that key
-already changes nothing.
+already changes nothing. When the home's position is not the one the
+person has for it, the app takes the new one, which changes the card
+and sends it to every contact: a node takes a new place at boot or when
+it turns fixed, and the home is the node, not the spot.
 
 The queue and the received texts, the contacts, and the person (seed,
 name, home, the last `sent`, the mailbox's state) are kept in three

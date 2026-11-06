@@ -1,7 +1,7 @@
 // The home node against the fake node: the mailbox key written and read
 // back, cleared at the home, kept by a home the person is not connected
-// to, written again on every connection to the home, and a node that does not
-// keep it refused as a home.
+// to, written again on every connection to the home, the home followed to
+// its node's new place, and a node that does not keep it refused as a home.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
@@ -127,6 +127,23 @@ void main() {
       expect(log(app), contains(contains('the key written')));
       expect(app.fakeNode!.homeKeyChanges, 1);
       expect(app.session.nodeHome!.set, isTrue);
+    });
+  });
+
+  test('the home follows its node to a new place, and the card changes', () {
+    run((async, app) {
+      final old = app.session.address!;
+      said(async, app.makeHome(old));
+      final card = app.me.cardTime;
+      async.elapse(const Duration(seconds: 5));
+      // As a fixed node that took a fresh place at boot.
+      app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
+      async.flushMicrotasks();
+      final here = app.session.address!;
+      expect(here.toString(), isNot(old.toString()));
+      expect(app.me.home.toString(), here.toString());
+      expect(app.me.cardTime, greaterThan(card));
+      expect(app.atHome, isTrue);
     });
   });
 
