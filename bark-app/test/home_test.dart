@@ -1,6 +1,6 @@
 // The home node against the fake node: the mailbox key written and read
 // back, cleared at the home, kept by a home the person is not connected
-// to, written again to a home that lost it, and a node that does not
+// to, written again on every connection to the home, and a node that does not
 // keep it refused as a home.
 
 import 'package:bark_app/app.dart';
@@ -111,8 +111,22 @@ void main() {
       async.flushMicrotasks();
       expect(app.fakeNode!.homeKey, app.me.keys.mailbox.extractBytes());
       expect(app.session.nodeHome!.set, isTrue);
-      expect(log(app), contains(contains('held no key; written again')));
+      expect(log(app), contains(contains('the key written')));
       expect(app.session.notice, isNull);
+    });
+  });
+
+  test('a home that holds its key is unchanged by the write on connection', () {
+    run((async, app) {
+      said(async, app.makeHome(app.session.address!));
+      expect(app.fakeNode!.homeKeyChanges, 1);
+      app.session.disconnect();
+      async.flushMicrotasks();
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(log(app), contains(contains('the key written')));
+      expect(app.fakeNode!.homeKeyChanges, 1);
+      expect(app.session.nodeHome!.set, isTrue);
     });
   });
 

@@ -73,6 +73,10 @@ class FakeNode implements NodeLink {
 
   /// The mailbox key it was given, kept across connections as in flash.
   Uint8List? homeKey;
+
+  /// How often a write changed the key; the same key again changes
+  /// nothing, as on the node.
+  int homeKeyChanges = 0;
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
@@ -293,7 +297,11 @@ class FakeNode implements NodeLink {
     if (key != null && key.length != mailboxKeyLen) {
       throw const AttException(AttError.invalidLength);
     }
-    homeKey = key == null ? null : Uint8List.fromList(key);
+    String? held(List<int>? k) => k == null ? null : hex(k);
+    if (held(key) != held(homeKey)) {
+      homeKey = key == null ? null : Uint8List.fromList(key);
+      homeKeyChanges++;
+    }
   });
 
   @override

@@ -341,19 +341,19 @@ class Session extends ChangeNotifier {
     return true;
   }
 
-  /// Reads Home, and gives the person's home its key again if it has
-  /// none: it may have been reflashed. Silent, as the person can do
-  /// nothing about it.
+  /// Gives the person's home its key, silently, and reads Home. A home
+  /// may have been reflashed, or the identity restored from its words;
+  /// the node changes nothing when it holds that key already.
   Future<void> _keepHome(NodeLink link, NodeInfo n) async {
     try {
-      nodeHome = await link.readHome();
-      note('Home: $nodeHome');
       final key = homeKey?.call(n);
-      if (key != null && !nodeHome!.set) {
-        await link.setHome(key);
-        nodeHome = await link.readHome();
-        note('Home: the person\'s home held no key; written again: $nodeHome');
-      }
+      if (key != null) await link.setHome(key);
+      nodeHome = await link.readHome();
+      note(
+        key != null
+            ? 'Home: the key written to the person\'s home; $nodeHome'
+            : 'Home: $nodeHome',
+      );
     } catch (e) {
       note('Home: $e');
     }

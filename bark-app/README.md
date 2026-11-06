@@ -75,9 +75,10 @@ version 2 or later the app writes the phone's UTC time and offset to Clock,
 silently, and the debug screen shows what the node then has.
 
 On every connection to a node of link version 3 or later the app reads
-Home. If the node is the person's home, known by its node ID, and holds
-no key, perhaps reflashed, the app writes the key again, silently, with
-a line in the log.
+Home. To the person's home, known by its node ID, it first writes the
+key, silently, with a line in the log: the node may have been reflashed,
+or the identity restored from its words, and a node that holds that key
+already changes nothing.
 
 The queue and the received texts, the contacts, and the person (seed,
 name, home, the last `sent`, the mailbox's state) are kept in three
@@ -186,8 +187,8 @@ words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, acknowledgements, a reflected message, a forged first message
 and the mailbox's replies against the fake node; give the fake node the
-mailbox key, read it back, clear it, write it again to a home that lost
-it, and refuse a node that does not keep it; group texts into
+mailbox key, read it back, clear it, write it again at every connection
+to the home, and refuse a node that does not keep it; group texts into
 conversations; and drive the screens: a text to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted
 card, my card, the debug screen and the fetch button.
