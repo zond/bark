@@ -3156,10 +3156,13 @@ Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
 reply. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
-unverified until a boxed payload from that identity opens, and it is
-used until the sender has received a boxed payload from the receiver.
-An introduction naming an identity the receiver has verified is
-dropped. Payloads are not padded.
+unverified until a boxed payload from that identity opens. It is used
+until a payload from the receiver, of either form, has opened at the
+sender: sealed to the sender's identity, it shows that the receiver
+holds the sender's card. Waiting for a boxed one instead would leave two
+people who hold each other's cards sending introductions for ever, as
+only a box verifies. An introduction naming an identity the receiver
+has verified is dropped. Payloads are not padded.
 
 *Plaintext.* Forms 0 and 1 hold a header, then records:
 
