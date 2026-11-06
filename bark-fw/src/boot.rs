@@ -22,6 +22,8 @@ pub struct Facts {
     pub controller: Option<(usize, usize)>,
     /// The GPS's state now (`gps.rs`).
     pub gps: &'static str,
+    /// The debug port's read-out protection (`protect.rs`).
+    pub protection: Option<crate::protect::State>,
 }
 
 static FACTS: Mutex<CriticalSectionRawMutex, Cell<Facts>> = Mutex::new(Cell::new(Facts {
@@ -29,6 +31,7 @@ static FACTS: Mutex<CriticalSectionRawMutex, Cell<Facts>> = Mutex::new(Cell::new
     display: None,
     controller: None,
     gps: "rest",
+    protection: None,
 }));
 
 /// Note a fact.
@@ -80,6 +83,9 @@ impl fmt::Display for Facts {
             None => f.write_str(" controller_memory=?")?,
         }
         write!(f, " gps={}", self.gps)?;
+        if let Some(p) = self.protection {
+            write!(f, " {p}")?;
+        }
         let slot = bark_image::layout::ACTIVE.len;
         write!(
             f,

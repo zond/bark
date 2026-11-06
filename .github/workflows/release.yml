@@ -122,9 +122,13 @@ jobs:
       # bench flashes to measure the radio and to stage images. Shipping it
       # spares a person a toolchain, and it costs one more build of the
       # firmware crate alone, its dependencies already built. With the
-      # loader, so it starts on any board.
+      # loader, so it starts on any board. Open, as a bench image: it
+      # opens no board a protected image has closed (bark-fw/README.md,
+      # "Read-out protection").
       - run: cargo build --release --features console
         working-directory: bark-fw
+        env:
+          BARK_OPEN: "1"
 
       - name: Package the console
         working-directory: bark-fw

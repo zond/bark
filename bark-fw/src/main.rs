@@ -33,6 +33,7 @@ mod mailbox;
 #[cfg(not(feature = "console"))]
 mod node;
 mod power;
+mod protect;
 mod radio;
 #[cfg(not(feature = "console"))]
 mod stack;
@@ -189,12 +190,16 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // First, before any secret is read; a reset here keeps the panic below.
+    let protection = protect::apply();
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
     stack::paint();
 
     let mut config = Config::default();
+    // The debug port is `protect`'s.
+    config.debug = embassy_nrf::config::Debug::NotConfigured;
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
     // Specification, USBD chapter). The console starts it at boot, for its
     // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
@@ -325,6 +330,9 @@ async fn main(spawner: Spawner) {
         bark_proto::radio::SYMBOL_TIME.as_micros(),
         HEARTBEAT_AIRTIME_US,
     );
+    log::info!("{}", protection);
+    #[cfg(not(feature = "console"))]
+    boot::note(|f| f.protection = Some(protection));
     #[cfg(not(feature = "console"))]
     match lf_source {
         lfclk::Source::Crystal { started_ms } => {
