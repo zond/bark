@@ -32,6 +32,17 @@ its battery is low (spec "Sleepy nodes"). For bench work,
 leaves the battery levels off, so that a board on the bench's USB runs
 sleepy and still logs (`scripts/measure.md` step 5).
 
+`BARK_IGNORE=<id>` at build time, twelve hex digits as the banner prints a
+node ID, makes a bench build deaf to that node: the driver drops each of
+its frames, heartbeat, DATA or ACK, as if the radio had not heard it
+(`bark_driver::BENCH_DEAF_TO`). Boards on one desk all hear each other;
+two built deaf to each other, with a third between, are a line for the
+routing tests (`docs/bringup-2026-11-06.md`). The radio still receives
+those frames, so they still keep it busy and still make its
+listen-before-talk wait, which a line's ends would not. The node logs
+`bench build: deaf to ..` after its `node id=` line. Neither flag is for
+a board that leaves the bench; off, each costs nothing (`size`).
+
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
 describes it. A node's place can be set when it is built, from `BARK_LAT`

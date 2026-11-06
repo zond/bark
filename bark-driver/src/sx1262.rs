@@ -925,6 +925,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
 impl<C: Chip, K: Clock> crate::Radio for Sx1262<C, K> {
     type Error = Error<C::Error>;
+    const DEAF_TO: Option<bark_proto::NodeId> = crate::BENCH_DEAF_TO;
 
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
         Sx1262::listen(self, channel).await

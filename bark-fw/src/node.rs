@@ -438,6 +438,9 @@ pub async fn run<'a>(
         dbm,
         crate::power::reported()
     );
+    if let Some(id) = bark_driver::BENCH_DEAF_TO {
+        log::warn!("bench build: deaf to {:02x?} (BARK_IGNORE)", id.0);
+    }
     let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
     let mut first_report = true;
     loop {

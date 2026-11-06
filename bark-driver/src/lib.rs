@@ -33,7 +33,7 @@ use core::future::pending;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
-use bark_proto::wire::MAX_PAYLOAD;
+use bark_proto::wire::{Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
     Stored, MAX_FRAME,
@@ -90,10 +90,47 @@ pub enum Heard {
     Nothing,
 }
 
+/// The node a bench build's radio is deaf to, from `BARK_IGNORE` at build
+/// time: twelve hex digits, as the banner and the USB serial number give a
+/// node ID. Boards on one desk all hear each other, and two of them deaf to
+/// each other make a line with a third between them
+/// (`docs/bringup-2026-11-06.md`). `None`, hearing every node, in every
+/// other build.
+pub const BENCH_DEAF_TO: Option<NodeId> = match option_env!("BARK_IGNORE") {
+    None => None,
+    Some(hex) => Some(node_id_of_hex(hex)),
+};
+
+/// A node ID from its twelve hex digits; any other text fails the build
+/// when it is a constant's.
+pub const fn node_id_of_hex(hex: &str) -> NodeId {
+    let b = hex.as_bytes();
+    assert!(b.len() == 2 * NodeId::LEN, "a node ID is twelve hex digits");
+    let mut id = [0u8; NodeId::LEN];
+    let mut i = 0;
+    while i < b.len() {
+        let digit = match b[i] {
+            b'0'..=b'9' => b[i] - b'0',
+            b'a'..=b'f' => b[i] - b'a' + 10,
+            b'A'..=b'F' => b[i] - b'A' + 10,
+            _ => panic!("a node ID is twelve hex digits"),
+        };
+        id[i / 2] = id[i / 2] << 4 | digit;
+        i += 1;
+    }
+    NodeId(id)
+}
+
 /// The half-duplex LoRa radio at bark's modulation (spec "Physical layer").
 pub trait Radio {
     /// A failure of the radio or its bus.
     type Error: Debug;
+
+    /// A node whose frames the driver drops as if this radio never heard
+    /// them; only a bench build has one ([`BENCH_DEAF_TO`]). The radio
+    /// still receives them, so they still keep it busy and its
+    /// listen-before-talk still sees them.
+    const DEAF_TO: Option<NodeId> = None;
 
     /// Listen on `channel` from whatever state the radio is in.
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error>;
@@ -481,6 +518,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 rssi_dbm,
                 snr_db,
             } => {
+                if let Some(id) = R::DEAF_TO {
+                    let bytes = &self.rx[..len as usize];
+                    if Packet::decode(bytes).is_ok_and(|p| p.sender() == id) {
+                        return Ok(());
+                    }
+                }
                 self.stats.frames += 1;
                 if let Some(channel) = listening {
                     // A copy, so the core can borrow it while the driver
