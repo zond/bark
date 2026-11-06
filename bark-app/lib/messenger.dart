@@ -132,13 +132,13 @@ class Messenger {
     }
   }
 
-  /// Asks the home node for what it holds after this phone's `since`,
-  /// to be sent to `here`.
+  /// Asks the home node for every item after this phone's `since`, to be
+  /// sent to `here`.
   Future<void> fetch(Address here) async {
     final home = me.home;
     if (home == null) return;
     final sent = await me.nextSent();
-    final f = Fetch(sent, here, me.since, Me.fetchMost);
+    final f = Fetch(sent, here, me.since);
     final p = f.seal(sodium, me.keys.mailbox, sodium.randombytes.buf(nonceLen));
     await me.fetched(sent);
     await session.queue(
@@ -190,19 +190,20 @@ class Messenger {
 
   Future<bool> _reply(InboxMessage m, List<int> p) async {
     for (final round in me.rounds) {
-      for (var n = me.since + 1; n <= me.since + Me.fetchMost; n++) {
-        final item = openReply(sodium, me.keys.mailbox, round, n, p);
-        if (item == null) continue;
-        await me.gotItem(n);
-        // An item that opens for nobody here is still one the mailbox
-        // has delivered: it is kept as received.
-        if (!await _open(m, item, mailbox: true)) {
-          await session.addReceived(
-            Received(m.msgId, item, now(), mailbox: true),
-          );
-        }
-        return true;
+      final o = openReply(sodium, me.keys.mailbox, round, p);
+      if (o == null) continue;
+      await session.fetchAnswered(round, nothingNew: o.nothingNew);
+      final item = o.item;
+      if (item == null) return true;
+      await me.gotItem(o.number, first: o.number - o.place + 1);
+      // An item that opens for nobody here is still one the mailbox has
+      // delivered: it is kept as received.
+      if (!await _open(m, item, mailbox: true)) {
+        await session.addReceived(
+          Received(m.msgId, item, now(), mailbox: true),
+        );
       }
+      return true;
     }
     return false;
   }

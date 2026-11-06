@@ -31,8 +31,12 @@ is a prototype for the bench, not the app people will carry.
   The pen button starts a conversation from the contacts. With a home
   node, the inbox button in the bar, **Fetch my mail**, sends a fetch to
   it, which the app does only when asked, and says "Fetching your
-  mail". It sends nothing, and says why, when no node is connected or
-  the connected node is the home: a fetch goes from another node to the
+  mail". The button is then off, an hourglass that says it waits for
+  the home's answer and how long at most (32 minutes, the spec's
+  bounds on the way there and back), until a reply comes, "No new mail"
+  if the home has nothing new, or the node gives the fetch back. It
+  sends nothing, and says why, when no node is connected or the
+  connected node is the home: a fetch goes from another node to the
   home, and the home's own inbox already holds the mail.
 - **A thread.** The texts sent to and received from one identity, in
   order, and a field at the bottom to write the next. A sent text
@@ -117,7 +121,9 @@ message names your address while the contact may not know it, carries
 the time it was written as its `sent`, and holds a text, an
 acknowledgement or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
-and the node's replies are opened with it (spec "Mailbox"). A payload
+and the node's replies are opened with it: one for each item newer than
+the last this phone has, or one that says nothing is new (spec
+"Mailbox"). A payload
 that opens for nobody is kept for the debug screen only.
 
 **Making a node the home.** The connected node must be of link version
@@ -188,7 +194,9 @@ The tests check every value's bytes against the vectors of
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, acknowledgements, a reflected message, a forged first message
-and the mailbox's replies against the fake node; give the fake node the
+and the mailbox's replies against the fake node, which answers a fetch
+as a home does; the fetch button's wait, ended by a reply, a give-back
+or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
 conversations; and drive the screens: a text to the fake friend, its
@@ -276,4 +284,6 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
    node my home**: Debug's Home reads a home, and the node's log shows
    `ble: home set`. Texts to your card now go to it and wait in its
    mailbox. Connected to another node, **Fetch my mail** on the first
-   screen says "Fetching your mail" and brings them there.
+   screen says "Fetching your mail" and brings them there, or "No new
+   mail"; the home's log shows `mailbox: fetch … taken` and a
+   `mailbox: reply …` line for each reply.

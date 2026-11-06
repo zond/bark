@@ -5220,7 +5220,7 @@ mod tests {
     /// the home's application send slot (spec "Mailbox").
     #[test]
     fn a_fetch_from_another_node_gets_the_mailbox_items() {
-        use bark_app_layer::seal::{self, Fetch};
+        use bark_app_layer::seal::{self, Fetch, Opened};
         use bark_app_layer::Address;
         let mut sc = Scenario::new("mailbox", 1, 1800.0)
             .point("A", RoleSpec::Relay, 0.0, 0.0)
@@ -5250,32 +5250,40 @@ mod tests {
             position: sim.relays[2].address(),
             node: sim.node_id(2),
         };
-        let fetch = Fetch {
-            sent: 7,
-            address,
-            since: 0,
-            most: 23,
-        }
-        .seal(&key, &[1; 24])
-        .unwrap();
-        send(&mut sim, 2, &fetch);
+        let fetch = |sent: u32, since: u32| {
+            Fetch {
+                sent,
+                address,
+                since,
+            }
+            .seal(&key, &[sent as u8; 24])
+            .unwrap()
+        };
+        send(&mut sim, 2, &fetch(7, 0));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
         let mut got = Vec::new();
-        for (node, r) in &sim.replies {
-            assert_eq!(*node, 2);
+        for (node, r) in sim.replies.drain(..) {
+            assert_eq!(node, 2);
             let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
-            let opened = (1..=3)
-                .find_map(|n| {
-                    seal::open_reply(&key, 7, n, r, &mut out)
-                        .ok()
-                        .map(|l| (n, out[..l].to_vec()))
-                })
-                .expect("a reply that opens");
-            got.push(opened);
+            match seal::open_reply(&key, 7, &r, &mut out) {
+                Ok(Opened::Item { number, len, .. }) => got.push((number, out[..len].to_vec())),
+                o => panic!("not an item of round 7: {o:?}"),
+            }
         }
         got.sort();
         got.dedup();
         assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
+        // Asked again, the home has nothing new and says so.
+        send(&mut sim, 2, &fetch(8, 3));
+        let t = sim.now + Duration::from_secs(300);
+        sim.run_until(t);
+        let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+        let answers: Vec<_> = sim
+            .replies
+            .iter()
+            .map(|(_, r)| seal::open_reply(&key, 8, r, &mut out))
+            .collect();
+        assert_eq!(answers, [Ok(Opened::NothingNew)]);
     }
 }

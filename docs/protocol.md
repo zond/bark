@@ -3074,10 +3074,10 @@ a version or form it does not know.
 | 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 41 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 49 |
 | 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 41 |
-| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key; the nonce is not sent | 17 |
+| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3) and the item; the nonce is not sent | 20 |
 
 Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-227 − 17 = 210 bytes, so that its mailbox can send any payload on as a
+227 − 20 = 207 bytes, so that its mailbox can send any payload on as a
 reply. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
@@ -3149,23 +3149,46 @@ but a fetch in a ring of slots in flash, numbered from 1, and erases the
 oldest page when the ring is full. Its phone link's inbox reads from it.
 
 **The fetch** is a form 2 payload to the home address whose plaintext
-is `sent` (4), the requester's current address (13), `since` (3), the
-number up to which it has every item, and `most` (1), the most items to
-send. The node takes it only if it opens under the mailbox key and its
-`sent` is later than the last fetch's it took, which it keeps. `since`
-0 asks for the newest `most`.
+is `sent` (4), the requester's current address (13) and `since` (3),
+the number up to which it has every item. The node takes it only if it
+opens under the mailbox key and its `sent` is later than the last
+fetch's it took, which it keeps. `since` 0 asks for everything the ring
+holds.
 
-**The reply.** The node sends the items after `since`, oldest first, at
-most `most`, to the fetch's address, then each new item as it arrives,
-until `since` + `most` is reached or the next fetch is taken. Each goes
-as a form 3 payload, the item sealed under the mailbox key with the
-nonce: the fetch's `sent` (4), the item's number (3), 17 zero bytes. The
-requester tries the numbers `since` + 1 to `since` + `most` and so
-learns each item's number.
+**The answer.** The node answers a fetch once, to the fetch's address:
+one reply for each item it holds after `since`, oldest first, one at a
+time through its send slot, or, when it holds none, one reply that says
+nothing is new. An item that arrives after the fetch waits for the next
+one. Each reply is a form 3 payload sealed under the mailbox key with
+the nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes.
+An item's place is its number less the first number of the round, plus
+one, and its plaintext is its number (3) and the item; the reply that
+says nothing is new has place 0 and an empty plaintext, 17 bytes. A
+round has at most 256 replies, every item of the board's ring (16 pages
+of 16 slots), so the requester tries places 1 to 256 on a reply that
+carries an item and learns its number from inside; a ring that held
+more would send its newest 256.
+
+*Why nothing new is an answer.* A person pressed a button and waits:
+without it they cannot tell "no mail" from a fetch or a reply lost on
+the way. It costs one short frame, and the node keeps nothing open, so
+mail moves only when the person asks (roadmap D128).
+
+*Why no cap.* A cap only spreads the same replies over more fetches,
+each with its frame across the city, and makes people fetch early. The
+home node sends one reply at a time through its send slot, and the
+network's back-pressure paces a burst: a reply the requester's node has
+no room for is refused and waits at its sender
+([phone link](#phone-link), Receiving), and one the home node's
+neighbours refuse is given back to the mailbox and goes again.
+
+*Why the number inside.* A requester restored from its words, or away
+longer than the ring lasts, does not know which numbers the ring holds;
+places start at 1 in every round, so it finds each reply in at most 256
+tries, and the number, which only it learns, sets its `since`.
 
 **When to fetch.** Only when the person asks, so that a mailbox costs
-air only when a person wants it (roadmap D128). The app asks for 23 at
-most, the inbox's size ([phone link](#phone-link)).
+air only when a person wants it (roadmap D128).
 
 The mailbox is an application on the node, beside the phone link: it
 uses the core's application interface (`core-interface.md`, Application) and

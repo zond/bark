@@ -140,13 +140,13 @@ void main() {
       m['sent'] as int,
       Address.parse(m['address'] as String)!,
       m['since'] as int,
-      m['most'] as int,
     );
     expect(hex(f.seal(s, alice.mailbox, h(m, 'nonce'))), m['payload']);
+    expect(h(m, 'payload').length, Fetch.len);
     final g = Fetch.open(s, alice.mailbox, h(m, 'payload'));
     expect(
-      (g.sent, g.address.toString(), g.since, g.most),
-      (f.sent, f.address.toString(), f.since, f.most),
+      (g.sent, g.address.toString(), g.since),
+      (f.sent, f.address.toString(), f.since),
     );
     expect(
       () => Fetch.open(s, bob.mailbox, h(m, 'payload')),
@@ -154,20 +154,33 @@ void main() {
     );
   });
 
-  test('a reply: made, opened at its number only', () {
+  test('a reply: made, opened in its round only, its number inside', () {
     final m = at('reply');
     final round = m['round'] as int;
+    final place = m['place'] as int;
     final n = m['number'] as int;
-    expect(hex(replyNonce(round, n)), m['nonce']);
+    expect(hex(replyNonce(round, place)), m['nonce']);
     expect(
-      hex(sealReply(s, alice.mailbox, round, n, h(m, 'item'))),
+      hex(sealReply(s, alice.mailbox, round, place, n, h(m, 'item'))),
       m['payload'],
     );
+    final o = openReply(s, alice.mailbox, round, h(m, 'payload'))!;
+    expect((o.number, o.place, hex(o.item!)), (n, place, m['item']));
+    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
+    expect(openReply(s, bob.mailbox, round, h(m, 'payload')), isNull);
+  });
+
+  test('nothing new: made, opened in its round only', () {
+    final m = at('nothing_new');
+    final round = m['round'] as int;
+    expect(hex(replyNonce(round, 0)), m['nonce']);
+    expect(hex(sealNothingNew(s, alice.mailbox, round)), m['payload']);
+    expect(h(m, 'payload').length, nothingNewLen);
     expect(
-      hex(openReply(s, alice.mailbox, round, n, h(m, 'payload'))!),
-      m['item'],
+      openReply(s, alice.mailbox, round, h(m, 'payload'))!.nothingNew,
+      isTrue,
     );
-    expect(openReply(s, alice.mailbox, round, n + 1, h(m, 'payload')), isNull);
+    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
   });
 
   test('windows-1251 when it holds the text', () {

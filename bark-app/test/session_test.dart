@@ -298,22 +298,30 @@ void main() {
       expect(o.dst.toString(), home.toString());
       final f = Fetch.open(sodium, p.me.keys.mailbox, o.payload);
       expect(f.since, 0);
-      expect(f.most, Me.fetchMost);
       expect(f.address.toString(), elsewhere.toString());
 
+      // Since 0: the ring's first item here is 41, at place 1.
       void item(int n, String text) {
         final inner = fromFriend(node, p, 1000 + n, [TextRecord(text)]);
-        final reply = sealReply(sodium, p.me.keys.mailbox, f.sent, n, inner);
+        final reply = sealReply(
+          sodium,
+          p.me.keys.mailbox,
+          f.sent,
+          n,
+          40 + n,
+          inner,
+        );
         p.messenger.receive(InboxMessage(100 + n, reply));
         async.flushMicrotasks();
       }
 
       item(1, 'one');
+      expect(o.acked, isTrue);
+      expect(p.me.since, 41);
       item(3, 'three');
-      expect(p.me.since, 1);
-      expect(p.me.above, {3});
+      expect(p.me.above, {43});
       item(2, 'two');
-      expect(p.me.since, 3);
+      expect(p.me.since, 43);
       final got = p.session.received.where((r) => r.mailbox).toList();
       expect(got.map((r) => r.text), ['one', 'three', 'two']);
       // The same item again, as after a lost reply, is not kept twice.
@@ -321,7 +329,7 @@ void main() {
       expect(p.session.received.where((r) => r.mailbox).length, 3);
       // A reply under another key opens for nobody.
       final other = Keys.fromSeed(sodium, List.filled(16, 7));
-      final stray = sealReply(sodium, other.mailbox, f.sent, 4, [1, 2, 3]);
+      final stray = sealReply(sodium, other.mailbox, f.sent, 4, 44, [1, 2, 3]);
       p.messenger.receive(InboxMessage(200, stray));
       async.flushMicrotasks();
       expect(p.session.received.last.from, isNull);
@@ -417,6 +425,61 @@ void main() {
       expect(again.session.received.first.from, hex(node.friend.identity));
       expect(again.session.outbox.single.text, 'kept');
       expect(again.session.outbox.single.id, p.session.outbox.single.id);
+    });
+  });
+
+  test('a fetch in flight is still waited for after a restart', () {
+    run((async, p, node) {
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      p.messenger.fetch(elsewhere);
+      async.flushMicrotasks();
+      final o = p.session.fetchWaiting!;
+      final again = p.again(sodium, () => start.add(async.elapsed));
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting?.id, o.id);
+      // Its answer, nothing new, ends the wait there too.
+      again.messenger.receive(
+        InboxMessage(1, sealNothingNew(sodium, again.me.keys.mailbox, o.sent)),
+      );
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting, isNull);
+      expect(again.session.fetchNews, 'No new mail');
+    });
+  });
+
+  test('the fake home answers a fetch with its item, then nothing new', () {
+    fakeAsync((async) {
+      DateTime now() => start.add(async.elapsed);
+      final p = Phone(sodium, now);
+      async.flushMicrotasks();
+      final node = FakeNode(
+        now: now,
+        sodium: sodium,
+        app: p.me.identity,
+        mailbox: p.me.keys.mailbox,
+      );
+      p.session.attach(node.connect());
+      async.flushMicrotasks();
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      for (final (since, waited) in [(0, true), (1, false)]) {
+        p.messenger.fetch(elsewhere);
+        async.elapse(FakeNode.fetchAnswerAfter + FakeNode.handOver);
+        expect(p.session.fetchWaiting, isNull);
+        expect(p.me.since, 1, reason: 'after since $since');
+        expect(p.session.fetchNews, waited ? isNull : 'No new mail');
+      }
+      expect(
+        p.session.received
+            .where((r) => r.mailbox || r.body != null)
+            .map((r) => r.body),
+        contains('Left at your home node while you were away.'),
+      );
+      node.dispose();
+      p.session.dispose();
     });
   });
 

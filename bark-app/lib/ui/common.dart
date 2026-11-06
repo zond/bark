@@ -66,7 +66,8 @@ class NoticeCard extends StatelessWidget {
 }
 
 /// "Fetch my mail", in an app bar, while the person has a home node; it
-/// says what was done, or why nothing was sent.
+/// says what was done, or why nothing was sent. While a fetch waits for
+/// its answer the button is off and says so; "No new mail" is told once.
 class FetchButton extends StatelessWidget {
   final AppModel app;
   const FetchButton(this.app, {super.key});
@@ -74,6 +75,24 @@ class FetchButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (app.me.home == null) return const SizedBox.shrink();
+    final s = app.session;
+    final news = s.fetchNews;
+    if (news != null && ModalRoute.of(context)?.isCurrent != false) {
+      s.fetchNews = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) say(context, news);
+      });
+    }
+    final waiting = s.fetchWaiting;
+    if (waiting != null) {
+      return IconButton(
+        tooltip:
+            'Waiting for your home node to answer, '
+            '${clock(s.fetchWaitLeftS(waiting))} at most',
+        icon: const Icon(Icons.hourglass_top),
+        onPressed: null,
+      );
+    }
     return IconButton(
       tooltip: 'Fetch my mail',
       icon: const Icon(Icons.move_to_inbox),
