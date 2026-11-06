@@ -214,6 +214,9 @@ class Session extends ChangeNotifier {
   /// the payload is kept as it came.
   Future<void> Function(InboxMessage)? reader;
 
+  /// Told of each message kept, once.
+  void Function(Received)? kept;
+
   /// The mailbox key a node should hold, if it is the person's home.
   Uint8List? Function(NodeInfo)? homeKey;
 
@@ -531,6 +534,7 @@ class Session extends ChangeNotifier {
   Future<void> addReceived(Received r) async {
     received.add(r);
     notifyListeners();
+    kept?.call(r);
     await save();
   }
 

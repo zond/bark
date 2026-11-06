@@ -1,5 +1,6 @@
-// Settings: the node to connect to, the person's name, their home node,
-// their backup words, the node's map point, and the fake node.
+// Settings: the node to connect to, the fake node, the battery exemption
+// that keeps the link with the screen off, the person's name, their home
+// node, their backup words, and the node's map point.
 
 import 'package:flutter/material.dart';
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
@@ -25,8 +26,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   AppModel get app => widget.app;
 
+  /// Whether Android exempts the app from battery optimisation, read again
+  /// when the person comes back from the system's dialog.
+  bool? _exempt;
+  late final AppLifecycleListener _life;
+
+  @override
+  void initState() {
+    super.initState();
+    _readExempt();
+    _life = AppLifecycleListener(onResume: _readExempt);
+  }
+
+  Future<void> _readExempt() async {
+    final e = await app.notifier.batteryExempt();
+    if (mounted) setState(() => _exempt = e);
+  }
+
   @override
   void dispose() {
+    _life.dispose();
     lat.dispose();
     lon.dispose();
     if (app.scanning) app.stopScan();
@@ -39,6 +58,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (mounted) say(context, '$failed: $e');
     }
+  }
+
+  /// Connects by `f`, at the first connection after asking to notify.
+  Future<void> _connect(Future<void> Function() f) async {
+    await app.askToNotify(
+      () async =>
+          await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Notifications'),
+              content: const Text(
+                'bark tells you when a text comes, and shows that it keeps '
+                'the link to the node while the screen is off. Android asks '
+                'you next.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Not now'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Continue'),
+                ),
+              ],
+            ),
+          ) ??
+          false,
+    );
+    await _try(f, 'Connecting failed');
   }
 
   Future<void> _phoneLocation() async {
@@ -81,6 +130,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             NoticeCard(app),
             ..._connection(),
+            ..._battery(),
             _heading('My name'),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -136,7 +186,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Align(
           alignment: Alignment.centerLeft,
           child: FilledButton(
-            onPressed: () => _try(app.connectFake, 'Connecting failed'),
+            onPressed: () => _connect(app.connectFake),
             child: const Text('Connect'),
           ),
         )
@@ -162,10 +212,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             contentPadding: EdgeInsets.zero,
             title: Text(n.name),
             subtitle: Text('${n.deviceId}, ${n.rssi ?? '?'} dBm'),
-            onTap: app.connecting
-                ? null
-                : () => _try(() => app.connect(n), 'Connecting failed'),
+            onTap: app.connecting ? null : () => _connect(() => app.connect(n)),
           ),
+      ],
+    ];
+  }
+
+  List<Widget> _battery() {
+    final e = _exempt;
+    if (e == null) return [];
+    return [
+      _heading('Battery'),
+      Text(
+        e
+            ? 'bark is exempt from battery optimisation: Android lets it '
+                  'keep the link to the node while the screen is off.'
+            : 'bark is not exempt from battery optimisation: with the '
+                  'screen off, some phones close its link to the node after '
+                  'some hours.',
+      ),
+      if (!e) ...[
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            onPressed: app.notifier.askBatteryExempt,
+            child: const Text('Exempt bark'),
+          ),
+        ),
       ],
     ];
   }
