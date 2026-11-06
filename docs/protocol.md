@@ -468,12 +468,12 @@ A node's position is its GPS fix, unless the app sets a map point, which
 wins. A rooftop relay with no sky view uses one.
 
 **A node's place.** A node has a place when it was given one where it
-was built, has one stored ([implementation notes](#implementation-notes)),
-or the app sets a map point. One with none takes its first accepted fix
-as its place, fixed, at once, and sends no heartbeat before it; it
-rebuilds the positions it heard near its place then, and a relay
-heartbeats its first rotation's burst ([heartbeat](#heartbeat)) from
-then, as at boot (roadmap D83).
+was built, has one stored as a fixed node
+([implementation notes](#implementation-notes)), or the app sets a map
+point. One with none takes its first accepted fix as its place, fixed,
+at once, and sends no heartbeat before it; it rebuilds the positions it
+heard near its place then, and a relay heartbeats its first rotation's
+burst ([heartbeat](#heartbeat)) from then, as at boot (roadmap D83).
 
 *Why no heartbeat before.* A heartbeat says where the node is, and
 carries only the short position ([positions on the wire](#positions-on-the-wire)):
@@ -481,6 +481,13 @@ a node with no place can rebuild neither its neighbours' positions nor
 its own beyond the short form's period, so any position or address it
 gave would send its neighbours elsewhere. For the same reason its driver
 checks its first fix against no neighbour.
+
+*Why a carried node's stored place is none.* It is where the node
+stood when last fixed, not where it is, and a node that boots there
+rebuilds every neighbour's short position near it: a period off, every
+true fix is beyond them all and dropped, and the node heartbeats a
+position its neighbours rebuild as far from them, so their fixes are
+dropped too (roadmap D133).
 
 *Why the first fix and not the fixed rule.* Measured from a position it
 never had, the first fix is a far fix, and the node would be carried
