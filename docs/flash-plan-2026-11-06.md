@@ -82,6 +82,10 @@ Two limits on "inside":
   read-out protection is on, which is its own decision (the chip's
   revision decides how: on later nRF52840 revisions it is on unless the
   firmware opens it at every boot; Product Specification, APPROTECT).
+  *2026-11-06:* decided and built, roadmap D138: on by default, open in
+  bench builds (`BARK_OPEN=1`); the firmware, through its HAL, had in
+  fact been opening it at every boot on revision 3
+  (`docs/approtect-2026-11-06.md`).
 
 ### The regions
 

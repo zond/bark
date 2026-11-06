@@ -83,6 +83,8 @@ def full_id(short: str, known: list[str] | None = None) -> str:
 
 
 def cargo(env: dict[str, str], console: bool, out: Path) -> None:
+    # Bench boards stay open to a debug probe (README, "Read-out protection").
+    env = {"BARK_OPEN": "1", **env}
     e = {k: v for k, v in os.environ.items() if not k.startswith("BARK_")}
     e.update(env)
     cmd = ["cargo", "build", "--release"] + (["--features", "console"] if console else [])

@@ -1,6 +1,8 @@
 //! What the T-Echo firmware and its loader must agree on: the flash
 //! layout ([`layout`]), the header a staged image travels with
-//! ([`Header`]) and the record of it the loader checks ([`record`]).
+//! ([`Header`]) and the record of it the loader checks ([`record`]); and
+//! the firmware's choice of read-out protection ([`protect`]), here to be
+//! tested on the host.
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -14,6 +16,7 @@ extern crate std;
 #[cfg(feature = "boot")]
 pub mod boot;
 pub mod layout;
+pub mod protect;
 pub mod record;
 
 /// Seconds a new image has to confirm itself before the watchdog resets
