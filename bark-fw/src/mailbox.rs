@@ -48,7 +48,11 @@ impl Region for Mapped {
 
 type Home = Mailbox<FlashRing<Mapped>>;
 
-static HOME: Mutex<CriticalSectionRawMutex, RefCell<Option<Home>>> = Mutex::new(RefCell::new(None));
+// The mailbox is built at boot into a cell in zeroed RAM: a static with a
+// non-zero initial value would keep a copy of it in flash.
+static HOME: Mutex<CriticalSectionRawMutex, RefCell<Option<&'static mut Home>>> =
+    Mutex::new(RefCell::new(None));
+static HOME_CELL: static_cell::StaticCell<Home> = static_cell::StaticCell::new();
 
 /// Raised when the mailbox has queued a write.
 static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -69,6 +73,7 @@ pub fn open() {
         m.newest(),
         m.unread_count()
     );
+    let m = HOME_CELL.init(m);
     HOME.lock(|c| *c.borrow_mut() = Some(m));
 }
 
