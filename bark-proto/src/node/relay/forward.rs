@@ -14,8 +14,9 @@
 //! A sleepy neighbour with an anchor is a next hop only as a last resort,
 //! where no other neighbour is left that could take the message but for
 //! a ban, and every DATA to a sleepy neighbour carries the long preamble
-//! (spec "Next hop"). The node a message is addressed to goes first, a
-//! last resort or not.
+//! (spec "Next hop"). The node a message is addressed to goes first,
+//! though carried and stale, but a sleepy one with an anchor stays a
+//! last resort.
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
@@ -773,8 +774,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The next hop for the message of `record` to node and position `dst`
     /// (spec "Next hop"), from the state as it is at `now`: the addressed
-    /// node itself if it is a live neighbour not in the tried set, a last
-    /// resort or not; otherwise the live neighbour nearest the position
+    /// node itself if it is a live neighbour not in the tried set, a stale
+    /// carried one too, a sleepy one with an anchor only as a last resort;
+    /// otherwise the live neighbour nearest the position
     /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
     /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
@@ -812,9 +814,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
-        // Only the node itself can end the search for it, and a frame to
-        // it costs little against a search through the city: first even
-        // where it would be a last resort (roadmap D116a).
+        // Only a carried node itself can end the search for it, and a
+        // frame to it costs little against a search through the city:
+        // first even when stale. A sleepy node with an anchor is reached
+        // through its anchor's queue and window (roadmap D116a).
         let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
@@ -827,7 +830,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
-                    && (first.is_some() || addressed(n) || self.tier(n, others, now))
+                    && (first.is_some()
+                        || (addressed(n) && !n.last_resort())
+                        || self.tier(n, others, now))
                     && !tried(record, passed, *slot)
                     && Some(n.id) != parent
             })

@@ -37,15 +37,18 @@ with the addressed node itself, before margin, demotion and distance:
   `dst_id`, if it is a candidate: not in the tried set, not the parent.
   The neighbour table is only read; nothing is looked up, and the heard
   table is not consulted.
-- **Last resorts.** It is first even where it would be a last resort: a
-  sleepy node with an anchor, or a carried relay not heard for its
-  heartbeat interval. It is sent to as its kind requires, the long
-  preamble to a sleepy one.
+- **Last resorts.** A carried relay not heard for its heartbeat
+  interval, a last resort for other messages, is first all the same. A
+  sleepy node with an anchor stays a last resort: its anchor owns its
+  address and delivers to it in its window ("The anchored sleepy
+  destination" below). Where no other candidate is left, it is first
+  among the last resorts, sent to with the long preamble.
 - **Answered seen.** A node that has had the message answers seen as any
   other (spec "The ACK"), and the search goes on.
 
 `Relay::choose` ranks `n.id == dst_id` first and lets it past the last
-resort tier. The record and `Relay` are unchanged.
+resort tier unless it is sleepy with an anchor. The record and `Relay`
+are unchanged.
 
 ## How it was measured
 

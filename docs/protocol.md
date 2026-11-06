@@ -1480,8 +1480,8 @@ Each relay keeps a small record per message
 ([message records](#message-records)), and the packet carries nothing
 for the search but its sender and a hop count. The search only routes
 around gaps; it never searches for an ID, though it hands a message to
-the node it is addressed to where that is a neighbour. A sleepy node that is a next
-hop ([next hop](#next-hop)) forwards as a relay does, and what this
+the node it is addressed to where that is a neighbour. A sleepy node
+that is a next hop ([next hop](#next-hop)) forwards as a relay does, and what this
 section says of a relay holds for it then.
 
 The **origin** of a message is the node that first sends it into the
@@ -1639,11 +1639,11 @@ dropped ([return to parent](#return-to-parent)):
 - a carried relay ([nodes](#nodes)) once nothing has been heard from it
   for its own heartbeat interval ([heartbeat](#heartbeat)).
 
-The addressed node is no last resort for its own message: sleepy with an
-anchor or carried and stale, it is first all the same. An anchorless
-neighbour is a candidate like any other, sent to with the long
-preamble. The first hop of a sleepy node's own message is its
-anchor while the anchor is live
+A stale carried relay is no last resort for a message addressed to it:
+it is first all the same. A sleepy neighbour with an anchor stays one,
+even for a message addressed to it. An anchorless neighbour is a
+candidate like any other, sent to with the long preamble. The first hop
+of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
@@ -1709,9 +1709,13 @@ its ID wherever it is ([owner](#owner)), and a carried node is seldom at
 the position a message bears: the search for it ends only when it meets
 the node, and otherwise goes through the city to the hop cap
 ([hop count](#hop-count)). Nothing is looked up: the relay reads its
-neighbour table, which it ranks anyway. A stale walker or a sleepy node
-costs three frames unanswered at most, against hundreds of hand-overs
-that only that node can end (roadmap D116a).
+neighbour table, which it ranks anyway. A stale walker costs three
+frames unanswered at most, against hundreds of hand-overs that only it
+can end. A sleepy node with an anchor is not lost that way: its address
+is its anchor's position, and the anchor, which owns that position,
+sends it the message in its window with the ordinary preamble
+([delivery](#delivery)). Sent to by every relay that hears it, the
+message would cost the long preamble each time instead (roadmap D116a).
 
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the

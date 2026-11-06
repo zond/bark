@@ -2654,17 +2654,25 @@ fn refusals_at_the_gate_are_told_a_line() {
     assert!(wait <= ban && wait + ban.div(8) + BAN > ban, "{wait:?}");
 }
 
+/// What E is in [`handing_between`].
+#[derive(Clone, Copy, Debug)]
+enum Peer {
+    Relay,
+    /// Carried; `stale` if not heard for its heartbeat interval, which
+    /// makes it a last resort (spec "Next hop").
+    Carried {
+        stale: bool,
+    },
+    /// Sleepy with an anchor: a last resort.
+    Sleepy,
+}
+
 /// A running relay with neighbours D and E north-east and north-west of
-/// it, E carried if `e_carried`, and a forward to a destination `north`
-/// and `east` counts from it, with a parent, being handed to D, the
-/// nearer (spec "Next hop"); to E if it is addressed to E, `to_e`. The
-/// relay, the time, the message, D and E.
-fn handing_between(
-    north: i32,
-    east: i32,
-    e_carried: bool,
-    to_e: bool,
-) -> (Relay, Instant, MsgId, NodeId, NodeId) {
+/// it, E a `peer`, and a forward with a parent to a destination 500
+/// counts north of it, D's position being the nearer, addressed to E if
+/// `to_e`. The relay, the time, the message, D and E, and the
+/// neighbour the forward was first handed to (spec "Next hop").
+fn handing_between(peer: Peer, to_e: bool) -> (Relay, Instant, MsgId, NodeId, NodeId, NodeId) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;
@@ -2688,38 +2696,45 @@ fn handing_between(
     };
     // About 600 m north and 400 m east and west: D a little nearer.
     let (d_pos, e_pos) = (at(1_000, 900), at(1_000, -1_000));
-    for (p, home, carried) in [(d_pos, 5, false), (e_pos, 7, e_carried)] {
-        let hb = Heartbeat {
-            sleepy: false,
+    let beat = |p: Position, home: u8, peer: Peer| {
+        Packet::Heartbeat(Heartbeat {
+            sleepy: matches!(peer, Peer::Sleepy),
             anchorless: false,
-            carried,
+            carried: matches!(peer, Peer::Carried { .. }),
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
             id: id_of(p),
             short: p.short(),
-        };
-        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+        })
+    };
+    hear(&mut r, &mut now, &beat(e_pos, 7, peer));
+    if let Peer::Carried { stale: true } = peer {
+        let until = now + crate::node::heartbeat_interval(id_of(e_pos), &r.config);
+        drive(&mut r, &mut now, until);
+        now = until;
     }
+    hear(&mut r, &mut now, &beat(d_pos, 5, Peer::Relay));
     let data = Data {
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
-        dst_pos: at(north, east),
+        dst_pos: at(500, 0),
         dst_id: if to_e { id_of(e_pos) } else { NOBODY },
         hops: 2,
         payload: b"gone",
     };
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
-    let at = r.record_place().unwrap();
-    r.records.put(at, Record::new(id, parent, 1, now));
+    let place = r.record_place().unwrap();
+    r.records.put(place, Record::new(id, parent, 1, now));
     let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
     r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
-    let first = if to_e { e_pos } else { d_pos };
-    assert_eq!(data_to(&sent), [(id_of(first), 2)], "first");
-    (r, now, id, id_of(d_pos), id_of(e_pos))
+    let [(first, 2)] = data_to(&sent)[..] else {
+        panic!("{:?}", data_to(&sent));
+    };
+    (r, now, id, id_of(d_pos), id_of(e_pos), first)
 }
 
 /// `from` answers the hand-over of `id` under way, taking it or, if
@@ -2793,16 +2808,34 @@ fn settle(
 }
 
 /// The addressed node goes first where it is a neighbour, though another
-/// is nearer its position and it is carried (spec "Next hop"); answered
-/// seen, the search goes on as before.
+/// is nearer its position, and though it is carried and stale; answered
+/// seen, the search goes on as before (spec "Next hop").
 #[test]
 fn the_addressed_node_goes_first() {
-    for carried in [false, true] {
-        let (mut r, mut now, id, d, e) = handing_between(500, 0, carried, true);
+    for peer in [
+        Peer::Relay,
+        Peer::Carried { stale: false },
+        Peer::Carried { stale: true },
+    ] {
+        let (mut r, mut now, id, d, e, first) = handing_between(peer, true);
+        assert_eq!(first, e, "{peer:?}");
         let a = answered(&mut r, &mut now, id, e, true);
         let (to, drops) = settle(&mut r, &mut now, a);
-        assert_eq!((to, drops), (Some(d), std::vec![]), "{carried}");
+        assert_eq!((to, drops), (Some(d), std::vec![]), "{peer:?}");
     }
+}
+
+/// A sleepy addressed node with an anchor stays a last resort: its mail
+/// goes through its anchor's queue and window (spec "Next hop",
+/// "Delivery"). It is handed the message once the nearer D has answered
+/// seen.
+#[test]
+fn the_addressed_sleepy_node_stays_a_last_resort() {
+    let (mut r, mut now, id, d, e, first) = handing_between(Peer::Sleepy, true);
+    assert_eq!(first, d);
+    let a = answered(&mut r, &mut now, id, d, true);
+    let (to, drops) = settle(&mut r, &mut now, a);
+    assert_eq!((to, drops), (Some(e), std::vec![]));
 }
 
 /// A relay with neighbours at `lats` north of it, each that far nearer
