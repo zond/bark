@@ -99,11 +99,15 @@ class AppModel extends ChangeNotifier {
       return 'Connected to your home node: your mail comes from its inbox '
           'here; a fetch is sent from another node';
     }
+    if (session.fetchWaiting != null) {
+      return 'Still waiting for your home node to answer the last fetch';
+    }
     final here = session.address;
     if (here == null) {
       return 'This node has no address yet, so your mail could not come '
           'back to it';
     }
+    session.fetchNews = null;
     await messenger.fetch(here);
     return 'Fetching your mail';
   }
@@ -203,7 +207,12 @@ class AppModel extends ChangeNotifier {
   }
 
   Future<void> connectFake() async {
-    final f = fakeNode ??= FakeNode(now: now, sodium: sodium, app: me.identity);
+    final f = fakeNode ??= FakeNode(
+      now: now,
+      sodium: sodium,
+      app: me.identity,
+      mailbox: me.keys.mailbox,
+    );
     mtu = attMtu;
     session.note('Connected to the fake node');
     await session.attach(f.connect());

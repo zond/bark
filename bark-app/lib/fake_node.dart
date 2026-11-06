@@ -2,7 +2,8 @@
 // app can be tried on a phone with no board. Its network is invented:
 // it hears relays, gives some messages back, and behind it is one
 // person, the fake friend, who writes first and echoes every text sent
-// to them, sealed as a real phone would.
+// to them, sealed as a real phone would. Somewhere away is the person's
+// home node, whose mailbox answers a fetch as the spec's "Mailbox" says.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -20,6 +21,18 @@ class FakeNode implements NodeLink {
 
   /// The identity of the app it serves, whom the fake friend writes to.
   final Uint8List app;
+
+  /// The mailbox key of the person's home away, if they have one.
+  final SecureKey? mailbox;
+
+  /// What the home away holds, item n at n − 1: one message the fake
+  /// friend left there.
+  late final List<Uint8List> homeRing = [
+    _intro('Left at your home node while you were away.').payload,
+  ];
+
+  /// How long after taking a fetch its answer arrives.
+  static const fetchAnswerAfter = Duration(seconds: 5);
 
   /// The fake friend's keys, the same at every start.
   late final Keys friend = Keys.fromSeed(
@@ -90,8 +103,12 @@ class FakeNode implements NodeLink {
   var _closed = Completer<void>();
   final List<Timer> _timers = [];
 
-  FakeNode({required this.now, required this.sodium, required List<int> app})
-    : app = Uint8List.fromList(app) {
+  FakeNode({
+    required this.now,
+    required this.sodium,
+    required List<int> app,
+    this.mailbox,
+  }) : app = Uint8List.fromList(app) {
     _boot = now();
     final step = firstRotation ~/ (relaysHeard + 1);
     for (var i = 1; i <= relaysHeard; i++) {
@@ -139,6 +156,30 @@ class FakeNode implements NodeLink {
     } on BadPayload {
       return null;
     }
+  }
+
+  /// The home away's answer to a fetch, as its mailbox gives it: every
+  /// item after `since`, or one reply that says nothing is new.
+  void _answerFetch(Uint8List payload) {
+    final key = mailbox;
+    if (key == null || formOf(payload) != Form.fetch) return;
+    final Fetch f;
+    try {
+      f = Fetch.open(sodium, key, payload);
+    } on BadPayload {
+      return;
+    }
+    final first = f.since + 1;
+    final replies = [
+      for (var n = first; n <= homeRing.length; n++)
+        sealReply(sodium, key, f.sent, n - first + 1, n, homeRing[n - 1]),
+    ];
+    if (replies.isEmpty) replies.add(sealNothingNew(sodium, key, f.sent));
+    _after(fetchAnswerAfter, () {
+      for (final r in replies) {
+        _inbox.add(_message(r));
+      }
+    });
   }
 
   /// Runs `f` after `d`, then notifies the status.
@@ -248,6 +289,7 @@ class FakeNode implements NodeLink {
       _after(handOver + givenBackWait, () => _ready = true);
     } else {
       _after(handOver, () => _ready = true);
+      _answerFetch(payload);
       final text = _textTo(payload);
       if (text != null) {
         _after(

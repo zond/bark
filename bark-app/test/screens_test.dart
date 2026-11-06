@@ -194,16 +194,41 @@ void main() {
     // Another node: the fetch goes to the home.
     await app.connectFake();
     await t.pump();
-    await fetch('Fetching your mail');
+    await t.tap(find.byTooltip('Fetch my mail'));
+    await t.pump();
+    await t.pump();
+    expect(find.text('Fetching your mail'), findsOneWidget);
     final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
     expect(f.single.dst.toString(), away.toString());
 
-    // The same button in a thread.
+    // It waits for the home's answer, which brings the one item there.
+    final waiting = find.byTooltip(
+      RegExp('^Waiting for your home node to answer'),
+    );
+    expect(waiting, findsOneWidget);
     await t.pumpAndSettle();
+    await t.pump(FakeNode.fetchAnswerAfter);
+    await t.pumpAndSettle();
+    expect(f.single.acked, isTrue);
+    expect(find.byTooltip('Fetch my mail'), findsOneWidget);
+    expect(find.textContaining('Left at your home node'), findsOneWidget);
+
+    // The same button in a thread; now nothing is new, and it says so.
     await t.tap(find.text('Fake friend'));
     await t.pumpAndSettle();
-    await fetch('Fetching your mail');
+    await t.tap(find.byTooltip('Fetch my mail'));
+    await t.pump();
     expect(f.length, 2);
+    expect(waiting, findsOneWidget);
+    await t.pumpAndSettle();
+    await t.pump(FakeNode.fetchAnswerAfter);
+    await t.pump();
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsOneWidget);
+    expect(find.byTooltip('Fetch my mail'), findsOneWidget);
+    await t.pumpAndSettle();
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -255,6 +280,61 @@ void main() {
     await t.pump();
     await press('Make this node my home', 'goes to your contact.');
     expect(app.atHome, isTrue);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the fetch button waits until a timeout or a give-back', (
+    t,
+  ) async {
+    var clock = DateTime.utc(2026, 11, 6);
+    final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, () => clock),
+      session: Session(store: MemoryStore(), now: () => clock),
+      contacts: Contacts(MemoryStore()),
+      now: () => clock,
+    );
+    await t.runAsync(app.load);
+    // A home whose answers never come back: the fake holds no key.
+    app.fakeNode = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
+    await t.pumpWidget(BarkApp(app));
+    await app.me.setHome(
+      Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+    );
+    await app.connectFake();
+    await t.pump();
+    final idle = find.byTooltip('Fetch my mail');
+    final waiting = find.byTooltip(
+      RegExp('^Waiting for your home node to answer'),
+    );
+
+    // Taken, and never answered: the wait ends at its bound.
+    await t.tap(idle);
+    await t.pump();
+    await t.pump(const Duration(seconds: 1));
+    expect(waiting, findsOneWidget);
+    expect(find.byTooltip(RegExp(r'31:5\d at most$')), findsOneWidget);
+    clock = clock.add(Session.fetchAnswerWait);
+    await t.pump(const Duration(seconds: 1));
+    expect(idle, findsOneWidget);
+
+    // The fake gives every third message it takes back.
+    await t.tap(idle);
+    await t.pump();
+    clock = clock.add(Session.fetchAnswerWait);
+    await t.pump(const Duration(seconds: 1));
+    await t.tap(idle);
+    await t.pump();
+    expect(waiting, findsOneWidget);
+    await t.pump(FakeNode.handOver);
+    await t.pump();
+    final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+    expect(fetches.last.state, OutState.givenBack);
+    expect(idle, findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

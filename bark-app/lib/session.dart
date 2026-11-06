@@ -61,7 +61,7 @@ class Outgoing {
   /// A text's words.
   final String? body;
 
-  /// The other side acknowledged it.
+  /// The other side acknowledged it; a fetch, the home node answered.
   bool acked;
   OutState state;
   DateTime? retryAt;
@@ -451,6 +451,57 @@ class Session extends ChangeNotifier {
     notifyListeners();
     await save();
     _pump();
+  }
+
+  /// The longest a fetch waits for its home node's first reply, by the
+  /// spec's bounds on a free channel: each way at most 256 hand-overs
+  /// that succeed ("Hop count", "Bounds"), each at most 3.15 s with its
+  /// attempts and retry waits ("Retry wait", "Delivery"), and at a sleepy
+  /// requester's end its holder waits for its beat, at most the beat
+  /// period of 300 s ("Beats", "Delivery"): 2 × 256 × 3.15 s + 300 s =
+  /// 1912.8 s. Past it the fetch or its answer is taken as lost.
+  static const fetchAnswerWait = Duration(
+    milliseconds: 2 * 256 * 3150 + 300000,
+  );
+
+  /// The newest fetch while it waits for its answer: the node has not
+  /// given it back or refused it, no reply of its round has come, and
+  /// [fetchAnswerWait] has not passed since it was queued. Stored with
+  /// the queue, so it is still waited for after a restart.
+  Outgoing? get fetchWaiting {
+    final o = outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
+    if (o == null || o.acked) return null;
+    if (o.state == OutState.givenBack || o.state == OutState.refused) {
+      return null;
+    }
+    return now().difference(o.at) < fetchAnswerWait ? o : null;
+  }
+
+  /// Seconds left of the wait for [fetchWaiting]'s answer.
+  int fetchWaitLeftS(Outgoing o) {
+    final left = fetchAnswerWait - now().difference(o.at);
+    return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
+  }
+
+  /// What the home node's answer said, to tell the person once.
+  String? fetchNews;
+
+  /// A reply of the fetch of `round` came: the fetch is answered.
+  Future<void> fetchAnswered(int round, {required bool nothingNew}) async {
+    final o = outbox
+        .where((o) => o.kind == OutKind.fetch && o.sent == round)
+        .firstOrNull;
+    if (nothingNew) {
+      note('Fetch $round: no new mail');
+      fetchNews = 'No new mail';
+    }
+    if (o == null || o.acked) {
+      notifyListeners();
+      return;
+    }
+    o.acked = true;
+    notifyListeners();
+    await save();
   }
 
   /// Keeps a received message.

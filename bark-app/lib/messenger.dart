@@ -192,6 +192,7 @@ class Messenger {
     for (final round in me.rounds) {
       final o = openReply(sodium, me.keys.mailbox, round, p);
       if (o == null) continue;
+      await session.fetchAnswered(round, nothingNew: o.nothingNew);
       final item = o.item;
       if (item == null) return true;
       await me.gotItem(o.number, first: o.number - o.place + 1);

@@ -316,6 +316,7 @@ void main() {
       }
 
       item(1, 'one');
+      expect(o.acked, isTrue);
       expect(p.me.since, 41);
       item(3, 'three');
       expect(p.me.above, {43});
@@ -424,6 +425,61 @@ void main() {
       expect(again.session.received.first.from, hex(node.friend.identity));
       expect(again.session.outbox.single.text, 'kept');
       expect(again.session.outbox.single.id, p.session.outbox.single.id);
+    });
+  });
+
+  test('a fetch in flight is still waited for after a restart', () {
+    run((async, p, node) {
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      p.messenger.fetch(elsewhere);
+      async.flushMicrotasks();
+      final o = p.session.fetchWaiting!;
+      final again = p.again(sodium, () => start.add(async.elapsed));
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting?.id, o.id);
+      // Its answer, nothing new, ends the wait there too.
+      again.messenger.receive(
+        InboxMessage(1, sealNothingNew(sodium, again.me.keys.mailbox, o.sent)),
+      );
+      async.flushMicrotasks();
+      expect(again.session.fetchWaiting, isNull);
+      expect(again.session.fetchNews, 'No new mail');
+    });
+  });
+
+  test('the fake home answers a fetch with its item, then nothing new', () {
+    fakeAsync((async) {
+      DateTime now() => start.add(async.elapsed);
+      final p = Phone(sodium, now);
+      async.flushMicrotasks();
+      final node = FakeNode(
+        now: now,
+        sodium: sodium,
+        app: p.me.identity,
+        mailbox: p.me.keys.mailbox,
+      );
+      p.session.attach(node.connect());
+      async.flushMicrotasks();
+      p.me.setHome(
+        Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
+      );
+      for (final (since, waited) in [(0, true), (1, false)]) {
+        p.messenger.fetch(elsewhere);
+        async.elapse(FakeNode.fetchAnswerAfter + FakeNode.handOver);
+        expect(p.session.fetchWaiting, isNull);
+        expect(p.me.since, 1, reason: 'after since $since');
+        expect(p.session.fetchNews, waited ? isNull : 'No new mail');
+      }
+      expect(
+        p.session.received
+            .where((r) => r.mailbox || r.body != null)
+            .map((r) => r.body),
+        contains('Left at your home node while you were away.'),
+      );
+      node.dispose();
+      p.session.dispose();
     });
   });
 
