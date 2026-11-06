@@ -533,10 +533,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that one's ban ends, and where its record is: `None` if this relay
     /// owns its destination now, or it has no record.
     fn heading(&self, o: &Outgoing, d: &Data<'_>, now: Instant) -> Option<(NodeId, Instant, u16)> {
-        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
+        let (at, record) = self.records.find(d.msg_id(), o.record)?;
+        if self.ends_here((d.dst_id, d.dst_pos), Some(record), o.passed, None, now) {
             return None;
         }
-        let (at, record) = self.records.find(d.msg_id(), o.record)?;
         self.heads_to(record, o.passed, o.avoid, (d.dst_id, d.dst_pos), now)
             .map(|(to, ban)| (to, ban, at))
     }
@@ -715,6 +715,46 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     // --- Owner and next hop (spec "Next hop", "Owner") ---
+
+    /// Whether the message of `record`, if it has one here, to `dst_id`
+    /// at `dst_pos`, ends here: addressed to this node, or its position
+    /// owned here while the addressed node is no live neighbour it can
+    /// be handed to ([`Self::addressed_open`]). `from` is the node it
+    /// comes from now, if any.
+    fn ends_here(
+        &self,
+        (dst_id, dst_pos): (NodeId, Position),
+        record: Option<&Record>,
+        passed: u64,
+        from: Option<NodeId>,
+        now: Instant,
+    ) -> bool {
+        dst_id == self.me()
+            || (self.owns(dst_pos, now) && !self.addressed_open(dst_id, record, passed, from, now))
+    }
+
+    /// Whether `dst_id` is a live neighbour that is no sleepy node with an
+    /// anchor and that the message of `record` may still be handed to:
+    /// not tried, not its parent, not `from`. The owner of the position
+    /// then hands it over at once rather than queue it for the node's
+    /// beat on its channel (spec "Owner", "Next hop").
+    fn addressed_open(
+        &self,
+        dst_id: NodeId,
+        record: Option<&Record>,
+        passed: u64,
+        from: Option<NodeId>,
+        now: Instant,
+    ) -> bool {
+        let parent = record.and_then(|r| r.parent()).map(|(name, _)| name);
+        self.neighbours.live(now).any(|(slot, n)| {
+            n.id == dst_id
+                && !n.last_resort()
+                && Some(n.id) != parent
+                && Some(n.id) != from
+                && !record.is_some_and(|r| tried(r, passed, slot))
+        })
+    }
 
     /// Whether this relay owns the destination `dst` of another node's
     /// message (spec "Owner"). A sleepy node owns none (module
@@ -989,7 +1029,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .get(id)
                 .zip(slot)
                 .is_some_and(|(r, s)| r.handed(s));
-        let owner_here = d.dst_id == self.me() || self.owns(d.dst_pos, now);
+        let owner_here = self.ends_here(
+            (d.dst_id, d.dst_pos),
+            self.records.get(id),
+            0,
+            Some(d.src_hop),
+            now,
+        );
         let case = self.classify(id, repeat, returned, owner_here);
         let copy = self
             .records
@@ -1424,7 +1470,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             hops: 0,
             payload,
         };
-        if dst_id == self.me() || self.owns(dst_pos, now) {
+        if self.ends_here((dst_id, dst_pos), None, 0, None, now) {
             let mut record = Record::new(id, None, 0, now);
             record.set_arrived();
             self.records.put(at, record);
@@ -1613,7 +1659,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
-        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
+        if self.ends_here((d.dst_id, d.dst_pos), Some(&record), out.passed, None, now) {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }

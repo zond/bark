@@ -1560,10 +1560,13 @@ differ by ([position](#position)), so a relay this close is, for the
 radio, in the same place.
 
 A node farther than 50 m with no closer neighbour is at a gap, not the
-owner, and the search goes on ([next hop](#next-hop)). A sleepy or
-carried node owns only what is addressed to its ID and sends anything
-else on ([nodes](#nodes)), and a sleepy or carried neighbour closer to
-`dst_pos` does not keep a node from owning it. A node in its first
+owner, and the search goes on ([next hop](#next-hop)). Nor is a node
+the owner by position while the addressed node is a live neighbour it
+has not tried, other than a sleepy one with an anchor: it hands the
+message to that node as the next hop. A sleepy or carried node owns
+only what is addressed to its ID and sends anything else on
+([nodes](#nodes)), and a sleepy or carried neighbour closer to `dst_pos`
+does not keep a node from owning it. A node in its first
 rotation owns no position but its own: its table may not yet hold the
 closer relay ([channel at boot](#channel-at-boot)).
 
@@ -1715,7 +1718,10 @@ can end. A sleepy node with an anchor is not lost that way: its address
 is its anchor's position, and the anchor, which owns that position,
 sends it the message in its window with the ordinary preamble
 ([delivery](#delivery)). Sent to by every relay that hears it, the
-message would cost the long preamble each time instead (roadmap D116a).
+message would cost the long preamble each time instead. The rule holds
+at the owner of the position too, which would otherwise queue the
+message for the node's beat on its own channel, up to a rotation away
+([delivery](#delivery); roadmap D116a).
 
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the

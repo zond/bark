@@ -2838,6 +2838,100 @@ fn the_addressed_sleepy_node_stays_a_last_resort() {
     assert_eq!((to, drops), (Some(e), std::vec![]));
 }
 
+/// A relay that owns the position of a forward addressed to relay C,
+/// C's own heartbeat placing it farther from that position than the
+/// relay (spec "Owner"), and so would queue it for C's beat on its
+/// channel: what it does in its first two seconds, if it has C in its
+/// neighbour table or not. The receiver of a DATA it sent, if any, and
+/// whether it queued the message for delivery.
+fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let at = |n: i32| Position {
+        lat: me.lat + n,
+        lon: me.lon,
+    };
+    // About 6 m north of the relay, and C 30 m: the relay is nearer.
+    let (dst, c_pos) = (at(10), at(50));
+    let c = id_of(c_pos);
+    if c_live {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(7).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: c,
+            short: c_pos.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let data = Data {
+        sender_home: r.home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: dst,
+        dst_id: c,
+        hops: 2,
+        payload: b"here",
+    };
+    let id = data.msg_id();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    let place = r.record_place().unwrap();
+    r.records.put(place, Record::new(id, parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    let mut seen = Vec::new();
+    let mut woken = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| woken.push(a));
+    let until = now + Duration::from_secs(2);
+    let (traces, pending): (Vec<_>, Vec<_>) = woken
+        .into_iter()
+        .partition(|a| matches!(a, Action::Trace(_)));
+    seen.extend(traces);
+    drive_all(&mut r, &mut now, until, pending, &mut |_, a| seen.push(a));
+    let to = seen.iter().find_map(|a| match a {
+        Action::Transmit(f) => match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some(d.dst_hop),
+            _ => None,
+        },
+        _ => None,
+    });
+    let queued = seen
+        .iter()
+        .any(|a| matches!(a, Action::Trace(Trace::Queued { msg_id, .. }) if *msg_id == id));
+    (to, queued)
+}
+
+/// The owner of a position hands a message to the node it is addressed
+/// to at once where that is a live neighbour, and queues it for the
+/// node's beat only where it is not (spec "Owner", "Next hop").
+#[test]
+fn an_owner_hands_to_the_addressed_neighbour_at_once() {
+    let me = Relay::new(Config::default(), 1).config.position;
+    let c = id_of(Position {
+        lat: me.lat + 50,
+        lon: me.lon,
+    });
+    assert_eq!(owner_with(true), (Some(c), false));
+    assert_eq!(owner_with(false), (None, true));
+}
+
 /// A relay with neighbours at `lats` north of it, each that far nearer
 /// a far destination, whose application's message has gone out to the
 /// nearest and been refused by it, told a wait of `bans` bans. The
