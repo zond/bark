@@ -581,9 +581,11 @@ phone in its resolving list.
 The log says `ble: pairing, the code shown`, then `ble: paired; the bond
 replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
 bond kept` for a node with one. A phone whose bond the node replaced
-gets no encryption: the node has no key for it, and the phone's reads
-fail with insufficient authentication; the app says the node is no
-longer the person's.
+asks to encrypt with its old key as soon as it connects; the node has no
+such key, and the host ends the link, authentication failure (bench,
+2026-11-06: `ble: disconnected Connection Terminated By Local Host` half a
+second after `ble: connected`); the app says the node is no longer the
+person's.
 
 Pairing costs 55.8 KB of flash, about 52 KB of it the host's pairing
 with its P-256 and AES in software and 4 KB the node's own code, the

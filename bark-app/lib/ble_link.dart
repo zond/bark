@@ -66,11 +66,16 @@ class BleLink implements NodeLink {
   /// Connects, asks for the MTU of [attMtu], and pairs if the phone has
   /// no bond with the node, telling `pairing` first, as Android then asks
   /// the person for the code on the node's screen, and `paired` once the
-  /// bond is made; returns the MTU
-  /// agreed. Throws [NotOurs] for a node, `name`, that no longer holds
-  /// the phone's bond, or whose bond the phone no longer has though it
-  /// `hadBond`, as Android may drop a bond whose key the node refused;
-  /// and [NotPaired] for a pairing that did not complete.
+  /// bond is made; returns the MTU agreed.
+  ///
+  /// Throws [NotOurs] for a node, `name`, that no longer holds the
+  /// phone's bond: one that ends the link it took before the app has
+  /// read it while the phone holds a bond for it, as the node does when
+  /// the phone's key is not its bond's ([setUpRefused]); one whose first
+  /// read it refuses ([_probe]); or one whose bond the phone no longer
+  /// has though it `hadBond`, as Android may drop a bond whose key the
+  /// node refused. Throws [NotPaired] for a pairing that did not
+  /// complete.
   static Future<(BleLink, int)> connect(
     String deviceId, {
     required String name,
@@ -90,8 +95,15 @@ class BleLink implements NodeLink {
     link._connection = UniversalBle.connectionStream(deviceId).listen((up) {
       if (!up && !link._closed.isCompleted) link._closed.complete();
     });
-    await UniversalBle.discoverServices(deviceId);
-    final mtu = await UniversalBle.requestMtu(deviceId, attMtu);
+    final int mtu;
+    try {
+      await UniversalBle.discoverServices(deviceId);
+      mtu = await UniversalBle.requestMtu(deviceId, attMtu);
+    } catch (e) {
+      await link.close();
+      if (await setUpRefused(deviceId, hadBond: hadBond)) throw NotOurs(name);
+      rethrow;
+    }
     try {
       if (await UniversalBle.isPaired(deviceId) ?? false) {
         await link._probe(name);
@@ -128,6 +140,27 @@ class BleLink implements NodeLink {
   /// person's wait for the pairing dialog.
   static const _forgetWait = Duration(seconds: 2);
   static const _forgetStep = Duration(milliseconds: 100);
+
+  /// Whether a link that came up and failed before the app read the node
+  /// failed for the phone's bond: the phone holds one for the node, by
+  /// Android's word or `hadBond`. A bonded Android phone encrypts the link
+  /// with its key as soon as it connects; a node that holds another bond
+  /// ends the link at once, authentication failure, which Android reports
+  /// as the connection's status 5 and fails the MTU request or the
+  /// discovery under way with 133, its catch-all GATT error (bench,
+  /// 2026-11-06). A link that never came up fails in
+  /// [UniversalBle.connect] instead and is a plain failure to connect.
+  static Future<bool> setUpRefused(
+    String deviceId, {
+    required bool hadBond,
+  }) async {
+    if (hadBond) return true;
+    try {
+      return await UniversalBle.isPaired(deviceId) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// A bonded phone's first read, which shows whether the node still
   /// holds its bond.

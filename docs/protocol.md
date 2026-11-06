@@ -2957,10 +2957,20 @@ among them, so only the owner's phone sets or clears the mailbox key
 ([mailbox](#mailbox)); there is no second check.
 
 **The replaced phone.** A phone whose bond the node replaced learns it
-at its next connection: the node has no key for it, so the link does
-not encrypt and the phone's reads fail. The app then tells the person
-that the node is no longer theirs and offers to pair again, which takes
-the code on the node's screen. A new pairing leaves the mailbox key as
+at its next connection. The phone encrypts the link with its old key as
+soon as it connects; the node holds no such key and ends the link,
+authentication failure (error code 0x05, Vol 1 Part F), before the app
+has read anything. So a link that a phone holding a bond for the node
+loses before its first read tells the app that the node is no longer
+the person's; the app says so and offers to pair again, which takes the
+code on the node's screen.
+
+*Why end the link.* The node could instead refuse the key and keep the
+link unencrypted (LE Long Term Key Request Negative Reply, Vol 4 Part E
+§7.8.26), and the phone's first read would fail with insufficient
+authentication. But a phone refused its key may start pairing by itself
+and ask its person for a code before the app can say why. The BLE host
+ends the link, and the node keeps that. A new pairing leaves the mailbox key as
 it was: the node goes on answering the former owner's fetches until the
 new owner writes their own key or clears it.
 

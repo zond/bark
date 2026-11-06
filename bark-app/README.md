@@ -99,9 +99,12 @@ does nothing: a second connect to it would close the link the first
 made. Tapping another node's row closes the link and connects to that
 one. The bond is the phone's from then on and
 every later connection is encrypted without a code. When another phone
-has paired with the node since, the node holds no key for this one and
-the first read after connecting fails, or Android has dropped the bond
-after such a failure; the app then says "This node is
+has paired with the node since, the node holds no key for this one: it
+ends the link as soon as the phone asks to encrypt with its old key,
+which fails the MTU request (Android's status 133, the connection's 5);
+a refused first read, or a bond Android has dropped after such a
+failure, count the same. A link that never comes up is a plain failure
+to connect. The app then says "This node is
 no longer yours", with **Not now** and **Pair again**, which forgets the
 phone's old bond and pairs anew, at the node. The node paired with, and
 whether it was lost, are kept with the queue and shown on the first
