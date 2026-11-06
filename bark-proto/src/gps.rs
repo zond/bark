@@ -12,6 +12,13 @@
 
 use crate::time::Duration;
 
+/// How far a fix may lie from the nearest relay the node knows before it
+/// is dropped as unreliable, metres: the hearing radius, 3 km, rooftop
+/// to rooftop (spec "Physical layer", "Position"; roadmap D74). No relay
+/// a node hears is farther, so a fix beyond it from every one is not
+/// where the node is.
+pub const HEARING_RADIUS_M: f32 = 3000.0;
+
 /// The receiver's current while it acquires or tracks, µA: 29 mA in
 /// either (Table 2).
 pub const GPS_CURRENT_UA: u64 = 29_000;

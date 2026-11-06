@@ -326,7 +326,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .queue
             .iter()
             .any(Outgoing::held)
-            .then(|| self.delivery.stale_from())
+            .then(|| earlier(self.delivery.stale_from(), self.inbox.stale_from()))
             .flatten();
         earlier(retry, earlier(self.heard.next_expiry(), held))
     }

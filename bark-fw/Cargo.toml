@@ -40,8 +40,11 @@ embassy-usb = "=0.6.0"
 embassy-usb-logger = "=0.6.0"
 embassy-futures = "=0.1.2"
 embassy-sync = "=0.8.0"
-log = "=0.4.34"
-cortex-m = { version = "=0.7.9", features = ["critical-section-single-core"] }
+# Debug and trace lines are left out of every build: the USB log's
+# filter is info (`main.rs`), and the BLE host's would cost flash.
+log = { version = "=0.4.34", features = ["max_level_info", "release_max_level_info"] }
+# No critical-section feature: nrf-mpsl provides the implementation (below).
+cortex-m = "=0.7.9"
 # `set-vtor`: point VTOR at our vector table in the reset handler, so
 # interrupts reach us directly instead of through MBR/SoftDevice forwarding.
 cortex-m-rt = { version = "=0.7.7", features = ["set-vtor"] }
@@ -59,12 +62,31 @@ lora-phy = { path = "vendor/lora-phy" }
 # and the update (src/update.rs).
 embedded-storage = "=0.3.2"
 embassy-embedded-hal = "=0.6.0"
+# The phone link (roadmap D5, D117; protocol.md "Phone link"): Nordic's
+# SoftDevice Controller, peripheral-only, under the multiprotocol service
+# layer (MPSL), and TrouBLE's host over it. `critical-section-impl`: a
+# critical section that masks every interrupt but the three the MPSL's
+# radio timing needs (RADIO, RTC0, TIMER0), for the console build too.
+# `att-queued-writes`: long writes (D119). Without `log`: the host's own
+# lines cost 9.9 KB of flash, which the GPS took (docs/gps-time-2026-11-05.md).
+nrf-sdc = { version = "=0.4.0", features = ["nrf52840", "peripheral"] }
+nrf-mpsl = { version = "=0.4.0", features = ["nrf52840", "critical-section-impl"] }
+trouble-host = { version = "=0.8.0", default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool", "att-queued-writes"] }
+bark-link = { path = "../bark-link" }
+# The mailbox and its ring (src/mailbox.rs).
+bark-app-layer = { path = "../bark-app-layer" }
+# What the e-paper shows, built and tested on the host (src/display.rs).
+bark-screen = { path = "../bark-screen" }
+# The GATT values' storage, the version trouble-host uses.
+heapless = "=0.9.3"
 # The SpiDevice trait lora-phy takes, implemented over the SPIM bus driven blocking (src/radio.rs).
 embedded-hal-async = "=1.0.0"
 
 [build-dependencies]
 # memory.x is written from the layout table.
 bark-image = { path = "../bark-image", default-features = false }
+# The built place is converted to counts by the core's conversion.
+bark-proto = { path = "../bark-proto" }
 
 [profile.release]
 debug = 2

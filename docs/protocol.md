@@ -606,9 +606,16 @@ an hour, 60 s each at 29 mA: 0.20 mA, 3 % of its 6.4 mA.
 *Why a map point rests it.* No fix moves a node with a map point
 ([nodes](#nodes)), so the GPS has nothing to do.
 
-**Time.** GPS is for position only. There is no network time: every
-timer is local and monotonic, and nothing depends on two nodes agreeing
-on a clock.
+**Time.** The protocol has no network time: every timer is local and
+monotonic, and nothing depends on two nodes agreeing on a clock. A node
+keeps the time of day for the people who read it, its display and the
+phone: UTC from a fix, or from the phone while it has none
+([phone link](#phone-link)), carried on by its own clock while the error
+can be under a minute, and the phone's UTC offset (roadmap D129, D130).
+
+*Why under a minute.* A clock that shows minutes needs no better, and
+past that the node shows no time rather than a wrong one: on a crystal
+taken at ±250 ppm, 2.7 days after the fix.
 
 ---
 
@@ -1326,21 +1333,24 @@ ban it had, shorter or longer: it is the neighbour's latest word. The
 message keeps its place in the send queue and is routed again with
 three fresh attempts: round the refuser while the ban lasts, to the
 next candidate at once, and waiting for the ban only where no other is
-left (roadmap D110). A refused return goes on as a forward. A node's own
-application's message waits out the told wait anyway, doubling as
-below, and is then routed afresh. A refused delivery waits the told wait
-and keeps the transmissions it has made. Silence, by contrast, holds the
-message ([hand-over](#hand-over) step 6).
+left (roadmap D110). A node's own application's message does the same,
+waiting longer where no other is left, as below (roadmap D115). A
+refused return goes on as a forward. A refused delivery waits the told
+wait and keeps the transmissions it has made. Silence, by contrast,
+holds the message ([hand-over](#hand-over) step 6).
 
 *Why a refused message goes round.* A refusal says the refuser has no
 room for the message now: its wait for the way on is past a hop's
 budget of 30 s, or its bucket is spent ([send queue](#send-queue)). A
 neighbour beside it often has room, and the refuser has not taken the
-message, so going round it leaves no copy. Where every way on is slow,
-every candidate refuses, the message waits here, this relay's queue for
-its next hop grows past the budget, and its gate refuses in turn: the
-wait travels back hop by hop to the origin, where the application is
-told it.
+message, so going round it leaves no copy. This holds at the origin as
+anywhere: a node with several neighbours offers its own message where
+there is room, while a sleepy node has one candidate, its anchor, and
+is told to wait ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+Where every way on is slow, every candidate refuses, the message waits
+here, this relay's queue for its next hop grows past the budget, and
+its gate refuses in turn: the wait travels back hop by hop to the
+origin, where the application is told it.
 
 **The told wait.** The ban is never shorter than 1.58 s: a relay refuses
 a packet to send on when its frame and the ACK that would take it, at
@@ -1445,13 +1455,15 @@ neighbour most likely lacks the message. If it did take it, the next
 offer costs one round trip: it holds the message and only ACKs, or has
 finished with it and returns it (roadmap D36).
 
-**A node's own message doubles its wait too.** After its k-th refusal in
-a row a node's own application's message waits the k-th ban after
-silence, or the told wait if longer, and starts again from one ban once
-it is taken or dropped. Offered every 1.58 s, it would put a full frame
-on the refuser's channel that often, 9 % of it, hiding its ACKs, and
-spend the refuser's bucket as fast as it refills. A sleepy node's own
-message has a wait of its own
+**A node's own message doubles its wait too.** Where no other
+candidate is left, a node's own application's message waits after its
+k-th refusal in a row the k-th ban after silence, or the told wait if
+longer, and starts again from one ban once it is taken or dropped.
+Every refusal in a row counts, gone round or not, so the origin offers
+no faster for having more neighbours to be refused by. Offered every
+1.58 s, it would put a full frame on the refuser's channel that often,
+9 % of it, hiding its ACKs, and spend the refuser's bucket as fast as
+it refills. A sleepy node's own message has a wait of its own
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 ### Routing
@@ -1815,8 +1827,9 @@ is banned is not sendable until the ban ends. Of the sendable, packets
 are handed over in the order they arrived, except that:
 
 - a delivery goes first ([delivery](#delivery));
-- when bans end, the packets that waited for them go first, the most
-  travelled first ([overload waits](#overload-waits)).
+- a packet that has waited since it was queued, for a ban or a wait of
+  its own, goes ahead of those that have not, the most travelled first
+  ([overload waits](#overload-waits)).
 
 The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
@@ -1824,9 +1837,9 @@ go first, since with the bucket at the cap it would always fit sooner
 and the longer frame would never go. Routing every message costs at
 most the queue's entries times the neighbour table's. Of it each entry
 keeps where it was last routed and since when, for the service time
-([neighbour table](#neighbour-table)), and whether it has waited for a
-ban; the relay keeps when the earliest ban that held a message back
-ends.
+([neighbour table](#neighbour-table)), and whether its next hop has
+been banned since it was queued; the relay keeps when the earliest ban
+that held a message back ends.
 
 *Why route at each chance.* The table changes between one chance to
 send and the next: a ban ends, a neighbour arrives, recovers or is
@@ -1872,8 +1885,9 @@ depends on what the packet gives it to do:
     the delivery queue is full, is kept aside until the queue has a
     place.
 - **Something to deliver.** It takes the packet only if its bucket holds
-  the reply reserve and an ACK and, for another node, its delivery
-  queue has room ([delivery queue](#delivery-queue)).
+  the reply reserve and an ACK and it has room for the message: in its
+  delivery queue for another node, in its inbox for its own application
+  ([delivery queue](#delivery-queue), [phone link](#phone-link)).
 - **No work**, cases 1, 3, 4 and 6 below. It answers the packet, taken
   or seen, even when it would refuse work: a refusal would send its
   sender on with a second copy.
@@ -2059,9 +2073,13 @@ send queue, its airtime still counted, until the ban ends, and is
 routed again then, at the origin or anywhere else ([next hop](#next-hop)).
 A message refused by that next hop itself goes round it where another
 candidate is left ([bans](#bans)).
-When bans end, the messages that waited for them go first, the most
-travelled first. The rest of the queue keeps its order, since ordering
-it all by count would starve messages that have just entered.
+A message that has waited since it was queued, for a ban of its next
+hop or a wait of its own (the node's own message, refused or with no
+neighbour to take it), goes ahead of every message that has not, the
+most travelled first, for as long as it is queued: after its offer
+too, and whatever next hop it is routed to later. The messages that have not waited keep
+their order, since ordering them all by count would starve those that
+have just entered.
 
 A message ends only:
 
@@ -2119,6 +2137,18 @@ farthest must be offered when a ban ends: a less travelled one offered
 first would be refused and ban the neighbour again, each time. The gate
 lets a higher count in whatever the wait on its way, so the message
 offered first is one the next relay's gate lets in.
+
+The same holds at every offer to a loaded way, not only when a ban
+ends: the gate refuses a lower count once the way's wait passes the
+budget, so a less travelled message offered first there costs a DATA
+frame and a refusal and bans the neighbour again. A message that has
+waited has met a loaded way and is likely to meet one again, so it
+keeps its place ahead for as long as it is queued: the messages that
+meet the gate go by count, and those on free ways keep their order.
+Ending that place at the offer, or when the message is routed to
+another next hop, refused more and delivered less under overload;
+ordering every message by count left the least travelled longest in
+the queues (roadmap D114).
 
 ### Why the search finds a path
 
@@ -2632,7 +2662,9 @@ its node's next beat as any other, until a message arrives at a full
 queue; then the oldest stale message makes way for it. When the queue is
 full and holds no stale message, a message for another node is refused
 ([receiving DATA](#receiving-data)): what is queued stays, and the
-sender learns at once.
+sender learns at once. Every node, sleepy or not, keeps the messages
+for its own application by the same rule, in its inbox
+([phone link](#phone-link)).
 
 A message's age counts from its arrival in the queue: the delivery TTL
 is the wait for a node that sleeps or is dark, not for the way there.
@@ -2888,30 +2920,308 @@ exchange with it.
 
 ## Phone link
 
-BLE 5.0 GATT service on the nRF52840 (TrouBLE, roadmap D5), with
-characteristics for send, receive-notify, node status, and setting and
-clearing a map point; there is no sleepy or carried setting ([nodes](#nodes), roadmap D71).
-The status says how the node's first rotation goes, the relays it knows
-and when the rotation ends ([channel at boot](#channel-at-boot)), so
-that the app can show "listening, 3 relays heard, 1:40 to go".
-A message the node refuses comes back to the app with its wait
-([addresses](#addresses)). The app owns identity and end-to-end
-encryption; the node sees opaque payloads. The sender's address, position and node ID, travels inside
-the encrypted payload, so that the relays that carry a message do not
-learn who sent it. Anyone in radio range of the sender's node still
-learns its ID and position from its heartbeats
-([what the protocol omits](#what-the-protocol-omits)). Encryption
-scheme: open item O1.
+A person's app talks to their node over Bluetooth LE, through one GATT
+service on the nRF52840 (TrouBLE, roadmap D5). The app owns identity
+and end-to-end encryption; the node sees opaque payloads. Section
+numbers below are of the Bluetooth Core Specification 5.0
+([sources](#sources)).
+
+**Finding the node.** The node advertises, connectable, every
+1022.5 ms: its flags and the service's UUID, which the app scans for,
+in the advertisement; its name, `bark-` and the twelve hex digits of
+its ID as its display shows them, in the scan response. It takes one
+connection at a time and does not advertise while it has one (roadmap
+D120).
+
+*Why the name in the scan response.* A legacy advertisement holds 31
+bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
+which leaves 10, too few for the name's 17.
+
+*Why 1022.5 ms.* A person who opens the app waits about a second for
+the node to show, and an iPhone finds a node quickly only at one of the
+intervals Apple's accessory guidelines list, of which this is the one
+nearest a second ([sources](#sources)). Faster costs a sleepy node more: an
+advertising event on the three channels is about 2 ms of the radio at
+4.8 mA, about 11 µA at this interval, near a tenth of its duty-cycled
+receive (an estimate from the nRF52840 Product Specification's radio
+currents, for the bench to measure).
+
+*Why one connection.* One person's phone owns the node: two phones
+would share one inbox and one message slot.
+
+**Security.** The link is open for the prototype: no pairing, no
+bonding (roadmap D121). The payloads the link carries are encrypted by
+the app, and their addresses and the node's ID, position and flags are
+on the 433 MHz air in the clear anyway, so a listener learns little
+more. But anyone within Bluetooth range can connect while the owner's
+phone is not connected, empty the inbox and move the node with a map
+point: open item O23, before nodes leave the bench.
+
+**MTU.** The node offers an ATT MTU of 247, the longest link-layer
+payload with the data length extension, 251 bytes (Vol 6 Part B §2.4),
+less the L2CAP header's 4 (Vol 3 Part A §3.1). The app asks for 247 by
+an MTU exchange (Vol 3 Part F §3.4.2) as soon as it connects; every
+value then fits one ATT PDU and one link-layer packet. The node also
+takes long writes and serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5),
+so a phone that settles on less still works, in more round trips. A
+notified value fits the 20 bytes a notification carries at the default
+MTU of 23 (Vol 3 Part F §3.4.7.1) (roadmap D119).
+
+*Why both.* An Android app must ask for the MTU, and iOS chooses it
+itself, which the app cannot raise; a notification has no long form.
+
+**The service.** One random UUID, its second 16 bits counting the
+service and its characteristics:
+
+| | UUID | properties | value | bytes |
+|---|---|---|---|---|
+| service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
+| Node | `28bc0002-…` | read | version(1) id(6) image(4) | 11 |
+| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) | 14 |
+| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none | 0, 4–231 |
+| | | write | msg_id(4) | 4 |
+| Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
+| Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
+| Clock | `28bc0008-…` | read | utc(4) offset(2) source(1) | 7 |
+| | | write | utc(4) offset(2) | 6 |
+| Home | `28bc0009-…` | read | set(1) oldest(3) newest(3) | 7 |
+| | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
+
+Positions and IDs are in the radio's encodings
+([positions on the wire](#positions-on-the-wire),
+[node identity](#node-identity)), a message ID is the 32-bit hash of
+[packet formats](#packet-formats), and every integer is big-endian.
+The codecs are `bark-link`, shared by the firmware and the tests. A
+write is a write request, which the node answers; a write that is not
+whole is answered with the ATT error 0x0D, invalid length, and one with
+a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
+
+**Node.** The link version, 3 in this specification; the node's ID, the
+second half of its address ([addresses](#addresses)); and the version
+of its firmware image.
+
+**Status.** How the node stands now, notified at every change but the
+countdown of `boot_left`:
+
+| | |
+|---|---|
+| flags bit 0 | ready: the node takes a message from the app now |
+| bit 1 | on external power, USB |
+| bits 2, 3, 4 | sleepy, carried, map point, as its heartbeat says them ([packet formats](#packet-formats)) |
+| bit 5 | placed: it has a place, and `address` holds a position; else `address` is zero ([position](#position)) |
+| bit 6 | its first rotation runs ([channel at boot](#channel-at-boot)) |
+| bit 7 | anchorless ([sleepy nodes alone](#sleepy-nodes-alone)) |
+| relays | the relays it knows |
+| boot_left | seconds left of its first rotation, rounded up; 0 once it is over |
+| address | the position of its address: its own, or a sleepy node's anchor's ([addresses](#addresses)) |
+| battery | millivolts as last read, uncalibrated; 0 on external power and before the first reading |
+| inbox | messages in the inbox |
+
+So the app can show "listening, 3 relays heard, 1:40 to go", and the
+address the person gives others to reach them. Sleepy and carried are
+measured, not set ([nodes](#nodes)).
+
+**Sending.** The app writes Send while ready is set. The node answers
+once it has taken the message, or with the ATT error 0x80, not ready,
+when it takes none now; the app then waits for ready. A message taken
+is the node's: the app hears of it again only if the node gives it
+back ([addresses](#addresses)). The node holds one message of its app's
+at a time ([receiving DATA](#receiving-data)), so the phone is the
+queue: it keeps the rest and offers the next when ready is set again.
+
+**Given back.** When the node gives the app's message back, it sets
+Given back to the message's ID and the seconds left of the wait the
+refusal asked for, rounded up, and notifies it. The value stays until
+the node takes another message, the wait counting down to 0. The app
+finds the message by its ID among those it sent, computing each one's
+as the node does, shows the person the wait, and offers it again once
+ready is set, or gives it up, as the person chooses.
+
+*Why the value stays.* The phone may not be connected when the message
+is given back, and the node takes no other message before the wait is
+over, so the app learns of it whenever it next connects.
+
+**Receiving.** The node keeps each message for its app in an inbox of
+23, oldest first, by the delivery queue's rule: a message stale there
+makes way for a new one, and while the inbox is full of fresh messages
+the node refuses the next ([delivery queue](#delivery-queue),
+[receiving DATA](#receiving-data); roadmap D118, D122). Inbox reads the
+oldest; the app keeps it and writes its ID back, and the node then
+forgets it. A write of another ID is answered 0x13. Status's count says
+when to read.
+
+*Why read and confirmed, not notified.* The phone is often not
+connected: the app is closed, the phone is out of range or off. A
+notification is confirmed by nobody, an indication only by the phone's
+Bluetooth stack, not by the app that must keep the message; the ID
+written back is the app's own word that it has it.
+
+*Why 23.* The texts a person receives in a day at the design rate
+([capacity and sizing](#capacity-and-sizing)), for a phone that
+connects once a day. The inbox, like the message the node holds, is
+not kept across a reboot.
+
+*Why the delivery queue's rule.* A message the node has taken is not
+lost for want of room: refused, it waits at its sender, as one for a
+sleepy node does. A phone away longer than the delivery TTL has its
+oldest message give way rather than hold up every sender, as a dark
+node's mail does.
+
+**Map point.** A write of 1 and a position sets the node's map point,
+and of 0 clears it ([position](#position)).
+
+**Clock.** The app writes the phone's time, UTC seconds since 1970, and
+its UTC offset in minutes, −720 to +840, at every connection; another
+offset is answered 0x13. The node keeps the offset across a reboot and
+takes the time only while it has none from its GPS
+([position](#position)). A read gives the node's time, the offset it
+keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
+none the time is 0. From link version 2 (roadmap D130).
+
+**Home.** A write of 1 and the mailbox key makes the node its person's
+home, and of 0 makes it nobody's ([mailbox](#mailbox)); the node keeps
+it across a reboot. A read says whether it is a home and the numbers of
+the oldest and the newest item its ring holds, 0 when none. While it is
+a home, the inbox is its ring: Inbox reads the oldest item after the
+last the phone confirmed, with the ID it arrived with, the written ID
+confirms it, and Status's count is the items not yet confirmed; the
+ring keeps them for fetches either way. From link version 3.
+
+*Why the offset from the phone.* Turning a position into a time zone
+takes the zones' boundaries and rules, which the node has no room for
+and which change by law; the phone has them, set by its person.
+
+**Versions.** A later link version may add characteristics and append
+fields to the values the node writes, Node, Status, Given back; an app
+reads the fields it knows and ignores the rest, as a node reads a
+heartbeat. The values the app writes change only with the version, and
+the app writes the form of the node's. A change to what a field means
+takes a new service UUID, so that an app that does not know it finds no
+node and asks the person to update it. An app that finds a version
+above its own tells the person the node's firmware is newer (roadmap
+D117).
+
+**The payload.** The app owns it; this is its layout (roadmap D123 to
+D127). The reasons, and the alternatives a reader would ask about, are
+in `docs/app-layer-2026-11-05.md`; the codec and the vectors the app is
+tested against are `bark-app-layer`.
+
+*Keys.* A person's **identity** is an X25519 public key. Every key
+comes from a 128-bit random seed, which the person backs up as 12 words:
+the seed and the first 4 bits of its SHA-256, 11 bits a word, from a
+fixed list of 2048 (`bark-app-layer/src/words.txt`). All cryptography is
+libsodium's: the master key is `crypto_generichash(seed, 32)`, the
+identity's key pair `crypto_box_seed_keypair` of
+`crypto_kdf_derive_from_key(master, 1, "bark-key")`, and the mailbox key
+`crypto_kdf_derive_from_key(master, 2, "bark-mbx")`. No signatures, and
+keys do not change.
+
+*Forms.* A payload's first byte is its format: the version, 1, in the
+high four bits, the form in the low four. A receiver drops a payload of
+a version or form it does not know.
+
+| form | to | after the format byte | over the plaintext |
+|---|---|---|---|
+| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 41 |
+| 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 49 |
+| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 41 |
+| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key; the nonce is not sent | 17 |
+
+Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
+227 − 17 = 210 bytes, so that its mailbox can send any payload on as a
+reply. A boxed payload names no sender: the receiver tries the key of
+each contact, `crypto_box_beforenm` of each made once, until one opens
+it. An introduction carries the sender's card; its sender is shown as
+unverified until a boxed payload from that identity opens, and it is
+used until the sender has received a boxed payload from the receiver.
+An introduction naming an identity the receiver has verified is
+dropped. Payloads are not padded.
+
+*Plaintext.* Forms 0 and 1 hold a header, then records:
+
+| field | bytes | |
+|---|---|---|
+| flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two, byte by byte; the others zero |
+| sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC, on each phone later than any it sent before |
+| address | 0 or 13 | the address to answer to |
+
+| record | bytes | |
+|---|---|---|
+| text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
+| acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
+| card | 1 + 1 + 50 to 82 | type 4, the card's length, then the card |
+
+A receiver drops a message whose bit 1 is not what the two identities
+say, and a text whose contact and `sent` it already has. The address is
+the one on the sender's card, included until the contact has answered a
+message that carried it and whenever it changes. The app sends nothing
+by itself: an acknowledgement is a message the person chooses to send,
+and a text is sent again only when the person says so (roadmap D126).
+
+*The card*, what people exchange, shown as a QR code: version (1), the
+identity (32), an address (13), the address's time as `sent` (4) and a
+display name in UTF-8 (0 to 32), 50 to 82 bytes; as text, `BARK:` and
+the bytes in base32 (RFC 4648, its base32 alphabet) without padding. Its address is the
+person's home node's when they have one, else their node's current one.
+A card with a later time replaces a contact's address; the person sends
+their card to their contacts when it changes.
+
+The sender's address travels inside the encrypted payload, so that the
+relays past the first hop do not learn who sent it: a DATA with hop
+count 0 names its sending node, and anyone in radio range of that node
+learns its node ID and position from its heartbeats
+([what the protocol omits](#what-the-protocol-omits)).
 
 A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app
-must make every payload unique; end-to-end encryption with a fresh nonce
-per message does that.
+must make every payload unique; the random nonce, the introduction's
+ephemeral key and a reply's round do that.
 
 *Why unique.* Two messages to one destination with identical payloads
 are one message to every relay that still keeps the first one's record
 ([message records](#message-records), [bounds](#bounds)), and the second
 is not delivered.
+
+---
+
+## Mailbox
+
+A person may set a node as their **home**, from the app over the phone
+link; the app then puts its address on the person's card. It must be a
+fixed relay, neither sleepy nor carried ([nodes](#nodes)), so that its
+address stays. The app gives it the mailbox key and nothing else, by the
+Home characteristic ([phone link](#phone-link); its values: `bark-link`
+`home`),
+so it cannot read the messages it keeps (roadmap D128;
+`docs/app-layer-2026-11-05.md`, "The mailbox").
+
+**The ring.** The home node keeps every payload delivered to its node ID
+but a fetch in a ring of slots in flash, numbered from 1, and erases the
+oldest page when the ring is full. Its phone link's inbox reads from it.
+
+**The fetch** is a form 2 payload to the home address whose plaintext
+is `sent` (4), the requester's current address (13), `since` (3), the
+number up to which it has every item, and `most` (1), the most items to
+send. The node takes it only if it opens under the mailbox key and its
+`sent` is later than the last fetch's it took, which it keeps. `since`
+0 asks for the newest `most`.
+
+**The reply.** The node sends the items after `since`, oldest first, at
+most `most`, to the fetch's address, then each new item as it arrives,
+until `since` + `most` is reached or the next fetch is taken. Each goes
+as a form 3 payload, the item sealed under the mailbox key with the
+nonce: the fetch's `sent` (4), the item's number (3), 17 zero bytes. The
+requester tries the numbers `since` + 1 to `since` + `most` and so
+learns each item's number.
+
+**When to fetch.** Only when the person asks, so that a mailbox costs
+air only when a person wants it (roadmap D128). The app asks for 23 at
+most, the inbox's size ([phone link](#phone-link)).
+
+The mailbox is an application on the node, beside the phone link: it
+uses the core's application interface (`core-interface.md`, Application) and
+nothing else, and the simulator runs it the same way.
 
 ---
 
@@ -2957,6 +3267,12 @@ channels they visit:
   14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
   the **design rate** the rest of this document uses.
 
+The app's encryption and header take 47 to 60 bytes of a payload
+([phone link](#phone-link)), so the 100-byte payload above holds a text
+of 40 to 53 bytes. A message fetched from a [mailbox](#mailbox) crosses
+the city twice: with a share f of messages fetched, the design rate is
+23 / (1 + f) texts a person a day.
+
 Sleepy nodes' beats cost what [beats](#beats) lists, 230 ms an hour
 each, and relays nothing for them. Summed over the domain's 20 000
 sleepy nodes they take 1.28 s of airtime a second, 10 % of one channel's
@@ -2998,7 +3314,8 @@ The design resists collisions and overload, not adversaries. Anyone in
 radio range learns every node's ID and position from its heartbeats;
 nobody farther away does. The app's end-to-end encryption keeps payloads
 private and authentic ([phone link](#phone-link)); it does nothing for
-routing.
+routing, and a listener near a home node can tie it, by timing, to the
+address its mail goes on to ([mailbox](#mailbox)).
 
 *Why no authentication.* A real node of the network with a few
 judicious bugs, by accident or intent, breaks large parts of it whether
@@ -3164,7 +3481,7 @@ hearing radius.
 **Rust stack:** `embassy-nrf` (nRF52840); the SX1262 driven by
 `bark-driver`'s sequencer, its commands encoded by a vendored copy of
 `lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for
-BLE, not yet in the firmware (D5); the stock UF2 bootloader for flashing
+BLE (D5); the stock UF2 bootloader for flashing
 (D6), and a loader of our own behind it that swaps in a new image and
 back if it does not confirm itself (D79). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
@@ -3172,8 +3489,8 @@ Crate layout is D7.
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
-(roadmap D71); their sizes, and how they fit beside Embassy and the
-stacks (≈16 KiB) in the 255 KiB the application has once 1 KiB is kept
+(roadmap D71); their sizes, and how they fit beside Embassy, the
+BLE stack and the call stack in the 255 KiB the application has once 1 KiB is kept
 for the bootloader's words and the panic message (`bark-image/src/layout.rs`),
 are in `core-interface.md`, Memory.
 
@@ -3219,7 +3536,6 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 
 | # | Item | Owner/when |
 |---|---|---|
-| O1 | End-to-end encryption scheme in the app (key exchange, address-in-payload format) | before step 6 |
 | O3 | Exact thresholds: busy threshold margin (6 dB), move hysteresis (0.05 / 10 min), demote count, ACK timeout | tune in steps 3–4 |
 | O5 | Adjacent-channel rejection of the SX1262 at 125 kHz spacing, with a neighbour at full power; if inadequate, 11 channels at 150 kHz spacing, the same end centres, 433.170–434.670 MHz ([channel plan](#channel-plan)) | step 1 |
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
@@ -3228,7 +3544,7 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O20 | What the application is told when its message is refused at its own node, the wait and what the phone does with it: with a budget per hop on the wait a queued message has ([send queue](#send-queue)), bursts from one phone are refused with a wait rather than queued, so the phone is the queue ([phone link](#phone-link)) | with the app, before step 6 |
+| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)); until then the mailbox key crosses the open link ([mailbox](#mailbox)) | before step 7 |
 
 ---
 
@@ -3242,6 +3558,21 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 - EN 300 220-2 for polite-access (listen-before-talk) shapes (not required
   in this band).
 - Semtech SX1261/2 datasheet: LoRa sensitivity table, CAD, RSSI, SF5/SF6.
+- Bluetooth Core Specification 5.0 (Bluetooth SIG, 2016): the ATT MTU,
+  writes, reads and errors (Vol 3 Part F), the L2CAP header (Vol 3
+  Part A), UUIDs (Vol 3 Part B), advertising and the link-layer packet
+  (Vol 6 Part B).
+- libsodium documentation: "Public-key authenticated encryption"
+  (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
+  (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
+  hashing" (`crypto_generichash`).
+- RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
+- FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum.
+- Nordic nRF52840 Product Specification: the radio's transmit and
+  receive currents.
+- Apple, Accessory Design Guidelines for Apple Devices, "Advertising
+  Interval", and Technical Q&A QA1931: the advertising intervals an
+  iPhone finds quickly.
 - Weber, Andrews, Yang, de Veciana, "Transmission capacity of wireless ad
   hoc networks with outage constraints", IEEE Trans. IT 2005 (frequency
   hopping vs direct sequence).

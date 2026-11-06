@@ -129,7 +129,8 @@ fn spec_links_resolve() {
             "{SPEC}: no heading for link #{target}"
         );
     }
-    // A section number left in the spec is a datasheet's.
+    // A section number left in the spec is a datasheet's, or a volume's
+    // of the Bluetooth Core Specification.
     for (i, _) in spec.match_indices('§') {
         let before: String = spec[..i]
             .chars()
@@ -140,7 +141,7 @@ fn spec_links_resolve() {
             .rev()
             .collect();
         assert!(
-            before.contains("datasheet"),
+            before.contains("datasheet") || before.contains("Vol "),
             "{SPEC}: numbered reference after {before:?}"
         );
     }

@@ -131,6 +131,7 @@ pub(crate) mod sizes {
         assert_eq!(send_queue::SEND_QUEUE, 39);
         assert_eq!(send_queue::HOP_PLACES, 254);
         assert_eq!(delivery::DELIVERY_QUEUE, 41);
+        assert_eq!(delivery::INBOX, 23);
         let sum = tables();
         std::println!("{:>10}: {sum:>6} B", "tables");
         assert!(size_of::<busy::BusyEstimator>() <= 512);
@@ -154,6 +155,11 @@ pub(crate) mod sizes {
                 "delivery",
                 size_of::<delivery::DeliveryQueue>(),
                 delivery::DELIVERY_QUEUE * 264,
+            ),
+            (
+                "inbox",
+                size_of::<delivery::DeliveryQueue<{ delivery::INBOX }>>(),
+                delivery::INBOX * 264,
             ),
             (
                 "records",

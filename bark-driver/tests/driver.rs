@@ -13,12 +13,14 @@ use std::pin::pin;
 use std::rc::Rc;
 use std::task::Poll;
 
-use bark_driver::{App, Clock, Driver, Heard, Outgoing, Radio, MAX_AIRTIME, RSSI_DWELL};
+use bark_driver::{
+    App, Clock, Driver, Gps, Heard, Outgoing, Radio, Request, MAX_AIRTIME, RSSI_DWELL,
+};
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, Position, Relay, Stored,
-    MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, Position, Relay,
+    Stored, MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -312,16 +314,22 @@ struct TestApp {
     /// driver asked for one.
     battery: Option<u16>,
     battery_reads: u32,
+    /// Requests waiting, and what the driver said of the GPS, in order.
+    requests: VecDeque<Request>,
+    gps: Vec<Gps>,
 }
 
 impl App for TestApp {
     async fn ready(&mut self, offer: bool) {
-        poll_fn(
-            |_| match (offer && self.outgoing.is_some()) || self.power != self.read {
+        poll_fn(|_| {
+            match (offer && self.outgoing.is_some())
+                || self.power != self.read
+                || !self.requests.is_empty()
+            {
                 true => Poll::Ready(()),
                 false => Poll::Pending,
-            },
-        )
+            }
+        })
         .await
     }
 
@@ -333,6 +341,10 @@ impl App for TestApp {
     async fn battery(&mut self) -> Option<u16> {
         self.battery_reads += 1;
         self.battery
+    }
+
+    fn request(&mut self) -> Option<Request> {
+        self.requests.pop_front()
     }
 
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
@@ -347,6 +359,10 @@ impl App for TestApp {
 
     fn store(&mut self, stored: &Stored) {
         self.stored = Some(*stored);
+    }
+
+    fn gps(&mut self, gps: Gps) {
+        self.gps.push(gps);
     }
 }
 
@@ -401,6 +417,9 @@ struct Scripted {
     check: Vec<Instant>,
     then: Vec<(Instant, Action)>,
     seen: Vec<(Instant, String)>,
+    /// From when its GPS tracks, and fixes beyond reach of what it knows.
+    tracks_from: Option<Instant>,
+    beyond: Vec<Position>,
 }
 
 impl Scripted {
@@ -412,6 +431,8 @@ impl Scripted {
             check: Vec::new(),
             then: Vec::new(),
             seen: Vec::new(),
+            tracks_from: None,
+            beyond: Vec::new(),
         }
     }
 }
@@ -462,6 +483,27 @@ impl Core for Scripted {
 
     fn accepts_send(&self, _: Instant) -> bool {
         false
+    }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        None
+    }
+
+    fn inbox_len(&self) -> usize {
+        0
+    }
+
+    fn confirm(&mut self, _: MsgId) -> bool {
+        false
+    }
+
+    fn gps_tracks(&self) -> bool {
+        let now = self.seen.last().map(|(t, _)| *t);
+        self.tracks_from.is_some_and(|t| now >= Some(t))
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        !self.beyond.contains(&position)
     }
 }
 
@@ -711,12 +753,14 @@ fn a_relay_runs_through_the_loop() {
             }
         }
     }
+    let (id, payload) = d.core().inbox().expect("its own message came back");
+    assert_eq!(payload, b"hello");
     assert!(
         d.app()
             .messages
             .iter()
-            .any(|e| matches!(e, AppEvent::Message { payload, len, .. } if &payload[..*len as usize] == b"hello")),
-        "its own message came back: {:?}",
+            .any(|e| matches!(e, AppEvent::Message { msg_id } if *msg_id == id)),
+        "and was announced: {:?}",
         d.app().messages
     );
     assert!(d.app().outgoing.is_none(), "taken");
@@ -968,6 +1012,26 @@ impl Core for Boxed {
     fn accepts_send(&self, now: Instant) -> bool {
         self.0.accepts_send(now)
     }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        self.0.inbox()
+    }
+
+    fn inbox_len(&self) -> usize {
+        self.0.inbox_len()
+    }
+
+    fn confirm(&mut self, msg_id: MsgId) -> bool {
+        self.0.confirm(msg_id)
+    }
+
+    fn gps_tracks(&self) -> bool {
+        self.0.gps_tracks()
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        self.0.fix_in_reach(position)
+    }
 }
 
 /// A relay set up as the firmware sets one up, in zeroed memory with
@@ -990,4 +1054,63 @@ fn a_relay_reset_in_zeroed_memory_is_a_new_one() {
     let fresh = run(Boxed(Box::new(Relay::new(config, 7))));
     assert!(fresh.iter().any(|(_, op)| matches!(op, Op::Transmit(_))));
     assert_eq!(from_zeros, fresh);
+}
+
+/// The GPS follows the core (core-interface §4): a search from a
+/// `Locate` until its end, ended by the first fix in reach and by a
+/// `Locate` at or before now, and running all the time while the core
+/// says it tracks; a fix beyond reach of every known relay is not handed.
+#[test]
+fn the_gps_follows_the_core() {
+    let world = World::default();
+    let wakeups = [at_ms(1), at_ms(10), at_ms(20), at_ms(30), at_ms(40)];
+    let mut core = Scripted::new(ch(3), &wakeups);
+    let here = Position::from_degrees(50.45, 30.52);
+    let far = Position::from_degrees(51.45, 30.52);
+    core.beyond.push(far);
+    core.then.push((at_ms(1), Action::Locate(at_ms(500))));
+    core.then.push((at_ms(20), Action::Locate(at_ms(500))));
+    core.then.push((at_ms(30), Action::Locate(at_ms(30))));
+    core.tracks_from = Some(at_ms(40));
+    let mut d = driver(core, &world, Duration::ZERO);
+    let fixes = |d: &TestDriver<Scripted>| {
+        d.core()
+            .seen
+            .iter()
+            .filter(|(_, s)| s.contains("Fix"))
+            .count()
+    };
+    run_until(&mut d, &world, at_ms(1));
+    assert_eq!(d.app().gps, [Gps::Rest, Gps::Search(at_ms(500))]);
+    d.app_mut().requests.push_back(Request::Fix(far));
+    step(&mut d, &world);
+    assert_eq!(fixes(&d), 0, "beyond reach");
+    assert_eq!(d.app().gps.last(), Some(&Gps::Search(at_ms(500))));
+    d.app_mut().requests.push_back(Request::Fix(here));
+    step(&mut d, &world);
+    assert_eq!(fixes(&d), 1);
+    assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "the fix ends it");
+    run_until(&mut d, &world, at_ms(20));
+    assert_eq!(d.app().gps.last(), Some(&Gps::Search(at_ms(500))));
+    run_until(&mut d, &world, at_ms(30));
+    assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "ended at once");
+    run_until(&mut d, &world, at_ms(40));
+    assert_eq!(d.app().gps.last(), Some(&Gps::Track));
+    d.app_mut().requests.push_back(Request::Fix(here));
+    step(&mut d, &world);
+    assert_eq!(fixes(&d), 2);
+    assert_eq!(d.app().gps.last(), Some(&Gps::Track), "tracking goes on");
+}
+
+/// A relay built with a place runs its GPS on external power: the place
+/// is not a map point (roadmap D83).
+#[test]
+fn a_placed_relay_on_usb_tracks() {
+    let world = World::default();
+    let me = Position::from_degrees(50.45, 30.52);
+    let mut d = driver(Relay::new(relay_config(me), 7), &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    run_until(&mut d, &world, Instant::ZERO + Duration::from_secs(5));
+    assert!(!d.core().on_map_point());
+    assert_eq!(d.app().gps.last(), Some(&Gps::Track), "{:?}", d.app().gps);
 }

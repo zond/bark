@@ -468,6 +468,12 @@ impl<C: Core> Harness<C> {
         for a in actions {
             self.apply(i, a);
         }
+        // The application reads every message at once and confirms it,
+        // as the simulator's does, so the inbox never fills.
+        let core = &mut self.nodes[i].core;
+        while let Some((id, _)) = core.inbox() {
+            core.confirm(id);
+        }
     }
 
     fn apply(&mut self, i: usize, a: Action) {

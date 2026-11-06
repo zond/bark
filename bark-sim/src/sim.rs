@@ -27,6 +27,7 @@ use crate::scenario::{
 };
 use crate::trace::{Names, Tracer};
 use crate::walk::{MovingLink, Walks};
+use bark_app_layer::mailbox::{Arrival as Kept, Mailbox, RamRing};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
@@ -410,6 +411,8 @@ struct OriginRecord {
     /// Whether its destination was sleepy then, and carried.
     dst_sleepy: bool,
     dst_carried: bool,
+    /// Whether its origin was sleepy when it was sent.
+    src_sleepy: bool,
 }
 
 /// One originated message, for the per-message table (`Sim::message_rows`).
@@ -459,6 +462,8 @@ pub struct MessageRow {
     pub dst_sleepy: bool,
     /// See `dst_sleepy`.
     pub dst_carried: bool,
+    /// Whether its origin was sleepy when it was sent.
+    pub src_sleepy: bool,
     /// Origination to the first DATA of it from a node other than its
     /// origin, seconds.
     pub entered_s: Option<f64>,
@@ -652,6 +657,10 @@ struct ScriptEntry {
     preamble: u16,
 }
 
+/// A home node's mailbox in the simulator: the board's 16 pages of 16
+/// slots, in RAM.
+pub(crate) type HomeMailbox = Mailbox<RamRing<256>>;
+
 /// The simulator.
 pub struct Sim {
     pub(crate) radio: RadioParams,
@@ -798,6 +807,14 @@ pub struct Sim {
     origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
+    /// Per node, its mailbox if it is a person's home (spec "Mailbox"),
+    /// on a ring in RAM of the board's 256 slots.
+    pub(crate) mailboxes: Vec<Option<Box<HomeMailbox>>>,
+    /// The mailbox replies nodes' applications received, with the node,
+    /// for the tests to open.
+    pub(crate) replies: Vec<(u32, Vec<u8>)>,
+    /// Whether any node keeps a mailbox.
+    with_mailboxes: bool,
     /// Message id (kept across hops) to traffic tag.
     msg_tags: HashMap<u32, u32>,
     /// What each application offered, to offer again when given back.
@@ -818,6 +835,10 @@ pub struct Sim {
     /// Every hand-over that ended, by message tag: the relay and the
     /// neighbour offered, in order (`metrics::Pressure`).
     offer_log: HashMap<u32, OfferLog>,
+    /// The refuser of each relay origin's own message refused last, by
+    /// origin and message tag, until its next hand-over ends
+    /// (`metrics::Pressure::own_refused`).
+    own_refused_by: HashMap<(u32, u32), u64>,
     /// Demotions not yet followed by an answer from the neighbour, by
     /// relay and the neighbour's key: when.
     demoted_at: HashMap<(u32, u64), Instant>,
@@ -1205,6 +1226,13 @@ impl Sim {
                 ids[p.b as usize] = ids[p.a as usize];
             }
         }
+        let mut mailboxes: Vec<Option<Box<HomeMailbox>>> = (0..n).map(|_| None).collect();
+        for m in &sc.mailboxes {
+            let i = resolve(&placed, m)?;
+            let mut mb = Box::new(Mailbox::new(RamRing::new()));
+            mb.set_key(Some(Sim::mailbox_key(sc.seed, i)));
+            mailboxes[i as usize] = Some(mb);
+        }
         let mut homes = vec![None; n];
         for h in &sc.homes {
             let c = Channel::new(h.channel)
@@ -1343,6 +1371,9 @@ impl Sim {
             leaf_nodes: HashMap::new(),
             origins: Vec::new(),
             offers: (0..n).map(|_| None).collect(),
+            with_mailboxes: mailboxes.iter().any(Option::is_some),
+            mailboxes,
+            replies: Vec::new(),
             msg_tags: HashMap::new(),
             offered: HashMap::new(),
             data_hops: HashMap::new(),
@@ -1351,6 +1382,7 @@ impl Sim {
             holders_of: HashMap::new(),
             holds: HashMap::new(),
             offer_log: HashMap::new(),
+            own_refused_by: HashMap::new(),
             demoted_at: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
@@ -2113,7 +2145,10 @@ impl Sim {
             self.wakeups.set(node, order);
         }
         // The application asks again after every event (core-interface §4).
-        if self.offers[node as usize].is_some() {
+        let reply_due = self.mailboxes[node as usize]
+            .as_ref()
+            .is_some_and(|m| m.reply_due());
+        if self.offers[node as usize].is_some() || reply_due {
             self.offer(node);
         }
     }
@@ -2589,6 +2624,7 @@ impl Sim {
                     }
                     Trace::TurnedAway { msg_id, by } => {
                         self.note_offer(node, msg_id, by);
+                        self.note_own_refusal(node, msg_id, by);
                         let c = &mut self.metrics.nodes[node as usize].core;
                         c.turned_away += 1;
                         if let Some(held) = self.hold_ended(node, msg_id) {
@@ -2828,6 +2864,9 @@ impl Sim {
             return;
         };
         let to = key(to);
+        if let Some(by) = self.own_refused_by.remove(&(node, tag)) {
+            self.metrics.pressure.own_round += u64::from(by != to);
+        }
         let log = self.offer_log.entry(tag).or_default();
         let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
         if let Some(&(_, last)) = here.next() {
@@ -2837,6 +2876,21 @@ impl Sim {
             }
         }
         log.to.push((node, to));
+    }
+
+    /// `by` refused `msg_id` at `node`: counted if it is the own message
+    /// of a relay origin, not yet past its first hop, whose next
+    /// hand-over [`Sim::note_offer`] then compares with `by`.
+    fn note_own_refusal(&mut self, node: u32, msg_id: MsgId, by: NodeId) {
+        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
+            return;
+        };
+        let o = &self.origins[tag as usize];
+        if o.src != node || o.entered_at.is_some() || self.relays[node as usize].sleepy() {
+            return;
+        }
+        self.metrics.pressure.own_refused += 1;
+        self.own_refused_by.insert((node, tag), key(by));
     }
 
     /// `node` handed `msg_id` to `to`: if it had held the message on `to`
@@ -3094,9 +3148,8 @@ impl Sim {
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
-    /// the checks on (spec "Position"), a fix farther than the longest
-    /// hearing radius from every neighbour the node keeps is not handed
-    /// over. The check of the satellites' C/N0 cannot be modelled: the
+    /// the checks on (spec "Position"), a fix the core finds out of reach
+    /// of every relay it knows (`Node::fix_in_reach`) is not handed over. The check of the satellites' C/N0 cannot be modelled: the
     /// simulator has no satellites.
     fn fix(&mut self, n: u32) {
         self.fix_now(n);
@@ -3136,25 +3189,13 @@ impl Sim {
         }
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
-        // A node with no place cannot rebuild its neighbours' positions,
-        // so its fixes go unchecked against them (roadmap D83).
-        if self.gps.checks && self.relays[n as usize].placed() {
-            // The longest hearing radius, rooftop to rooftop (spec
-            // "Physical layer").
-            const HEARING_M: f32 = 3000.0;
-            let plane = bark_proto::geo::LocalPlane::new(position);
-            let far = |p: Position| plane.point(p).distance_m(Default::default()) > HEARING_M;
-            let mut heard = self.relays[n as usize]
-                .neighbours()
-                .map(|e| e.position)
-                .peekable();
-            let alone = heard.peek().is_some() && heard.all(far);
-            if alone {
-                if fault.is_some() {
-                    self.metrics.research.fixes[k][1] += 1;
-                }
-                return false;
+        // The check of spec "Position" the core answers, unchecked while
+        // the node has no place (roadmap D83).
+        if self.gps.checks && !self.relays[n as usize].fix_in_reach(position) {
+            if fault.is_some() {
+                self.metrics.research.fixes[k][1] += 1;
             }
+            return false;
         }
         if fault.is_some() {
             self.metrics.research.fixes[k][0] += 1;
@@ -3469,7 +3510,32 @@ impl Sim {
     /// message given back.
     fn app_event(&mut self, node: u32, e: AppEvent) {
         let (len, payload) = match e {
-            AppEvent::Message { len, payload, .. } => (len, payload),
+            // The application reads the message at once and confirms it,
+            // so the inbox never fills (core-interface §4).
+            AppEvent::Message { msg_id } => {
+                let core = &mut self.relays[node as usize];
+                let mut payload = [0u8; MAX_FRAME];
+                let Some((id, bytes)) = core.inbox() else {
+                    return;
+                };
+                debug_assert_eq!(id, msg_id, "the oldest is the newest");
+                payload[..bytes.len()].copy_from_slice(bytes);
+                let len = bytes.len() as u8;
+                core.confirm(id);
+                if self.mailbox_takes(node, &payload[..len as usize]) {
+                    return;
+                }
+                (len, payload)
+            }
+            AppEvent::GivenBack { msg_id, .. }
+                if !self.msg_tags.contains_key(&msg_id.0)
+                    && self.mailboxes[node as usize].is_some() =>
+            {
+                if let Some(m) = self.mailboxes[node as usize].as_mut() {
+                    m.given_back(msg_id);
+                }
+                return;
+            }
             AppEvent::GivenBack { msg_id, retry_at } => {
                 if !self.give_back(node, msg_id, retry_at) {
                     self.mark_dropped(node, msg_id, DropReason::Pushback);
@@ -3478,6 +3544,13 @@ impl Sim {
             }
             AppEvent::Boot { .. } => return,
         };
+        self.app_message(node, &payload[..len as usize]);
+    }
+
+    /// A message read from `node`'s inbox: counted against its origin by
+    /// the tag its payload starts with.
+    fn app_message(&mut self, node: u32, payload: &[u8]) {
+        let len = payload.len();
         let m = &mut self.metrics;
         m.nodes[node as usize].messages_in += 1;
         if len < 4 {
@@ -3711,6 +3784,7 @@ impl Sim {
                 dst_anchor: o.dst_anchor,
                 dst_sleepy: o.dst_sleepy,
                 dst_carried: o.dst_carried,
+                src_sleepy: o.src_sleepy,
                 entered_s: o.entered_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
                 holder_beats: o.holder_beats,
                 holder_tries: o.holder_tries,
@@ -3760,7 +3834,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -3818,7 +3892,7 @@ impl Sim {
                 .get(&r.tag)
                 .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
             s.push_str(&format!(
-                ",{},{offers},{hops},{flaps},{},{},{},{},{},{}\n",
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{}\n",
                 w.elsewhere,
                 relay(r.holder),
                 r.holder_anchor_end,
@@ -3827,7 +3901,8 @@ impl Sim {
                     .map(|t| format!("{t:.1}"))
                     .unwrap_or_default(),
                 r.dst_switches,
-                r.holder_links_anchor_end
+                r.holder_links_anchor_end,
+                r.src_sleepy
             ));
         }
         s
@@ -4074,6 +4149,7 @@ impl Sim {
                 .flatten(),
             dst_sleepy: self.relays[dst as usize].sleepy(),
             dst_carried: self.relays[dst as usize].carried(),
+            src_sleepy: self.relays[src as usize].sleepy(),
         });
         self.metrics.app.originated += 1;
         self.metrics.nodes[src as usize].originated += 1;
@@ -4129,6 +4205,7 @@ impl Sim {
             return;
         }
         let Some(o) = self.offers[src as usize].take() else {
+            self.mailbox_offer(src);
             return;
         };
         self.offered.insert(o.tag, o);
@@ -4154,6 +4231,74 @@ impl Sim {
             payload,
         };
         self.deliver(src, Event::App(cmd));
+    }
+
+    /// The mailbox key of node `node`'s home in a run of `seed`: drawn
+    /// from them, so that a test can seal a fetch.
+    pub fn mailbox_key(seed: u64, node: u32) -> [u8; 32] {
+        let mut r = bark_proto::node::Rng::new(seed ^ 0x6d61_696c_626f_7800 ^ u64::from(node));
+        let mut k = [0u8; 32];
+        for c in k.chunks_mut(8) {
+            c.copy_from_slice(&r.next_u64().to_le_bytes());
+        }
+        k
+    }
+
+    /// A payload for `node`'s application that its mailbox takes, or that
+    /// is a mailbox's reply: kept, and not counted as a text.
+    fn mailbox_takes(&mut self, node: u32, payload: &[u8]) -> bool {
+        use bark_app_layer::seal::Form;
+        // Without a mailbox in the run every payload is a traffic tag,
+        // which may begin as a reply does.
+        if !self.with_mailboxes {
+            return false;
+        }
+        if Form::of(payload) == Ok(Form::Reply) {
+            self.replies.push((node, payload.to_vec()));
+            return true;
+        }
+        let Some(m) = self.mailboxes[node as usize].as_mut() else {
+            return false;
+        };
+        // Every payload but a fetch is kept; the texts are counted as
+        // delivered as at any node.
+        !matches!(m.arrive(payload), Kept::Kept(_))
+    }
+
+    /// The mailbox's next reply, handed to the core while its application
+    /// has no message of its own: the one place the send slot is shared,
+    /// as in the firmware.
+    fn mailbox_offer(&mut self, src: u32) {
+        let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+        let Some(o) = self.mailboxes[src as usize]
+            .as_mut()
+            .and_then(|m| m.next(&mut out))
+        else {
+            return;
+        };
+        let cmd = AppCommand::Send {
+            dst_pos: o.address.position,
+            dst_id: o.address.node,
+            payload: &out[..o.len],
+        };
+        self.deliver(src, Event::App(cmd));
+    }
+
+    /// Hand `payload` from `src`'s application to `dst`, if its core takes
+    /// one now: for the tests, beside the traffic model's texts.
+    #[cfg(test)]
+    pub(crate) fn send_raw(&mut self, src: u32, dst: u32, payload: &[u8]) -> bool {
+        let local = self.clocks[src as usize].local(self.now);
+        if !self.relays[src as usize].accepts_send(local) {
+            return false;
+        }
+        let cmd = AppCommand::Send {
+            dst_pos: self.relays[dst as usize].address(),
+            dst_id: self.node_id(dst),
+            payload,
+        };
+        self.deliver(src, Event::App(cmd));
+        true
     }
 
     fn poisson_arrival(&mut self, n: u32) {
@@ -5042,19 +5187,13 @@ mod tests {
                 dst_anchor: None,
                 dst_sleepy: true,
                 dst_carried: false,
+                src_sleepy: false,
             });
             sim.msg_tags.insert(id, tag);
         }
         sim.message_dropped(1, MsgId(7), DropReason::NoRoute);
         sim.message_dropped(1, MsgId(8), DropReason::QueueExpired);
-        let mut payload = [0u8; MAX_FRAME];
-        payload[..4].copy_from_slice(&1u32.to_le_bytes());
-        let msg = AppEvent::Message {
-            msg_id: MsgId(8),
-            len: 4,
-            payload,
-        };
-        sim.app_event(2, msg);
+        sim.app_message(2, &1u32.to_le_bytes());
         let fates: Vec<Fate> = sim.fates().collect();
         let no_route = Fate::Dropped {
             node: 1,
@@ -5074,5 +5213,69 @@ mod tests {
             (s.app.drops.total(), s.app.delivered, s.app.unaccounted),
             (2, 1, 0)
         );
+    }
+
+    /// A home node keeps what reaches it, and a fetch from another node's
+    /// application gets the items back, sealed for the requester, through
+    /// the home's application send slot (spec "Mailbox").
+    #[test]
+    fn a_fetch_from_another_node_gets_the_mailbox_items() {
+        use bark_app_layer::seal::{self, Fetch};
+        use bark_app_layer::Address;
+        let mut sc = Scenario::new("mailbox", 1, 1800.0)
+            .point("A", RoleSpec::Relay, 0.0, 0.0)
+            .point("B", RoleSpec::Relay, 400.0, 0.0)
+            .point("C", RoleSpec::Relay, 800.0, 0.0)
+            .link("A", "B", -80.0)
+            .link("B", "C", -80.0);
+        sc.mailboxes = vec!["A".into()];
+        let mut sim = Sim::new(&sc).unwrap();
+        let s = |t: u64| Instant::ZERO + Duration::from_secs(t);
+        sim.run_until(s(300));
+        let send = |sim: &mut Sim, src: u32, payload: &[u8]| {
+            while !sim.send_raw(src, 0, payload) {
+                let t = sim.now + Duration::from_secs(1);
+                sim.run_until(t);
+            }
+        };
+        let items: Vec<Vec<u8>> = (1..=3).map(|i| format!("item {i}").into_bytes()).collect();
+        for item in &items {
+            send(&mut sim, 1, item);
+        }
+        let t = sim.now + Duration::from_secs(60);
+        sim.run_until(t);
+        assert_eq!(sim.mailboxes[0].as_ref().unwrap().newest(), 3);
+        let key = Sim::mailbox_key(1, 0);
+        let address = Address {
+            position: sim.relays[2].address(),
+            node: sim.node_id(2),
+        };
+        let fetch = Fetch {
+            sent: 7,
+            address,
+            since: 0,
+            most: 23,
+        }
+        .seal(&key, &[1; 24])
+        .unwrap();
+        send(&mut sim, 2, &fetch);
+        let t = sim.now + Duration::from_secs(300);
+        sim.run_until(t);
+        let mut got = Vec::new();
+        for (node, r) in &sim.replies {
+            assert_eq!(*node, 2);
+            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+            let opened = (1..=3)
+                .find_map(|n| {
+                    seal::open_reply(&key, 7, n, r, &mut out)
+                        .ok()
+                        .map(|l| (n, out[..l].to_vec()))
+                })
+                .expect("a reply that opens");
+            got.push(opened);
+        }
+        got.sort();
+        got.dedup();
+        assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
     }
 }

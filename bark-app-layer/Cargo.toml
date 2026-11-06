@@ -1,0 +1,20 @@
+[package]
+name = "bark-app-layer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "What the bark app puts in a payload: keys, the payload's forms, the records, the card and the mailbox (docs/app-layer-2026-11-05.md)."
+
+# Pinned: the app's libsodium is checked against bytes these make
+# (vectors.json), so a new version is a decision, not an update.
+[dependencies]
+bark-proto = { path = "../bark-proto" }
+blake2 = { version = "=0.10.6", default-features = false }
+crypto_box = { version = "=0.9.1", default-features = false, features = ["salsa20"] }
+crypto_secretbox = { version = "=0.1.1", default-features = false, features = ["salsa20"] }
+sha2 = { version = "=0.10.9", default-features = false }
+
+[dev-dependencies]
+# The library's own sealed box, which allocates, to check ours against.
+crypto_box = { version = "=0.9.1", default-features = false, features = ["salsa20", "seal", "getrandom"] }

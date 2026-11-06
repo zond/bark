@@ -156,12 +156,8 @@ impl Tracer {
                     self.packet(f.payload(), tags)
                 );
             }
-            Action::App(AppEvent::Message { len, payload, .. }) => {
-                let _ = write!(
-                    what,
-                    "app message {}",
-                    payload_tag(&payload[..*len as usize])
-                );
+            Action::App(AppEvent::Message { msg_id }) => {
+                let _ = write!(what, "app message {}", self.msg(*msg_id, tags));
             }
             Action::App(AppEvent::GivenBack { msg_id, retry_at }) => {
                 let _ = write!(

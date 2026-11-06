@@ -23,7 +23,9 @@
 
 use super::{Node, Stage};
 use crate::event::{Action, Trace};
-use crate::gps::{BACKOFF, SEARCH_LIMIT};
+use crate::geo::LocalPlane;
+use crate::gps::{BACKOFF, HEARING_RADIUS_M, SEARCH_LIMIT};
+use crate::position::Position;
 use crate::radio::FADE_DEPTH_DB;
 use crate::time::{Duration, Instant};
 
@@ -244,6 +246,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let w = self.gps.watch_now();
         let rests = self.unplugged().is_some() && w.has(PAST_GRACE);
         self.motion.carried || w.has(FOLLOW) || !rests
+    }
+
+    /// Whether a fix at `position` passes the check against the relays
+    /// this node knows (spec "Position", roadmap D74): it lies within the
+    /// hearing radius of one of them, or the node knows none, or it has
+    /// no place and so cannot rebuild where they are (roadmap D83).
+    pub fn fix_in_reach(&self, position: Position) -> bool {
+        if !self.placed() {
+            return true;
+        }
+        let plane = LocalPlane::new(position);
+        let mut known = self.neighbours().map(|n| n.position).peekable();
+        known.peek().is_none()
+            || known.any(|p| plane.point(p).distance_m(Default::default()) <= HEARING_RADIUS_M)
     }
 
     /// Whether this relay rests its GPS and watches the radio for a sign

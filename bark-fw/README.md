@@ -34,22 +34,39 @@ sleepy and still logs (`scripts/measure.md` step 5).
 
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
-describes it. A node's position is set when it is built, from `BARK_LAT`
-and `BARK_LON` in degrees, until the phone app or the GPS can set it:
+describes it. A node's place can be set when it is built, from `BARK_LAT`
+and `BARK_LON` in degrees:
 
 ```
 BARK_LAT=50.4501 BARK_LON=30.5234 cargo build --release
 ```
 
-Without them the position is 0, 0, and boards built alike share one
-identity. Every protocol event (`Trace`), every message for the node, and
+`build.rs` converts them to the position's counts with the core's
+conversion, so the image parses no numbers; one set without the other,
+or a value that is not a number, fails the build. Without them the node
+has no place until the phone sets a map point (roadmap D83).
+
+A built place is not a map point: the GPS runs with one as without, and
+only a map point the phone sets keeps it at rest (spec "Position"; the
+`boot:` line says `gps=` and `map_point=`). But a fix is taken only
+within 3 km of a relay the node knows (spec "Position"), and a board
+built with a place it does not stand at, beside others built the same,
+knows only relays at that place: its every true fix is dropped
+(`gps: fix … beyond every known relay; dropped`, once), though it still
+keeps the time from them. To bench the GPS, build without a place or
+with the place the board stands at. Every protocol event (`Trace`), every message for the node, and
 a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
-its longest times. There is no application yet: the node sends no
-messages of its own. It does not touch GPS or BLE (the GPS does
-get power, see Radio power below).
+its longest times and `stack_used`, the call stack's high-water mark.
+Its application is the phone link over BLE (`src/ble.rs`;
+spec "Phone link"), whose bench procedure in nRF Connect is in
+`docs/phone-link-2026-11-05.md`, "On the bench". Its GPS runs as the
+core says, in its own task (`src/gps.rs`; `docs/gps-time-2026-11-05.md`):
+on USB all the time, on battery in standby but for the searches the core
+asks for. Once a fix or the phone has given the time, the 10 s line ends
+in `utc_s=`, `offset_min=` and its source.
 
 ## Verified and unverified
 
@@ -61,17 +78,15 @@ Verified on the host:
 
 - `cargo build --release` and `cargo clippy --release -- -D warnings` pass,
   with each of the two builds.
-- The ELF's first loadable byte (the vector table) is at `0x2B000`, the
+- The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The node image is 167 KiB of
   flash (`.text`, `.rodata` and `.data`, 171 644 B, 671 UF2 blocks) and
   uses 176 KiB of RAM before the stack (`.data` and `.bss`, 180 212 B),
   which leaves 79 KiB for the stack (2026-10-25, `llvm-size -A`); the
   console image is 105 804 B. The
   relay, 172 432 B, is in `.bss`: its static holds zero bytes, which the
-  startup code writes, and `src/node.rs` sets it up in place. Its deepest
-  single stack frame, the largest stack adjustment in the disassembly
-  (`llvm-objdump`), is 34 560 B (33.8 KiB), in the main task
-  (2026-10-25).
+  startup code writes, and `src/node.rs` sets it up in place. The
+  stack's depth is in "Tasks and the stack", below.
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
   the host workspace), duty-cycled receive included: it starts at the
   core's `Sniff`, starts again after each frame, ends at the sniff's end or
@@ -86,9 +101,10 @@ Verified on the host:
   reading inside a CAD (2026-10-30, roadmap D88).
 - `scripts/uf2.py` produces UF2s that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, 256-byte payloads in ascending
-  order inside `0x26000..0xF4000`; the loader's at `0x26000`, the
-  firmware's at `0x2B000`, the erased state page and record.
-- The loader builds to 8748 B at `0x26000`, and `cargo clippy --release
+  order inside `0x01000..0xEA000`; the loader's at `0x01000`, the rest
+  of the old SoftDevice's pages erased, the firmware's at `0x06000`, the
+  erased state page and record.
+- The loader builds to 8.5 KiB at `0x01000`, and `cargo clippy --release
   -- -D warnings` passes in `../bark-loader`.
 - The swap, on a flash in RAM with the board's layout
   (`cargo test -p bark-image` in the host workspace): a staged image is
@@ -102,8 +118,9 @@ Verified on the host:
 
 Unverified, in the order they will fail if wrong:
 
-- The bootloader accepts the UF2 with the loader and jumps to it at
-  `0x26000`, and the loader jumps to the firmware at `0x2B000`.
+- The loader jumps to the firmware at `0x06000`. The bootloader's jump
+  to the loader at `0x01000` was seen on f4f5 on 2026-11-06, with the
+  firmware still at `0x2B000` (`docs/softdevice-2026-11-05.md`).
 - The bootloader writes a UF2 block of `0xFF` bytes as an erased page,
   so that a copy clears a swap asked for before it (Build and package).
 - The loader's write protection: after the jump, an erase of its pages
@@ -116,11 +133,18 @@ Unverified, in the order they will fail if wrong:
   running.
 - Interrupts reach the application. The firmware sets VTOR itself
   (cortex-m-rt `set-vtor`) rather than relying on MBR/SoftDevice forwarding.
-- The 32 MHz crystal starts (USB needs it) when a node boots on USB
-  power or the cable comes, and stops when it goes; whether USB enumerates
-  when the cable comes after a boot on battery is not known; the
-  low-frequency clock uses the internal RC oscillator so no 32.768 kHz
-  crystal is assumed.
+- The 32 MHz crystal, which USB needs: the console starts it at boot and
+  keeps it, and the node asks it of the MPSL while on USB (`src/main.rs`,
+  `src/ble.rs`) and lets it go on battery; whether USB enumerates
+  when the cable comes after a boot on battery is not known.
+- The 32.768 kHz clock: whether the board has the crystal is not known.
+  The node tries it at boot, giving it 1 s, and falls back to the
+  calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
+  the console keeps the RC oscillator.
+- The bootloader from the serial port (`src/touch.rs`): 0x57 in GPREGRET
+  as the bootloader's UF2 reset magic is taken from its source as
+  remembered, not read from the board's 0.6.1; the bench's first
+  `stty … 1200` shows the drive or not.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
@@ -130,7 +154,7 @@ Unverified, in the order they will fail if wrong:
 - A panic message survives the soft reset through the bootloader and the
   loader (`PANIC_DUMP` in `bark-image/src/layout.rs`) and is logged on the
   next boot.
-- The stored state: the NVMC writes each record the core asks to keep into
+- The stored state: the NVMC, through the MPSL's flash timeslots, writes each record the core asks to keep into
   the next slot of the `STORE` page and erases the page when it is full,
   and the next boot logs `stored Some(..)` and comes back on the same home
   channel (`src/store.rs`, roadmap D73).
@@ -163,11 +187,17 @@ Unverified, in the order they will fail if wrong:
   antenna port, and the stock antenna has no gain over a dipole, so the
   console's 10 dBm cap meets the 10 mW ERP limit.
 - Battery voltage reads correctly (P0.04, 2:1 divider; unreliable on USB).
+- The GPS (`src/gps.rs`): NMEA at 9600 bps on P1.09 through UARTE1,
+  its sentences set by PCAS03 on P1.08 at each start, WAKEUP on P1.02
+  high to run and low for standby, a hot start after standby; `docs/gps-time-2026-11-05.md`, "On the bench".
 - Every console command. The timings it prints are its purpose; none has
   been seen.
-- The display (Display, below): the controller answers on SPIM3 at
-  4 MHz, BUSY falls after the reset, the software reset and the refresh,
-  the picture comes out black on white the right way up (`ROTATION` in
+- The display (Display, below): the controller answered on SPIM3 at
+  4 MHz in the console build, and in the node build never started the
+  refresh (bench, 2026-11-05); it now runs on SPIM1. The node's state
+  screen and its redraws are untried. BUSY
+  falls after the reset, the software reset and the refresh, the
+  picture comes out black on white the right way up (`ROTATION` in
   `src/display.rs` turns it if not), and the controller's deep sleep
   keeps it on the glass.
 
@@ -184,8 +214,9 @@ cargo-binutils is needed.
 
 ## Flash layout
 
-The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6): it
-jumps to `0x26000`. There sits a loader of our own, `../bark-loader`,
+The T-Echo ships with a UF2 bootloader and keeps it (roadmap D6). With
+the SoftDevice it came with erased, it jumps to `0x01000`, the MBR's end
+(roadmap D129, `docs/softdevice-2026-11-05.md`). There sits a loader of our own, `../bark-loader`,
 which starts the firmware from the slot above it and can swap in a
 staged image (Updates, below; roadmap D79). One table,
 `bark-image/src/layout.rs`, gives every region; the build scripts of the
@@ -196,13 +227,13 @@ Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
 | Region | Start | Size | Why |
 |---|---|---|---|
 | MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
-| SoftDevice S140 6.1.1 | `0x01000` | 148 KiB | kept, never enabled; whether the bootloader starts the application without it is not known |
-| loader | `0x26000` | 16 KiB, 4 pages | where the bootloader jumps; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field |
-| loader state | `0x2A000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 354 of its 1024) |
-| firmware, running | `0x2B000` | 352 KiB, 88 pages | what is left once the loader, its state and the staging have theirs, halved: 2.1 times today's 167 KiB node image, 1.44 times the 250 kB the update note plans for once BLE and the application are in |
-| firmware, staged | `0x83000` | 356 KiB, 89 pages | one page larger than the running slot, which embassy-boot's swap needs |
-| staged image's record | `0xDC000` | 4 KiB | its header, and the loader's word that it matched it |
-| coded pieces | `0xDD000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.5 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
+| loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 394 of its 1024) |
+| firmware, running | `0x06000` | 392 KiB, 98 pages | what is left once the loader, its state, the staging and the mailbox have theirs, halved: 40 KiB more than the 351 368 B node image of 2026-11-05 |
+| firmware, staged | `0x68000` | 396 KiB, 99 pages | one page larger than the running slot, which embassy-boot's swap needs |
+| staged image's record | `0xCB000` | 4 KiB | its header, and the loader's word that it matched it; below `0xEA000`, where the bootloader's drive stops writing |
+| coded pieces | `0xCC000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
+| mailbox | `0xE2000` | 68 KiB, 17 pages | its state, then a ring of 16 pages, 256 items (`docs/app-layer-2026-11-05.md`, section 5); unused until the mailbox is built |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
@@ -239,9 +270,19 @@ cargo build --release && scripts/uf2.py --loader ../bark-loader/target/thumbv7em
 Both also write the loader state page and the record as erased, so a copy
 always boots the copied firmware, even over a swap asked for and not yet
 made. The firmware alone on a board without the loader does not start:
-the bootloader jumps to `0x26000`, which then holds an old image or nothing. `scripts/uf2.py
+the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevice or nothing. `scripts/uf2.py
 --check target/bark.uf2` validates a UF2 and prints its block count and
 address ranges.
+
+The image is the same wherever the repository is checked out. Source
+paths end up in it, a panic's location among them, and absolute ones
+would make its size depend on the checkout's path: a build from a path
+18 characters longer once took 168 B more flash. So Cargo runs rustc
+through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
+`.cargo/config.toml`, the loader's too), which maps the checkout's root
+to `/bark` and Cargo's home to `/cargo`; the build commands above need
+nothing more, here and in the workflows. A wrapper changed after a
+build does not rebuild by itself: `cargo clean` first.
 
 ## Flash
 
@@ -250,7 +291,14 @@ address ranges.
 2. Double-tap the top-left button, within about half a second (the
    bootloader waits 500 ms after a pin reset for the second one). The
    bootloader stays resident and a USB drive named `TECHOBOOT` appears. `INFO_UF2.TXT` on it reports the
-   bootloader and SoftDevice versions; expect bootloader 0.6.1, S140 6.1.1.
+   bootloader and SoftDevice versions: bootloader 0.6.1, and
+   `SoftDevice: not found` once the board has had the loader at `0x01000`
+   (S140 6.1.1 before that).
+   A board running this firmware takes the same step from the serial
+   port, without the button: `stty -F /dev/ttyACM0 1200` (its port by
+   ID is `/dev/serial/by-id/*bark*`) resets it into the bootloader with
+   its drive (`src/touch.rs`). Any other rate, the log's included, does
+   nothing.
 3. Copy the UF2 to it:
    ```
    cp target/bark.uf2 /media/$USER/TECHOBOOT/   # or /run/media/$USER/TECHOBOOT
@@ -266,6 +314,17 @@ address ranges.
 
 If the LED does not blink, double-tap reset again: the bootloader is intact
 and will accept another image.
+
+A board of the layout before 2026-11-06, with its loader at `0x26000` above
+the SoftDevice, takes `bark.uf2`, the UF2 built with `--loader`, once:
+enter its drive by a double tap or by the 1200-baud touch, which its
+firmware has as well, and copy it. The copy puts the loader at `0x01000`
+and erases the rest of the SoftDevice, and from then on the bootloader
+starts the loader there and reports `SoftDevice: not found`. `bark-fw.uf2`
+alone is not for such a board: it leaves the SoftDevice's magic number
+in place, so the bootloader still jumps to `0x26000`, where the new
+firmware's bytes now lie, and the board does not start; a double tap
+and `bark.uf2` put it right.
 
 ## Updates
 
@@ -290,10 +349,13 @@ as `scripts/uf2.py` lays them:
 
 The header is not signed yet: signatures come with the key policy, and
 the running firmware will check them before it stages, never the loader
-(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time (0
-without it), kept under its own symbol, from which `scripts/image.py`
+(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time,
+kept under its own symbol, from which `scripts/image.py`
 writes the header's; an image is staged only above the running one's
-version. The hash is computed with the `sha2` crate (0.10.9), the
+version. Without the variable the version is 0: a bench build, flashed
+by UF2, which any staged image replaces and which can itself never be
+staged over another, since `scripts/image.py` packs only a version
+above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
 swap.
 
@@ -313,18 +375,17 @@ swap.
    page once each copy is whole, so a power cut anywhere is taken up from
    the copy it stopped (embassy-boot's documentation of `prepare_boot`,
    "SWAPPING" and "REVERTING", read at version 0.7.0). A swap is two
-   copies of each of the 88 pages, an erase of 85 ms and 1024 word writes
-   of 41 µs each (nRF52840 Product Specification, NVMC), 22 s; a swap back
+   copies of each of the 98 pages, an erase of 85 ms and 1024 word writes
+   of 41 µs each (nRF52840 Product Specification, NVMC), 25 s; a swap back
    as long.
 4. On those boots it starts the watchdog first, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
-5. It write-protects `0x00000..0x2A000` (the MBR, the SoftDevice and
-   itself) and `0xF4000..0x100000` (the bootloader, its settings and the
+5. It write-protects `0x00000..0x05000` (the MBR and itself) and `0xF4000..0x100000` (the bootloader, its settings and the
    MBR's parameters) through two ACL regions, until the next reset
    (Product Specification, ACL).
-6. It jumps to the firmware at `0x2B000`.
+6. It jumps to the firmware at `0x06000`.
 
 **The firmware** confirms itself once its core is set up and its radio
 is up (`update::started`), and from then on feeds the watchdog twice a
@@ -364,34 +425,183 @@ would confirm, `hang` spins there with everything else stopped; and
 protection must stop with a bus fault (should it get through, the board's
 bootloader finds nothing to start and waits for a UF2, so the test costs
 at most a copy). Every image logs the two protected regions as the ACL
-reads them back, `update: acl 0 start=0x0 len=0x2a000 write=Disable`
+reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
 ## Display
 
-At boot every image writes one picture to the 1.54" e-paper
-(200 × 200, SSD1681 controller, `src/display.rs`): the board's node ID
-as twelve hex digits in two rows of six, 25 × 35 pixels each, the
-largest six fit across the panel, below them the image's name, `NODE`,
-`CONSOLE` or `SURVEY`, and its version as `V` and `BARK_IMAGE_VERSION`,
-a survey's with its channel as `CH`. The text
-comes from a 5 × 7 bitmap font of the hex digits and the few letters
-those words need, scaled by whole pixels. A board can then be told from
-another unplugged, and the hex matches the `id=` of its log and its USB
-serial number.
+The 1.54" e-paper (200 × 200, SSD1681 controller, `src/display.rs`)
+says what a person needs to tell boards apart and to see how a node is
+doing without a phone. The text comes from a 5 × 7 bitmap font of the
+digits, the capital letters and `%`, scaled by whole pixels.
 
-The panel has its own SPI (SPIM3, 4 MHz) and its refresh runs as its
-own future beside the radio's start, so it delays nothing: the picture
-is rendered in microseconds, the 5000-byte RAM write is DMA, and every
-wait on the controller's BUSY line is on an interrupt and bounded at
-6 s, three times the 2 s full refresh the board's label gives. A
-controller that does not answer logs `display: busy past 6 s at <step>;
-no picture` and the boot goes on without it. The sequence is the
-controller's: reset, software reset, the driver output, data entry,
-RAM window, border and temperature settings, the picture into both RAM
-planes, one full refresh, then deep sleep mode 1, which holds the
-picture on the glass and draws nothing until a hardware reset. The
-front light (P1.11) stays off.
+The console and survey images draw one picture at boot: the node ID as
+twelve hex digits, then the image's name, `CONSOLE` or `SURVEY`, and its
+version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
+`CH`.
+
+The node image draws its state, built from what its core says after
+each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
+the host. Sixteen characters to a line, every line from the left
+margin: a state as a word or two at the left, a quantity as its label
+at the left and its value flush right. Top to bottom:
+
+| line | says | from |
+|---|---|---|
+| the ID | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
+| image | `NODE V12` | `BARK_IMAGE_VERSION` |
+| role | `RELAY`, `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy and anchorless flags |
+| place | `FIXED`, `CARRIED` or `NO PLACE YET` | placed, carried |
+| `STARTING` | while the first rotation runs | booting |
+| `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
+| `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
+| `BOTH WAYS 2` | of them, those that have taken a message from it | the table's `taken_at` |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
+| `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
+| `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
+
+*Why three neighbour counts.* A heartbeat is one way: a node that hears
+a neighbour does not know the neighbour hears it. Only an answer to its
+own frame proves that, and the table keeps one sign of it, when the
+neighbour last took a hand-over of this node's. `STRONG` is a good
+guess, labelled as one: links on one channel are mostly symmetric, and
+a neighbour heard with margin will likely hear a frame at the same
+power. A refusal or an ACK that has seen the packet also prove the
+neighbour hears this node; the table keeps neither per neighbour. A
+bit for "answered" would cost no RAM, since it fits the padding of the
+104-byte entry (measured), and would count those two as well; it is
+left out while the display is its only reader, since on a quiet network
+neither comes before a take does.
+
+*Why the percentage is "about".* The node knows three open-circuit
+voltages of a typical cell: 20 %, 30 % and full (Maxim AN4189, the core's
+battery levels). It reads the charge off the straight line between them
+(`bark_proto::node::battery_percent`), which is close at the low end
+and a coarse guess between 30 % and full, where a cell's curve is not
+straight. At or below 20 % it says `LOW`: the curve falls steeply there,
+and a fixed relay turns sleepy.
+
+*Why the uptime.* A picture stays on the glass when the node stops,
+so a stale one would lie. The node redraws at least once an hour on
+battery and every ten minutes on USB; an uptime that has not moved
+after that long means the node is not running.
+
+*When it redraws.* At boot, once the node's loop has run (at most 5 s),
+then when a fact it shows changes, but not within 5 minutes of the
+last refresh on battery or a minute on USB, and at least once an hour on
+battery and every ten minutes on USB. The cost on battery: a full
+refresh holds BUSY high for 2 s (the board's label). The panel's
+current during a refresh is not in the repository's notes, nor its
+datasheet; taking 10 mA, an assumption to be replaced by a measurement
+with `scripts/measure.md`, a refresh is 20 mAs, 5.6 µAh,
+of the 850 mAh cell (spec "Hardware") one part in 150 000. At the
+5-minute floor, with something changing all the time, that is 0.067 mA
+on average, a tenth of a sleepy node's 0.65 mA
+(`docs/battery-role-2026-10-25.md`); with the hourly redraw alone,
+0.006 mA, under 1 %. So 5 minutes is the floor at which the display
+costs a sleepy node at most a tenth of its battery life, and the
+hourly redraw is the price of knowing the node runs. On USB the
+energy is the charger's; a minute keeps the picture current enough.
+Between refreshes the controller is in deep sleep, holding the picture
+and drawing nothing measurable; each refresh wakes it with a hardware
+reset.
+
+*Beside the radio.* The panel has its own SPI (SPIM1, 4 MHz; not
+SPIM3, whose transmitted data can be corrupted while the CPU or another
+EasyDMA master uses its buffer's RAM block, nRF52840 Errata anomaly
+198) and shares no pin with the radio. Its refreshes run as a task of
+their own beside the radio's loop, with the picture in a static: joined
+into the main task as a future, they grew that task's stack frame, the
+deepest, from 29 184 B to 42 752 B and a nested 8 000 B beside, past
+the 43 KiB left for the stack, and the first image hung at boot before
+USB came up (bench, 2026-11-05); "Tasks and the stack", below, has the
+rest. In its task the picture is drawn a line at a time,
+tens of microseconds each, the executor given back between lines; the
+5000-byte RAM writes are DMA; and every wait on the controller's BUSY
+line is on an interrupt, bounded at 6 s, three times the 2 s refresh.
+So a refresh during a hand-over holds the radio's loop for no more than
+one line's drawing, far inside the 3.6 ms the loop must be back by
+(D37); the bench checks it in `longest_away_us` across a refresh. The
+switched rail, which the panel shares with the radio, is raised by the
+radio first thing and held for as long as the firmware runs; the
+panel's pins stay driven between refreshes, RES# high, since a
+disconnected RES# could wake the controller.
+
+A controller that does not answer logs `display: busy past 6 s at
+<step>; no picture`; one that never raises BUSY within 100 ms of being
+asked to refresh did not take the commands and logs `display: the
+refresh never started; no picture`; the node goes on either way. The
+sequence is the controller's: hardware reset, software reset, the
+driver output, data entry, RAM window, border and temperature
+settings, the picture into both RAM planes, one full refresh, then deep
+sleep mode 1. The front light (P1.11) stays off.
+
+## Mailbox
+
+A node set as a person's home (spec "Mailbox"; Home on the phone link)
+keeps every message for its application in a ring in flash, the region
+`MAILBOX` (`bark-image/src/layout.rs`): a page of state, then 16 pages
+of 16 slots of 256 bytes, the oldest page erased when the ring is full
+(`bark_app_layer::flash_ring`, `src/mailbox.rs`). Its phone's Inbox reads
+from the ring, and a fetch from the person's phone elsewhere is answered
+with the items, sealed again, through the core's one application send
+slot, the phone's own message first (`src/node.rs`, `LinkApp::take`).
+
+The mailbox runs in microseconds and never waits on the flash: its
+writes and erases are queued and done by a task of their own through
+the MPSL's flash timeslots, the flash shared with the store, each op a
+timeslot (an erase 85 ms, a slot 2.6 ms). A message the core delivered
+is confirmed to the core only once its slot is written, so that a
+reboot meanwhile loses none: the core keeps it and delivers it again. A
+cut write leaves a slot that fails its check, and a cut state record
+the one before it, as the store's does; the host tests cut every write
+of a run at every eighth byte (`bark-app-layer`, `flash_ring` tests).
+While the node is nobody's home nothing changes: its inbox is the
+core's, read and confirmed by the phone as before.
+
+The cost (release, with a place, against `a3d9fbe`): 15 688 B of flash,
+374 012 B of the 401 408 B slot; 2 880 B of static RAM, the mailbox
+with its queue of eight ops; the flash task's deepest chain 1 064 B, the
+others unchanged within 1.2 KB, the radio's 9 392 B now the deepest,
+and the main task's 6 344 B at boot, where it opens the ring.
+
+## Tasks and the stack
+
+In the node image every long-lived part of the firmware is an embassy
+task of its own, spawned by the main task, which sets up the chip, the
+board, USB and the log, spawns, and ends: the USB device, the log, the
+bootloader touch, the watchdog, the LED and crystal, the MPSL, the
+phone link, the radio and the core on it, the store, the mailbox's
+flash writes, the GPS and the screen. A task's future lies in its own static storage, and the
+executor polls one task at a time, so the stack needs only the deepest
+task's poll and the interrupts above it, not the sum of everything
+joined into one future. Futures stay what a task waits on for a while,
+a read raced against a timer. The console keeps its one-shot structure,
+its radio, LED and picture joined in the main task, which holds no
+relay; its USB device, log, touch and watchdog are tasks as in the node.
+
+Measured with `llvm-objdump` (the release image with a place): the
+largest single frames, and the deepest chain of calls the disassembly
+shows from each task's poll, an upper bound since calls through
+pointers are not followed.
+
+| | before (`5248d65`) | after |
+|---|---|---|
+| main task's frame | 29 312 B | 1 372 B |
+| main task's deepest chain | 38 840 B | 2 476 B |
+| phone link's deepest chain | in the main task's | 10 352 B (its own frame 8 384 B) |
+| radio and core's deepest chain | in the main task's | 9 344 B (its own frame 2 224 B) |
+| screen, GPS, store | 880, 760, 516 B | 880, 760, 516 B |
+| any other task | in the main task's | under 400 B |
+
+The main task's 29 KB frame was mostly the relay's set-up at boot: the
+neighbour table, the heard table, the delivery queue and the inbox,
+each built and assigned, passed through it, 32 KB together; they are
+now emptied in place (`Relay::reset`, `docs/core-interface.md` §6). So
+the stack's high-water mark should fall from the 37.0 KB painted
+(`stack_used`) to about 11 KB, the phone link's chain and the executor's
+200 B, with the interrupts' frames above it, of the 41.7 KB the stack
+has.
 
 ## Radio power
 
@@ -406,8 +616,8 @@ for BUSY low, which the chip raises from reset until it is ready (DS §9.1;
 
 `PWR_ON` is needed on battery: the rail is up when
 `PWR_EN AND (PWR_ON OR VBUS)`. The rail also feeds the GPS, which is
-therefore powered (and drawing current) though this firmware does not talk
-to it.
+therefore powered whenever the radio is; its WAKEUP line (P1.02) keeps it
+in standby when the core does not want it (`src/gps.rs`).
 
 ## Console
 
@@ -645,10 +855,9 @@ keep the board awake stop while it is on battery, and start again on USB:
 
 What stays, and is not this firmware's to fix without a board:
 
-- The GPS. It is on the switched rail with the radio (Radio power) and
-  draws its own current, likely more than everything else together; its
-  standby pin (P1.02, `board.rs`) has an unverified polarity. Measure
-  the board with it as it is first, then decide.
+- The GPS's standby: 20 µA with WAKEUP low (L76K Hardware Design,
+  Table 2), if the pin's polarity is as taken (`src/gps.rs`); its cost
+  per day in each state is in `docs/gps-time-2026-11-05.md`.
 - The battery divider, about 12 µA all the time (`board.rs`, Battery).
 - The nRF52840's regulator runs as an LDO (embassy's default); the DC-DC
   needs an inductor the T-Echo may or may not have.

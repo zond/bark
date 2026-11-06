@@ -35,10 +35,11 @@ fn sizes() {
     std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
     assert!(relay <= tables + 1024 + kept, "{relay}");
     // It fits the board's RAM: 255 KiB for the application
-    // (bark-image/src/layout.rs), less the BLE controller's buffer, under 5 KiB
-    // (docs/implementation-research-2026-10-14.md), and Embassy and the
-    // stacks, about 16 KiB (spec "Implementation notes").
-    let ram = (255 - 5 - 16) * 1024;
+    // (bark-image/src/layout.rs), less the firmware's other static memory,
+    // the BLE stack, Embassy and the USB log, 29 896 B as measured
+    // (docs/phone-link-2026-11-05.md, "Does it fit"), and the call
+    // stack, estimated at 16 KiB (spec "Implementation notes").
+    let ram = 255 * 1024 - 29_896 - 16 * 1024;
     assert!(relay <= ram, "{relay} of {ram}");
     // A node built only to be sleepy spends nothing on the heard table
     // and the delivery queue (spec "Sleepy nodes").
@@ -1063,6 +1064,212 @@ fn waiting_entries_keep_arrival_order_through_bans() {
         assert!(w[1].0.since(w[0].0) >= BAN, "offered within the ban");
     }
     assert!(r.queue.is_empty());
+}
+
+/// A message that has waited for a ban goes ahead of those that have
+/// not, the most travelled first, for as long as it is queued (spec
+/// "Overload waits"). A, far travelled, waits for D's ban behind K and M,
+/// which go to E; when D's ban ends A goes ahead of M, D refuses it, and
+/// A goes round D to E, still ahead of M, which has waited for nothing.
+#[test]
+fn a_message_that_waited_keeps_its_turn() {
+    use crate::ids::MsgId;
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::{Ack, Data};
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    // D is A's best way north; E, north-east, its second, and the only
+    // way east.
+    let d_pos = Position {
+        lat: me.lat + 10_000,
+        ..me
+    };
+    let e_pos = Position {
+        lat: me.lat + 4_000,
+        lon: me.lon + 4_000,
+    };
+    for (p, home) in [(d_pos, 5), (e_pos, 7)] {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(p),
+            short: p.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let (d, e) = (id_of(d_pos), id_of(e_pos));
+    let north = Position {
+        lat: me.lat + 100_000,
+        ..me
+    };
+    let east = Position {
+        lon: me.lon + 100_000,
+        ..me
+    };
+    // K, M and A, queued in this order.
+    let home = r.home;
+    let mut ids = Vec::new();
+    for (tag, dst_pos, hops) in [(0u8, east, 1u8), (1, east, 2), (2, north, 9)] {
+        let payload = [tag];
+        let data = Data {
+            sender_home: home,
+            dst_hop: name(0),
+            src_hop: r.me(),
+            dst_pos,
+            dst_id: NOBODY,
+            hops,
+            payload: &payload,
+        };
+        let parent = Some((name(7), Channel::new(6).unwrap()));
+        let at = r.record_place().unwrap();
+        r.records
+            .put(at, Record::new(data.msg_id(), parent, 1, now));
+        let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        ids.push(data.msg_id());
+    }
+    // D's ban ends while K is handed over.
+    r.neighbours.refused(d, now + Duration::from_millis(1));
+    let answer = |r: &mut Relay, now: Instant, p: &Packet<'_>| {
+        let f = mac::frame(p, home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let mut pending = Vec::new();
+        r.handle(event, now, &mut |a| pending.push(a));
+        pending
+    };
+    // D refuses everything, E takes everything.
+    let mut offers: Vec<(NodeId, MsgId)> = Vec::new();
+    let until = now + Duration::from_secs(20);
+    let mut pending: Vec<Action> = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+    loop {
+        let event = match pending.pop() {
+            Some(Action::Lbt(channel)) => Event::LbtDone {
+                channel,
+                busy: false,
+                dbm: -130,
+            },
+            Some(Action::Rssi(channel)) => Event::RssiSample { channel, dbm: -130 },
+            Some(Action::Transmit(f)) => {
+                now += mac::airtime(&f);
+                r.handle(Event::TxDone, now, &mut |a| pending.push(a));
+                if let Ok(Packet::Data(data)) = Packet::decode(f.payload()) {
+                    let id = data.msg_id();
+                    offers.push((data.dst_hop, id));
+                    now += Duration::from_millis(5);
+                    let from = data.dst_hop;
+                    let reply = Packet::Ack(Ack {
+                        msg_id: id,
+                        from,
+                        to: r.me(),
+                        refused: from == d,
+                        wait: 8,
+                        seen: false,
+                    });
+                    pending.extend(answer(&mut r, now, &reply));
+                }
+                continue;
+            }
+            Some(_) => continue,
+            None => match r.next_wakeup() {
+                Some(t) if t <= until => {
+                    now = now.max(t);
+                    Event::Wakeup
+                }
+                _ => break,
+            },
+        };
+        r.handle(event, now, &mut |a| pending.push(a));
+    }
+    let [k, m, a] = [ids[0], ids[1], ids[2]];
+    assert_eq!(offers, [(e, k), (d, a), (e, a), (e, m)]);
+    assert!(r.queue.is_empty());
+}
+
+/// The mark that a message waited for a ban outlasts its offer (spec
+/// "Overload waits").
+#[test]
+fn the_offer_keeps_the_mark() {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let d_pos = Position {
+        lat: me.lat + 10_000,
+        ..me
+    };
+    let hb = Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home: Channel::new(5).unwrap(),
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id: id_of(d_pos),
+        short: d_pos.short(),
+    };
+    hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    let home = r.home;
+    let payload = [0];
+    let data = Data {
+        sender_home: home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: Position {
+            lat: me.lat + 100_000,
+            ..me
+        },
+        dst_id: NOBODY,
+        hops: 9,
+        payload: &payload,
+    };
+    let at = r.record_place().unwrap();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    r.records
+        .put(at, Record::new(data.msg_id(), parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.neighbours
+        .refused(id_of(d_pos), now + Duration::from_millis(1));
+    r.handle(Event::Wakeup, now, &mut |_| {});
+    assert!(r.queue.get(0).unwrap().waited, "it waits for D's ban");
+    now = r.next_wakeup().unwrap();
+    r.handle(Event::Wakeup, now, &mut |_| {});
+    assert!(r.queue.current().is_some(), "its hand-over has started");
+    assert!(r.queue.get(0).unwrap().waited);
 }
 
 /// Two relays offer one message to the same neighbour D at once, as a
@@ -2634,4 +2841,234 @@ fn the_addressed_node_goes_first() {
         let (to, drops) = settle(&mut r, &mut now, a);
         assert_eq!((to, drops), (Some(d), std::vec![]), "{carried}");
     }
+}
+
+/// A relay with neighbours at `lats` north of it, each that far nearer
+/// a far destination, whose application's message has gone out to the
+/// nearest and been refused by it, told a wait of `bans` bans. The
+/// relay, the time of the refusal and the frames sent after it.
+fn own_refused(lats: &[i32], bans: u8) -> (Relay, Instant, Vec<(Instant, Frame)>) {
+    use crate::wire::Ack;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let at = |k: i32| Position {
+        lat: me.lat + k,
+        ..me
+    };
+    for (i, &k) in lats.iter().enumerate() {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5 + i as u8).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(at(k)),
+            short: at(k).short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let payload = [7u8; 20];
+    let send = AppCommand::Send {
+        dst_pos: at(100_000),
+        dst_id: NOBODY,
+        payload: &payload,
+    };
+    assert!(r.accepts_send(now));
+    let mut pending = Vec::new();
+    r.handle(Event::App(send), now, &mut |a| pending.push(a));
+    let sent = until_sent(&mut r, &mut now, pending);
+    let nearest = id_of(at(*lats.iter().max().unwrap()));
+    assert_eq!(data_to(&sent), [(nearest, 1)], "the nearest first");
+    let id = sent
+        .iter()
+        .find_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) => Some(d.msg_id()),
+            _ => None,
+        })
+        .unwrap();
+    now += Duration::from_millis(5);
+    let refusal = Ack {
+        msg_id: id,
+        from: nearest,
+        to: r.me(),
+        refused: true,
+        wait: bans,
+        seen: false,
+    };
+    let refused_at = now;
+    let mut sent = hear(&mut r, &mut now, &Packet::Ack(refusal));
+    if data_to(&sent).is_empty() {
+        sent = until_sent(&mut r, &mut now, Vec::new());
+    }
+    (r, refused_at, sent)
+}
+
+/// The time of the first DATA in `sent`.
+fn first_data(sent: &[(Instant, Frame)]) -> Instant {
+    sent.iter()
+        .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))))
+        .unwrap()
+        .0
+}
+
+/// The application's message, refused, goes round the refuser to the
+/// next neighbour at once, as a forward does (spec "Bans").
+#[test]
+fn the_application_s_refused_message_goes_round_the_refuser() {
+    let (lats, bans) = ([10_000, 5_000], 8);
+    let (r, refused_at, sent) = own_refused(&lats, bans);
+    let e = Position {
+        lat: r.config.position.lat + 5_000,
+        ..r.config.position
+    };
+    assert_eq!(data_to(&sent), [(id_of(e), 1)], "E");
+    assert!(first_data(&sent) < refused_at + BAN, "at once");
+}
+
+/// With no other neighbour the application's refused message waits for
+/// the refuser, on its hold (spec "Bans").
+#[test]
+fn the_application_s_refused_message_alone_waits_for_the_refuser() {
+    use crate::tables::budget::told;
+    let bans = 4;
+    let (r, refused_at, sent) = own_refused(&[10_000], bans);
+    let d = Position {
+        lat: r.config.position.lat + 10_000,
+        ..r.config.position
+    };
+    assert_eq!(data_to(&sent), [(id_of(d), 1)], "D again");
+    assert!(first_data(&sent) >= refused_at + told(bans));
+}
+
+/// The inbox follows the delivery queue's rule (spec "Delivery queue",
+/// "Receiving DATA"): a message for this node's application waits until
+/// the application confirms it, the oldest first; a full inbox of fresh
+/// messages refuses the next with a wait, and once the oldest is stale a
+/// newer message takes its place.
+#[test]
+fn the_inbox_keeps_messages_by_the_delivery_queue_s_rule() {
+    use crate::event::{AppEvent, DropReason};
+    use crate::tables::delivery::INBOX;
+    use crate::wire::Data;
+    let (mut r, mut now, _) = with_every_neighbour_banned();
+    let me = r.me();
+    let at = r.config.position;
+    // Offer a message for this node's application; whether it was taken
+    // and, refused, why.
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8| {
+        let payload = [tag; 8];
+        let d = Data {
+            sender_home: Channel::new(5).unwrap(),
+            dst_hop: me,
+            src_hop: name(1),
+            dst_pos: at,
+            dst_id: me,
+            hops: 1,
+            payload: &payload,
+        };
+        let f = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: &f.bytes[..f.len as usize],
+        };
+        let (mut refused, mut arrived) = (None, false);
+        let mut pending = Vec::new();
+        r.handle(event, *now, &mut |a| match a {
+            Action::Trace(Trace::Refused { reason, .. }) => refused = Some(reason),
+            Action::App(AppEvent::Message { msg_id }) if msg_id == d.msg_id() => arrived = true,
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
+            _ => {}
+        });
+        let until = *now + Duration::from_millis(100);
+        let mut taken = arrived;
+        let start = *now;
+        drive_all(r, now, until, pending, &mut |_, a| {
+            taken |= matches!(a, Action::App(AppEvent::Message { msg_id }) if msg_id == d.msg_id());
+        });
+        *now = (*now).max(start + Duration::from_secs(2));
+        (d.msg_id(), taken, refused)
+    };
+    let mut ids = Vec::new();
+    for tag in 0..INBOX as u8 {
+        let (id, taken, refused) = offer(&mut r, &mut now, tag);
+        assert!(taken && refused.is_none(), "message {tag}");
+        ids.push(id);
+    }
+    assert_eq!(r.inbox_len(), INBOX);
+    let (_, taken, refused) = offer(&mut r, &mut now, 100);
+    assert!(!taken);
+    assert_eq!(refused, Some(DropReason::DeliveryFull));
+    // Only the oldest is confirmed.
+    assert!(!r.confirm(ids[1]));
+    assert_eq!(r.inbox().map(|(id, p)| (id, p[0])), Some((ids[0], 0)));
+    assert!(r.confirm(ids[0]));
+    let (_, taken, _) = offer(&mut r, &mut now, 101);
+    assert!(taken, "a confirmed message makes room");
+    // Once the oldest is stale, a newer message takes its place.
+    now += r.config.delivery_ttl;
+    let (_, taken, refused) = offer(&mut r, &mut now, 102);
+    assert!(taken && refused.is_none());
+    assert_eq!(r.inbox_len(), INBOX);
+    assert_eq!(r.inbox().map(|(id, _)| id), Some(ids[2]));
+}
+
+/// The counts a person sees: every live neighbour heard, those with
+/// margin as strong, and as both ways only one that has taken a message.
+#[test]
+fn neighbour_counts_tell_heard_strong_and_proven() {
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let margin = Neighbours::margin_dbm(r.radio.busy.noise_floor_dbm());
+    let mut ids = Vec::new();
+    for (k, rssi) in [
+        (1, margin as i16 + 10),
+        (2, margin as i16 + 10),
+        (3, margin as i16 - 10),
+    ] {
+        let at = Position {
+            lat: me.lat + 5_000 * k,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(at),
+            short: at.short(),
+        };
+        r.neighbours.heard(&hb, at, rssi, &r.plane, now);
+        ids.push(hb.id);
+    }
+    let counts = r.neighbour_counts(now);
+    assert_eq!((counts.heard, counts.strong, counts.both_ways), (3, 2, 0));
+    r.neighbours.took(ids[2], now, now + Duration::from_secs(1));
+    let counts = r.neighbour_counts(now);
+    assert_eq!((counts.heard, counts.strong, counts.both_ways), (3, 2, 1));
 }

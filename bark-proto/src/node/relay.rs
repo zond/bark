@@ -63,7 +63,7 @@ use crate::store::Stored;
 use crate::tables::budget::Budget;
 use crate::tables::busy::BusyEstimator;
 use crate::tables::delivered::Delivered;
-use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE};
+use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE, INBOX};
 use crate::tables::heard::{Heard, HEARD};
 use crate::tables::neighbours::{Neighbour, NeighbourParams, Neighbours};
 use crate::tables::records::Records;
@@ -348,6 +348,20 @@ pub struct Load {
 /// design's sizes (spec "Heard table", "Delivery queue").
 pub type Relay = Node<HEARD, DELIVERY_QUEUE>;
 
+/// A node's live neighbours by what it knows of each
+/// ([`Node::neighbour_counts`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NeighbourCounts {
+    /// Whose heartbeats it hears.
+    pub heard: u8,
+    /// Of them, heard with margin: a full frame reaches this node through
+    /// a fade, so one from it likely reaches them; not proven.
+    pub strong: u8,
+    /// Of them, those that have taken a message from it since it first
+    /// heard them: proven to hear it.
+    pub both_ways: u8,
+}
+
 /// A node built only to be sleepy: no heard table and no delivery queue,
 /// which a sleepy node does not keep (spec "Sleepy nodes"), so that a
 /// driver of a node that never switches to a relay does not spend their
@@ -393,6 +407,9 @@ pub struct Node<const H: usize, const Q: usize> {
     /// The sleepy nodes heard, for delivery.
     heard: Heard<H>,
     delivery: DeliveryQueue<Q>,
+    /// The messages for its own application, until the application
+    /// confirms each (spec "Receiving DATA", "Phone link").
+    inbox: DeliveryQueue<INBOX>,
     neighbours: Neighbours,
     queue: SendQueue,
     records: Records,
@@ -437,6 +454,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
+            inbox: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             own: OwnMessage::NONE,
             config,
@@ -473,7 +491,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .unwrap_or_else(|| random_channel(&mut rng));
         let rotation = random_channel(&mut rng);
         // Every field by name, so that a new one cannot be left out. The
-        // large tables are emptied where they lie.
+        // large tables are emptied where they lie: built and assigned,
+        // each would pass through the stack, and together they made the
+        // deepest frame the firmware had (`bark-fw/README.md`).
         let Node {
             config: c,
             timers,
@@ -494,6 +514,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             motion,
             gps,
             delivery,
+            inbox,
             delivered,
             own,
         } = self;
@@ -509,14 +530,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Channel::all().next().expect("the plan has channels"),
             rotation,
         );
-        *neighbours = Neighbours::new(NeighbourParams::from_config(&config));
+        neighbours.reset(NeighbourParams::from_config(&config));
         records.clear();
         queue.clear();
         *forwarding = Forwarding::IDLE;
-        *heard = Heard::from_config(&config);
+        heard.reset(&config);
         *motion = Motion::at_boot(&config);
         *gps = gps::Gps::DEFAULT;
-        *delivery = DeliveryQueue::from_config(&config);
+        delivery.reset(&config);
+        inbox.reset(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
         *timers = Timers::UNSET;
@@ -586,6 +608,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// has no window (spec "Sleepy nodes alone").
     pub fn anchorless(&self) -> bool {
         self.sleep().is_some_and(|s| s.anchor.is_none()) && self.stage == Stage::Running
+    }
+
+    /// Whether its position is a map point a person set in the app (spec
+    /// "Position").
+    pub fn on_map_point(&self) -> bool {
+        self.motion.map_point
     }
 
     /// The preamble the frames this node forwards are counted with before
@@ -1052,6 +1080,31 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         }
         self.sniff(now, emit);
         self.keep(emit);
+    }
+
+    fn inbox(&self) -> Option<(MsgId, &[u8])> {
+        self.inbox.iter().next().map(|q| (q.msg_id, q.payload()))
+    }
+
+    fn inbox_len(&self) -> usize {
+        self.inbox.len()
+    }
+
+    fn confirm(&mut self, msg_id: MsgId) -> bool {
+        if self.inbox.iter().next().is_some_and(|q| q.msg_id == msg_id) {
+            self.inbox.remove(msg_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn gps_tracks(&self) -> bool {
+        Node::gps_tracks(self)
+    }
+
+    fn fix_in_reach(&self, position: Position) -> bool {
+        Node::fix_in_reach(self, position)
     }
 
     fn next_wakeup(&self) -> Option<Instant> {

@@ -1315,6 +1315,12 @@ pub struct Pressure {
     /// by their wait here for their way on, at the edges of
     /// [`Pressure::WAIT_EDGES`]: `[taken by the gate, refused]`.
     pub way_waits: [[u64; 12]; 2],
+    /// Refusals of a relay origin's own message before its first hop
+    /// took it, at the origin (spec "Bans").
+    pub own_refused: u64,
+    /// Of them, followed by the origin's next hand-over of the message
+    /// ending at another neighbour than the refuser.
+    pub own_round: u64,
 }
 
 impl Pressure {

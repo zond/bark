@@ -379,6 +379,14 @@ impl Neighbours {
         }
     }
 
+    /// What [`Neighbours::new`] builds, made where the table lies, with
+    /// no copy of it on the stack.
+    pub fn reset(&mut self, params: NeighbourParams) {
+        self.slots.fill(None);
+        self.params = params;
+        self.pinned = None;
+    }
+
     /// The parameters.
     pub fn params(&self) -> &NeighbourParams {
         &self.params

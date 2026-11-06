@@ -114,11 +114,12 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 ## 4. Application
 
 Every node has the same application interface: the readiness query
-`accepts_send`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
+`accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
 `AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
-`Action::Store` and `Config::stored`, and the GPS request `Action::Locate`.
+`Action::Store` and `Config::stored`, and the GPS: the request `Action::Locate` and
+the queries `gps_tracks` and `fix_in_reach`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -152,9 +153,12 @@ panic or never offer it.
 `AppCommand::SetPosition` sets own position from a map point set in the app, which wins
 over GPS: the node takes it and is fixed (spec "Position"). `AppCommand::ClearMapPoint`
 clears it: the node stays where it is and its next accepted fix is its place (roadmap
-D84). `AppCommand::Fix` hands the core a GPS fix that passed the driver's plausibility
-checks; the driver hands each one, and none while a map point is set, and the core takes
-none then. A node decides from the fixes whether it is carried; a carried node, or a
+D84). `AppCommand::Fix` hands the core a GPS fix that passed the checks of spec
+"Position": the satellites' C/N0, which the driver makes from what the receiver reports,
+and the distance to the relays the node knows, which it asks of the core with
+`fix_in_reach(position)`: within the hearing radius, 3 km (`gps::HEARING_RADIUS_M`), of
+one of them, or any fix while the node knows none or has no place. The driver hands each
+fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node, or a
 sleepy one without an anchor, takes each fix, a fixed relay keeps its position, and a
 sleepy node with an anchor takes none and keeps the flag it had: its position is its
 anchor's, which it beats and rebuilds the short positions it hears near, and
@@ -174,7 +178,7 @@ anchor, and ends the search under way when it takes one (spec "Beats", roadmap D
 a resting relay asks at boot and at its radio's sign of motion (spec "Position", roadmap
 D82).
 
-`Node::gps_tracks` says whether the GPS is to run all the time now: a relay's on external
+`gps_tracks()` says whether the GPS is to run all the time now: a relay's on external
 power, for its grace on battery, while it follows a far fix and while it is carried, never
 with a map point; a sleepy node's never. The driver reads it after every `handle` call, as
 it reads `next_wakeup`, runs the receiver while it holds and keeps it in standby when it
@@ -197,8 +201,18 @@ battery turned sleepy relays again at the high level. A driver whose board reads
 battery builds the core with `Config::battery` `None`, and the core then turns every relay
 sleepy at its grace's end, since a fixed one would otherwise relay until it browns out.
 
-`AppEvent::Message` delivers a payload to this node's application.
-The core never inspects a payload (spec "Phone link": the app owns identity and encryption).
+A message for this node's application waits in its inbox, oldest first, until the
+application confirms it (spec "Phone link"; roadmap D122). The core announces each with
+`AppEvent::Message` and its ID; `inbox()` gives the oldest's ID and payload, `inbox_len()`
+how many wait, and `confirm(msg_id)` forgets the oldest if it is `msg_id`, and answers
+whether it was. The driver reads them between `handle` calls; confirming needs no
+`handle` call and changes nothing else. A full inbox follows the delivery queue's rule
+(spec "Delivery queue"): a stale message makes way, and while every one is fresh a
+message for the application is refused with a wait, so the simulator's driver and the
+tests', which confirm each message at once, never fill it. The firmware's driver takes
+the application's confirmations, and its map point set and clear, as
+`bark_driver::Request`s when the application is ready. The core never inspects a
+payload (spec "Phone link": the app owns identity and encryption).
 
 `AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
 (spec "Channel at boot", "Phone link"): at boot, with no relay known and when the rotation
@@ -231,8 +245,9 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Seed | per-run seed → per-node stream | nRF RNG at boot |
 | Power (§4), after the boot wakeup and at each change | the power the placement gives a node, or `[power]`'s process (`bark-sim/src/power.rs`) | VBUS detection: `USBREGSTATUS.VBUSDETECT`, read again at each POWER interrupt (`bark-fw/src/power.rs`) |
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
-| GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `Node::gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds (`bark-sim/src/gps.rs`) | none yet: the L76K driver is a Phase 2 item, `bark-driver` logs the request |
-| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE` (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
+| GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
+| Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
+| Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 
 ## 6. Memory
 
@@ -246,9 +261,10 @@ test in `tables/mod.rs`:
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
 | Send queue (spec "Send queue") | (39 + 254) × 304 B | 87.0 KiB |
+| Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **176.2 KiB** |
+| **All** | | **182.2 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -256,23 +272,25 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-181 520 B (177.3 KiB): the tables and, in under 1 KiB around them, the
+187 608 B (183.2 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 162 504 B (158.7 KiB), without the heard table and the delivery
+`SleepyNode` is 168 592 B (164.6 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`); the BLE controller takes under 5 KiB
-(`implementation-research-2026-10-14.md`) and Embassy and the stacks about 16 KiB
-(spec "Implementation notes"), which leaves 234 KiB, 57 KiB more than a node needs. Checked by the tests in
-`tables/mod.rs` and `node/relay/tests.rs`.
+(`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
+relay, Embassy, the USB log and the phone link with its BLE stack, is 217 504 B
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which leaves 43 616 B, 42.6 KiB, for
+the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target building one took 174 KiB of stack in the
 firmware's release build, more than the 88 KiB left beside a
 relay in static memory. So `Relay::reset(config, seed)` sets up a relay in place, as
-`Relay::new` would have, whatever it held before. A driver can keep the relay in a static
+`Relay::new` would have, whatever it held before; it empties its large tables where they
+lie, since a table built and assigned passes through the stack, and the four largest
+together made a 28 KiB frame in the firmware's boot. A driver can keep the relay in a static
 holding `Relay::UNSET`, a relay with empty tables built at compile time, or holding zero
 bytes, which are a valid relay. The firmware does the second: a static of zero bytes is in
 `.bss`, which takes no flash, where `Relay::UNSET`, whose empty tables are not all zeros,
@@ -281,7 +299,7 @@ would put the whole relay in flash, to be copied to RAM at boot. A constant in
 and a test in `bark-driver` checks that a relay reset in zeroed memory runs as a new one.
 The simulator, on the host, uses `Relay::new`.
 
-`Action::Transmit` and `AppEvent::Message` carry a 255-byte frame by value: drivers hold one
+`Action::Transmit` carries a 255-byte frame by value: drivers hold one
 action at a time, and the core never allocates.
 
 ## 7. Wire-format choices made here

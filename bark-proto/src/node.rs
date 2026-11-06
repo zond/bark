@@ -8,7 +8,7 @@
 //! `node/transfer.rs`.
 
 use crate::event::{Action, Event, MAX_FRAME};
-use crate::ids::NodeId;
+use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, CHANNELS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
@@ -20,7 +20,7 @@ mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{Anchor, Load, Node, Relay, SleepyNode};
+pub use relay::{Anchor, Load, NeighbourCounts, Node, Relay, SleepyNode};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).
@@ -161,6 +161,35 @@ impl BatteryLevels {
 /// rest (Maxim AN4189, Table 1): what a calibrated reading of a cell that
 /// has finished charging and rested is (spec "Sleepy nodes").
 pub const BATTERY_FULL_MV: u16 = 4177;
+
+/// About how much of a cell's charge is left at `mv`, a calibrated reading
+/// in millivolts, in percent; `None` at or below 20 %, the low level, where
+/// the curve falls steeply and the node turns sleepy. Between the three
+/// open-circuit voltages known here, 20 %, 30 % and full
+/// ([`BatteryLevels::DESIGN`], [`BATTERY_FULL_MV`]), it is read off the
+/// straight line between them: a coarse guess between 30 % and full,
+/// where a cell's curve is not straight, for a person to see roughly what
+/// is left, and used by no rule.
+pub fn battery_percent(mv: u16) -> Option<u8> {
+    let BatteryLevels { low_mv, high_mv } = BatteryLevels::DESIGN;
+    if mv <= low_mv {
+        return None;
+    }
+    let between = |mv: u16, (lo_mv, lo): (u16, u32), (hi_mv, hi): (u16, u32)| {
+        let span = u32::from(hi_mv - lo_mv);
+        lo + (u32::from(mv - lo_mv) * (hi - lo) + span / 2) / span
+    };
+    let percent = if mv < high_mv {
+        between(mv, (low_mv, 20), (high_mv, 30))
+    } else {
+        between(
+            mv.min(BATTERY_FULL_MV),
+            (high_mv, 30),
+            (BATTERY_FULL_MV, 100),
+        )
+    };
+    Some(percent as u8)
+}
 
 /// How long on external power a cell is full: the charger's 500 mA
 /// (LILYGO T-Echo, "Electrical Parameters") brings an empty 850 mAh cell
@@ -341,6 +370,28 @@ pub trait Core {
     /// `Send` offered while this is false is a driver bug, and the core
     /// ignores it (`docs/core-interface.md` §4).
     fn accepts_send(&self, now: Instant) -> bool;
+
+    /// The oldest message in the inbox, the messages for this node's
+    /// application that it has not confirmed yet: its ID and payload
+    /// (`docs/core-interface.md` §4). The driver reads it after an
+    /// `AppEvent::Message` and whenever its application asks.
+    fn inbox(&self) -> Option<(MsgId, &[u8])>;
+
+    /// Messages in the inbox.
+    fn inbox_len(&self) -> usize;
+
+    /// The application has the oldest message, `msg_id`, and the node may
+    /// forget it. Another ID changes nothing, and the answer is false.
+    fn confirm(&mut self, msg_id: MsgId) -> bool;
+
+    /// Whether the GPS is to run all the time now; the driver re-reads it
+    /// after each call (`docs/core-interface.md` §4).
+    fn gps_tracks(&self) -> bool;
+
+    /// Whether a fix at `position` passes the check against the relays
+    /// the node knows; the driver hands only such a fix
+    /// (`docs/core-interface.md` §4).
+    fn fix_in_reach(&self, position: Position) -> bool;
 }
 
 /// SplitMix64: 64 bits of state, full-period, every bit of output usable.
@@ -372,5 +423,21 @@ impl Rng {
     /// A duration uniform in `[lo, hi]`; `lo` if `hi < lo`.
     pub fn duration(&mut self, lo: Duration, hi: Duration) -> Duration {
         Duration::from_micros(self.range(lo.as_micros(), hi.as_micros().max(lo.as_micros())))
+    }
+}
+
+#[cfg(test)]
+mod battery_percent_tests {
+    use super::*;
+
+    #[test]
+    fn the_known_points_and_between() {
+        assert_eq!(battery_percent(3741), None);
+        assert_eq!(battery_percent(3742), Some(20));
+        assert_eq!(battery_percent(3775), Some(30));
+        assert_eq!(battery_percent(4177), Some(100));
+        assert_eq!(battery_percent(4300), Some(100));
+        assert_eq!(battery_percent(3758), Some(25));
+        assert_eq!(battery_percent(3976), Some(65));
     }
 }

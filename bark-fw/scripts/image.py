@@ -59,6 +59,9 @@ def pack(elf: bytes) -> tuple[bytes, int]:
     if at is None or not start <= at < start + len(image) - 4:
         sys.exit("the ELF has no BARK_IMAGE_VERSION in its image")
     (version,) = struct.unpack_from("<I", image, at - start)
+    if version == 0:
+        # Staged only above the running version, 0 never is.
+        sys.exit("the ELF was built without BARK_IMAGE_VERSION: version 0 cannot be staged")
     return header(version, image) + image, version
 
 

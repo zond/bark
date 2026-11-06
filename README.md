@@ -56,9 +56,19 @@ bark-proto/   no_std protocol core: packet codecs, tables, routing, MAC state
 bark-driver/  no_std loop that drives the core against a radio and a clock;
               the firmware runs it on the board, its tests on the host
               against a fake radio.
+bark-link/    no_std: the values of the phone link's BLE service, shared by
+              the firmware and the tests (protocol.md, "Phone link").
+bark-screen/  no_std: what a node's e-paper shows, the picture built from
+              its state; tested on the host (bark-fw/README.md, Display).
+bark-app-layer/
+              no_std: what the app puts in a payload, its keys, forms,
+              records and card, and the home node's mailbox; its
+              vectors.json is what the app's tests check (protocol.md,
+              "Phone link", "Mailbox").
 bark-sim/     discrete-event simulator and scenario runner (std, host).
 bark-fw/      T-Echo firmware: embassy-nrf and a vendored lora-phy around
-              bark-driver and bark-proto; BLE (TrouBLE) is still to come.
+              bark-driver and bark-proto, and the phone link's BLE stack
+              (TrouBLE over Nordic's controller).
               Its own Cargo workspace, cross-compiled.
 bark-loader/  the loader the board's bootloader starts: swaps in a staged
               firmware image and swaps it back if it does not confirm
@@ -66,6 +76,8 @@ bark-loader/  the loader the board's bootloader starts: swaps in a staged
 bark-image/   no_std: the flash layout, the image header and the swap,
               shared by the firmware, the loader and their build scripts;
               tested on the host.
+bark-app/     Flutter Android app for the phone link, sealing its texts end to
+              end (bark-app-layer).
 docs/         design notes, research, decisions.
 ```
 
@@ -98,3 +110,38 @@ rustup target add thumbv7em-none-eabihf
 
 See `bark-fw/README.md` for packaging the UF2, with the loader, and
 flashing.
+
+`.github/workflows/ci.yml` runs the checks every commit must pass
+(`AGENTS.md`, "Commits"), with the firmware's and the app's, on every
+push to main and every pull request.
+
+## Releases
+
+A tag `v<N>`, N a positive integer, makes release N:
+`.github/workflows/release.yml` builds the firmware, the loader, the
+measurement console and the Android app, and attaches them to a GitHub
+Release whose notes say which file is for what. N is both the
+firmware's image version and the app's version, and a board or a phone
+takes an update only above the version it runs, so each tag is above the
+last:
+
+```
+git tag v1 && git push origin v1
+```
+
+The app is signed with a release key held in three repository secrets.
+Android takes the key as the app's identity, so it is made once and kept,
+outside the repository and backed up: an app signed with another key
+cannot be updated, only uninstalled and installed again. To make it and
+store it:
+
+```
+keytool -genkeypair -keystore bark-release.jks -alias bark \
+    -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 bark-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD   # the password given to keytool
+gh secret set ANDROID_KEY_ALIAS --body bark
+```
+
+The keystore keytool makes has one password for the store and the key,
+and the workflow uses it for both.
