@@ -53,11 +53,12 @@ is a prototype for the bench, not the app people will carry.
   the last connection.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
-  connected node your home, or none; your new card then goes to every
-  contact; clear the mailbox key of a node that holds one and is not
-  your home), your 12 words (show them, or restore an identity from
-  them), and the node's map point: set from typed degrees or the phone's
-  location, or cleared.
+  connected node your home, or none; if your card's address changes,
+  the dialog says so and your new card goes to every contact; clear the
+  mailbox key of a node that holds one and is not your home), your 12
+  words (show them, or restore an identity from them), and the node's
+  map point: set from typed degrees or the phone's location, or
+  cleared.
 - **Debug**, from the menu. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, the last
   Given back value, each sent and received message's kind, `sent`, ID
@@ -224,8 +225,9 @@ card, my card, the debug screen and the fetch button.
 8. Menu, **Settings**, under **Map point**: press **Phone location**
    (allow location), then **Set**: the address on My card changes.
    **Clear** brings back the fake's own fix.
-9. **Settings**, under **Home node**: **Make this node my home**, **Go
-   ahead**: "This node is your home". Debug's Home reads "a home, its
+9. **Settings**, under **Home node**: **Make this node my home**. The
+   dialog says your card's address stays as it is, since it is already
+   this node's. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
    mailbox empty". Go back: the bar has the inbox button, **Fetch my
    mail**. Press it: it says you are connected to your home node, and
    sends nothing. Disconnect and press it: it says no node is

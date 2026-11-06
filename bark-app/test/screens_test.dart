@@ -209,4 +209,46 @@ void main() {
     await t.pump();
     app.dispose();
   });
+
+  testWidgets('the home dialog says a card is sent only when one is', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    await app.connectFake();
+    await t.pump();
+    await t.tap(find.textContaining('Connected to'));
+    await t.pumpAndSettle();
+
+    Future<void> press(String button, String told) async {
+      await t.scrollUntilVisible(
+        find.text(button),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.tap(find.text(button));
+      await t.pumpAndSettle();
+      expect(find.textContaining(told), findsOneWidget);
+      await t.tap(find.text('Go ahead'));
+      await t.pumpAndSettle();
+    }
+
+    // The card already carries this node's address.
+    await press('Make this node my home', 'stays as it is, so no card');
+    expect(app.atHome, isTrue);
+    await press('No home node', 'stays as it is, so no card');
+    expect(app.me.home, isNull);
+
+    // A home elsewhere: making this node the home moves the card.
+    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
+    await app.me.setHome(away);
+    await t.pump();
+    await press('Make this node my home', 'goes to your contact.');
+    expect(app.atHome, isTrue);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
 }
