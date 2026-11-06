@@ -99,7 +99,7 @@ Pins (Meshtastic `variants/nrf52840/t-echo/variant.h`, confirmed by umsh hardwar
 | LEDs | P0.14 blue, P0.15 green (P0.13 is power enable) |
 | Battery ADC | AIN2 / P0.04, 2:1 divider, ~12 µA constant drain; unreliable while on USB |
 | I2C | SDA P0.26, SCL P0.27; PCF8563 RTC, INT P0.16 |
-| QSPI flash MX25R1635F | SCK P1.14, CS P1.15, IO0 P1.12, IO1 P1.13 |
+| QSPI flash, ZD25WQ16B (`docs/external-flash-2026-11-06.md`) | SCK P1.14, CS P1.15, IO0 P1.12, IO1 P1.13, WP# P0.07, HOLD# P0.05 |
 
 Gotchas from umsh bring-up: do not hold GPS reset low while on USB; a floating P0.13
 leaves the rail half-up; embassy-nrf SAADC default full scale is 3.6 V so battery mV =

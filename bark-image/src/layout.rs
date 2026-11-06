@@ -17,7 +17,7 @@
 //! | [`DFU`] | the staged image, one page larger than [`ACTIVE`] |
 //! | [`RECORD`] | the staged image's header, which the loader checks |
 //! | [`PIECES`] | coded pieces of an update arriving over the mesh |
-//! | [`MAILBOX`] | the mailbox's state and its ring (`docs/app-layer-2026-11-05.md`, section 5) |
+//! | [`MAILBOX`] | the mailbox's ring, then its state ([`MAILBOX_STATE`]) (`docs/app-layer-2026-11-05.md`, section 5) |
 //! | [`STORE`] | the node's stored state (roadmap D73) |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
 
@@ -63,6 +63,12 @@ pub const SOFTDEVICE_MAGIC_AT: u32 = 0x3004;
 /// The magic number the bootloader looks for there.
 pub const SOFTDEVICE_MAGIC: u32 = 0x51B1_E5DB;
 
+/// The end of the flash the board's bootloader serves on its drive, as
+/// `CURRENT.UF2`, and writes from a UF2 (`docs/softdevice-2026-11-05.md`,
+/// "How the drive places a UF2"): anyone with the board and a double tap
+/// reads every byte below it, so secrets lie above it.
+pub const DRIVE_END: u32 = 0xEA000;
+
 /// The first page of the board's bootloader, above everything of ours.
 pub const BOOTLOADER_START: u32 = 0xF4000;
 
@@ -80,7 +86,7 @@ const LOADER_PAGES: u32 = 4;
 /// node gathers at once (the note, "The code").
 const STAGING_PAGES: u32 = 23;
 
-/// Pages for the mailbox: one for its state, 16 for its ring, 256 items
+/// Pages for the mailbox: 16 for its ring, one for its state, 256 items
 /// of 256 bytes, eleven days at 23 a day (`docs/app-layer-2026-11-05.md`,
 /// section 5; `docs/softdevice-2026-11-05.md`, "The layout").
 const MAILBOX_PAGES: u32 = 17;
@@ -112,8 +118,11 @@ pub const RECORD: Region = Region::pages_from(DFU.end(), 1);
 /// Coded pieces of an update arriving over the mesh; unused until the
 /// transport exists.
 pub const PIECES: Region = Region::pages_from(RECORD.end(), STAGING_PAGES - 1);
-/// The mailbox: its state page, then its ring.
+/// The mailbox: its ring, then its state page.
 pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_PAGES);
+/// The mailbox's state page, the last of [`MAILBOX`]: it holds the
+/// mailbox key, so it lies above [`DRIVE_END`].
+pub const MAILBOX_STATE: Region = Region::pages_from(MAILBOX.end() - PAGE, 1);
 /// The node's stored state, one page (roadmap D73).
 pub const STORE: Region = Region::pages_from(STORE_START, 1);
 
@@ -166,8 +175,10 @@ pub const RAM: Region = Region {
 const _: () = {
     assert!(MAILBOX.end() == STORE.start);
     // Every UF2 writes the record erased, and the bootloader's drive writes
-    // only below 0xEA000 (`docs/softdevice-2026-11-05.md`).
-    assert!(RECORD.end() <= 0xEA000);
+    // only below its end.
+    assert!(RECORD.end() <= DRIVE_END);
+    // The secrets lie where the drive neither reads nor writes.
+    assert!(MAILBOX_STATE.start >= DRIVE_END && STORE.start >= DRIVE_END);
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(DFU.len == ACTIVE.len + PAGE);
@@ -280,6 +291,7 @@ mod tests {
                 len: 17 * PAGE
             }
         );
+        assert_eq!(MAILBOX_STATE.start, 0xF2000);
         assert_eq!(STORE.start, 0xF3000);
     }
 
