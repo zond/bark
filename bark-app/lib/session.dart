@@ -191,6 +191,9 @@ class Session extends ChangeNotifier {
   /// the payload is kept as it came.
   Future<void> Function(InboxMessage)? reader;
 
+  /// The mailbox key a node should hold, if it is the person's home.
+  Uint8List? Function(NodeInfo)? homeKey;
+
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
 
@@ -206,6 +209,9 @@ class Session extends ChangeNotifier {
 
   /// The node's time as last read, after the app wrote its own.
   NodeTime? nodeTime;
+
+  /// The node's Home as last read, from link version 3.
+  NodeHome? nodeHome;
   DateTime? _statusAt;
 
   /// The last thing worth telling the person.
@@ -245,23 +251,30 @@ class Session extends ChangeNotifier {
     return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
   }
 
+  /// The version of `bark.json`'s format.
+  static const version = 1;
+
   Future<void> load() async {
-    final j = await store.load();
+    final j = await store.load(
+      version,
+      (j) => (
+        outbox: [
+          for (final e in j['outbox'] as List)
+            Outgoing.fromJson(e as Map<String, dynamic>),
+        ],
+        received: [
+          for (final e in j['received'] as List)
+            Received.fromJson(e as Map<String, dynamic>),
+        ],
+      ),
+    );
     if (j == null) return;
-    outbox.addAll(
-      (j['outbox'] as List).map(
-        (e) => Outgoing.fromJson(e as Map<String, dynamic>),
-      ),
-    );
-    received.addAll(
-      (j['received'] as List).map(
-        (e) => Received.fromJson(e as Map<String, dynamic>),
-      ),
-    );
+    outbox.addAll(j.outbox);
+    received.addAll(j.received);
     notifyListeners();
   }
 
-  Future<void> save() => store.save({
+  Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
   });
@@ -324,7 +337,42 @@ class Session extends ChangeNotifier {
       _tell('Reading the node failed: $e');
     }
     if (n.version >= clockVersion) await _setClock(link);
+    if (n.version >= homeVersion) await _keepHome(link, n);
     return true;
+  }
+
+  /// Gives the person's home its key, silently, and reads Home. A home
+  /// may have been reflashed, or the identity restored from its words;
+  /// the node changes nothing when it holds that key already.
+  Future<void> _keepHome(NodeLink link, NodeInfo n) async {
+    try {
+      final key = homeKey?.call(n);
+      if (key != null) await link.setHome(key);
+      nodeHome = await link.readHome();
+      note(
+        key != null
+            ? 'Home: the key written to the person\'s home; $nodeHome'
+            : 'Home: $nodeHome',
+      );
+    } catch (e) {
+      note('Home: $e');
+    }
+    notifyListeners();
+  }
+
+  /// Writes Home, the mailbox key or none, and reads it back.
+  Future<NodeHome> writeHome(List<int>? key) async {
+    final link = _link;
+    final n = node;
+    if (link == null || n == null) throw StateError('not connected');
+    if (n.version < homeVersion) {
+      throw StateError('no Home before link version $homeVersion');
+    }
+    await link.setHome(key);
+    nodeHome = await link.readHome();
+    note('Home: wrote ${key == null ? 'no key' : 'the key'}, reads $nodeHome');
+    notifyListeners();
+    return nodeHome!;
   }
 
   /// Gives the node the phone's time and UTC offset, silently: a node
@@ -356,6 +404,7 @@ class Session extends ChangeNotifier {
     node = null;
     givenBack = null;
     nodeTime = null;
+    nodeHome = null;
     note('Disconnected');
   }
 

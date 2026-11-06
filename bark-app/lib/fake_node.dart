@@ -70,6 +70,13 @@ class FakeNode implements NodeLink {
   /// offset; the fake has no GPS time.
   (int, DateTime)? _time;
   int _offsetMin = 0;
+
+  /// The mailbox key it was given, kept across connections as in flash.
+  Uint8List? homeKey;
+
+  /// How often a write changed the key; the same key again changes
+  /// nothing, as on the node.
+  int homeKeyChanges = 0;
   int _relays = 0;
   bool _ready = true;
   final List<InboxMessage> _inbox = [];
@@ -282,6 +289,23 @@ class FakeNode implements NodeLink {
       TimeSource.phone,
     );
   });
+
+  /// Home as the node serves it; the fake has no ring, so its numbers
+  /// are 0.
+  @override
+  Future<void> setHome(List<int>? key) => _answer(() {
+    if (key != null && key.length != mailboxKeyLen) {
+      throw const AttException(AttError.invalidLength);
+    }
+    String? held(List<int>? k) => k == null ? null : hex(k);
+    if (held(key) != held(homeKey)) {
+      homeKey = key == null ? null : Uint8List.fromList(key);
+      homeKeyChanges++;
+    }
+  });
+
+  @override
+  Future<NodeHome> readHome() => _answer(() => NodeHome(homeKey != null, 0, 0));
 
   @override
   Stream<Status> get statusNotified => _status.stream;

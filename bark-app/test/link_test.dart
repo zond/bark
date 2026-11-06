@@ -158,4 +158,20 @@ void main() {
     expect(Address.parse('47c0490ad9ff8001020304050'), isNull);
     expect(Address.parse('zz'), isNull);
   });
+
+  // bark-link/src/home.rs, test `vectors`.
+  test('home', () {
+    expect(encodeHome(null), [0]);
+    final k = List.generate(mailboxKeyLen, (i) => i);
+    expect(encodeHome(k), [1, ...k]);
+    expect(() => encodeHome([1, 2]), throwsA(isA<Malformed>()));
+    final h = NodeHome.decode([1, 0, 0, 17, 1, 2, 3, 9]);
+    expect((h.set, h.oldest, h.newest), (true, 17, 0x010203));
+    expect(h.encode(), [1, 0, 0, 17, 1, 2, 3]);
+    expect(
+      () => NodeHome.decode([2, 0, 0, 0, 0, 0, 0]),
+      throwsA(isA<Malformed>()),
+    );
+    expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
+  });
 }

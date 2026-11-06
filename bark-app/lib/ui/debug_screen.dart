@@ -142,6 +142,12 @@ class DebugScreen extends StatelessWidget {
                 final t => describeTime(t),
               },
       ),
+      _row(
+        'Home',
+        n.version < homeVersion
+            ? 'none before link version $homeVersion'
+            : '${s.nodeHome ?? 'not read'}',
+      ),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Address'),

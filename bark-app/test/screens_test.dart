@@ -1,7 +1,8 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged; the card, the backup words, adding a contact
-// and the debug screen.
+// and the debug screen; the fetch button, on the first screen and in a
+// thread, and why it sends nothing.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -162,6 +163,102 @@ void main() {
     expect(app.contacts.list.single.verified, isFalse);
 
     await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('the fetch button: with a home only, and why nothing is sent', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    expect(find.byTooltip('Fetch my mail'), findsNothing);
+
+    Future<void> fetch(String told) async {
+      await t.tap(find.byTooltip('Fetch my mail'));
+      await t.pump();
+      await t.pump();
+      expect(find.textContaining(told), findsOneWidget);
+      // In, past its four seconds, and out.
+      await t.pumpAndSettle();
+      await t.pump(const Duration(seconds: 5));
+      await t.pumpAndSettle();
+    }
+
+    // A home elsewhere, and no node.
+    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
+    await app.me.setHome(away);
+    await t.pump();
+    await fetch('Not connected to a node: a fetch is sent from another node');
+    expect(app.session.outbox, isEmpty);
+
+    // Another node: the fetch goes to the home.
+    await app.connectFake();
+    await t.pump();
+    await fetch('Fetching your mail');
+    final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+    expect(f.single.dst.toString(), away.toString());
+
+    // The same button in a thread.
+    await t.pumpAndSettle();
+    await t.tap(find.text('Fake friend'));
+    await t.pumpAndSettle();
+    await fetch('Fetching your mail');
+    expect(f.length, 2);
+    await t.pageBack();
+    await t.pumpAndSettle();
+
+    // The home itself: its mail is in its inbox, nothing is sent.
+    await app.makeHome(app.session.address!);
+    await t.pump();
+    final before = app.session.outbox.length;
+    await fetch('Connected to your home node');
+    expect(app.session.outbox.length, before);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the home dialog says a card is sent only when one is', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    await app.connectFake();
+    await t.pump();
+    await t.tap(find.textContaining('Connected to'));
+    await t.pumpAndSettle();
+
+    Future<void> press(String button, String told) async {
+      await t.scrollUntilVisible(
+        find.text(button),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.tap(find.text(button));
+      await t.pumpAndSettle();
+      expect(find.textContaining(told), findsOneWidget);
+      await t.tap(find.text('Go ahead'));
+      await t.pumpAndSettle();
+    }
+
+    // The card already carries this node's address.
+    await press('Make this node my home', 'stays as it is, so no card');
+    expect(app.atHome, isTrue);
+    await press('No home node', 'stays as it is, so no card');
+    expect(app.me.home, isNull);
+
+    // A home elsewhere: making this node the home moves the card.
+    final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
+    await app.me.setHome(away);
+    await t.pump();
+    await press('Make this node my home', 'goes to your contact.');
+    expect(app.atHome, isTrue);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
     app.dispose();
   });
 }

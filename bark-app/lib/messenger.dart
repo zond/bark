@@ -22,6 +22,15 @@ class Messenger {
 
   Messenger(this.sodium, this.me, this.contacts, this.session, this.now) {
     session.reader = receive;
+    session.homeKey = (n) =>
+        isHome(n.id) ? me.keys.mailbox.extractBytes() : null;
+  }
+
+  /// Whether the node of `id` is the person's home: a home is known by its
+  /// node ID, as its position may be corrected.
+  bool isHome(List<int> id) {
+    final h = me.home;
+    return h != null && hex(h.id) == hex(id);
   }
 
   /// `crypto_box_beforenm` of each contact, made once; keyed by both
