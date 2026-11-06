@@ -1,7 +1,8 @@
 // The app's side of the link against the fake node: the queue, the
 // inbox, given back and the version check; and what is sealed and
 // opened on top of them: texts, acknowledgements, first messages and
-// the mailbox's replies; and the node paired with, kept across a restart.
+// the mailbox's replies; and the node paired with, and whether the person
+// stopped looking for it, kept across a restart.
 
 import 'dart:typed_data';
 
@@ -683,7 +684,7 @@ void main() {
     });
   });
 
-  test('the node paired with, and its loss, survive a restart', () {
+  test('the node paired with, its loss and a stop survive a restart', () {
     run((async, p, node) {
       p.session.setPaired('bark-fa4e00000001');
       async.flushMicrotasks();
@@ -696,6 +697,12 @@ void main() {
       again = again.again(sodium, () => start);
       async.flushMicrotasks();
       expect(again.session.pairingLost, isTrue);
+      expect(again.session.stopped, isFalse);
+      again.session.setStopped(true);
+      async.flushMicrotasks();
+      again = again.again(sodium, () => start);
+      async.flushMicrotasks();
+      expect(again.session.stopped, isTrue);
     });
   });
 

@@ -150,8 +150,10 @@ costs about 3 mAh an hour, under a tenth of a percent of a phone's
 battery. The app stops looking while it is connected or Bluetooth is
 off, after "This node is no longer yours" (the person decides with
 **Pair again**), and after the person presses **Disconnect** or **Stop
-looking** in Settings, until they tap a node or restart the app. A tap on
-a node, or a scan, ends a search round at once.
+looking** in Settings, until they tap a node. That stop is kept with the
+queue, so neither a restart of the app nor of the phone undoes it: the
+person chose it, and the phone should not start looking behind their
+back. A tap on a node, or a scan, ends a search round at once.
 
 The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
@@ -192,20 +194,20 @@ file empty (for the person, with a new identity).
 While a node is connected over Bluetooth, the app keeps running with the
 screen off or its window closed, under a notification that names the
 node, "Connected to bark-…"; tapping it opens the app. The link is the
-same one as in the foreground: the app's engine outlives its window
-(`MainActivity.kt`), and an Android foreground service of the connected
-device type keeps the process running, so there is one implementation of
-the link, in Dart. While the app looks for its paired node (previous
-section) the service runs too, and its notification says "Looking for
-bark-…": without one Android suspends or ends an app in the background,
-and the search with it, and queued texts are to go out as soon as the node is in reach, not
-when the person next opens the app. The service goes on from connected
-to looking and back, changing only its notification, as Android 12 and
-later restrict starting a service from the background. It stops, and its
-notification goes, when the app neither holds a link nor looks. With the
-screen off and the phone still, Android may let the phone sleep through
-a round's pause, so a round can start later than 15 s. The fake node
-runs inside the app and starts no service.
+same one as in the foreground: the app's Dart engine outlives its window
+(`Engine.kt`), and an Android foreground service of the connected device
+type (`LinkService.kt`) keeps the process running, so there is one
+implementation of the link, in Dart. While the app looks for its paired
+node (previous section) the service runs too, and its notification says
+"Looking for bark-…": without one Android suspends or ends an app in the
+background, and the search with it, and queued texts are to go out as
+soon as the node is in reach, not when the person next opens the app.
+The service goes on from connected to looking and back, changing only its
+notification, as Android 12 and later restrict starting a service from
+the background. It stops, and its notification goes, when the app neither
+holds a link nor looks. With the screen off and the phone still, Android
+may let the phone sleep through a round's pause, so a round can start
+later than 15 s. The fake node runs inside the app and starts no service.
 
 Each new text notifies, with the system's sound and vibration, under the
 contact's name; a text in parts notifies once, at its first part, and
@@ -218,6 +220,36 @@ for the permission; the app does not ask again. Settings says whether the
 app is exempt from battery optimisation and, if not, opens Android's
 dialog to exempt it: without that, some phones stop the service after
 some hours with the screen off.
+
+**Starting with the phone.** When the phone has started, the app starts
+the service by itself if it is paired with a node that is still its own
+and the person has not stopped looking; a phone that held a link when it
+was switched off thus looks for the node again and connects when it sees
+it, with no one opening the app. The service starts the Dart engine
+without a window and runs the same `main`, session and search; the
+engine is kept, so a window opened later attaches to it and shows the
+state as it stands, and closing the window leaves it running. The Dart
+side tells the Android side, whenever it changes, whether to start at
+boot and under what notification, which the Android side keeps in its
+preferences: the rule needs the pairing and the stop, both known only to
+Dart, and reading `bark.json` from Kotlin would make a second reader of
+its format. The service is the app's own, not the notifications plugin's:
+starting the plugin's from boot would mean writing its internal start
+parameters by hand, and one small service that both shows the
+notification and runs the engine is simpler. If Android ends the
+process while the service runs, it may start the service again later,
+which starts the engine as at boot.
+
+The app starts on `BOOT_COMPLETED`, which comes after the person first
+unlocks the phone, not on the earlier `LOCKED_BOOT_COMPLETED`: until then
+the app's files, the identity among them, are encrypted, and moving them
+to storage readable before unlocking would leave the identity less
+protected. Android delivers the boot broadcast only to an app the person
+has opened at least once since installing it, and not after **Force
+stop** in Android's settings until it is opened again. The battery
+exemption (above) matters for the service to run for hours, and some
+makers' battery managers end it anyway, or keep the app from starting at
+boot, until the person allows it in the maker's own settings.
 
 ## The fake node
 
@@ -306,7 +338,7 @@ licences compatible with the repository's GPL-3:
 | `crypto` 3.0.8 | SHA-256, for the backup words' checksum | BSD-3-Clause |
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
-| `flutter_local_notifications` 22.3.3 | the notifications, and the foreground service that holds the link's | BSD-3-Clause |
+| `flutter_local_notifications` 22.3.3 | the texts' notifications and the permission to notify | BSD-3-Clause |
 
 The common `mobile_scanner` is not used: on Android it decodes with
 Google's ML Kit, which is not free software.
@@ -360,12 +392,14 @@ or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
-choose where a text goes; decide what notifies, against a
-notifier that writes down what it is asked; and drive the screens: a text
-to the fake friend, its
-echo, an acknowledgement, the backup words, a contact from a pasted or a
-scanned card, my card, the debug screen, the fetch button, the
-choice of where a text goes, and a long text's parts.
+choose where a text goes; decide what notifies, and when the app starts
+with the phone, against a notifier that writes down what it is asked;
+and drive the screens: a text to the fake friend, its echo, an
+acknowledgement, the backup words, a contact from a pasted or a scanned
+card, my card, the debug screen, the fetch button, the choice of where
+a text goes, and a long text's parts. The Android side, the service and
+the boot receiver, cannot run on the host; it is kept small and tried on
+a phone (Trying it, With a node).
 
 ## Trying it
 
@@ -481,3 +515,12 @@ choice of where a text goes, and a long text's parts.
     now** leaves it so, and the first screen says so too; **Pair
     again**, at the node, makes it the first phone's again, and the
     second then finds it no longer its own.
+11. Starting with the phone: open the app once after installing it,
+    exempt it from battery optimisation in Settings, and connect to the
+    node. Restart the phone and unlock it, without opening the app.
+    Within about half a minute of the unlock the notification says
+    "Looking for bark-…", then "Connected to bark-…", and texts arrive.
+    `adb logcat -s flutter` shows the session's log from the start,
+    `Found bark-…, connecting` and `Connected, MTU 247` among it.
+    Opening the app shows the link as it stands. After **Disconnect**, a
+    restart of the phone starts nothing.

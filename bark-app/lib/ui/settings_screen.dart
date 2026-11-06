@@ -296,7 +296,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// The search for the paired node, which the person can stop until
-  /// they connect or restart the app.
+  /// they connect.
   List<Widget> _looking() {
     final l = lookingLine(app);
     if (l == null) return [];

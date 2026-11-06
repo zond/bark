@@ -7,20 +7,13 @@ import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    // One engine for the process, kept when the activity goes: the Dart
-    // session in it holds the link to the node, which the foreground
-    // service keeps running after the person closes the app's window.
-    // Plugins are registered when the engine is made.
-    override fun provideFlutterEngine(context: Context): FlutterEngine {
-        val cache = FlutterEngineCache.getInstance()
-        return cache.get(ENGINE) ?: FlutterEngine(context.applicationContext).also {
-            cache.put(ENGINE, it)
-        }
-    }
+    // The process's one engine (Engine.kt), kept when the window goes, and
+    // already running when the app started with the phone: the window then
+    // shows the session as it stands.
+    override fun provideFlutterEngine(context: Context): FlutterEngine = Engine.get(context)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler { call, result ->
@@ -47,7 +40,6 @@ class MainActivity : FlutterActivity() {
     }
 
     private companion object {
-        const val ENGINE = "main"
         const val POWER = "org.bark.bark_app/power"
     }
 }
