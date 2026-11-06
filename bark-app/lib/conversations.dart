@@ -4,15 +4,51 @@
 import 'contacts.dart';
 import 'session.dart';
 
-/// One text in a thread: sent or received.
+/// One text in a thread, sent or received, of one part or several.
 class Entry {
-  final Outgoing? sent;
-  final Received? received;
-  Entry.sent(Outgoing this.sent) : received = null;
-  Entry.received(Received this.received) : sent = null;
+  /// A sent text's parts, in order; empty for a received one.
+  final List<Outgoing> outs;
 
-  DateTime get at => sent?.at ?? received!.at;
-  String get text => sent?.text ?? received!.text;
+  /// A received text's parts by number, null where one has not come;
+  /// empty for a sent one.
+  final List<Received?> ins;
+
+  Entry.sent(this.outs) : ins = const [];
+  Entry.received(this.ins) : outs = const [];
+
+  bool get mine => outs.isNotEmpty;
+
+  /// The parts of a received text that have come.
+  Iterable<Received> get arrived => ins.nonNulls;
+
+  /// When the first part was queued or came.
+  DateTime get at => mine
+      ? outs.first.at
+      : arrived.map((r) => r.at).reduce((a, b) => a.isBefore(b) ? a : b);
+
+  /// The text: a sent one whole, a received one as far as it has come.
+  String get text => mine
+      ? outs.map((o) => o.text).join()
+      : [for (final p in pieces) p.text].join();
+
+  /// A received text's pieces in order: what has come, and a line in
+  /// place of each part that has not.
+  List<({String text, bool missing})> get pieces {
+    final out = <({String text, bool missing})>[];
+    for (final (i, r) in ins.indexed) {
+      if (r != null) {
+        out.add((text: r.text, missing: false));
+        continue;
+      }
+      final before = out.isEmpty || out.last.text.endsWith('\n') ? '' : '\n';
+      final after = i == ins.length - 1 ? '' : '\n';
+      out.add((
+        text: '${before}part ${i + 1} of ${ins.length} not yet here$after',
+        missing: true,
+      ));
+    }
+    return out;
+  }
 }
 
 class Conversation {
@@ -37,13 +73,35 @@ List<Conversation> conversations(
   List<Outgoing> outbox,
   List<Received> received,
 ) {
-  // Ties keep sent before received and each list's own order, which
-  // List.sort, not being stable, would not.
+  // A text's parts are one entry, where its first part to be queued or
+  // to come stands. Ties keep sent before received and each list's own
+  // order, which List.sort, not being stable, would not.
+  final outs = <String, List<Outgoing>>{};
+  final firstOut = <String, int>{};
+  for (final (i, o) in outbox.indexed) {
+    if (o.kind != OutKind.text || o.to == null) continue;
+    final k = '${o.to}/${o.first}/${o.of}';
+    (outs[k] ??= []).add(o);
+    firstOut.putIfAbsent(k, () => i);
+  }
+  final ins = <String, List<Received?>>{};
+  final firstIn = <String, int>{};
+  for (final (i, r) in received.indexed) {
+    if (r.from == null || r.body == null) continue;
+    final k = '${r.from}/${r.first}/${r.of}';
+    (ins[k] ??= List.filled(r.of, null))[r.part - 1] = r;
+    firstIn.putIfAbsent(k, () => i);
+  }
   final all = [
-    for (final (i, o) in outbox.indexed)
-      if (o.kind == OutKind.text && o.to != null) (Entry.sent(o), o.to!, 0, i),
-    for (final (i, r) in received.indexed)
-      if (r.from != null && r.body != null) (Entry.received(r), r.from!, 1, i),
+    for (final MapEntry(key: k, value: os) in outs.entries)
+      (
+        Entry.sent(os..sort((a, b) => a.part - b.part)),
+        os.first.to!,
+        0,
+        firstOut[k]!,
+      ),
+    for (final MapEntry(key: k, value: rs) in ins.entries)
+      (Entry.received(rs), rs.nonNulls.first.from!, 1, firstIn[k]!),
   ];
   all.sort((x, y) {
     final t = x.$1.at.compareTo(y.$1.at);

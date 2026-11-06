@@ -59,7 +59,22 @@ is a prototype for the bench, not the app people will carry.
   names a home, whether from it. A received text has a small filled
   check-mark button, **Acknowledge**; nothing is acknowledged by itself.
   Once pressed, the button turns into one plain check, and the two
-  checks appear on the sender's copy. A contact whose first message has come but no
+  checks appear on the sender's copy.
+  A text longer than one message holds, 160 bytes in a box without an
+  address, goes as parts of up to 159 bytes, 16 at most (roadmap D137):
+  once the text in the field needs more than one, a line under it says
+  how many, "2 parts", counted in the bytes that will go, one a letter
+  for Cyrillic. Send splits it between two characters, after a space
+  near the end of each part, and queues the parts in order. The sent
+  text is one bubble with the parts' state on its small line: the usual
+  icons while every part is in the same state, else words such as
+  "2 of 3 taken"; the two checks once every part is acknowledged. A
+  received text in parts is one bubble with the parts that have come,
+  in order, and "part 2 of 3 not yet here" in place of one that has
+  not, until all are in. **Acknowledge** acknowledges every part that
+  has come; a part that comes after the tap brings the button back and
+  is acknowledged with the next tap.
+  A contact whose first message has come but no
   sealed reply is marked not verified. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,
@@ -193,7 +208,8 @@ a round's pause, so a round can start later than 15 s. The fake node
 runs inside the app and starts no service.
 
 Each new text notifies, with the system's sound and vibration, under the
-contact's name. Texts from one contact collect in one notification until
+contact's name; a text in parts notifies once, at its first part, and
+each later part changes what the notification shows, without a sound. Texts from one contact collect in one notification until
 their thread is opened; tapping it opens the thread. Acknowledgements and
 cards do not notify, nor a text in a thread open in front of the person.
 
@@ -213,7 +229,9 @@ relays; every third message it takes is given back with a wait of
 1.58 s. Behind it is one person, the **fake friend**, with an identity
 of their own: they start with two first messages to you in the inbox,
 with their card, and answer each text you send them with a sealed
-"Echo: " of it 5 s later. Their card names a home, `bark-fa4e00000002`,
+"Echo: " of it 5 s later; a text in parts once every part has come,
+split again, its last part first and the others 5 s after, so that
+the missing ones show. Their card names a home, `bark-fa4e00000002`,
 and they write from a node of their own away from it,
 `bark-fa4e00000003`, which moves about 110 m north between their
 messages. It runs on while the app is disconnected, as
@@ -230,8 +248,8 @@ card, every later one boxed to their identity, which names no sender:
 the app tries its contacts' keys on each message that arrives. A
 message names the node you write from while the contact may not know
 it, carries
-the time it was written as its `sent`, and holds a text, an
-acknowledgement or a card. A fetch to your home node is sealed with a
+the time it was written as its `sent`, and holds a text or a part of
+one, acknowledgements or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
 and the node's replies are opened with it: one for each item newer than
 the last this phone has, or one that says nothing is new (spec
@@ -327,17 +345,19 @@ words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, acknowledgements, a reflected message, a forged first message,
 the header's written-from address kept apart from the card's, and the
-mailbox's replies against the fake node, which answers a fetch
+mailbox's replies, and long texts sent as parts, put together in any
+order and acknowledged, against the fake node, which answers a fetch
 as a home does; the fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; group texts into
-conversations; choose where a text goes; decide what notifies, against a
+conversations; split texts at boundaries as the Rust vectors do;
+choose where a text goes; decide what notifies, against a
 notifier that writes down what it is asked; and drive the screens: a text
 to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted or a
-scanned card, my card, the debug screen, the fetch button, and the
-choice of where a text goes.
+scanned card, my card, the debug screen, the fetch button, the
+choice of where a text goes, and a long text's parts.
 
 ## Trying it
 
@@ -374,25 +394,30 @@ choice of where a text goes.
    "Their home mailbox". Pick the mailbox: the text says "to their
    home". Its echo makes where they were fresh again, and the next text
    goes there without asking.
-8. The QR button, **My card**: set a name. Your identity, a QR code
+8. Write a text of more than 160 letters: a line under the field says
+   "2 parts". Send it: one bubble with the whole text, its parts'
+   state in words while they differ. When both are taken, 5 s later the
+   echo's last part arrives with "part 1 of 2 not yet here" in its
+   place, and 5 s after that the whole echo.
+9. The QR button, **My card**: set a name. Your identity, a QR code
    and the card as text, `BARK:` and capitals, appear, with a line that
    without a home people can answer you only after you write to them.
-9. Menu, **Settings**, under **Map point**: press **Phone location**
-   (allow location), then **Set**: Debug's address changes, and the
-   next text to the fake friend names it. **Clear** brings back the
-   fake's own fix.
-10. **Settings**, under **Home node**: **Make this node my home**. The
+10. Menu, **Settings**, under **Map point**: press **Phone location**
+    (allow location), then **Set**: Debug's address changes, and the
+    next text to the fake friend names it. **Clear** brings back the
+    fake's own fix.
+11. **Settings**, under **Home node**: **Make this node my home**. The
     dialog says your card changes and goes to your contact. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
     mailbox empty". Go back: the bar has the inbox button, **Fetch my
     mail**. Press it: it says you are connected to your home node, and
     sends nothing. Disconnect and press it: it says no node is
     connected.
-11. Connect again. **Settings**, **No home node**, **Go ahead**: the
+12. Connect again. **Settings**, **No home node**, **Go ahead**: the
     node forgets the key, and Home reads "not a home". Make it your home
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-12. Disconnect, close the app, open it again: the conversations, the
+13. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
 
 ### With a node
