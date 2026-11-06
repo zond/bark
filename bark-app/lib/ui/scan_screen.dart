@@ -7,6 +7,10 @@ import 'package:qr_code_scanner_plus/qr_code_scanner_plus.dart';
 
 import '../card.dart';
 
+/// The camera's card, or null when the person goes back without one.
+Future<PersonCard?> scanCard(BuildContext context) => Navigator.of(context)
+    .push<PersonCard>(MaterialPageRoute(builder: (_) => const ScanScreen()));
+
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
 

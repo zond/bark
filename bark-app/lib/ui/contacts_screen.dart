@@ -52,7 +52,10 @@ class ContactsScreen extends StatelessWidget {
 
 class AddContactScreen extends StatefulWidget {
   final AppModel app;
-  const AddContactScreen(this.app, {super.key});
+
+  /// A card already scanned, to name and save.
+  final PersonCard? card;
+  const AddContactScreen(this.app, {this.card, super.key});
 
   @override
   State<AddContactScreen> createState() => _AddContactScreenState();
@@ -65,6 +68,13 @@ class _AddContactScreenState extends State<AddContactScreen> {
   String? error;
 
   @override
+  void initState() {
+    super.initState();
+    final c = widget.card;
+    if (c != null) _read(c.toText());
+  }
+
+  @override
   void dispose() {
     pasted.dispose();
     name.dispose();
@@ -74,6 +84,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
   /// A pasted card: its identity is what the app seals texts to, so an
   /// address alone is not enough.
   void _read(String s) {
+    if (pasted.text != s) pasted.text = s;
     setState(() {
       card = null;
       error = null;
@@ -88,12 +99,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
   }
 
   Future<void> _scan() async {
-    final c = await Navigator.of(
-      context,
-    ).push<PersonCard>(MaterialPageRoute(builder: (_) => const ScanScreen()));
-    if (c == null) return;
-    pasted.text = c.toText();
-    _read(pasted.text);
+    final c = await scanCard(context);
+    if (c != null) _read(c.toText());
   }
 
   Future<void> _save() async {

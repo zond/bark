@@ -1,8 +1,8 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged; the card, the backup words, adding a contact
-// and the debug screen; the fetch button, on the first screen and in a
-// thread, and why it sends nothing.
+// from a pasted or a scanned card, and the debug screen; the fetch button,
+// on the first screen and in a thread, and why it sends nothing.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -13,6 +13,7 @@ import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -100,6 +101,11 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
+    await t.scrollUntilVisible(
+      find.text('Scan their card'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     final mine = app.me.card!;
     expect(
       mine.address.toString(),
@@ -161,6 +167,22 @@ void main() {
     expect(find.byIcon(Icons.send), findsOneWidget);
     expect(app.contacts.list.single.key, card.key);
     expect(app.contacts.list.single.verified, isFalse);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a contact from a scanned card', (t) async {
+    final app = await model(t);
+    final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
+    // What My card and Add contact open once the camera has read a card.
+    await t.pumpWidget(MaterialApp(home: AddContactScreen(app, card: card)));
+    expect(find.text(card.toText()), findsOneWidget);
+    expect(find.text('Olena'), findsOneWidget);
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    expect(app.contacts.list.single.key, card.key);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

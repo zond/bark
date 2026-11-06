@@ -1,4 +1,5 @@
-// The person's own card, for another phone to scan or paste.
+// The person's own card, for another phone to scan or paste, and theirs
+// to scan back.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../app.dart';
 import '../card.dart';
 import 'common.dart';
+import 'contacts_screen.dart';
+import 'scan_screen.dart';
 
 class CardScreen extends StatelessWidget {
   final AppModel app;
@@ -55,17 +58,26 @@ class CardScreen extends StatelessWidget {
                 ),
               )
             else
-              ..._card(context, card),
+              ..._card(card),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan their card'),
+                onPressed: () => _scan(context),
+              ),
+            ),
+            if (card != null) ..._copy(context, card),
           ],
         ),
       ),
     );
   });
 
-  List<Widget> _card(BuildContext context, PersonCard card) {
+  List<Widget> _card(PersonCard card) {
     final home = app.me.home != null;
     final connected = app.session.address != null;
-    final mono = const TextStyle(fontFamily: 'monospace');
     return [
       Padding(
         padding: const EdgeInsets.only(top: 8),
@@ -86,7 +98,13 @@ class CardScreen extends StatelessWidget {
         ),
       const SizedBox(height: 16),
       Center(child: _qr(card.toText())),
-      const SizedBox(height: 16),
+    ];
+  }
+
+  List<Widget> _copy(BuildContext context, PersonCard card) {
+    final mono = const TextStyle(fontFamily: 'monospace');
+    return [
+      const SizedBox(height: 8),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Address'),
@@ -114,6 +132,14 @@ class CardScreen extends StatelessWidget {
         ),
       ),
     ];
+  }
+
+  Future<void> _scan(BuildContext context) async {
+    final c = await scanCard(context);
+    if (c == null || !context.mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => AddContactScreen(app, card: c)));
   }
 
   /// Dark on white whatever the theme, as scanners expect, with the
