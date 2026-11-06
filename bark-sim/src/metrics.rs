@@ -849,6 +849,10 @@ pub struct SleepMetrics {
     /// anchor, and by any other node; and how long it had been so, under
     /// 5 s or more.
     pub to_deaf: [[u64; 2]; 2],
+    /// DATA with the long preamble to a sleepy node with an anchor that
+    /// is the message's destination: frames and their airtime, µs; from
+    /// its anchor, and from any other node.
+    pub long_to_node: [[u64; 2]; 2],
     /// Changes of a sleepy node's anchor.
     pub anchor_changes: u64,
     /// Messages a holder dropped at the end of the delivery TTL: held by
