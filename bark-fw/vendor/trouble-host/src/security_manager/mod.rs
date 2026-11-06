@@ -23,8 +23,6 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Instant, TimeoutError, WithTimeout};
 use heapless::VecView;
 pub use pairing::OobData;
-use rand_chacha::ChaCha12Rng;
-use rand_core::SeedableRng;
 use types::Command;
 pub use types::{PassKey, Reason};
 
@@ -187,8 +185,8 @@ impl<P: PacketPool> TxPacket<P> {
 /// Inner mutable state of the security manager
 struct Inner {
     /// Random generator
-    rng: ChaCha12Rng,
-    /// Persistent LESC keypair (generated once when RNG is seeded)
+    rng: crypto::Random,
+    /// Persistent LESC keypair (generated once, when the manager is created)
     secret_key: crypto::SecretKey,
     /// Corresponding public key
     public_key: crypto::PublicKey,
@@ -638,7 +636,7 @@ pub struct SecurityManager<'d> {
 impl<'d> SecurityManager<'d> {
     /// Create a new SecurityManager
     pub(crate) fn new(bonds: &'d RefCell<VecView<BondInformation>>) -> Self {
-        let mut rng = ChaCha12Rng::from_seed([0u8; 32]);
+        let mut rng = crypto::Random;
         let secret_key = crypto::SecretKey::new(&mut rng);
         let public_key = secret_key.public_key();
         Self {
@@ -677,14 +675,6 @@ impl<'d> SecurityManager<'d> {
     #[cfg(feature = "legacy-pairing")]
     pub(crate) fn set_secure_connections_only(&self, enabled: bool) {
         self.inner.borrow_mut().secure_connections_only = enabled;
-    }
-
-    /// Seed the security manager's CSPRNG and regenerate the persistent LESC keypair.
-    pub(crate) fn set_random_generator_seed(&self, random_seed: [u8; 32]) {
-        let mut inner = self.inner.borrow_mut();
-        inner.rng = ChaCha12Rng::from_seed(random_seed);
-        inner.secret_key = crypto::SecretKey::new(&mut inner.rng);
-        inner.public_key = inner.secret_key.public_key();
     }
 
     /// Set the current local address
@@ -1328,9 +1318,6 @@ mod tests {
 
     use bt_hci::param::{ConnHandle, LeConnRole};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-    use rand_chacha::ChaCha12Rng;
-    use rand_core::SeedableRng;
-
     use super::*;
     use crate::connection::ConnParams;
     use crate::connection_manager::{ConnectionManager, ConnectionStorage};
@@ -1345,7 +1332,7 @@ mod tests {
     }
 
     fn test_inner(peer_address: Address) -> Inner {
-        let mut rng = ChaCha12Rng::from_seed([7; 32]);
+        let mut rng = crypto::Random;
         let secret_key = crypto::SecretKey::new(&mut rng);
         let public_key = secret_key.public_key();
         Inner {

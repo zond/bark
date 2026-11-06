@@ -23,6 +23,7 @@ mod clock;
 #[cfg(feature = "console")]
 mod console;
 mod display;
+mod ext_flash;
 #[cfg(not(feature = "console"))]
 mod gps;
 #[cfg(not(feature = "console"))]
@@ -351,6 +352,7 @@ async fn main(spawner: Spawner) {
         let clock = clock::Clock::new(p.TIMER1);
         let mut lines = console::Lines::new();
         let channel = console::SURVEY.unwrap_or(bark_proto::Channel::new(0).expect("in the plan"));
+        let flash = board.flash;
         let radio_task = async {
             let t0 = clock.now();
             match radio::boot(
@@ -366,6 +368,7 @@ async fn main(spawner: Spawner) {
             {
                 Ok(radio) => {
                     radio_up(&radio, &clock, t0);
+                    ext_flash::power_down(flash);
                     update::started(shared);
                     console::Console::new(radio, &clock, battery, shared)
                         .run(&mut lines)
@@ -439,6 +442,7 @@ async fn main(spawner: Spawner) {
             node_radio(NodeRadio {
                 radio: board.radio,
                 power: board.power,
+                flash: board.flash,
                 spi: p.SPI2,
                 mpsl,
                 shared,
@@ -568,6 +572,7 @@ async fn phone(
 struct NodeRadio {
     radio: board::Radio,
     power: board::Power,
+    flash: board::Flash,
     spi: embassy_nrf::Peri<'static, peripherals::SPI2>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
     shared: &'static update::Flash,
@@ -576,8 +581,9 @@ struct NodeRadio {
     config: bark_proto::Config,
 }
 
-/// The radio and the core on it: the radio up, the image confirmed, the
-/// phone link let start, and the driver's loop (`node.rs`).
+/// The radio and the core on it: the radio up, the external flash in deep
+/// power-down (`ext_flash.rs`), the image confirmed, the phone link let
+/// start, and the driver's loop (`node.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn node_radio(n: NodeRadio) {
@@ -604,6 +610,7 @@ async fn node_radio(n: NodeRadio) {
     {
         Ok(radio) => {
             radio_up(&radio, &clock, t0);
+            ext_flash::power_down(n.flash);
             update::started(n.shared);
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;

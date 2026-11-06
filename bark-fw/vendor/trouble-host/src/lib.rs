@@ -480,7 +480,6 @@ pub trait SecurityCmds:
     + ControllerCmdSync<LeSetAddrResolutionEnable>
     + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
     + ControllerCmdSync<LeSetPrivacyMode>
-    + ControllerCmdSync<LeRand>
 {
 }
 
@@ -494,8 +493,7 @@ impl<
             + ControllerCmdSync<LeClearResolvingList>
             + ControllerCmdSync<LeSetAddrResolutionEnable>
             + ControllerCmdSync<LeSetResolvablePrivateAddrTimeout>
-            + ControllerCmdSync<LeSetPrivacyMode>
-            + ControllerCmdSync<LeRand>,
+            + ControllerCmdSync<LeSetPrivacyMode>,
     > SecurityCmds for C
 {
 }

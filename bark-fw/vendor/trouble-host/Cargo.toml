@@ -162,10 +162,7 @@ prepare-write-buffer-size-64 = []
 scan = ["central"]
 security = [
     "dep:p256",
-    "dep:aes",
-    "dep:cmac",
     "dep:rand_core",
-    "dep:rand_chacha",
     "dep:rand",
 ]
 security-p256-cortex-m4 = [
@@ -203,17 +200,9 @@ path = "tests/l2cap.rs"
 name = "service_attribute_macro"
 path = "tests/service_attribute_macro.rs"
 
-[dependencies.aes]
-version = "0.8.2"
-optional = true
-
 [dependencies.bt-hci]
 version = "0.10"
 features = ["uuid"]
-
-[dependencies.cmac]
-version = "0.7.2"
-optional = true
 
 [dependencies.defmt]
 version = "1.0.1"
@@ -261,11 +250,6 @@ version = "0.8"
 optional = true
 default-features = false
 
-[dependencies.rand_chacha]
-version = "0.3"
-optional = true
-default-features = false
-
 [dependencies.rand_core]
 version = "0.6"
 optional = true
@@ -285,6 +269,9 @@ optional = true
 
 [dependencies.zerocopy]
 version = "0.8.21"
+
+[dev-dependencies.aes]
+version = "0.8.2"
 
 [dev-dependencies.bt-hci-serial]
 version = "0.1"
@@ -322,6 +309,10 @@ version = "0.9"
 
 [dev-dependencies.rand]
 version = "0.8.5"
+
+[dev-dependencies.rand_chacha]
+version = "0.3"
+default-features = false
 
 [dev-dependencies.rand_core]
 version = "0.6"
