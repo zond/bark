@@ -3,10 +3,7 @@
 
 use core::num::NonZeroU128;
 
-use aes::cipher::{BlockEncrypt, KeyInit};
-use aes::Aes128;
 use bt_hci::param::BdAddr;
-use cmac::digest;
 #[cfg(not(feature = "security-p256-cortex-m4"))]
 use p256::ecdh;
 use rand_core::{CryptoRng, RngCore};
@@ -161,8 +158,7 @@ impl IdentityResolvingKey {
         let mut r_prime = [0u8; 16];
         r_prime[13..].copy_from_slice(&r);
 
-        let cipher = Aes128::new_from_slice(&self.0.get().to_be_bytes()).unwrap();
-        cipher.encrypt_block((&mut r_prime).into());
+        aes128(&self.0.get().to_be_bytes(), &mut r_prime);
         // Extract least significant 24 bits (3 bytes) as the result
         r_prime[13..16].try_into().unwrap()
     }
@@ -188,17 +184,79 @@ impl defmt::Format for IdentityResolvingKey {
     }
 }
 
-/// RFC-4493 AES-CMAC ([Vol 3] Part H, Section 2.2.5).
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct AesCmac(cmac::Cmac<aes::Aes128>);
+extern "Rust" {
+    /// AES-128 encryption of one block in place, with the key and the block
+    /// in the byte order of FIPS-197. The application provides it, so that a
+    /// chip with an AES block uses it in place of a software cipher.
+    fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]);
+}
+
+/// The security function `e` ([Vol 3] Part H, Section 2.2.1): AES-128.
+#[inline]
+pub(super) fn aes128(key: &[u8; 16], block: &mut [u8; 16]) {
+    // SAFETY: the application defines the function with this signature.
+    unsafe { trouble_host_aes128(key, block) }
+}
+
+extern "Rust" {
+    /// Fills `dest` with random bytes fit for keys and nonces: generated as
+    /// [Vol 2] Part H, Section 2 requires. The application provides it, so
+    /// that the controller's generator serves the host too.
+    fn trouble_host_random(dest: &mut [u8]);
+}
+
+/// The application's random source as a generator.
+pub(crate) struct Random;
+
+impl RngCore for Random {
+    fn next_u32(&mut self) -> u32 {
+        let mut b = [0; 4];
+        self.fill_bytes(&mut b);
+        u32::from_le_bytes(b)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut b = [0; 8];
+        self.fill_bytes(&mut b);
+        u64::from_le_bytes(b)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        // SAFETY: the application defines the function with this signature.
+        unsafe { trouble_host_random(dest) }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for Random {}
+
+/// RFC 4493 AES-CMAC ([Vol 3] Part H, Section 2.2.5), on which f4, f5, f6
+/// and g2 (Sections 2.2.6 to 2.2.9) and the GATT database hash are built.
+pub struct AesCmac {
+    key: Key,
+    /// The chained value, `X` of RFC 4493 Section 2.4.
+    x: [u8; 16],
+    /// The message's last block so far, held back because the last block is
+    /// masked with a subkey before it is encrypted.
+    last: [u8; 16],
+    /// Bytes in `last`.
+    len: usize,
+}
 
 impl AesCmac {
     /// Creates new AES-CMAC state using key `k`.
-    #[inline(always)]
     #[must_use]
     pub(super) fn new(k: &Key) -> Self {
-        Self(digest::KeyInit::new(&k.0))
+        Self {
+            key: *k,
+            x: [0; 16],
+            last: [0; 16],
+            len: 0,
+        }
     }
 
     /// Creates new AES-CMAC state using an all-zero key for GAP database hash
@@ -212,25 +270,61 @@ impl AesCmac {
     /// Updates CMAC state.
     #[inline(always)]
     pub fn update(&mut self, b: impl AsRef<[u8]>) -> &mut Self {
-        digest::Update::update(&mut self.0, b.as_ref());
+        self.update_bytes(b.as_ref())
+    }
+
+    // One copy of the loop, not one for each type of argument.
+    #[inline(never)]
+    fn update_bytes(&mut self, b: &[u8]) -> &mut Self {
+        for &byte in b {
+            if self.len == 16 {
+                xor_into(&mut self.x, &self.last);
+                aes128(&self.key.0, &mut self.x);
+                self.len = 0;
+            }
+            self.last[self.len] = byte;
+            self.len += 1;
+        }
         self
     }
 
     /// Computes the final MAC value.
-    #[inline(always)]
     #[must_use]
-    pub fn finalize(self) -> u128 {
-        u128::from_be_bytes(*digest::FixedOutput::finalize_fixed(self.0).as_ref())
+    pub fn finalize(mut self) -> u128 {
+        u128::from(&self.finalize_key())
     }
 
     /// Computes the final MAC value for use as a future key and resets the
     /// state.
-    #[inline(always)]
     pub(super) fn finalize_key(&mut self) -> Key {
-        // Best effort to avoid leaving copies
-        let mut k = Key::new(0);
-        digest::FixedOutputReset::finalize_into_reset(&mut self.0, &mut k.0);
-        k
+        // Subkeys, RFC 4493 Section 2.3.
+        let mut l = [0; 16];
+        aes128(&self.key.0, &mut l);
+        let k1 = dbl(u128::from_be_bytes(l));
+        let mask = if self.len == 16 {
+            k1
+        } else {
+            self.last[self.len..].fill(0);
+            self.last[self.len] = 0x80;
+            dbl(k1)
+        };
+        xor_into(&mut self.last, &mask.to_be_bytes());
+        let mut mac = self.x;
+        xor_into(&mut mac, &self.last);
+        aes128(&self.key.0, &mut mac);
+        *self = Self::new(&self.key);
+        Key(mac)
+    }
+}
+
+/// Doubling in GF(2^128), RFC 4493 Section 2.3.
+fn dbl(v: u128) -> u128 {
+    (v << 1) ^ if v >> 127 == 1 { 0x87 } else { 0 }
+}
+
+fn xor_into(a: &mut [u8; 16], b: &[u8; 16]) {
+    for (a, b) in a.iter_mut().zip(b) {
+        *a ^= b;
     }
 }
 
@@ -242,20 +336,20 @@ pub struct Check(pub u128);
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub(super) struct Key(aes::cipher::Key<aes::Aes128>);
+pub(super) struct Key([u8; 16]);
 
 impl Key {
     /// Creates a key from a `u128` value.
     #[inline(always)]
     pub fn new(k: u128) -> Self {
-        Self(k.to_be_bytes().into())
+        Self(k.to_be_bytes())
     }
 }
 
 impl From<&Key> for u128 {
     #[inline(always)]
     fn from(k: &Key) -> Self {
-        Self::from_be_bytes(k.0.into())
+        Self::from_be_bytes(k.0)
     }
 }
 
@@ -684,7 +778,7 @@ pub(super) fn c1(
     p2[4..10].copy_from_slice(ia);
     p2[10..16].copy_from_slice(ra);
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
+    let k = k.to_be_bytes();
 
     // e(k, r XOR p1)
     let r_bytes = r.to_be_bytes();
@@ -692,13 +786,13 @@ pub(super) fn c1(
     for i in 0..16 {
         block[i] = r_bytes[i] ^ p1[i];
     }
-    cipher.encrypt_block((&mut block).into());
+    aes128(&k, &mut block);
 
     // e(k, result XOR p2)
     for i in 0..16 {
         block[i] ^= p2[i];
     }
-    cipher.encrypt_block((&mut block).into());
+    aes128(&k, &mut block);
 
     u128::from_be_bytes(block)
 }
@@ -719,8 +813,7 @@ pub(super) fn s1(k: u128, r1: u128, r2: u128) -> u128 {
     r_prime[0..8].copy_from_slice(&r1_bytes[8..16]);
     r_prime[8..16].copy_from_slice(&r2_bytes[8..16]);
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
-    cipher.encrypt_block((&mut r_prime).into());
+    aes128(&k.to_be_bytes(), &mut r_prime);
 
     u128::from_be_bytes(r_prime)
 }
@@ -735,8 +828,7 @@ pub(super) fn d1(k: u128, d: u16, r: u16) -> u128 {
     d_prime[12..14].copy_from_slice(&r.to_be_bytes());
     d_prime[14..16].copy_from_slice(&d.to_be_bytes());
 
-    let cipher = Aes128::new_from_slice(&k.to_be_bytes()).unwrap();
-    cipher.encrypt_block((&mut d_prime).into());
+    aes128(&k.to_be_bytes(), &mut d_prime);
 
     u128::from_be_bytes(d_prime)
 }
@@ -760,6 +852,71 @@ mod tests {
     use super::*;
     extern crate std;
     use bt_hci::param::{AddrKind, BdAddr};
+
+    /// The host's tests encrypt in software, where the firmware uses the chip.
+    #[no_mangle]
+    fn trouble_host_aes128(key: &[u8; 16], block: &mut [u8; 16]) {
+        use aes::cipher::{BlockEncrypt, KeyInit};
+        aes::Aes128::new_from_slice(key).unwrap().encrypt_block(block.into());
+    }
+
+    #[no_mangle]
+    fn trouble_host_random(dest: &mut [u8]) {
+        OsRng.fill_bytes(dest);
+    }
+
+    /// The examples of RFC 4493 Section 4, each message also fed in pieces
+    /// that cross the block boundaries.
+    #[test]
+    fn cmac_rfc4493() {
+        const M: [u8; 64] = u512(
+            0x6bc1bee2_2e409f96_e93d7e11_7393172a,
+            0xae2d8a57_1e03ac9c_9eb76fac_45af8e51,
+            0x30c81c46_a35ce411_e5fbc119_1a0a52ef,
+            0xf69f2445_df4f9b17_ad2b417b_e66c3710,
+        );
+        let k = Key::new(0x2b7e1516_28aed2a6_abf71588_09cf4f3c);
+        let mut l = [0; 16];
+        aes128(&k.0, &mut l);
+        assert_eq!(u128::from_be_bytes(l), 0x7df76b0c_1ab899b3_3e42f047_b91b546f);
+        assert_eq!(dbl(u128::from_be_bytes(l)), 0xfbeed618_35713366_7c85e08f_7236a8de);
+        assert_eq!(
+            dbl(dbl(u128::from_be_bytes(l))),
+            0xf7ddac30_6ae266cc_f90bc11e_e46d513b
+        );
+        for (len, mac) in [
+            (0, 0xbb1d6929_e9593728_7fa37d12_9b756746),
+            (16, 0x070a16b4_6b4d4144_f79bdd9d_d04a287c),
+            (40, 0xdfa66747_de9ae630_30ca3261_1497c827),
+            (64, 0x51f0bebf_7e3b9d92_fc497417_79363cfe),
+        ] {
+            let mut m = AesCmac::new(&k);
+            m.update(&M[..len]);
+            assert_eq!(m.finalize(), mac, "{len} bytes whole");
+            let mut m = AesCmac::new(&k);
+            for piece in M[..len].chunks(7) {
+                m.update(piece);
+            }
+            assert_eq!(m.finalize(), mac, "{len} bytes in pieces");
+        }
+        // The state is reset after a MAC taken as a key.
+        let mut m = AesCmac::new(&k);
+        m.update(&M[..40]);
+        let _ = m.finalize_key();
+        m.update(&M[..16]);
+        assert_eq!(m.finalize(), 0x070a16b4_6b4d4144_f79bdd9d_d04a287c);
+    }
+
+    const fn u512(a: u128, b: u128, c: u128, d: u128) -> [u8; 64] {
+        let mut out = [0; 64];
+        let words = [a.to_be_bytes(), b.to_be_bytes(), c.to_be_bytes(), d.to_be_bytes()];
+        let mut i = 0;
+        while i < 64 {
+            out[i] = words[i / 16][i % 16];
+            i += 1;
+        }
+        out
+    }
 
     #[test]
     fn sizes() {
