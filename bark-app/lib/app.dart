@@ -74,8 +74,14 @@ class AppModel extends ChangeNotifier {
     final a = session.address;
     if (a == null) return;
     if (a.toString() != me.nodeAddress?.toString()) me.setNodeAddress(a);
-    // The home is the node, not the spot: its position moves when it takes
-    // a new place, and the card and texts to the old one would miss it.
+    // The home is the node, not the spot: a fixed, awake node's address is
+    // its stored place, which moves only at boot or when it turns fixed,
+    // and the card and texts to the old one would miss it. A carried
+    // node's address is its live fix, which moves every second, and a card
+    // to every contact on each fix would flood the mesh; a sleepy node's is
+    // its anchor's, which changes as it picks anchors.
+    final s = session.status;
+    if (s == null || s.carried || s.sleepy) return;
     if (atHome && a.toString() != me.home.toString()) unawaited(_homeMoved(a));
   }
 
