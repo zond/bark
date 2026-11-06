@@ -88,10 +88,7 @@
 //! carries its own hand-over ([`HandOver`]). A forward is addressed
 //! when its hand-over starts, by the one next-hop function of spec "Next hop",
 //! from the state as it is then; with no candidate left it becomes a
-//! return to the parent, or at the origin a drop. Before the choice, a
-//! message whose destination this relay and two neighbours it has tried
-//! for it enclose is dropped: by the triangle rule of spec "Next hop", no
-//! node is at that address. Nothing of the choice
+//! return to the parent, or at the origin a drop. Nothing of the choice
 //! is kept once the hand-over ends: the next routing makes it afresh.
 //! The hop count a packet
 //! carries is stamped at each hand-over's first transmission, the record's
@@ -189,7 +186,6 @@
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
-use crate::geo;
 use crate::ids::{MsgId, NodeId};
 use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, IN_FLIGHT};
 use crate::node::Rng;
@@ -731,7 +727,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if dst == self.config.position {
             return true;
         }
-        if !self.owns_near() {
+        if self.booting() {
+            // Its table may not yet hold a relay within the radius that is
+            // nearer (spec "Owner").
             return false;
         }
         let target = self.plane.point(dst);
@@ -741,48 +739,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .neighbours
                 .candidates(now)
                 .any(|(_, n)| n.holds_mail() && n.local.distance2(target) < mine)
-    }
-
-    /// Whether this node owns positions near its own (spec "Owner"): it
-    /// holds mail, and is past its first rotation, whose table may not yet
-    /// hold a relay within the radius that is nearer, and has a place
-    /// (spec "Position").
-    fn owns_near(&self) -> bool {
-        !(self.sleepy() || self.motion.carried || self.leaving())
-            && !self.booting()
-            && self.placed()
-    }
-
-    /// Whether the message of `record` to `dst` ends here by the triangle
-    /// rule (spec "Next hop"): this relay and two neighbours it has
-    /// tried for it, those in `handed` but its parent, enclose `dst`,
-    /// each at a fixed place and owning near it, and none owns `dst`;
-    /// unless the addressed node `dst_id` is a live neighbour it has not
-    /// tried, which goes first ([`Self::next_hop`]).
-    /// At most the neighbour table's entries squared, when a message comes
-    /// back here and is routed again.
-    fn enclosed(&self, record: &Record, dst: Position, dst_id: NodeId, now: Instant) -> bool {
-        if !self.owns_near() {
-            return false;
-        }
-        let parent = record.parent().map(|(name, _)| name);
-        if self
-            .neighbours
-            .live(now)
-            .any(|(slot, n)| n.id == dst_id && !record.handed(slot) && Some(n.id) != parent)
-        {
-            return false;
-        }
-        let corner = |&(slot, n): &(usize, &Neighbour)| {
-            record.handed(slot) && n.holds_mail() && Some(n.id) != parent
-        };
-        let me = self.config.position;
-        self.neighbours.slots().filter(corner).any(|(i, a)| {
-            self.neighbours
-                .slots()
-                .filter(corner)
-                .any(|(j, b)| j > i && geo::encloses([me, a.position, b.position], dst))
-        })
     }
 
     /// Whether `n` is a last resort at `now` (spec "Next hop"): a sleepy
@@ -1660,10 +1616,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return Routed::Hold;
             }
             self.arrive(id, &d, now, emit);
-            return Routed::Done;
-        }
-        if self.enclosed(&record, d.dst_pos, d.dst_id, now) {
-            self.drop_msg(id, DropReason::Triangle, emit);
             return Routed::Done;
         }
         if let Some((_, n)) =

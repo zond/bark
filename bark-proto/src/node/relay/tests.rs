@@ -2792,44 +2792,6 @@ fn settle(
     }
 }
 
-/// A message whose destination the relay and two neighbours it tried
-/// enclose ends there, and nothing more is sent for it, by the triangle
-/// rule of spec "Next hop": D answers seen, the relay goes on to E, and E's seen makes
-/// the triangle. Without it the relay would return the message to its
-/// parent.
-#[test]
-fn a_destination_two_tried_neighbours_enclose_ends_the_message() {
-    use crate::event::DropReason;
-    let (mut r, mut now, id, d, e) = handing_between(500, 0, false, false);
-    let a = answered(&mut r, &mut now, id, d, true);
-    let (to, drops) = settle(&mut r, &mut now, a);
-    assert_eq!((to, drops), (Some(e), std::vec![]), "E next");
-    let a = answered(&mut r, &mut now, id, e, true);
-    let (to, drops) = settle(&mut r, &mut now, a);
-    assert_eq!((to, drops), (None, std::vec![DropReason::Triangle]));
-    assert!(r.holding().next().is_none() && r.handover_idle());
-}
-
-/// Outside the triangle, or with a carried corner, whose place is not
-/// fixed (spec "Position"), the search goes on as before: back to the
-/// parent.
-#[test]
-fn a_destination_outside_or_a_carried_corner_returns_to_the_parent() {
-    for (north, carried) in [(-500, false), (500, true)] {
-        let (mut r, mut now, id, d, e) = handing_between(north, 0, carried, false);
-        let a = answered(&mut r, &mut now, id, d, true);
-        let (to, _) = settle(&mut r, &mut now, a);
-        assert_eq!(to, Some(e));
-        let a = answered(&mut r, &mut now, id, e, true);
-        let (to, drops) = settle(&mut r, &mut now, a);
-        assert_eq!(
-            (to, drops),
-            (Some(name(7)), std::vec![]),
-            "{north} {carried}"
-        );
-    }
-}
-
 /// The addressed node goes first where it is a neighbour, though another
 /// is nearer its position and it is carried (spec "Next hop"); answered
 /// seen, the search goes on as before.
