@@ -141,18 +141,11 @@ void main() {
 
   test('a fetch: made and opened', () {
     final m = at('fetch');
-    final f = Fetch(
-      m['sent'] as int,
-      Address.parse(m['address'] as String)!,
-      m['since'] as int,
-    );
+    final f = Fetch(m['sent'] as int, Address.parse(m['address'] as String)!);
     expect(hex(f.seal(s, alice.mailbox, h(m, 'nonce'))), m['payload']);
     expect(h(m, 'payload').length, Fetch.len);
     final g = Fetch.open(s, alice.mailbox, h(m, 'payload'));
-    expect(
-      (g.sent, g.address.toString(), g.since),
-      (f.sent, f.address.toString(), f.since),
-    );
+    expect((g.sent, g.address.toString()), (f.sent, f.address.toString()));
     expect(
       () => Fetch.open(s, bob.mailbox, h(m, 'payload')),
       throwsA(isA<BadPayload>()),
@@ -164,15 +157,29 @@ void main() {
     final round = m['round'] as int;
     final place = m['place'] as int;
     final n = m['number'] as int;
+    final left = m['remaining'] as int;
     expect(hex(replyNonce(round, place)), m['nonce']);
     expect(
-      hex(sealReply(s, alice.mailbox, round, place, n, h(m, 'item'))),
+      hex(sealReply(s, alice.mailbox, round, place, n, left, h(m, 'item'))),
       m['payload'],
     );
     final o = openReply(s, alice.mailbox, round, h(m, 'payload'))!;
-    expect((o.number, o.place, hex(o.item!)), (n, place, m['item']));
+    expect(
+      (o.number, o.place, o.remaining, hex(o.item!)),
+      (n, place, left, m['item']),
+    );
     expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
     expect(openReply(s, bob.mailbox, round, h(m, 'payload')), isNull);
+  });
+
+  test('a reply opens at every place of a batch, and tells what remains', () {
+    for (final place in [1, maxReplies]) {
+      final p = sealReply(s, alice.mailbox, 7, place, 5, 1000, [1, 2]);
+      final o = openReply(s, alice.mailbox, 7, p)!;
+      expect((o.number, o.place, o.remaining), (5, place, 1000));
+    }
+    final beyond = sealReply(s, alice.mailbox, 7, maxReplies + 1, 5, 0, [1, 2]);
+    expect(openReply(s, alice.mailbox, 7, beyond), isNull);
   });
 
   test('nothing new: made, opened in its round only', () {

@@ -198,13 +198,13 @@ class Messenger {
     await me.setCardSent(t);
   }
 
-  /// Asks the home node for every item after this phone's `since`, to be
-  /// sent to `here`.
+  /// Asks the home node for the newest batch of the items it has not
+  /// sent, to be sent to `here`.
   Future<void> fetch(Address here) async {
     final home = me.home;
     if (home == null) return;
     final sent = await me.nextSent();
-    final f = Fetch(sent, here, me.since);
+    final f = Fetch(sent, here);
     final p = f.seal(sodium, me.keys.mailbox, sodium.randombytes.buf(nonceLen));
     await me.fetched(sent);
     await session.queue(
@@ -258,10 +258,15 @@ class Messenger {
     for (final round in me.rounds) {
       final o = openReply(sodium, me.keys.mailbox, round, p);
       if (o == null) continue;
-      await session.fetchAnswered(round, nothingNew: o.nothingNew);
+      await session.fetchAnswered(
+        round,
+        nothingNew: o.nothingNew,
+        remaining: round == me.rounds.first ? o.remaining : 0,
+      );
+      await me.gotReply(round, o);
       final item = o.item;
-      if (item == null) return true;
-      await me.gotItem(o.number, first: o.number - o.place + 1);
+      // An empty item is one the home could not send: only its number came.
+      if (item == null || item.isEmpty) return true;
       // An item that opens for nobody here is still one the mailbox has
       // delivered: it is kept as received.
       if (!await _open(m, item, mailbox: true)) {

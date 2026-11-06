@@ -104,7 +104,9 @@ class NoticeCard extends StatelessWidget {
 
 /// "Fetch my mail", in an app bar, while the person has a home node; it
 /// says what was done, or why nothing was sent. While a fetch waits for
-/// its answer the button is off and says so; "No new mail" is told once.
+/// its answer the button is off and says so; "No new mail", or how many
+/// more the home holds, is told once, and the count stays on the button
+/// until a fetch brings them.
 class FetchButton extends StatelessWidget {
   final AppModel app;
   const FetchButton(this.app, {super.key});
@@ -130,9 +132,14 @@ class FetchButton extends StatelessWidget {
         onPressed: null,
       );
     }
+    final more = app.me.remaining;
     return IconButton(
       tooltip: 'Fetch my mail',
-      icon: const Icon(Icons.move_to_inbox),
+      icon: Badge(
+        label: Text('$more'),
+        isLabelVisible: more > 0,
+        child: const Icon(Icons.move_to_inbox),
+      ),
       onPressed: () async {
         try {
           final r = await app.fetchNow();
