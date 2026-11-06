@@ -289,8 +289,8 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 398 660 B of the 401 408 B slot,
-2 748 B free; the pairing of roadmap D135 took 55.8 KB of it
+and one codegen unit: the node image is 387 244 B of the 401 408 B slot,
+14 164 B free; the pairing of roadmap D135 took 55.8 KB of it
 (`docs/flash-2026-11-06.md` measures the options,
 `docs/pairing-2026-11-06.md` the pairing's). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
@@ -300,10 +300,14 @@ paths end up in it, a panic's location among them, and absolute ones
 would make its size depend on the checkout's path: a build from a path
 18 characters longer once took 168 B more flash. So Cargo runs rustc
 through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
-`.cargo/config.toml`, the loader's too), which maps the checkout's root
-to `/bark`, Cargo's home to `/cargo` and the standard library's source
-to `/rustc/<commit>`, where the toolchain's compiled library has it; the build commands above need
-nothing more, here and in the workflows. A wrapper changed after a
+`.cargo/config.toml`, the loader's too), which cuts each path to the
+crate's directory and the file in it: `bark-proto/src/wire.rs` for the
+checkout, `aes-0.8.4/src/soft/fixslice32.rs` for Cargo's registry,
+`core/src/slice/index.rs` for the standard library, and `src/main.rs`
+for the firmware's own. A panic still names its crate, file and line,
+and the prefixes cost no flash: 3 120 B less than mapping them to
+`/bark`, `/cargo/registry/src/<index>` and `/rustc/<commit>/library`.
+The build commands above need nothing more, here and in the workflows. A wrapper changed after a
 build does not rebuild by itself: `cargo clean` first.
 
 ## Flash
