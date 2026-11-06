@@ -52,7 +52,10 @@ class AppModel extends ChangeNotifier {
     return AppModel(
       sodium: s,
       me: Me(FileStore('me.json'), s, DateTime.now),
-      session: Session(store: FileStore('bark.json'), now: DateTime.now),
+      session: Session(store: FileStore('bark.json'), now: DateTime.now)
+        // debugPrint, unlike dart:developer's log, reaches the Android log
+        // in release builds too, under the tag flutter.
+        ..noted = (l) => debugPrint('bark ${logTime(l.at)} ${l.text}'),
       contacts: Contacts(FileStore('contacts.json')),
       now: DateTime.now,
       notifier: await PhoneNotifier.start(),

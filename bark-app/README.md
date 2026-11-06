@@ -84,7 +84,9 @@ is a prototype for the bench, not the app people will carry.
   mailbox state; Node, what Home reads, every Status field, the last
   Given back value, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
-  started.
+  started. Each log line also goes to the Android log, so on the bench
+  `adb logcat -s flutter` shows them as, for example,
+  `11-06 14:03:27.513  8812  8840 I flutter : bark 14:03:27.512 Disconnected`.
 
 A node is the paired phone's alone (spec "Phone link", Pairing; roadmap
 D135). The first time the phone connects to a node it pairs: Settings

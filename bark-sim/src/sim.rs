@@ -3522,7 +3522,7 @@ impl Sim {
                 payload[..bytes.len()].copy_from_slice(bytes);
                 let len = bytes.len() as u8;
                 core.confirm(id);
-                if self.mailbox_takes(node, &payload[..len as usize]) {
+                if self.mailbox_takes(node, id, &payload[..len as usize]) {
                     return;
                 }
                 (len, payload)
@@ -4246,7 +4246,7 @@ impl Sim {
 
     /// A payload for `node`'s application that its mailbox takes, or that
     /// is a mailbox's reply: kept, and not counted as a text.
-    fn mailbox_takes(&mut self, node: u32, payload: &[u8]) -> bool {
+    fn mailbox_takes(&mut self, node: u32, msg_id: MsgId, payload: &[u8]) -> bool {
         use bark_app_layer::seal::Form;
         // Without a mailbox in the run every payload is a traffic tag,
         // which may begin as a reply does.
@@ -4262,7 +4262,7 @@ impl Sim {
         };
         // Every payload but a fetch is kept; the texts are counted as
         // delivered as at any node.
-        !matches!(m.arrive(payload), Kept::Kept(_))
+        !matches!(m.arrive(msg_id, payload), Kept::Kept(_))
     }
 
     /// The mailbox's next reply, handed to the core while its application

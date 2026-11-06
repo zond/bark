@@ -65,8 +65,7 @@ class DebugScreen extends StatelessWidget {
             if (s.log.isEmpty) const Text('Nothing yet'),
             for (final l in s.log.reversed)
               Text(
-                '${l.at.toLocal().toIso8601String().substring(11, 23)} '
-                '${l.text}',
+                '${logTime(l.at)} ${l.text}',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
               ),
           ],
