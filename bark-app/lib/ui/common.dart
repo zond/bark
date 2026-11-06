@@ -177,3 +177,16 @@ Future<String?> askText(BuildContext context, String label, String initial) {
     ),
   );
 }
+
+/// The phone's pairing as a person reads it while not connected (spec
+/// "Phone link", Pairing).
+String pairedLine(Session s) {
+  final n = s.pairedWith;
+  if (n == null) {
+    return 'Not paired with a node yet: the first connection pairs, by a '
+        'code on the node\'s screen.';
+  }
+  return s.pairingLost
+      ? '$n is no longer yours: another phone has paired with it.'
+      : 'Paired with $n.';
+}

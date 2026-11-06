@@ -91,8 +91,9 @@ class ConversationsScreen extends StatelessWidget {
   Widget _connection(BuildContext context) {
     final s = app.session;
     final text = s.connected
-        ? 'Connected to ${nodeName(s.node!.id)}'
-        : 'Not connected to a node: texts wait on the phone';
+        ? 'Connected to ${nodeName(s.node!.id)}, paired'
+        : 'Not connected to a node: texts wait on the phone. '
+              '${pairedLine(s)}';
     return ListTile(
       dense: true,
       leading: Icon(

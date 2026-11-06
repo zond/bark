@@ -407,7 +407,15 @@ async fn main(spawner: Spawner) {
             embassy_nrf::peripherals::NVMC::steal()
         }));
         let mpsl_flash = store::shared(mpsl_flash);
-        let (flash, stored, offset_min) = store::Flash::open(mpsl_flash);
+        let (flash, kept) = store::Flash::open(mpsl_flash);
+        let (stored, offset_min) = (kept.stored, kept.offset_min);
+        // The bond with the paired phone, to the phone link, and its line
+        // on the first picture.
+        display::phone_at_boot(match kept.bond {
+            Some(_) => bark_screen::Phone::Paired,
+            None => bark_screen::Phone::None,
+        });
+        ble::STORED_BOND.signal(kept.bond);
         // The mailbox, beside the store on the same flash (`mailbox.rs`).
         mailbox::open();
         spawner.spawn(mailbox::run(mpsl_flash).expect("spawned once"));
