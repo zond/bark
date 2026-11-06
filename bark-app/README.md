@@ -91,7 +91,13 @@ is a prototype for the bench, not the app people will carry.
 A node is the paired phone's alone (spec "Phone link", Pairing; roadmap
 D135). The first time the phone connects to a node it pairs: Settings
 says to type the six-digit code the node's screen shows, and Android
-asks for it in its own dialog. The bond is the phone's from then on and
+asks for it in its own dialog; Android then takes about five seconds
+before it reports the bond, and Settings says "Paired, connecting…"
+until the node is read. While a connection is being made no other
+starts, and the connected node's row in the scan says "Connected" and
+does nothing: a second connect to it would close the link the first
+made. Tapping another node's row closes the link and connects to that
+one. The bond is the phone's from then on and
 every later connection is encrypted without a code. When another phone
 has paired with the node since, the node holds no key for this one and
 the first read after connecting fails, or Android has dropped the bond

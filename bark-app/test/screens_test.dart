@@ -410,6 +410,23 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('a connect to the node connected, or during one, does nothing', (
+    t,
+  ) async {
+    final app = await model(t);
+    await Future.wait([app.connectFake(), app.connectFake()]);
+    await app.connectFake();
+    expect(app.session.connected, isTrue);
+    expect(app.linking, Linking.none);
+    expect(
+      app.session.log.where((l) => l.text.startsWith('Connected, MTU')),
+      hasLength(1),
+    );
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
   testWidgets('another phone paired: no longer yours, then paired again', (
     t,
   ) async {

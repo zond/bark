@@ -65,7 +65,8 @@ class BleLink implements NodeLink {
 
   /// Connects, asks for the MTU of [attMtu], and pairs if the phone has
   /// no bond with the node, telling `pairing` first, as Android then asks
-  /// the person for the code on the node's screen; returns the MTU
+  /// the person for the code on the node's screen, and `paired` once the
+  /// bond is made; returns the MTU
   /// agreed. Throws [NotOurs] for a node, `name`, that no longer holds
   /// the phone's bond, or whose bond the phone no longer has though it
   /// `hadBond`, as Android may drop a bond whose key the node refused;
@@ -75,6 +76,7 @@ class BleLink implements NodeLink {
     required String name,
     bool hadBond = false,
     void Function()? pairing,
+    void Function()? paired,
   }) async {
     final link = BleLink._(deviceId);
     await UniversalBle.connect(
@@ -98,6 +100,7 @@ class BleLink implements NodeLink {
       } else {
         pairing?.call();
         await UniversalBle.pair(deviceId);
+        paired?.call();
       }
     } on PairingException {
       await link.close();
