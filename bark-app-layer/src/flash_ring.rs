@@ -1,6 +1,8 @@
-//! The mailbox's [`Ring`] in a region of NOR flash: its first page a log
-//! of the state, the rest the ring's pages (spec "Mailbox";
-//! `bark-image/src/layout.rs`, `MAILBOX`).
+//! The mailbox's [`Ring`] in a region of NOR flash: the ring's pages,
+//! then a page with a log of the state (spec "Mailbox";
+//! `bark-image/src/layout.rs`, `MAILBOX`). The state, which holds the
+//! mailbox key, goes last so that the region can end above the flash the
+//! board's bootloader serves on its drive.
 //!
 //! The flash is read where it lies, but written later than the mailbox
 //! asks: a write or an erase is queued as an [`Op`], read back through the
@@ -35,7 +37,7 @@ pub const OPS: usize = 8;
 
 /// The region's flash, read where it lies; offsets from its start.
 pub trait Region {
-    /// Pages in the region: the state's and the ring's.
+    /// Pages in the region: the ring's and the state's.
     fn pages(&self) -> u32;
     /// The bytes at `offset`, into `out`.
     fn read(&self, offset: u32, out: &mut [u8]);
@@ -94,12 +96,13 @@ fn fnv1a(bytes: &[u8]) -> u32 {
 impl<F: Region> FlashRing<F> {
     /// The ring in `flash`, with the state its last whole record holds.
     pub fn open(flash: F) -> FlashRing<F> {
-        assert!(flash.pages() >= 3, "a state page and two of the ring");
+        assert!(flash.pages() >= 3, "two pages of the ring and a state page");
         let mut state = None;
         let mut next_record = RECORDS;
+        let at = Self::state_offset(&flash);
         for i in 0..RECORDS {
             let mut r = [0u8; RECORD_LEN];
-            flash.read(i * RECORD_LEN as u32, &mut r);
+            flash.read(at + i * RECORD_LEN as u32, &mut r);
             if r.iter().all(|&b| b == 0xff) {
                 next_record = i;
                 break;
@@ -160,7 +163,11 @@ impl<F: Region> FlashRing<F> {
     }
 
     fn slot_offset(slot: u32) -> u32 {
-        PAGE_LEN * (1 + slot / SLOTS_PER_PAGE) + (slot % SLOTS_PER_PAGE) * SLOT_LEN as u32
+        PAGE_LEN * (slot / SLOTS_PER_PAGE) + (slot % SLOTS_PER_PAGE) * SLOT_LEN as u32
+    }
+
+    fn state_offset(flash: &F) -> u32 {
+        PAGE_LEN * (flash.pages() - 1)
     }
 }
 
@@ -196,7 +203,7 @@ impl<F: Region> Ring for FlashRing<F> {
 
     fn erase(&mut self, page: u32) {
         self.push(Op::Erase {
-            offset: PAGE_LEN * (1 + page),
+            offset: PAGE_LEN * page,
         });
     }
 
@@ -205,15 +212,16 @@ impl<F: Region> Ring for FlashRing<F> {
     }
 
     fn keep_state(&mut self, state: &[u8; STATE_LEN]) {
+        let at = Self::state_offset(&self.flash);
         if self.next_record >= RECORDS {
-            self.push(Op::Erase { offset: 0 });
+            self.push(Op::Erase { offset: at });
             self.next_record = 0;
         }
         let mut bytes = [0xffu8; SLOT_LEN];
         bytes[..STATE_LEN].copy_from_slice(state);
         bytes[CHECK_AT..CHECK_AT + 4].copy_from_slice(&fnv1a(state).to_be_bytes());
         self.push(Op::Write {
-            offset: self.next_record * RECORD_LEN as u32,
+            offset: at + self.next_record * RECORD_LEN as u32,
             len: RECORD_LEN as u16,
             bytes,
         });

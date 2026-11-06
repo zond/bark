@@ -230,6 +230,12 @@ staged image (Updates, below; roadmap D79). One table,
 firmware and of the loader write each one's `memory.x` from it, with a
 symbol for each region, which `scripts/uf2.py` reads from the ELF.
 Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
+The bootloader's drive writes a UF2 into `0x1000..0xEA000` and, after a
+double tap, serves every byte of that range as `CURRENT.UF2`
+(`docs/softdevice-2026-11-05.md`, "How the drive places a UF2"): anyone
+holding the board can copy it off. So the secrets, the mailbox's state
+and the stored state, lie in `0xEA000..0xF4000`, which no UF2 writes or
+reads.
 
 | Region | Start | Size | Why |
 |---|---|---|---|
@@ -240,8 +246,9 @@ Pages are 4 KiB, the erase unit (nRF52840 Product Specification, NVMC).
 | firmware, staged | `0x68000` | 396 KiB, 99 pages | one page larger than the running slot, which embassy-boot's swap needs |
 | staged image's record | `0xCB000` | 4 KiB | its header, and the loader's word that it matched it; below `0xEA000`, where the bootloader's drive stops writing |
 | coded pieces | `0xCC000` | 88 KiB, 22 pages | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
-| mailbox | `0xE2000` | 68 KiB, 17 pages | its state, then a ring of 16 pages, 256 items (`docs/app-layer-2026-11-05.md`, section 5); unused until the mailbox is built |
-| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond with the paired phone |
+| mailbox ring | `0xE2000` | 64 KiB, 16 pages | 256 items (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
+| mailbox state | `0xF2000` | 4 KiB | the mailbox key, the last fetch and the phone's last confirmed item; secret, so above `0xEA000` |
+| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond's keys with the paired phone; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
 | MBR parameters | `0xFE000` | 4 KiB | |
@@ -282,8 +289,8 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the node image is 398 660 B of the 401 408 B slot,
-2 748 B free; the pairing of roadmap D135 took 55.8 KB of it
+and one codegen unit: the node image is 387 244 B of the 401 408 B slot,
+14 164 B free; the pairing of roadmap D135 took 55.8 KB of it
 (`docs/flash-2026-11-06.md` measures the options,
 `docs/pairing-2026-11-06.md` the pairing's). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
@@ -293,10 +300,14 @@ paths end up in it, a panic's location among them, and absolute ones
 would make its size depend on the checkout's path: a build from a path
 18 characters longer once took 168 B more flash. So Cargo runs rustc
 through `scripts/rustc-remap.sh` (`build.rustc-wrapper` in
-`.cargo/config.toml`, the loader's too), which maps the checkout's root
-to `/bark`, Cargo's home to `/cargo` and the standard library's source
-to `/rustc/<commit>`, where the toolchain's compiled library has it; the build commands above need
-nothing more, here and in the workflows. A wrapper changed after a
+`.cargo/config.toml`, the loader's too), which cuts each path to the
+crate's directory and the file in it: `bark-proto/src/wire.rs` for the
+checkout, `aes-0.8.4/src/soft/fixslice32.rs` for Cargo's registry,
+`core/src/slice/index.rs` for the standard library, and `src/main.rs`
+for the firmware's own. A panic still names its crate, file and line,
+and the prefixes cost no flash: 3 120 B less than mapping them to
+`/bark`, `/cargo/registry/src/<index>` and `/rustc/<commit>/library`.
+The build commands above need nothing more, here and in the workflows. A wrapper changed after a
 build does not rebuild by itself: `cargo clean` first.
 
 ## Flash
@@ -602,8 +613,8 @@ bench's `stack_used` to show (`docs/pairing-2026-11-06.md`).
 
 A node set as a person's home (spec "Mailbox"; Home on the phone link)
 keeps every message for its application in a ring in flash, the region
-`MAILBOX` (`bark-image/src/layout.rs`): a page of state, then 16 pages
-of 16 slots of 256 bytes, the oldest page erased when the ring is full
+`MAILBOX` (`bark-image/src/layout.rs`): 16 pages of 16 slots of 256
+bytes, then a page of state, the oldest page erased when the ring is full
 (`bark_app_layer::flash_ring`, `src/mailbox.rs`). Its phone's Inbox reads
 from the ring, and a fetch from the person's phone elsewhere is answered
 with the items, sealed again, through the core's one application send

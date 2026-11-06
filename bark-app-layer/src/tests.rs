@@ -840,7 +840,7 @@ mod flash_ring {
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
 
-    /// The region's pages: the state's and four of the ring.
+    /// The region's pages: four of the ring and the state's.
     const PAGES: u32 = 5;
 
     /// Flash in RAM, as NOR flash behaves: a write clears bits, an erase
@@ -971,6 +971,40 @@ mod flash_ring {
         assert!(m.is_home());
         assert_eq!(m.unread_count(), 0);
         assert_eq!(m.newest(), 100);
+    }
+
+    /// Items a page away from their place, as a ring laid out with its
+    /// state page first leaves them, are not taken for items, and new
+    /// ones are kept whole from the first slot.
+    #[test]
+    fn items_out_of_place_are_ignored() {
+        let mut flash = Ram::erased();
+        step(&mut flash, home);
+        for i in 1..=20 {
+            step(&mut flash, |m| {
+                m.arrive(MsgId(i), &item(i));
+            });
+        }
+        // The state page to the front, the ring a page up.
+        let page = PAGE_LEN as usize;
+        flash.0.rotate_right(page);
+        let mut m = Mailbox::new(FlashRing::open(&flash));
+        assert_eq!(m.newest(), 0);
+        assert!(!m.is_home());
+        home(&mut m);
+        let mut kept = flash.clone();
+        for op in take_ops(&mut m) {
+            kept.apply(&op, None);
+        }
+        for i in 1..=3 {
+            step(&mut kept, |m| {
+                assert_eq!(m.arrive(MsgId(i), &item(i)), Arrival::Kept(i))
+            });
+        }
+        let m = Mailbox::new(FlashRing::open(&kept));
+        assert_eq!((m.oldest(), m.newest()), (1, 3));
+        let mut b = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.item(3, &mut b), Some(item(3).len()));
     }
 
     /// A power cut at every op of a run, at every eighth byte of a
