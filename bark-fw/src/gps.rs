@@ -196,6 +196,20 @@ fn lose(state: State) {
     }
 }
 
+/// A value the receiver may leave out, `-` if it did, in tenths if the
+/// flag says so.
+struct Given(Option<u16>, bool);
+
+impl core::fmt::Display for Given {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Given(None, _) => f.write_str("-"),
+            Given(Some(v), false) => write!(f, "{v}"),
+            Given(Some(v), true) => write!(f, "{}.{}", v / 10, v % 10),
+        }
+    }
+}
+
 /// Lines of text, each after a space.
 struct Lines<I>(I);
 
@@ -241,11 +255,12 @@ fn fixed(f: Fix, state: State) -> State {
         lose(state);
         return State::Dropped;
     }
-    // Every fix, for the bench: how a still board's fixes wander, and
-    // with what quality, decides the carried rule (spec "Open items", O16,
-    // O18; `docs/gps-bench-2026-11-06.md`).
+    // Every fix, for the bench: how a still board's fixes wander, with
+    // what quality, and what speed its receiver measures meanwhile,
+    // decides the carried rule (spec "Open items", O16, O18;
+    // `docs/gps-bench-2026-11-06.md`).
     log::info!(
-        "gps: fix at {} sats={} hdop={}.{} mode={} c/n0 n={} min={} mean={} max={} dB-Hz",
+        "gps: fix at {} sats={} hdop={}.{} mode={} speed={}cm/s course={} c/n0 n={} min={} mean={} max={} dB-Hz",
         position,
         f.satellites,
         f.hdop_tenths / 10,
@@ -255,6 +270,8 @@ fn fixed(f: Fix, state: State) -> State {
         } else {
             '-'
         },
+        Given(f.speed_cm_s, false),
+        Given(f.course_tenths, true),
         c.count,
         c.min,
         c.mean,

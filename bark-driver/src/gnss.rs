@@ -122,6 +122,13 @@ pub struct Fix {
     /// RMC's mode: `A` autonomous, `D` differential, `E` estimated (dead
     /// reckoning), `N` none (NMEA 0183 4.10); 0 if not given.
     pub mode: u8,
+    /// RMC's speed over ground, which the receiver measures from the
+    /// satellites' Doppler shift, in cm/s, rounded from its hundredths of
+    /// a knot (0.51 cm/s each): the unit of the spec's walker, 150 cm/s
+    /// at a brisk pace. For the bench (spec O16).
+    pub speed_cm_s: Option<u16>,
+    /// RMC's course over ground, degrees from true north, in tenths.
+    pub course_tenths: Option<u16>,
     /// Their C/N0.
     pub cn0: Cn0,
 }
@@ -207,6 +214,28 @@ fn tenths(f: &[u8]) -> Option<u16> {
         None => 0,
     };
     u16::try_from(whole * 10 + tenth).ok()
+}
+
+/// A field's decimal value in hundredths, the digits after the second of
+/// the fraction ignored; `None` if empty or not a number.
+fn hundredths(f: &[u8]) -> Option<u64> {
+    let whole = u64::from(number(f)?);
+    let mut fraction = f.iter().skip_while(|&&c| c != b'.').skip(1);
+    let mut part = 0;
+    for _ in 0..2 {
+        part = part * 10
+            + match fraction.next() {
+                Some(c) if c.is_ascii_digit() => u64::from(c - b'0'),
+                Some(_) => return None,
+                None => 0,
+            };
+    }
+    Some(whole * 100 + part)
+}
+
+/// Centimetres a second from hundredths of a knot, 1852 m an hour.
+fn cm_s(hundredths_kn: u64) -> u16 {
+    u16::try_from((hundredths_kn * 1852 + 1800) / 3600).unwrap_or(u16::MAX)
 }
 
 /// Millionths of a minute in half the circle, 180°, which a position's
@@ -402,6 +431,8 @@ impl Nmea {
                     satellites: self.satellites,
                     hdop_tenths: self.hdop_tenths,
                     mode: f[11].first().copied().unwrap_or(0),
+                    speed_cm_s: hundredths(f[6]).map(cm_s),
+                    course_tenths: tenths(f[7]),
                     cn0: self.cn0(),
                 })
             }
@@ -532,6 +563,7 @@ mod tests {
         assert_eq!(f.utc_s, Some(1_793_882_119));
         assert_eq!(f.satellites, 5);
         assert_eq!((f.hdop_tenths, f.mode), (12, b'A'));
+        assert_eq!((f.speed_cm_s, f.course_tenths), (Some(0), Some(0)));
         // 04, 07, 09 of GPS and 13, 21 of BeiDou; 11 and 16 not used.
         assert_eq!(
             f.cn0,
@@ -712,6 +744,24 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
             .all(|f| f.position.is_none() && f.utc_s.is_none()));
         assert_eq!(got[0].satellites, 0);
         assert_eq!((got[0].hdop_tenths, got[0].mode), (999, b'N'));
+        assert_eq!((got[0].speed_cm_s, got[0].course_tenths), (None, None));
+    }
+
+    /// A walker's speed and course: 2.92 kn is 150.2 cm/s.
+    #[test]
+    fn speed_and_course() {
+        let mut n = Nmea::default();
+        let text = s("GNRMC,101500.000,A,5912.9071,N,01812.7088,E,2.92,123.45,061126,,,A,V");
+        let got = fixes(&mut n, &text);
+        assert_eq!(
+            (got[0].speed_cm_s, got[0].course_tenths),
+            (Some(150), Some(1234))
+        );
+        let text = s("GNRMC,101500.000,A,5912.9071,N,01812.7088,E,0.05,,061126,,,A,V");
+        let got = fixes(&mut n, &text);
+        assert_eq!((got[0].speed_cm_s, got[0].course_tenths), (Some(3), None));
+        assert_eq!(hundredths(b"1.2"), Some(120));
+        assert_eq!(hundredths(b"1.x"), None);
     }
 
     #[test]
