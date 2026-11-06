@@ -230,7 +230,11 @@ fn fixed(f: Fix, state: State) -> State {
         f.satellites,
         f.hdop_tenths / 10,
         f.hdop_tenths % 10,
-        if f.mode.is_ascii_graphic() { f.mode as char } else { '-' },
+        if f.mode.is_ascii_graphic() {
+            f.mode as char
+        } else {
+            '-'
+        },
         c.count,
         c.min,
         c.mean,
