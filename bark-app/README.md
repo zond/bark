@@ -154,11 +154,13 @@ A message names the node its sender writes from, while the other side
 may not know it, so the app knows two addresses for a contact: the
 home on their card, if they have one, and the one they last wrote from, with
 the age of their newest message, counted from the time it was written,
-or from when it arrived if that is earlier. While that age is under
-10 minutes, the delivery TTL, a text goes where they wrote from without
-asking: in that time the network keeps mail for a node at the address it
-last used (`docs/protocol.md`, "Delivery queue"), so it goes straight to
-where they are and needs no fetch from their mailbox. Older, the send
+or from when it arrived if that is earlier. While that age is under a
+minute, a text goes where they wrote from without asking, straight to
+where they are, with no fetch from their mailbox: in a minute a person
+on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
+relay hears a handheld in the street (`docs/protocol.md`, "Physical
+layer"), while a driver has already left that reach, so no longer wait
+makes the guess better. Older, the send
 button asks, for that text only: "Where <name> was <age> ago" or "Their
 home mailbox". Without a home it goes where they were, without asking;
 with a home and nothing written from yet, to the home. A contact with
@@ -260,8 +262,8 @@ choice of where a text goes.
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
    queued for about two seconds, then it is taken.
-7. Leave the thread open for ten minutes, the delivery TTL, then send
-   a text: the send button asks "Where Fake friend was 10 min ago" or
+7. Wait a minute after the last echo, then send a text: the send
+   button asks "Where Fake friend was 1 min ago" or
    "Their home mailbox". Pick the mailbox: the text says "to their
    home". Its echo makes where they were fresh again, and the next text
    goes there without asking.

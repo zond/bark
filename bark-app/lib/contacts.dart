@@ -42,10 +42,12 @@ class Contact {
     this.heardAt,
   });
 
-  /// The delivery TTL, the age at which the spec's "Delivery queue" calls
-  /// a message stale: until then the network keeps mail for a node at the
-  /// address it last used.
-  static const fresh = Duration(seconds: 600);
+  /// How long where they wrote from is taken as where they are: in a
+  /// minute a person on foot, at a brisk 1.5 m/s, moves about 90 m, well
+  /// within the 750 m a relay hears a handheld in the street (spec
+  /// "Physical layer"), while one driving has already left that reach, so
+  /// a longer wait would not make the guess any better.
+  static const fresh = Duration(seconds: 60);
 
   /// Where a text to them may go at `now`: where they last wrote from
   /// while that is fresh; past it, that or their home's mailbox, for the

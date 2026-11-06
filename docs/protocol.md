@@ -3131,7 +3131,7 @@ and a card that drops it must replace an older one only if it is later.
 apart from the address their messages were last written from, with the
 age of the newest message from them, counted from its `sent`, or from
 its arrival when `sent` is ahead of the phone's clock. While that age
-is under the delivery TTL, a text goes to where they write from; past
+is under a minute, a text goes to where they write from; past
 it, with a home, the person chooses between where they were and the
 home's mailbox, for each text, and without one it goes to where they
 were. With a home and nothing written from, it goes to the home; with
@@ -3139,10 +3139,14 @@ neither, the contact cannot be written to yet (roadmap D132).
 
 *Why where they write from.* A reply goes straight to where the person
 is, rather than to their home's mailbox to wait for a fetch, at
-13 bytes on a message after a change. Within the delivery TTL the
-network keeps mail for a node at the address it last used
-([delivery queue](#delivery-queue)); past it the app cannot tell
-whether they are still there, and the person may know.
+13 bytes on a message after a change.
+
+*Why a minute.* In a minute a person on foot, at a brisk 1.5 m/s, moves
+about 90 m, well within the ≈750 m a relay hears a handheld in the
+street ([physical layer](#physical-layer)); a person driving has left
+that reach by then, so a longer wait would not make the guess better.
+Past it the app cannot tell whether they are still there, and the
+person may know.
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it: a DATA with hop
