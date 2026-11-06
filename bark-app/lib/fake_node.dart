@@ -98,6 +98,18 @@ class FakeNode implements NodeLink {
   late final DateTime _boot;
   Position? _mapPoint;
 
+  /// A carried node's address is its live fix, which wanders; a sleepy
+  /// node's is not its stored place either.
+  bool carried = false;
+  bool sleepy = false;
+  Position _fix = gps;
+
+  /// A new GPS fix, notified as the node does.
+  void walkTo(Position p) {
+    _fix = p;
+    _notify();
+  }
+
   /// The time the phone gave, against the fake's own clock, and the
   /// offset; the fake has no GPS time.
   (int, DateTime)? _time;
@@ -141,7 +153,7 @@ class FakeNode implements NodeLink {
     _inbox.add(_intro('A second message, waiting in the inbox.'));
   }
 
-  Address get _own => Address(_mapPoint ?? gps, id);
+  Address get _own => Address(_mapPoint ?? _fix, id);
 
   late final PrecalculatedBox _pair = sodium.crypto.box.precalculate(
     publicKey: app,
@@ -230,12 +242,14 @@ class FakeNode implements NodeLink {
     return Status(
       ready: _ready,
       externalPower: true,
+      sleepy: sleepy,
+      carried: carried,
       mapPoint: _mapPoint != null,
       placed: true,
       booting: left > Duration.zero,
       relays: _relays,
       bootLeftS: _ceilS(left),
-      address: _mapPoint ?? gps,
+      address: _mapPoint ?? _fix,
       inbox: _inbox.length,
     );
   }
