@@ -50,7 +50,7 @@ is a prototype for the bench, not the app people will carry.
   counting down; a given-back text can be sent again once the wait is
   over, or dropped. Each says in small text where it went: "to
   where they were" or "to their home". The top line says when the contact last wrote, and, when their card names
-  a home, whether from it. A received text has a check-mark button,
+  a home, whether from it. A received text has a filled check-mark button,
   **Acknowledge**; nothing is acknowledged by itself. Once pressed, the
   button turns into a plain check mark at the end of the small text,
   and the same mark appears on the sender's copy. A contact whose first message has come but no
