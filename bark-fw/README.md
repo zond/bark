@@ -443,15 +443,16 @@ version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
 The node image draws its state, built from what its core says after
 each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
 the host. Sixteen characters to a line, every line from the left
-margin: a state as a word or two at the left, a quantity as its label
-at the left and its value flush right. Top to bottom:
+margin. A header says what the node is, as a word or two at the left,
+and a gap sets it apart; every line below it is a label at the left and
+its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
-| the ID | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
-| image | `NODE V12` | `BARK_IMAGE_VERSION` |
 | role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy, anchorless, placed and carried flags |
-| `STARTING` | while the first rotation runs | booting |
+| `STARTING` | while the first rotation runs, under the role in the header | booting |
+| `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
+| image | `NODE V12` | `BARK_IMAGE_VERSION` |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |

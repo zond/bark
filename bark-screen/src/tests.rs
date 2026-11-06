@@ -83,9 +83,9 @@ fn a_sleepy_carried_node_on_battery() {
     assert_eq!(
         texts(&state, 12),
         [
-            "BAE6E6CBF4F5    ",
-            "NODE         V12",
             "SLEEPY ANCHORED ",
+            "ID  BAE6E6CBF4F5",
+            "NODE         V12",
             "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
@@ -103,10 +103,10 @@ fn a_relay_starting_without_a_place() {
     assert_eq!(
         texts(&state, 0),
         [
-            "BAE6E6CBF4F5    ",
-            "NODE         V12",
             "RELAY NO PLACE  ",
             "STARTING        ",
+            "ID  BAE6E6CBF4F5",
+            "NODE         V12",
             "KNOWN      0/0/0",
             "POWER        USB",
             "UP         0 MIN",
@@ -133,9 +133,9 @@ fn a_fixed_relay_on_usb() {
     assert_eq!(
         shown,
         [
-            "BAE6E6CBF4F5    ",
-            "NODE         V12",
             "FIXED RELAY     ",
+            "ID  BAE6E6CBF4F5",
+            "NODE         V12",
             "KNOWN     12/9/3",
             "POWER        USB",
             "UP        90 MIN",
@@ -144,7 +144,7 @@ fn a_fixed_relay_on_usb() {
     );
 }
 
-/// The role line of each role, a sleepy node's place not shown.
+/// The header of each role, a sleepy node's place not shown.
 #[test]
 fn the_role_and_the_place() {
     let role = |sleepy, anchored, placed, carried| {
@@ -155,7 +155,7 @@ fn the_role_and_the_place() {
             carried,
             ..State::default()
         };
-        String::from(texts(&state, 0)[2].trim_end())
+        String::from(texts(&state, 0)[0].trim_end())
     };
     assert_eq!(role(false, false, true, false), "FIXED RELAY");
     assert_eq!(role(false, false, true, true), "CARRIED RELAY");
@@ -273,5 +273,27 @@ fn lines_align_left_and_values_right() {
                 assert!(right < WIDTH - margin && right >= WIDTH - margin - CELL * SCALE);
             }
         }
+    }
+}
+
+/// The header, the role and `STARTING` while it shows, stands apart by
+/// the gap; the rows below it follow one another, the first the ID.
+#[test]
+fn the_header_stands_apart() {
+    for starting in [false, true] {
+        let state = State {
+            starting,
+            ..State::default()
+        };
+        let shown = lines(&FIXED, &state, 0, CLOCKS[0]);
+        let shown: Vec<&(Text, usize)> = shown.iter().flatten().collect();
+        let header = if starting { 2 } else { 1 };
+        let ys: Vec<usize> = shown.iter().map(|(_, y)| *y).collect();
+        for i in 1..ys.len() {
+            let gap = if i == header { GAP } else { 0 };
+            assert_eq!(ys[i], ys[i - 1] + line_height(SCALE) + gap);
+        }
+        assert!(shown[header].0.bytes().starts_with(b"ID  "));
+        assert_eq!(ys[0], TOP);
     }
 }
