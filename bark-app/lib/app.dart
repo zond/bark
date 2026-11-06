@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:sodium/sodium.dart';
+import 'package:universal_ble/universal_ble.dart';
 
 import 'alerts.dart';
 import 'ble_link.dart';
@@ -59,6 +60,9 @@ class AppModel extends ChangeNotifier {
     session.kept = (r) => alerts.kept(r).catchError(_unnotified);
     session.addListener(_nodeAddress);
     session.addListener(_link);
+    session.addListener(_search);
+    addListener(_link);
+    addListener(_search);
     // The countdowns move without a word from the node.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       notifyListeners();
@@ -140,15 +144,27 @@ class AppModel extends ChangeNotifier {
       : 'Your card changed: your home node has a new address';
 
   /// Keeps the app running while a node is connected by Bluetooth, so
-  /// that it reads the inbox with the screen off. The fake node runs in
-  /// the app and is not a connected device.
+  /// that it reads the inbox with the screen off, and while it searches
+  /// for the paired node, so that the texts waiting go out as soon as it
+  /// is in reach. The fake node runs in the app and is not a connected
+  /// device.
   void _link() {
     final n = session.node;
-    unawaited(
-      alerts
-          .link(n != null && !fake ? nodeName(n.id) : null)
-          .catchError(_unnotified),
-    );
+    final paired = searchFor;
+    final Held? h = n != null && !fake
+        ? (
+            title: 'Connected to ${nodeName(n.id)}',
+            body: 'Texts arrive while the screen is off',
+          )
+        : paired != null
+        ? (
+            title: 'Looking for $paired',
+            body: bluetoothOn
+                ? 'Texts waiting go out once it is in reach'
+                : 'Bluetooth is off',
+          )
+        : null;
+    unawaited(alerts.hold(h).catchError(_unnotified));
   }
 
   void _unnotified(Object e) => session.note('Notifying failed: $e');
@@ -259,6 +275,7 @@ class AppModel extends ChangeNotifier {
     found.clear();
     scanning = true;
     notifyListeners();
+    await _searchStopped();
     try {
       await startScan((n) {
         found[n.deviceId] = n;
@@ -280,15 +297,22 @@ class AppModel extends ChangeNotifier {
   /// Whether `device` is the one connected.
   bool connectedTo(String device) => session.connected && linkDevice == device;
 
-  /// Connects to `n`, after closing the link to another node; `again`
-  /// after the person chose to pair again, which forgets the phone's old
-  /// bond and finds the node in a scan first ([seen]). Nothing while a connection is
+  /// The person connects to `n`, after closing the link to another
+  /// node; `again` after they chose to pair again, which forgets the
+  /// phone's old bond and finds the node in a scan first ([seen]). It
+  /// ends the search for the paired node. Nothing while a connection is
   /// being made or `n` is connected already: a second connect to the
   /// same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
     if (connecting || connectedTo(n.deviceId)) return;
+    _stayOff = false;
+    await _connect(n, again: again);
+  }
+
+  Future<void> _connect(FoundNode n, {bool again = false}) async {
     final s = session;
     await _open(n.deviceId, () async {
+      await _searchStopped();
       await stopScan();
       if (again) {
         await BleLink.forget(n.deviceId);
@@ -312,6 +336,7 @@ class AppModel extends ChangeNotifier {
 
   Future<void> connectFake() async {
     if (connecting || connectedTo(fakeDevice)) return;
+    _stayOff = false;
     final f = fakeNode ??= FakeNode(
       now: now,
       sodium: sodium,
@@ -362,11 +387,164 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The person closes the link: the app does not look for the node
+  /// again until they connect or restart it.
+  Future<void> disconnect() async {
+    stopLooking();
+    await session.disconnect();
+  }
+
+  /// The person stops the search for the paired node, until they connect
+  /// or restart the app.
+  void stopLooking() {
+    _stayOff = true;
+    notifyListeners();
+  }
+
+  /// Whether the search has started, which only the app on a phone does:
+  /// a test starts it to drive it.
+  bool _searchStarted = false;
+
+  /// The person closed the link or stopped the search on purpose.
+  bool _stayOff = false;
+
+  /// Bluetooth is on, by Android's word.
+  bool bluetoothOn = false;
+  StreamSubscription<AvailabilityState>? _availability;
+
+  /// The search runs: a round scans, or waits for the next.
+  bool _searching = false;
+
+  /// The round under way, which ends once its scan has stopped.
+  Future<void>? _round;
+
+  /// Completed to end the search's scan or wait at once.
+  Completer<void> _wake = Completer<void>();
+
+  /// The last failure the search noted, so that a failure every round
+  /// is told once.
+  String? _searchFailed;
+
+  /// The node the app searches for while it is not connected: the paired
+  /// node, unless it is no longer this phone's (then the person decides,
+  /// with Pair again), the person stopped the search, or the fake node
+  /// is in use.
+  String? get searchFor {
+    final p = session.pairedWith;
+    if (!_searchStarted || fake || _stayOff || session.connected) return null;
+    if (p == null || session.pairingLost) return null;
+    return p;
+  }
+
+  /// The node the search is scanning for now: not while Bluetooth is
+  /// off, a connection is being made, or the person scans.
+  String? get lookingFor =>
+      bluetoothOn && !connecting && !scanning ? searchFor : null;
+
+  /// Starts the search for the paired node, which then runs whenever it
+  /// should: at start, and after a link drops.
+  void startSearch() {
+    if (_searchStarted) return;
+    _searchStarted = true;
+    _availability = UniversalBle.availabilityStream.listen((a) {
+      bluetoothOn = a == AvailabilityState.poweredOn;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  /// Starts the search's rounds when it should run, and ends a scan or
+  /// wait when it should not.
+  void _search() {
+    if (lookingFor == null) {
+      if (!_wake.isCompleted) _wake.complete();
+      return;
+    }
+    if (_searching) return;
+    _searching = true;
+    _wake = Completer<void>();
+    unawaited(_rounds());
+  }
+
+  Future<void> _rounds() async {
+    try {
+      while (true) {
+        final name = _awake();
+        if (name == null) break;
+        final start = now();
+        final round = _look(name);
+        _round = round;
+        final n = await round;
+        _round = null;
+        if (n != null && lookingFor == name) {
+          await _connectFound(n);
+        }
+        if (_awake() == null) break;
+        final left = lookRound - now().difference(start);
+        if (left > Duration.zero) {
+          final t = Timer(left, () {
+            if (!_wake.isCompleted) _wake.complete();
+          });
+          await _wake.future;
+          t.cancel();
+        }
+      }
+    } finally {
+      _searching = false;
+    }
+  }
+
+  /// [lookingFor], with a new [_wake] when the search goes on: the last
+  /// may have ended a scan or wait for a change that has passed.
+  String? _awake() {
+    final name = lookingFor;
+    if (name != null && _wake.isCompleted) _wake = Completer<void>();
+    return name;
+  }
+
+  Future<FoundNode?> _look(String name) async {
+    try {
+      final n = await look(name, stop: _wake.future);
+      _searchFailed = null;
+      return n;
+    } catch (e) {
+      final f = 'Looking for $name failed: $e';
+      if (f != _searchFailed) session.note(f);
+      _searchFailed = f;
+      return null;
+    }
+  }
+
+  /// Connects to the paired node the search found, by the person's path.
+  /// A node no longer this phone's ends the search, as [searchFor] says;
+  /// another failure waits for the next round.
+  Future<void> _connectFound(FoundNode n) async {
+    session.note('Found ${n.name}, connecting');
+    try {
+      await _connect(n);
+    } on NotOurs {
+      return;
+    } catch (e) {
+      session.note('Connecting to ${n.name} failed: $e');
+    }
+  }
+
+  /// Ends the search's scan and waits until it has stopped, so that a
+  /// scan or connect of the person's does not meet it.
+  Future<void> _searchStopped() async {
+    if (!_wake.isCompleted) _wake.complete();
+    await _round;
+  }
+
   @override
   void dispose() {
     _ticker.cancel();
+    _availability?.cancel();
+    _stayOff = true;
+    if (!_wake.isCompleted) _wake.complete();
     session.removeListener(_nodeAddress);
     session.removeListener(_link);
+    session.removeListener(_search);
     fakeNode?.dispose();
     session.dispose();
     contacts.dispose();

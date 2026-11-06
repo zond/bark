@@ -14,6 +14,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final app = await AppModel.onPhone(await SodiumInit.init());
   await app.load();
+  app.startSearch();
   runApp(BarkApp(app));
 }
 

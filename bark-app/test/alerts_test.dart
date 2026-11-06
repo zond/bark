@@ -40,9 +40,9 @@ class FakeNotifier implements Notifier {
   }
 
   @override
-  Future<void> linkUp(String node) async => log.add('up $node');
+  Future<void> hold(Held held) async => log.add('hold ${held.title}');
   @override
-  Future<void> linkDown() async => log.add('down');
+  Future<void> letGo() async => log.add('let go');
   @override
   Future<void> texts(String key, String name, List<Received> texts) async =>
       log.add('$name: ${texts.map((t) => t.body).join(' | ')}');
@@ -168,7 +168,7 @@ void main() {
   test('the link notification is up while a Bluetooth link is', () {
     run((async, app, n) {
       // The fake node is no connected device.
-      expect(n.log.where((l) => l.startsWith('up')), isEmpty);
+      expect(n.log.where((l) => l.startsWith('hold')), isEmpty);
       app.session.disconnect();
       async.flushMicrotasks();
 
@@ -180,10 +180,10 @@ void main() {
       n.log.clear();
       app.session.disconnect();
       async.flushMicrotasks();
-      expect(n.log, ['down']);
+      expect(n.log, ['let go']);
       app.session.attach(node.connect());
       async.flushMicrotasks();
-      expect(n.log, ['down', 'up bark-fa4e00000001']);
+      expect(n.log, ['let go', 'hold Connected to bark-fa4e00000001']);
       node.dispose();
     });
   });

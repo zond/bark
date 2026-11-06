@@ -30,11 +30,13 @@ class PhoneNotifier implements Notifier {
   static const _linkId = 1, _textsId = 2;
 
   /// The link's notification makes no sound: it is there as long as the
-  /// link, and Android requires it of a foreground service.
+  /// link or the search for the node, and Android requires it of a
+  /// foreground service.
   static const _linkChannel = AndroidNotificationDetails(
     'link',
     'Connection to the node',
-    channelDescription: 'Shown while the app keeps the link to a node',
+    channelDescription:
+        'Shown while the app keeps the link to a node or looks for it',
     importance: Importance.low,
     priority: Priority.low,
     ongoing: true,
@@ -91,22 +93,43 @@ class PhoneNotifier implements Notifier {
   Future<bool> ask() async =>
       await _plugin.requestNotificationsPermission() ?? false;
 
-  @override
-  Future<void> linkUp(String node) => _plugin.startForegroundService(
-    id: _linkId,
-    title: 'Connected to $node',
-    body: 'Texts arrive while the screen is off',
-    notificationDetails: _linkChannel,
-    // Started again by Android after it killed the process, the service
-    // would claim a link that the process took with it.
-    startType: AndroidServiceStartType.startNotSticky,
-    foregroundServiceTypes: {
-      AndroidServiceForegroundType.foregroundServiceTypeConnectedDevice,
-    },
-  );
+  /// Whether the foreground service runs.
+  bool _held = false;
 
   @override
-  Future<void> linkDown() => _plugin.stopForegroundService();
+  Future<void> hold(Held held) async {
+    if (_held) {
+      // The service runs: its notification changes in place, with no
+      // start of the service, which Android 12 and later restrict in the
+      // background.
+      await _plugin.show(
+        id: _linkId,
+        title: held.title,
+        body: held.body,
+        notificationDetails: _linkChannel,
+      );
+      return;
+    }
+    await _plugin.startForegroundService(
+      id: _linkId,
+      title: held.title,
+      body: held.body,
+      notificationDetails: _linkChannel,
+      // Started again by Android after it killed the process, the service
+      // would claim a link that the process took with it.
+      startType: AndroidServiceStartType.startNotSticky,
+      foregroundServiceTypes: {
+        AndroidServiceForegroundType.foregroundServiceTypeConnectedDevice,
+      },
+    );
+    _held = true;
+  }
+
+  @override
+  Future<void> letGo() async {
+    _held = false;
+    await _plugin.stopForegroundService();
+  }
 
   @override
   Future<void> texts(String key, String name, List<Received> texts) {

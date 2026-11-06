@@ -242,7 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: Text(nodeName(s.node!.id)),
           subtitle: Text('Connected and paired, MTU ${app.mtu ?? '?'}'),
           trailing: OutlinedButton(
-            onPressed: s.disconnect,
+            onPressed: app.disconnect,
             child: const Text('Disconnect'),
           ),
         )
@@ -290,7 +290,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ? null
                 : () => _connect(() => app.connect(n)),
           ),
+        ..._looking(),
       ],
+    ];
+  }
+
+  /// The search for the paired node, which the person can stop until
+  /// they connect or restart the app.
+  List<Widget> _looking() {
+    final l = lookingLine(app);
+    if (l == null) return [];
+    return [
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(child: Text(l)),
+          TextButton(
+            onPressed: app.stopLooking,
+            child: const Text('Stop looking'),
+          ),
+        ],
+      ),
     ];
   }
 
