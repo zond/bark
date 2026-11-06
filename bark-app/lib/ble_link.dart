@@ -72,6 +72,17 @@ Future<bool> seen(String deviceId, {Duration wait = seenWait}) async {
   }
 }
 
+/// How long the app waits for a pairing to end. The plugin's commands
+/// time out after 10 s by default, and a person typing the code takes
+/// longer (17 and 20 s on the bench, 2026-11-06), so the pairing gets its
+/// own bound. Its true ends are Android's: the bond made, or none when
+/// the person cancels or the pairing fails, at the latest when the
+/// Security Manager's 30 s timer between its messages runs out (Bluetooth
+/// Core Specification 5.0, Vol 3 Part H §3.4), so the bond state comes
+/// within some 30 s of the code being shown. Four times that only keeps
+/// the app from waiting for ever on a report that never comes.
+const Duration pairWait = Duration(seconds: 4 * 30);
+
 /// The node `node` was not seen in a scan.
 class NotSeen implements Exception {
   final String node;
@@ -159,7 +170,7 @@ class BleLink implements NodeLink {
         throw NotOurs(name);
       } else {
         pairing?.call();
-        await UniversalBle.pair(deviceId);
+        await UniversalBle.pair(deviceId, timeout: pairWait);
         paired?.call();
       }
     } on PairingException {

@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/node_link.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
@@ -75,8 +76,11 @@ class RefusingNode extends UniversalBlePlatform {
 class HiddenNode extends UniversalBlePlatform {
   final String id;
   final bool advertises;
+
+  /// How long the person takes to type the code.
+  final Duration typing;
   bool scanned = false;
-  HiddenNode(this.id, {this.advertises = true});
+  HiddenNode(this.id, {this.advertises = true, this.typing = Duration.zero});
 
   @override
   Future<void> startScan({
@@ -126,7 +130,7 @@ class HiddenNode extends UniversalBlePlatform {
   Future<bool> isPaired(String deviceId) async => false;
 
   @override
-  Future<bool> pair(String deviceId) async => true;
+  Future<bool> pair(String deviceId) => Future.delayed(typing, () => true);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -181,5 +185,22 @@ void main() {
   test('a node not seen within the wait', () async {
     UniversalBle.setInstance(HiddenNode(device, advertises: false));
     expect(await seen(device, wait: const Duration(milliseconds: 50)), isFalse);
+  });
+
+  test('a pairing longer than the plugin\'s 10 s is waited for', () {
+    fakeAsync((async) {
+      final node = HiddenNode(device, typing: const Duration(seconds: 25))
+        ..scanned = true;
+      UniversalBle.setInstance(node);
+      int? mtu;
+      Object? failed;
+      BleLink.connect(
+        device,
+        name: 'bark-7572482fc367',
+      ).then<void>((r) => mtu = r.$2, onError: (Object e) => failed = e);
+      async.elapse(const Duration(seconds: 26));
+      expect(failed, isNull);
+      expect(mtu, attMtu);
+    });
   });
 }
