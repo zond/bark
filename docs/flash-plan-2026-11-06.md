@@ -16,7 +16,7 @@ The board carries a 2 MB SPI NOR flash on the QSPI pins (`board.rs`,
 `Flash`: SCK P1.14, CS P1.15, IO0 P1.12, IO1 P1.13). The factory firmware
 read its JEDEC ID as `BA 60 15` (`docs/bench-2026-10-30.md`), which is
 the Zetta ZD25WQ16B (its datasheet, "Table ID Definitions"), not the
-MX25R1635F that `board.rs` and the pin research name. From the
+MX25R1635F that the schematic and the pin research name. From the
 ZD25WQ16B datasheet:
 
 | | |
@@ -32,10 +32,10 @@ ZD25WQ16B datasheet:
 | endurance, retention | 100 000 program/erase cycles, 20 years |
 | quad I/O | needs the QE bit set; with QE clear, IO2 and IO3 are WP# and HOLD#, which must be held high |
 
-IO2 and IO3 are not in our pin research. Single-line reads and writes
-need only IO0 and IO1, but embassy-nrf's QSPI driver claims all four
-pins, and WP#/HOLD# must not float. Both must be read off the schematic
-before any of this is built.
+IO2 and IO3 are WP# on P0.07 and HOLD# on P0.05, with no pull-ups,
+and the chip is on the switched rail, which the firmware holds up on
+battery too (`docs/external-flash-2026-11-06.md`). Single-line reads and
+writes need only IO0 and IO1, but WP# and HOLD# must be driven high.
 
 The firmware never touches the chip, so it sits in standby: 12 µA on
 battery, if its supply is on whenever the board is (the schematic says;
@@ -170,10 +170,11 @@ update, as today.
 
 ### What can go wrong
 
-- The IO2/IO3 pins and the chip's supply are unknown until the schematic
-  is read; if the chip is on the switched rail, a sleepy node must keep
-  the rail up or lose the chip between uses (and a swap must turn the
-  rail on).
+- The chip is on the switched rail (`docs/external-flash-2026-11-06.md`).
+  The firmware keeps it up for the radio; the loader cannot count on
+  it, since the regulator's enable has a pull-down and nothing drives
+  `PWR_EN` from a reset until the firmware runs. The loader must raise
+  `PWR_EN` and `PWR_ON` and wait for the chip before a swap.
 - A bad external chip makes a swap impossible. The loader then must
   not touch the running slot: the loader checks the staged slot against
   the record's hash before any copy, so a chip that reads wrong fails
