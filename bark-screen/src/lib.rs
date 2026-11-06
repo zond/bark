@@ -249,7 +249,8 @@ pub enum Battery {
 pub struct State {
     /// The first rotation after boot runs.
     pub starting: bool,
-    /// It knows where it is.
+    /// It knows where it is. Shown for a relay only: a sleepy node is
+    /// reached through its anchor.
     pub placed: bool,
     pub sleepy: bool,
     /// Sleepy, with a relay that holds its mail.
@@ -290,8 +291,8 @@ const TOP: usize = 6;
 const GAP: usize = 8;
 
 /// The most lines the screen takes: the ID and the image, the state's
-/// eight, and the time.
-pub const LINES: usize = 11;
+/// seven, and the time.
+pub const LINES: usize = 10;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
@@ -319,19 +320,15 @@ pub fn lines(
     put(plain(format_args!("{}", Hex(fixed.id))), 0);
     put(row(fixed.image, format_args!("V{}", fixed.version)), GAP);
     put(
-        plain(match (state.sleepy, state.anchored) {
-            (false, _) => format_args!("RELAY"),
-            (true, true) => format_args!("SLEEPY ANCHORED"),
-            (true, false) => format_args!("SLEEPY NO ANCHOR"),
-        }),
-        0,
-    );
-    put(
-        plain(match (state.placed, state.carried) {
-            (false, _) => format_args!("NO PLACE YET"),
-            (true, true) => format_args!("CARRIED"),
-            (true, false) => format_args!("FIXED"),
-        }),
+        plain(
+            match (state.sleepy, state.anchored, state.placed, state.carried) {
+                (true, true, _, _) => format_args!("SLEEPY ANCHORED"),
+                (true, false, _, _) => format_args!("SLEEPY NO ANCHOR"),
+                (false, _, false, _) => format_args!("RELAY NO PLACE"),
+                (false, _, true, true) => format_args!("CARRIED RELAY"),
+                (false, _, true, false) => format_args!("FIXED RELAY"),
+            },
+        ),
         0,
     );
     if state.starting {

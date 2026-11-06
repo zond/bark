@@ -450,8 +450,7 @@ at the left and its value flush right. Top to bottom:
 |---|---|---|
 | the ID | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| role | `RELAY`, `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy and anchorless flags |
-| place | `FIXED`, `CARRIED` or `NO PLACE YET` | placed, carried |
+| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy, anchorless, placed and carried flags |
 | `STARTING` | while the first rotation runs | booting |
 | `HEARD 5` | neighbours whose heartbeats it hears now | the neighbour table's live entries |
 | `STRONG 4` | of them, heard loudly enough that a full frame reaches it through a fade | the table's averaged RSSI against the margin the core routes by (spec "Next hop") |
@@ -459,6 +458,12 @@ at the left and its value flush right. Top to bottom:
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
 | `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
+
+*Why a sleepy node's place is not shown.* A sleepy node is reached
+through its anchor: its address is its anchor's position, and while it
+has one it takes no fix of its own (spec "Sleepy nodes"). So its place
+matters little to a reader, and the line has no room for it beside
+`SLEEPY NO ANCHOR`.
 
 *Why three neighbour counts.* A heartbeat is one way: a node that hears
 a neighbour does not know the neighbour hears it. Only an answer to its
