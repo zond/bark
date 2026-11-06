@@ -8,7 +8,8 @@
 // sent after a move only by "Send my card"; and a node that another
 // phone has paired with since, and pairing with it again; and a long
 // text, counted in parts as it is written, sent in one bubble and
-// received as far as it has come.
+// received as far as it has come; and a first message marked in a
+// verified thread.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -263,6 +264,43 @@ void main() {
     expect(o.dst.toString(), there.toString());
     expect(o.toward, Toward.there);
     expect(find.byTooltip('To where they were'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a first message in a verified thread is marked', (t) async {
+    final app = await model(t);
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), null, 1, 'Olena'),
+      'Olena',
+      verified: true,
+    );
+    await t.runAsync(() async {
+      await app.contacts.put(olena);
+      for (final (sent, intro) in [(1, true), (2, false)]) {
+        await app.session.addReceived(
+          Received(
+            sent,
+            [sent],
+            DateTime.now(),
+            from: olena.key,
+            sent: sent,
+            body: 'text $sent',
+            intro: intro,
+          ),
+        );
+      }
+    });
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    expect(find.byTooltip(unverifiedText), findsOneWidget);
+    expect(find.textContaining('Not verified yet'), findsNothing);
+
+    // Unverified, the line above the thread says it of every text.
+    await t.runAsync(() => app.contacts.put(olena.copyWith(verified: false)));
+    await t.pump();
+    expect(find.byTooltip(unverifiedText), findsNothing);
+    expect(find.textContaining('Not verified yet'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

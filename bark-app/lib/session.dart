@@ -175,6 +175,10 @@ class Received {
   final int part;
   final int of;
 
+  /// It came as a first message, which anyone holding the person's card
+  /// and its sender's could have made.
+  final bool intro;
+
   /// The person acknowledged it.
   bool acked;
 
@@ -188,6 +192,7 @@ class Received {
     this.mailbox = false,
     this.part = 1,
     this.of = 1,
+    this.intro = false,
     this.acked = false,
   }) : payload = Uint8List.fromList(payload);
 
@@ -213,6 +218,7 @@ class Received {
     'mailbox': mailbox,
     'part': part,
     'of': of,
+    'intro': intro,
     'acked': acked,
   };
 
@@ -226,6 +232,7 @@ class Received {
     mailbox: j['mailbox'] as bool,
     part: j['part'] as int? ?? 1,
     of: j['of'] as int? ?? 1,
+    intro: j['intro'] as bool? ?? false,
     acked: j['acked'] as bool,
   );
 }

@@ -515,7 +515,7 @@ void main() {
     });
   });
 
-  test('a first message naming a verified contact is dropped', () {
+  test('a first message naming a verified contact is marked as one', () {
     run((async, p, node) {
       final f = friendOf(p, node);
       p.messenger.sendText(f, 'x');
@@ -529,10 +529,12 @@ void main() {
           const TextRecord('I am your friend, honest'),
         ]),
       );
-      final before = p.session.received.length;
       p.messenger.receive(InboxMessage(3, forged));
       async.flushMicrotasks();
-      expect(p.session.received.length, before);
+      final r = p.session.received.last;
+      expect(r.body, 'I am your friend, honest');
+      expect(r.intro, isTrue);
+      expect(friendOf(p, node).verified, isTrue);
     });
   });
 
