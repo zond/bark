@@ -114,6 +114,7 @@ pub fn json() -> String {
     let alice_card = Card {
         identity: f.alice.identity,
         address: f.home,
+        home: true,
         time: 86_400,
         name: "Аліса",
     };
@@ -126,6 +127,7 @@ pub fn json() -> String {
         &[
             ("identity", h(&alice_card.identity.0)),
             ("address", h(&alice_card.address.encode())),
+            ("home", format!("{}", alice_card.home)),
             ("time", format!("{}", alice_card.time)),
             ("name", q(alice_card.name)),
             ("bytes", h(&cb[..n])),

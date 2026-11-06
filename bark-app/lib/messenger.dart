@@ -229,7 +229,13 @@ class Messenger {
       final a = h.address;
       if (a != null) {
         u = u.copyWith(
-          card: PersonCard(u.card.identity, a, u.card.time, u.card.name),
+          card: PersonCard(
+            u.card.identity,
+            a,
+            u.card.time,
+            u.card.name,
+            home: u.card.home,
+          ),
         );
       }
       await contacts.put(u);

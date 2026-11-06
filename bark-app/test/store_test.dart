@@ -27,7 +27,8 @@ const oldBark =
     '"at":"2026-11-05T16:39:51.106508"}]}';
 
 /// `contacts.json` and `me.json` as that build wrote them, the seed made
-/// up: without a version, and read as version 1.
+/// up: without a version, and read as version 1. Contacts are at version
+/// 2 since their cards carry the home flag.
 const oldContacts =
     '{"contacts":[],"myName":"Martin","myAddress":"47c0520ada4ec0bae6e6cbf4f5"}';
 const oldMe =
@@ -51,12 +52,12 @@ void main() {
     expect(store.fault, startsWith('Stored bark.json did not read'));
   });
 
-  test('the old contacts.json and me.json are read', () async {
+  test('the old me.json is read, the old contacts.json set aside', () async {
     final contacts = MemoryStore('contacts.json')..text = oldContacts;
     final c = Contacts(contacts);
     await c.load();
     expect(c.list, isEmpty);
-    expect(contacts.fault, isNull);
+    expect(contacts.aside, {'contacts.json.old-1': oldContacts});
     final me = MemoryStore('me.json')..text = oldMe;
     final m = Me(me, sodium, () => at);
     await m.load();
@@ -126,7 +127,7 @@ void main() {
     expect(store.fault, contains('kept as me.json.old-bad-2'));
   });
 
-  test('the app starts on an old bark.json and logs it once', () async {
+  test('the app starts on old files and logs each once', () async {
     final app = AppModel(
       sodium: sodium,
       me: Me(MemoryStore('me.json')..text = oldMe, sodium, () => at),
@@ -139,7 +140,10 @@ void main() {
     );
     await app.load();
     final lines = app.session.log.map((l) => l.text).toList();
-    expect(lines, [startsWith('Stored bark.json did not read')]);
+    expect(lines, [
+      startsWith('Stored bark.json did not read'),
+      startsWith('Stored contacts.json is of version 1'),
+    ]);
     app.dispose();
   });
 }

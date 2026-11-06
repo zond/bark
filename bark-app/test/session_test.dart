@@ -519,19 +519,35 @@ void main() {
 
   test('a card read from its text, and what is not one', () {
     final k = Keys.fromSeed(sodium, List.filled(16, 1));
-    for (final name in ['', 'Olena', 'Олена Ш.', '🐕 bark']) {
-      final c = PersonCard(k.identity, elsewhere, 7, name);
+    for (final (name, home) in [
+      ('', true),
+      ('Olena', false),
+      ('Олена Ш.', true),
+      ('🐕 bark', false),
+    ]) {
+      final c = PersonCard(k.identity, elsewhere, 7, name, home: home);
       final back = PersonCard.parse(c.toText());
       expect(back.name, name);
       expect(back.key, c.key);
       expect(back.address.toString(), elsewhere.toString());
+      expect(back.home, home);
       expect(back.time, 7);
+    }
+    // A card of version 1, before the home flag, and an unknown flag.
+    final b = PersonCard(k.identity, elsewhere, 7, '', home: true).encode();
+    for (final (at, v, why) in [(0, 1, 'older'), (1, 2, 'Not a card')]) {
+      final bad = Uint8List.fromList(b)..[at] = v;
+      expect(
+        () => PersonCard.decode(bad),
+        throwsA(predicate((e) => e is BadCard && '$e'.contains(why))),
+      );
     }
     for (final t in ['', 'BARK:', 'hello', 'BARK:A1', elsewhere.toString()]) {
       expect(() => PersonCard.parse(t), throwsA(isA<BadCard>()), reason: t);
     }
     expect(
-      () => PersonCard(k.identity, elsewhere, 0, 'x' * 33).encode(),
+      () =>
+          PersonCard(k.identity, elsewhere, 0, 'x' * 33, home: false).encode(),
       throwsA(isA<BadCard>()),
     );
   });

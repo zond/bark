@@ -5,6 +5,7 @@
 //! | field | bytes |
 //! |---|---|
 //! | version | 1 |
+//! | flags | 1: bit 0, the address is a home node's; the others zero |
 //! | identity | 32 |
 //! | address | 13 |
 //! | the address's time, as `sent` | 4 |
@@ -22,6 +23,9 @@ pub struct Card<'a> {
     pub identity: Identity,
     /// Where to reach them.
     pub address: Address,
+    /// The address is their home node's, whose mailbox keeps their mail
+    /// for as long as its ring holds it; else it is where their node was.
+    pub home: bool,
     /// When that address became theirs, as `sent`: a later card replaces
     /// an earlier one's address.
     pub time: u32,
@@ -30,11 +34,11 @@ pub struct Card<'a> {
 }
 
 /// The card layout's version.
-pub const CARD_VERSION: u8 = 1;
+pub const CARD_VERSION: u8 = 2;
 /// The longest name, in UTF-8 bytes.
 pub const MAX_NAME: usize = 32;
 /// Bytes before the name.
-pub const FIXED_LEN: usize = 1 + Identity::LEN + Address::LEN + 4;
+pub const FIXED_LEN: usize = 1 + 1 + Identity::LEN + Address::LEN + 4;
 /// The longest card.
 pub const MAX_LEN: usize = FIXED_LEN + MAX_NAME;
 
@@ -42,6 +46,8 @@ pub const MAX_LEN: usize = FIXED_LEN + MAX_NAME;
 pub const PREFIX: &str = "BARK:";
 /// The longest text: the prefix and 5 bits a character.
 pub const MAX_TEXT_LEN: usize = PREFIX.len() + (MAX_LEN * 8).div_ceil(5);
+
+const FLAG_HOME: u8 = 1;
 
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -54,24 +60,30 @@ impl<'a> Card<'a> {
             return Err(Error::TooLong);
         }
         out[0] = CARD_VERSION;
-        out[1..33].copy_from_slice(&self.identity.0);
-        out[33..33 + Address::LEN].copy_from_slice(&self.address.encode());
-        out[46..50].copy_from_slice(&self.time.to_be_bytes());
+        out[1] = if self.home { FLAG_HOME } else { 0 };
+        out[2..34].copy_from_slice(&self.identity.0);
+        out[34..34 + Address::LEN].copy_from_slice(&self.address.encode());
+        out[47..51].copy_from_slice(&self.time.to_be_bytes());
         out[FIXED_LEN..len].copy_from_slice(name);
         Ok(len)
     }
 
     /// The card in `b`, all of it.
     pub fn decode(b: &'a [u8]) -> Result<Card<'a>, Error> {
-        if b.len() < FIXED_LEN || b.len() > MAX_LEN || b[0] != CARD_VERSION {
+        if b.len() < FIXED_LEN
+            || b.len() > MAX_LEN
+            || b[0] != CARD_VERSION
+            || b[1] & !FLAG_HOME != 0
+        {
             return Err(Error::Malformed);
         }
         let mut identity = [0u8; Identity::LEN];
-        identity.copy_from_slice(&b[1..33]);
+        identity.copy_from_slice(&b[2..34]);
         Ok(Card {
             identity: Identity(identity),
-            address: Address::decode(&b[33..])?,
-            time: be(&b[46..50]),
+            address: Address::decode(&b[34..])?,
+            home: b[1] & FLAG_HOME != 0,
+            time: be(&b[47..51]),
             name: core::str::from_utf8(&b[FIXED_LEN..]).map_err(|_| Error::Malformed)?,
         })
     }

@@ -42,7 +42,7 @@ class FakeNode implements NodeLink {
 
   /// The fake friend's card: their address is the fake node's.
   PersonCard get friendCard =>
-      PersonCard(friend.identity, _own, 0, 'Fake friend');
+      PersonCard(friend.identity, _own, 0, 'Fake friend', home: false);
 
   /// `bark-fa4e00000001`.
   static final id = Uint8List.fromList([0xfa, 0x4e, 0, 0, 0, 1]);

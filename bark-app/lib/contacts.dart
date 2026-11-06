@@ -71,8 +71,9 @@ class Contacts extends ChangeNotifier {
 
   Contact? byKey(String? key) => list.where((c) => c.key == key).firstOrNull;
 
-  /// The version of `contacts.json`'s format.
-  static const version = 1;
+  /// The version of `contacts.json`'s format: 2 since the cards it holds
+  /// carry the home flag, card version 2.
+  static const version = 2;
 
   Future<void> load() async {
     final l = await store.load(

@@ -3098,7 +3098,7 @@ dropped. Payloads are not padded.
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 50 to 82 | type 4, the card's length, then the card |
+| card | 1 + 1 + 51 to 83 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
@@ -3107,13 +3107,20 @@ message that carried it and whenever it changes. The app sends nothing
 by itself: an acknowledgement is a message the person chooses to send,
 and a text is sent again only when the person says so (roadmap D126).
 
-*The card*, what people exchange, shown as a QR code: version (1), the
-identity (32), an address (13), the address's time as `sent` (4) and a
-display name in UTF-8 (0 to 32), 50 to 82 bytes; as text, `BARK:` and
-the bytes in base32 (RFC 4648, its base32 alphabet) without padding. Its address is the
-person's home node's when they have one, else their node's current one.
-A card with a later time replaces a contact's address; the person sends
-their card to their contacts when it changes.
+*The card*, what people exchange, shown as a QR code: version (1), 2;
+flags (1), bit 0 set when the address is a home node's, the others
+zero; the identity (32), an address (13), the address's time as `sent`
+(4) and a display name in UTF-8 (0 to 32), 51 to 83 bytes; as text,
+`BARK:` and the bytes in base32 (RFC 4648, its base32 alphabet) without
+padding. Its address is the person's home node's when they have one,
+else their node's current one. A card with a later time replaces a
+contact's card; the person sends their card to their contacts when it
+changes.
+
+*Why the home flag.* A home's [mailbox](#mailbox) keeps a person's mail
+until they fetch it; a node's address that is not a home is only where
+they were. The sender's app chooses between them and the address a
+message was last written from (below).
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it: a DATA with hop

@@ -146,7 +146,7 @@ void main() {
   testWidgets('a contact from a pasted card', (t) async {
     final app = await model(t);
     final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena', home: false);
     await t.pumpWidget(BarkApp(app));
     await t.tap(find.byTooltip('New conversation'));
     await t.pumpAndSettle();
@@ -175,7 +175,7 @@ void main() {
   testWidgets('a contact from a scanned card', (t) async {
     final app = await model(t);
     final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
+    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena', home: false);
     // What My card and Add contact open once the camera has read a card.
     await t.pumpWidget(MaterialApp(home: AddContactScreen(app, card: card)));
     expect(find.text(card.toText()), findsOneWidget);

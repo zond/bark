@@ -58,7 +58,9 @@ class Me extends ChangeNotifier {
 
   PersonCard? get card {
     final a = cardAddress;
-    return a == null ? null : PersonCard(identity, a, cardTime, name);
+    return a == null
+        ? null
+        : PersonCard(identity, a, cardTime, name, home: home != null);
   }
 
   /// The version of `me.json`'s format.
