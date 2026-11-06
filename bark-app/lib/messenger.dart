@@ -313,15 +313,27 @@ class Messenger {
     }
     if (h.greater != greater(card.identity, me.identity)) return false;
     final known = contacts.byKey(card.key);
-    // Only the holder of a verified identity can box; a sealed box
-    // naming it may be anyone's.
-    if (known != null && known.verified) return true;
+    if (known != null && known.verified) {
+      // A first message of theirs that a box overtook on the way, or
+      // anyone's who holds both cards: its text is kept, marked, but it
+      // changes nothing a box has proven, so a forger can only add
+      // marked texts.
+      await _records(
+        m,
+        card.key,
+        h,
+        rs.whereType<TextRecord>(),
+        mailbox,
+        intro: true,
+      );
+      return true;
+    }
     await contacts.put(
       (known?.copyWith(card: card) ??
               Contact(card, card.name.isEmpty ? 'Unnamed' : card.name))
           .heard(h.sent, h.address, now()),
     );
-    await _records(m, card.key, h, rs.sublist(1), mailbox);
+    await _records(m, card.key, h, rs.skip(1), mailbox, intro: true);
     return true;
   }
 
@@ -329,9 +341,10 @@ class Messenger {
     InboxMessage m,
     String from,
     Header h,
-    List<Record> rs,
-    bool mailbox,
-  ) async {
+    Iterable<Record> rs,
+    bool mailbox, {
+    bool intro = false,
+  }) async {
     for (final r in rs) {
       switch (r) {
         case TextRecord(:final text, :final part, :final of):
@@ -350,6 +363,7 @@ class Messenger {
                 mailbox: mailbox,
                 part: part,
                 of: of,
+                intro: intro,
               ),
             );
           }

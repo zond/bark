@@ -58,7 +58,8 @@ class DebugScreen extends StatelessWidget {
             for (final r in s.received.reversed)
               _raw(
                 '${msgIdHex(r.id)} from ${r.from == null ? 'nobody: did not open' : _who(r.from)}',
-                'sent ${r.sent}${r.mailbox ? ', from the mailbox' : ''}, '
+                'sent ${r.sent}${r.intro ? ', a first message' : ''}'
+                    '${r.mailbox ? ', from the mailbox' : ''}, '
                     '${r.at.toLocal()}\n${hex(r.payload)}',
               ),
             heading('Log'),

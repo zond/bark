@@ -1,5 +1,7 @@
 // Two phones writing to each other with no node between them: which form
-// each message takes and when each side verifies the other.
+// each message takes and when each side verifies the other; a first
+// message that a box overtook, and one forged after it, both kept as
+// texts marked as first messages that change nothing else.
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/contacts.dart';
@@ -79,12 +81,24 @@ void main() {
     return formOf(from.session.outbox.last.payload)!;
   }
 
-  /// Hands everything `from` has queued to `to`'s inbox.
-  void carry(FakeAsync async, Person from, Person to) {
+  /// Hands `from`'s outbox message `i` to `to`'s inbox.
+  void deliver(FakeAsync async, Person from, Person to, int i) {
+    to.messenger.receive(InboxMessage(i, from.session.outbox[i].payload));
+    async.flushMicrotasks();
+  }
+
+  /// Hands everything `from` has queued to `to`'s inbox, but `held`,
+  /// the outbox's indices of messages that take longer.
+  void carry(
+    FakeAsync async,
+    Person from,
+    Person to, {
+    Set<int> held = const {},
+  }) {
     final o = from.session.outbox;
     for (; from.carried < o.length; from.carried++) {
-      to.messenger.receive(InboxMessage(from.carried, o[from.carried].payload));
-      async.flushMicrotasks();
+      if (held.contains(from.carried)) continue;
+      deliver(async, from, to, from.carried);
     }
   }
 
@@ -178,6 +192,73 @@ void main() {
       carry(async, a, b);
       expect(b.of(a).verified, isTrue);
       expect(texts(b), ['boxed']);
+    });
+  });
+
+  /// A first message, A's to B, that B reads only after a box of A's:
+  /// A writes two first messages, B reads the first and answers, A's
+  /// next is boxed, and B reads it before the second.
+  void overtaken(FakeAsync async, Person a, Person b) {
+    a.scan(b, 'B');
+    async.flushMicrotasks();
+    expect(write(async, a, b, 'one'), Form.introduction);
+    expect(write(async, a, b, 'two'), Form.introduction);
+    carry(async, a, b, held: {1});
+    expect(write(async, b, a, 'hi'), Form.boxed);
+    carry(async, b, a);
+    expect(write(async, a, b, 'three'), Form.boxed);
+    carry(async, a, b);
+    expect(b.of(a).verified, isTrue);
+  }
+
+  bool intro(Person p, String text) =>
+      p.session.received.singleWhere((r) => r.body == text).intro;
+
+  test('a first message overtaken by a box is kept, marked', () {
+    run((async, a, b) {
+      overtaken(async, a, b);
+      final heard = b.of(a).heardSent;
+      deliver(async, a, b, 1);
+      expect(texts(b), ['one', 'three', 'two']);
+      expect(intro(b, 'one'), isTrue);
+      expect(intro(b, 'two'), isTrue);
+      expect(intro(b, 'three'), isFalse);
+      expect(b.of(a).verified, isTrue);
+      expect(b.of(a).heardSent, heard);
+    });
+  });
+
+  test('a first message forged after a box is kept, marked, and changes '
+      'nothing else', () {
+    run((async, a, b) {
+      overtaken(async, a, b);
+      // B's text, not yet acknowledged.
+      write(async, b, a, 'unanswered');
+      final mine = b.session.outbox.last;
+      final before = b.of(a);
+      // Anyone holding both cards: a new address, and an acknowledgement
+      // of a text A has not read.
+      final forged = sealIntro(
+        sodium,
+        b.me.identity,
+        writePlain(
+          Header(greater(a.me.identity, b.me.identity), 1 << 30, at(9)),
+          [
+            CardRecord(a.me.card.encode()),
+            AckRecord(mine.sent),
+            const TextRecord('forged'),
+          ],
+        ),
+      );
+      b.messenger.receive(InboxMessage(99, forged));
+      async.flushMicrotasks();
+      expect(texts(b).last, 'forged');
+      expect(intro(b, 'forged'), isTrue);
+      final after = b.of(a);
+      expect(after.verified, isTrue);
+      expect(after.wroteFrom.toString(), before.wroteFrom.toString());
+      expect(after.heardSent, before.heardSent);
+      expect(mine.acked, isFalse);
     });
   });
 }
