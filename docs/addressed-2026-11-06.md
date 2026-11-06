@@ -43,12 +43,9 @@ with the addressed node itself, before margin, demotion and distance:
   preamble to a sleepy one.
 - **Answered seen.** A node that has had the message answers seen as any
   other (spec "The ACK"), and the search goes on.
-- **With the triangle rule.** The triangle does not end a message whose
-  addressed node is a candidate; it goes first.
 
 `Relay::choose` ranks `n.id == dst_id` first and lets it past the last
-resort tier; `Relay::enclosed` returns false while it is a candidate. The
-record and `Relay` are unchanged.
+resort tier. The record and `Relay` are unchanged.
 
 ## How it was measured
 

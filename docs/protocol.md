@@ -1720,40 +1720,6 @@ takes it and it goes no further; if the candidate has had the message
 and holds none, it answers seen, and the relay goes on to its next
 candidate ([receiving DATA](#receiving-data), [the ACK](#the-ack)).
 
-**The triangle rule.** A relay that has tried two neighbours for a
-message, and with them encloses the destination position, drops it:
-it sends the message neither on nor back to its parent. Each time it
-routes the message, before it chooses a candidate, it looks at the
-neighbours in the record's `handed` set but the parent
-([message records](#message-records)), each of which has had the
-message and holds none: it returned it here, answered seen, or offered
-a copy this relay answered seen. Such a neighbour is a corner if it
-holds mail, neither sleepy nor carried, since a node that moves has no
-fixed place ([position](#position)). The relay is the third corner, and
-applies the rule only where it may own a destination near it: it holds
-mail, is past its first rotation and has a place ([owner](#owner)). If
-the triangle of the relay and two corners holds the destination
-position, its edges included, the message ends, unless the addressed
-node is a candidate, which goes first; three corners on a line
-hold nothing. The test is exact in the counts of the position
-([positions on the wire](#positions-on-the-wire)): the local plane only
-scales each axis, which keeps the side of a line a point is on.
-
-*Why.* Three relays around the destination position have each had the
-message, and none owned it: none is within 50 m of it with no closer
-neighbour, so no node is at that address any more. A carried node has
-walked away, or a sleepy node has moved to another anchor. Without the
-rule such a search goes through the city until the hop cap ends it
-([hop count](#hop-count)), at hundreds of hand-overs (roadmap D116).
-
-*What it costs.* A message ends that the full search would deliver: to
-a carried node that the search would meet on its way through the city,
-since a node owns what is addressed to its ID wherever it is; to a node
-reached only through relays inside the triangle that none of the
-corners reaches; or where a corner that answered seen has its own search
-still open, with a neighbour untried that leads to the node. The first
-is most of it (roadmap D116).
-
 #### Send queue
 
 The send queue has a regular room of 39 places and one hop place for
@@ -2057,9 +2023,8 @@ in the delivery queue to be dropped again at every try.
 *Why the cap.* A search that keeps its records ends on its own
 ([why the search finds a path](#why-the-search-finds-a-path)); the cap
 ends one that has lost its way because a record was replaced or the
-message split in two, one for an address no node is at that the
-triangle rule does not end ([next hop](#next-hop)), and it ends the
-chain of hop places ([overload waits](#overload-waits)). 255 is generous: the longest
+message split in two, and it ends the chain of hop places
+([overload waits](#overload-waits)). 255 is generous: the longest
 straight route across the city of
 [capacity and sizing](#capacity-and-sizing) (≈30 km at the ≈750 m
 street range of [physical layer](#physical-layer)) is about 40
@@ -2093,7 +2058,6 @@ A message ends only:
   ([delivery queue](#delivery-queue)), or when the relay holding it
   comes to own its destination while it is queued and finds that queue
   full ([owner](#owner));
-- by the triangle rule ([next hop](#next-hop));
 - at the hop cap ([hop count](#hop-count));
 - when a node holding it dies (roadmap D31, D44, D106).
 
@@ -2207,9 +2171,6 @@ What breaks it:
   link lost.
 - **Links that change** during the search, including a parent that moves
   to another home channel: parts of the graph go unsearched.
-- **The triangle rule** ([next hop](#next-hop)) ends a search before the
-  traversal is done, where three relays it has met enclose the
-  destination position.
 
 ### Bounds
 
