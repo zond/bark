@@ -546,6 +546,44 @@ fn mesh_routes_bursts_and_a_restart() {
     }
 }
 
+/// The desk (`scenarios/desk.toml`): four relays with one position, so
+/// each of A, B and C owns D's. A text for D is handed to D at once, by
+/// its origin A or by whichever of A, B, C it reaches from F, not queued
+/// for D's beat on its channel (spec "Owner"), which took 44 s at the
+/// median and up to 162 s over seeds 1 to 10 before the owner did so
+/// (`docs/addressed-2026-11-06.md`). The bound is the shortest
+/// heartbeat interval: no text to D waits for a beat.
+#[test]
+fn on_the_desk_a_text_reaches_its_node_at_once() {
+    let sc = scenario("desk.toml");
+    let settle = sc.settle_s;
+    let beat = bark_proto::Config::default().heartbeat_min.as_micros() as f64 / 1e6;
+    // Every placement is one point, numbered in order.
+    let d = sc
+        .nodes
+        .iter()
+        .position(|p| matches!(p, Placement::Point { name: Some(n), .. } if n == "D"))
+        .expect("D") as u32;
+    for seed in 1..=3 {
+        let mut sc = sc.clone();
+        sc.seed = seed;
+        let mut sim = Sim::new(&sc).expect("builds");
+        sim.run();
+        let to_d: Vec<_> = sim
+            .message_rows()
+            .into_iter()
+            .filter(|r| r.dst == d && r.t_s >= settle && r.t_s + beat < sc.duration_s)
+            .collect();
+        assert!(to_d.len() >= 80, "seed {seed}: {} texts to D", to_d.len());
+        for r in &to_d {
+            assert_eq!(r.fate, Fate::Delivered, "seed {seed}: text {}", r.tag);
+            let l = r.latency_s.expect("delivered");
+            assert!(l < beat, "seed {seed}: text {} took {l} s", r.tag);
+        }
+        accounted(&sim, &format!("desk seed {seed}"));
+    }
+}
+
 /// A restarted relay keeps its position, loses its neighbours and boots
 /// again, on the home channel it stored (spec "Channel at boot",
 /// "Implementation notes"), and its neighbours are heard again within its

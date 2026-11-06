@@ -33,11 +33,20 @@ class Me extends ChangeNotifier {
   /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
+  /// The `cardTime` of the card last sent to every contact.
+  int cardSentTime = 0;
+
+  /// The card changed since it was last sent to every contact.
+  bool get cardUnsent => cardTime > cardSentTime;
+
   /// The last `sent` this phone gave a message.
   int lastSent = 0;
 
   /// The person has seen their backup words.
   bool backedUp = false;
+
+  /// The app has asked the person to let it notify.
+  bool askedToNotify = false;
 
   /// The mailbox: the number up to which this phone has every item, the
   /// numbers it has above that, and the rounds of its latest fetches,
@@ -66,8 +75,13 @@ class Me extends ChangeNotifier {
       final home = _address(j['home']);
       final nodeAddress = _address(j['nodeAddress']);
       final cardTime = j['cardTime'] as int;
+      // Added after the format's first version: before it, every changed
+      // card was sent at once, so absent means sent.
+      final cardSentTime = j['cardSentTime'] as int? ?? cardTime;
       final lastSent = j['lastSent'] as int;
       final backedUp = j['backedUp'] as bool;
+      // Added after the format's first version: absent means not asked.
+      final askedToNotify = j['askedToNotify'] as bool? ?? false;
       final since = j['since'] as int;
       final above = (j['above'] as List).cast<int>().toList();
       final rounds = (j['rounds'] as List).cast<int>().toList();
@@ -77,8 +91,10 @@ class Me extends ChangeNotifier {
         this.home = home;
         this.nodeAddress = nodeAddress;
         this.cardTime = cardTime;
+        this.cardSentTime = cardSentTime;
         this.lastSent = lastSent;
         this.backedUp = backedUp;
+        this.askedToNotify = askedToNotify;
         this.since = since;
         this.above.addAll(above);
         this.rounds.addAll(rounds);
@@ -102,8 +118,10 @@ class Me extends ChangeNotifier {
     'home': home?.toString(),
     'nodeAddress': nodeAddress?.toString(),
     'cardTime': cardTime,
+    'cardSentTime': cardSentTime,
     'lastSent': lastSent,
     'backedUp': backedUp,
+    'askedToNotify': askedToNotify,
     'since': since,
     'above': above.toList(),
     'rounds': rounds,
@@ -132,6 +150,11 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
+  Future<void> setAskedToNotify() async {
+    askedToNotify = true;
+    await _changed();
+  }
+
   /// Replaces the identity by the one of `seed`, from its 12 words.
   Future<void> restore(Uint8List seed) async {
     keys = Keys.fromSeed(sodium, seed);
@@ -146,9 +169,17 @@ class Me extends ChangeNotifier {
   Future<bool> setHome(Address? a) async {
     final changed = a?.toString() != home?.toString();
     home = a;
-    if (changed) cardTime = sentOf(now());
+    // One past the last, so that a second change within a second is still
+    // a newer card.
+    if (changed) cardTime = max(sentOf(now()), cardTime + 1);
     await _changed();
     return changed;
+  }
+
+  /// The card of time `t` went to every contact.
+  Future<void> setCardSent(int t) async {
+    cardSentTime = max(cardSentTime, t);
+    await _changed();
   }
 
   /// The connected node's address: where the person writes from.

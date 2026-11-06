@@ -116,6 +116,41 @@ class FetchButton extends StatelessWidget {
   }
 }
 
+/// While the card has changed and not gone to the contacts, says why, with
+/// **Send my card**: the app sends no card by itself (roadmap D126).
+class SendCardLine extends StatelessWidget {
+  final AppModel app;
+  final EdgeInsetsGeometry? padding;
+  const SendCardLine(this.app, {this.padding, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!app.cardUnsent) return const SizedBox.shrink();
+    final n = app.contacts.list.length;
+    return ListTile(
+      contentPadding: padding,
+      leading: const Icon(Icons.badge_outlined),
+      title: Text(app.cardChange),
+      subtitle: Text(
+        n == 1
+            ? 'Your contact has the old one.'
+            : 'Your $n contacts have the old one; one message each.',
+      ),
+      trailing: FilledButton(
+        onPressed: () async {
+          try {
+            await app.messenger.sendCardToAll();
+            if (context.mounted) say(context, 'Your card is queued');
+          } catch (e) {
+            if (context.mounted) say(context, 'Sending the card failed: $e');
+          }
+        },
+        child: const Text('Send my card'),
+      ),
+    );
+  }
+}
+
 /// Asks for one line of text; null if the person cancels.
 Future<String?> askText(BuildContext context, String label, String initial) {
   final c = TextEditingController(text: initial);

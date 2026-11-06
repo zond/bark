@@ -23,7 +23,10 @@ against 97.55, 97.33 and 95.67 %; of those to carried nodes 97.9 to
 air falls from 10 to 16 % to 1.5 to 4.2 %, the air per delivered text
 falls, and latency falls, most at ×4 (p50 31.5 → 20.9 s, p90 173 →
 116 s). The district gains 1.3 points, the carried nodes' share 64 → 84 %;
-the other scenarios are unchanged or within their seed spread.
+the other scenarios are unchanged or within their seed spread. The
+owner's hand-over to the addressed neighbour, added after, takes the
+bench's wait for the node's beat from 44 s at the median to under a
+second ("The owner of the position").
 
 Two other forms were measured. With a sleepy node with an anchor first
 too, (a), the city is the same, but where relays hear one another's
@@ -69,6 +72,8 @@ on main `e2e2761`; the adopted rule was measured again on main
 | triangle | main `e2e2761` with the triangle rule (`ba527e4`), not adopted |
 | triangle + (a) | the branch at `a7cee15` |
 | variant, variant + (a) | the triangle note's variant, without and with (a) |
+| with | main `389c30b`: (c) and the owner's hand-over below |
+| without | main `389c30b` with the owner's hand-over (`cb95095`) taken out of `forward.rs`; its runs give the same message files as `b919329` byte for byte, so the city's are those of (c) |
 
 The air of lost texts is given two ways: as a share of the air of the
 texts written in the window, and as a share of all air in the run, as
@@ -103,9 +108,8 @@ Ring and corridor are identical in both. At ×1, and in S4 and mesh
 burst, main `324d1c1` gives the same figures as `e2e2761` below, and
 (c) the same on both mains: the mailbox changes nothing there.
 
-The measured build is `b919329`. The owner's hand-over to the addressed
-neighbour ("The owner of the position" below) came after these runs and
-is not in it.
+The measured build is `b919329`, without the owner's hand-over to the
+addressed neighbour, measured in "The owner of the position" below.
 
 ### The variants against main `e2e2761`
 
@@ -241,9 +245,64 @@ neighbour table throughout. The rule therefore holds at the owner too:
 with the addressed node a live neighbour not yet tried, other than a
 sleepy one with an anchor, the owner hands the message to it at once,
 and queues it only otherwise (`Relay::ends_here`, test
-`an_owner_hands_to_the_addressed_neighbour_at_once`). It came after the
-runs above and was not measured; in the simulated city relays stand
-farther apart than 50 m, so few messages meet that case.
+`an_owner_hands_to_the_addressed_neighbour_at_once`).
+
+`scenarios/desk.toml` is the bench: A, B, C and D on one desk with one
+place, as the bench boards stored, so each of A, B and C owns D's
+position; and a person F two relay hops away, whose texts reach the
+desk through a relay that does not hear D. A writes to D, F to D and D
+to F, each once a minute. Seeds 1 to 10, the texts written from 390 to
+3400 s:
+
+| texts | build | delivered | air per delivered text, s | latency p50 / p90 / p99 / most, s |
+|---|---|---|---|---|
+| A to D | without | 500 of 500 | 0.06 | 44.4 / 80 / 87 / 157 |
+| A to D | with | 500 of 500 | 0.06 | 0.06 / 0.1 / 0.1 / 0.3 |
+| F to D | without | 500 of 500 | 0.24 | 44.0 / 79 / 87 / 162 |
+| F to D | with | 500 of 500 | 0.24 | 0.26 / 0.3 / 0.3 / 0.7 |
+| D to F | both | 500 of 500 | 0.47 | 0.49 / 0.5 / 0.5 / 1.3 |
+
+The wait without it is D's beat on its channel, as on the bench; with
+it a text for D costs the same air and arrives in under a second. Test
+`on_the_desk_a_text_reaches_its_node_at_once` holds every text to D,
+seeds 1 to 3, under the shortest heartbeat interval, 5 s.
+
+Elsewhere the case is rarer: city relays stand farther apart than 50 m,
+and it arises where a carried node, which keeps no relay from owning,
+is near its address. The same scenarios as above, with and without it;
+the district also at ×4 (`district.toml` with the rate ×4, 900 to
+1 800 s), where it is not overloaded:
+
+| run | build | delivered of accepted % | lost at the hop cap, of accepted % | air of lost texts, of the window's texts' air / of all air in the run % | air per delivered text, s | to carried nodes: delivered %, lost at the cap %, median / p90 hops | latency p50 / p90 / p99, s |
+|---|---|---|---|---|---|---|---|
+| city ×1 | without | 98.29 | 0.18 | 4.2 / 12.7 | 1.94 | 98.71, 0.09, 7 / 14 | 3.9 / 24 / 509 |
+| city ×1 | with | 98.38 | 0.14 | 3.1 / 12.8 | 1.95 | 98.89, 0.04, 8 / 14 | 3.9 / 22 / 511 |
+| city ×3 | without | 98.50 | 0.11 | 2.5 / 8.3 | 2.11 | 98.76, 0.07, 8 / 15 | 7.9 / 34 / 547 |
+| city ×3 | with | 98.66 | 0.08 | 2.0 / 8.4 | 2.14 | 99.23, 0.07, 8 / 15 | 8.0 / 30 / 549 |
+| city ×4 | without | 97.58 | 0.09 | 1.5 / 6.6 | 3.12 | 97.89, 0.06, 10 / 19 | 20.9 / 116 / 636 |
+| city ×4 | with | 97.46 | 0.10 | 1.8 / 6.6 | 3.08 | 98.08, 0.06, 10 / 19 | 19.2 / 106 / 638 |
+| district ×32, seeds 1 to 6 | without | 83.57 (79.82–85.96) | 0.09 | 2.3 / 3.9 | 2.50 | 83.02, 0.00, 6 / 11 | 36.3 / 217 / 530 |
+| district ×32, seeds 1 to 6 | with | 82.98 (77.94–85.98) | 0.08 | 1.9 / 3.9 | 2.56 | 84.17, 0.00, 7 / 12 | 38.1 / 224 / 538 |
+| district ×4, seeds 1 to 10 | without | 96.12 (95.76–96.46) | 0.14 | 4.8 / 4.0 | 1.12 | 96.31, 0.00, 4 / 6 | 1.1 / 16 / 296 |
+| district ×4, seeds 1 to 10 | with | 96.23 (95.92–96.80) | 0.19 | 6.9 / 4.4 | 1.12 | 97.81, 0.00, 4 / 6 | 1.1 / 15 / 295 |
+| S4 | without | 94.44 (93.64–95.37) | 0.12 | 3.6 / 3.0 | 1.12 | – | 1.4 / 191 / 994 |
+| S4 | with | 94.43 (93.73–95.37) | 0.12 | 4.0 / 3.1 | 1.12 | – | 1.4 / 192 / 992 |
+
+Ring, corridor, mesh burst and spread mesh give the same message files
+with and without it.
+
+The texts to carried nodes gain everywhere, 0.2 to 1.5 points, and
+latency p90 in the city falls 2 to 10 s. City ×1 and ×3 deliver 0.09
+and 0.16 points more, ×4 0.12 less, one seed each. In the district two
+results go the other way, both small against their spread. At ×32,
+seed by seed 1 to 6, delivered goes 85.96 → 84.02, 84.03 → 85.19, 80.55 → 80.62,
+84.94 → 83.80, 79.82 → 77.94, 85.85 → 85.98 %: 0.6 points lower on
+average, the texts to fixed nodes 88.7 → 87.5 % with more of them in
+flight at the end, and latency p50 36.3 → 38.1 s. A run's traffic
+differs between the builds from the first change on, so no text can be
+followed through both. In the district at ×4 delivered is higher in 9
+of 10 seeds, but 34 texts end at the hop cap against 24, all to sleepy
+nodes, and the lost texts' share of the window's air rises 4.8 → 6.9 %.
 
 ## What it shows
 
@@ -258,6 +317,10 @@ farther apart than 50 m, so few messages meet that case.
 - A sleepy node with an anchor first too, (a), gains nothing in the
   city and costs air and latency where a relay hears another's leaf.
 - On top of it the triangle rule saves little.
+- The owner's hand-over takes the bench's wait for the addressed node's
+  beat, 44 s at the median and up to 162 s, to under a second; in the
+  city and district it changes delivery by less than the spread between
+  seeds.
 
 ## What it does not show
 
@@ -266,7 +329,10 @@ farther apart than 50 m, so few messages meet that case.
   the end, and its builds differ mostly in what is in flight.
 - How often a real walker stays within reach of the relays near where it
   last stood is the simulator's walk model.
-- The owner's hand-over to the addressed neighbour is unmeasured.
+- Why the overloaded district delivers 0.6 points less with the
+  owner's hand-over, and the district at ×4 loses more at the hop cap:
+  both are within their seed spread, and the runs do not record which
+  relay held a text when it was handed to its node.
 
 ## Verdict
 
