@@ -371,6 +371,18 @@ pub fn config(stored: Option<Stored>) -> Config {
     }
     let position = built.unwrap_or_default();
     log::info!("stored {:?}", stored);
+    // A place given at build time is where the bench says the board
+    // stands: it wins over the place stored, and the board is fixed there,
+    // so that boards built in a line are a line at every boot.
+    let stored = match built {
+        Some(place) => stored.map(|s| Stored {
+            place,
+            carried: false,
+            map_point: false,
+            ..s
+        }),
+        None => stored,
+    };
     Config {
         position,
         placed: built.is_some(),
@@ -438,6 +450,9 @@ pub async fn run<'a>(
         dbm,
         crate::power::reported()
     );
+    if let Some(id) = bark_driver::BENCH_DEAF_TO {
+        log::warn!("bench build: deaf to {:02x?} (BARK_IGNORE)", id.0);
+    }
     let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
     let mut first_report = true;
     loop {

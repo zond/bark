@@ -17,7 +17,7 @@ use bark_driver::{
     App, Clock, Driver, Gps, Heard, Outgoing, Radio, Request, MAX_AIRTIME, RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
+use bark_proto::wire::{Ack, Data, Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
     Relay, Stored, MAX_FRAME,
@@ -399,7 +399,7 @@ impl App for TestApp {
     }
 }
 
-type TestDriver<C> = Driver<C, FakeRadio, FakeClock, TestApp>;
+type TestDriver<C, R = FakeRadio> = Driver<C, R, FakeClock, TestApp>;
 
 fn driver<C: Core>(core: C, world: &World, early: Duration) -> TestDriver<C> {
     let radio = FakeRadio {
@@ -415,7 +415,7 @@ fn driver<C: Core>(core: C, world: &World, early: Duration) -> TestDriver<C> {
 }
 
 /// One step, moving the clock whenever the step waits.
-fn step<C: Core>(d: &mut TestDriver<C>, world: &World) {
+fn step<C: Core, R: Radio<Error = ()>>(d: &mut TestDriver<C, R>, world: &World) {
     let mut fut = pin!(d.step());
     loop {
         match poll_once(fut.as_mut()) {
@@ -425,7 +425,11 @@ fn step<C: Core>(d: &mut TestDriver<C>, world: &World) {
     }
 }
 
-fn run_until<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant) {
+fn run_until<C: Core, R: Radio<Error = ()>>(
+    d: &mut TestDriver<C, R>,
+    world: &World,
+    until: Instant,
+) {
     while world.now() < until {
         step(d, world);
     }
@@ -546,7 +550,7 @@ impl Core for Scripted {
     }
 }
 
-fn seen(d: &TestDriver<Scripted>) -> Vec<(u64, &str)> {
+fn seen<R: Radio>(d: &TestDriver<Scripted, R>) -> Vec<(u64, &str)> {
     d.core()
         .seen
         .iter()
@@ -593,6 +597,132 @@ fn a_received_frame_reaches_the_core() {
     );
     assert_eq!(d.stats().frames, 1);
     assert_eq!(world.0.borrow().lost, 1, "the other channel's frame");
+}
+
+/// The node the deaf radio below drops the frames of.
+const DEAF: NodeId = NodeId([0xba, 0xe6, 0xe6, 0xcb, 0xf4, 0xf5]);
+
+/// A bench build's radio (`bark_driver::BENCH_DEAF_TO`): the fake radio,
+/// deaf to [`DEAF`].
+struct DeafRadio(FakeRadio);
+
+impl Radio for DeafRadio {
+    type Error = ();
+    const DEAF_TO: Option<NodeId> = Some(DEAF);
+
+    async fn listen(&mut self, channel: Channel) -> Result<(), ()> {
+        self.0.listen(channel).await
+    }
+
+    async fn sniff(&mut self, channel: Channel) -> Result<(), ()> {
+        self.0.sniff(channel).await
+    }
+
+    async fn wait(&mut self) -> Result<(), ()> {
+        self.0.wait().await
+    }
+
+    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, ()> {
+        self.0.service(buf).await
+    }
+
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), ()> {
+        self.0.lbt(channel).await
+    }
+
+    async fn rssi(&mut self) -> Result<i16, ()> {
+        self.0.rssi().await
+    }
+
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), ()> {
+        self.0.transmit(frame, dbm).await
+    }
+}
+
+/// A radio deaf to one node passes the core none of its frames, a
+/// heartbeat, a DATA or an ACK, and counts none of them, while every other
+/// node's frame and a frame that names no sender reach the core.
+#[test]
+fn a_deaf_radio_drops_every_frame_of_its_node() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(600)]);
+    let radio = DeafRadio(FakeRadio {
+        world: world.clone(),
+        cad_busy: false,
+    });
+    let clock = FakeClock {
+        world: world.clone(),
+        early: Duration::ZERO,
+        fired_early: Default::default(),
+    };
+    let mut d = Driver::new(core, radio, clock, TestApp::default(), 10);
+    let other = NodeId([1, 2, 3, 4, 5, 6]);
+    let encode = |p: Packet<'_>| {
+        let mut buf = [0; MAX_FRAME];
+        let len = p.encode(&mut buf).expect("encodes");
+        buf[..len].to_vec()
+    };
+    let heartbeat = |id| {
+        encode(Packet::Heartbeat(Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: ch(3),
+            format: bark_proto::wire::FORMAT,
+            map_point: false,
+            id,
+            short: Position::default().short(),
+        }))
+    };
+    let data = encode(Packet::Data(Data {
+        sender_home: ch(3),
+        dst_hop: other,
+        src_hop: DEAF,
+        dst_pos: Position::default(),
+        dst_id: other,
+        hops: 1,
+        payload: b"text",
+    }));
+    let ack = encode(Packet::Ack(Ack {
+        msg_id: MsgId(7),
+        from: DEAF,
+        to: other,
+        refused: false,
+        wait: 0,
+        seen: false,
+    }));
+    let heard = heartbeat(other);
+    let bench = [bark_proto::wire::BENCH_FIRST, 1, 0];
+    for (end, bytes) in [
+        (100, heartbeat(DEAF)),
+        (200, data),
+        (300, ack),
+        (400, heard.clone()),
+        (500, bench.to_vec()),
+    ] {
+        world.send(at_ms(end), ch(3), &bytes);
+    }
+    run_until(&mut d, &world, at_ms(600));
+    let heard = format!("rx 3 {heard:?}");
+    let bench = format!("rx 3 {:?}", &bench[..]);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (400_000, heard.as_str()),
+            (500_000, bench.as_str()),
+            (600_000, "wakeup")
+        ]
+    );
+    assert_eq!(world.0.borrow().lost, 0, "the radio heard all five");
+    assert_eq!(d.stats().frames, 2);
+}
+
+/// `BARK_IGNORE` is read as the log prints a node ID.
+#[test]
+fn a_node_id_is_read_from_its_hex_digits() {
+    assert_eq!(bark_driver::node_id_of_hex("bae6e6cbf4f5"), DEAF);
+    assert_eq!(bark_driver::node_id_of_hex("BAE6E6CBF4F5"), DEAF);
 }
 
 /// A transmit goes out on the frame's channel, the core hears `TxDone`

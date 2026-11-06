@@ -167,12 +167,14 @@ The bring-up order. Each step is a milestone on real boards; steps 1 to 3 come f
 1. `lora-phy` at SF5/125 kHz on two T-Echo 433: transmit, receive, channel activity detection (CAD), signal strength (RSSI); retune and sweep times, the noise floor and the preamble the modem needs to lock measured; adjacent-channel rejection with two boards and attenuators (O5).
 2. Listen-before-talk + rotating heartbeat + neighbour table on three boards: each board lists the other two with channel and position within one rotation; a board switched on beside the other two lists them, and they it, within its first rotation's burst, about 15 s, each answering it once (D73). Restarted, a board comes back on its stored home channel (`stored Some(..)` in its log).
 3. Busy estimate + home-channel selection: put a continuous-wave interferer on one channel, watch boards avoid it; check that three boards that all hear each other do not keep switching.
-4. Greedy forwarding + per-hop ACK across three relays in a line, with attenuators or distance so A cannot hear C. Demotion when the middle relay is powered off.
+4. Greedy forwarding + per-hop ACK across three relays in a line, with attenuators or distance so A cannot hear C, or on one desk with A and C built deaf to each other (`BARK_IGNORE`), which tests the routing and not the hidden terminal (`docs/bringup-2026-11-06.md`). Demotion when the middle relay is powered off.
 5. Sleepy node: anchor, beats, delivery in the window, queue, the watch for the anchor's heartbeat, and duty-cycled receive between the windows with the long preamble (`Action::Sniff`, `core-interface.md`): a long-preamble frame sent to a board checking every 361 ms, 100 times, caught every time. **This is the loop every user feels; prototype it before anything clever.**
 6. BLE GATT + minimal phone app.
 7. Field test: a dozen relays on windowsills across a few blocks.
 
 Open on the bench, 2026-10-30, after the first two days:
+
+- Steps 4 and 5 on the three boards of one desk, prepared 2026-11-06 and not yet run (`docs/bringup-2026-11-06.md`): a line of A and C built deaf to each other with B between, its twin `scenarios/line.toml`; a sleepy node built to report battery on the host's USB (`BARK_ON_BATTERY=1`); a board switched off by its bootloader; and `bark-fw/scripts/bench.py` to build, flash and log from the host and to read each text's path, the long-preamble catches and the anchor's watches from the logs.
 
 - A survey build of the console for a board left on battery away from the host, built 2026-10-30 and not yet placed (`BARK_SURVEY=<channel>`, `bark-fw/README.md` "Survey build"): beacons at every power and length with each frame saying its power, and a log of the noise floor by channel kept in memory until the board is plugged in again. One placement gives the RSSI calibration, the loss curve as far as the path allows, the noise floor away from the desk and, over a day, the fading of one link.
 - Whether the desk's noise floor, 40 dB above thermal, is the room's (screens, chargers, the host's USB ground) or the board's: the survey build in a quiet room answers it.

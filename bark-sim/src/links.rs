@@ -97,6 +97,12 @@ pub struct TableLink {
     /// Per-channel static offsets in dB, 13 values, applied both ways.
     #[serde(default)]
     pub channel_offsets_db: Option<Vec<f64>>,
+    /// Each end's driver drops the other's frames as unheard, as the
+    /// firmware's bench build deaf to a node does (`BARK_IGNORE`,
+    /// `bark_driver::BENCH_DEAF_TO`): the radio receives them, so they
+    /// keep it busy and its listen-before-talk sees them.
+    #[serde(default)]
+    pub deaf: bool,
 }
 
 /// Fading process parameters.
@@ -244,6 +250,9 @@ pub struct LinkTable {
     pair_nodes: Vec<(u32, u32)>,
     static_offsets: Vec<[f32; NCH]>,
     fading: Option<Fading>,
+    /// Pairs whose ends are deaf to each other (`TableLink::deaf`), the
+    /// lower node first.
+    deaf: Vec<(u32, u32)>,
     /// Build statistics.
     pub stats: BuildStats,
 }
@@ -275,6 +284,7 @@ impl LinkTable {
         let mut rows: Vec<Vec<Link>> = vec![Vec::new(); n];
         let mut pair_nodes = Vec::new();
         let mut static_offsets = Vec::new();
+        let mut deaf = Vec::new();
         let mut stats = BuildStats::default();
         match p.model {
             Model::LogDistance => {
@@ -353,6 +363,9 @@ impl LinkTable {
                         return Err("a node of a loaded link table cannot walk".into());
                     }
                     stats.evaluated += 1;
+                    if l.deaf {
+                        deaf.push((a.min(b) as u32, a.max(b) as u32));
+                    }
                     let before = pair_nodes.len();
                     push_pair(
                         &mut rows,
@@ -403,8 +416,14 @@ impl LinkTable {
             pair_nodes,
             static_offsets,
             fading,
+            deaf,
             stats,
         })
+    }
+
+    /// Whether `a` and `b` are deaf to each other's frames.
+    pub fn deaf(&self, a: u32, b: u32) -> bool {
+        !self.deaf.is_empty() && self.deaf.contains(&(a.min(b), a.max(b)))
     }
 
     /// Stored receivers of transmitter `a`.

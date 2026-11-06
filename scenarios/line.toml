@@ -1,0 +1,89 @@
+# The bench line of bring-up step 4 (docs/bringup-2026-11-06.md): three
+# relays on one desk, A and C built deaf to each other (BARK_IGNORE), so
+# that a text between them goes through B.
+#
+#   A ---150 m--- B ---150 m--- C      (places built in; one desk)
+#
+# The places are the ones the boards are built with: B at the desk's own
+# position, where the boards' fixes lie (docs/gps-bench-2026-11-06.md),
+# and A and C 150 m west and east of it, so that every board's true fixes
+# stay within the carried radius of 250 m (roadmap D136) and none turns
+# carried. Every pair hears the others at a desk's level, and A and C drop each other's frames in their
+# drivers, though their radios receive them (`deaf`). A writes to C and C
+# to A, as the two phones do. C is switched off at 20 minutes: B, which
+# cannot reach it, returns A's texts to A, which drops them
+# (spec "Return to parent"). B is switched off at 30 minutes: A demotes
+# it and drops its texts (spec "Next hop").
+
+name = "line"
+seed = 1
+duration_s = 2400.0
+# As S1: the relays know each other within their first rotation, and
+# choose their homes at its end, 195 s; 390 s leaves a rotation more
+# (spec "Channel at boot", "Heartbeat").
+settle_s = 390.0
+
+[origin]
+lat = 59.2148
+lon = 18.2130
+
+[links]
+model = "table"
+table = [
+  # On one desk.
+  { a = "A", b = "B", dbm = -50.0 },
+  { a = "B", b = "C", dbm = -50.0 },
+  { a = "A", b = "C", dbm = -50.0, deaf = true },
+]
+
+[[nodes]]
+place = "point"
+name = "A"
+role = "relay"
+x = -150.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "B"
+role = "relay"
+x = 0.0
+y = 0.0
+
+[[nodes]]
+place = "point"
+name = "C"
+role = "relay"
+x = 150.0
+y = 0.0
+
+# A text of the app's, sealed: about 100 bytes (docs/app-layer-2026-11-05.md).
+[[traffic]]
+kind = "periodic"
+from = "A"
+to = "C"
+interval_s = 60.0
+payload_bytes = 100
+
+[[traffic]]
+kind = "periodic"
+from = "C"
+to = "A"
+interval_s = 60.0
+start_s = 30.0
+payload_bytes = 100
+
+[[events]]
+at_s = 1200.0
+node = "C"
+action = "remove"
+
+[[events]]
+at_s = 1800.0
+node = "B"
+action = "remove"
+
+[metrics]
+cadence_s = 10.0
+observers = ["A", "B", "C"]
+per_node = true
