@@ -59,6 +59,12 @@ pub fn take_fix() -> Option<Position> {
     FIX.lock(Cell::take)
 }
 
+/// The node's side: whether anything [`FOR_CORE`] was raised for waits,
+/// so that a signal whose fix was taken wakes no one.
+pub fn waiting() -> bool {
+    FIX.lock(|x| x.get().is_some())
+}
+
 /// What the task takes.
 pub struct Parts {
     pub uarte: Peri<'static, peripherals::UARTE1>,

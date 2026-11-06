@@ -317,21 +317,44 @@ struct TestApp {
     /// Requests waiting, and what the driver said of the GPS, in order.
     requests: VecDeque<Request>,
     gps: Vec<Gps>,
-    /// `ready` resolves at once whether anything waits or not, as the
-    /// node's did while its mailbox said a reply was due that it then
-    /// did not give; and how many times it resolved.
+    /// A signal raised and not yet seen by `ready`.
+    signalled: bool,
+    /// `ready` resolves at once whether anything waits or not, against
+    /// its contract, as the node's did while its mailbox said a reply was
+    /// due that it then did not give; and how many times it resolved.
     eager: bool,
     readies: u32,
+    /// What it queues, without a signal, when the core hands it a
+    /// message, as a home's mailbox does a reply to a fetch.
+    reply: Option<(Outgoing, Vec<u8>)>,
+}
+
+impl TestApp {
+    fn signal(&mut self) {
+        self.signalled = true;
+    }
+
+    fn set_power(&mut self, power: bool) {
+        self.power = Some(power);
+        self.signal();
+    }
+
+    fn push_request(&mut self, request: Request) {
+        self.requests.push_back(request);
+        self.signal();
+    }
 }
 
 impl App for TestApp {
+    /// At a signal, resolves if the driver gets something, and otherwise
+    /// takes the signal and waits on.
     async fn ready(&mut self, offer: bool) {
         poll_fn(|_| {
-            match self.eager
-                || (offer && self.outgoing.is_some())
-                || self.power != self.read
-                || !self.requests.is_empty()
-            {
+            let new = core::mem::take(&mut self.signalled)
+                && ((offer && self.outgoing.is_some())
+                    || self.power != self.read
+                    || !self.requests.is_empty());
+            match self.eager || new {
                 true => Poll::Ready(()),
                 false => Poll::Pending,
             }
@@ -362,6 +385,9 @@ impl App for TestApp {
 
     fn message(&mut self, event: &AppEvent) {
         self.messages.push(*event);
+        if let AppEvent::Message { .. } = event {
+            self.outgoing = self.outgoing.take().or(self.reply.take());
+        }
     }
 
     fn store(&mut self, stored: &Stored) {
@@ -427,8 +453,10 @@ struct Scripted {
     /// From when its GPS tracks, and fixes beyond reach of what it knows.
     tracks_from: Option<Instant>,
     beyond: Vec<Position>,
-    /// Whether it accepts a message from the application.
+    /// Whether it accepts a message from the application, and from when
+    /// it does in any case.
     accepts: bool,
+    accepts_from: Option<Instant>,
 }
 
 impl Scripted {
@@ -443,6 +471,7 @@ impl Scripted {
             tracks_from: None,
             beyond: Vec::new(),
             accepts: false,
+            accepts_from: None,
         }
     }
 }
@@ -491,8 +520,8 @@ impl Core for Scripted {
         self.wakeups.front().copied()
     }
 
-    fn accepts_send(&self, _: Instant) -> bool {
-        self.accepts
+    fn accepts_send(&self, now: Instant) -> bool {
+        self.accepts || self.accepts_from.is_some_and(|t| now >= t)
     }
 
     fn inbox(&self) -> Option<(MsgId, &[u8])> {
@@ -966,7 +995,7 @@ fn the_power_reaches_the_core_at_boot_and_at_each_change() {
     let mut d = driver(core, &world, Duration::ZERO);
     d.app_mut().power = Some(true);
     run_until(&mut d, &world, at_ms(100));
-    d.app_mut().power = Some(false);
+    d.app_mut().set_power(false);
     step(&mut d, &world);
     run_until(&mut d, &world, at_ms(300));
     assert_eq!(
@@ -993,7 +1022,7 @@ fn the_battery_reaches_the_core_once_a_minute_on_battery() {
     d.app_mut().battery = Some(3900);
     run_until(&mut d, &world, at_ms(1));
     assert_eq!(d.app().battery_reads, 0, "none on USB");
-    d.app_mut().power = Some(false);
+    d.app_mut().set_power(false);
     run_until(&mut d, &world, at_ms(200_000));
     let readings: Vec<u64> = seen(&d)
         .iter()
@@ -1092,11 +1121,11 @@ fn the_gps_follows_the_core() {
     };
     run_until(&mut d, &world, at_ms(1));
     assert_eq!(d.app().gps, [Gps::Rest, Gps::Search(at_ms(500))]);
-    d.app_mut().requests.push_back(Request::Fix(far));
+    d.app_mut().push_request(Request::Fix(far));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 0, "beyond reach");
     assert_eq!(d.app().gps.last(), Some(&Gps::Search(at_ms(500))));
-    d.app_mut().requests.push_back(Request::Fix(here));
+    d.app_mut().push_request(Request::Fix(here));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 1);
     assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "the fix ends it");
@@ -1106,7 +1135,7 @@ fn the_gps_follows_the_core() {
     assert_eq!(d.app().gps.last(), Some(&Gps::Rest), "ended at once");
     run_until(&mut d, &world, at_ms(40));
     assert_eq!(d.app().gps.last(), Some(&Gps::Track));
-    d.app_mut().requests.push_back(Request::Fix(here));
+    d.app_mut().push_request(Request::Fix(here));
     step(&mut d, &world);
     assert_eq!(fixes(&d), 2);
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "tracking goes on");
@@ -1172,40 +1201,118 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
         5,
         "after the boot and each event but the last"
     );
+    assert_eq!(d.stats().empty_readies, 5);
 }
 
-/// A message the application has goes to the core in the step that the
-/// application's readiness ends, at once, and so does one that comes after
-/// an empty readiness, at the next event of the clock or the radio.
+/// A message the application has goes to the core at once, and so does
+/// one that comes after an empty readiness, at the next step: the driver
+/// offers before it waits (core-interface §4).
 #[test]
 fn a_message_offered_goes_at_once() {
     let world = World::default();
     let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
     core.accepts = true;
     let mut d = driver(core, &world, Duration::ZERO);
-    let out = Outgoing {
+    step(&mut d, &world);
+    d.app_mut().outgoing = Some((out(), vec![4, 5]));
+    d.app_mut().signal();
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    // Empty, then a message: it does not wait for the wakeup.
+    d.app_mut().eager = true;
+    step(&mut d, &world);
+    d.app_mut().eager = false;
+    d.app_mut().outgoing = Some((out(), vec![6]));
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(sends(&d), [0, 0]);
+}
+
+fn out() -> Outgoing {
+    Outgoing {
         dst_pos: Position::default(),
         dst_id: NodeId([7; 6]),
         len: 2,
-    };
-    step(&mut d, &world);
-    d.app_mut().outgoing = Some((out, vec![4, 5]));
-    step(&mut d, &world);
-    assert_eq!(d.app().outgoing, None, "taken");
-    assert_eq!(world.now(), Instant::ZERO, "at once");
-    // Empty, then a message: it waits for the wakeup.
-    d.app_mut().eager = true;
-    step(&mut d, &world);
-    d.app_mut().outgoing = Some((out, vec![6]));
-    run_bounded(&mut d, &world, at_ms(100), 1);
-    assert!(d.app().outgoing.is_some(), "not before the wakeup");
-    step(&mut d, &world);
-    assert_eq!(d.app().outgoing, None, "taken");
-    assert_eq!(world.now(), at_ms(100));
-    let sends: Vec<_> = seen(&d)
+    }
+}
+
+/// When the core took each message from the application.
+fn sends(d: &TestDriver<Scripted>) -> Vec<u64> {
+    seen(d)
         .into_iter()
         .filter(|(_, s)| s.contains("Send"))
         .map(|(t, _)| t)
-        .collect();
-    assert_eq!(sends, [0, 100_000]);
+        .collect()
+}
+
+/// A message queued with no signal goes at the next step, and one the
+/// application holds while the core takes none goes at the step after the
+/// one that lets the core take it; neither is a readiness.
+#[test]
+fn a_waiting_message_goes_without_a_signal() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts_from = Some(at_ms(100));
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    // The core takes none until its wakeup at 100 ms; the application
+    // holds what arrives meanwhile.
+    d.app_mut().outgoing = Some((out(), vec![6]));
+    d.app_mut().signal();
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    // With no signal at all.
+    d.app_mut().outgoing = Some((out(), vec![7]));
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(sends(&d), [100_000, 100_000]);
+    assert_eq!(d.app().readies, 0);
+    assert_eq!(d.stats().empty_readies, 0);
+}
+
+/// A signal with nothing behind it, and a power event that changed
+/// nothing, end no wait: the loop waits for its clock as with an idle
+/// application.
+#[test]
+fn a_signal_with_nothing_behind_it_is_no_readiness() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().power = Some(true);
+    step(&mut d, &world);
+    d.app_mut().signal();
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    d.app_mut().set_power(true);
+    run_bounded(&mut d, &world, at_ms(200), 1);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (0, "App(Power { external: true })"),
+            (100_000, "wakeup"),
+            (200_000, "wakeup")
+        ]
+    );
+    assert_eq!(d.app().readies, 0);
+    assert_eq!(d.stats().empty_readies, 0);
+}
+
+/// A reply that becomes due when the core hands the application a
+/// message, as a home's to a fetch, goes at the next step, with no
+/// signal and no write from the phone.
+#[test]
+fn a_reply_that_becomes_due_goes_without_a_signal() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts = true;
+    let fetch = AppEvent::Message { msg_id: MsgId(9) };
+    core.then.push((at_ms(100), Action::App(fetch)));
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().reply = Some((out(), vec![4, 5]));
+    run_bounded(&mut d, &world, at_ms(100), 2);
+    step(&mut d, &world);
+    assert_eq!(d.app().messages, [fetch]);
+    assert_eq!(sends(&d), [100_000]);
+    assert_eq!(d.app().readies, 0);
 }

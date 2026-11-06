@@ -53,8 +53,10 @@ static HOME: Mutex<CriticalSectionRawMutex, RefCell<Option<Home>>> = Mutex::new(
 /// Raised when the mailbox has queued a write.
 static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Raised when the queued writes are done, or a reply may be due: the
-/// node's loop then confirms what was kept and offers replies.
+/// Raised when the queued writes are done, and when the phone sets or
+/// clears the home: the node then confirms what was kept, and publishes
+/// the change. A reply due needs no signal: the driver offers before every
+/// wait.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Open the mailbox as it was before the reboot, once at boot.

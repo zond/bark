@@ -43,42 +43,55 @@ pub struct LinkApp<'a> {
     battery_mv: u16,
     /// The step was woken for the link's request.
     serving: bool,
+    /// The power last told the driver.
+    power: Option<bool>,
     /// A message the core delivered and the mailbox took, to confirm to
     /// the core once its slot is written (`mailbox.rs`).
     kept: Option<bark_proto::MsgId>,
+    /// The core's inbox at the last step, its length and oldest message,
+    /// to publish at once when the phone clears the home.
+    core_inbox: (u8, Option<(bark_proto::MsgId, u8, [u8; MAX_PAYLOAD])>),
     /// The mailbox's reply the core holds, to tell its given back from
     /// the phone's.
     replying: Option<bark_proto::MsgId>,
 }
 
 impl App for LinkApp<'_> {
+    /// At each signal, resolves if the driver gets something for it, and
+    /// otherwise takes it and waits on: the driver offers a message that
+    /// waits, the mailbox's reply among them, by itself.
     async fn ready(&mut self, offer: bool) {
-        if crate::ble::request_waiting() {
-            self.serving = true;
-            return;
-        }
-        // The mailbox's reply goes once the core takes one, unless the
-        // phone's waits (`take`).
-        if offer && crate::mailbox::with(|m| m.reply_due()).unwrap_or(false) {
-            return;
-        }
         use embassy_futures::select::{select4, Either4};
-        let fix = crate::gps::FOR_CORE.wait();
-        match select4(
-            crate::power::FOR_CORE.wait(),
-            crate::ble::FOR_CORE.wait(),
-            fix,
-            crate::mailbox::FOR_CORE.wait(),
-        )
-        .await
-        {
-            Either4::Second(()) => self.serving = true,
-            Either4::First(()) | Either4::Third(()) | Either4::Fourth(()) => {}
+        loop {
+            let fix = crate::gps::FOR_CORE.wait();
+            let new = match select4(
+                crate::power::FOR_CORE.wait(),
+                crate::ble::FOR_CORE.wait(),
+                fix,
+                crate::mailbox::FOR_CORE.wait(),
+            )
+            .await
+            {
+                Either4::First(()) => Some(crate::power::reported()) != self.power,
+                Either4::Second(()) => {
+                    self.serving = self.serve_own(offer);
+                    self.serving
+                }
+                Either4::Third(()) => crate::gps::waiting(),
+                Either4::Fourth(()) => {
+                    self.follow_home();
+                    self.kept.is_some() && crate::mailbox::idle()
+                }
+            };
+            if new {
+                return;
+            }
         }
     }
 
     fn power(&mut self) -> Option<bool> {
-        Some(crate::power::reported())
+        self.power = Some(crate::power::reported());
+        self.power
     }
 
     async fn battery(&mut self) -> Option<u16> {
@@ -97,43 +110,26 @@ impl App for LinkApp<'_> {
             self.kept = None;
             return Some(Request::Confirm(id));
         }
-        let head = crate::ble::LINK.lock(|l| l.borrow().inbox.map(|(id, _, _)| id));
-        let ring = crate::ble::LINK.lock(|l| l.borrow().ring_head);
+        // The rest is the application's own (`serve_own`).
+        let (head, ring) = crate::ble::LINK.lock(|l| {
+            let l = l.borrow();
+            (l.inbox.map(|(id, _, _)| id), l.ring_head)
+        });
         crate::ble::take_request(|r| match *r {
-            Link::Send { .. } => None,
-            // A home's inbox is the ring's: the phone's confirmation moves
-            // its mark there, and the core holds nothing for it.
-            Link::Confirm(id) if ring.is_some() => {
-                let ok = ring.is_some_and(|(n, h)| {
-                    n > 0 && h == id && {
-                        crate::mailbox::with(|m| m.confirm_read(n));
-                        true
-                    }
-                });
-                log::info!("ble: confirm id={:08x} ok={} (mailbox)", id.0, ok);
-                Some((None, ok))
-            }
-            Link::Confirm(id) => {
-                let ok = head == Some(id);
-                log::info!("ble: confirm id={:08x} ok={}", id.0, ok);
-                Some((ok.then_some(Request::Confirm(id)), ok))
+            Link::Confirm(id) if ring.is_none() && head == Some(id) => {
+                log::info!("ble: confirm id={:08x} ok=true", id.0);
+                Some((Request::Confirm(id), true))
             }
             Link::MapPoint(bark_link::MapPoint::Set(position)) => {
                 log::info!("ble: map point {}", position);
-                Some((Some(Request::SetPosition(position)), true))
+                Some((Request::SetPosition(position), true))
             }
             Link::MapPoint(bark_link::MapPoint::Clear) => {
                 log::info!("ble: map point cleared");
-                Some((Some(Request::ClearMapPoint), true))
+                Some((Request::ClearMapPoint, true))
             }
-            Link::Clock(c) => {
-                if crate::utc::phone(c.utc_s.into(), c.offset_min) {
-                    crate::store::keep_offset(c.offset_min);
-                }
-                Some((None, true))
-            }
+            Link::Send { .. } | Link::Confirm(_) | Link::Clock(_) => None,
         })
-        .flatten()
     }
 
     /// The one place the core's application send slot is shared: the
@@ -200,6 +196,84 @@ impl App for LinkApp<'_> {
 }
 
 impl LinkApp<'_> {
+    /// Publish a home set or cleared since the last step at once, so that
+    /// what the phone reads after its write shows it: the ring, or the
+    /// core's inbox as the last step left it.
+    fn follow_home(&self) {
+        let (status, ring) = crate::ble::LINK.lock(|l| {
+            let l = l.borrow();
+            (l.status, l.ring_head.is_some())
+        });
+        let home = crate::mailbox::is_home();
+        if home == ring {
+            return;
+        }
+        if home {
+            publish_home(status);
+        } else {
+            let (len, head) = &self.core_inbox;
+            let status = Status {
+                inbox: *len,
+                ..status
+            };
+            crate::ble::publish(
+                status,
+                head.as_ref().map(|(id, n, p)| (*id, &p[..*n as usize])),
+            );
+        }
+    }
+
+    /// Serve the phone's request waiting if the driver gets nothing of it,
+    /// and answer it at once: the clock; a home's confirmation, which
+    /// moves the ring's mark; a confirmation of a message the inbox does
+    /// not show; and a message while the core takes none. Whether a
+    /// request for the driver waits.
+    fn serve_own(&mut self, offer: bool) -> bool {
+        use crate::ble::Request as Link;
+        let (head, ring) = crate::ble::LINK.lock(|l| {
+            let l = l.borrow();
+            (l.inbox.map(|(id, _, _)| id), l.ring_head)
+        });
+        let own = crate::ble::take_request(|r| match *r {
+            Link::Send { .. } if !offer => {
+                log::info!("ble: send refused, the node takes none now");
+                Some((false, false))
+            }
+            // A home's inbox is the ring's: the phone's confirmation moves
+            // its mark there, and the core holds nothing for it.
+            Link::Confirm(id) if ring.is_some() => {
+                let ok = ring.is_some_and(|(n, h)| {
+                    n > 0 && h == id && {
+                        crate::mailbox::with(|m| m.confirm_read(n));
+                        true
+                    }
+                });
+                log::info!("ble: confirm id={:08x} ok={} (mailbox)", id.0, ok);
+                Some((true, ok))
+            }
+            Link::Confirm(id) if head != Some(id) => {
+                log::info!("ble: confirm id={:08x} ok=false", id.0);
+                Some((false, false))
+            }
+            Link::Clock(c) => {
+                if crate::utc::phone(c.utc_s.into(), c.offset_min) {
+                    crate::store::keep_offset(c.offset_min);
+                }
+                Some((false, true))
+            }
+            _ => None,
+        });
+        let Some(ring) = own else {
+            return crate::ble::request_waiting();
+        };
+        // What the phone reads after its answer shows its write.
+        if ring {
+            publish_home(crate::ble::LINK.lock(|l| l.borrow().status));
+        }
+        crate::ble::answer(false);
+        false
+    }
+
     /// The phone's message, if it wrote one (`ble.rs`, Send).
     fn phone_message(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         crate::ble::take_request(|r| match *r {
@@ -244,6 +318,16 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
         battery_mv: if external_power { 0 } else { battery_mv },
         inbox: core.inbox_len().min(u8::MAX as usize) as u8,
     }
+}
+
+/// Publish a home's inbox, its ring's oldest unread item, with `status`.
+fn publish_home(mut status: Status) {
+    let mut item = [0u8; MAX_PAYLOAD];
+    let unread = crate::mailbox::unread(&mut item);
+    status.inbox = crate::mailbox::with(|m| m.unread_count())
+        .unwrap_or(0)
+        .min(u32::from(u8::MAX)) as u8;
+    crate::ble::publish_ring(status, unread.map(|(n, id, len)| (n, id, &item[..len])));
 }
 
 /// What the e-paper shows of `core` now (`display.rs`, `bark-screen`).
@@ -341,8 +425,10 @@ pub async fn run<'a>(
         clock,
         battery_mv: 0,
         serving: false,
+        power: None,
         kept: None,
         replying: None,
+        core_inbox: (0, None),
     };
     let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
     log::info!(
@@ -360,7 +446,7 @@ pub async fn run<'a>(
         }
         let now = bark_driver::Clock::now(&clock);
         let core = &driver.core().0;
-        let mut status = status(core, now, driver.app().battery_mv);
+        let status = status(core, now, driver.app().battery_mv);
         // A home's messages go into its mailbox, one at a time, each
         // confirmed to the core once it is written (`request`); its phone
         // reads them from the ring.
@@ -373,15 +459,18 @@ pub async fn run<'a>(
         }
         let core = &driver.core().0;
         if home {
-            let mut item = [0u8; MAX_PAYLOAD];
-            let unread = crate::mailbox::unread(&mut item);
-            status.inbox = crate::mailbox::with(|m| m.unread_count())
-                .unwrap_or(0)
-                .min(u32::from(u8::MAX)) as u8;
-            crate::ble::publish_ring(status, unread.map(|(n, id, len)| (n, id, &item[..len])));
+            publish_home(status);
         } else {
             crate::ble::publish(status, core.inbox());
         }
+        let head = core.inbox().map(|(id, p)| {
+            let mut payload = [0; MAX_PAYLOAD];
+            payload[..p.len()].copy_from_slice(p);
+            (id, p.len() as u8, payload)
+        });
+        let core_inbox = (status.inbox, head);
+        driver.app_mut().core_inbox = core_inbox;
+        let core = &driver.core().0;
         crate::display::publish(screen(core, now, driver.app().battery_mv));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
@@ -400,7 +489,7 @@ pub async fn run<'a>(
             let r = driver.radio().stats();
             let t = driver.radio().tcxo();
             log::info!(
-                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} \
+                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} \
 resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}",
                 s.events,
                 s.frames,
@@ -410,6 +499,7 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}
                 s.sniffs,
                 s.longest_handle.as_micros(),
                 s.longest_away.as_micros(),
+                s.empty_readies,
                 r.resets,
                 r.configured,
                 r.cold_starts,
