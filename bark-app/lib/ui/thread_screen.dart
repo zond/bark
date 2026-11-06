@@ -50,6 +50,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       appBar: AppBar(
         title: Text(c.title, overflow: TextOverflow.ellipsis),
         actions: [
+          FetchButton(app),
           if (contact != null)
             PopupMenuButton<void Function()>(
               onSelected: (f) => f(),

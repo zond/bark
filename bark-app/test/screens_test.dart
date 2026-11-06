@@ -1,7 +1,8 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged; the card, the backup words, adding a contact
-// and the debug screen; the fetch button and why it sends nothing.
+// and the debug screen; the fetch button, on the first screen and in a
+// thread, and why it sends nothing.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -196,6 +197,15 @@ void main() {
     await fetch('Fetching your mail');
     final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
     expect(f.single.dst.toString(), away.toString());
+
+    // The same button in a thread.
+    await t.pumpAndSettle();
+    await t.tap(find.text('Fake friend'));
+    await t.pumpAndSettle();
+    await fetch('Fetching your mail');
+    expect(f.length, 2);
+    await t.pageBack();
+    await t.pumpAndSettle();
 
     // The home itself: its mail is in its inbox, nothing is sent.
     await app.makeHome(app.session.address!);

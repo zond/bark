@@ -65,6 +65,30 @@ class NoticeCard extends StatelessWidget {
   }
 }
 
+/// "Fetch my mail", in an app bar, while the person has a home node; it
+/// says what was done, or why nothing was sent.
+class FetchButton extends StatelessWidget {
+  final AppModel app;
+  const FetchButton(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (app.me.home == null) return const SizedBox.shrink();
+    return IconButton(
+      tooltip: 'Fetch my mail',
+      icon: const Icon(Icons.move_to_inbox),
+      onPressed: () async {
+        try {
+          final r = await app.fetchNow();
+          if (context.mounted) say(context, r);
+        } catch (e) {
+          if (context.mounted) say(context, 'Fetching failed: $e');
+        }
+      },
+    );
+  }
+}
+
 /// Asks for one line of text; null if the person cancels.
 Future<String?> askText(BuildContext context, String label, String initial) {
   final c = TextEditingController(text: initial);

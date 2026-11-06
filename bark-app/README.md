@@ -42,8 +42,9 @@ is a prototype for the bench, not the app people will carry.
   **Acknowledge** on it. A received text has that button; nothing is
   acknowledged by itself. A contact whose first message has come but no
   sealed reply is marked not verified. The menu renames the contact,
-  sends them your card, or removes them. Texts wait on the phone while
-  no node is connected.
+  sends them your card, or removes them. The bar has **Fetch my mail**
+  too, as on the first screen. Texts wait on the phone while no node is
+  connected.
 - **Contacts**, from the menu. Adding one: scan their card with the
   camera, or paste it, and give a name. An address alone is not
   enough: a text is sealed to the identity on the card.
