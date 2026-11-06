@@ -176,7 +176,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final here = s.address;
     final st = s.status;
     final atHome = app.atHome;
-    final moved = here != null && home?.toString() != here.toString();
     return [
       _heading('Home node'),
       Text(
@@ -208,7 +207,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Wrap(
         spacing: 8,
         children: [
-          if (moved)
+          if (here != null && !atHome)
             FilledButton(
               onPressed: () => _setHome(here),
               child: const Text('Make this node my home'),

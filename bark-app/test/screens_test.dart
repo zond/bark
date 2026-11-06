@@ -2,7 +2,8 @@
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged; the card, the backup words, adding a contact
 // from a pasted or a scanned card, and the debug screen; the fetch button,
-// on the first screen and in a thread, and why it sends nothing.
+// on the first screen and in a thread, and why it sends nothing; the home
+// buttons, the home known by its node ID wherever it is.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -338,6 +339,20 @@ void main() {
     // Setting and clearing the home both change the card.
     await press('Make this node my home', 'goes to your contact.');
     expect(app.atHome, isTrue);
+    // The home at a new place is still the home: no button to make it one.
+    await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
+    await t.pumpAndSettle();
+    expect(app.me.home.toString(), app.session.address.toString());
+    expect(find.text('No home node'), findsOneWidget);
+    expect(find.text('Make this node my home'), findsNothing);
+    // With the home elsewhere, the connected node is another node.
+    final home = app.me.home!;
+    await app.me.setHome(Address(home.pos, [1, 2, 3, 4, 5, 6]));
+    await t.pumpAndSettle();
+    expect(app.atHome, isFalse);
+    expect(find.text('Make this node my home'), findsOneWidget);
+    await app.me.setHome(home);
+    await t.pumpAndSettle();
     await press('No home node', 'goes to your contact.');
     expect(app.me.home, isNull);
 
