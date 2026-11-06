@@ -58,8 +58,8 @@ is a prototype for the bench, not the app people will carry.
   The top line says when the contact last wrote, and, when their card
   names a home, whether from it. A received text has a small filled
   check-mark button, **Acknowledge**; nothing is acknowledged by itself.
-  Once pressed, the button turns into the two checks, and the same
-  appear on the sender's copy. A contact whose first message has come but no
+  Once pressed, the button turns into one plain check, and the two
+  checks appear on the sender's copy. A contact whose first message has come but no
   sealed reply is marked not verified. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,
