@@ -1,8 +1,9 @@
 // The home node against the fake node: the mailbox key written and read
 // back, cleared at the home, kept by a home the person is not connected
 // to, written again on every connection to the home, the home followed to
-// a fixed node's new place but not to a carried node's wandering fix, and
-// a node that does not keep it refused as a home.
+// a fixed node's new place, its card sent only when the person asks, but
+// not to a carried node's wandering fix, and a node that does not keep it
+// refused as a home.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -182,23 +183,31 @@ void main() {
     });
   });
 
-  test('a fixed home at a new place sends one card to each contact', () {
+  test('a fixed home at a new place sends nothing until the person asks', () {
     run((async, app) {
       said(async, app.makeHome(app.session.address!));
       twoContacts(async, app);
       // The fake friend's intros are read and answered first.
       async.elapse(const Duration(seconds: 30));
-      final before = cards(app);
+      final sent = cards(app);
       final each = app.contacts.list.length;
+      expect(app.cardUnsent, isFalse);
       app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
       async.flushMicrotasks();
-      expect(cards(app), before + each);
+      expect(app.me.home.toString(), app.session.address.toString());
+      expect(cards(app), sent);
+      expect(app.cardUnsent, isTrue);
+      app.messenger.sendCardToAll();
+      async.flushMicrotasks();
+      expect(cards(app), sent + each);
+      expect(app.cardUnsent, isFalse);
       for (var i = 0; i < 10; i++) {
         async.elapse(const Duration(seconds: 1));
         app.fakeNode!.walkTo(FakeNode.gps);
         async.flushMicrotasks();
       }
-      expect(cards(app), before + each);
+      expect(cards(app), sent + each);
+      expect(app.cardUnsent, isFalse);
     });
   });
 

@@ -254,8 +254,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _heading('Home node'),
       Text(
         home == null
-            ? 'No home node: your card carries the address of the node you '
-                  'are connected to, which changes when it moves.'
+            ? 'No home node: your card carries no address, so people can '
+                  'answer you only after you write to them.'
             : 'Your home node is at $home. Your card carries its address, '
                   'and it holds your mailbox key. "Fetch my mail", the '
                   'inbox button on the first screen, brings your mail from '
@@ -301,6 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
         ],
       ),
+      SendCardLine(app, padding: EdgeInsets.zero),
     ];
   }
 

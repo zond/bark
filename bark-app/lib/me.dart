@@ -33,6 +33,12 @@ class Me extends ChangeNotifier {
   /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
+  /// The `cardTime` of the card last sent to every contact.
+  int cardSentTime = 0;
+
+  /// The card changed since it was last sent to every contact.
+  bool get cardUnsent => cardTime > cardSentTime;
+
   /// The last `sent` this phone gave a message.
   int lastSent = 0;
 
@@ -69,6 +75,9 @@ class Me extends ChangeNotifier {
       final home = _address(j['home']);
       final nodeAddress = _address(j['nodeAddress']);
       final cardTime = j['cardTime'] as int;
+      // Added after the format's first version: before it, every changed
+      // card was sent at once, so absent means sent.
+      final cardSentTime = j['cardSentTime'] as int? ?? cardTime;
       final lastSent = j['lastSent'] as int;
       final backedUp = j['backedUp'] as bool;
       // Added after the format's first version: absent means not asked.
@@ -82,6 +91,7 @@ class Me extends ChangeNotifier {
         this.home = home;
         this.nodeAddress = nodeAddress;
         this.cardTime = cardTime;
+        this.cardSentTime = cardSentTime;
         this.lastSent = lastSent;
         this.backedUp = backedUp;
         this.askedToNotify = askedToNotify;
@@ -108,6 +118,7 @@ class Me extends ChangeNotifier {
     'home': home?.toString(),
     'nodeAddress': nodeAddress?.toString(),
     'cardTime': cardTime,
+    'cardSentTime': cardSentTime,
     'lastSent': lastSent,
     'backedUp': backedUp,
     'askedToNotify': askedToNotify,
@@ -158,9 +169,17 @@ class Me extends ChangeNotifier {
   Future<bool> setHome(Address? a) async {
     final changed = a?.toString() != home?.toString();
     home = a;
-    if (changed) cardTime = sentOf(now());
+    // One past the last, so that a second change within a second is still
+    // a newer card.
+    if (changed) cardTime = max(sentOf(now()), cardTime + 1);
     await _changed();
     return changed;
+  }
+
+  /// The card of time `t` went to every contact.
+  Future<void> setCardSent(int t) async {
+    cardSentTime = max(cardSentTime, t);
+    await _changed();
   }
 
   /// The connected node's address: where the person writes from.
