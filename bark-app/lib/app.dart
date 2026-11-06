@@ -86,13 +86,26 @@ class AppModel extends ChangeNotifier {
   /// a former home of theirs, or someone else's.
   bool get holdsOtherKey => !atHome && (session.nodeHome?.set ?? false);
 
-  /// Fetches to the node's address. Only the person's word fetches, as
-  /// fetched mail crosses the city twice (roadmap D128).
-  Future<bool> fetchNow() async {
+  /// Fetches to the node's address; returns what to tell the person. Only
+  /// the person's word fetches, as fetched mail crosses the city twice
+  /// (roadmap D128).
+  Future<String> fetchNow() async {
+    if (me.home == null) return 'No home node to fetch from';
+    if (!session.connected) {
+      return 'Not connected to a node: a fetch is sent from another node '
+          'to your home, and the mail comes back to that node';
+    }
+    if (atHome) {
+      return 'Connected to your home node: your mail comes from its inbox '
+          'here; a fetch is sent from another node';
+    }
     final here = session.address;
-    if (here == null || me.home == null) return false;
+    if (here == null) {
+      return 'This node has no address yet, so your mail could not come '
+          'back to it';
+    }
     await messenger.fetch(here);
-    return true;
+    return 'Fetching your mail';
   }
 
   static const _oldHomeKeeps =

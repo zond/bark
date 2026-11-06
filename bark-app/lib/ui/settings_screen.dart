@@ -181,8 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ? 'No home node: your card carries the address of the node you '
                   'are connected to, which changes when it moves.'
             : 'Your home node is at $home. Your card carries its address, '
-                  'and it holds your mailbox key. "Fetch my mail" brings '
-                  'your mail from it to the node you are connected to.',
+                  'and it holds your mailbox key. "Fetch my mail", the '
+                  'inbox button on the first screen, brings your mail from '
+                  'it to the node you are connected to.',
       ),
       if (here != null && !atHome && st != null && (st.sleepy || st.carried))
         const Padding(
@@ -221,15 +222,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 if (mounted) say(context, r);
               }, 'Clearing the key failed'),
               child: const Text('Clear its mailbox key'),
-            ),
-          if (home != null && here != null && !atHome)
-            OutlinedButton(
-              onPressed: () async {
-                if (await app.fetchNow() && mounted) {
-                  say(context, 'Fetching your mail');
-                }
-              },
-              child: const Text('Fetch my mail'),
             ),
         ],
       ),

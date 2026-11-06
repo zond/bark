@@ -28,7 +28,12 @@ is a prototype for the bench, not the app people will carry.
 - **Conversations**, the first screen. One row a conversation, newest
   first, with the last text and, for a sent one, its state. A line at
   the top says whether a node is connected; tapping it opens Settings.
-  The pen button starts a conversation from the contacts.
+  The pen button starts a conversation from the contacts. With a home
+  node, the inbox button in the bar, **Fetch my mail**, sends a fetch to
+  it, which the app does only when asked, and says "Fetching your
+  mail". It sends nothing, and says why, when no node is connected or
+  the connected node is the home: a fetch goes from another node to the
+  home, and the home's own inbox already holds the mail.
 - **A thread.** The texts sent to and received from one identity, in
   order, and a field at the bottom to write the next. A sent text
   shows as queued, taken by the node, or given back with its wait
@@ -49,15 +54,15 @@ is a prototype for the bench, not the app people will carry.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one), the fake node switch, your name, the home node (make the
   connected node your home, or none; your new card then goes to every
-  contact; fetch your mail, which the app does only when asked; clear the
-  mailbox key of a node that holds one and is not your home), your 12
-  words (show them, or restore an identity from them), and the node's map
-  point: set from typed degrees or the phone's location, or cleared.
+  contact; clear the mailbox key of a node that holds one and is not
+  your home), your 12 words (show them, or restore an identity from
+  them), and the node's map point: set from typed degrees or the phone's
+  location, or cleared.
 - **Debug**, from the menu. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, the last
-  Given back value,
-  each sent and received message's kind, `sent`, ID and payload in
-  hex, and a log of the link's events since the app started.
+  Given back value, each sent and received message's kind, `sent`, ID
+  and payload in hex, and a log of the link's events since the app
+  started.
 
 The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
@@ -185,7 +190,7 @@ mailbox key, read it back, clear it, write it again to a home that lost
 it, and refuse a node that does not keep it; group texts into
 conversations; and drive the screens: a text to the fake friend, its
 echo, an acknowledgement, the backup words, a contact from a pasted
-card, my card and the debug screen.
+card, my card, the debug screen and the fetch button.
 
 ## Trying it
 
@@ -220,11 +225,14 @@ card, my card and the debug screen.
    **Clear** brings back the fake's own fix.
 9. **Settings**, under **Home node**: **Make this node my home**, **Go
    ahead**: "This node is your home". Debug's Home reads "a home, its
-   mailbox empty".
-10. **No home node**, **Go ahead**: the node forgets the key, and Home
-    reads "not a home". Make it your home again, disconnect, press **No
-    home node**: the app says the old home still holds the key.
-    Connect: Settings says the node holds a mailbox key; **Clear its
+   mailbox empty". Go back: the bar has the inbox button, **Fetch my
+   mail**. Press it: it says you are connected to your home node, and
+   sends nothing. Disconnect and press it: it says no node is
+   connected.
+10. Connect again. **Settings**, **No home node**, **Go ahead**: the
+    node forgets the key, and Home reads "not a home". Make it your home
+    again, disconnect, press **No home node**: the app says the old home
+    still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
 11. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
@@ -263,5 +271,5 @@ The firmware's side of the link is still to build (`docs/phone-link-2026-11-05.m
 8. On a node on USB that stays where it is, **Settings**, **Make this
    node my home**: Debug's Home reads a home, and the node's log shows
    `ble: home set`. Texts to your card now go to it and wait in its
-   mailbox. Connected to another node, **Fetch my mail** brings them
-   there.
+   mailbox. Connected to another node, **Fetch my mail** on the first
+   screen says "Fetching your mail" and brings them there.

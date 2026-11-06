@@ -27,6 +27,12 @@ class ConversationsScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('bark'),
         actions: [
+          if (app.me.home != null)
+            IconButton(
+              tooltip: 'Fetch my mail',
+              icon: const Icon(Icons.move_to_inbox),
+              onPressed: () => _fetch(context),
+            ),
           IconButton(
             tooltip: 'My card',
             icon: const Icon(Icons.qr_code),
@@ -85,6 +91,15 @@ class ConversationsScreen extends StatelessWidget {
       ),
     );
   });
+
+  Future<void> _fetch(BuildContext context) async {
+    try {
+      final r = await app.fetchNow();
+      if (context.mounted) say(context, r);
+    } catch (e) {
+      if (context.mounted) say(context, 'Fetching failed: $e');
+    }
+  }
 
   Widget _connection(BuildContext context) {
     final s = app.session;
