@@ -19,8 +19,8 @@ use bark_driver::{
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{Heartbeat, Packet, MAX_PAYLOAD};
 use bark_proto::{
-    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, Position, Relay,
-    Stored, MAX_FRAME,
+    Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
+    Relay, Stored, MAX_FRAME,
 };
 use embassy_futures::poll_once;
 
@@ -317,12 +317,18 @@ struct TestApp {
     /// Requests waiting, and what the driver said of the GPS, in order.
     requests: VecDeque<Request>,
     gps: Vec<Gps>,
+    /// `ready` resolves at once whether anything waits or not, as the
+    /// node's did while its mailbox said a reply was due that it then
+    /// did not give; and how many times it resolved.
+    eager: bool,
+    readies: u32,
 }
 
 impl App for TestApp {
     async fn ready(&mut self, offer: bool) {
         poll_fn(|_| {
-            match (offer && self.outgoing.is_some())
+            match self.eager
+                || (offer && self.outgoing.is_some())
                 || self.power != self.read
                 || !self.requests.is_empty()
             {
@@ -330,7 +336,8 @@ impl App for TestApp {
                 false => Poll::Pending,
             }
         })
-        .await
+        .await;
+        self.readies += 1;
     }
 
     fn power(&mut self) -> Option<bool> {
@@ -420,6 +427,8 @@ struct Scripted {
     /// From when its GPS tracks, and fixes beyond reach of what it knows.
     tracks_from: Option<Instant>,
     beyond: Vec<Position>,
+    /// Whether it accepts a message from the application.
+    accepts: bool,
 }
 
 impl Scripted {
@@ -433,6 +442,7 @@ impl Scripted {
             seen: Vec::new(),
             tracks_from: None,
             beyond: Vec::new(),
+            accepts: false,
         }
     }
 }
@@ -482,7 +492,7 @@ impl Core for Scripted {
     }
 
     fn accepts_send(&self, _: Instant) -> bool {
-        false
+        self.accepts
     }
 
     fn inbox(&self) -> Option<(MsgId, &[u8])> {
@@ -1113,4 +1123,89 @@ fn a_placed_relay_on_usb_tracks() {
     run_until(&mut d, &world, Instant::ZERO + Duration::from_secs(5));
     assert!(!d.core().on_map_point());
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "{:?}", d.app().gps);
+}
+
+/// Steps until the clock reaches `until`, at most `max`: a loop that never
+/// waits takes steps without moving the clock and runs out of them.
+fn run_bounded<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant, max: u32) {
+    let mut steps = 0;
+    while world.now() < until {
+        assert!(
+            steps < max,
+            "{max} steps and the clock still at {:?}",
+            world.now()
+        );
+        step(d, world);
+        steps += 1;
+    }
+}
+
+/// An application that says it is ready at once, always, and then gives
+/// nothing, as the node's did on the bench 2026-11-06 while its mailbox
+/// said a reply was due that it then did not give: the loop still waits for its clock
+/// and its radio as with an idle application, and asks the application
+/// again only after one of them woke it (core-interface §4).
+#[test]
+fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200), at_ms(300)]);
+    core.accepts = true;
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().eager = true;
+    world.send(at_ms(150), ch(3), &[1, 2, 3]);
+    // The boot, and per event of the clock or the radio, the frame's start
+    // and its end among them, one step for it and one for the
+    // application's empty readiness.
+    run_bounded(&mut d, &world, at_ms(300), 1 + 2 * 5);
+    assert_eq!(
+        seen(&d),
+        [
+            (0, "boot"),
+            (100_000, "wakeup"),
+            (150_000, "rx 3 [1, 2, 3]"),
+            (200_000, "wakeup"),
+            (300_000, "wakeup")
+        ]
+    );
+    assert_eq!(
+        d.app().readies,
+        5,
+        "after the boot and each event but the last"
+    );
+}
+
+/// A message the application has goes to the core in the step that the
+/// application's readiness ends, at once, and so does one that comes after
+/// an empty readiness, at the next event of the clock or the radio.
+#[test]
+fn a_message_offered_goes_at_once() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    core.accepts = true;
+    let mut d = driver(core, &world, Duration::ZERO);
+    let out = Outgoing {
+        dst_pos: Position::default(),
+        dst_id: NodeId([7; 6]),
+        len: 2,
+    };
+    step(&mut d, &world);
+    d.app_mut().outgoing = Some((out, vec![4, 5]));
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(world.now(), Instant::ZERO, "at once");
+    // Empty, then a message: it waits for the wakeup.
+    d.app_mut().eager = true;
+    step(&mut d, &world);
+    d.app_mut().outgoing = Some((out, vec![6]));
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    assert!(d.app().outgoing.is_some(), "not before the wakeup");
+    step(&mut d, &world);
+    assert_eq!(d.app().outgoing, None, "taken");
+    assert_eq!(world.now(), at_ms(100));
+    let sends: Vec<_> = seen(&d)
+        .into_iter()
+        .filter(|(_, s)| s.contains("Send"))
+        .map(|(t, _)| t)
+        .collect();
+    assert_eq!(sends, [0, 100_000]);
 }
