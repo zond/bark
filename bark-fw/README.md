@@ -893,7 +893,10 @@ Between the core's wakeups and the radio's interrupts nothing runs: the
 driver's loop waits on one embassy timer (the core's next wakeup, the end
 of a sniff or of a hold), DIO1 through GPIOTE, an application that
 has nothing to send and a change of USB power, and the embassy executor
-sleeps in `wfe` meanwhile. The USB device waits for VBUS and the log for
+sleeps in `wfe` meanwhile. An application that says it is ready and then
+gives nothing is not waited on again until the timer or DIO1 wakes the
+loop (`docs/core-interface.md` §4), and the log says `app said ready but
+offered nothing`, at most once a minute. The USB device waits for VBUS and the log for
 the host to open the port, both on interrupts. Three things that would
 keep the board awake stop while it is on battery, and start again on USB:
 
