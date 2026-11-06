@@ -786,7 +786,9 @@ and `CH<k>` (Display, above).
 
 `scripts/measure.md` is the measurement plan for bring-up steps 1 to 3 and 5
 and bench item C1, with a table that maps the results onto the simulator's
-radio parameters.
+radio parameters. `scripts/bench.py` builds, flashes and logs the boards of
+steps 4 and 5 from the host and reads their logs
+(`docs/bringup-2026-11-06.md`).
 
 ## Radio driver
 
