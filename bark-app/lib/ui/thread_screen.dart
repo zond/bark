@@ -225,28 +225,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Flexible(
-                      child: Text(
-                        mine
-                            ? '${when(e.at)}, ${stateLabel(app.session, o)}'
-                                  '${o.toward == null ? '' : ', ${o.toward!.label}'}'
-                            : '${when(e.at)}'
-                                  '${e.received!.mailbox ? ', from your mailbox' : ''}',
-                        style: small,
+                    Text(when(e.at), style: small),
+                    if (mine && o.toward != null)
+                      _where(o.toward!, small, scheme.onSurfaceVariant)
+                    else if (!mine && e.received!.mailbox)
+                      _mark(
+                        Icons.markunread_mailbox,
+                        'From your mailbox',
+                        small,
+                        scheme.onSurfaceVariant,
                       ),
-                    ),
                     if (mine ? o.acked : e.received!.acked)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Icon(
-                          Icons.check,
-                          size: small.fontSize,
-                          color: scheme.onSurfaceVariant,
-                          semanticLabel: 'Acknowledged',
-                        ),
+                      _mark(
+                        Icons.done_all,
+                        'Acknowledged',
+                        small,
+                        scheme.primary,
                       )
                     else if (!mine)
-                      _acknowledge(e.received!),
+                      _acknowledge(e.received!, small)
+                    else
+                      ..._state(o, small, scheme.onSurfaceVariant),
                   ],
                 ),
                 if (mine) _actions(o),
@@ -258,20 +257,78 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  /// A filled button, unlike the plain acknowledged mark, so "tap to
+  /// An icon the small text's size, with the words it stands for as its
+  /// tooltip and semantic label, so nothing is lost to someone who does
+  /// not know the icon.
+  Widget _mark(IconData icon, String words, TextStyle small, Color color) =>
+      Padding(
+        padding: const EdgeInsets.only(left: 4),
+        child: Tooltip(
+          message: words,
+          excludeFromSemantics: true,
+          child: Icon(
+            icon,
+            size: small.fontSize,
+            color: color,
+            semanticLabel: words,
+          ),
+        ),
+      );
+
+  Widget _where(Toward t, TextStyle small, Color color) => switch (t) {
+    Toward.there => _mark(Icons.place, 'To where they were', small, color),
+    Toward.home => _mark(Icons.home, 'To their home', small, color),
+  };
+
+  /// A sent text's state short of acknowledged. Not yet with the node
+  /// shows a clock rather than nothing, so a missing mark never means two
+  /// things. A state that is a problem keeps its words, which say why.
+  List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
+      switch (o.state) {
+        OutState.queued => [_mark(Icons.schedule, 'Queued', small, color)],
+        OutState.writing => [
+          _mark(Icons.schedule, 'Offering to the node', small, color),
+        ],
+        OutState.taken => [
+          _mark(Icons.check, 'Taken by the node', small, color),
+        ],
+        OutState.givenBack || OutState.refused => [
+          const SizedBox(width: 4),
+          Flexible(child: Text(stateLabel(app.session, o), style: small)),
+        ],
+      };
+
+  /// A filled button, unlike the plain acknowledged marks, so "tap to
   /// acknowledge" cannot be mistaken for "acknowledged".
-  Widget _acknowledge(Received r) => IconButton.filled(
-    tooltip: 'Acknowledge',
-    icon: const Icon(Icons.check),
-    visualDensity: VisualDensity.compact,
-    onPressed: () async {
-      try {
-        await app.messenger.acknowledge(r);
-      } on BadPayload catch (e) {
-        if (mounted) say(context, 'Not sent: $e');
-      }
-    },
-  );
+  ///
+  /// One line of small text tall, so the line keeps its height with the
+  /// button in it.
+  Widget _acknowledge(Received r, TextStyle small) {
+    final line = small.fontSize! * (small.height ?? 1);
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: SizedBox.square(
+        dimension: line,
+        child: IconButton.filled(
+          tooltip: 'Acknowledge',
+          icon: const Icon(Icons.check),
+          iconSize: small.fontSize,
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints.tight(Size.square(line)),
+          style: IconButton.styleFrom(
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          onPressed: () async {
+            try {
+              await app.messenger.acknowledge(r);
+            } on BadPayload catch (e) {
+              if (mounted) say(context, 'Not sent: $e');
+            }
+          },
+        ),
+      ),
+    );
+  }
 
   Widget _actions(Outgoing o) {
     final s = app.session;

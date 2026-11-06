@@ -47,15 +47,19 @@ is a prototype for the bench, not the app people will carry.
   which sends it to every contact, one message each; the line then
   goes. The app sends no card by itself (roadmap D126).
 - **A thread.** The texts sent to and received from one identity, in
-  order, and a field at the bottom to write the next. A sent text
-  shows as queued, taken by the node, or given back with its wait
-  counting down; a given-back text can be sent again once the wait is
-  over, or dropped. Each says in small text where it went: "to
-  where they were" or "to their home". The top line says when the contact last wrote, and, when their card names
-  a home, whether from it. A received text has a filled check-mark button,
-  **Acknowledge**; nothing is acknowledged by itself. Once pressed, the
-  button turns into a plain check mark at the end of the small text,
-  and the same mark appears on the sender's copy. A contact whose first message has come but no
+  order, and a field at the bottom to write the next. Each text's small
+  line has its time, then where it went, then its state, as icons the
+  text's size whose tooltips give the words: a house, to their home; a
+  pin, to where they were; a mailbox, from your mailbox; a clock, not
+  yet with the node; one check, taken by the node; two checks in the
+  theme's colour, acknowledged by the other person. A given-back text
+  says so in words with its wait counting down, and can be sent again
+  once the wait is over, or dropped; a refused text says why in words.
+  The top line says when the contact last wrote, and, when their card
+  names a home, whether from it. A received text has a small filled
+  check-mark button, **Acknowledge**; nothing is acknowledged by itself.
+  Once pressed, the button turns into the two checks, and the same
+  appear on the sender's copy. A contact whose first message has come but no
   sealed reply is marked not verified. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,

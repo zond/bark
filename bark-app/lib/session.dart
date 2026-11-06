@@ -49,13 +49,7 @@ enum Toward {
   there,
 
   /// Their home's mailbox, the address on their card.
-  home;
-
-  /// For the sent row.
-  String get label => switch (this) {
-    there => 'to where they were',
-    home => 'to their home',
-  };
+  home,
 }
 
 class Outgoing {
