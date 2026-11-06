@@ -206,20 +206,23 @@ void main() {
     });
   });
 
-  test('the first texts go as first messages, then boxed', () {
+  test('a text to someone who has written is boxed from the first', () {
     run((async, p, node) {
+      // The fake friend's first messages show they hold the person's card.
       final f = friendOf(p, node);
+      expect(f.verified, isFalse);
+      expect(f.hasMine, isTrue);
       p.messenger.sendText(f, 'first');
       async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
       p.messenger.sendText(friendOf(p, node), 'second');
       async.flushMicrotasks();
       final [first, second] = p.session.outbox;
-      expect(formOf(first.payload), Form.introduction);
+      expect(formOf(first.payload), Form.boxed);
       expect(formOf(second.payload), Form.boxed);
       expect(second.sent, greaterThan(first.sent));
       // The first names the node the person writes from; the echo answered
       // it, so the second does not.
-      final (h1, _) = readPlain(openIntro(sodium, node.friend, first.payload));
+      final (h1, _) = readPlain(openBox(friendPair(p, node), first.payload));
       expect(h1.address.toString(), p.me.nodeAddress.toString());
       final (h2, _) = readPlain(openBox(friendPair(p, node), second.payload));
       expect(h2.address, isNull);
