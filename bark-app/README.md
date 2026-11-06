@@ -121,6 +121,23 @@ screen and in Settings. A pairing cancelled or with a wrong code says
 so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
 
+While it is not connected, the app looks for the node it is paired with
+and connects to it when it sees it, by the same path as a tap and without
+a code: from its start, and after a link drops, so that texts waiting go
+out as soon as the node is in reach. The first screen, and Settings under
+the scan rows, say "Looking for bark-…", or that Bluetooth is off. A
+search round scans for four of the node's advertising intervals, 4.1 s,
+without a break, and a round starts every 15 s: Android refuses an app's
+sixth scan started within 30 s, and two leave room for the person's own
+Scan and Pair again. A phone's Bluetooth scanning without a break draws
+in the order of 10 mA (an estimate, not measured here), so the search
+costs about 3 mAh an hour, under a tenth of a percent of a phone's
+battery. The app stops looking while it is connected or Bluetooth is
+off, after "This node is no longer yours" (the person decides with
+**Pair again**), and after the person presses **Disconnect** or **Stop
+looking** in Settings, until they tap a node or restart the app. A tap on
+a node, or a scan, ends a search round at once.
+
 The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
 Whenever Status counts messages in the inbox, it reads the oldest,
@@ -163,9 +180,17 @@ node, "Connected to bark-…"; tapping it opens the app. The link is the
 same one as in the foreground: the app's engine outlives its window
 (`MainActivity.kt`), and an Android foreground service of the connected
 device type keeps the process running, so there is one implementation of
-the link, in Dart. When the link ends, from either side, the service
-stops and its notification goes. The fake node runs inside the app and
-starts no service.
+the link, in Dart. While the app looks for its paired node (previous
+section) the service runs too, and its notification says "Looking for
+bark-…": without one Android suspends or ends an app in the background,
+and the search with it, and queued texts are to go out as soon as the node is in reach, not
+when the person next opens the app. The service goes on from connected
+to looking and back, changing only its notification, as Android 12 and
+later restrict starting a service from the background. It stops, and its
+notification goes, when the app neither holds a link nor looks. With the
+screen off and the phone still, Android may let the phone sleep through
+a round's pause, so a round can start later than 15 s. The fake node
+runs inside the app and starts no service.
 
 Each new text notifies, with the system's sound and vibration, under the
 contact's name. Texts from one contact collect in one notification until

@@ -1,5 +1,6 @@
 // What the app tells the person outside its own window: that it holds
-// the link to a node, and which texts came while they were not looking.
+// the link to a node or looks for it, and which texts came while they
+// were not looking.
 
 import 'contacts.dart';
 import 'session.dart';
@@ -13,12 +14,13 @@ abstract interface class Notifier {
   /// Asks the person to let the app notify; whether they did.
   Future<bool> ask();
 
-  /// The link to the node called `node` is up: the app keeps running in
-  /// the background, under a notification that says so.
-  Future<void> linkUp(String node);
+  /// The app keeps running in the background, under a notification of
+  /// `held`'s title and body; a later call changes only the
+  /// notification.
+  Future<void> hold(Held held);
 
-  /// The link is down: the app may be suspended again.
-  Future<void> linkDown();
+  /// The app need not run in the background: it may be suspended again.
+  Future<void> letGo();
 
   /// Shows the unread `texts` from the contact of identity `key`, called
   /// `name`, as one notification in place of the last.
@@ -38,6 +40,10 @@ abstract interface class Notifier {
   Future<void> askBatteryExempt();
 }
 
+/// What the notification of an app kept running says: what it holds the
+/// link for.
+typedef Held = ({String title, String body});
+
 /// No phone around the app: nothing is shown and nothing is asked.
 class NoNotifier implements Notifier {
   const NoNotifier();
@@ -46,9 +52,9 @@ class NoNotifier implements Notifier {
   @override
   Future<bool> ask() async => true;
   @override
-  Future<void> linkUp(String node) async {}
+  Future<void> hold(Held held) async {}
   @override
-  Future<void> linkDown() async {}
+  Future<void> letGo() async {}
   @override
   Future<void> texts(String key, String name, List<Received> texts) async {}
   @override
@@ -77,14 +83,14 @@ class Alerts {
   /// The texts each contact's notification shows.
   final Map<String, List<Received>> _unread = {};
 
-  /// The node the link notification names.
-  String? _node;
+  /// What the notification of the app kept running says.
+  Held? _held;
 
-  /// The link is up to the node called `node`, or down for null.
-  Future<void> link(String? node) async {
-    if (node == _node) return;
-    _node = node;
-    await (node == null ? notifier.linkDown() : notifier.linkUp(node));
+  /// Keeps the app running under `held`, or lets it go for null.
+  Future<void> hold(Held? held) async {
+    if (held == _held) return;
+    _held = held;
+    await (held == null ? notifier.letGo() : notifier.hold(held));
   }
 
   /// A message was kept: a text notifies, anything else does not.

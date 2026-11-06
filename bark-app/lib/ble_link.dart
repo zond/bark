@@ -30,10 +30,12 @@ Future<void> startScan(void Function(FoundNode) found) async {
   await _scanForNodes();
 }
 
-Future<void> _scanForNodes() => UniversalBle.startScan(
+Future<void> _scanForNodes({AndroidScanMode? mode}) => UniversalBle.startScan(
   scanFilter: ScanFilter(withServices: [Uuids.service]),
   // The node advertises with legacy advertising PDUs (spec "Phone link").
-  platformConfig: PlatformConfig(android: AndroidOptions(legacy: true)),
+  platformConfig: PlatformConfig(
+    android: AndroidOptions(legacy: true, scanMode: mode),
+  ),
 );
 
 /// How long a scan looks for one node: ten of its advertising intervals
@@ -52,22 +54,61 @@ const Duration seenWait = Duration(milliseconds: 10 * 1022 + 5);
 /// takes the address's type, so a node is seen in a scan before a
 /// connect that has no bond to go by.
 Future<bool> seen(String deviceId, {Duration wait = seenWait}) async {
-  final found = Completer<bool>();
   final id = deviceId.toUpperCase();
+  return await _scanUntil((d) => d.deviceId.toUpperCase() == id, wait) != null;
+}
+
+/// How long a round of the search for the paired node scans: four of
+/// its advertising intervals of 1022.5 ms (spec "Phone link", Finding the
+/// node). The scan listens without a break ([AndroidScanMode.lowLatency]),
+/// so with the screen on it hears nearly every advertisement in reach;
+/// the extra intervals cover a scan's start and an advertisement lost.
+/// With the screen off Android listens less, and a later round makes up
+/// for a miss.
+const Duration lookScan = Duration(microseconds: 4 * 1022500);
+
+/// How often a round of the search starts. Android refuses an app's
+/// sixth scan started within 30 s, silently (its Bluetooth service,
+/// since Android 7); a round every 15 s takes two of the five and leaves
+/// three for the person's own Scan and Pair again.
+const Duration lookRound = Duration(seconds: 15);
+
+/// Scans for the node called `name` for [lookScan], or until `stop`
+/// completes; the node, or null if it was not seen.
+Future<FoundNode?> look(String name, {Future<void>? stop}) async {
+  final d = await _scanUntil(
+    (d) => d.name == name,
+    lookScan,
+    mode: AndroidScanMode.lowLatency,
+    stop: stop,
+  );
+  return d == null ? null : FoundNode(d.deviceId, name, d.rssi);
+}
+
+/// Scans until a device `match`es, at most `wait` or until `stop`
+/// completes; the device, or null.
+Future<BleDevice?> _scanUntil(
+  bool Function(BleDevice) match,
+  Duration wait, {
+  AndroidScanMode? mode,
+  Future<void>? stop,
+}) async {
+  final found = Completer<BleDevice?>();
+  void end(BleDevice? d) {
+    if (!found.isCompleted) found.complete(d);
+  }
+
   final sub = UniversalBle.scanStream.listen((d) {
-    if (d.deviceId.toUpperCase() == id && !found.isCompleted) {
-      found.complete(true);
-    }
+    if (match(d)) end(d);
   });
-  final timer = Timer(wait, () {
-    if (!found.isCompleted) found.complete(false);
-  });
+  final timer = Timer(wait, () => end(null));
+  stop?.then((_) => end(null));
   try {
-    await _scanForNodes();
+    await _scanForNodes(mode: mode);
     return await found.future;
   } finally {
     timer.cancel();
-    await sub.cancel();
+    unawaited(sub.cancel());
     await UniversalBle.stopScan();
   }
 }
@@ -321,7 +362,7 @@ class BleLink implements NodeLink {
 
   @override
   Future<void> close() async {
-    await _connection?.cancel();
+    unawaited(_connection?.cancel());
     try {
       await UniversalBle.disconnect(deviceId);
     } finally {

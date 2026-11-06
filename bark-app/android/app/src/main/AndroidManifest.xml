@@ -18,7 +18,7 @@
     <!-- Notifications: each new text, and the one that a foreground
          service must show; the service keeps the app running with the
          screen off while it holds the link to a node, a connected
-         device. -->
+         device, or looks for the node it is paired with. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
@@ -55,8 +55,9 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- The plugin's service, started and stopped with the link; it
-             goes on when the person closes the app's window. -->
+        <!-- The plugin's service, running while the app holds the link
+             or looks for the paired node; it goes on when the person
+             closes the app's window. -->
         <service
             android:name="com.dexterous.flutterlocalnotifications.ForegroundService"
             android:exported="false"
