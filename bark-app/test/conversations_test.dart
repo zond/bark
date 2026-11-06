@@ -47,7 +47,7 @@ void main() {
     );
     expect(cs.map((c) => c.title), ['Olena', 'Petro']);
     expect(cs.first.entries.map((e) => e.text), ['hi', 'hello', 'how are you']);
-    expect(cs.first.entries.map((e) => e.sent != null), [true, false, false]);
+    expect(cs.first.entries.map((e) => e.mine), [true, false, false]);
     expect(cs.first.contact, same(olena));
   });
 
@@ -85,5 +85,49 @@ void main() {
     final c = conversations([], [out(id(1), 'hi', 0)], []).single;
     expect(c.contact, isNull);
     expect(c.title, 'Removed contact');
+  });
+
+  test('a text\'s parts are one entry, in order, as far as they came', () {
+    Received part(int sent, int n, String t, int min) => Received(
+      0,
+      [sent],
+      at(min),
+      from: id(1),
+      sent: sent,
+      body: t,
+      part: n,
+      of: 3,
+    );
+    Outgoing outPart(int sent, int n, String t, int min) => Outgoing(
+      where,
+      Uint8List.fromList([sent]),
+      at: at(min),
+      kind: OutKind.text,
+      sent: sent,
+      to: id(1),
+      body: t,
+      part: n,
+      of: 2,
+    );
+    // Received last part first; a whole text between; another text's
+    // part of the same count after.
+    final c = conversations(
+      [olena],
+      [outPart(100, 1, 'mine ', 0), outPart(101, 2, 'whole', 0)],
+      [
+        part(502, 3, 'c', 1),
+        got(id(1), 'between', 2),
+        part(500, 1, 'a ', 3),
+        part(700, 1, 'next', 4),
+      ],
+    ).single;
+    expect(c.entries.map((e) => e.text), [
+      'mine whole',
+      'a \npart 2 of 3 not yet here\nc',
+      'between',
+      'next\npart 2 of 3 not yet here\npart 3 of 3 not yet here',
+    ]);
+    // A text stands where its first part to come stands.
+    expect(c.entries[1].at, at(1));
   });
 }

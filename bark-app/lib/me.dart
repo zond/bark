@@ -134,10 +134,15 @@ class Me extends ChangeNotifier {
 
   /// The next `sent`: the clock, or one past the last if the clock is
   /// behind it.
-  Future<int> nextSent() async {
-    lastSent = max(sentOf(now()), lastSent + 1);
+  Future<int> nextSent() => nextSents(1);
+
+  /// The first of `n` consecutive `sent`, taken at once, as a split
+  /// text's parts are named by them.
+  Future<int> nextSents(int n) async {
+    final first = max(sentOf(now()), lastSent + 1);
+    lastSent = first + n - 1;
     await _save();
-    return lastSent;
+    return first;
   }
 
   Future<void> setName(String n) async {

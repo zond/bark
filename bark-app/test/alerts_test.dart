@@ -1,5 +1,5 @@
 // What notifies: each new text, collected per contact until its thread is
-// opened, and nothing for a thread in front of the person, an
+// opened, a text in parts once, and nothing for a thread in front of the person, an
 // acknowledgement or a card; the link's notification with a Bluetooth
 // link only; the permission asked once, at the first connection; the
 // battery exemption in Settings; and a tapped notification's thread.
@@ -44,8 +44,14 @@ class FakeNotifier implements Notifier {
   @override
   Future<void> letGo() async => log.add('let go');
   @override
-  Future<void> texts(String key, String name, List<Received> texts) async =>
-      log.add('$name: ${texts.map((t) => t.body).join(' | ')}');
+  Future<void> texts(
+    String key,
+    String name,
+    List<Unread> texts, {
+    bool quiet = false,
+  }) async => log.add(
+    '${quiet ? '(quiet) ' : ''}$name: ${texts.map((t) => t.text).join(' | ')}',
+  );
   @override
   Future<void> clear(String key) async => log.add('clear $key');
   @override
@@ -142,6 +148,34 @@ void main() {
       app.messenger.receive(fromFriend(app, 9, [TextRecord('three')]));
       async.flushMicrotasks();
       expect(n.log, ['Fake friend: three']);
+    });
+  });
+
+  test('a text in parts notifies once, then shows each part quietly', () {
+    run((async, app, n) {
+      final f = friend(app);
+      app.alerts.opened(f);
+      app.alerts.closed(f);
+      async.flushMicrotasks();
+      n.log.clear();
+      void part(int k, String t) => app.messenger.receive(
+        fromFriend(app, 50 + k - 1, [TextRecord(t, k, 3)]),
+      );
+      part(2, 'two ');
+      async.flushMicrotasks();
+      part(1, 'one ');
+      async.flushMicrotasks();
+      app.messenger.receive(fromFriend(app, 60, [const TextRecord('other')]));
+      async.flushMicrotasks();
+      part(3, 'three');
+      async.flushMicrotasks();
+      expect(n.log, [
+        'Fake friend: part 1 of 3 not yet here\ntwo \n'
+            'part 3 of 3 not yet here',
+        '(quiet) Fake friend: one two \npart 3 of 3 not yet here',
+        'Fake friend: one two \npart 3 of 3 not yet here | other',
+        '(quiet) Fake friend: one two three | other',
+      ]);
     });
   });
 

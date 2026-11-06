@@ -6,7 +6,9 @@
 // in a thread, and why it sends nothing; the home
 // buttons, the home known by its node ID wherever it is, and its card
 // sent after a move only by "Send my card"; and a node that another
-// phone has paired with since, and pairing with it again.
+// phone has paired with since, and pairing with it again; and a long
+// text, counted in parts as it is written, sent in one bubble and
+// received as far as it has come.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -261,6 +263,106 @@ void main() {
     expect(o.dst.toString(), there.toString());
     expect(o.toward, Toward.there);
     expect(find.byTooltip('To where they were'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a long text: its parts counted, one bubble, states summed', (
+    t,
+  ) async {
+    final app = await model(t);
+    final there = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final now = DateTime.now();
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), null, 1, 'Olena'),
+      'Olena',
+      verified: true,
+    ).heard(sentOf(now), there, now);
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+
+    // A box without an address holds 160 bytes of text, a part 159.
+    await t.enterText(find.byType(TextField), 'a' * 160);
+    await t.pump();
+    expect(find.textContaining('parts'), findsNothing);
+    final long = List.filled(40, 'word').join(' ');
+    await t.enterText(find.byType(TextField), long);
+    await t.pump();
+    expect(find.text('2 parts'), findsOneWidget);
+    // Cyrillic counts one byte a letter.
+    await t.enterText(find.byType(TextField), 'ї' * 300);
+    await t.pump();
+    expect(find.text('2 parts'), findsOneWidget);
+    await t.enterText(find.byType(TextField), 'x' * 3000);
+    await t.pump();
+    expect(find.text('19 parts, 16 at most'), findsOneWidget);
+
+    // Sent: one bubble with the whole text; the parts agree, so the
+    // usual mark.
+    await t.enterText(find.byType(TextField), long);
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    final out = app.session.outbox;
+    expect(out.map((o) => o.part), [1, 2]);
+    expect(find.text(long), findsOneWidget);
+    expect(find.byTooltip('Queued'), findsOneWidget);
+
+    Future<void> redraw() async {
+      app.session.dismissNotice();
+      await t.pump();
+    }
+
+    // They differ: in words.
+    out[0].state = OutState.taken;
+    await redraw();
+    expect(find.text('1 of 2 taken'), findsOneWidget);
+    expect(find.byTooltip('Queued'), findsNothing);
+    out[1].state = OutState.taken;
+    await redraw();
+    expect(find.byTooltip('Taken by the node'), findsOneWidget);
+    final both = find.byWidgetPredicate(
+      (w) => w is Icon && w.icon == Icons.done_all,
+    );
+    out[0].acked = true;
+    await redraw();
+    expect(find.text('2 of 2 taken, 1 acknowledged'), findsOneWidget);
+    expect(both, findsNothing);
+    out[1].acked = true;
+    await redraw();
+    expect(both, findsOneWidget);
+    expect(find.textContaining('of 2'), findsNothing);
+
+    // Received: the parts that came, a line where one has not, and the
+    // button until every part that came is acknowledged.
+    Future<void> receive(int sent, int part, String body) =>
+        app.session.addReceived(
+          Received(
+            sent,
+            [sent],
+            DateTime.now(),
+            from: olena.key,
+            sent: sent,
+            body: body,
+            part: part,
+            of: 3,
+          ),
+        );
+    await t.runAsync(() => receive(7002, 3, 'three'));
+    await t.runAsync(() => receive(7000, 1, 'one '));
+    await t.pump();
+    expect(find.textContaining('part 2 of 3 not yet here'), findsOneWidget);
+    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    for (final r in app.session.received) {
+      r.acked = true;
+    }
+    await redraw();
+    expect(find.byTooltip('Acknowledge'), findsNothing);
+    await t.runAsync(() => receive(7001, 2, 'two '));
+    await t.pump();
+    expect(find.textContaining('not yet here'), findsNothing);
+    expect(find.text('one two three'), findsOneWidget);
+    expect(find.byTooltip('Acknowledge'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

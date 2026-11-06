@@ -57,7 +57,8 @@ class AppModel extends ChangeNotifier {
   }) {
     messenger = Messenger(sodium, me, contacts, session, now);
     alerts = Alerts(notifier, contacts);
-    session.kept = (r) => alerts.kept(r).catchError(_unnotified);
+    session.kept = (r) =>
+        alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     session.addListener(_nodeAddress);
     session.addListener(_link);
     session.addListener(_search);
