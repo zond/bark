@@ -468,12 +468,12 @@ A node's position is its GPS fix, unless the app sets a map point, which
 wins. A rooftop relay with no sky view uses one.
 
 **A node's place.** A node has a place when it was given one where it
-was built, has one stored ([implementation notes](#implementation-notes)),
-or the app sets a map point. One with none takes its first accepted fix
-as its place, fixed, at once, and sends no heartbeat before it; it
-rebuilds the positions it heard near its place then, and a relay
-heartbeats its first rotation's burst ([heartbeat](#heartbeat)) from
-then, as at boot (roadmap D83).
+was built, has one stored as a fixed node
+([implementation notes](#implementation-notes)), or the app sets a map
+point. One with none takes its first accepted fix as its place, fixed,
+at once, and sends no heartbeat before it; it rebuilds the positions it
+heard near its place then, and a relay heartbeats its first rotation's
+burst ([heartbeat](#heartbeat)) from then, as at boot (roadmap D83).
 
 *Why no heartbeat before.* A heartbeat says where the node is, and
 carries only the short position ([positions on the wire](#positions-on-the-wire)):
@@ -481,6 +481,13 @@ a node with no place can rebuild neither its neighbours' positions nor
 its own beyond the short form's period, so any position or address it
 gave would send its neighbours elsewhere. For the same reason its driver
 checks its first fix against no neighbour.
+
+*Why a carried node's stored place is none.* It is where the node
+stood when last fixed, not where it is, and a node that boots there
+rebuilds every neighbour's short position near it: a period off, every
+true fix is beyond them all and dropped, and the node heartbeats a
+position its neighbours rebuild as far from them, so their fixes are
+dropped too (roadmap D133).
 
 *Why the first fix and not the fixed rule.* Measured from a position it
 never had, the first fix is a far fix, and the node would be carried
@@ -3568,8 +3575,8 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s | step 2 bench, roadmap D70 |
-| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)) | step 2 bench, roadmap D74 |
+| O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s. Bench 2026-11-06: at a window the first fixes after each loss spread 134 by 139 m, a third beyond 50 m of their median and an eighth of pairs over 100 m apart; the runs need each second's fix (`docs/gps-bench-2026-11-06.md`) | step 2 bench, roadmap D70 |
+| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 | O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)); until then the mailbox key crosses the open link ([mailbox](#mailbox)) | before step 7 |
 

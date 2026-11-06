@@ -30,8 +30,9 @@ pub struct Config {
     pub position: Position,
     /// Whether `position` is the node's place: set when it was built or
     /// placed, as on a bench board or in the simulator. Without it, and
-    /// without a stored place, the node has none until its first accepted
-    /// fix or a map point (spec "Position", roadmap D83).
+    /// without a stored place of a fixed node, the node has none until its
+    /// first accepted fix or a map point (spec "Position", roadmap D83,
+    /// D133).
     pub placed: bool,
     /// The node's ID: on the board from the chip's hardware ID, in the
     /// simulator one per node. A node given [`NodeId::NONE`] draws one from
