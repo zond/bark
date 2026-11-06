@@ -1,11 +1,9 @@
 //! The user button (`board::Buttons`, P1.10): a press redraws the screen
 //! at once (`display::redraw`).
 //!
-//! Its polarity is read from no bench note or schematic in this
-//! repository. The board's UF2 bootloader reads its buttons through the
-//! internal pull-up, pressed pulling the pin to ground; this module
-//! assumes P1.10 is wired the same way, active low. Unverified on the
-//! bench: a press that logs nothing means it is not.
+//! The board's UF2 bootloader reads its buttons through the internal
+//! pull-up, pressed pulling the pin to ground; P1.10 is wired the same
+//! way, active low, as a press on the bench (2026-11-06) showed.
 
 use embassy_nrf::gpio::{Input, Pull};
 use embassy_nrf::peripherals::P1_10;
