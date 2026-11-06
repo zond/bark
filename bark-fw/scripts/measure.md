@@ -322,7 +322,7 @@ From the trace of duty-cycled receive:
   the battery divider's 12 µA, the external flash in deep power-down
   (0.5 µA typical, `src/ext_flash.rs`) and the parts not driven.
 - The external flash's part: the same level from an image whose
-  `node_radio` skips `ext_flash::power_down`, same board, same battery.
+  `node_radio` skips `ext_flash::init`, same board, same battery.
   About 11.5 µA higher if the command works (12 µA standby against
   0.5 µA, ZD25WQ16B datasheet Table 4-2); the same level means the chip
   did not take it, or its rail is not what the schematic shows. A level well

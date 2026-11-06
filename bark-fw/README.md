@@ -188,8 +188,9 @@ Unverified, in the order they will fail if wrong:
   shows as `Busy` or `DIO1` errors when the radio starts or on its first
   transmit or receive.
 - 8 MHz SPI works on the board's traces.
-- The external flash takes `B9h` at boot and drops from standby to deep
-  power-down, 12 µA to 0.5 µA typical (`src/ext_flash.rs`,
+- The external flash answers its ID, `ext flash: id ba 60 15` in the
+  boot log, takes `B9h` and drops from standby to deep power-down, 12 µA
+  to 0.5 µA typical (`src/ext_flash.rs`,
   `docs/external-flash-2026-11-06.md`); `scripts/measure.md` step 5 sees
   it or not.
 - The chip's behaviour beyond what the datasheet says: CRC-failed frames
@@ -967,7 +968,8 @@ What stays, and is not this firmware's to fix without a board:
 
 The external flash sits in standby at 12 µA unless told otherwise, so
 the node puts it in deep power-down, 0.5 µA typical, once the radio has
-raised the rail that feeds it (`src/ext_flash.rs`).
+raised the rail that feeds it, and wakes it only for a read or a write
+(`src/ext_flash.rs`).
 
 The radio's part is the cycle above, 0.11 to 0.14 mA, plus its beats and
 the windows after them (spec "Beats"); without an anchor each beat is a

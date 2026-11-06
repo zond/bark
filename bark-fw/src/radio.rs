@@ -74,14 +74,15 @@ const BUSY_TIMEOUT: embassy_time::Duration =
 /// NRESET low time: twice the typical 100 µs of DS §8.1.
 const RESET_PULSE_US: u32 = 200;
 
-/// The switched rail's ramp after PWR_EN rises. No source gives it; 10 ms
-/// is far beyond a load switch's typical sub-millisecond ramp and costs
-/// nothing once per boot. NRESET is held low throughout, and the chip's own
-/// start-up is then gated on BUSY, so only the ramp itself is assumed.
-pub const RAIL_SETTLE: embassy_time::Duration = embassy_time::Duration::from_millis(10);
+/// The switched rail's ramp after PWR_EN rises, as the loader waits it
+/// for the external flash (`bark_image::ext_flash::RAIL_SETTLE_US`).
+/// NRESET is held low throughout, and the chip's own start-up is then
+/// gated on BUSY, so only the ramp itself is assumed.
+pub const RAIL_SETTLE: embassy_time::Duration =
+    embassy_time::Duration::from_micros(bark_image::ext_flash::RAIL_SETTLE_US as u64);
 
 /// nRF52840 CPU clock, Hz (nRF52840 Product Specification, CLOCK).
-const CPU_HZ: u64 = 64_000_000;
+pub const CPU_HZ: u64 = 64_000_000;
 
 /// BUSY rises at most 600 ns after NSS rises (DS §8.3.1, T_SW). The driver
 /// polls BUSY right after each command; polled sooner it can still read the

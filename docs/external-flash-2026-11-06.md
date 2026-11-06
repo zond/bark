@@ -91,10 +91,12 @@ From the datasheet, Table 4-2 (DC) and Table 4-3 (AC):
 
 ## What the firmware does with it
 
-`bark-fw/src/ext_flash.rs` sends `B9h` once the radio has raised the
-rail, bit by bit on the pins above with WP# and HOLD# driven high, and
-then keeps CS#, WP# and HOLD# high and the clock and data line low for
-the rest of the run, since IDPD holds only with the inputs at a rail.
-Whatever uses the chip later sends `ABh` and waits tRES1 first.
+The loader and the firmware drive the chip through one driver,
+`bark-image/src/ext_flash.rs`: SPI mode 0 by software on the pins
+above, WP# and HOLD# driven high, CS# high and the clock and data line
+low between commands, since IDPD holds only with the inputs at a rail.
+The firmware checks the chip's ID once the radio has raised the rail
+(`bark-fw/src/ext_flash.rs`) and sends `B9h`; every later use sends
+`ABh`, waits tRES1, and sends `B9h` again when done.
 `bark-fw/scripts/measure.md` step 5.3 says how the bench sees the
 saving.

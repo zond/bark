@@ -368,7 +368,7 @@ async fn main(spawner: Spawner) {
             {
                 Ok(radio) => {
                     radio_up(&radio, &clock, t0);
-                    ext_flash::power_down(flash);
+                    ext_flash::init(flash);
                     update::started(shared);
                     console::Console::new(radio, &clock, battery, shared)
                         .run(&mut lines)
@@ -581,8 +581,8 @@ struct NodeRadio {
     config: bark_proto::Config,
 }
 
-/// The radio and the core on it: the radio up, the external flash in deep
-/// power-down (`ext_flash.rs`), the image confirmed, the phone link let
+/// The radio and the core on it: the radio up, the external flash found
+/// and in deep power-down (`ext_flash.rs`), the image confirmed, the phone link let
 /// start, and the driver's loop (`node.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
@@ -610,7 +610,7 @@ async fn node_radio(n: NodeRadio) {
     {
         Ok(radio) => {
             radio_up(&radio, &clock, t0);
-            ext_flash::power_down(n.flash);
+            ext_flash::init(n.flash);
             update::started(n.shared);
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
