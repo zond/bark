@@ -608,6 +608,7 @@ const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
 
+pub mod bond;
 pub mod home;
 
 #[cfg(test)]

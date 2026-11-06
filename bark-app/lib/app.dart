@@ -14,9 +14,27 @@ import 'fake_node.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
+import 'node_link.dart';
 import 'phone_notifier.dart';
 import 'session.dart';
 import 'store.dart';
+
+/// The steps of a connection before its link is attached.
+enum Linking {
+  none,
+
+  /// Connecting, and asking for the MTU.
+  connecting,
+
+  /// Android asks the person for the code on the node's screen.
+  pairing,
+
+  /// The bond is made; the app goes on to connect.
+  paired,
+
+  /// Connected; the app reads the node.
+  attaching,
+}
 
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
@@ -78,8 +96,22 @@ class AppModel extends ChangeNotifier {
   FakeNode? fakeNode;
   final Map<String, FoundNode> found = {};
   bool scanning = false;
-  bool connecting = false;
   int? mtu;
+
+  /// Where a connection stands until the link is attached.
+  Linking linking = Linking.none;
+
+  /// A connection is being made: no other may start.
+  bool get connecting => linking != Linking.none;
+
+  /// The device of the link connected or being connected: a found
+  /// node's ID, or [fakeDevice].
+  String? linkDevice;
+  static const fakeDevice = 'fake';
+
+  /// After a connect found the node no longer this phone's: forgets the
+  /// old bond and connects again, which pairs.
+  Future<void> Function()? pairAgain;
 
   /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
@@ -245,31 +277,89 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connect(FoundNode n) async {
-    await stopScan();
-    connecting = true;
-    notifyListeners();
-    try {
-      final (link, m) = await BleLink.connect(n.deviceId);
-      mtu = m;
-      session.note('Connected to ${n.name}, MTU $m');
-      await session.attach(link);
-    } finally {
-      connecting = false;
-      notifyListeners();
-    }
+  /// Whether `device` is the one connected.
+  bool connectedTo(String device) => session.connected && linkDevice == device;
+
+  /// Connects to `n`, after closing the link to another node; `again`
+  /// after the person chose to pair again, which forgets the phone's old
+  /// bond and finds the node in a scan first ([seen]). Nothing while a connection is
+  /// being made or `n` is connected already: a second connect to the
+  /// same node would close the link the first made.
+  Future<void> connect(FoundNode n, {bool again = false}) async {
+    if (connecting || connectedTo(n.deviceId)) return;
+    final s = session;
+    await _open(n.deviceId, () async {
+      await stopScan();
+      if (again) {
+        await BleLink.forget(n.deviceId);
+        if (!await seen(n.deviceId)) throw NotSeen(n.name);
+      }
+      return BleLink.connect(
+        n.deviceId,
+        name: n.name,
+        hadBond: !again && s.pairedWith == n.name && !s.pairingLost,
+        pairing: () {
+          _phase(Linking.pairing);
+          session.note('Pairing with ${n.name}');
+        },
+        paired: () {
+          _phase(Linking.paired);
+          session.note('Paired with ${n.name}');
+        },
+      );
+    }, again: () => connect(n, again: true));
   }
 
   Future<void> connectFake() async {
+    if (connecting || connectedTo(fakeDevice)) return;
     final f = fakeNode ??= FakeNode(
       now: now,
       sodium: sodium,
       app: me.identity,
       mailbox: me.keys.mailbox,
     );
-    mtu = attMtu;
-    session.note('Connected to the fake node');
-    await session.attach(f.connect());
+    await _open(
+      fakeDevice,
+      () async => (f.connect(), attMtu),
+      again: () async {
+        f.pair();
+        await connectFake();
+      },
+    );
+  }
+
+  /// Connects by `open` and attaches the link; the node holds this
+  /// phone's bond then. A node that no longer does is kept as lost, with
+  /// `again` to pair with it anew, and [NotOurs] goes on to the caller.
+  Future<void> _open(
+    String device,
+    Future<(NodeLink, int)> Function() open, {
+    required Future<void> Function() again,
+  }) async {
+    _phase(Linking.connecting);
+    pairAgain = null;
+    try {
+      if (session.connected) await session.disconnect();
+      linkDevice = device;
+      final (link, m) = await open();
+      _phase(Linking.attaching);
+      mtu = m;
+      session.note('Connected, MTU $m');
+      if (await session.attach(link)) {
+        await session.setPaired(nodeName(session.node!.id));
+      }
+    } on NotOurs catch (e) {
+      await session.setPaired(e.node, lost: true);
+      pairAgain = again;
+      rethrow;
+    } finally {
+      _phase(Linking.none);
+    }
+  }
+
+  void _phase(Linking l) {
+    linking = l;
+    notifyListeners();
   }
 
   @override

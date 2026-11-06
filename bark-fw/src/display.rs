@@ -293,7 +293,16 @@ static STATE: embassy_sync::blocking_mutex::Mutex<
     heard: 0,
     strong: 0,
     both_ways: 0,
+    phone: bark_screen::Phone::None,
 }));
+
+/// The phone link's line (`ble.rs`), apart from the node's state, as it
+/// changes outside the node's steps.
+#[cfg(not(feature = "console"))]
+static PHONE: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<bark_screen::Phone>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(bark_screen::Phone::None));
 #[cfg(not(feature = "console"))]
 static CHANGED: embassy_sync::signal::Signal<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
@@ -312,7 +321,24 @@ pub fn redraw() {
     PRESSED.signal(());
 }
 
-/// The node's side, after a step: its state as the screen says it.
+/// The phone link's line at boot, drawn with the first picture.
+#[cfg(not(feature = "console"))]
+pub fn phone_at_boot(phone: bark_screen::Phone) {
+    PHONE.lock(|p| p.set(phone));
+}
+
+/// The phone link's side: its line, drawn at once when it changes, since
+/// a pairing code is typed while the phone waits (spec "Phone link",
+/// Pairing).
+#[cfg(not(feature = "console"))]
+pub fn phone(phone: bark_screen::Phone) {
+    if PHONE.lock(|p| p.replace(phone)) != phone {
+        redraw();
+    }
+}
+
+/// The node's side, after a step: its state as the screen says it, but
+/// for the phone's line, which the phone link gives ([`phone`]).
 #[cfg(not(feature = "console"))]
 pub fn publish(state: State) {
     if STATE.lock(|s| s.replace(state)) != state {
@@ -360,7 +386,10 @@ pub async fn run(
     let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
     let mut pressed = false;
     loop {
-        let state = STATE.lock(core::cell::Cell::get);
+        let state = State {
+            phone: PHONE.lock(core::cell::Cell::get),
+            ..STATE.lock(core::cell::Cell::get)
+        };
         let usb = state.battery == bark_screen::Battery::Usb;
         let (gap, stale) = match usb {
             true => (USB_GAP, USB_STALE),

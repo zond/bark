@@ -176,7 +176,8 @@ connection costs.
 
 ### Security (D121, O23)
 
-Open for the prototype: no pairing, no bonding.
+Open for the prototype: no pairing, no bonding. *2026-11-06:* superseded
+by D135, pairing with a passkey on the node's screen.
 
 - What the link carries: payloads, which are the app's ciphertext (O1);
   destinations, which every DATA frame carries in the clear on 433 MHz;

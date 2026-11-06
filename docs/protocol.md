@@ -2927,13 +2927,52 @@ currents, for the bench to measure).
 *Why one connection.* One person's phone owns the node: two phones
 would share one inbox and one message slot.
 
-**Security.** The link is open for the prototype: no pairing, no
-bonding (roadmap D121). The payloads the link carries are encrypted by
-the app, and their addresses and the node's ID, position and flags are
-on the 433 MHz air in the clear anyway, so a listener learns little
-more. But anyone within Bluetooth range can connect while the owner's
-phone is not connected, empty the inbox and move the node with a map
-point: open item O23, before nodes leave the bench.
+**Pairing.** A node is one phone's: the phone paired with it (roadmap
+D135). Every characteristic of the service needs a link encrypted with
+an authenticated key; a read, write or subscription on any other link
+is answered with the ATT error 0x05, insufficient authentication (Vol 3
+Part F §3.4.1.1), which is the phone's cue to pair. The node's name and
+appearance stay open, as the advertisement says them anyway.
+
+The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
+§2.3.5.6.3). The node can display and cannot take input, so the method
+is that the node shows a six-digit passkey and the person types it into
+the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
+screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
+same line says `PHONE PAIRED` or `PHONE NONE` otherwise. The node keeps
+one bond in flash across reboots: the phone's identity address, the
+identity resolving key by which it knows the phone's changing address
+(Vol 6 Part B §1.3.2.2), and the long-term key. A new pairing replaces
+the bond. A pairing that is not authenticated, as with a phone that has
+no keyboard (Just Works), or that does not bond, changes nothing, and
+the node closes its link.
+
+*Why the bond is the ownership.* A node has one inbox and one mailbox
+key, so it serves one person (why one connection, above). The passkey
+shows only on the node's screen, so a phone can pair only while its
+person is at the node: being there is what a person can show without
+accounts or a server, and it is also what lets the rightful owner take
+the node back from anyone. Every characteristic needs the bond, Home
+among them, so only the owner's phone sets or clears the mailbox key
+([mailbox](#mailbox)); there is no second check.
+
+**The replaced phone.** A phone whose bond the node replaced learns it
+at its next connection. The phone encrypts the link with its old key as
+soon as it connects; the node holds no such key and ends the link,
+authentication failure (error code 0x05, Vol 1 Part F), before the app
+has read anything. So a link that a phone holding a bond for the node
+loses before its first read tells the app that the node is no longer
+the person's; the app says so and offers to pair again, which takes the
+code on the node's screen.
+
+*Why end the link.* The node could instead refuse the key and keep the
+link unencrypted (LE Long Term Key Request Negative Reply, Vol 4 Part E
+§7.8.26), and the phone's first read would fail with insufficient
+authentication. But a phone refused its key may start pairing by itself
+and ask its person for a code before the app can say why. The BLE host
+ends the link, and the node keeps that. A new pairing leaves the mailbox key as
+it was: the node goes on answering the former owner's fetches until the
+new owner writes their own key or clears it.
 
 **MTU.** The node offers an ATT MTU of 247, the longest link-layer
 payload with the data length extension, 251 bytes (Vol 6 Part B §2.4),
@@ -3584,7 +3623,6 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: whether a node at a windowsill sees fixes beyond the 50 m allowance for 72 s in a row and turns carried ([position](#position)); if it does, a far fix beyond twice the allowance as well, which a walker passes in the same 72 s. Bench 2026-11-06: at a window the first fixes after each loss spread 134 by 139 m, a third beyond 50 m of their median and an eighth of pairs over 100 m apart; the runs need each second's fix (`docs/gps-bench-2026-11-06.md`) | step 2 bench, roadmap D70 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
-| O23 | The phone link's security before nodes leave the bench: likely LE Secure Connections pairing with a passkey shown on the node's display and typed into the app (Vol 3 Part H §2.3.5.6.3), bonded to one phone ([phone link](#phone-link)); until then the mailbox key crosses the open link ([mailbox](#mailbox)) | before step 7 |
 
 ---
 
