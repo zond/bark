@@ -14,7 +14,9 @@
 //! A sleepy neighbour with an anchor is a next hop only as a last resort,
 //! where no other neighbour is left that could take the message but for
 //! a ban, and every DATA to a sleepy neighbour carries the long preamble
-//! (spec "Next hop").
+//! (spec "Next hop"). The node a message is addressed to goes first,
+//! though carried and stale, but a sleepy one with an anchor stays a
+//! last resort.
 //!
 //! # Receiving a DATA packet (spec "Receiving DATA")
 //!
@@ -497,7 +499,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         record: &Record,
         passed: u64,
         avoid: u64,
-        dst: Position,
+        dst: (NodeId, Position),
         now: Instant,
     ) -> Option<(NodeId, Instant)> {
         if let Some((_, n)) = self.next_hop(record, passed, avoid, dst, now) {
@@ -531,11 +533,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that one's ban ends, and where its record is: `None` if this relay
     /// owns its destination now, or it has no record.
     fn heading(&self, o: &Outgoing, d: &Data<'_>, now: Instant) -> Option<(NodeId, Instant, u16)> {
-        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
+        let (at, record) = self.records.find(d.msg_id(), o.record)?;
+        if self.ends_here((d.dst_id, d.dst_pos), Some(record), o.passed, None, now) {
             return None;
         }
-        let (at, record) = self.records.find(d.msg_id(), o.record)?;
-        self.heads_to(record, o.passed, o.avoid, d.dst_pos, now)
+        self.heads_to(record, o.passed, o.avoid, (d.dst_id, d.dst_pos), now)
             .map(|(to, ban)| (to, ban, at))
     }
 
@@ -714,6 +716,46 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- Owner and next hop (spec "Next hop", "Owner") ---
 
+    /// Whether the message of `record`, if it has one here, to `dst_id`
+    /// at `dst_pos`, ends here: addressed to this node, or its position
+    /// owned here while the addressed node is no live neighbour it can
+    /// be handed to ([`Self::addressed_open`]). `from` is the node it
+    /// comes from now, if any.
+    fn ends_here(
+        &self,
+        (dst_id, dst_pos): (NodeId, Position),
+        record: Option<&Record>,
+        passed: u64,
+        from: Option<NodeId>,
+        now: Instant,
+    ) -> bool {
+        dst_id == self.me()
+            || (self.owns(dst_pos, now) && !self.addressed_open(dst_id, record, passed, from, now))
+    }
+
+    /// Whether `dst_id` is a live neighbour that is no sleepy node with an
+    /// anchor and that the message of `record` may still be handed to:
+    /// not tried, not its parent, not `from`. The owner of the position
+    /// then hands it over at once rather than queue it for the node's
+    /// beat on its channel (spec "Owner", "Next hop").
+    fn addressed_open(
+        &self,
+        dst_id: NodeId,
+        record: Option<&Record>,
+        passed: u64,
+        from: Option<NodeId>,
+        now: Instant,
+    ) -> bool {
+        let parent = record.and_then(|r| r.parent()).map(|(name, _)| name);
+        self.neighbours.live(now).any(|(slot, n)| {
+            n.id == dst_id
+                && !n.last_resort()
+                && Some(n.id) != parent
+                && Some(n.id) != from
+                && !record.is_some_and(|r| tried(r, passed, slot))
+        })
+    }
+
     /// Whether this relay owns the destination `dst` of another node's
     /// message (spec "Owner"). A sleepy node owns none (module
     /// documentation), nor does a carried one, nor one leaving after its
@@ -770,8 +812,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         })
     }
 
-    /// The next hop for the message of `record` to `dst` (spec "Next hop"),
-    /// from the state as it is at `now`: the live neighbour nearest `dst`
+    /// The next hop for the message of `record` to node and position `dst`
+    /// (spec "Next hop"), from the state as it is at `now`: the addressed
+    /// node itself if it is a live neighbour not in the tried set, a stale
+    /// carried one too, a sleepy one with an anchor only as a last resort;
+    /// otherwise the live neighbour nearest the position
     /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
     /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
@@ -783,7 +828,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         record: &Record,
         passed: u64,
         avoid: u64,
-        dst: Position,
+        dst: (NodeId, Position),
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let hop = self.choose(record, passed, dst, now);
@@ -805,10 +850,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self,
         record: &Record,
         passed: u64,
-        dst: Position,
+        (dst_id, dst): (NodeId, Position),
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
+        // Only a carried node itself can end the search for it, and a
+        // frame to it costs little against a search through the city:
+        // first even when stale. A sleepy node with an anchor is reached
+        // through its anchor's queue and window (roadmap D116a).
+        let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
         let margin = Neighbours::margin_dbm(self.radio.busy.noise_floor_dbm());
@@ -820,14 +870,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .live(now)
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
-                    && (first.is_some() || self.tier(n, others, now))
+                    && (first.is_some()
+                        || (addressed(n) && !n.last_resort())
+                        || self.tier(n, others, now))
                     && !tried(record, passed, *slot)
                     && Some(n.id) != parent
             })
             .min_by(|(_, a), (_, b)| {
                 let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                faint(a)
-                    .cmp(&faint(b))
+                addressed(b)
+                    .cmp(&addressed(a))
+                    .then(faint(a).cmp(&faint(b)))
                     .then(demoted(a).cmp(&demoted(b)))
                     .then(da.total_cmp(&db))
                     .then(a.id.0.cmp(&b.id.0))
@@ -976,7 +1029,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .get(id)
                 .zip(slot)
                 .is_some_and(|(r, s)| r.handed(s));
-        let owner_here = d.dst_id == self.me() || self.owns(d.dst_pos, now);
+        let owner_here = self.ends_here(
+            (d.dst_id, d.dst_pos),
+            self.records.get(id),
+            0,
+            Some(d.src_hop),
+            now,
+        );
         let case = self.classify(id, repeat, returned, owner_here);
         let copy = self
             .records
@@ -1007,7 +1066,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
                 probe.handed_to(s);
             }
-            self.heads_to(&probe, 0, 0, d.dst_pos, now)
+            self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
         } else {
             None
         };
@@ -1411,7 +1470,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             hops: 0,
             payload,
         };
-        if dst_id == self.me() || self.owns(dst_pos, now) {
+        if self.ends_here((dst_id, dst_pos), None, 0, None, now) {
             let mut record = Record::new(id, None, 0, now);
             record.set_arrived();
             self.records.put(at, record);
@@ -1434,7 +1493,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let record = Record::new(id, None, 0, now);
-        if let Some((to, ban)) = self.heads_to(&record, 0, 0, dst_pos, now) {
+        if let Some((to, ban)) = self.heads_to(&record, 0, 0, (dst_id, dst_pos), now) {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA"): refused, it goes back to the
             // application with a place in its way's line, as an ACK
@@ -1600,7 +1659,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
-        if d.dst_id == self.me() || self.owns(d.dst_pos, now) {
+        if self.ends_here((d.dst_id, d.dst_pos), Some(&record), out.passed, None, now) {
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
             }
@@ -1610,7 +1669,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.arrive(id, &d, now, emit);
             return Routed::Done;
         }
-        if let Some((_, n)) = self.next_hop(&record, out.passed, out.avoid, d.dst_pos, now) {
+        if let Some((_, n)) =
+            self.next_hop(&record, out.passed, out.avoid, (d.dst_id, d.dst_pos), now)
+        {
             if self.neighbours.is_banned(&n, now) {
                 // A ban is a wait, not an exclusion (spec "Next hop").
                 return Routed::Banned(n.banned_until);
@@ -2319,7 +2380,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// its parent once none is left (spec "Next hop", "Return to parent").
     fn goes_to(&self, d: &Data<'_>, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(d.msg_id())?;
-        self.next_hop(record, passed, avoid, d.dst_pos, now)
+        self.next_hop(record, passed, avoid, (d.dst_id, d.dst_pos), now)
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }

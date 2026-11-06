@@ -1479,8 +1479,9 @@ relay it first got it from, which tries its next neighbour.
 Each relay keeps a small record per message
 ([message records](#message-records)), and the packet carries nothing
 for the search but its sender and a hop count. The search only routes
-around gaps; it never searches for an ID. A sleepy node that is a next
-hop ([next hop](#next-hop)) forwards as a relay does, and what this
+around gaps; it never searches for an ID, though it hands a message to
+the node it is addressed to where that is a neighbour. A sleepy node
+that is a next hop ([next hop](#next-hop)) forwards as a relay does, and what this
 section says of a relay holds for it then.
 
 The **origin** of a message is the node that first sends it into the
@@ -1559,10 +1560,13 @@ differ by ([position](#position)), so a relay this close is, for the
 radio, in the same place.
 
 A node farther than 50 m with no closer neighbour is at a gap, not the
-owner, and the search goes on ([next hop](#next-hop)). A sleepy or
-carried node owns only what is addressed to its ID and sends anything
-else on ([nodes](#nodes)), and a sleepy or carried neighbour closer to
-`dst_pos` does not keep a node from owning it. A node in its first
+owner, and the search goes on ([next hop](#next-hop)). Nor is a node
+the owner by position while the addressed node is a live neighbour it
+has not tried, other than a sleepy one with an anchor: it hands the
+message to that node as the next hop. A sleepy or carried node owns
+only what is addressed to its ID and sends anything else on
+([nodes](#nodes)), and a sleepy or carried neighbour closer to `dst_pos`
+does not keep a node from owning it. A node in its first
 rotation owns no position but its own: its table may not yet hold the
 closer relay ([channel at boot](#channel-at-boot)).
 
@@ -1599,6 +1603,7 @@ those in the tried set ([message records](#message-records)).
 
 The **order** is:
 
+- the addressed node itself, if it is a candidate, before all others;
 - neighbours with margin before those without;
 - within each, neighbours that are not demoted before demoted ones;
 - within each, distance to the destination position in the local plane
@@ -1637,9 +1642,11 @@ dropped ([return to parent](#return-to-parent)):
 - a carried relay ([nodes](#nodes)) once nothing has been heard from it
   for its own heartbeat interval ([heartbeat](#heartbeat)).
 
-An anchorless neighbour is a candidate like any other, sent to with the
-long preamble. The first hop of a sleepy node's own message is its
-anchor while the anchor is live
+A stale carried relay is no last resort for a message addressed to it:
+it is first all the same. A sleepy neighbour with an anchor stays one,
+even for a message addressed to it. An anchorless neighbour is a
+candidate like any other, sent to with the long preamble. The first hop
+of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
 *Why a sleepy neighbour is a last resort.* A ban is no reason to go
@@ -1699,6 +1706,22 @@ tries the link last.
 best neighbour left is usually farther from the destination than the
 relay itself, and such a rule would turn every gap into a dead end. On a
 first send the nearest neighbour is chosen anyway.
+
+*Why the addressed node goes first.* A node owns what is addressed to
+its ID wherever it is ([owner](#owner)), and a carried node is seldom at
+the position a message bears: the search for it ends only when it meets
+the node, and otherwise goes through the city to the hop cap
+([hop count](#hop-count)). Nothing is looked up: the relay reads its
+neighbour table, which it ranks anyway. A stale walker costs three
+frames unanswered at most, against hundreds of hand-overs that only it
+can end. A sleepy node with an anchor is not lost that way: its address
+is its anchor's position, and the anchor, which owns that position,
+sends it the message in its window with the ordinary preamble
+([delivery](#delivery)). Sent to by every relay that hears it, the
+message would cost the long preamble each time instead. The rule holds
+at the owner of the position too, which would otherwise queue the
+message for the node's beat on its own channel, up to a rotation away
+([delivery](#delivery); roadmap D116a).
 
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the
