@@ -204,6 +204,9 @@ class Received {
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
 
+/// A log line's local time of day, to the millisecond.
+String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
+
 class Session extends ChangeNotifier {
   final Store store;
   final DateTime Function() now;
@@ -228,6 +231,9 @@ class Session extends ChangeNotifier {
   /// scrolls back through.
   final List<LogLine> log = [];
   static const logLines = 500;
+
+  /// Told of each log line as it is added.
+  void Function(LogLine)? noted;
 
   NodeLink? _link;
   NodeInfo? node;
@@ -321,7 +327,9 @@ class Session extends ChangeNotifier {
 
   /// Adds a line to the log.
   void note(String s) {
-    log.add((at: now(), text: s));
+    final l = (at: now(), text: s);
+    log.add(l);
+    noted?.call(l);
     if (log.length > logLines) log.removeAt(0);
     notifyListeners();
   }
