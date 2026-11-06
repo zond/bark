@@ -5254,16 +5254,12 @@ mod tests {
             position: sim.relays[2].address(),
             node: sim.node_id(2),
         };
-        let fetch = |sent: u32, since: u32| {
-            Fetch {
-                sent,
-                address,
-                since,
-            }
-            .seal(&key, &[sent as u8; 24])
-            .unwrap()
+        let fetch = |sent: u32| {
+            Fetch { sent, address }
+                .seal(&key, &[sent as u8; 24])
+                .unwrap()
         };
-        send(&mut sim, 2, &fetch(7, 0));
+        send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
         let mut got = Vec::new();
@@ -5279,7 +5275,7 @@ mod tests {
         got.dedup();
         assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
         // Asked again, the home has nothing new and says so.
-        send(&mut sim, 2, &fetch(8, 3));
+        send(&mut sim, 2, &fetch(8));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
         let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];

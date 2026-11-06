@@ -30,6 +30,9 @@ class FakeNode implements NodeLink {
 
   /// What the home away holds, item n at n − 1: one message the fake
   /// friend left there.
+  /// The numbers of the home's items it has sent to a fetch.
+  final Set<int> _homeSent = {};
+
   late final List<Uint8List> homeRing = [
     _intro('Left at your home node while you were away.').payload,
   ];
@@ -243,8 +246,10 @@ class FakeNode implements NodeLink {
     if (n > 1) _after(echoAfter, () => _inbox.addAll(sealed.sublist(0, n - 1)));
   });
 
-  /// The home away's answer to a fetch, as its mailbox gives it: every
-  /// item after `since`, or one reply that says nothing is new.
+  /// The home away's answer to a fetch, as its mailbox gives it: the
+  /// newest batch of the items it has not sent, newest first, each with
+  /// the count of those still unsent after it, or one reply that says
+  /// nothing is new.
   void _answerFetch(Uint8List payload) {
     final key = mailbox;
     if (key == null || formOf(payload) != Form.fetch) return;
@@ -254,10 +259,23 @@ class FakeNode implements NodeLink {
     } on BadPayload {
       return;
     }
-    final first = f.since + 1;
+    final unsent = [
+      for (var n = homeRing.length; n >= 1; n--)
+        if (!_homeSent.contains(n)) n,
+    ];
+    final batch = unsent.take(maxReplies).toList();
+    _homeSent.addAll(batch);
     final replies = [
-      for (var n = first; n <= homeRing.length; n++)
-        sealReply(sodium, key, f.sent, n - first + 1, n, homeRing[n - 1]),
+      for (final (i, n) in batch.indexed)
+        sealReply(
+          sodium,
+          key,
+          f.sent,
+          i + 1,
+          n,
+          unsent.length - batch.length,
+          homeRing[n - 1],
+        ),
     ];
     if (replies.isEmpty) replies.add(sealNothingNew(sodium, key, f.sent));
     _after(fetchAnswerAfter, () {

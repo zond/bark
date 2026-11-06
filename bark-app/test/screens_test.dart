@@ -320,8 +320,8 @@ void main() {
     await t.runAsync(() => app.contacts.put(olena));
     await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
 
-    // A box without an address holds 160 bytes of text, a part 159.
-    await t.enterText(find.byType(TextField), 'a' * 160);
+    // A box without an address holds 158 bytes of text, a part 157.
+    await t.enterText(find.byType(TextField), 'a' * 158);
     await t.pump();
     expect(find.textContaining('parts'), findsNothing);
     final long = List.filled(40, 'word').join(' ');
@@ -334,7 +334,7 @@ void main() {
     expect(find.text('2 parts'), findsOneWidget);
     await t.enterText(find.byType(TextField), 'x' * 3000);
     await t.pump();
-    expect(find.text('19 parts, 16 at most'), findsOneWidget);
+    expect(find.text('20 parts, 16 at most'), findsOneWidget);
 
     // Sent: one bubble with the whole text; the parts agree, so the
     // usual mark.
