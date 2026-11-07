@@ -3627,7 +3627,10 @@ most 9 frames of the send queue go before an update frame that is due;
 then it goes before the next. Each is paid from the bucket as a forward
 is, leaving the reply reserve ([duty cycle cap](#duty-cycle-cap)), and
 listens before it talks as a heartbeat does ([heartbeat](#heartbeat)):
-up to three checks, and if every one is busy the frame waits its pace.
+up to three checks, and if every one is busy the frame waits its pace. Of a node's own update
+frames, an announcement or a request that is due goes before the
+pieces, which wait for it if a pace holds it back; the pieces go on
+whichever channel the pace frees first.
 
 *Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
 to 1.4 % of the time at the design rate of

@@ -484,8 +484,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         at
     }
 
-    /// The update frames the node would send, in order, each with its
-    /// channel and the time it wants to go.
+    /// The update frames the node would send, each with its channel and
+    /// the time it wants to go, in the order they go: the announcements
+    /// and the request, which are rare, before the pieces.
     fn wanted(&self, now: Instant) -> impl Iterator<Item = (Out, Channel, Instant)> + '_ {
         let s = &self.spread;
         let request = s.gather.and_then(|g| {
@@ -522,12 +523,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let c = self.other_channel();
             (Out::Announce(c, Turn::Other), c, t)
         });
-        request
-            .into_iter()
-            .chain(pieces)
-            .chain(owed)
+        owed.into_iter()
             .chain(home)
             .chain(other)
+            .chain(request)
+            .chain(pieces)
     }
 
     /// The channel of the next hourly announcement away from home.
@@ -548,10 +548,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((_, c)) = self.spread.current {
             return Some(self.spread.ready_at.max(self.pace_allows(c, now)));
         }
-        self.wanted(now)
-            .map(|(_, c, t)| self.pace_allows(c, t.max(now)))
-            .min()
-            .map(|t| t.max(self.spread.ready_at))
+        self.next_out(now)
+            .map(|(_, _, t)| t.max(self.spread.ready_at))
+    }
+
+    /// The update frame that goes next and when the pace lets it: the
+    /// first announcement or request that wants to go by `now`, which the
+    /// pieces wait for, since a pace may hold it back on its channel; else
+    /// the frame the pace lets go soonest.
+    fn next_out(&self, now: Instant) -> Option<(Out, Channel, Instant)> {
+        let mut soonest: Option<(Out, Channel, Instant)> = None;
+        for (out, c, t) in self.wanted(now) {
+            let at = self.pace_allows(c, t.max(now));
+            if t <= now && !matches!(out, Out::Piece(_)) {
+                return Some((out, c, at));
+            }
+            if soonest.is_none_or(|s| at < s.2) {
+                soonest = Some((out, c, at));
+            }
+        }
+        soonest
     }
 
     /// When the update job is next ready of its own accord: a time past
@@ -619,10 +635,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return false;
         }
         if self.spread.current.is_none() {
-            let next = self
-                .wanted(now)
-                .find(|&(_, c, t)| t <= now && self.pace_allows(c, now) <= now);
-            let Some((out, c, _)) = next else {
+            let Some((out, c, _)) = self.next_out(now).filter(|o| o.2 <= now) else {
                 return false;
             };
             self.spread.current = Some((out, c));

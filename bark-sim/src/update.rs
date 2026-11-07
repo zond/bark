@@ -74,7 +74,7 @@ impl UpdateRun {
             holds_at: vec![None; nodes],
             owed: Vec::new(),
             series: String::from(
-                "t_s,relays,relays_holding,placed_relays,placed_holding,sleepy,sleepy_holding,busy_home_mean,busy_home_p90,air_announce_s,air_request_s,air_piece_s,air_all_s\n",
+                "t_s,relays,relays_holding,placed_relays,placed_holding,sleepy,sleepy_holding,gathering,gathering_block_mean,gathering_block_max,busy_home_mean,busy_home_p90,air_announce_s,air_request_s,air_piece_s,air_all_s\n",
             ),
             air: [0; 4],
             air_total: [0; 4],
@@ -134,7 +134,14 @@ impl UpdateRun {
     /// whether it is a relay or sleepy and whether it was placed as a
     /// relay; `busy` the busy share of each relay's home channel as it
     /// estimates it.
-    pub fn sample(&mut self, now: Instant, nodes: &[(bool, bool)], mut busy: Vec<f64>) {
+    /// `gathering` has the first block each node that gathers lacks.
+    pub fn sample(
+        &mut self,
+        now: Instant,
+        nodes: &[(bool, bool)],
+        gathering: &[u8],
+        mut busy: Vec<f64>,
+    ) {
         let holds = |i: usize| self.holds_at[i].is_some();
         let mut c = [0usize; 6];
         for (i, &(relay, placed)) in nodes.iter().enumerate() {
@@ -160,7 +167,7 @@ impl UpdateRun {
         let s = |us: u64| us as f64 / 1e6;
         let _ = writeln!(
             self.series,
-            "{},{},{},{},{},{},{},{:.5},{:.5},{:.3},{:.3},{:.3},{:.3}",
+            "{},{},{},{},{},{},{},{},{:.2},{},{:.5},{:.5},{:.3},{:.3},{:.3},{:.3}",
             now.as_micros() / 1_000_000,
             c[0],
             c[1],
@@ -168,6 +175,9 @@ impl UpdateRun {
             c[3],
             c[4],
             c[5],
+            gathering.len(),
+            gathering.iter().map(|&b| f64::from(b)).sum::<f64>() / gathering.len().max(1) as f64,
+            gathering.iter().max().copied().unwrap_or(0),
             mean,
             p90,
             s(self.air[0]),

@@ -1813,7 +1813,11 @@ impl Sim {
                 r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64
             })
             .collect();
-        u.sample(self.now, &nodes, busy);
+        let gathering: Vec<u8> = (0..self.relays.len())
+            .filter(|&i| self.nodes[i].alive)
+            .filter_map(|i| self.relays[i].gathering().map(|g| g.1))
+            .collect();
+        u.sample(self.now, &nodes, &gathering, busy);
         self.update = Some(u);
         self.push(
             self.now + Duration::from_micros(crate::update::SAMPLE_US),

@@ -155,3 +155,52 @@ fn a_node_that_holds_nothing_new_asks_for_nothing() {
     };
     assert_eq!(announced(0).min(announced(1)), 0);
 }
+
+/// Today's image, the table and 25 blocks, the last of 33 pieces, crosses
+/// one hop without loss in about what a request buys for every block,
+/// 2430 pieces at the pace, 9.4 hours, within a tenth; and to a node on
+/// another channel too within twelve hours.
+#[test]
+fn todays_image_crosses_a_hop_in_about_its_pieces_paces() {
+    let image = Image {
+        id: [9; 32],
+        version: 3,
+        blocks: 26,
+        last: 33,
+        key: 0,
+    };
+    let mut needs = vec![1];
+    needs.extend(std::iter::repeat_n(64, 24));
+    needs.push(33);
+    let n = 4;
+    let mut h = Harness::new(
+        (0..n)
+            .map(|i| relay(100.0 * i as f64, i as u64 + 1))
+            .collect(),
+    );
+    for a in 0..n {
+        for b in a + 1..n {
+            h.link(a, b);
+        }
+        h.nodes[a].updates = Some(Updates {
+            needs: needs.clone(),
+            ..Updates::default()
+        });
+    }
+    h.run_until(at(400), |_| false);
+    h.deliver_app(0, AppCommand::Holds(image));
+    let start = h.now;
+    let done = h.run_until(start + secs(12 * 3600), |h| {
+        h.nodes[1..]
+            .iter()
+            .all(|n| n.updates.as_ref().unwrap().holds_at.is_some())
+    });
+    assert!(done, "not every relay holds the image within twelve hours");
+    let first = h.nodes[1..]
+        .iter()
+        .filter_map(|n| n.updates.as_ref().unwrap().holds_at)
+        .min()
+        .unwrap();
+    let paces = first.since(start).as_micros() / PACE.as_micros();
+    assert!((2190..2670).contains(&paces), "{paces} paces");
+}
