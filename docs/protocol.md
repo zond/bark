@@ -3696,6 +3696,12 @@ back if it does not confirm itself (D79). The protocol core does no I/O of
 its own and owns its routing and tables (D1, D3; `core-interface.md`).
 Crate layout is D7.
 
+**Updates.** A node on battery whose last reading is at or below the
+low level ([sleepy nodes](#sleepy-nodes)) starts no swap to a new image;
+on external power nothing limits it (roadmap D143). A cell that gives
+out in the middle of a swap leaves the node with no image to run until
+it is charged, where without the swap it would run on asleep for days.
+
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
 (roadmap D71); their sizes, and how they fit beside Embassy, the

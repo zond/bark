@@ -156,6 +156,15 @@ impl BatteryLevels {
         low_mv: 3741,
         high_mv: 3775,
     };
+
+    /// Whether a node may start swapping in a new image (spec
+    /// "Implementation notes"): on external power always, on battery only
+    /// above the low level. `millivolts` is a reading as the levels compare
+    /// it, calibrated once there is a calibration; 0, no reading yet, is
+    /// below it.
+    pub fn swap_allowed(self, external_power: bool, millivolts: u16) -> bool {
+        external_power || millivolts > self.low_mv
+    }
 }
 
 /// A full cell's open-circuit voltage, millivolts, read after an hour's
@@ -450,5 +459,14 @@ mod battery_percent_tests {
         assert_eq!(battery_percent(4300), Some(100));
         assert_eq!(battery_percent(3758), Some(25));
         assert_eq!(battery_percent(3976), Some(65));
+    }
+
+    #[test]
+    fn a_swap_waits_for_power_above_the_low_level() {
+        let levels = BatteryLevels::DESIGN;
+        assert!(!levels.swap_allowed(false, 0));
+        assert!(!levels.swap_allowed(false, levels.low_mv));
+        assert!(levels.swap_allowed(false, levels.low_mv + 1));
+        assert!(levels.swap_allowed(true, 0));
     }
 }
