@@ -2,8 +2,9 @@
 //! layout ([`layout`]), the external flash's driver (`ext_flash`), the
 //! header a staged image travels with ([`Header`]) and the record of it
 //! the loader checks ([`record`]) and the signatures the firmware checks
-//! (`sign`); and the firmware's choice of read-out
-//! protection ([`protect`]), here to be tested on the host.
+//! (`sign`); the firmware's choice of read-out
+//! protection ([`protect`]), here to be tested on the host; and the start
+//! of the 32.768 kHz clock the loader's watchdog holds (`lfclk`).
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -19,6 +20,8 @@ pub mod boot;
 #[cfg(feature = "boot")]
 pub mod ext_flash;
 pub mod layout;
+#[cfg(feature = "lfclk")]
+pub mod lfclk;
 pub mod protect;
 pub mod record;
 pub mod sign;

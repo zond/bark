@@ -11,12 +11,12 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
 use crate::display::Outcome;
-use crate::lfclk::Source;
+use bark_image::lfclk::{Found, Source};
 
 /// The facts, each set once by the part that learns it.
 #[derive(Clone, Copy, Default)]
 pub struct Facts {
-    pub lfclk: Option<Source>,
+    pub lfclk: Option<Found>,
     pub display: Option<Outcome>,
     /// The BLE controller's memory: what it needs and what it has.
     pub controller: Option<(usize, usize)>,
@@ -67,8 +67,10 @@ pub fn image_len() -> u32 {
 impl fmt::Display for Facts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.lfclk {
-            Some(Source::Crystal { started_ms }) => write!(f, "lfclk=crystal in {started_ms} ms")?,
-            Some(Source::Rc) => f.write_str("lfclk=rc")?,
+            Some(Found::Crystal { started_ms }) => write!(f, "lfclk=crystal in {started_ms} ms")?,
+            Some(Found::Rc) => f.write_str("lfclk=rc")?,
+            Some(Found::Held(Source::Crystal)) => f.write_str("lfclk=crystal already running")?,
+            Some(Found::Held(Source::Rc)) => f.write_str("lfclk=rc already running")?,
             None => f.write_str("lfclk=?")?,
         }
         match self.display {

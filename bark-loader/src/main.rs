@@ -5,7 +5,9 @@
 //! recorded; goes on with a swap a power cut stopped; or swaps the
 //! previous image back when the new one did not confirm itself
 //! (`bark_image::boot`). While a new image is on trial the watchdog runs,
-//! so that one that hangs is reset and swapped back too. Then it
+//! so that one that hangs is reset and swapped back too; it holds the
+//! 32.768 kHz clock on its source until a reset, so the loader first
+//! starts the clock as the firmware would (`bark_image::lfclk`). Then it
 //! write-protects itself and everything that boots the board, and jumps
 //! to the firmware. It holds no key and checks no signature: the running
 //! firmware checks those before it stages.
@@ -30,7 +32,7 @@ use bark_image::boot::cut::{
 use bark_image::boot::{prepare, swap_requested, Boot, FlashError, Shared};
 use bark_image::ext_flash::{BitBang, Chip, RAIL_SETTLE_US};
 use bark_image::layout::{Region, ACTIVE, PAGE, PROTECT_HIGH, PROTECT_LOW};
-use bark_image::TRIAL_SECONDS;
+use bark_image::{lfclk, TRIAL_SECONDS};
 use cortex_m::peripheral::SCB;
 use cortex_m_rt::entry;
 use embassy_boot_nrf::WatchdogFlash;
@@ -92,6 +94,9 @@ fn main() -> ! {
     let mut page = [0u8; PAGE as usize];
     let done = match swap_requested(&flash) {
         Ok(true) => {
+            // The watchdog's clock: once the watchdog runs, the image can
+            // no longer change its source.
+            lfclk::probe(&mut Cycles);
             // The timeout is (CRV + 1) / 32 768 s (Product Specification,
             // WDT). Counting on while the CPU sleeps: a sleepy node sleeps
             // nearly all the time, and its trial must end all the same.

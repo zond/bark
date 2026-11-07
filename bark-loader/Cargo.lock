@@ -34,6 +34,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-storage",
  "embedded-storage-async",
+ "nrf-pac",
  "sha2",
 ]
 

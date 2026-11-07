@@ -22,8 +22,9 @@ console = []
 [dependencies]
 bark-proto = { path = "../bark-proto" }
 bark-driver = { path = "../bark-driver" }
-# The flash layout, and the staging and confirmation of an image.
-bark-image = { path = "../bark-image" }
+# The flash layout, the staging and confirmation of an image, and the
+# 32.768 kHz clock's start.
+bark-image = { path = "../bark-image", features = ["lfclk"] }
 # A place for the 150 KiB relay outside every task's future and stack.
 static_cell = "=2.1.1"
 
