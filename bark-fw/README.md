@@ -166,8 +166,12 @@ Unverified, in the order they will fail if wrong:
   the controller takes the host's resolving-list commands. Only built.
 - The 32.768 kHz clock: whether the board has the crystal is not known.
   The node tries it at boot, giving it 1 s, and falls back to the
-  calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
-  the console keeps the RC oscillator.
+  calibrated internal RC oscillator, logging which runs
+  (`bark_image::lfclk`); the console keeps the RC oscillator. Under a
+  trial's watchdog the clock runs on the source the loader found, which
+  the node logs as `already running` (roadmap D148); that embassy-nrf's
+  init, which starts the clock again, gets its LFCLKSTARTED from a clock
+  the loader started on the crystal is not yet seen.
 - The bootloader from the serial port (`src/touch.rs`): 0x57 in GPREGRET
   as the bootloader's UF2 reset magic is taken from its source as
   remembered, not read from the board's 0.6.1; the bench's first
@@ -505,7 +509,10 @@ A bench build, version 0, takes any signed version.
    instructions: about 190 ms a page, 44 s, and 3 s more for the hash; a
    swap back as long without the hash. Unmeasured; the mailbox's open
    logs the bus's speed (Mailbox, below). Then the rail falls again.
-5. On those boots it starts the watchdog first, with a period of
+5. On those boots it first starts the 32.768 kHz clock as the firmware
+   does, on the crystal if it starts within 1 s (`bark_image::lfclk`),
+   since the watchdog holds the clock on its source until a reset
+   (roadmap D148); then the watchdog, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
