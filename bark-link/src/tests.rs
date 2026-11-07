@@ -160,7 +160,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [5, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [6, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -200,6 +200,8 @@ fn uuids_are_one_base_counted() {
         uuid::CLOCK,
         uuid::HOME,
         uuid::NEIGHBOURS,
+        uuid::UPDATE,
+        uuid::IMAGE,
     ];
     for (i, u) in all.into_iter().enumerate() {
         assert_eq!(u & !(0xffff << 96), uuid::SERVICE & !(0xffff << 96));

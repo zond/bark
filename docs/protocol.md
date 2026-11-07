@@ -3030,7 +3030,8 @@ new owner writes their own key or clears it.
 payload with the data length extension, 251 bytes (Vol 6 Part B §2.4),
 less the L2CAP header's 4 (Vol 3 Part A §3.1). The app asks for 247 by
 an MTU exchange (Vol 3 Part F §3.4.2) as soon as it connects; every
-value then fits one ATT PDU and one link-layer packet. The node also
+value but an update's begin (Updates, below) then fits one ATT PDU and
+one link-layer packet. The node also
 takes long writes and serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5),
 so a phone that settles on less still works, in more round trips. A
 notified value fits the 20 bytes a notification carries at the default
@@ -3058,13 +3059,17 @@ service and its characteristics:
 | | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
 | Neighbours | `28bc000a-…` | read | floor(1) next(1) entry_len(1) own(7), then per neighbour id(6) position(7) rssi(2) age(2) flags(1) | 10–244 |
 | | | write | slot(1) | 1 |
+| Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
+| | | write | 0 then header(256) to begin; 1 to commit; 2 to reboot | 257, 1 |
+| Image | `28bc000c-…` | write, write without response | offset(4) bytes(1–240) | 5–244 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
 [node identity](#node-identity)), a message ID is the 32-bit hash of
 [packet formats](#packet-formats), and every integer is big-endian.
 The codecs are `bark-link`, shared by the firmware and the tests. A
-write is a write request, which the node answers; a write that is not
+write is a write request, which the node answers, but for Image's,
+which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
@@ -3213,9 +3218,71 @@ leaves between two reads the others stay where they were, and the next
 page skips none of them; counted from the first live one, they would
 shift down by one, and one would be skipped.
 
+**Updates.** The app stages a new firmware image on the node, which
+the node's loader swaps in at its next boot (roadmap D79;
+`bark-fw/README.md`, "Updates"): so a node on a roof is updated from
+the street. The image is a header of 256 bytes, which holds its
+version, its length and its SHA-256, and then its bytes. The app writes
+0 and the header to Update to begin: the node forgets any image staged
+before, and takes the header if its version is above the node's own and
+no swap is asked for already. Then the app writes the image to Image in
+pieces, each its offset in the image and as many bytes as one write
+carries, 240 at the MTU of 247, without a response; the node writes each
+into its external flash, and takes a piece only at the offset where the
+bytes it holds end. Update's read gives the state, 0 idle, 1 receiving,
+2 staged, every byte held, 3 committed; why the last begin, commit or
+reboot was refused, 0 if it was not; the bytes held; and the header's
+version and hash, zero while idle. The app reads it after every seven
+pieces and goes on from the bytes held, so that a piece or a connection
+lost is sent again from there; a hash not its image's is another image
+being staged, which it begins again. With every byte held, the app
+writes 1 to commit: the node checks the image against the header's hash,
+and every other check its console's commit makes, and asks the loader
+for the swap. Then it writes 2 to reboot: the node answers, ends the
+link and resets. A begin, a commit or a reboot the node refuses is
+answered with the ATT error 0x81, refused, and Update says why:
+
+| refused | |
+|---|---|
+| 1, header | not a header the node reads |
+| 2, version | not above the version the node runs |
+| 3, busy | a swap is asked for already: reboot first |
+| 4, incomplete | not every byte is held |
+| 5, hash | the bytes do not hash to the header's hash, and are forgotten |
+| 6, battery | on battery at or below the low level ([implementation notes](#implementation-notes)); the image stays staged, to commit on external power |
+| 7, flash | the flash failed, and the image is forgotten |
+
+What is staged lasts across connections until the node resets. From
+link version 6 (roadmap D145).
+
+*Why without a response, seven at a time.* A write request is answered
+in a later connection event than the one that carried it, so a phone
+that waits for each answer sends one piece every two events; without
+a response it sends as many as an event carries. The node's host
+queues 8 ATT PDUs for a link and drops one more, so seven pieces and
+the read fit; the read is answered only once the node has written the
+pieces before it, so it is also the flow control.
+
+*How long it takes.* An app asks Android for a short connection
+interval for the transfer, 11.25 to 15 ms ([sources](#sources)). A
+packet of 251 bytes takes 2.12 ms on the 1 Mbit/s PHY, 2.5 ms with the
+node's empty answer and the two 150 µs gaps between (Vol 6 Part B
+§2.1, §4.1.1), so the node's connection event of 7.5 ms and its three
+receive buffers take three pieces an event. Seven pieces take three
+events at 15 ms; the node writes them meanwhile, each 240 bytes over its
+external flash's bus at about 1 Mbit/s, 2 ms, two page programs on
+average, 2.6 ms, and a sector erase every 17 pieces, 0.6 ms each: 36 ms.
+The read's answer goes in the next event and the next pieces in the one
+after: about five events, 75 ms, for 1680 bytes, 22 KB/s. An image of
+400 KB takes about 18 s, and the commit's hash, a read of it over the
+same bus, about 3 s more. At Android's default of 30 to 50 ms the node's
+writing hides inside the three events, and the same five events take
+twice as long or more, 40 to 60 s; with a write request for each piece,
+two events a piece, it would be 50 s at 15 ms.
+
 **Versions.** A later link version may add characteristics and append
-fields to the values the node writes, Node, Status, Given back, and
-each neighbour of Neighbours; an app
+fields to the values the node writes, Node, Status, Given back, Update,
+and each neighbour of Neighbours; an app
 reads the fields it knows and ignores the rest, as a node reads a
 heartbeat. The values the app writes change only with the version, and
 the app writes the form of the node's. A change to what a field means
@@ -3804,8 +3871,14 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 - Semtech SX1261/2 datasheet: LoRa sensitivity table, CAD, RSSI, SF5/SF6.
 - Bluetooth Core Specification 5.0 (Bluetooth SIG, 2016): the ATT MTU,
   writes, reads and errors (Vol 3 Part F), the L2CAP header (Vol 3
-  Part A), UUIDs (Vol 3 Part B), advertising and the link-layer packet
-  (Vol 6 Part B), attribute caching and Service Changed (Vol 3 Part G).
+  Part A), UUIDs (Vol 3 Part B), advertising, the link-layer packet and
+  its timing (Vol 6 Part B), attribute caching and Service Changed
+  (Vol 3 Part G).
+- Android API reference, `BluetoothGatt.requestConnectionPriority`: the
+  connection interval of `CONNECTION_PRIORITY_HIGH`, 11.25 to 15 ms, and
+  of `CONNECTION_PRIORITY_BALANCED`, 30 to 50 ms.
+- Nordic SoftDevice Controller, `sdc_hci_vs.h`: a connection event of
+  7.5 ms by default.
   Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
   hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
